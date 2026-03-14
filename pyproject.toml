@@ -6,7 +6,7 @@ readme = "README.md"
 authors = [
     { name = "Les Orchard", email = "lorchard@mozilla.com" }
 ]
-requires-python = ">=3.14"
+requires-python = ">=3.13"
 dependencies = [
     "httpx>=0.28.1",
     "python-dotenv>=1.2.2",
