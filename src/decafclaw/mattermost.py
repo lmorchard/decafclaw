@@ -44,6 +44,32 @@ class MattermostClient:
         resp = await self._http.post("/posts", json=body)
         resp.raise_for_status()
 
+    async def send_placeholder(self, channel_id, root_id=None, text="Thinking..."):
+        """Send a placeholder message and return its post ID."""
+        body = {"channel_id": channel_id, "message": text}
+        if root_id:
+            body["root_id"] = root_id
+        resp = await self._http.post("/posts", json=body)
+        resp.raise_for_status()
+        return resp.json().get("id")
+
+    async def edit_message(self, post_id, message):
+        """Edit an existing post's content."""
+        resp = await self._http.put(f"/posts/{post_id}/patch", json={
+            "id": post_id,
+            "message": message,
+        })
+        resp.raise_for_status()
+
+    async def send_typing(self, channel_id):
+        """Send a typing indicator."""
+        try:
+            await self._http.post("/users/me/typing", json={
+                "channel_id": channel_id,
+            })
+        except Exception:
+            pass  # typing indicators are best-effort
+
     async def listen(self, on_message):
         """Listen for posted events via WebSocket. Calls on_message(post, channel_type)
         for each incoming user message. Reconnects on disconnect."""

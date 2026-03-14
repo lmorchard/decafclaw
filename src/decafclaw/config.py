@@ -17,6 +17,10 @@ class Config:
     mattermost_token: str = ""
     mattermost_bot_username: str = ""
 
+    # Tabstack settings
+    tabstack_api_key: str = ""
+    tabstack_api_url: str = ""  # empty = SDK default (production)
+
     # Agent settings
     system_prompt: str = "You are a helpful assistant. You have access to tools you can use to help answer questions."
     max_tool_iterations: int = 10
@@ -31,6 +35,8 @@ def load_config() -> Config:
         mattermost_url=os.getenv("MATTERMOST_URL", ""),
         mattermost_token=os.getenv("MATTERMOST_TOKEN", ""),
         mattermost_bot_username=os.getenv("MATTERMOST_BOT_USERNAME", ""),
+        tabstack_api_key=os.getenv("TABSTACK_API_KEY", ""),
+        tabstack_api_url=os.getenv("TABSTACK_API_URL", ""),
         system_prompt=os.getenv("SYSTEM_PROMPT", Config.system_prompt),
         max_tool_iterations=int(os.getenv("MAX_TOOL_ITERATIONS", "10")),
     )
