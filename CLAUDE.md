@@ -62,6 +62,8 @@ Session docs live in `.claude/dev-sessions/YYYY-MM-DD-HHMM-slug/` with `spec.md`
 - **One agent turn per conversation at a time.** Concurrent conversations (different threads/channels) are fine.
 - **Memory lives in `data/workspace/{agent_id}/memories/`.** Daily markdown files per user, append-only. Tools read user_id/channel/thread from context, not config.
 - **Agent workspace at `data/workspace/{agent_id}/`.** Configurable via `DATA_HOME` and `AGENT_ID`. Agent-owned files (memories, future to-do lists) go here.
+- **System prompt from file.** If `data/workspace/{agent_id}/SYSTEM_PROMPT.md` exists, it overrides the default system prompt. Edit and restart to iterate.
+- **LOG_LEVEL env var.** Set `LOG_LEVEL=DEBUG` for verbose logging (default: INFO).
 
 ## Keeping docs current
 
@@ -72,8 +74,4 @@ When adding features, new tools, config options, or architectural changes:
 
 ## Known gaps
 
-- `LOG_LEVEL` env var isn't wired up (hardcoded to INFO in `__init__.py`)
-- No automated tests beyond import smoke checks
-- Lint target explicitly lists files (should glob)
-- No history persistence (in-memory, lost on restart — but archived to JSONL)
-- No history truncation (unbounded growth)
+- No history truncation (unbounded growth — compaction helps but no hard limit)
