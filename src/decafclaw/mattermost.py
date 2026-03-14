@@ -413,11 +413,6 @@ class MattermostClient:
         try:
             await self.listen(on_message_sync, shutdown_event=shutdown_event)
         finally:
-            # Wait briefly for in-flight tasks to complete
-            tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
-            if tasks:
-                log.info(f"Waiting for {len(tasks)} in-flight task(s) to complete...")
-                await asyncio.gather(*tasks, return_exceptions=True)
             await self.close()
             log.info("Shutdown complete")
 
