@@ -5,23 +5,32 @@ work by stripping away all the complexity.
 
 ## What it does
 
-Connects to Mattermost, receives messages, runs an LLM with tool-calling
-via LiteLLM, executes tools, and responds. Features an event-driven
-architecture with async agent loop, live tool progress in chat, persistent
-user memory, and flood/DoS protection.
+Connects to Mattermost as a chat bot, runs an LLM with tool-calling via
+LiteLLM, executes tools, and responds. Features persistent memory with
+semantic search, conversation archival and compaction, per-conversation
+to-do lists, workspace-sandboxed file tools, shell with user confirmation,
+and flood/DoS protection.
 
 ### Tools
 
 | Tool | What it does |
 |------|-------------|
-| `shell` | Run a shell command |
-| `read_file` | Read a local file |
 | `web_fetch` | Fetch raw HTML from a URL |
+| `think` | Internal reasoning scratchpad (hidden from user) |
 | `debug_context` | Dump current conversation context |
-| `memory_save` | Save a memory about the user |
-| `memory_search` | Search memories (substring match) |
-| `memory_recent` | Recall recent memories |
 | `compact_conversation` | Manually compact conversation history |
+| `memory_save` | Save a persistent memory |
+| `memory_search` | Search memories (semantic or substring) |
+| `memory_recent` | Recall recent memories |
+| `todo_add` | Add a to-do item |
+| `todo_complete` | Mark a to-do item done |
+| `todo_list` | Show the to-do list |
+| `todo_clear` | Clear the to-do list |
+| `workspace_read` | Read a file from the workspace (sandboxed) |
+| `workspace_write` | Write a file to the workspace (sandboxed) |
+| `workspace_list` | List files in the workspace |
+| `shell` | Run a shell command (requires user confirmation) |
+| `conversation_search` | Search past conversations semantically |
 | `tabstack_extract_markdown` | Read a page or PDF as clean Markdown |
 | `tabstack_extract_json` | Extract structured data with a JSON schema |
 | `tabstack_generate` | Transform content with LLM instructions |
@@ -94,6 +103,16 @@ All via environment variables (`.env` file supported):
 | `DATA_HOME` | No | `./data` | Base data directory |
 | `AGENT_ID` | No | `decafclaw` | Agent identity |
 | `AGENT_USER_ID` | No | `user` | Configured user ID (single user for now) |
+| `LOG_LEVEL` | No | `INFO` | Logging level (DEBUG, INFO, WARNING, etc.) |
+
+### Embeddings / Semantic Search
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `EMBEDDING_MODEL` | No | `text-embedding-004` | Embedding model name |
+| `EMBEDDING_URL` | No | `LLM_URL` (adjusted) | Embedding API endpoint |
+| `EMBEDDING_API_KEY` | No | `LLM_API_KEY` | Embedding API key |
+| `MEMORY_SEARCH_STRATEGY` | No | `substring` | `substring` or `semantic` |
 
 ### Compaction
 
@@ -111,7 +130,7 @@ Without Mattermost configured, runs in interactive terminal mode.
 ## Architecture
 
 ```
-User message → Build prompt (system + history + tools)
+User message → Build prompt (SOUL.md + AGENT.md + USER.md + history + tools)
                     ↓
                Call LLM (async)
                     ↓
@@ -122,6 +141,8 @@ User message → Build prompt (system + history + tools)
             │                     terminal prints progress)
             │
             └── Text response → Send to user
+                                     ↓
+                              Archive + maybe compact
 ```
 
 Key architectural pieces:
@@ -129,29 +150,71 @@ Key architectural pieces:
 - **Context** (`context.py`) — Go-inspired forkable runtime context
 - **Async agent loop** — LLM calls, tool execution, and subscribers all async
 - **Per-conversation state** — threads and channels are independent conversations
-- **User memory** — file-based markdown memories in `data/workspace/`
-- **Conversation archive** — append-only JSONL per conversation
-- **Auto-compaction** — summarizes old history when token budget exceeded
+- **Memory** — file-based markdown + semantic search via embeddings
+- **Conversation archive** — append-only JSONL, source of truth for compaction
+- **Auto-compaction** — summarizes old history from archive when token budget exceeded
+- **Conversation resume** — replays archive on restart
+- **To-do lists** — markdown checkboxes on disk, per-conversation
+- **Workspace sandbox** — file tools confined to `data/{agent_id}/workspace/`
+- **Shell confirmation** — user must approve shell commands via reaction (Mattermost) or y/n (terminal)
+- **Prompt files** — SOUL.md + AGENT.md bundled, USER.md as workspace override
+
+## Data layout
+
+```
+data/{agent_id}/                    # Admin (read-only to agent)
+├── SOUL.md                         # Identity/personality override
+├── AGENT.md                        # Capability/tool guidance override
+├── USER.md                         # User context override
+├── COMPACTION.md                   # Compaction prompt override
+└── workspace/                      # Agent read/write sandbox
+    ├── memories/                   # Markdown memory files
+    │   └── 2026/
+    │       └── 2026-03-14.md
+    ├── conversations/              # JSONL archives
+    │   └── {conv_id}.jsonl
+    ├── todos/                      # Per-conversation to-do lists
+    │   └── {conv_id}.md
+    └── embeddings.db               # Semantic search index (SQLite)
+```
 
 ## Project structure
 
 ```
 src/decafclaw/
-├── __init__.py         Entry point, mode selection
-├── agent.py            Async agent loop + interactive mode
-├── config.py           Env var loading
-├── context.py          Forkable runtime context
-├── events.py           In-process pub/sub event bus
-├── llm.py              Async HTTP to LLM endpoint
-├── mattermost.py       WebSocket, REST, flood protection, progress
-├── memory.py           File-based memory read/write
-├── archive.py          Conversation archive (JSONL)
-├── compaction.py       History compaction via summarization
+├── __init__.py           Entry point, mode selection
+├── agent.py              Async agent loop + interactive mode
+├── archive.py            Conversation archive (JSONL)
+├── compaction.py         History compaction via summarization
+├── config.py             Env var loading
+├── context.py            Forkable runtime context
+├── embeddings.py         Semantic search index (SQLite + cosine similarity)
+├── events.py             In-process pub/sub event bus
+├── llm.py                Async HTTP to LLM endpoint
+├── mattermost.py         WebSocket, REST, flood protection, progress, confirmation
+├── memory.py             File-based memory read/write
+├── todos.py              Per-conversation to-do lists
+├── prompts/              System prompt assembly
+│   ├── __init__.py       Prompt loader (bundled + workspace overrides)
+│   ├── SOUL.md           Default identity prompt
+│   └── AGENT.md          Default capability/tool prompt
+├── eval/                 Eval harness
+│   ├── __main__.py       CLI entry point
+│   ├── runner.py         Test execution
+│   └── reflect.py        Failure reflection via judge model
 └── tools/
-    ├── __init__.py     Tool registry (sync/async dispatch)
-    ├── core.py         shell, read_file, web_fetch, debug_context
-    ├── memory_tools.py memory_save, memory_search, memory_recent
-    └── tabstack_tools.py  AsyncTabstack web tools
+    ├── __init__.py       Tool registry (sync/async dispatch + allowed_tools)
+    ├── core.py           web_fetch, debug_context, think, compact_conversation
+    ├── memory_tools.py   memory_save, memory_search, memory_recent
+    ├── todo_tools.py     todo_add, todo_complete, todo_list, todo_clear
+    ├── workspace_tools.py workspace_read, workspace_write, workspace_list
+    ├── shell_tools.py    shell (with user confirmation)
+    ├── conversation_tools.py conversation_search
+    └── tabstack_tools.py AsyncTabstack web tools
+
+evals/                    Eval test cases (YAML)
+scripts/                  Utility scripts
+tests/                    pytest test suite (64 tests)
 ```
 
 ## What this is NOT

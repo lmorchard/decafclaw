@@ -23,17 +23,23 @@ A minimal AI agent for learning how agent frameworks work. Connects to Mattermos
 - `src/decafclaw/memory.py` — Memory file read/write operations
 - `src/decafclaw/archive.py` — Conversation archive (JSONL per conversation)
 - `src/decafclaw/compaction.py` — History compaction via summarization
-- `src/decafclaw/tools/` — Tool registry, core tools, Tabstack tools, memory tools
+- `src/decafclaw/embeddings.py` — Semantic search index (SQLite + cosine similarity)
+- `src/decafclaw/todos.py` — Per-conversation to-do lists (markdown checkboxes)
+- `src/decafclaw/prompts/` — System prompt assembly (SOUL.md + AGENT.md + loader)
+- `src/decafclaw/eval/` — Eval harness (YAML tests, failure reflection)
+- `src/decafclaw/tools/` — Tool registry: core, memory, tabstack, todo, workspace, shell, conversation
 
 ## Running
 
 ```
 make run          # Interactive mode (stdin/stdout)
-make dev          # Auto-restart on file changes (needs uv sync --extra dev)
-make debug        # With debug logging (NOTE: LOG_LEVEL env var not yet wired up)
+make dev          # Auto-restart on file changes (10s graceful shutdown)
+make debug        # With debug logging
 make run-pro      # With gemini-2.5-pro model
 make lint         # Compile-check all source files
-make test         # Import smoke tests
+make test         # Run pytest (64 tests)
+make reindex      # Rebuild embedding index from memory files
+make build-eval-fixtures  # Rebuild eval embedding fixtures
 ```
 
 **Important:** Only one bot instance can connect to Mattermost at a time. A second instance will silently miss websocket events. Les likely has `make dev` running in another terminal — do NOT start `make run`, `make dev`, or `make debug` without checking first. If you need to run an instance for log capture or debugging, ask Les to kill the existing one.
@@ -76,4 +82,4 @@ When adding features, new tools, config options, or architectural changes:
 
 ## Known gaps
 
-- No history truncation (unbounded growth — compaction helps but no hard limit)
+- No hard history size limit (compaction helps but unbounded archive growth)
