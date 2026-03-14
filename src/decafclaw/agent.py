@@ -8,38 +8,44 @@ This is where the interesting stuff happens. The loop:
 5. Returns the final text response
 """
 
+import asyncio
 import json
 import logging
 
-from .config import Config
 from .llm import call_llm
 from .tools import TOOL_DEFINITIONS, execute_tool
 
 log = logging.getLogger(__name__)
 
 
-def run_agent_turn(config: Config, user_message: str, history: list) -> str:
+async def run_agent_turn(ctx, user_message: str, history: list) -> str:
     """Process a single user message through the agent loop.
 
     Args:
-        config: Agent configuration
+        ctx: Runtime context (carries config, event bus, etc.)
         user_message: The user's message text
         history: Conversation history (list of message dicts, mutated in place)
 
     Returns:
         The agent's text response
     """
+    config = ctx.config
+
     # Add user message to history
     history.append({"role": "user", "content": user_message})
 
     # Build the messages array: system prompt + history
     messages = [{"role": "system", "content": config.system_prompt}] + history
+    # Expose messages on context so debug tools can inspect them
+    ctx.messages = messages
 
     for iteration in range(config.max_tool_iterations):
         log.debug(f"Agent iteration {iteration + 1}")
 
         # Call the LLM
-        response = call_llm(config, messages, tools=TOOL_DEFINITIONS)
+        await ctx.publish("llm_start", iteration=iteration + 1)
+        response = await call_llm(config, messages, tools=TOOL_DEFINITIONS)
+        await ctx.publish("llm_end", iteration=iteration + 1)
 
         # If there are tool calls, execute them
         tool_calls = response.get("tool_calls")
@@ -57,7 +63,9 @@ def run_agent_turn(config: Config, user_message: str, history: list) -> str:
                 fn_args = json.loads(tc["function"]["arguments"])
                 log.info(f"Tool call: {fn_name}({fn_args})")
 
-                result = execute_tool(fn_name, fn_args)
+                await ctx.publish("tool_start", tool=fn_name, args=fn_args)
+                result = await execute_tool(ctx, fn_name, fn_args)
+                await ctx.publish("tool_end", tool=fn_name)
                 log.debug(f"Tool result: {result[:200]}...")
 
                 tool_msg = {
@@ -82,26 +90,41 @@ def run_agent_turn(config: Config, user_message: str, history: list) -> str:
     return msg
 
 
-def run_interactive(config: Config):
+async def run_interactive(ctx):
     """Run the agent in interactive terminal mode (stdin/stdout)."""
+    config = ctx.config
     print("DecafClaw interactive mode. Type 'quit' to exit.")
     print(f"Model: {config.llm_model}")
     print(f"Tools: {', '.join(t['function']['name'] for t in TOOL_DEFINITIONS)}")
     print()
 
+    def on_progress(event):
+        event_type = event.get("type")
+        if event_type == "tool_status":
+            print(f"  [{event.get('tool', 'tool')}] {event['message']}")
+        elif event_type == "tool_start":
+            print(f"  [running {event.get('tool', 'tool')}...]")
+        elif event_type == "llm_start" and event.get("iteration", 1) > 1:
+            print("  [thinking...]")
+
+    sub_id = ctx.event_bus.subscribe(on_progress)
+
     history = []
 
-    while True:
-        try:
-            user_input = input("you> ").strip()
-        except (EOFError, KeyboardInterrupt):
-            print("\nBye!")
-            break
+    try:
+        while True:
+            try:
+                user_input = (await asyncio.to_thread(input, "you> ")).strip()
+            except (EOFError, KeyboardInterrupt):
+                print("\nBye!")
+                break
 
-        if not user_input:
-            continue
-        if user_input.lower() in ("quit", "exit"):
-            break
+            if not user_input:
+                continue
+            if user_input.lower() in ("quit", "exit"):
+                break
 
-        response = run_agent_turn(config, user_input, history)
-        print(f"\nagent> {response}\n")
+            response = await run_agent_turn(ctx, user_input, history)
+            print(f"\nagent> {response}\n")
+    finally:
+        ctx.event_bus.unsubscribe(sub_id)
