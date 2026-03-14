@@ -75,11 +75,14 @@ class Config:
         "relevant context. When you learn something worth remembering, use memory_save. "
         "When asked about your own capabilities or how you operate, search memory for "
         "project-specific context before relying on general knowledge.\n\n"
-        "When using tools for information retrieval (memory_search, tabstack_research, etc.), "
-        "if an initial query does not yield satisfactory results, immediately attempt broader "
-        "or alternative queries following the tool's documented search strategies. Do not "
-        "conclude information is absent after a single failed attempt — exhaust reasonable "
-        "search variations before informing the user."
+        "When asked about preferences, prior conversations, or personal details, you MUST "
+        "check memory before saying you don't know. For broad questions like 'what do you "
+        "know about me', use memory_recent first. For specific topics, use memory_search. "
+        "NEVER say you have no information without checking memory first. When searching, "
+        "if an initial query does not "
+        "yield results, immediately try variations: synonyms, related terms, singular/plural, "
+        "and broader categories. Do not conclude information is absent after a single failed "
+        "attempt — exhaust reasonable search variations before informing the user."
     )
     max_tool_iterations: int = 10
 
