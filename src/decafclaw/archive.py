@@ -2,6 +2,7 @@
 
 import json
 import logging
+from datetime import datetime
 from pathlib import Path
 
 log = logging.getLogger(__name__)
@@ -13,9 +14,12 @@ def archive_path(config, conv_id: str) -> Path:
 
 
 def append_message(config, conv_id: str, message: dict):
-    """Append a message to the conversation archive."""
+    """Append a message to the conversation archive with timestamp."""
     path = archive_path(config, conv_id)
     path.parent.mkdir(parents=True, exist_ok=True)
+    # Add timestamp if not already present
+    if "timestamp" not in message:
+        message = {**message, "timestamp": datetime.now().isoformat()}
     with open(path, "a") as f:
         f.write(json.dumps(message) + "\n")
 
