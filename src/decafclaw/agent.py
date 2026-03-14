@@ -32,6 +32,26 @@ def _archive(ctx, msg):
     except Exception as e:
         log.error(f"Archive write failed: {e}")
 
+    # Index user/assistant messages for conversation search (fire and forget)
+    if ctx.config.memory_search_strategy == "semantic" and msg.get("role") in ("user", "assistant"):
+        content = msg.get("content")
+        if content and len(content) > 20:  # skip trivial messages
+            import asyncio
+            asyncio.create_task(_index_conversation_message(ctx, msg))
+
+
+async def _index_conversation_message(ctx, msg):
+    """Index a conversation message for semantic search (background)."""
+    try:
+        from .embeddings import index_entry
+        conv_id = _conv_id(ctx)
+        role = msg.get("role", "unknown")
+        content = msg.get("content", "")
+        entry_text = f"{role}: {content}"
+        await index_entry(ctx.config, conv_id, entry_text, source_type="conversation")
+    except Exception as e:
+        log.debug(f"Conversation indexing failed: {e}")
+
 
 async def _maybe_compact(ctx, config, history, prompt_tokens):
     """Trigger compaction if token budget is exceeded."""
