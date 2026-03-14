@@ -7,19 +7,16 @@ from pathlib import Path
 log = logging.getLogger(__name__)
 
 
-def memory_dir(config, user_id: str) -> Path:
-    """Compute the memory directory path for a user."""
-    return Path(config.data_home) / "workspace" / config.agent_id / "memories" / user_id
+def memory_dir(config) -> Path:
+    """Compute the memory directory path for the agent."""
+    return Path(config.data_home) / "workspace" / config.agent_id / "memories"
 
 
-def save_entry(config, user_id: str, channel_name: str, channel_id: str,
+def save_entry(config, channel_name: str, channel_id: str,
                thread_id: str, tags: list[str], content: str) -> str:
     """Append a memory entry to today's file."""
-    if not user_id:
-        return "[error: no user_id in context]"
-
     now = datetime.now()
-    base = memory_dir(config, user_id) / str(now.year)
+    base = memory_dir(config) / str(now.year)
     base.mkdir(parents=True, exist_ok=True)
 
     filepath = base / f"{now:%Y-%m-%d}.md"
@@ -36,16 +33,16 @@ def save_entry(config, user_id: str, channel_name: str, channel_id: str,
     with open(filepath, "a") as f:
         f.write(entry)
 
-    log.info(f"Saved memory for {user_id} tagged [{tag_str}]")
+    log.info(f"Saved memory tagged [{tag_str}]")
     return f"Saved memory tagged [{tag_str}]"
 
 
-def search_entries(config, user_id: str, query: str, context_lines: int = 3) -> str:
-    """Search all memory files for a user using case-insensitive substring matching."""
-    if not user_id:
-        return "[error: no user_id in context]"
+def search_entries(config, query: str, context_lines: int = 3) -> str:
+    """Search all memory files using case-insensitive substring matching.
 
-    base = memory_dir(config, user_id)
+    Returns whole entries when a match is found within any line of the entry.
+    """
+    base = memory_dir(config)
     if not base.exists():
         return f"No memories found matching '{query}'"
 
@@ -56,31 +53,20 @@ def search_entries(config, user_id: str, query: str, context_lines: int = 3) -> 
     md_files = sorted(base.rglob("*.md"))
 
     for filepath in md_files:
-        lines = filepath.read_text().splitlines()
-        matched_lines = set()
+        text = filepath.read_text()
+        # Split into entries on "## " headers
+        parts = text.split("\n## ")
+        rel_path = filepath.relative_to(base)
 
-        # Find all matching line indices
-        for i, line in enumerate(lines):
-            if query_lower in line.lower():
-                # Add the match and its context window
-                start = max(0, i - context_lines)
-                end = min(len(lines), i + context_lines + 1)
-                for j in range(start, end):
-                    matched_lines.add(j)
-
-        if matched_lines:
-            # Build output with contiguous blocks
-            rel_path = filepath.relative_to(base)
-            block_lines = []
-            sorted_indices = sorted(matched_lines)
-
-            for idx, line_num in enumerate(sorted_indices):
-                # Add separator between non-contiguous blocks
-                if idx > 0 and line_num > sorted_indices[idx - 1] + 1:
-                    block_lines.append("---")
-                block_lines.append(lines[line_num])
-
-            results.append(f"### {rel_path}\n\n" + "\n".join(block_lines))
+        for part in parts:
+            part = part.strip()
+            if not part:
+                continue
+            # Re-add the header prefix
+            entry = "## " + part if not part.startswith("## ") else part
+            # Check if query matches anywhere in the entry
+            if query_lower in entry.lower():
+                results.append(f"### {rel_path}\n\n{entry}")
 
     if not results:
         return f"No memories found matching '{query}'"
@@ -88,12 +74,9 @@ def search_entries(config, user_id: str, query: str, context_lines: int = 3) -> 
     return "\n\n".join(results)
 
 
-def recent_entries(config, user_id: str, n: int = 5) -> str:
-    """Return the last N memory entries for a user."""
-    if not user_id:
-        return "[error: no user_id in context]"
-
-    base = memory_dir(config, user_id)
+def recent_entries(config, n: int = 5) -> str:
+    """Return the last N memory entries."""
+    base = memory_dir(config)
     if not base.exists():
         return "No memories found"
 
