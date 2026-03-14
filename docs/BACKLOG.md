@@ -192,6 +192,12 @@ Les prefers concise answers and doesn't like summaries of what was just done.
 - Agent decides when to remember, or user says "remember this"
 - Each entry carries channel/thread/tag metadata for context
 
+**Near-term improvements:**
+- Entry-aware search — instead of grep-style context lines, parse the
+  markdown structure and return whole entries when any line matches.
+  Guarantees tags/metadata/content always returned together. The `## `
+  header is already a natural entry delimiter.
+
 **Future enhancements:**
 - `related_to` / `supersedes` entry linking — lightweight knowledge graph
   on top of flat files. Search follows links and respects supersedes.
