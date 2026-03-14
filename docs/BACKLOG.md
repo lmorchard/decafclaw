@@ -503,6 +503,64 @@ deployed as a persistent service.
 - Could expose circuit breaker state per channel
 - Pairs with deployment work (systemd health check, Docker healthcheck)
 
+## Spec / plan / execute loop
+
+Teach the agent to autonomously run the same workflow we use in dev
+sessions: gather information to shape an idea, plan the execution,
+build a to-do list, then crunch through it.
+
+**Design ideas:**
+- Could be a skill or a meta-tool: `start_project(description)`
+- Phase 1 — **Spec**: agent asks clarifying questions, researches
+  context (memory, web), drafts a spec document in workspace
+- Phase 2 — **Plan**: agent breaks the spec into steps, identifies
+  dependencies, writes a plan
+- Phase 3 — **Execute**: agent creates a to-do list from the plan,
+  works through items one by one, reporting progress via events
+- Each phase produces an artifact (spec.md, plan.md, todo list)
+- User can review/approve at phase boundaries or let it run
+- Pairs with: to-do list, chain-of-thought scratchpad, sub-agent
+  delegation (farm out subtasks), tool confirmation (approve risky steps)
+
+**Why this matters:** This is the difference between a chatbot and an
+agent. A chatbot answers questions. An agent takes on projects.
+
+## Knowledge base (Obsidian-style wiki)
+
+Augment episodic memory (daily logs of what happened) with a
+structured knowledge base of wiki-linked topics that can be added
+to and refined over time.
+
+**Design ideas:**
+- Lives alongside memories in workspace: `workspace/{agent_id}/wiki/`
+- Each topic is a markdown file: `wiki/cocktails.md`, `wiki/decafclaw-architecture.md`
+- Files use `[[wiki-links]]` to connect topics, Obsidian-style
+- Agent can create, update, and link pages — not append-only like memories
+- Episodic memory captures events; wiki captures durable knowledge
+- When the agent learns something that refines existing knowledge,
+  it updates the wiki page rather than appending another memory entry
+
+**Tools:**
+- `wiki_read(topic)` — read a wiki page
+- `wiki_write(topic, content)` — create or overwrite a wiki page
+- `wiki_append(topic, content)` — add to an existing page
+- `wiki_search(query)` — search across wiki pages
+- `wiki_links(topic)` — show what links to/from a topic
+
+**Relationship to memory:**
+- **Memory** = "Les told me on March 13 that he likes Boulevardiers"
+  (episodic, timestamped, append-only)
+- **Wiki** = "Les's drink preferences: Boulevardier, Old Fashioned"
+  (curated, updated, the current truth)
+- The agent could periodically consolidate memories into wiki pages
+  (manual or automatic). This is a form of the "memory pruning" idea
+  but more structured.
+
+**Parallels:**
+- Obsidian / Roam / LogSeq personal knowledge management
+- MemGPT's archival memory vs core memory distinction
+- The "related_to / supersedes" memory linking idea, but more natural
+
 ## Feed SSE stream into prompt
 
 The automate/research SSE events could be fed into the LLM as
