@@ -33,7 +33,8 @@ def _archive(ctx, msg):
         log.error(f"Archive write failed: {e}")
 
     # Index user/assistant messages for conversation search (fire and forget)
-    if ctx.config.memory_search_strategy == "semantic" and msg.get("role") in ("user", "assistant"):
+    # Requires an embedding model to be configured
+    if ctx.config.embedding_model and msg.get("role") in ("user", "assistant"):
         content = msg.get("content")
         if content and len(content) > 20:  # skip trivial messages
             import asyncio
