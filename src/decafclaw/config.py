@@ -2,6 +2,7 @@
 
 import os
 from dataclasses import dataclass, field
+from pathlib import Path
 from dotenv import load_dotenv
 
 
@@ -27,12 +28,32 @@ class Config:
     mattermost_circuit_breaker_window_sec: int = 30  # sliding window for circuit breaker
     mattermost_circuit_breaker_pause_sec: int = 60  # pause duration after breaker trips
 
+    # Workspace settings
+    data_home: str = "./data"
+    agent_id: str = "decafclaw"
+    agent_user_id: str = "user"  # single configured user (temporary)
+
+    @property
+    def workspace_path(self) -> Path:
+        return Path(self.data_home) / "workspace" / self.agent_id
+
     # Tabstack settings
     tabstack_api_key: str = ""
     tabstack_api_url: str = ""  # empty = SDK default (production)
 
     # Agent settings
-    system_prompt: str = "You are a helpful assistant. You have access to tools you can use to help answer questions."
+    system_prompt: str = (
+        "You are a helpful assistant. You have access to tools you can use to help answer questions.\n\n"
+        "You have a persistent memory system. At the start of each conversation, "
+        "use memory_search or memory_recent to recall relevant context about the user. "
+        "When you learn something worth remembering — a preference, a fact, project "
+        "context — use memory_save to store it for future conversations.\n\n"
+        "When using tools for information retrieval (memory_search, tabstack_research, etc.), "
+        "if an initial query does not yield satisfactory results, immediately attempt broader "
+        "or alternative queries following the tool's documented search strategies. Do not "
+        "conclude information is absent after a single failed attempt — exhaust reasonable "
+        "search variations before informing the user."
+    )
     max_tool_iterations: int = 10
 
 
@@ -55,6 +76,9 @@ def load_config() -> Config:
         mattermost_circuit_breaker_max=int(os.getenv("MATTERMOST_CIRCUIT_BREAKER_MAX", "10")),
         mattermost_circuit_breaker_window_sec=int(os.getenv("MATTERMOST_CIRCUIT_BREAKER_WINDOW_SEC", "30")),
         mattermost_circuit_breaker_pause_sec=int(os.getenv("MATTERMOST_CIRCUIT_BREAKER_PAUSE_SEC", "60")),
+        data_home=os.getenv("DATA_HOME", Config.data_home),
+        agent_id=os.getenv("AGENT_ID", Config.agent_id),
+        agent_user_id=os.getenv("AGENT_USER_ID", Config.agent_user_id),
         tabstack_api_key=os.getenv("TABSTACK_API_KEY", ""),
         tabstack_api_url=os.getenv("TABSTACK_API_URL", ""),
         system_prompt=os.getenv("SYSTEM_PROMPT", Config.system_prompt),

@@ -307,8 +307,13 @@ class MattermostClient:
                     histories[hist_id] = []
             history = histories[hist_id]
 
-            # Fork a request context and subscribe to progress events
-            req_ctx = app_ctx.fork()
+            # Fork a request context with user/channel metadata
+            req_ctx = app_ctx.fork(
+                user_id=app_ctx.config.agent_user_id,
+                channel_id=channel_id,
+                channel_name="",
+                thread_id=root_id or "",
+            )
             sub_id = self._subscribe_progress(
                 req_ctx.event_bus, req_ctx.context_id, placeholder_id
             )
