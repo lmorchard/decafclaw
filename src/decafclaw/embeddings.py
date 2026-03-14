@@ -34,6 +34,7 @@ def _get_db(config) -> sqlite3.Connection:
             entry_hash TEXT NOT NULL UNIQUE,
             entry_text TEXT NOT NULL,
             embedding BLOB NOT NULL,
+            source_type TEXT NOT NULL DEFAULT 'memory',
             created_at TEXT NOT NULL
         )
     """)
@@ -43,6 +44,11 @@ def _get_db(config) -> sqlite3.Connection:
             value TEXT NOT NULL
         )
     """)
+    # Migration: add source_type column to existing DBs
+    try:
+        conn.execute("ALTER TABLE memory_embeddings ADD COLUMN source_type TEXT NOT NULL DEFAULT 'memory'")
+    except sqlite3.OperationalError:
+        pass  # column already exists
     conn.commit()
     return conn
 
@@ -105,20 +111,22 @@ def _set_model(config, conn):
     )
 
 
-def index_entry_sync(config, file_path: str, entry_text: str, embedding: list[float]):
+def index_entry_sync(config, file_path: str, entry_text: str, embedding: list[float],
+                     source_type: str = "memory"):
     """Store an entry and its embedding in the index (sync)."""
     conn = _get_db(config)
     try:
         _set_model(config, conn)
         conn.execute(
             """INSERT OR IGNORE INTO memory_embeddings
-               (file_path, entry_hash, entry_text, embedding, created_at)
-               VALUES (?, ?, ?, ?, ?)""",
+               (file_path, entry_hash, entry_text, embedding, source_type, created_at)
+               VALUES (?, ?, ?, ?, ?, ?)""",
             (
                 file_path,
                 _entry_hash(entry_text),
                 entry_text,
                 _serialize_embedding(embedding),
+                source_type,
                 datetime.now().isoformat(),
             ),
         )
@@ -127,14 +135,24 @@ def index_entry_sync(config, file_path: str, entry_text: str, embedding: list[fl
         conn.close()
 
 
-def search_similar_sync(config, query_embedding: list[float], top_k: int = 5) -> list[dict]:
-    """Find the top K most similar entries by cosine similarity (sync)."""
+def search_similar_sync(config, query_embedding: list[float], top_k: int = 5,
+                        source_type: str | None = None) -> list[dict]:
+    """Find the top K most similar entries by cosine similarity (sync).
+
+    If source_type is specified, only search that type. Otherwise search all.
+    """
     conn = _get_db(config)
     try:
         _check_model(config, conn)
-        rows = conn.execute(
-            "SELECT entry_text, file_path, embedding FROM memory_embeddings"
-        ).fetchall()
+        if source_type:
+            rows = conn.execute(
+                "SELECT entry_text, file_path, embedding FROM memory_embeddings WHERE source_type = ?",
+                (source_type,),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT entry_text, file_path, embedding FROM memory_embeddings"
+            ).fetchall()
     finally:
         conn.close()
 
@@ -163,34 +181,39 @@ def search_similar_sync(config, query_embedding: list[float], top_k: int = 5) ->
     return results[:top_k]
 
 
-async def index_entry(config, file_path: str, entry_text: str):
-    """Embed and index a memory entry (async)."""
+async def index_entry(config, file_path: str, entry_text: str, source_type: str = "memory"):
+    """Embed and index an entry (async)."""
     embedding = await embed_text(config, entry_text)
     if embedding:
-        index_entry_sync(config, file_path, entry_text, embedding)
-        log.debug(f"Indexed entry from {file_path}")
+        index_entry_sync(config, file_path, entry_text, embedding, source_type=source_type)
+        log.debug(f"Indexed {source_type} entry from {file_path}")
 
 
-async def search_similar(config, query: str, top_k: int = 5) -> list[dict]:
+async def search_similar(config, query: str, top_k: int = 5,
+                         source_type: str | None = None) -> list[dict]:
     """Embed a query and find similar entries (async).
 
-    If the index is empty but memory files exist, reindex first.
+    If source_type is specified, only search that type.
+    If the memory index is empty but memory files exist, reindex first.
     """
-    # Check if index needs building
-    conn = _get_db(config)
-    try:
-        count = conn.execute("SELECT COUNT(*) FROM memory_embeddings").fetchone()[0]
-    finally:
-        conn.close()
+    # Check if index needs building (only for memory type)
+    if source_type is None or source_type == "memory":
+        conn = _get_db(config)
+        try:
+            count = conn.execute(
+                "SELECT COUNT(*) FROM memory_embeddings WHERE source_type = 'memory'"
+            ).fetchone()[0]
+        finally:
+            conn.close()
 
-    if count == 0:
-        log.info("Embedding index is empty, reindexing memories...")
-        await reindex_all(config)
+        if count == 0:
+            log.info("Embedding index is empty, reindexing memories...")
+            await reindex_all(config)
 
     query_embedding = await embed_text(config, query)
     if not query_embedding:
         return []
-    return search_similar_sync(config, query_embedding, top_k)
+    return search_similar_sync(config, query_embedding, top_k, source_type=source_type)
 
 
 async def reindex_all(config):
