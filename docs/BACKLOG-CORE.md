@@ -5,27 +5,19 @@ Not portable as skills — they're the platform skills run on.
 
 ## Conversation management
 
-- Persistent conversation history (SQLite?)
-- History truncation strategies
+- ~~Persistent conversation history~~ — JSONL archives + resume on restart
+- ~~History truncation~~ — compaction via summarization LLM
 - Per-user history in channels (not just per-channel)
 - Session reset command
 
-## Conversation summarization
+## ~~Conversation summarization~~ (DONE)
 
-When history exceeds a token budget, summarize older messages to stay
-within the context window. Different from simple truncation — the agent
-retains the gist of earlier conversation. Could use a cheap/fast model
-for the summarization step.
+Implemented: compaction from archive, configurable LLM, chunked compaction.
 
-## Token budget tracking
+## ~~Token budget tracking~~ (DONE)
 
-Track token usage per conversation, warn when approaching limits,
-tie into conversation summarization.
-
-- Count tokens on each LLM call (most APIs return usage in response)
-- Track cumulative per-conversation budget
-- Trigger summarization when budget reaches threshold
-- Log costs per conversation for operational visibility
+Implemented: prompt_tokens from API, ctx.total_prompt/completion_tokens,
+auto-compaction when budget exceeded.
 
 ## Multi-model routing
 
@@ -83,11 +75,9 @@ might be "tool definitions are eating 30% of your budget."
 Truncate or reject absurdly long messages before sending to the LLM.
 Prevents context window abuse and accidental paste bombs.
 
-## Graceful shutdown
+## ~~Graceful shutdown~~ (DONE)
 
-Handle SIGTERM properly: finish in-flight agent turns, unsubscribe
-from the event bus, close the websocket cleanly. Currently a kill
-just drops everything.
+Implemented: shutdown event, websocket polling, agent task tracking.
 
 ## Streaming LLM responses
 

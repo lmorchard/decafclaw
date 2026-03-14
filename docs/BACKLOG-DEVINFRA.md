@@ -2,18 +2,13 @@
 
 Tools, testing, deployment, and observability.
 
-## System prompt as independent Markdown file on disk
+## ~~System prompt as Markdown files~~ (DONE)
 
-System prompt is currently embedded as a string in config.py.
-We should move that into its own independent and more easily
-editable markdown file. Also, offer the ability for a user to
-supply SYSTEM.md in the workspace of an agent to override it.
+Implemented: SOUL.md + AGENT.md bundled, USER.md workspace override.
 
-## All prompts as independent Markdown files?
+## ~~Prompts as independent Markdown files~~ (DONE)
 
-The compaction prompt default is also embedded in Python as a string.
-Should we move all default prompts into a folder of Markdown files to
-make them more easily edited and evaluated in isolation?
+Implemented: prompts/ package with bundled files, workspace overrides.
 
 ## Skills system with progressive resource loading
 
@@ -73,19 +68,15 @@ Connect external MCP servers as tool providers.
 - `execute_tool` routes calls to the appropriate server
 - Could be bidirectional: DecafClaw exposes its own tools via MCP
 
-## Eval loop for prompt and tool testing
+## ~~Eval loop~~ (DONE)
 
-Lightweight YAML-based test harness for prompt/tool changes.
+Implemented: YAML tests, multi-turn, failure reflection, judge model,
+result bundles, allowed_tools constraints. 12+ eval cases.
 
-- Fixtures with known memories, assertions on tool calls and responses
-- `--model` flag to compare across models
-- Cost-controlled: short conversations, cheapest viable model
+## ~~Proper linting and testing~~ (MOSTLY DONE)
 
-## Proper linting and testing
-
-- ruff or flake8 replacing per-file `py_compile`
-- pytest unit tests for memory, event bus, context, tool dispatch
-- CI integration (GitHub Actions)
+Implemented: glob-based py_compile, pytest with 54 tests.
+Remaining: ruff/flake8, CI integration (GitHub Actions).
 
 ## Model-specific prompt tuning
 
@@ -120,7 +111,7 @@ Useful once deployed as a persistent service.
 ## Code cleanup
 
 - Mattermost progress subscriber: refactor `elif` chain to dispatch dict pattern
-- Makefile lint target: glob instead of explicit file list
+- ~~Makefile lint target: glob instead of explicit file list~~ (DONE)
 
 ## Experiments
 

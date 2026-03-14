@@ -8,19 +8,13 @@ object, workspace, and event bus.
 
 Current implementation is basic. Improvements:
 
-**Near-term:**
-- Entry-aware search — return whole entries on match instead of
-  context lines, using the `## ` header as a natural delimiter
-- Restructure as per-agent memory, drop per-user directory. Currently
-  positioned as "memories about the user" but agents get confused
-  about who "the user" is (single configured user anyway). Simpler
-  model: it's the agent's knowledge store. Path becomes
-  `workspace/{agent_id}/memories/{year}/{date}.md` with no user
-  subdirectory. Re-add per-user scoping later when multi-user arrives.
+**Done:**
+- ~~Entry-aware search~~ — returns whole entries
+- ~~Per-agent memory~~ — dropped per-user directory
+- ~~Semantic search~~ — embeddings via text-embedding-004
 
 **Future:**
 - `related_to` / `supersedes` entry linking — lightweight knowledge graph
-- RAG / vector embedding search — semantic similarity for fuzzy queries
 - Memory pruning / archival — summarize old entries
 
 ## Knowledge base (Obsidian-style wiki)
@@ -37,55 +31,18 @@ topics that can be added to and refined over time.
 
 Tools: `wiki_read`, `wiki_write`, `wiki_append`, `wiki_search`, `wiki_links`
 
-## Per-conversation to-do list
+## ~~Per-conversation to-do list~~ (DONE)
 
-Scratchpad for multi-step work. Complements memory (long-term) with
-short-term intent tracking within a conversation.
+Implemented: markdown checkboxes on disk, per-conversation, crash-recoverable.
 
-Tools: `todo_add`, `todo_complete`, `todo_list`, `todo_clear`
+## ~~Chain-of-thought / scratchpad~~ (DONE)
 
-- In-memory, ephemeral (or persists with conversation history)
-- Agent posts to-do list in chat and updates as items complete
+Implemented: `think` tool, hidden from user, logged for debugging.
 
-## Chain-of-thought / scratchpad (hidden reasoning)
+## ~~Conversation history search~~ (DONE)
 
-A `think` tool for internal reasoning hidden from the user. Agent can
-plan, evaluate options, and work through logic without process chatter.
-
-- `think(content)` — returns immediately, logged but not shown to user
-- Suppress intermediate narration ("Let me search for that...")
-- Works with any model (not dependent on native extended thinking)
-- Pairs with to-do list: think through a plan, commit it, execute
-
-## Conversation history search
-
-Search across archived conversation JSONL files in the workspace.
-The archive preserves full uncompacted history, so this can find
-things that have been summarized away from the active context.
-
-- `conversation_search(query, conv_id=None)` — search across all
-  conversations or a specific one
-- Returns matching messages with surrounding context and conv_id
-- Useful for: "when did we discuss X?", "what did I say about Y
-  last week?", cross-conversation knowledge retrieval
-
-Depends on the conversation archive from the compaction session.
-
-**Design note: generalize embedding search infrastructure.**
-Reuse the same SQLite embeddings DB (`embeddings.db`) with a
-`source_type` column to distinguish record types:
-
-```sql
-source_type TEXT NOT NULL DEFAULT 'memory'  -- 'memory' | 'conversation' | 'wiki'
-```
-
-- `memory_search` → `WHERE source_type = 'memory'`
-- `conversation_search` → `WHERE source_type = 'conversation'`
-- Cross-type search for broad queries (no filter)
-- Same embedding space, same cosine similarity, same reindex command
-- Extract `embeddings.py` search functions into a shared module that
-  memory, conversation, and wiki tools all use. Currently memory-specific
-  but the indexing/search/reindex logic is generic.
+Implemented: semantic search over archived messages via `source_type`
+column in shared embeddings DB. Messages indexed as they're archived.
 
 ## Self-reflection / retry
 
