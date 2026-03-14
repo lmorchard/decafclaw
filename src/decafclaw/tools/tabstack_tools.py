@@ -2,12 +2,12 @@
 
 import json
 import logging
-from tabstack import Tabstack
+from tabstack import AsyncTabstack
 
 log = logging.getLogger(__name__)
 
 # Initialized once from config via init_tabstack()
-_client: Tabstack | None = None
+_client: AsyncTabstack | None = None
 
 
 def init_tabstack(api_key: str, api_url: str | None = None):
@@ -16,11 +16,11 @@ def init_tabstack(api_key: str, api_url: str | None = None):
     kwargs = {"api_key": api_key}
     if api_url:
         kwargs["base_url"] = api_url
-    _client = Tabstack(**kwargs)
+    _client = AsyncTabstack(**kwargs)
     log.info(f"Tabstack client initialized (url={api_url or 'default'})")
 
 
-def _get_client() -> Tabstack:
+def _get_client() -> AsyncTabstack:
     if _client is None:
         raise RuntimeError("Tabstack not initialized — is TABSTACK_API_KEY set?")
     return _client
@@ -28,31 +28,31 @@ def _get_client() -> Tabstack:
 
 # -- Tool implementations ---------------------------------------------------
 
-def tool_tabstack_extract_markdown(url: str) -> str:
+async def tool_tabstack_extract_markdown(ctx, url: str) -> str:
     """Extract clean Markdown from a web page or PDF."""
     log.info(f"[tool:tabstack_extract_markdown] {url}")
     try:
-        result = _get_client().extract.markdown(url=url)
+        result = await _get_client().extract.markdown(url=url)
         return result.content
     except Exception as e:
         return f"[error: {e}]"
 
 
-def tool_tabstack_extract_json(url: str, json_schema: dict) -> str:
+async def tool_tabstack_extract_json(ctx, url: str, json_schema: dict) -> str:
     """Extract structured JSON data from a web page or PDF."""
     log.info(f"[tool:tabstack_extract_json] {url}")
     try:
-        result = _get_client().extract.json(url=url, json_schema=json_schema)
+        result = await _get_client().extract.json(url=url, json_schema=json_schema)
         return json.dumps(result.data, indent=2)
     except Exception as e:
         return f"[error: {e}]"
 
 
-def tool_tabstack_generate(url: str, json_schema: dict, instructions: str) -> str:
+async def tool_tabstack_generate(ctx, url: str, json_schema: dict, instructions: str) -> str:
     """Transform web/PDF content into structured JSON using LLM instructions."""
     log.info(f"[tool:tabstack_generate] {url}")
     try:
-        result = _get_client().generate.json(
+        result = await _get_client().generate.json(
             url=url, json_schema=json_schema, instructions=instructions
         )
         return json.dumps(result.data, indent=2)
@@ -60,18 +60,23 @@ def tool_tabstack_generate(url: str, json_schema: dict, instructions: str) -> st
         return f"[error: {e}]"
 
 
-def tool_tabstack_automate(task: str, url: str | None = None) -> str:
+async def tool_tabstack_automate(ctx, task: str, url: str | None = None) -> str:
     """Run a multi-step browser automation task."""
     log.info(f"[tool:tabstack_automate] task={task} url={url}")
     try:
         kwargs = {"task": task}
         if url:
             kwargs["url"] = url
-        stream = _get_client().agent.automate(**kwargs)
+        stream = await _get_client().agent.automate(**kwargs)
 
         final_answer = None
-        for event in stream:
+        async for event in stream:
             _log_stream_event("automate", event)
+
+            # Publish progress
+            msg = _get_field(event, "message")
+            if msg:
+                await ctx.publish("tool_status", tool="tabstack_automate", message=msg)
 
             # SDK v2: fields are directly on the event object
             answer = _get_field(event, "finalAnswer") or _get_report(event)
@@ -83,15 +88,20 @@ def tool_tabstack_automate(task: str, url: str | None = None) -> str:
         return f"[error: {e}]"
 
 
-def tool_tabstack_research(query: str, mode: str = "balanced") -> str:
+async def tool_tabstack_research(ctx, query: str, mode: str = "balanced") -> str:
     """Search the web, analyze multiple sources, and synthesize an answer."""
     log.info(f"[tool:tabstack_research] query={query} mode={mode}")
     try:
-        stream = _get_client().agent.research(query=query, mode=mode)
+        stream = await _get_client().agent.research(query=query, mode=mode)
 
         final_answer = None
-        for event in stream:
+        async for event in stream:
             _log_stream_event("research", event)
+
+            # Publish progress
+            msg = _get_field(event, "message")
+            if msg:
+                await ctx.publish("tool_status", tool="tabstack_research", message=msg)
 
             # SDK v2: the report is in metadata.report on the final event
             report = _get_report(event)
