@@ -196,6 +196,50 @@ Handle SIGTERM properly: finish in-flight agent turns, unsubscribe
 from the event bus, close the websocket cleanly. Currently a kill
 just drops everything.
 
+## Skills system with progressive resource loading
+
+Claude Code / OpenClaw-style skills: bundled knowledge + tools that the
+agent can discover and load on demand rather than stuffing everything
+into the system prompt upfront.
+
+**Design ideas:**
+- Skills live in a directory (e.g., `skills/web-research/`)
+- Each skill has a manifest: name, description, trigger conditions,
+  and a list of resources (prompt fragments, tool definitions, examples)
+- Agent sees a lightweight skill index in its system prompt
+- When a skill is relevant, the agent loads its resources progressively —
+  fetch the prompt fragment, register the tools, load examples as needed
+- Keeps the base context small while enabling deep specialization
+- Skills could be first-party (bundled) or user-defined
+
+**Parallels:**
+- Claude Code's skill system with selective resource fetch
+- OpenClaw's progressive context loading
+- MCP's tool discovery (see below)
+
+## MCP server support
+
+Support Model Context Protocol (MCP) servers as additional tool
+providers. The agent could connect to external MCP servers and
+use their tools alongside built-in ones.
+
+**Design ideas:**
+- Config lists MCP server endpoints (stdio or HTTP/SSE)
+- On startup, discover available tools from each server
+- Merge MCP tool definitions into the tool registry alongside
+  core and Tabstack tools
+- `execute_tool` routes MCP tool calls to the appropriate server
+- The async architecture already supports this — MCP calls are
+  just async tool executions
+- Could be bidirectional: DecafClaw itself could expose an MCP
+  server interface, letting other agents use its tools
+
+**Use cases:**
+- Connect to a database MCP server for SQL queries
+- Connect to a GitHub MCP server for repo management
+- Connect to a home automation MCP server
+- Let users extend the agent without modifying core code
+
 ## Feed SSE stream into prompt
 
 The automate/research SSE events could be fed into the LLM as
