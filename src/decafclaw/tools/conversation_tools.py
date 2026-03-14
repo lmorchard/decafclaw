@@ -1,8 +1,7 @@
-"""Conversation search tools — search across archived conversations."""
+"""Conversation tools — search and compact conversations."""
 
 import logging
 from .. import embeddings
-from ..archive import read_archive
 
 log = logging.getLogger(__name__)
 
@@ -25,8 +24,23 @@ async def tool_conversation_search(ctx, query: str) -> str:
     return f"No conversation history found matching '{query}'"
 
 
+async def tool_conversation_compact(ctx) -> str:
+    """Manually trigger conversation compaction."""
+    log.info("[tool:conversation_compact]")
+    from ..compaction import compact_history
+    history = getattr(ctx, "history", None)
+    if history is None:
+        return "[error: no conversation history available]"
+    result = await compact_history(ctx, history)
+    if result:
+        return f"Conversation compacted. History now has {len(history)} messages."
+    else:
+        return "No compaction needed (not enough turns to compact)."
+
+
 CONVERSATION_TOOLS = {
     "conversation_search": tool_conversation_search,
+    "conversation_compact": tool_conversation_compact,
 }
 
 CONVERSATION_TOOL_DEFINITIONS = [
@@ -49,6 +63,18 @@ CONVERSATION_TOOL_DEFINITIONS = [
                     },
                 },
                 "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "conversation_compact",
+            "description": "Manually compact the conversation history into a summary. Use when the conversation is getting long or when you want to consolidate context. This triggers the same compaction that happens automatically when the token budget is exceeded.",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": [],
             },
         },
     },
