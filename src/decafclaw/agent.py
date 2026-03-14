@@ -93,6 +93,13 @@ async def run_agent_turn(ctx, user_message: str, history: list) -> str:
 async def run_interactive(ctx):
     """Run the agent in interactive terminal mode (stdin/stdout)."""
     config = ctx.config
+
+    # Populate context defaults for interactive mode
+    ctx.user_id = getattr(ctx, "user_id", None) or config.agent_user_id
+    ctx.channel_id = getattr(ctx, "channel_id", "") or "interactive"
+    ctx.channel_name = getattr(ctx, "channel_name", "") or "interactive"
+    ctx.thread_id = getattr(ctx, "thread_id", "") or ""
+
     print("DecafClaw interactive mode. Type 'quit' to exit.")
     print(f"Model: {config.llm_model}")
     print(f"Tools: {', '.join(t['function']['name'] for t in TOOL_DEFINITIONS)}")

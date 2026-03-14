@@ -20,7 +20,8 @@ A minimal AI agent for learning how agent frameworks work. Connects to Mattermos
 - `src/decafclaw/config.py` — Dataclass config from env vars / .env
 - `src/decafclaw/context.py` — Forkable runtime context
 - `src/decafclaw/events.py` — In-process pub/sub event bus
-- `src/decafclaw/tools/` — Tool registry, core tools, Tabstack tools
+- `src/decafclaw/memory.py` — Memory file read/write operations
+- `src/decafclaw/tools/` — Tool registry, core tools, Tabstack tools, memory tools
 
 ## Running
 
@@ -49,6 +50,8 @@ Session docs live in `.claude/dev-sessions/YYYY-MM-DD-HHMM-slug/` with `spec.md`
 - **Config via env vars.** All config comes from `.env` / environment. Dataclass defaults in `config.py`.
 - **Commit after each logical step.** Lint and test before committing.
 - **One agent turn per conversation at a time.** Concurrent conversations (different threads/channels) are fine.
+- **Memory lives in `data/workspace/{agent_id}/memories/`.** Daily markdown files per user, append-only. Tools read user_id/channel/thread from context, not config.
+- **Agent workspace at `data/workspace/{agent_id}/`.** Configurable via `DATA_HOME` and `AGENT_ID`. Agent-owned files (memories, future to-do lists) go here.
 
 ## Known gaps
 
