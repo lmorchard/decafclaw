@@ -47,6 +47,60 @@ a sandbox, those files could end up anywhere.
 - Test memory operations, event bus, context fork, tool dispatch
 - CI integration (GitHub Actions)
 
+## Eval loop for prompt and tool testing
+
+A lightweight harness for testing prompt/tool changes before deploying
+to Mattermost. Not a full eval framework — just enough to catch
+regressions and compare models.
+
+**Design sketch:**
+
+```python
+# evals/test_memory_search.yaml
+- name: "finds cocktail preference with plural query"
+  setup:
+    memories:
+      - tags: [preference, cocktail, drink]
+        content: "User's favorite cocktails are Boulevardier and Old Fashioned"
+  input: "What are my favorite cocktails?"
+  expect:
+    tool_called: memory_search      # agent should use this tool
+    response_contains: "Boulevardier"  # final response includes this
+    max_tool_calls: 5               # shouldn't take more than this
+
+- name: "recalls recent memory"
+  setup:
+    memories:
+      - tags: [project]
+        content: "Working on the event bus refactor"
+  input: "What was I working on?"
+  expect:
+    response_contains: "event bus"
+```
+
+**Runner:**
+- Parse YAML test cases
+- For each: set up a temp memory directory with fixtures, create a
+  context, run `run_agent_turn`, inspect the response and tool call log
+- Report pass/fail per case, with timing and cost (token count)
+- Support `--model` flag to compare across models
+
+**What it tests:**
+- Does the agent find memories with various query phrasings?
+- Does it follow the search checklist (try variations)?
+- Does it save memories when it should?
+- Does tool description wording affect behavior? (A/B test descriptions)
+
+**What it doesn't try to be:**
+- Not a unit test framework (needs real LLM calls)
+- Not continuous — run manually before/after prompt changes
+- Not comprehensive — a handful of targeted cases, not a benchmark
+
+**Cost control:**
+- Use the cheapest viable model for most runs (Flash)
+- Keep test conversations short (1-2 turns)
+- Cache LLM responses for deterministic re-runs? (tricky with tool calls)
+
 ## Max message length
 
 Truncate or reject absurdly long messages before sending to the LLM.
