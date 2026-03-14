@@ -10,6 +10,7 @@ requires-python = ">=3.14"
 dependencies = [
     "httpx>=0.28.1",
     "python-dotenv>=1.2.2",
+    "tabstack>=2.3.0",
     "websockets>=16.0",
 ]
 
