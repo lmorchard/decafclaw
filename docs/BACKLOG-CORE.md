@@ -5,19 +5,8 @@ Not portable as skills — they're the platform skills run on.
 
 ## Conversation management
 
-- ~~Persistent conversation history~~ — JSONL archives + resume on restart
-- ~~History truncation~~ — compaction via summarization LLM
 - Per-user history in channels (not just per-channel)
 - Session reset command
-
-## ~~Conversation summarization~~ (DONE)
-
-Implemented: compaction from archive, configurable LLM, chunked compaction.
-
-## ~~Token budget tracking~~ (DONE)
-
-Implemented: prompt_tokens from API, ctx.total_prompt/completion_tokens,
-auto-compaction when budget exceeded.
 
 ## Multi-model routing
 
@@ -32,19 +21,6 @@ Extract a channel interface so the bot isn't Mattermost-specific.
 Terminal mode is already a second "channel." Could add Discord, Slack,
 IRC, or a simple HTTP API. The event bus and context are already
 channel-agnostic — the main coupling is in `mattermost.py`.
-
-## Agent workspace sandbox
-
-The agent should have a dedicated filesystem workspace directory.
-File tools (`read_file`, `write_file`, `shell`) should be confined to
-this directory by default.
-
-- Config: `AGENT_WORKSPACE=/path/to/workspace` (base path)
-- Per-agent subdirectory: `workspace/{agent_id}/`
-- Path resolution rejects escapes (no `../../etc/passwd`)
-- `shell` runs with `cwd` set to workspace
-- Explicit permission model: agent can request access outside the
-  workspace, user must approve (pairs with tool confirmation)
 
 ## User permissions / roles
 
@@ -74,10 +50,6 @@ might be "tool definitions are eating 30% of your budget."
 
 Truncate or reject absurdly long messages before sending to the LLM.
 Prevents context window abuse and accidental paste bombs.
-
-## ~~Graceful shutdown~~ (DONE)
-
-Implemented: shutdown event, websocket polling, agent task tracking.
 
 ## Streaming LLM responses
 
