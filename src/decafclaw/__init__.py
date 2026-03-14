@@ -18,12 +18,9 @@ def main():
 
     config = load_config()
 
-    # Load system prompt from workspace file if it exists
-    from pathlib import Path
-    prompt_path = config.workspace_path / "SYSTEM_PROMPT.md"
-    if prompt_path.exists():
-        config.system_prompt = prompt_path.read_text().strip()
-        logging.info(f"Loaded system prompt from {prompt_path}")
+    # Assemble system prompt from markdown files (bundled + workspace overrides)
+    from .prompts import load_system_prompt
+    config.system_prompt = load_system_prompt(config)
 
     bus = EventBus()
     app_ctx = Context(config=config, event_bus=bus)
