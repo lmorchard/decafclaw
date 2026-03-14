@@ -158,6 +158,31 @@ metrics — response times, tool usage frequency, error rates, circuit
 breaker trips. Could be as simple as a log-based subscriber or a
 Prometheus endpoint.
 
+## Channel management tools
+
+Give the agent tools to manage the communication channel itself, not
+just send messages. On Mattermost, with the right permissions:
+
+- `create_channel(name, purpose)` — spin up a new channel for a topic
+- `invite_user(channel, user)` — invite a user to a channel
+- `set_channel_header(channel, text)` — update channel header/purpose
+- `archive_channel(channel)` — archive when done
+
+**Use cases:**
+- Agent is researching a complex topic, creates a dedicated channel
+  to keep the discussion organized and invites the user
+- Agent spins up a "war room" channel for an incident
+- Agent creates a channel per project/task to keep threads separate
+- Could pair with to-do lists — one channel per to-do, agent works
+  through items and posts results
+
+**Design notes:**
+- Needs Mattermost bot permissions: `create_public_channel`,
+  `create_private_channel`, `add_channel_members`
+- Should be exposed as agent tools, gated by config/permissions
+- The channel abstraction (below) would make this portable across
+  platforms
+
 ## Channel abstraction
 
 Extract a channel interface so the bot isn't Mattermost-specific.
