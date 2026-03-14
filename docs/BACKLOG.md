@@ -52,6 +52,22 @@ a sandbox, those files could end up anywhere.
 Truncate or reject absurdly long messages before sending to the LLM.
 Prevents context window abuse and accidental paste bombs.
 
+## Model-specific prompt tuning
+
+Tool descriptions and system prompts are getting detailed (checklists,
+multi-step guidance). Stronger models (gemini-2.5-pro) follow them
+faithfully; cheaper models (gemini-2.5-flash) skip steps or summarize
+instead of following instructions.
+
+**Ideas:**
+- Different tool description verbosity per model — Flash gets shorter,
+  punchier descriptions ("try 3 query variations"); Pro gets the full checklist
+- Could tie into the multi-model routing work — route complex tool-use
+  chains to Pro, simple Q&A to Flash
+- Skills system could select prompt variants by model capability
+- Experiment: same task, same tools, compare Flash vs Pro adherence to
+  tool instructions. Quantify the gap.
+
 ## Experiments from the spec
 
 - Strip the system prompt to nothing — what happens?
