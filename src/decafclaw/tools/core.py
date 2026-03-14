@@ -1,40 +1,10 @@
-"""Core tools — shell, file, and web operations."""
+"""Core tools — web fetch, debug, think, compaction."""
 
 import httpx
 import json
 import logging
-import subprocess
 
 log = logging.getLogger(__name__)
-
-
-def tool_shell(ctx, command: str) -> str:
-    """Run a shell command and return stdout + stderr."""
-    log.info(f"[tool:shell] {command}")
-    try:
-        result = subprocess.run(
-            command, shell=True, capture_output=True, text=True, timeout=30
-        )
-        output = result.stdout
-        if result.stderr:
-            output += f"\n[stderr]\n{result.stderr}"
-        if result.returncode != 0:
-            output += f"\n[exit code: {result.returncode}]"
-        return output or "(no output)"
-    except subprocess.TimeoutExpired:
-        return "[error: command timed out after 30 seconds]"
-
-
-def tool_read_file(ctx, path: str) -> str:
-    """Read a file and return its contents."""
-    log.info(f"[tool:read_file] {path}")
-    try:
-        with open(path) as f:
-            return f.read()
-    except FileNotFoundError:
-        return f"[error: file not found: {path}]"
-    except PermissionError:
-        return f"[error: permission denied: {path}]"
 
 
 def tool_web_fetch(ctx, url: str) -> str:
@@ -108,8 +78,6 @@ async def tool_compact_conversation(ctx) -> str:
 
 
 CORE_TOOLS = {
-    "shell": tool_shell,
-    "read_file": tool_read_file,
     "web_fetch": tool_web_fetch,
     "debug_context": tool_debug_context,
     "think": tool_think,
@@ -117,40 +85,6 @@ CORE_TOOLS = {
 }
 
 CORE_TOOL_DEFINITIONS = [
-    {
-        "type": "function",
-        "function": {
-            "name": "shell",
-            "description": "Run a shell command and return stdout and stderr.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "command": {
-                        "type": "string",
-                        "description": "The shell command to execute",
-                    }
-                },
-                "required": ["command"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "read_file",
-            "description": "Read a file from the local filesystem and return its contents.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "path": {
-                        "type": "string",
-                        "description": "Absolute or relative file path to read",
-                    }
-                },
-                "required": ["path"],
-            },
-        },
-    },
     {
         "type": "function",
         "function": {
