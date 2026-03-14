@@ -175,7 +175,7 @@ async def run_interactive(ctx):
     print(f"Tools: {', '.join(t['function']['name'] for t in TOOL_DEFINITIONS)}")
     print()
 
-    def on_progress(event):
+    async def on_progress(event):
         event_type = event.get("type")
         if event_type == "tool_status":
             print(f"  [{event.get('tool', 'tool')}] {event['message']}")
@@ -187,6 +187,18 @@ async def run_interactive(ctx):
             print("  [compacting conversation...]")
         elif event_type == "compaction_end":
             print("  [compaction complete]")
+        elif event_type == "tool_confirm_request":
+            command = event.get("command", "")
+            tool_name = event.get("tool", "tool")
+            print(f"\n  \U0001f6a8 Confirm {tool_name}: {command}")
+            answer = await asyncio.to_thread(input, "  Approve? (y/n): ")
+            approved = answer.strip().lower() in ("y", "yes")
+            await ctx.event_bus.publish({
+                "type": "tool_confirm_response",
+                "context_id": event.get("context_id"),
+                "tool": tool_name,
+                "approved": approved,
+            })
 
     sub_id = ctx.event_bus.subscribe(on_progress)
 
