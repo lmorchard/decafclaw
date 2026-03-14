@@ -303,3 +303,40 @@ def reindex_cli():
 
     mem_count, conv_count = asyncio.run(_reindex_all())
     print(f"Done: {mem_count} memory entries + {conv_count} conversation messages → {db_path}")
+
+
+def search_cli():
+    """CLI entry point: search the embedding index."""
+    import argparse
+    import asyncio
+    import logging
+    from .config import load_config
+
+    parser = argparse.ArgumentParser(description="Search DecafClaw embeddings")
+    parser.add_argument("query", help="Search query")
+    parser.add_argument("--type", choices=["memory", "conversation", "all"], default="all",
+                        help="Source type to search (default: all)")
+    parser.add_argument("--top-k", type=int, default=5, help="Number of results (default: 5)")
+    args = parser.parse_args()
+
+    logging.basicConfig(level=logging.WARNING)
+    config = load_config()
+
+    source_type = args.type if args.type != "all" else None
+
+    async def _search():
+        return await search_similar(config, args.query, top_k=args.top_k,
+                                     source_type=source_type)
+
+    results = asyncio.run(_search())
+
+    if not results:
+        print(f"No results for '{args.query}'")
+        return
+
+    print(f"\n{len(results)} results for '{args.query}' (type={args.type}):\n")
+    for i, r in enumerate(results):
+        sim = f"{r['similarity']:.3f}"
+        preview = r['entry_text'][:120].replace('\n', ' ')
+        print(f"  {i+1}. [{sim}] ({r['file_path']}) {preview}...")
+    print()
