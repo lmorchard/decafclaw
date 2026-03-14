@@ -227,7 +227,7 @@ async def reindex_all(config):
 
     md_files = sorted(base.rglob("*.md"))
     count = 0
-    for filepath in md_files:
+    for fi, filepath in enumerate(md_files):
         text = filepath.read_text()
         parts = text.split("\n## ")
         for part in parts:
@@ -237,6 +237,8 @@ async def reindex_all(config):
             entry = "## " + part if not part.startswith("## ") else part
             await index_entry(config, str(filepath.relative_to(base)), entry)
             count += 1
+            if count % 10 == 0:
+                print(f"  memories: {count} entries ({fi + 1}/{len(md_files)} files)...", flush=True)
 
     log.info(f"Reindexed {count} entries from {len(md_files)} files")
     return count
@@ -249,16 +251,16 @@ async def reindex_conversations(config):
         log.info("No conversations directory found, nothing to index")
         return 0
 
+    import json as _json
     jsonl_files = sorted(conv_dir.glob("*.jsonl"))
     count = 0
-    for filepath in jsonl_files:
+    for fi, filepath in enumerate(jsonl_files):
         conv_id = filepath.stem
         for line in filepath.read_text().splitlines():
             line = line.strip()
             if not line:
                 continue
-            import json
-            msg = json.loads(line)
+            msg = _json.loads(line)
             if msg.get("role") in ("user", "assistant"):
                 content = msg.get("content", "")
                 if content and len(content) > 20:
@@ -266,6 +268,8 @@ async def reindex_conversations(config):
                     entry_text = f"{role}: {content}"
                     await index_entry(config, conv_id, entry_text, source_type="conversation")
                     count += 1
+                    if count % 10 == 0:
+                        print(f"  conversations: {count} messages ({fi + 1}/{len(jsonl_files)} files)...", flush=True)
 
     log.info(f"Reindexed {count} conversation messages from {len(jsonl_files)} files")
     return count
