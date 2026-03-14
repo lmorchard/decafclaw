@@ -109,10 +109,20 @@ class MattermostClient:
                     }))
                     log.info("WebSocket connected")
 
-                    async for raw in ws:
+                    while True:
                         if shutdown_event and shutdown_event.is_set():
                             log.info("Shutdown requested, stopping listener")
                             return
+
+                        # Use wait_for with a short timeout so we can check
+                        # the shutdown event regularly
+                        try:
+                            raw = await asyncio.wait_for(ws.recv(), timeout=1.0)
+                        except asyncio.TimeoutError:
+                            continue
+                        except websockets.ConnectionClosed:
+                            break
+
                         evt = json.loads(raw)
                         if evt.get("event") == "posted":
                             self._handle_posted(evt, on_message)
