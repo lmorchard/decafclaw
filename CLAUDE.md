@@ -53,6 +53,13 @@ Session docs live in `.claude/dev-sessions/YYYY-MM-DD-HHMM-slug/` with `spec.md`
 - **Memory lives in `data/workspace/{agent_id}/memories/`.** Daily markdown files per user, append-only. Tools read user_id/channel/thread from context, not config.
 - **Agent workspace at `data/workspace/{agent_id}/`.** Configurable via `DATA_HOME` and `AGENT_ID`. Agent-owned files (memories, future to-do lists) go here.
 
+## Keeping docs current
+
+When adding features, new tools, config options, or architectural changes:
+- **Update `README.md`** — tool table, config table, architecture diagram, project structure
+- **Update `CLAUDE.md`** — conventions, key files, known gaps
+- These should stay in sync with the actual codebase. If you change code, check if the docs need updating too.
+
 ## Known gaps
 
 - `LOG_LEVEL` env var isn't wired up (hardcoded to INFO in `__init__.py`)
