@@ -14,6 +14,9 @@ dependencies = [
     "websockets>=16.0",
 ]
 
+[project.optional-dependencies]
+dev = ["watchfiles>=1.0.0"]
+
 [project.scripts]
 decafclaw = "decafclaw:main"
 
