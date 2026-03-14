@@ -230,7 +230,7 @@ TABSTACK_TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "tabstack_automate",
-            "description": "Automate multi-step browser interactions using natural language. Can click, navigate, fill forms, and extract data across pages. Use when you need real browser interaction, not just page reading. Takes 30-120 seconds.",
+            "description": "Automate web tasks using natural language. Has its own built-in web search — great for quick lookups like addresses, hours, prices, or simple facts. Also handles browser interactions: clicking, navigating, filling forms. Prefer this over tabstack_research for simple questions that just need a quick search. Takes 30-120 seconds.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -251,7 +251,7 @@ TABSTACK_TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "tabstack_research",
-            "description": "Search the web, analyze multiple sources, and synthesize a comprehensive answer with citations. Best for complex questions, fact-checking, comparisons, and topic deep-dives. Takes 60-120 seconds.",
+            "description": "Deep multi-source web research with synthesis and citations. Use ONLY for complex questions that need analysis of multiple sources: comparisons, fact-checking across sources, topic deep-dives. For simple lookups (addresses, hours, single facts), use tabstack_automate instead — it's faster and cheaper. Takes 60-120 seconds.",
             "parameters": {
                 "type": "object",
                 "properties": {
