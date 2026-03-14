@@ -2,6 +2,10 @@
 run:
 	uv run decafclaw
 
+# Run with auto-restart on source changes
+dev:
+	uv run --extra dev watchfiles --filter python "decafclaw.main" src/
+
 # Run with debug logging
 debug:
 	LOG_LEVEL=DEBUG uv run decafclaw
