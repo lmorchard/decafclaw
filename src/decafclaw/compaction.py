@@ -20,7 +20,7 @@ Be concise but don't lose critical details. Format as a brief narrative."""
 
 def _load_compaction_prompt(config) -> str:
     """Load custom prompt from workspace, or use default."""
-    prompt_path = Path(config.data_home) / "workspace" / config.agent_id / "COMPACTION.md"
+    prompt_path = config.agent_path / "COMPACTION.md"
     if prompt_path.exists():
         return prompt_path.read_text().strip()
     return DEFAULT_COMPACTION_PROMPT
