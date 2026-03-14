@@ -170,7 +170,14 @@ async def run_interactive(ctx):
 
     sub_id = ctx.event_bus.subscribe(on_progress)
 
-    history = []
+    # Resume from archive if available
+    from .archive import read_archive
+    history = read_archive(config, ctx.conv_id)
+    if history:
+        log.info(f"Resumed interactive session from archive ({len(history)} messages)")
+        print(f"  (resumed {len(history)} messages from previous session)")
+    else:
+        history = []
 
     try:
         while True:
