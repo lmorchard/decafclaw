@@ -41,6 +41,30 @@ class Config:
     tabstack_api_key: str = ""
     tabstack_api_url: str = ""  # empty = SDK default (production)
 
+    # Compaction settings
+    compaction_llm_url: str = ""        # default: falls back to llm_url
+    compaction_llm_model: str = ""      # default: falls back to llm_model
+    compaction_llm_api_key: str = ""    # default: falls back to llm_api_key
+    compaction_max_tokens: int = 100000 # compact when prompt_tokens exceeds this
+    compaction_llm_max_tokens: int = 0  # compaction LLM's context budget (0 = use compaction_max_tokens)
+    compaction_preserve_turns: int = 5  # keep this many recent turns intact
+
+    @property
+    def compaction_url(self) -> str:
+        return self.compaction_llm_url or self.llm_url
+
+    @property
+    def compaction_model(self) -> str:
+        return self.compaction_llm_model or self.llm_model
+
+    @property
+    def compaction_api_key(self) -> str:
+        return self.compaction_llm_api_key or self.llm_api_key
+
+    @property
+    def compaction_context_budget(self) -> int:
+        return self.compaction_llm_max_tokens or self.compaction_max_tokens
+
     # Agent settings
     system_prompt: str = (
         "You are a helpful assistant. You have access to tools you can use to help answer questions.\n\n"
@@ -79,6 +103,12 @@ def load_config() -> Config:
         mattermost_circuit_breaker_max=int(os.getenv("MATTERMOST_CIRCUIT_BREAKER_MAX", "10")),
         mattermost_circuit_breaker_window_sec=int(os.getenv("MATTERMOST_CIRCUIT_BREAKER_WINDOW_SEC", "30")),
         mattermost_circuit_breaker_pause_sec=int(os.getenv("MATTERMOST_CIRCUIT_BREAKER_PAUSE_SEC", "60")),
+        compaction_llm_url=os.getenv("COMPACTION_LLM_URL", ""),
+        compaction_llm_model=os.getenv("COMPACTION_LLM_MODEL", ""),
+        compaction_llm_api_key=os.getenv("COMPACTION_LLM_API_KEY", ""),
+        compaction_max_tokens=int(os.getenv("COMPACTION_MAX_TOKENS", "100000")),
+        compaction_llm_max_tokens=int(os.getenv("COMPACTION_LLM_MAX_TOKENS", "0")),
+        compaction_preserve_turns=int(os.getenv("COMPACTION_PRESERVE_TURNS", "5")),
         data_home=os.getenv("DATA_HOME", Config.data_home),
         agent_id=os.getenv("AGENT_ID", Config.agent_id),
         agent_user_id=os.getenv("AGENT_USER_ID", Config.agent_user_id),
