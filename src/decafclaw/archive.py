@@ -1,0 +1,34 @@
+"""Conversation archive — append-only JSONL files per conversation."""
+
+import json
+import logging
+from pathlib import Path
+
+log = logging.getLogger(__name__)
+
+
+def archive_path(config, conv_id: str) -> Path:
+    """Compute the archive file path for a conversation."""
+    return Path(config.data_home) / "workspace" / config.agent_id / "conversations" / f"{conv_id}.jsonl"
+
+
+def append_message(config, conv_id: str, message: dict):
+    """Append a message to the conversation archive."""
+    path = archive_path(config, conv_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "a") as f:
+        f.write(json.dumps(message) + "\n")
+
+
+def read_archive(config, conv_id: str) -> list[dict]:
+    """Read all messages from a conversation archive."""
+    path = archive_path(config, conv_id)
+    if not path.exists():
+        return []
+    messages = []
+    with open(path) as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                messages.append(json.loads(line))
+    return messages

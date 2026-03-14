@@ -12,10 +12,36 @@ import asyncio
 import json
 import logging
 
+from .archive import append_message
+from .compaction import compact_history
 from .llm import call_llm
 from .tools import TOOL_DEFINITIONS, execute_tool
 
 log = logging.getLogger(__name__)
+
+
+def _conv_id(ctx):
+    """Get conversation ID from context."""
+    return getattr(ctx, "conv_id", None) or getattr(ctx, "channel_id", "unknown")
+
+
+def _archive(ctx, msg):
+    """Archive a message, logging errors but never raising."""
+    try:
+        append_message(ctx.config, _conv_id(ctx), msg)
+    except Exception as e:
+        log.error(f"Archive write failed: {e}")
+
+
+async def _maybe_compact(ctx, config, history, prompt_tokens):
+    """Trigger compaction if token budget is exceeded."""
+    if prompt_tokens and prompt_tokens > config.compaction_max_tokens:
+        log.info(f"Token budget exceeded ({prompt_tokens} > {config.compaction_max_tokens}), "
+                 f"triggering compaction")
+        try:
+            await compact_history(ctx, history)
+        except Exception as e:
+            log.error(f"Compaction failed: {e}")
 
 
 async def run_agent_turn(ctx, user_message: str, history: list) -> str:
@@ -30,14 +56,20 @@ async def run_agent_turn(ctx, user_message: str, history: list) -> str:
         The agent's text response
     """
     config = ctx.config
+    # Expose history on context so tools (e.g., compact_conversation) can access it
+    ctx.history = history
 
     # Add user message to history
-    history.append({"role": "user", "content": user_message})
+    user_msg = {"role": "user", "content": user_message}
+    history.append(user_msg)
+    _archive(ctx, user_msg)
 
     # Build the messages array: system prompt + history
     messages = [{"role": "system", "content": config.system_prompt}] + history
     # Expose messages on context so debug tools can inspect them
     ctx.messages = messages
+
+    prompt_tokens = 0
 
     for iteration in range(config.max_tool_iterations):
         log.debug(f"Agent iteration {iteration + 1}")
@@ -46,6 +78,11 @@ async def run_agent_turn(ctx, user_message: str, history: list) -> str:
         await ctx.publish("llm_start", iteration=iteration + 1)
         response = await call_llm(config, messages, tools=TOOL_DEFINITIONS)
         await ctx.publish("llm_end", iteration=iteration + 1)
+
+        # Track token usage
+        usage = response.get("usage")
+        if usage:
+            prompt_tokens = usage.get("prompt_tokens", 0)
 
         # If there are tool calls, execute them
         tool_calls = response.get("tool_calls")
@@ -56,6 +93,7 @@ async def run_agent_turn(ctx, user_message: str, history: list) -> str:
                 assistant_msg["tool_calls"] = tool_calls
             history.append(assistant_msg)
             messages.append(assistant_msg)
+            _archive(ctx, assistant_msg)
 
             # Execute each tool and add results
             for tc in tool_calls:
@@ -75,18 +113,25 @@ async def run_agent_turn(ctx, user_message: str, history: list) -> str:
                 }
                 history.append(tool_msg)
                 messages.append(tool_msg)
+                _archive(ctx, tool_msg)
 
             # Loop back to call the LLM again with tool results
             continue
 
         # No tool calls — we have a final response
         content = response.get("content", "")
-        history.append({"role": "assistant", "content": content})
+        final_msg = {"role": "assistant", "content": content}
+        history.append(final_msg)
+        _archive(ctx, final_msg)
+        await _maybe_compact(ctx, config, history, prompt_tokens)
         return content
 
     # Hit max iterations
     msg = "[Agent reached max tool iterations without a final response]"
-    history.append({"role": "assistant", "content": msg})
+    final_msg = {"role": "assistant", "content": msg}
+    history.append(final_msg)
+    _archive(ctx, final_msg)
+    await _maybe_compact(ctx, config, history, prompt_tokens)
     return msg
 
 
@@ -99,6 +144,7 @@ async def run_interactive(ctx):
     ctx.channel_id = getattr(ctx, "channel_id", "") or "interactive"
     ctx.channel_name = getattr(ctx, "channel_name", "") or "interactive"
     ctx.thread_id = getattr(ctx, "thread_id", "") or ""
+    ctx.conv_id = "interactive"
 
     print("DecafClaw interactive mode. Type 'quit' to exit.")
     print(f"Model: {config.llm_model}")
@@ -113,6 +159,10 @@ async def run_interactive(ctx):
             print(f"  [running {event.get('tool', 'tool')}...]")
         elif event_type == "llm_start" and event.get("iteration", 1) > 1:
             print("  [thinking...]")
+        elif event_type == "compaction_start":
+            print("  [compacting conversation...]")
+        elif event_type == "compaction_end":
+            print("  [compaction complete]")
 
     sub_id = ctx.event_bus.subscribe(on_progress)
 

@@ -51,12 +51,13 @@ class MattermostClient:
         log.info(f"Authenticated as @{self.bot_username} ({self.bot_user_id})")
 
     async def send(self, channel_id, message, root_id=None):
-        """Send a message to a channel."""
+        """Send a message to a channel. Returns the post ID."""
         body = {"channel_id": channel_id, "message": message}
         if root_id:
             body["root_id"] = root_id
         resp = await self._http.post("/posts", json=body)
         resp.raise_for_status()
+        return resp.json().get("id")
 
     async def send_placeholder(self, channel_id, root_id=None, text="\U0001f4ad Thinking..."):
         """Send a placeholder message and return its post ID."""
@@ -73,6 +74,11 @@ class MattermostClient:
             "id": post_id,
             "message": message,
         })
+        resp.raise_for_status()
+
+    async def delete_message(self, post_id):
+        """Delete an existing post."""
+        resp = await self._http.delete(f"/posts/{post_id}")
         resp.raise_for_status()
 
     async def send_typing(self, channel_id):
@@ -313,9 +319,11 @@ class MattermostClient:
                 channel_id=channel_id,
                 channel_name="",
                 thread_id=root_id or "",
+                conv_id=conv_id,
             )
             sub_id = self._subscribe_progress(
-                req_ctx.event_bus, req_ctx.context_id, placeholder_id
+                req_ctx.event_bus, req_ctx.context_id, placeholder_id,
+                channel_id=channel_id, root_id=root_id,
             )
             conv_busy[conv_id] = True
             try:
@@ -373,27 +381,39 @@ class MattermostClient:
 
         await self.listen(on_message_sync)
 
-    def _subscribe_progress(self, event_bus, context_id, placeholder_id):
+    def _subscribe_progress(self, event_bus, context_id, placeholder_id,
+                            channel_id=None, root_id=None):
         """Subscribe to progress events and update the placeholder message.
 
         Returns the subscription ID for later unsubscribe.
         """
         client = self
+        compaction_post_id = None
 
         async def on_progress(event):
+            nonlocal compaction_post_id
             if event.get("context_id") != context_id:
                 return
-            if not placeholder_id:
-                return
             event_type = event.get("type")
-            if event_type == "tool_status":
+            if event_type == "tool_status" and placeholder_id:
                 tool_name = event.get("tool", "tool")
                 await client.edit_message(placeholder_id, f"\U0001f527 {tool_name}: {event['message']}")
-            elif event_type == "tool_start":
+            elif event_type == "tool_start" and placeholder_id:
                 tool_name = event.get("tool", "tool")
                 await client.edit_message(placeholder_id, f"\U0001f527 Running {tool_name}...")
-            elif event_type == "llm_start":
+            elif event_type == "llm_start" and placeholder_id:
                 await client.edit_message(placeholder_id, "\U0001f4ad Thinking...")
+            elif event_type == "compaction_start" and channel_id:
+                compaction_post_id = await client.send(
+                    channel_id, "\U0001f4e6 Compacting conversation...",
+                    root_id=root_id,
+                )
+            elif event_type == "compaction_end" and compaction_post_id:
+                try:
+                    await client.delete_message(compaction_post_id)
+                except Exception:
+                    pass  # best effort
+                compaction_post_id = None
 
         return event_bus.subscribe(on_progress)
 

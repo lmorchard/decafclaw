@@ -21,6 +21,7 @@ user memory, and flood/DoS protection.
 | `memory_save` | Save a memory about the user |
 | `memory_search` | Search memories (substring match) |
 | `memory_recent` | Recall recent memories |
+| `compact_conversation` | Manually compact conversation history |
 | `tabstack_extract_markdown` | Read a page or PDF as clean Markdown |
 | `tabstack_extract_json` | Extract structured data with a JSON schema |
 | `tabstack_generate` | Transform content with LLM instructions |
@@ -94,6 +95,17 @@ All via environment variables (`.env` file supported):
 | `AGENT_ID` | No | `decafclaw` | Agent identity |
 | `AGENT_USER_ID` | No | `user` | Configured user ID (single user for now) |
 
+### Compaction
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `COMPACTION_LLM_URL` | No | `LLM_URL` | Compaction LLM endpoint |
+| `COMPACTION_LLM_MODEL` | No | `LLM_MODEL` | Compaction model name |
+| `COMPACTION_LLM_API_KEY` | No | `LLM_API_KEY` | Compaction API key |
+| `COMPACTION_MAX_TOKENS` | No | `100000` | Compact when prompt_tokens exceeds this |
+| `COMPACTION_LLM_MAX_TOKENS` | No | `COMPACTION_MAX_TOKENS` | Compaction LLM's context budget |
+| `COMPACTION_PRESERVE_TURNS` | No | `5` | Recent turns to keep uncompacted |
+
 Without Mattermost configured, runs in interactive terminal mode.
 
 ## Architecture
@@ -118,6 +130,8 @@ Key architectural pieces:
 - **Async agent loop** — LLM calls, tool execution, and subscribers all async
 - **Per-conversation state** — threads and channels are independent conversations
 - **User memory** — file-based markdown memories in `data/workspace/`
+- **Conversation archive** — append-only JSONL per conversation
+- **Auto-compaction** — summarizes old history when token budget exceeded
 
 ## Project structure
 
@@ -131,6 +145,8 @@ src/decafclaw/
 ├── llm.py              Async HTTP to LLM endpoint
 ├── mattermost.py       WebSocket, REST, flood protection, progress
 ├── memory.py           File-based memory read/write
+├── archive.py          Conversation archive (JSONL)
+├── compaction.py       History compaction via summarization
 └── tools/
     ├── __init__.py     Tool registry (sync/async dispatch)
     ├── core.py         shell, read_file, web_fetch, debug_context
