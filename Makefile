@@ -22,6 +22,10 @@ lint:
 test:
 	uv run pytest tests/ -v
 
+# Rebuild production embedding index from memory files
+reindex:
+	uv run decafclaw-reindex
+
 # Rebuild eval embedding fixtures (run when changing embedding models)
 build-eval-fixtures:
 	uv run python scripts/build-eval-fixtures.py
