@@ -1,0 +1,131 @@
+# Semantic search evals — tests that require meaning-based retrieval
+# These should be run with MEMORY_SEARCH_STRATEGY=semantic
+#
+# allowed_tools restricts the agent to memory tools only — if it tries
+# web search, it gets an error forcing it back to memory.
+
+- name: "finds cocktail preference with indirect phrasing"
+  allowed_tools: [memory_search, memory_recent, memory_save, think]
+  setup:
+    embeddings_fixture: "evals/fixtures/cat-facts-embeddings.db"
+    memories:
+      - tags: [preference, cocktail, drink, beverage]
+        content: "Favorite cocktails are Boulevardier and Old Fashioned"
+      - tags: [project, decafclaw]
+        content: "DecafClaw is a minimal AI agent built in Python"
+      - tags: [preference, music]
+        content: "Enjoys jazz and blues music"
+      - tags: [fact, location]
+        content: "Lives in Portland, Oregon"
+      - tags: [preference, food]
+        content: "Loves Thai food and sushi"
+  input: "What drinks do I like?"
+  expect:
+    response_contains:
+      - "Boulevardier"
+      - "Old Fashioned"
+
+- name: "finds job with indirect phrasing"
+  allowed_tools: [memory_search, memory_recent, memory_save, think]
+  setup:
+    embeddings_fixture: "evals/fixtures/cat-facts-embeddings.db"
+    memories:
+      - tags: [work, team, role, job, career]
+        content: "Works as a software engineer on the platform team"
+      # Distractors
+      - tags: [preference, cocktail]
+        content: "Likes Negroni cocktails"
+      - tags: [hobby, weekend]
+        content: "Plays guitar on weekends"
+      - tags: [preference, food]
+        content: "Prefers spicy food"
+      - tags: [project, home]
+        content: "Building a home automation system"
+  input: "What do I do for a living?"
+  expect:
+    response_contains:
+      - "software engineer"
+      - "engineer"
+
+- name: "finds food preference among many memories"
+  allowed_tools: [memory_search, memory_recent, memory_save, think]
+  setup:
+    embeddings_fixture: "evals/fixtures/cat-facts-embeddings.db"
+    memories:
+      - tags: [preference, food, cuisine, thai, spicy]
+        content: "Enjoys spicy Thai food, especially pad kra pao"
+      # Distractors
+      - tags: [work, project]
+        content: "Working on the DecafClaw event bus refactor"
+      - tags: [preference, music]
+        content: "Favorite band is Radiohead"
+      - tags: [fact, pet]
+        content: "Has a dog named Luna"
+      - tags: [preference, drink, coffee]
+        content: "Drinks oat milk lattes every morning"
+  input: "What kind of cuisine do I enjoy?"
+  expect:
+    response_contains:
+      - "Thai"
+
+- name: "finds cat facts among real memories"
+  allowed_tools: [memory_search, memory_recent, memory_save, think]
+  setup:
+    embeddings_fixture: "evals/fixtures/cat-facts-embeddings.db"
+    memories:
+      - tags: [preference, cocktail, drink]
+        content: "Favorite cocktails are Boulevardier and Old Fashioned"
+      - tags: [work, team, role]
+        content: "Works as a software engineer on the platform team"
+  input: "Do you know any fun facts about cats?"
+  expect:
+    response_contains:
+      - "re:cat[s]?"
+    response_not_contains:
+      - "don't have"
+      - "unable"
+
+- name: "finds specific cat fact via semantic search"
+  allowed_tools: [memory_search, memory_recent, memory_save, think]
+  setup:
+    embeddings_fixture: "evals/fixtures/cat-facts-embeddings.db"
+    memories:
+      - tags: [preference, cocktail]
+        content: "Likes Negroni cocktails"
+  input: "When was Felix the Cat created?"
+  expect:
+    response_contains:
+      - "1919"
+
+- name: "finds personal fact among general knowledge distractors"
+  allowed_tools: [memory_search, memory_recent, memory_save, think]
+  setup:
+    embeddings_fixture: "evals/fixtures/cat-facts-embeddings.db"
+    memories:
+      - tags: [pet, cat, personal, memory, childhood]
+        content: "My first cat's name was Sassy"
+      - tags: [work, project]
+        content: "Working on DecafClaw agent project"
+  input: "What was my first cat's name?"
+  expect:
+    response_contains: "Sassy"
+
+- name: "distinguishes between similar topics"
+  allowed_tools: [memory_search, memory_recent, memory_save, think]
+  setup:
+    embeddings_fixture: "evals/fixtures/cat-facts-embeddings.db"
+    memories:
+      - tags: [preference, drink, coffee, morning]
+        content: "Drinks oat milk lattes every morning"
+      - tags: [preference, drink, cocktail, evening]
+        content: "Favorite cocktails are Boulevardier and Old Fashioned"
+      # Distractors
+      - tags: [project, work]
+        content: "Using Python 3.13 for the DecafClaw project"
+      - tags: [fact, location]
+        content: "Lives near several good coffee shops"
+  input: "What's my morning drink routine?"
+  expect:
+    response_contains:
+      - "oat milk"
+      - "latte"

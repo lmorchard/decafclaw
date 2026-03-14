@@ -6,10 +6,10 @@ from .. import memory
 log = logging.getLogger(__name__)
 
 
-def tool_memory_save(ctx, tags: list[str], content: str) -> str:
+async def tool_memory_save(ctx, tags: list[str], content: str) -> str:
     """Save a memory."""
     log.info(f"[tool:memory_save] tags={tags}")
-    return memory.save_entry(
+    result = memory.save_entry(
         config=ctx.config,
         channel_name=getattr(ctx, "channel_name", ""),
         channel_id=getattr(ctx, "channel_id", ""),
@@ -17,11 +17,48 @@ def tool_memory_save(ctx, tags: list[str], content: str) -> str:
         tags=tags,
         content=content,
     )
+    # Index for semantic search if enabled
+    if ctx.config.memory_search_strategy == "semantic":
+        try:
+            from .. import embeddings
+            from datetime import datetime
+            tag_str = ", ".join(tags)
+            channel_name = getattr(ctx, "channel_name", "")
+            channel_id = getattr(ctx, "channel_id", "")
+            thread_id = getattr(ctx, "thread_id", "")
+            # Format like the actual markdown entry for consistent embeddings
+            entry_text = f"## {datetime.now():%Y-%m-%d %H:%M}\n\n"
+            if channel_name or channel_id:
+                entry_text += f"- **channel:** {channel_name} ({channel_id})\n"
+            if thread_id:
+                entry_text += f"- **thread:** {thread_id}\n"
+            entry_text += f"- **tags:** {tag_str}\n\n{content}"
+            await embeddings.index_entry(ctx.config, "live", entry_text)
+        except Exception as e:
+            log.error(f"Failed to index memory for semantic search: {e}")
+    return result
 
 
-def tool_memory_search(ctx, query: str) -> str:
+async def tool_memory_search(ctx, query: str) -> str:
     """Search memories."""
-    log.info(f"[tool:memory_search] query={query}")
+    log.info(f"[tool:memory_search] query={query} strategy={ctx.config.memory_search_strategy}")
+
+    if ctx.config.memory_search_strategy == "semantic":
+        try:
+            from .. import embeddings
+            # Ensure index exists (reindex on first search if needed)
+            results = await embeddings.search_similar(ctx.config, query, top_k=5)
+            if results:
+                lines = [f"Found {len(results)} matching memories (ranked by relevance):\n"]
+                for i, r in enumerate(results):
+                    sim = f"{r['similarity']:.2f}"
+                    lines.append(f"--- Result {i+1} (relevance: {sim}) ---\n{r['entry_text']}")
+                return "\n\n".join(lines)
+            # Fall through to substring if semantic returns nothing
+            log.info("Semantic search returned no results, falling back to substring")
+        except Exception as e:
+            log.error(f"Semantic search failed, falling back to substring: {e}")
+
     return memory.search_entries(
         config=ctx.config,
         query=query,
@@ -84,22 +121,19 @@ MEMORY_TOOL_DEFINITIONS = [
         "function": {
             "name": "memory_search",
             "description": (
-                "Search your persistent memories. Use this when you need information "
-                "from a prior conversation, a project detail, or a fact you don't have "
-                "in your immediate context. Returns whole matching entries.\n\n"
-                "**IMPORTANT — SUBSTRING MATCH ONLY. Follow this checklist on every search:**\n"
-                "This tool does NOT understand meaning — it matches exact substrings. "
-                "You MUST work through this checklist in order:\n"
-                "1. Rephrase idioms into concrete terms before searching "
-                "(e.g., 'what do I do for a living' -> search for 'job', 'work', 'career').\n"
-                "2. Try the most specific concrete term.\n"
-                "3. No results? Try the SINGULAR form (cocktails -> cocktail) or PLURAL form.\n"
-                "4. Still nothing? Try the ROOT WORD (e.g., 'drinking' -> 'drink').\n"
-                "5. Still nothing? Try SYNONYMS (e.g., 'drinks' -> 'beverages', 'tool' -> 'capability').\n"
-                "6. Still nothing? Try BROADER categories (e.g., 'cocktail' -> 'drink', 'food').\n"
-                "7. Still nothing? Try likely TAGS (memories are saved with tags like "
-                "'preference', 'fact', 'project', 'agent', 'architecture' — search for the tag word itself).\n"
-                "Do NOT stop after one or two failed searches. Work the full checklist."
+                "Search your persistent memories. ALWAYS try this BEFORE web search or "
+                "other external tools — your memories may already have the answer. Use "
+                "this for personal details, preferences, project context, facts from "
+                "prior conversations, or any stored knowledge.\n\n"
+                "The search understands meaning — use natural language queries. "
+                "'What drinks do I like?' will find memories about cocktails.\n\n"
+                "**IMPORTANT:** When this tool returns results, you MUST use them — "
+                "either in your thinking or presented to the user. Do NOT ignore search "
+                "results or say you have no information when results were returned. The "
+                "first result is the most relevant. If no results after a few queries, "
+                "then say so.\n\n"
+                "If initial search returns nothing, try rephrasing: synonyms, related "
+                "terms, broader categories. Try at least 3 variations before giving up."
             ),
             "parameters": {
                 "type": "object",

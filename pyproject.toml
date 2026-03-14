@@ -9,6 +9,7 @@ authors = [
 requires-python = ">=3.13"
 dependencies = [
     "httpx>=0.28.1",
+    "numpy>=2.4.3",
     "python-dotenv>=1.2.2",
     "tabstack>=2.3.0",
     "websockets>=16.0",
@@ -19,6 +20,7 @@ dev = ["watchfiles>=1.0.0"]
 
 [project.scripts]
 decafclaw = "decafclaw:main"
+decafclaw-reindex = "decafclaw.embeddings:reindex_cli"
 
 [build-system]
 requires = ["hatchling"]
