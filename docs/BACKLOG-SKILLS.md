@@ -11,6 +11,12 @@ Current implementation is basic. Improvements:
 **Near-term:**
 - Entry-aware search — return whole entries on match instead of
   context lines, using the `## ` header as a natural delimiter
+- Restructure as per-agent memory, drop per-user directory. Currently
+  positioned as "memories about the user" but agents get confused
+  about who "the user" is (single configured user anyway). Simpler
+  model: it's the agent's knowledge store. Path becomes
+  `workspace/{agent_id}/memories/{year}/{date}.md` with no user
+  subdirectory. Re-add per-user scoping later when multi-user arrives.
 
 **Future:**
 - `related_to` / `supersedes` entry linking — lightweight knowledge graph
@@ -50,6 +56,21 @@ plan, evaluate options, and work through logic without process chatter.
 - Suppress intermediate narration ("Let me search for that...")
 - Works with any model (not dependent on native extended thinking)
 - Pairs with to-do list: think through a plan, commit it, execute
+
+## Conversation history search
+
+Search across archived conversation JSONL files in the workspace.
+The archive preserves full uncompacted history, so this can find
+things that have been summarized away from the active context.
+
+- `conversation_search(query, conv_id=None)` — search across all
+  conversations or a specific one
+- Returns matching messages with surrounding context and conv_id
+- Substring match like memory_search (upgrade to semantic later)
+- Useful for: "when did we discuss X?", "what did I say about Y
+  last week?", cross-conversation knowledge retrieval
+
+Depends on the conversation archive from the compaction session.
 
 ## Self-reflection / retry
 

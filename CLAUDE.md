@@ -21,6 +21,8 @@ A minimal AI agent for learning how agent frameworks work. Connects to Mattermos
 - `src/decafclaw/context.py` — Forkable runtime context
 - `src/decafclaw/events.py` — In-process pub/sub event bus
 - `src/decafclaw/memory.py` — Memory file read/write operations
+- `src/decafclaw/archive.py` — Conversation archive (JSONL per conversation)
+- `src/decafclaw/compaction.py` — History compaction via summarization
 - `src/decafclaw/tools/` — Tool registry, core tools, Tabstack tools, memory tools
 
 ## Running
@@ -65,5 +67,5 @@ When adding features, new tools, config options, or architectural changes:
 - `LOG_LEVEL` env var isn't wired up (hardcoded to INFO in `__init__.py`)
 - No automated tests beyond import smoke checks
 - Lint target explicitly lists files (should glob)
-- No history persistence (in-memory, lost on restart)
+- No history persistence (in-memory, lost on restart — but archived to JSONL)
 - No history truncation (unbounded growth)

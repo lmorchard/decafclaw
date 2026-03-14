@@ -2,6 +2,19 @@
 
 Tools, testing, deployment, and observability.
 
+## System prompt as independent Markdown file on disk
+
+System prompt is currently embedded as a string in config.py.
+We should move that into its own independent and more easily
+editable markdown file. Also, offer the ability for a user to
+supply SYSTEM.md in the workspace of an agent to override it.
+
+## All prompts as independent Markdown files?
+
+The compaction prompt default is also embedded in Python as a string.
+Should we move all default prompts into a folder of Markdown files to
+make them more easily edited and evaluated in isolation?
+
 ## Skills system with progressive resource loading
 
 The framework for packaging and loading skills, designed for
@@ -103,6 +116,11 @@ Useful once deployed as a persistent service.
 - Proxmox VM as persistent service
 - Systemd user service (like picoclaw)
 - Docker container
+
+## Code cleanup
+
+- Mattermost progress subscriber: refactor `elif` chain to dispatch dict pattern
+- Makefile lint target: glob instead of explicit file list
 
 ## Experiments
 

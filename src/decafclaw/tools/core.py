@@ -87,11 +87,26 @@ def tool_debug_context(ctx) -> str:
     return "\n".join(lines)
 
 
+async def tool_compact_conversation(ctx) -> str:
+    """Manually trigger conversation compaction."""
+    log.info("[tool:compact_conversation]")
+    from ..compaction import compact_history
+    history = getattr(ctx, "history", None)
+    if history is None:
+        return "[error: no conversation history available]"
+    result = await compact_history(ctx, history)
+    if result:
+        return f"Conversation compacted. History now has {len(history)} messages."
+    else:
+        return "No compaction needed (not enough turns to compact)."
+
+
 CORE_TOOLS = {
     "shell": tool_shell,
     "read_file": tool_read_file,
     "web_fetch": tool_web_fetch,
     "debug_context": tool_debug_context,
+    "compact_conversation": tool_compact_conversation,
 }
 
 CORE_TOOL_DEFINITIONS = [
@@ -151,6 +166,18 @@ CORE_TOOL_DEFINITIONS = [
         "function": {
             "name": "debug_context",
             "description": "Dump the current conversation context for debugging. Shows all messages the LLM can see, including system prompt, user messages, assistant responses, and tool results. Use when asked to inspect or describe your context. IMPORTANT: Always paste the full output of this tool verbatim in your response — do not summarize or paraphrase it.",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "compact_conversation",
+            "description": "Manually compact the conversation history into a summary. Use when the conversation is getting long or when you want to consolidate context. This triggers the same compaction that happens automatically when the token budget is exceeded.",
             "parameters": {
                 "type": "object",
                 "properties": {},
