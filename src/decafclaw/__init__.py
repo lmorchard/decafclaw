@@ -9,12 +9,22 @@ from .events import EventBus
 
 
 def main():
+    import os
+    log_level = os.getenv("LOG_LEVEL", "INFO").upper()
     logging.basicConfig(
-        level=logging.INFO,
+        level=getattr(logging, log_level, logging.INFO),
         format="%(asctime)s %(name)s %(levelname)s: %(message)s",
     )
 
     config = load_config()
+
+    # Load system prompt from workspace file if it exists
+    from pathlib import Path
+    prompt_path = config.workspace_path / "SYSTEM_PROMPT.md"
+    if prompt_path.exists():
+        config.system_prompt = prompt_path.read_text().strip()
+        logging.info(f"Loaded system prompt from {prompt_path}")
+
     bus = EventBus()
     app_ctx = Context(config=config, event_bus=bus)
 
