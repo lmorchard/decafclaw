@@ -20,20 +20,20 @@ def load_system_prompt(config) -> str:
     """Assemble the system prompt from markdown files.
 
     For each prompt file (SOUL.md, AGENT.md):
-    1. Check workspace override: data/workspace/{agent_id}/prompts/{file}
+    1. Check agent directory: data/{agent_id}/{file}
     2. Fall back to bundled: src/decafclaw/prompts/{file}
 
-    Then append USER.md from workspace if it exists.
+    Then append USER.md from agent directory if it exists.
     """
-    workspace_prompts = config.workspace_path / "prompts"
+    agent_dir = config.agent_path
     sections = []
 
     for filename in _PROMPT_FILES:
         # Check workspace override first
-        workspace_file = workspace_prompts / filename
-        if workspace_file.exists():
-            text = workspace_file.read_text().strip()
-            log.info(f"Loaded prompt {filename} from workspace")
+        agent_file = agent_dir / filename
+        if agent_file.exists():
+            text = agent_file.read_text().strip()
+            log.info(f"Loaded prompt {filename} from {agent_dir}")
         else:
             bundled_file = _PROMPTS_DIR / filename
             if bundled_file.exists():
@@ -44,7 +44,7 @@ def load_system_prompt(config) -> str:
             sections.append(text)
 
     # USER.md only from workspace (not bundled — it's per-deployment)
-    user_file = workspace_prompts / "USER.md"
+    user_file = agent_dir / "USER.md"
     if user_file.exists():
         text = user_file.read_text().strip()
         if text:
