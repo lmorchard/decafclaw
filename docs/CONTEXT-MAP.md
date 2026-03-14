@@ -12,7 +12,7 @@ Assembled from markdown files at startup. Workspace files override bundled.
 | 2 | `AGENT.md` | `src/decafclaw/prompts/` or workspace override | Capabilities, tool guidance, memory instructions |
 | 3 | `USER.md` | Workspace only (`data/workspace/{agent_id}/prompts/`) | User-specific context (optional) |
 
-Override path: `data/workspace/{agent_id}/prompts/{SOUL,AGENT,USER}.md`
+Override path: `data/{agent_id}/{SOUL,AGENT,USER}.md` (admin, read-only to agent)
 
 ## Context Window Layout
 

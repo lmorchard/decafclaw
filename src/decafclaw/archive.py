@@ -9,7 +9,7 @@ log = logging.getLogger(__name__)
 
 def archive_path(config, conv_id: str) -> Path:
     """Compute the archive file path for a conversation."""
-    return Path(config.data_home) / "workspace" / config.agent_id / "conversations" / f"{conv_id}.jsonl"
+    return config.workspace_path / "conversations" / f"{conv_id}.jsonl"
 
 
 def append_message(config, conv_id: str, message: dict):

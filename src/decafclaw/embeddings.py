@@ -19,7 +19,7 @@ EMBEDDING_DIM = 768
 
 def _db_path(config) -> Path:
     """Path to the embeddings SQLite database."""
-    return Path(config.data_home) / "workspace" / config.agent_id / "embeddings.db"
+    return config.workspace_path / "embeddings.db"
 
 
 def _get_db(config) -> sqlite3.Connection:

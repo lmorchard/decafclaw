@@ -34,8 +34,14 @@ class Config:
     agent_user_id: str = "user"  # single configured user (temporary)
 
     @property
+    def agent_path(self) -> Path:
+        """Admin-level agent directory (read-only to agent)."""
+        return Path(self.data_home) / self.agent_id
+
+    @property
     def workspace_path(self) -> Path:
-        return Path(self.data_home) / "workspace" / self.agent_id
+        """Agent read/write sandbox."""
+        return Path(self.data_home) / self.agent_id / "workspace"
 
     # Embedding / semantic search settings
     embedding_model: str = "text-embedding-004"
