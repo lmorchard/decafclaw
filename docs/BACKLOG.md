@@ -24,7 +24,9 @@ tools (`read_file`, `write_file`, `shell`) should be confined to
 this directory by default.
 
 **Design ideas:**
-- Config: `AGENT_WORKSPACE=/path/to/workspace`
+- Config: `AGENT_WORKSPACE=/path/to/workspace` (base path)
+- Per-agent subdirectory: `workspace/{agent_id}/` — each agent gets
+  its own isolated workspace, anticipating multi-agent setups
 - `read_file` and `write_file` resolve paths relative to workspace,
   reject anything outside it (no `../../etc/passwd`)
 - `shell` runs with `cwd` set to workspace
