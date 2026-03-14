@@ -1,0 +1,21 @@
+[project]
+name = "decafclaw"
+version = "0.1.0"
+description = "A minimal AI agent for learning how agent frameworks work"
+readme = "README.md"
+authors = [
+    { name = "Les Orchard", email = "lorchard@mozilla.com" }
+]
+requires-python = ">=3.14"
+dependencies = [
+    "httpx>=0.28.1",
+    "python-dotenv>=1.2.2",
+    "websockets>=16.0",
+]
+
+[project.scripts]
+decafclaw = "decafclaw:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
