@@ -21,3 +21,7 @@ lint:
 # Run tests (pytest)
 test:
 	uv run pytest tests/ -v
+
+# Rebuild eval embedding fixtures (run when changing embedding models)
+build-eval-fixtures:
+	uv run python scripts/build-eval-fixtures.py

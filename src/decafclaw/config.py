@@ -37,6 +37,20 @@ class Config:
     def workspace_path(self) -> Path:
         return Path(self.data_home) / "workspace" / self.agent_id
 
+    # Embedding / semantic search settings
+    embedding_model: str = "text-embedding-004"
+    embedding_url: str = ""      # default: falls back to llm_url
+    embedding_api_key: str = ""  # default: falls back to llm_api_key
+    memory_search_strategy: str = "substring"  # substring | semantic
+
+    @property
+    def effective_embedding_url(self) -> str:
+        return self.embedding_url or self.llm_url.replace("/chat/completions", "/embeddings")
+
+    @property
+    def effective_embedding_api_key(self) -> str:
+        return self.embedding_api_key or self.llm_api_key
+
     # Tabstack settings
     tabstack_api_key: str = ""
     tabstack_api_url: str = ""  # empty = SDK default (production)
@@ -82,7 +96,11 @@ class Config:
         "if an initial query does not "
         "yield results, immediately try variations: synonyms, related terms, singular/plural, "
         "and broader categories. Do not conclude information is absent after a single failed "
-        "attempt — exhaust reasonable search variations before informing the user."
+        "attempt — exhaust reasonable search variations before informing the user.\n\n"
+        "When a tool returns results, use them in your response — do not ignore valid "
+        "results. If a tool returns an error or is unavailable, try a different tool "
+        "or answer from your own knowledge. NEVER say 'tools are unavailable' — instead "
+        "either present what you found or explain what you couldn't find specifically."
     )
     max_tool_iterations: int = 10
 
@@ -112,6 +130,10 @@ def load_config() -> Config:
         compaction_max_tokens=int(os.getenv("COMPACTION_MAX_TOKENS", "100000")),
         compaction_llm_max_tokens=int(os.getenv("COMPACTION_LLM_MAX_TOKENS", "0")),
         compaction_preserve_turns=int(os.getenv("COMPACTION_PRESERVE_TURNS", "5")),
+        embedding_model=os.getenv("EMBEDDING_MODEL", Config.embedding_model),
+        embedding_url=os.getenv("EMBEDDING_URL", ""),
+        embedding_api_key=os.getenv("EMBEDDING_API_KEY", ""),
+        memory_search_strategy=os.getenv("MEMORY_SEARCH_STRATEGY", Config.memory_search_strategy),
         data_home=os.getenv("DATA_HOME", Config.data_home),
         agent_id=os.getenv("AGENT_ID", Config.agent_id),
         agent_user_id=os.getenv("AGENT_USER_ID", Config.agent_user_id),
