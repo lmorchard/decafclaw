@@ -2,13 +2,25 @@
 
 Tools, testing, deployment, and observability.
 
-## ~~System prompt as Markdown files~~ (DONE)
+## Heartbeat prompt
 
-Implemented: SOUL.md + AGENT.md bundled, USER.md workspace override.
+We should implement a system that fires every 30 minutes (configurable)
+that wakes up the agent, feeds it a HEARTBEAT.md from workspace or the
+agent directory above. The agent should then perform the prompts therein
+accordingly. This would be good for tasks that require periodic checking, 
+also one-off tasks that can be removed from HEARTBEAT.md after first run.
 
-## ~~Prompts as independent Markdown files~~ (DONE)
+We might want to allow configuration of a specific a communication method,
+channel, etc for the agent to report results from HEARTBEAT.md prompts.
 
-Implemented: prompts/ package with bundled files, workspace overrides.
+## Scheduled tasks
+
+Whereas HEARTBEAT.md runs periodically, scheduled tasks can run at specific
+times. We could even use the unix system cron for this, but might be
+useful to keep this self-contained. Each scheduled task should consist
+of its own distinct prompt file fed to the agend at the scheduled time, 
+and each should be able to define it's own communication channel for
+reporting.
 
 ## Skills system with progressive resource loading
 
@@ -68,15 +80,9 @@ Connect external MCP servers as tool providers.
 - `execute_tool` routes calls to the appropriate server
 - Could be bidirectional: DecafClaw exposes its own tools via MCP
 
-## ~~Eval loop~~ (DONE)
+## Linting and CI
 
-Implemented: YAML tests, multi-turn, failure reflection, judge model,
-result bundles, allowed_tools constraints. 12+ eval cases.
-
-## ~~Proper linting and testing~~ (MOSTLY DONE)
-
-Implemented: glob-based py_compile, pytest with 54 tests.
-Remaining: ruff/flake8, CI integration (GitHub Actions).
+Remaining: ruff/flake8 integration, CI integration (GitHub Actions).
 
 ## Model-specific prompt tuning
 
@@ -111,7 +117,6 @@ Useful once deployed as a persistent service.
 ## Code cleanup
 
 - Mattermost progress subscriber: refactor `elif` chain to dispatch dict pattern
-- ~~Makefile lint target: glob instead of explicit file list~~ (DONE)
 
 ## Experiments
 
