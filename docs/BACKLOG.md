@@ -16,6 +16,28 @@ via `MATTERMOST_IGNORE_BOTS`.
 **Design:** Config could take a list of `bot_username:channel_id` pairs,
 or separate allowlists for bot usernames and channel IDs.
 
+## Agent workspace sandbox
+
+The agent should have a dedicated filesystem workspace directory
+(e.g., `workspace/` or configurable via `AGENT_WORKSPACE`). File
+tools (`read_file`, `write_file`, `shell`) should be confined to
+this directory by default.
+
+**Design ideas:**
+- Config: `AGENT_WORKSPACE=/path/to/workspace`
+- `read_file` and `write_file` resolve paths relative to workspace,
+  reject anything outside it (no `../../etc/passwd`)
+- `shell` runs with `cwd` set to workspace
+- Memories, to-do lists, and other agent-owned files live here
+- Explicit permission model: agent can request access outside the
+  workspace, user must approve (pairs with tool confirmation flow)
+- Could use the context to carry the workspace path so tools
+  discover it naturally
+
+**Why now:** As we add memory files, to-do lists, and potentially
+file attachments, the agent needs a place to put things. Without
+a sandbox, those files could end up anywhere.
+
 ## Max message length
 
 Truncate or reject absurdly long messages before sending to the LLM.
