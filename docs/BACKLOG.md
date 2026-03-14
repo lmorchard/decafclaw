@@ -40,6 +40,13 @@ this directory by default.
 file attachments, the agent needs a place to put things. Without
 a sandbox, those files could end up anywhere.
 
+## Proper linting and testing
+
+- Replace the per-file `py_compile` lint target with ruff or flake8
+- Replace import smoke tests with pytest unit tests
+- Test memory operations, event bus, context fork, tool dispatch
+- CI integration (GitHub Actions)
+
 ## Max message length
 
 Truncate or reject absurdly long messages before sending to the LLM.
@@ -168,6 +175,14 @@ Les prefers concise answers and doesn't like summaries of what was just done.
 - Grep is fast even over hundreds of files
 - Agent decides when to remember, or user says "remember this"
 - Each entry carries channel/thread/tag metadata for context
+
+**Future enhancements:**
+- `related_to` / `supersedes` entry linking — lightweight knowledge graph
+  on top of flat files. Search follows links and respects supersedes.
+- RAG / vector embedding search — replace substring grep with semantic
+  similarity for better recall on fuzzy queries
+- Memory pruning / archival — old or superseded entries could be archived
+  or summarized to keep the active set manageable
 
 ## Scheduled / recurring tasks
 
