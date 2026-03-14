@@ -459,6 +459,23 @@ class MattermostClient:
                 await client.edit_message(placeholder_id, f"\U0001f527 Running {tool_name}...")
             elif event_type == "llm_start" and placeholder_id:
                 await client.edit_message(placeholder_id, "\U0001f4ad Thinking...")
+            elif event_type == "tool_confirm_request" and channel_id:
+                # Post confirmation message and poll for reaction
+                tool_name = event.get("tool", "tool")
+                command = event.get("command", "")
+                confirm_post_id = await client.send(
+                    channel_id,
+                    f"\U0001f6a8 **Confirm {tool_name}:**\n```\n{command}\n```\n"
+                    f"React with \U0001f44d to approve or \U0001f44e to deny.",
+                    root_id=root_id,
+                )
+                if confirm_post_id:
+                    # Poll for reaction in background
+                    asyncio.create_task(
+                        client._poll_confirmation(
+                            confirm_post_id, event_bus, context_id, tool_name
+                        )
+                    )
             elif event_type == "compaction_start" and channel_id:
                 compaction_post_id = await client.send(
                     channel_id, "\U0001f4e6 Compacting conversation...",
@@ -472,6 +489,53 @@ class MattermostClient:
                 compaction_post_id = None
 
         return event_bus.subscribe(on_progress)
+
+    async def _poll_confirmation(self, post_id, event_bus, context_id, tool_name,
+                                 timeout=60, poll_interval=2):
+        """Poll a post for thumbs up/down reactions to approve/deny a tool."""
+        import time
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            try:
+                resp = await self._http.get(f"/posts/{post_id}/reactions")
+                resp.raise_for_status()
+                reactions = resp.json()
+                for r in reactions:
+                    emoji = r.get("emoji_name", "")
+                    user_id = r.get("user_id", "")
+                    # Ignore bot's own reactions
+                    if user_id == self.bot_user_id:
+                        continue
+                    if emoji in ("+1", "thumbsup"):
+                        log.info(f"Shell command approved by {user_id}")
+                        await event_bus.publish({
+                            "type": "tool_confirm_response",
+                            "context_id": context_id,
+                            "tool": tool_name,
+                            "approved": True,
+                        })
+                        return
+                    elif emoji in ("-1", "thumbsdown"):
+                        log.info(f"Shell command denied by {user_id}")
+                        await event_bus.publish({
+                            "type": "tool_confirm_response",
+                            "context_id": context_id,
+                            "tool": tool_name,
+                            "approved": False,
+                        })
+                        return
+            except Exception as e:
+                log.debug(f"Reaction poll error: {e}")
+            await asyncio.sleep(poll_interval)
+
+        # Timeout — deny by default
+        log.info(f"Confirmation timed out for {tool_name}")
+        await event_bus.publish({
+            "type": "tool_confirm_response",
+            "context_id": context_id,
+            "tool": tool_name,
+            "approved": False,
+        })
 
     async def close(self):
         await self._http.aclose()

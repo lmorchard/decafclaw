@@ -1,0 +1,59 @@
+"""Tests for workspace file tools — path sandboxing."""
+
+from decafclaw.tools.workspace_tools import tool_workspace_read, tool_workspace_write, tool_workspace_list, _resolve_safe
+
+
+def test_resolve_safe_normal(config):
+    result = _resolve_safe(config, "test.txt")
+    assert result is not None
+    assert str(config.workspace_path) in str(result)
+
+
+def test_resolve_safe_rejects_escape(config):
+    result = _resolve_safe(config, "../../etc/passwd")
+    assert result is None
+
+
+def test_resolve_safe_rejects_absolute(config):
+    result = _resolve_safe(config, "/etc/passwd")
+    assert result is None
+
+
+def test_write_and_read(ctx):
+    result = tool_workspace_write(ctx, "test.txt", "hello world")
+    assert "hello world" in tool_workspace_read(ctx, "test.txt")
+
+
+def test_write_creates_dirs(ctx):
+    tool_workspace_write(ctx, "subdir/nested/file.txt", "content")
+    assert "content" in tool_workspace_read(ctx, "subdir/nested/file.txt")
+
+
+def test_read_nonexistent(ctx):
+    result = tool_workspace_read(ctx, "nope.txt")
+    assert "error" in result.lower()
+
+
+def test_read_escape_blocked(ctx):
+    result = tool_workspace_read(ctx, "../../etc/passwd")
+    assert "outside" in result.lower()
+
+
+def test_write_escape_blocked(ctx):
+    result = tool_workspace_write(ctx, "../../evil.txt", "pwned")
+    assert "outside" in result.lower()
+
+
+def test_list_workspace(ctx):
+    tool_workspace_write(ctx, "a.txt", "aaa")
+    tool_workspace_write(ctx, "b.txt", "bbb")
+    result = tool_workspace_list(ctx)
+    assert "a.txt" in result
+    assert "b.txt" in result
+
+
+def test_list_empty(ctx):
+    # Ensure workspace dir exists
+    ctx.config.workspace_path.mkdir(parents=True, exist_ok=True)
+    result = tool_workspace_list(ctx)
+    assert "error" not in result.lower()
