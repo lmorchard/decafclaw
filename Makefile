@@ -4,7 +4,7 @@ run:
 
 # Run with auto-restart on source changes
 dev:
-	uv run --extra dev watchfiles --filter python "decafclaw.main" src/
+	uv run --extra dev watchfiles --filter python --sigint-timeout 10 --sigkill-timeout 15 "decafclaw.main" src/
 
 # Run with debug logging
 debug:
