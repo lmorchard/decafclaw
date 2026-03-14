@@ -70,6 +70,7 @@ Session docs live in `.claude/dev-sessions/YYYY-MM-DD-HHMM-slug/` with `spec.md`
 When adding features, new tools, config options, or architectural changes:
 - **Update `README.md`** — tool table, config table, architecture diagram, project structure
 - **Update `CLAUDE.md`** — conventions, key files, known gaps
+- **Update `docs/CONTEXT-MAP.md`** — if changing system prompt, tool definitions, or context assembly
 - These should stay in sync with the actual codebase. If you change code, check if the docs need updating too.
 
 ## Known gaps
