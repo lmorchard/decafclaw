@@ -45,7 +45,14 @@ async def _run_mattermost(config):
     async def on_message(msg):
         channel_id = msg["channel_id"]
         text = msg["text"]
-        root_id = msg["root_id"] or msg["post_id"]
+        # In DM channels, don't start a new thread unless @-mentioned.
+        # Always continue an existing thread.
+        is_dm = msg.get("channel_type") == "D"
+        already_in_thread = bool(msg["root_id"])
+        if is_dm and not msg.get("mentioned") and not already_in_thread:
+            root_id = None
+        else:
+            root_id = msg["root_id"] or msg["post_id"]
 
         logging.info(f"Message from {msg['sender_name']}: {text[:50]}")
 

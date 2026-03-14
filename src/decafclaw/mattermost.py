@@ -121,10 +121,12 @@ class MattermostClient:
         if not message:
             return
 
-        # Strip bot @mention
+        # Strip bot @mention and track whether it was present
+        mentioned = False
         if self.bot_username:
             mention = f"@{self.bot_username}"
             if mention in message:
+                mentioned = True
                 message = message.replace(mention, "").strip()
 
         on_message({
@@ -135,6 +137,7 @@ class MattermostClient:
             "user_id": post.get("user_id", ""),
             "sender_name": data.get("sender_name", ""),
             "channel_type": channel_type,
+            "mentioned": mentioned,
         })
 
     async def close(self):
