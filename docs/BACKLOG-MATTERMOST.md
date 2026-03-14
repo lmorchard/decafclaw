@@ -26,6 +26,5 @@ Send files alongside messages via Mattermost's `POST /files` API.
 
 ## Additional Tabstack tools
 
-- `write_file` — write content to a local file
 - Tabstack `automate` with `--guardrails` and `--data` support
 - Tabstack geo-targeting (`--geo CC`) for region-specific content

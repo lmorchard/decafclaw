@@ -8,12 +8,6 @@ object, workspace, and event bus.
 
 Current implementation is basic. Improvements:
 
-**Done:**
-- ~~Entry-aware search~~ — returns whole entries
-- ~~Per-agent memory~~ — dropped per-user directory
-- ~~Semantic search~~ — embeddings via text-embedding-004
-
-**Future:**
 - `related_to` / `supersedes` entry linking — lightweight knowledge graph
 - Memory pruning / archival — summarize old entries
 
@@ -30,19 +24,6 @@ topics that can be added to and refined over time.
 - Agent consolidates memories into wiki pages over time
 
 Tools: `wiki_read`, `wiki_write`, `wiki_append`, `wiki_search`, `wiki_links`
-
-## ~~Per-conversation to-do list~~ (DONE)
-
-Implemented: markdown checkboxes on disk, per-conversation, crash-recoverable.
-
-## ~~Chain-of-thought / scratchpad~~ (DONE)
-
-Implemented: `think` tool, hidden from user, logged for debugging.
-
-## ~~Conversation history search~~ (DONE)
-
-Implemented: semantic search over archived messages via `source_type`
-column in shared embeddings DB. Messages indexed as they're archived.
 
 ## Self-reflection / retry
 
