@@ -96,8 +96,9 @@ daily markdown files per user, searchable via grep.
 ```
 memories/
   lmorchard/
-    2026-03-13.md
-    2026-03-14.md
+    2026/
+      2026-03-13.md
+      2026-03-14.md
 ```
 
 **Entry format:**
