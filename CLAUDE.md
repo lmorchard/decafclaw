@@ -60,9 +60,9 @@ Session docs live in `.claude/dev-sessions/YYYY-MM-DD-HHMM-slug/` with `spec.md`
 - **Config via env vars.** All config comes from `.env` / environment. Dataclass defaults in `config.py`.
 - **Commit after each logical step.** Lint and test before committing.
 - **One agent turn per conversation at a time.** Concurrent conversations (different threads/channels) are fine.
-- **Memory lives in `data/workspace/{agent_id}/memories/`.** Daily markdown files per user, append-only. Tools read user_id/channel/thread from context, not config.
-- **Agent workspace at `data/workspace/{agent_id}/`.** Configurable via `DATA_HOME` and `AGENT_ID`. Agent-owned files (memories, future to-do lists) go here.
-- **System prompt from file.** If `data/workspace/{agent_id}/SYSTEM_PROMPT.md` exists, it overrides the default system prompt. Edit and restart to iterate.
+- **Memory lives in `data/{agent_id}/workspace/memories/`.** Daily markdown files, append-only. Tools read context from ctx, not config.
+- **Agent data at `data/{agent_id}/`.** Admin files (SOUL.md, AGENT.md, USER.md, COMPACTION.md, config.yaml) live at the root — read-only to the agent. Agent read/write files live in `workspace/` subdirectory.
+- **System prompt from files.** SOUL.md + AGENT.md bundled in code, overridable at `data/{agent_id}/`. USER.md is workspace-only.
 - **LOG_LEVEL env var.** Set `LOG_LEVEL=DEBUG` for verbose logging (default: INFO).
 
 ## Keeping docs current

@@ -24,7 +24,7 @@ async def _setup_workspace(config, test_case: dict):
     if fixture_db:
         fixture_path = Path(fixture_db)
         if fixture_path.exists():
-            dest = Path(config.data_home) / "workspace" / config.agent_id / "embeddings.db"
+            dest = config.workspace_path / "embeddings.db"
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(fixture_path, dest)
             log.info(f"Copied embeddings fixture from {fixture_path}")

@@ -9,7 +9,7 @@ log = logging.getLogger(__name__)
 
 def memory_dir(config) -> Path:
     """Compute the memory directory path for the agent."""
-    return Path(config.data_home) / "workspace" / config.agent_id / "memories"
+    return config.workspace_path / "memories"
 
 
 def save_entry(config, channel_name: str, channel_id: str,
