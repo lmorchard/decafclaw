@@ -14,9 +14,22 @@ from ..agent import run_agent_turn
 log = logging.getLogger(__name__)
 
 
-def _setup_workspace(config, test_case: dict):
+async def _setup_workspace(config, test_case: dict):
     """Create fixture data in the temp workspace."""
+    import shutil
     setup = test_case.get("setup", {})
+
+    # Copy pre-built embeddings fixture if specified
+    fixture_db = setup.get("embeddings_fixture")
+    if fixture_db:
+        fixture_path = Path(fixture_db)
+        if fixture_path.exists():
+            dest = Path(config.data_home) / "workspace" / config.agent_id / "embeddings.db"
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(fixture_path, dest)
+            log.info(f"Copied embeddings fixture from {fixture_path}")
+
+    # Save memory entries
     memories = setup.get("memories", [])
     for mem in memories:
         save_entry(
@@ -27,6 +40,20 @@ def _setup_workspace(config, test_case: dict):
             tags=mem.get("tags", []),
             content=mem["content"],
         )
+
+    # Index memories for semantic search if strategy is semantic
+    if config.memory_search_strategy == "semantic" and memories:
+        from ..embeddings import index_entry
+        for mem in memories:
+            tag_str = ", ".join(mem.get("tags", []))
+            # Format like actual markdown entries for consistent embeddings
+            entry_text = (
+                f"## 2026-01-01 00:00\n\n"
+                f"- **channel:** eval (eval)\n"
+                f"- **tags:** {tag_str}\n\n"
+                f"{mem['content']}"
+            )
+            await index_entry(config, "eval-fixture", entry_text)
 
 
 def _count_tool_calls(history: list) -> int:
@@ -92,8 +119,13 @@ async def run_test(config: Config, test_case: dict) -> dict:
     ctx.thread_id = ""
     ctx.user_id = config.agent_user_id
 
+    # Set allowed tools if specified (disallowed tools return an error)
+    allowed_tools = test_case.get("allowed_tools")
+    if allowed_tools:
+        ctx.allowed_tools = set(allowed_tools)
+
     # Setup fixtures
-    _setup_workspace(config, test_case)
+    await _setup_workspace(config, test_case)
 
     # Determine turns
     if "turns" in test_case:
@@ -187,16 +219,10 @@ async def run_eval(yaml_data: list[dict], config: Config,
 
         # Each test gets its own temp workspace
         with tempfile.TemporaryDirectory() as tmp:
-            test_config = Config(
-                llm_url=config.llm_url,
-                llm_model=config.llm_model,
-                llm_api_key=config.llm_api_key,
+            from dataclasses import replace
+            test_config = replace(config,
                 data_home=tmp,
                 agent_id="eval",
-                agent_user_id=config.agent_user_id,
-                system_prompt=config.system_prompt,
-                max_tool_iterations=config.max_tool_iterations,
-                compaction_max_tokens=config.compaction_max_tokens,
             )
 
             result = await run_test(test_config, test_case)
