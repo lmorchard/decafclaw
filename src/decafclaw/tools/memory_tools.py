@@ -53,8 +53,10 @@ MEMORY_TOOL_DEFINITIONS = [
         "function": {
             "name": "memory_save",
             "description": (
-                "Save a memory about the user for future conversations. Use this when you "
-                "learn a preference, fact, project context, or anything worth remembering. "
+                "Save a persistent memory. Use this to store information relevant to the "
+                "user, the project, the conversation context, or your own role and capabilities "
+                "within this project. This includes user preferences, facts, project details, "
+                "architectural decisions, and your own operational characteristics. "
                 "Memories persist across restarts and are searched via substring match, so "
                 "rich tagging at save time is critical for future retrieval."
             ),
@@ -87,19 +89,22 @@ MEMORY_TOOL_DEFINITIONS = [
         "function": {
             "name": "memory_search",
             "description": (
-                "Search your memories about the user. Use this when the user references "
-                "a preference, prior conversation, or fact you don't have in your current context. "
+                "Search your persistent memories. Use this when the user references "
+                "information from a prior conversation, a project detail, or a fact you "
+                "don't have in your immediate context. This includes details about the user, "
+                "the project, or your own role and capabilities as an agent. "
                 "Returns matching entries with surrounding context.\n\n"
                 "**IMPORTANT — SUBSTRING MATCH ONLY. Follow this checklist on every search:**\n"
                 "This tool does NOT understand meaning — it matches exact substrings. "
                 "You MUST work through this checklist in order:\n"
-                "1. Try the most specific key term from the user's request.\n"
-                "2. No results? Try the SINGULAR form (cocktails -> cocktail) or PLURAL form.\n"
-                "3. Still nothing? Try the ROOT WORD (e.g., 'drinking' -> 'drink').\n"
-                "4. Still nothing? Try SYNONYMS (e.g., 'drinks' -> 'beverages', 'cocktail').\n"
-                "5. Still nothing? Try BROADER categories (e.g., 'cocktail' -> 'drink', 'food').\n"
-                "6. Still nothing? Try likely TAGS (memories are saved with tags like "
-                "'preference', 'fact', 'project' — search for the tag word itself).\n"
+                "1. Identify key terms related to the user, project, or agent's role.\n"
+                "2. Try the most specific key term from the request.\n"
+                "3. No results? Try the SINGULAR form (cocktails -> cocktail) or PLURAL form.\n"
+                "4. Still nothing? Try the ROOT WORD (e.g., 'drinking' -> 'drink').\n"
+                "5. Still nothing? Try SYNONYMS (e.g., 'drinks' -> 'beverages', 'tool' -> 'capability').\n"
+                "6. Still nothing? Try BROADER categories (e.g., 'cocktail' -> 'drink', 'food').\n"
+                "7. Still nothing? Try likely TAGS (memories are saved with tags like "
+                "'preference', 'fact', 'project', 'agent', 'architecture' — search for the tag word itself).\n"
                 "Do NOT stop after one or two failed searches. Work the full checklist."
             ),
             "parameters": {
