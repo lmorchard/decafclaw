@@ -87,6 +87,12 @@ def tool_debug_context(ctx) -> str:
     return "\n".join(lines)
 
 
+def tool_think(ctx, content: str) -> str:
+    """Internal reasoning scratchpad — hidden from the user."""
+    log.info(f"[tool:think] {content[:100]}...")
+    return "OK"
+
+
 async def tool_compact_conversation(ctx) -> str:
     """Manually trigger conversation compaction."""
     log.info("[tool:compact_conversation]")
@@ -106,6 +112,7 @@ CORE_TOOLS = {
     "read_file": tool_read_file,
     "web_fetch": tool_web_fetch,
     "debug_context": tool_debug_context,
+    "think": tool_think,
     "compact_conversation": tool_compact_conversation,
 }
 
@@ -170,6 +177,31 @@ CORE_TOOL_DEFINITIONS = [
                 "type": "object",
                 "properties": {},
                 "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "think",
+            "description": (
+                "Use this tool for internal reasoning and planning that should NOT be "
+                "shown to the user. Think through your approach before acting: plan "
+                "multi-step work, evaluate options, reason about what tools to use, or "
+                "work through logic. The content is logged for debugging but hidden from "
+                "the conversation. Use this INSTEAD of narrating your process in the chat "
+                "(e.g., instead of saying 'Let me search for that...', use think to plan, "
+                "then just do it)."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "content": {
+                        "type": "string",
+                        "description": "Your internal reasoning or planning",
+                    },
+                },
+                "required": ["content"],
             },
         },
     },
