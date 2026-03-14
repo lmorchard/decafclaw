@@ -1,5 +1,7 @@
 """Tool registry — combines core and tabstack tools."""
 
+import asyncio
+
 from .core import CORE_TOOLS, CORE_TOOL_DEFINITIONS
 from .tabstack_tools import (
     TABSTACK_TOOLS,
@@ -12,12 +14,15 @@ TOOLS = {**CORE_TOOLS, **TABSTACK_TOOLS}
 TOOL_DEFINITIONS = CORE_TOOL_DEFINITIONS + TABSTACK_TOOL_DEFINITIONS
 
 
-def execute_tool(name: str, arguments: dict) -> str:
+async def execute_tool(ctx, name: str, arguments: dict) -> str:
     """Execute a tool by name and return the result as a string."""
     fn = TOOLS.get(name)
     if fn is None:
         return f"[error: unknown tool: {name}]"
     try:
-        return fn(**arguments)
+        if asyncio.iscoroutinefunction(fn):
+            return await fn(ctx, **arguments)
+        else:
+            return await asyncio.to_thread(fn, ctx, **arguments)
     except Exception as e:
         return f"[error executing {name}: {e}]"

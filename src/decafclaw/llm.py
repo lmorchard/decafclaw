@@ -7,7 +7,7 @@ import logging
 log = logging.getLogger(__name__)
 
 
-def call_llm(config, messages, tools=None):
+async def call_llm(config, messages, tools=None):
     """Call the LLM and return the response message.
 
     Returns a dict with:
@@ -28,7 +28,8 @@ def call_llm(config, messages, tools=None):
 
     log.debug(f"LLM request: model={config.llm_model}, messages={len(messages)}, tools={len(tools) if tools else 0}")
 
-    resp = httpx.post(config.llm_url, json=body, headers=headers, timeout=120)
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(config.llm_url, json=body, headers=headers, timeout=120)
     resp.raise_for_status()
     data = resp.json()
 
