@@ -42,6 +42,14 @@ make test         # Import smoke tests
 
 Session docs live in `.claude/dev-sessions/YYYY-MM-DD-HHMM-slug/` with `spec.md`, `plan.md`, and `notes.md`.
 
+**Session protocol:**
+1. Start session → create directory and files
+2. Brainstorm → iterative Q&A to develop spec
+3. **Review spec for critical gaps** — always do a review pass before planning
+4. Plan → break into steps with prompts
+5. Execute → implement, lint, test, commit per phase
+6. Retro → write notes, squash, merge
+
 ## Conventions
 
 - **Keep it simple.** This is a learning project. Prefer clarity over abstraction.

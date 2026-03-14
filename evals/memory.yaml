@@ -1,0 +1,81 @@
+- name: "finds preference by direct term"
+  setup:
+    memories:
+      - tags: [preference, cocktail, drink, beverage, alcohol, favorite]
+        content: "Favorite cocktails are Boulevardier and Old Fashioned"
+  input: "What are my favorite cocktails?"
+  expect:
+    response_contains: "Boulevardier"
+    max_tool_calls: 8
+
+- name: "finds preference by related term"
+  setup:
+    memories:
+      - tags: [preference, cocktail, drink, beverage, alcohol, favorite]
+        content: "Favorite cocktails are Boulevardier and Old Fashioned"
+  input: "What drinks do I like?"
+  expect:
+    response_contains: "Boulevardier"
+    max_tool_calls: 10
+
+- name: "recalls recent memories"
+  setup:
+    memories:
+      - tags: [project, architecture, decafclaw]
+        content: "Working on the event bus refactor for DecafClaw"
+      - tags: [preference, communication, style]
+        content: "Prefers concise answers without summaries"
+  input: "What do you know about me and what I've been working on?"
+  expect:
+    response_contains:
+      - "concise"
+      - "event bus"
+
+- name: "handles missing memories gracefully"
+  input: "What is my favorite color?"
+  expect:
+    response_contains: "don't"
+
+- name: "saves memory when asked"
+  input: "Please remember that my favorite programming language is Python. Confirm what you saved."
+  expect:
+    response_contains: "Python"
+    max_tool_calls: 5
+
+- name: "connects related memories"
+  setup:
+    memories:
+      - tags: [project, decafclaw, architecture, event-bus]
+        content: "DecafClaw uses an event bus for progress reporting"
+      - tags: [project, decafclaw, architecture, async]
+        content: "The agent loop is fully async with asyncio"
+  input: "Tell me about the DecafClaw architecture"
+  expect:
+    response_contains:
+      - "event bus"
+      - "async"
+
+- name: "uses think tool for complex question"
+  setup:
+    memories:
+      - tags: [preference, cocktail, drink]
+        content: "Likes Boulevardier and Old Fashioned"
+      - tags: [preference, food, cuisine]
+        content: "Enjoys Thai and Japanese food"
+  input: "If you were planning a dinner party for me, what would you serve?"
+  expect:
+    response_contains:
+      - "re:thai|japanese"
+      - "re:boulevardier|old fashioned|cocktail"
+
+- name: "finds info with indirect phrasing"
+  setup:
+    memories:
+      - tags: [work, team, role, job, career, profession, engineer, software]
+        content: "Works as a software engineer on the platform team"
+  input: "What do I do for a living?"
+  expect:
+    response_contains:
+      - "software engineer"
+      - "engineer"
+      - "platform"

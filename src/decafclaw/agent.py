@@ -58,6 +58,8 @@ async def run_agent_turn(ctx, user_message: str, history: list) -> str:
     config = ctx.config
     # Expose history on context so tools (e.g., compact_conversation) can access it
     ctx.history = history
+    ctx.total_prompt_tokens = getattr(ctx, "total_prompt_tokens", 0)
+    ctx.total_completion_tokens = getattr(ctx, "total_completion_tokens", 0)
 
     # Add user message to history
     user_msg = {"role": "user", "content": user_message}
@@ -83,6 +85,8 @@ async def run_agent_turn(ctx, user_message: str, history: list) -> str:
         usage = response.get("usage")
         if usage:
             prompt_tokens = usage.get("prompt_tokens", 0)
+            ctx.total_prompt_tokens += usage.get("prompt_tokens", 0)
+            ctx.total_completion_tokens += usage.get("completion_tokens", 0)
 
         # If there are tool calls, execute them
         tool_calls = response.get("tool_calls")

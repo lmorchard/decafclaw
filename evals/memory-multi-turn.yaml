@@ -1,0 +1,47 @@
+- name: "save then recall hobby"
+  turns:
+    - input: "Remember that I play guitar on weekends"
+      expect:
+        response_contains: "guitar"
+    - input: "What are my hobbies?"
+      expect:
+        response_contains: "guitar"
+
+- name: "save preference then ask about it indirectly"
+  turns:
+    - input: "I really love spicy Thai food, please remember that"
+      expect:
+        response_contains:
+          - "Thai"
+          - "spicy"
+    - input: "What kind of food should we order for dinner?"
+      expect:
+        response_contains:
+          - "Thai"
+          - "spicy"
+
+- name: "save multiple facts then recall all"
+  turns:
+    - input: "Remember that my dog's name is Luna"
+      expect:
+        response_contains: "Luna"
+    - input: "Also remember that I work at Mozilla"
+      expect:
+        response_contains: "Mozilla"
+    - input: "Tell me everything you know about me"
+      expect:
+        response_contains:
+          - "Luna"
+          - "Mozilla"
+
+- name: "correct a memory"
+  turns:
+    - input: "Remember that my favorite color is blue"
+      expect:
+        response_contains: "blue"
+    - input: "Actually, I changed my mind. My favorite color is green now. Please update your memory."
+      expect:
+        response_contains: "green"
+    - input: "What is my favorite color?"
+      expect:
+        response_contains: "green"
