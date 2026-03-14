@@ -66,11 +66,26 @@ things that have been summarized away from the active context.
 - `conversation_search(query, conv_id=None)` — search across all
   conversations or a specific one
 - Returns matching messages with surrounding context and conv_id
-- Substring match like memory_search (upgrade to semantic later)
 - Useful for: "when did we discuss X?", "what did I say about Y
   last week?", cross-conversation knowledge retrieval
 
 Depends on the conversation archive from the compaction session.
+
+**Design note: generalize embedding search infrastructure.**
+Reuse the same SQLite embeddings DB (`embeddings.db`) with a
+`source_type` column to distinguish record types:
+
+```sql
+source_type TEXT NOT NULL DEFAULT 'memory'  -- 'memory' | 'conversation' | 'wiki'
+```
+
+- `memory_search` → `WHERE source_type = 'memory'`
+- `conversation_search` → `WHERE source_type = 'conversation'`
+- Cross-type search for broad queries (no filter)
+- Same embedding space, same cosine similarity, same reindex command
+- Extract `embeddings.py` search functions into a shared module that
+  memory, conversation, and wiki tools all use. Currently memory-specific
+  but the indexing/search/reindex logic is generic.
 
 ## Self-reflection / retry
 
