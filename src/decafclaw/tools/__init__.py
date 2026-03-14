@@ -17,6 +17,11 @@ TOOL_DEFINITIONS = CORE_TOOL_DEFINITIONS + TABSTACK_TOOL_DEFINITIONS + MEMORY_TO
 
 async def execute_tool(ctx, name: str, arguments: dict) -> str:
     """Execute a tool by name and return the result as a string."""
+    # Check allowed tools list (used by eval runner)
+    allowed = getattr(ctx, "allowed_tools", None)
+    if allowed is not None and name not in allowed:
+        return f"[error: tool '{name}' is not available in this context]"
+
     fn = TOOLS.get(name)
     if fn is None:
         return f"[error: unknown tool: {name}]"
