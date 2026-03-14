@@ -242,8 +242,37 @@ async def reindex_all(config):
     return count
 
 
+async def reindex_conversations(config):
+    """Rebuild conversation embeddings from JSONL archive files."""
+    conv_dir = config.workspace_path / "conversations"
+    if not conv_dir.exists():
+        log.info("No conversations directory found, nothing to index")
+        return 0
+
+    jsonl_files = sorted(conv_dir.glob("*.jsonl"))
+    count = 0
+    for filepath in jsonl_files:
+        conv_id = filepath.stem
+        for line in filepath.read_text().splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            import json
+            msg = json.loads(line)
+            if msg.get("role") in ("user", "assistant"):
+                content = msg.get("content", "")
+                if content and len(content) > 20:
+                    role = msg.get("role", "unknown")
+                    entry_text = f"{role}: {content}"
+                    await index_entry(config, conv_id, entry_text, source_type="conversation")
+                    count += 1
+
+    log.info(f"Reindexed {count} conversation messages from {len(jsonl_files)} files")
+    return count
+
+
 def reindex_cli():
-    """CLI entry point: rebuild the embedding index from memory files."""
+    """CLI entry point: rebuild the embedding index from all sources."""
     import asyncio
     import logging
     from .config import load_config
@@ -261,8 +290,12 @@ def reindex_cli():
         db_path.unlink()
         print(f"Deleted existing index: {db_path}")
 
-    print(f"Reindexing memories from {config.workspace_path / 'memories'}...")
     print(f"Embedding model: {config.embedding_model}")
 
-    count = asyncio.run(reindex_all(config))
-    print(f"Done: indexed {count} entries → {db_path}")
+    async def _reindex_all():
+        mem_count = await reindex_all(config)
+        conv_count = await reindex_conversations(config)
+        return mem_count, conv_count
+
+    mem_count, conv_count = asyncio.run(_reindex_all())
+    print(f"Done: {mem_count} memory entries + {conv_count} conversation messages → {db_path}")
