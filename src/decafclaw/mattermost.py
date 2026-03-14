@@ -205,6 +205,9 @@ class MattermostClient:
 
         await self.connect()
 
+        # Track in-flight agent tasks for graceful shutdown
+        agent_tasks = set()
+
         # All state is keyed by conversation ID (conv_id):
         # - Top-level channel messages use channel_id
         # - Thread messages use root_id
@@ -365,7 +368,12 @@ class MattermostClient:
             msgs = pending_msgs.pop(conv_id, [])
             debounce_timers.pop(conv_id, None)
             if msgs:
-                await _process_conversation(conv_id, channel_id, msgs)
+                task = asyncio.current_task()
+                agent_tasks.add(task)
+                try:
+                    await _process_conversation(conv_id, channel_id, msgs)
+                finally:
+                    agent_tasks.discard(task)
 
         async def on_message(msg):
             channel_id = msg["channel_id"]
@@ -413,6 +421,9 @@ class MattermostClient:
         try:
             await self.listen(on_message_sync, shutdown_event=shutdown_event)
         finally:
+            if agent_tasks:
+                log.info(f"Waiting for {len(agent_tasks)} in-flight agent turn(s)...")
+                await asyncio.gather(*agent_tasks, return_exceptions=True)
             await self.close()
             log.info("Shutdown complete")
 
