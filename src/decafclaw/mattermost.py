@@ -459,23 +459,21 @@ class MattermostClient:
                 await client.edit_message(placeholder_id, f"\U0001f527 Running {tool_name}...")
             elif event_type == "llm_start" and placeholder_id:
                 await client.edit_message(placeholder_id, "\U0001f4ad Thinking...")
-            elif event_type == "tool_confirm_request" and channel_id:
-                # Post confirmation message and poll for reaction
+            elif event_type == "tool_confirm_request" and placeholder_id:
+                # Edit placeholder to show confirmation request
                 tool_name = event.get("tool", "tool")
                 command = event.get("command", "")
-                confirm_post_id = await client.send(
-                    channel_id,
+                await client.edit_message(
+                    placeholder_id,
                     f"\U0001f6a8 **Confirm {tool_name}:**\n```\n{command}\n```\n"
                     f"React with \U0001f44d to approve or \U0001f44e to deny.",
-                    root_id=root_id,
                 )
-                if confirm_post_id:
-                    # Poll for reaction in background
-                    asyncio.create_task(
-                        client._poll_confirmation(
-                            confirm_post_id, event_bus, context_id, tool_name
-                        )
+                # Poll the placeholder for reactions
+                asyncio.create_task(
+                    client._poll_confirmation(
+                        placeholder_id, event_bus, context_id, tool_name
                     )
+                )
             elif event_type == "compaction_start" and channel_id:
                 compaction_post_id = await client.send(
                     channel_id, "\U0001f4e6 Compacting conversation...",
