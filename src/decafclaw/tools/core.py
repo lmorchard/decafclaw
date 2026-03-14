@@ -1,13 +1,14 @@
 """Core tools — shell, file, and web operations."""
 
 import httpx
+import json
 import logging
 import subprocess
 
 log = logging.getLogger(__name__)
 
 
-def tool_shell(command: str) -> str:
+def tool_shell(ctx, command: str) -> str:
     """Run a shell command and return stdout + stderr."""
     log.info(f"[tool:shell] {command}")
     try:
@@ -24,7 +25,7 @@ def tool_shell(command: str) -> str:
         return "[error: command timed out after 30 seconds]"
 
 
-def tool_read_file(path: str) -> str:
+def tool_read_file(ctx, path: str) -> str:
     """Read a file and return its contents."""
     log.info(f"[tool:read_file] {path}")
     try:
@@ -36,7 +37,7 @@ def tool_read_file(path: str) -> str:
         return f"[error: permission denied: {path}]"
 
 
-def tool_web_fetch(url: str) -> str:
+def tool_web_fetch(ctx, url: str) -> str:
     """Fetch a URL and return the raw response body as text."""
     log.info(f"[tool:web_fetch] {url}")
     try:
@@ -50,10 +51,47 @@ def tool_web_fetch(url: str) -> str:
         return f"[error: {e}]"
 
 
+def tool_debug_context(ctx) -> str:
+    """Dump the current conversation context for debugging."""
+    log.info("[tool:debug_context]")
+    messages = getattr(ctx, "messages", None)
+    if messages is None:
+        return "[no context available]"
+
+    # Summarize each message
+    lines = [f"Total messages: {len(messages)}\n"]
+    for i, msg in enumerate(messages):
+        role = msg.get("role", "?")
+        content = msg.get("content") or ""
+        tool_calls = msg.get("tool_calls")
+        tool_call_id = msg.get("tool_call_id")
+
+        # Truncate long content
+        preview = content[:200] + "..." if len(content) > 200 else content
+
+        if role == "system":
+            lines.append(f"[{i}] system: {preview}")
+        elif role == "user":
+            lines.append(f"[{i}] user: {preview}")
+        elif role == "assistant":
+            if tool_calls:
+                names = [tc["function"]["name"] for tc in tool_calls]
+                lines.append(f"[{i}] assistant: (tool calls: {', '.join(names)})")
+            else:
+                lines.append(f"[{i}] assistant: {preview}")
+        elif role == "tool":
+            lines.append(f"[{i}] tool [{tool_call_id}]: {preview}")
+        else:
+            lines.append(f"[{i}] {role}: {preview}")
+
+    return "\n".join(lines)
+
+
 CORE_TOOLS = {
     "shell": tool_shell,
     "read_file": tool_read_file,
     "web_fetch": tool_web_fetch,
+    "debug_context": tool_debug_context,
 }
 
 CORE_TOOL_DEFINITIONS = [
@@ -105,6 +143,18 @@ CORE_TOOL_DEFINITIONS = [
                     }
                 },
                 "required": ["url"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "debug_context",
+            "description": "Dump the current conversation context for debugging. Shows all messages the LLM can see, including system prompt, user messages, assistant responses, and tool results. Use when asked to inspect or describe your context. IMPORTANT: Always paste the full output of this tool verbatim in your response — do not summarize or paraphrase it.",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": [],
             },
         },
     },
