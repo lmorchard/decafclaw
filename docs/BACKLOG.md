@@ -41,6 +41,24 @@ Prevents context window abuse and accidental paste bombs.
 - Systemd user service (like picoclaw)
 - Or Docker container
 
+## Per-conversation to-do list
+
+Give the agent a scratchpad to plan multi-step work. Complements memory
+(long-term) with short-term intent tracking within a conversation.
+
+**Tools:**
+- `todo_add(item)` — add an item to the list
+- `todo_complete(index)` — mark an item done
+- `todo_list()` — show current state
+- `todo_clear()` — reset the list
+
+**Design notes:**
+- Lives in-memory on the context or alongside conversation history
+- Ephemeral — dies with the conversation (or could persist if history persists)
+- Agent could post the to-do list in Mattermost and update it as items
+  complete, similar to placeholder progress updates
+- Pairs naturally with memory: agent plans in to-do, saves learnings to memory
+
 ## Conversation management
 
 - Persistent conversation history (SQLite?)
