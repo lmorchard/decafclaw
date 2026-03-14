@@ -69,3 +69,5 @@ Handle SIGTERM/SIGINT cleanly instead of dropping everything.
 - Cleaning up old archive files
 - Pruning archives by age
 - UI indication in Mattermost that a conversation was resumed
+- Compaction snapshot alongside archive (avoid re-summarizing on every restart)
+  — store last compaction result so replay can skip straight to summary + recent

@@ -90,13 +90,14 @@ class MattermostClient:
         except Exception:
             pass  # typing indicators are best-effort
 
-    async def listen(self, on_message):
+    async def listen(self, on_message, shutdown_event=None):
         """Listen for posted events via WebSocket. Calls on_message(post, channel_type)
-        for each incoming user message. Reconnects on disconnect."""
+        for each incoming user message. Reconnects on disconnect.
+        If shutdown_event is set, stops listening gracefully."""
         ws_scheme = "wss" if self.url.startswith("https") else "ws"
         ws_url = f"{ws_scheme}://{self.url.split('://')[1]}/api/v4/websocket"
 
-        while True:
+        while not (shutdown_event and shutdown_event.is_set()):
             try:
                 log.info(f"Connecting WebSocket to {ws_url}")
                 async with websockets.connect(ws_url, ping_interval=30) as ws:
@@ -109,6 +110,9 @@ class MattermostClient:
                     log.info("WebSocket connected")
 
                     async for raw in ws:
+                        if shutdown_event and shutdown_event.is_set():
+                            log.info("Shutdown requested, stopping listener")
+                            return
                         evt = json.loads(raw)
                         if evt.get("event") == "posted":
                             self._handle_posted(evt, on_message)
@@ -116,6 +120,8 @@ class MattermostClient:
                             log.info("WebSocket hello (server ready)")
 
             except (websockets.ConnectionClosed, Exception) as e:
+                if shutdown_event and shutdown_event.is_set():
+                    return
                 log.warning(f"WebSocket disconnected: {e}, reconnecting in 5s...")
                 await asyncio.sleep(5)
 
@@ -195,6 +201,7 @@ class MattermostClient:
     async def run(self, app_ctx):
         """Run the bot: connect, listen for messages, and dispatch to the agent."""
         from .agent import run_agent_turn
+        from .archive import read_archive
 
         await self.connect()
 
@@ -300,17 +307,29 @@ class MattermostClient:
             await self.send_typing(channel_id)
 
             # Get or create conversation history.
-            # Threads get their own history, forked from the channel at creation.
+            # On first access, try to resume from archive.
+            # Threads get their own history, forked from channel at creation.
             if root_id:
                 hist_id = root_id
                 if hist_id not in histories:
-                    channel_history = histories.get(channel_id, [])
-                    histories[hist_id] = list(channel_history)
-                    log.debug(f"Forked thread history {hist_id[:8]} from channel {channel_id[:8]} ({len(channel_history)} msgs)")
+                    # Try archive first, then fork from channel
+                    archived = read_archive(app_ctx.config, hist_id)
+                    if archived:
+                        histories[hist_id] = archived
+                        log.info(f"Resumed thread {hist_id[:8]} from archive ({len(archived)} messages)")
+                    else:
+                        channel_history = histories.get(channel_id, [])
+                        histories[hist_id] = list(channel_history)
+                        log.debug(f"Forked thread history {hist_id[:8]} from channel {channel_id[:8]} ({len(channel_history)} msgs)")
             else:
                 hist_id = channel_id
                 if hist_id not in histories:
-                    histories[hist_id] = []
+                    archived = read_archive(app_ctx.config, hist_id)
+                    if archived:
+                        histories[hist_id] = archived
+                        log.info(f"Resumed channel {hist_id[:8]} from archive ({len(archived)} messages)")
+                    else:
+                        histories[hist_id] = []
             history = histories[hist_id]
 
             # Fork a request context with user/channel metadata
@@ -379,7 +398,28 @@ class MattermostClient:
         def on_message_sync(msg):
             asyncio.get_event_loop().create_task(on_message(msg))
 
-        await self.listen(on_message_sync)
+        # Graceful shutdown support
+        import signal
+        shutdown_event = asyncio.Event()
+
+        def _signal_handler():
+            log.info("Shutdown signal received, finishing in-flight turns...")
+            shutdown_event.set()
+
+        loop = asyncio.get_event_loop()
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            loop.add_signal_handler(sig, _signal_handler)
+
+        try:
+            await self.listen(on_message_sync, shutdown_event=shutdown_event)
+        finally:
+            # Wait briefly for in-flight tasks to complete
+            tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+            if tasks:
+                log.info(f"Waiting for {len(tasks)} in-flight task(s) to complete...")
+                await asyncio.gather(*tasks, return_exceptions=True)
+            await self.close()
+            log.info("Shutdown complete")
 
     def _subscribe_progress(self, event_bus, context_id, placeholder_id,
                             channel_id=None, root_id=None):
