@@ -561,6 +561,48 @@ to and refined over time.
 - MemGPT's archival memory vs core memory distinction
 - The "related_to / supersedes" memory linking idea, but more natural
 
+## Claude Code as a sub-agent tool
+
+Offer Claude Code (or similar coding agents) as a delegatable tool.
+DecafClaw handles the conversation and coordination; Claude Code
+handles the actual software engineering.
+
+**The idea:**
+- User in Mattermost: "Fix the auth bug in decafclaw"
+- DecafClaw: specs the task, delegates to Claude Code via CLI
+- Claude Code: reads code, makes changes, runs tests
+- DecafClaw: reports progress via event bus, posts results to chat
+
+**Design ideas:**
+- `code_agent(task, working_dir, flags)` tool — spawns `claude -p "..."` as
+  a subprocess (or uses the Claude Agent SDK)
+- Streams stdout/stderr back as `tool_status` events for live progress
+- Could run in a git worktree for isolation (like Claude Code's own
+  `--worktree` flag)
+- Results: diff, test output, commit hash — posted back to Mattermost
+- Could also work with other coding agents (Codex CLI, aider, etc.)
+
+**Why this is interesting:**
+- DecafClaw is good at conversation, memory, web research, coordination
+- Claude Code is good at reading/writing code, running tests, git
+- Together: a chat-first interface to a coding agent with persistent
+  memory and project context
+- The spec/plan/execute loop could drive Claude Code: DecafClaw specs
+  and plans, Claude Code executes the code changes
+
+**Challenges:**
+- Long-running: Claude Code sessions can take minutes. Need async
+  subprocess management, progress streaming, timeout handling.
+- Cost: Claude Code uses Opus/Sonnet. Need budget controls.
+- Auth: Claude Code needs its own API key and permissions.
+- Scope: how much autonomy? Auto-commit? Auto-push? Probably needs
+  the tool confirmation flow.
+
+**Parallels:**
+- Claude Code's own Agent tool (sub-agents in worktrees)
+- GitHub Copilot agent mode
+- The sub-agent delegation backlog item, but with a real external agent
+
 ## Feed SSE stream into prompt
 
 The automate/research SSE events could be fed into the LLM as
