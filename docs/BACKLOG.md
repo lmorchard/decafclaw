@@ -2,18 +2,24 @@
 
 Future session ideas and enhancements.
 
-## Live tool progress in placeholder messages
+## ~~Live tool progress in placeholder messages~~ (DONE)
 
-Update the "Thinking..." placeholder with real-time progress from tools.
-For example, during a research call:
+Implemented via event bus, runtime context, and async agent loop.
 
-- "Researching... Searching with 8 queries"
-- "Researching... Analyzing 13 pages"
-- "Researching... Writing report"
+## Bot/channel allowlists
 
-**Design:** Give tools a callback function that edits the placeholder.
-The callback needs to bridge sync tools → async Mattermost client.
-Options: thread an event loop through, use a queue, or make tools async.
+Allow listening to specific bots in specific channels. For example,
+respond to messages from a CI bot in #deployments, or relay messages
+from another chat bot. Currently bots are globally ignored/allowed
+via `MATTERMOST_IGNORE_BOTS`.
+
+**Design:** Config could take a list of `bot_username:channel_id` pairs,
+or separate allowlists for bot usernames and channel IDs.
+
+## Max message length
+
+Truncate or reject absurdly long messages before sending to the LLM.
+Prevents context window abuse and accidental paste bombs.
 
 ## Experiments from the spec
 
@@ -41,6 +47,18 @@ Options: thread an event loop through, use a queue, or make tools async.
 - History truncation strategies
 - Per-user history in channels (not just per-channel)
 - Session reset command
+
+## File attachments as a channel capability
+
+Some channels (like Mattermost) support sending files alongside messages.
+Expose this as a capability that the agent and tools can use — e.g., a
+tool could generate a report and attach it as a file, or the agent could
+send an image result from a Tabstack automation.
+
+**Design:** The context or channel abstraction could advertise capabilities
+(e.g., `supports_file_upload`). Tools and the agent could use a
+`send_file(channel, filename, data)` primitive. Mattermost's file upload
+API (`POST /files`) supports this natively.
 
 ## Feed SSE stream into prompt
 
