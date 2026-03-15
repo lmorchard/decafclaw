@@ -218,8 +218,8 @@ async def run_interactive(ctx):
         ctx.on_stream_chunk = _terminal_stream_chunk
 
     # Connect MCP servers
-    from .mcp_client import init_mcp, shutdown_mcp, get_registry
     from .heartbeat import run_heartbeat_timer
+    from .mcp_client import get_registry, init_mcp, shutdown_mcp
     await init_mcp(config)
 
     print("DecafClaw interactive mode. Type 'quit' to exit.")
@@ -319,8 +319,8 @@ async def run_interactive(ctx):
                 if result.media:
                     output = process_media_for_terminal(result, config.workspace_path)
                     # Print just the media lines (text was already streamed)
-                    media_lines = [l for l in output.split("\n")
-                                   if l.startswith("[file saved:") or l.startswith("[image:")]
+                    media_lines = [line for line in output.split("\n")
+                                   if line.startswith("[file saved:") or line.startswith("[image:")]
                     if media_lines:
                         print("\n" + "\n".join(media_lines))
                 print()  # final newline after streamed text

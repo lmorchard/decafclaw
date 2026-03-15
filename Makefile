@@ -14,9 +14,17 @@ debug:
 run-pro:
 	LLM_MODEL=gemini-2.5-pro uv run decafclaw
 
-# Lint — compile-check all Python source files
+# Lint with ruff
 lint:
-	@uv run python -c "import py_compile, glob, sys; files = glob.glob('src/**/*.py', recursive=True); errors = [f for f in files if not py_compile.compile(f, doraise=False)]; sys.exit(1) if errors else print(f'All {len(files)} files compile OK')"
+	uv run ruff check src/ tests/
+
+# Auto-fix lint issues
+lint-fix:
+	uv run ruff check --fix src/ tests/
+
+# Format with ruff
+fmt:
+	uv run ruff format src/ tests/
 
 # Run tests (pytest)
 test:

@@ -6,14 +6,13 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from decafclaw.heartbeat import (
-    parse_interval,
-    load_heartbeat_sections,
-    is_heartbeat_ok,
     build_section_prompt,
+    is_heartbeat_ok,
+    load_heartbeat_sections,
+    parse_interval,
     run_heartbeat_cycle,
     run_heartbeat_timer,
 )
-
 
 # -- interval parsing tests --
 

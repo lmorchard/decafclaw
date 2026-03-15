@@ -1,8 +1,9 @@
 """LLM client — raw HTTP to an OpenAI-compatible endpoint (LiteLLM)."""
 
-import httpx
 import json
 import logging
+
+import httpx
 
 log = logging.getLogger(__name__)
 

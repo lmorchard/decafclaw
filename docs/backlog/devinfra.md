@@ -11,10 +11,6 @@ of its own distinct prompt file fed to the agend at the scheduled time,
 and each should be able to define it's own communication channel for
 reporting.
 
-## Linting and CI
-
-Remaining: ruff/flake8 integration, CI integration (GitHub Actions).
-
 ## Model-specific prompt tuning
 
 Different tool description verbosity per model capability.

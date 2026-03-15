@@ -1,8 +1,9 @@
 """Tests for core tools and tool execution."""
 
 import pytest
-from decafclaw.tools.core import tool_think
+
 from decafclaw.tools import execute_tool
+from decafclaw.tools.core import tool_think
 
 
 def test_think_returns_ok(ctx):
@@ -44,6 +45,7 @@ async def test_execute_tool_unknown(ctx):
 async def test_execute_tool_mcp_routes_to_registry(ctx, monkeypatch):
     """MCP-namespaced tools route to the MCP registry."""
     from unittest.mock import AsyncMock, MagicMock
+
     from decafclaw import mcp_client
 
     mock_fn = AsyncMock(return_value="mcp result")
@@ -69,6 +71,7 @@ async def test_execute_tool_mcp_no_registry(ctx, monkeypatch):
 async def test_execute_tool_mcp_tool_not_found(ctx, monkeypatch):
     """MCP tool not in registry returns error."""
     from unittest.mock import MagicMock
+
     from decafclaw import mcp_client
 
     mock_registry = MagicMock()

@@ -1,6 +1,7 @@
 """Conversation tools — search and compact conversations."""
 
 import logging
+
 from .. import embeddings
 
 log = logging.getLogger(__name__)

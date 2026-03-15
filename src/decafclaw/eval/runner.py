@@ -5,11 +5,11 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+from ..agent import run_agent_turn
 from ..config import Config, load_config
 from ..context import Context
 from ..events import EventBus
 from ..memory import save_entry
-from ..agent import run_agent_turn
 
 log = logging.getLogger(__name__)
 

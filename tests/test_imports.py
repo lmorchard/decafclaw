@@ -29,12 +29,12 @@ def test_import_llm():
 
 
 def test_import_memory():
-    from decafclaw.memory import save_entry, search_entries, recent_entries
+    from decafclaw.memory import recent_entries, save_entry, search_entries
     assert save_entry is not None
 
 
 def test_import_memory_tools():
-    from decafclaw.tools.memory_tools import MEMORY_TOOLS, MEMORY_TOOL_DEFINITIONS
+    from decafclaw.tools.memory_tools import MEMORY_TOOL_DEFINITIONS, MEMORY_TOOLS
     assert len(MEMORY_TOOLS) > 0
     assert len(MEMORY_TOOL_DEFINITIONS) > 0
 

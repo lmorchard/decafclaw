@@ -168,6 +168,7 @@ def _convert_mcp_response(result):
     """
     import base64
     import mimetypes as _mimetypes
+
     from .media import ToolResult
 
     # Handle dict or SDK result object

@@ -3,16 +3,15 @@
 import asyncio
 
 from ..media import ToolResult
-
-from .core import CORE_TOOLS, CORE_TOOL_DEFINITIONS
-from .memory_tools import MEMORY_TOOLS, MEMORY_TOOL_DEFINITIONS
-from .todo_tools import TODO_TOOLS, TODO_TOOL_DEFINITIONS
-from .conversation_tools import CONVERSATION_TOOLS, CONVERSATION_TOOL_DEFINITIONS
-from .workspace_tools import WORKSPACE_TOOLS, WORKSPACE_TOOL_DEFINITIONS
-from .shell_tools import SHELL_TOOLS, SHELL_TOOL_DEFINITIONS
-from .skill_tools import SKILL_TOOLS, SKILL_TOOL_DEFINITIONS
-from .mcp_tools import MCP_TOOLS, MCP_TOOL_DEFINITIONS
-from .heartbeat_tools import HEARTBEAT_TOOLS, HEARTBEAT_TOOL_DEFINITIONS
+from .conversation_tools import CONVERSATION_TOOL_DEFINITIONS, CONVERSATION_TOOLS
+from .core import CORE_TOOL_DEFINITIONS, CORE_TOOLS
+from .heartbeat_tools import HEARTBEAT_TOOL_DEFINITIONS, HEARTBEAT_TOOLS
+from .mcp_tools import MCP_TOOL_DEFINITIONS, MCP_TOOLS
+from .memory_tools import MEMORY_TOOL_DEFINITIONS, MEMORY_TOOLS
+from .shell_tools import SHELL_TOOL_DEFINITIONS, SHELL_TOOLS
+from .skill_tools import SKILL_TOOL_DEFINITIONS, SKILL_TOOLS
+from .todo_tools import TODO_TOOL_DEFINITIONS, TODO_TOOLS
+from .workspace_tools import WORKSPACE_TOOL_DEFINITIONS, WORKSPACE_TOOLS
 
 # Combined registry (tabstack via skill, MCP tools via registry)
 TOOLS = {**CORE_TOOLS, **MEMORY_TOOLS, **TODO_TOOLS,

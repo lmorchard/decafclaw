@@ -9,15 +9,14 @@ from decafclaw.mcp_client import (
     MCPRegistry,
     MCPServerConfig,
     MCPServerState,
+    _convert_mcp_response,
+    _convert_tool_definition,
     _expand_env,
-    _validate_server_name,
     _namespace_tool,
     _parse_namespace,
-    _convert_tool_definition,
-    _convert_mcp_response,
+    _validate_server_name,
     load_mcp_config,
 )
-
 
 # -- env var expansion tests --
 

@@ -1,6 +1,6 @@
 """Tests for conversation archive."""
 
-from decafclaw.archive import append_message, read_archive, archive_path
+from decafclaw.archive import append_message, archive_path, read_archive
 
 
 def test_archive_path(config):
