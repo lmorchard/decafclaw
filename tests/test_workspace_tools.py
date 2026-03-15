@@ -1,6 +1,9 @@
-"""Tests for workspace file tools — path sandboxing."""
+"""Tests for workspace file tools — path sandboxing and file sharing."""
 
-from decafclaw.tools.workspace_tools import tool_workspace_read, tool_workspace_write, tool_workspace_list, _resolve_safe
+from decafclaw.tools.workspace_tools import (
+    tool_workspace_read, tool_workspace_write, tool_workspace_list,
+    tool_file_share, _resolve_safe,
+)
 
 
 def test_resolve_safe_normal(config):
@@ -57,3 +60,33 @@ def test_list_empty(ctx):
     ctx.config.workspace_path.mkdir(parents=True, exist_ok=True)
     result = tool_workspace_list(ctx)
     assert "error" not in result.lower()
+
+
+# -- file_share tests --
+
+
+def test_file_share(ctx):
+    tool_workspace_write(ctx, "report.txt", "some data")
+    result = tool_file_share(ctx, "report.txt")
+    assert len(result.media) == 1
+    assert result.media[0]["filename"] == "report.txt"
+    assert result.media[0]["data"] == b"some data"
+
+
+def test_file_share_with_message(ctx):
+    tool_workspace_write(ctx, "data.json", '{"key": "value"}')
+    result = tool_file_share(ctx, "data.json", message="Here's the data")
+    assert result.text == "Here's the data"
+    assert result.media[0]["content_type"] == "application/json"
+
+
+def test_file_share_escape_blocked(ctx):
+    result = tool_file_share(ctx, "../../etc/passwd")
+    assert "outside" in result.text.lower()
+    assert result.media == []
+
+
+def test_file_share_not_found(ctx):
+    result = tool_file_share(ctx, "nonexistent.txt")
+    assert "not found" in result.text.lower()
+    assert result.media == []

@@ -16,15 +16,6 @@ Agent tools to create channels, invite users, set headers, archive.
 - Needs Mattermost bot permissions
 - Gated by config/permissions
 
-## File attachments
-
-Send files alongside messages via Mattermost's `POST /files` API.
-
-- Context advertises `supports_file_upload` capability
-- `send_file(channel, filename, data)` primitive
-- Tools and agent use it for reports, images, etc.
-- Would improve `debug_context` — currently writes to workspace files, could upload directly
-
 ## Additional Tabstack tools
 
 - Tabstack `automate` with `--guardrails` and `--data` support

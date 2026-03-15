@@ -167,7 +167,8 @@ async def run_heartbeat_cycle(config, event_bus) -> list[dict]:
             ctx.conv_id = f"heartbeat-{timestamp}-{i}"
 
             prompt = build_section_prompt(section)
-            response = await run_agent_turn(ctx, prompt, history=[])
+            result = await run_agent_turn(ctx, prompt, history=[])
+            response = result.text if hasattr(result, "text") else (result or "")
             response = response or "(no response)"
 
             results.append({

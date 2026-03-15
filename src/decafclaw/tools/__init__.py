@@ -2,6 +2,8 @@
 
 import asyncio
 
+from ..media import ToolResult
+
 from .core import CORE_TOOLS, CORE_TOOL_DEFINITIONS
 from .memory_tools import MEMORY_TOOLS, MEMORY_TOOL_DEFINITIONS
 from .todo_tools import TODO_TOOLS, TODO_TOOL_DEFINITIONS
@@ -23,15 +25,28 @@ TOOL_DEFINITIONS = (CORE_TOOL_DEFINITIONS
                     + MCP_TOOL_DEFINITIONS + HEARTBEAT_TOOL_DEFINITIONS)
 
 
-async def execute_tool(ctx, name: str, arguments: dict) -> str:
-    """Execute a tool by name and return the result as a string.
+def _to_tool_result(value) -> ToolResult:
+    """Normalize a tool return value to ToolResult."""
+    if isinstance(value, ToolResult):
+        return value
+    if isinstance(value, str):
+        return ToolResult(text=value)
+    if value is None:
+        return ToolResult(text="")
+    return ToolResult(text=str(value))
 
-    Checks ctx.extra_tools (from activated skills) first, then the global registry.
+
+async def execute_tool(ctx, name: str, arguments: dict) -> ToolResult:
+    """Execute a tool by name and return the result.
+
+    Returns a ToolResult with text (for LLM history) and optional media
+    (for file attachments). Checks ctx.extra_tools (from activated skills)
+    first, then the global registry.
     """
     # Check allowed tools list (used by eval runner)
     allowed = getattr(ctx, "allowed_tools", None)
     if allowed is not None and name not in allowed:
-        return f"[error: tool '{name}' is not available in this context]"
+        return ToolResult(text=f"[error: tool '{name}' is not available in this context]")
 
     # Route MCP tools to the MCP registry (different call signature — no ctx)
     if name.startswith("mcp__"):
@@ -42,20 +57,22 @@ async def execute_tool(ctx, name: str, arguments: dict) -> str:
             fn = mcp_tools.get(name)
             if fn:
                 try:
-                    return await fn(arguments)
+                    result = await fn(arguments)
+                    return _to_tool_result(result)
                 except Exception as e:
-                    return f"[error executing {name}: {e}]"
-        return f"[error: MCP tool '{name}' not available]"
+                    return ToolResult(text=f"[error executing {name}: {e}]")
+        return ToolResult(text=f"[error: MCP tool '{name}' not available]")
 
     # Check skill-provided tools first, then global registry
     extra_tools = getattr(ctx, "extra_tools", {})
     fn = extra_tools.get(name) or TOOLS.get(name)
     if fn is None:
-        return f"[error: unknown tool: {name}]"
+        return ToolResult(text=f"[error: unknown tool: {name}]")
     try:
         if asyncio.iscoroutinefunction(fn):
-            return await fn(ctx, **arguments)
+            result = await fn(ctx, **arguments)
         else:
-            return await asyncio.to_thread(fn, ctx, **arguments)
+            result = await asyncio.to_thread(fn, ctx, **arguments)
+        return _to_tool_result(result)
     except Exception as e:
-        return f"[error executing {name}: {e}]"
+        return ToolResult(text=f"[error executing {name}: {e}]")

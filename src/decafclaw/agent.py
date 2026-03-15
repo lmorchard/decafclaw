@@ -65,7 +65,7 @@ async def _maybe_compact(ctx, config, history, prompt_tokens):
             log.error(f"Compaction failed: {e}")
 
 
-async def run_agent_turn(ctx, user_message: str, history: list) -> str:
+async def run_agent_turn(ctx, user_message: str, history: list):
     """Process a single user message through the agent loop.
 
     Args:
@@ -74,13 +74,18 @@ async def run_agent_turn(ctx, user_message: str, history: list) -> str:
         history: Conversation history (list of message dicts, mutated in place)
 
     Returns:
-        The agent's text response
+        ToolResult with the agent's text response and any accumulated media.
     """
+    from .media import ToolResult, extract_workspace_media
+
     config = ctx.config
     # Expose history on context so tools (e.g., compact_conversation) can access it
     ctx.history = history
     ctx.total_prompt_tokens = getattr(ctx, "total_prompt_tokens", 0)
     ctx.total_completion_tokens = getattr(ctx, "total_completion_tokens", 0)
+
+    # Accumulate media from tool results across the turn
+    pending_media = []
 
     # Add user message to history
     user_msg = {"role": "user", "content": user_message}
@@ -136,12 +141,16 @@ async def run_agent_turn(ctx, user_message: str, history: list) -> str:
                 await ctx.publish("tool_start", tool=fn_name, args=fn_args)
                 result = await execute_tool(ctx, fn_name, fn_args)
                 await ctx.publish("tool_end", tool=fn_name)
-                log.debug(f"Tool result: {result[:200]}...")
+                log.debug(f"Tool result: {result.text[:200]}...")
+
+                # Accumulate media from tool results
+                if result.media:
+                    pending_media.extend(result.media)
 
                 tool_msg = {
                     "role": "tool",
                     "tool_call_id": tc["id"],
-                    "content": result,
+                    "content": result.text,
                 }
                 history.append(tool_msg)
                 messages.append(tool_msg)
@@ -156,7 +165,16 @@ async def run_agent_turn(ctx, user_message: str, history: list) -> str:
         history.append(final_msg)
         _archive(ctx, final_msg)
         await _maybe_compact(ctx, config, history, prompt_tokens)
-        return content
+
+        # Scan for workspace image references and combine with tool media
+        cleaned_text, workspace_media = extract_workspace_media(
+            content or "", config.workspace_path
+        )
+        all_media = pending_media + workspace_media
+
+        if all_media:
+            return ToolResult(text=cleaned_text, media=all_media)
+        return ToolResult(text=content or "")
 
     # Hit max iterations
     msg = "[Agent reached max tool iterations without a final response]"
@@ -164,7 +182,7 @@ async def run_agent_turn(ctx, user_message: str, history: list) -> str:
     history.append(final_msg)
     _archive(ctx, final_msg)
     await _maybe_compact(ctx, config, history, prompt_tokens)
-    return msg
+    return ToolResult(text=msg)
 
 
 async def run_interactive(ctx):
@@ -177,6 +195,10 @@ async def run_interactive(ctx):
     ctx.channel_name = getattr(ctx, "channel_name", "") or "interactive"
     ctx.thread_id = getattr(ctx, "thread_id", "") or ""
     ctx.conv_id = "interactive"
+
+    # Set up media handler for terminal mode
+    from .media import TerminalMediaHandler
+    ctx.media_handler = TerminalMediaHandler(config.workspace_path)
 
     # Connect MCP servers
     from .mcp_client import init_mcp, shutdown_mcp, get_registry
@@ -272,8 +294,10 @@ async def run_interactive(ctx):
             if user_input.lower() in ("quit", "exit"):
                 break
 
-            response = await run_agent_turn(ctx, user_input, history)
-            print(f"\nagent> {response}\n")
+            result = await run_agent_turn(ctx, user_input, history)
+            from .media import process_media_for_terminal
+            output = process_media_for_terminal(result, config.workspace_path)
+            print(f"\nagent> {output}\n")
     finally:
         shutdown_event.set()
         heartbeat_task.cancel()

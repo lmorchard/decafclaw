@@ -23,21 +23,21 @@ async def test_execute_tool_with_extra_tools(ctx):
 
     ctx.extra_tools = {"mock_search": mock_tool}
     result = await execute_tool(ctx, "mock_search", {"query": "hello"})
-    assert result == "mock result: hello"
+    assert result.text == "mock result: hello"
 
 
 @pytest.mark.asyncio
 async def test_execute_tool_extra_tools_not_present(ctx):
     """execute_tool works when ctx has no extra_tools (backward compat)."""
     result = await execute_tool(ctx, "think", {"content": "test"})
-    assert result == "OK"
+    assert result.text == "OK"
 
 
 @pytest.mark.asyncio
 async def test_execute_tool_unknown(ctx):
     """Unknown tool returns error message."""
     result = await execute_tool(ctx, "nonexistent_tool", {})
-    assert "[error: unknown tool:" in result
+    assert "[error: unknown tool:" in result.text
 
 
 @pytest.mark.asyncio
@@ -52,7 +52,7 @@ async def test_execute_tool_mcp_routes_to_registry(ctx, monkeypatch):
 
     monkeypatch.setattr(mcp_client, "_registry", mock_registry)
     result = await execute_tool(ctx, "mcp__test__my_tool", {"arg": "val"})
-    assert result == "mcp result"
+    assert result.text == "mcp result"
     mock_fn.assert_called_once_with({"arg": "val"})
 
 
@@ -62,7 +62,7 @@ async def test_execute_tool_mcp_no_registry(ctx, monkeypatch):
     from decafclaw import mcp_client
     monkeypatch.setattr(mcp_client, "_registry", None)
     result = await execute_tool(ctx, "mcp__test__my_tool", {})
-    assert "[error: MCP tool" in result
+    assert "[error: MCP tool" in result.text
 
 
 @pytest.mark.asyncio
@@ -76,4 +76,13 @@ async def test_execute_tool_mcp_tool_not_found(ctx, monkeypatch):
 
     monkeypatch.setattr(mcp_client, "_registry", mock_registry)
     result = await execute_tool(ctx, "mcp__test__missing", {})
-    assert "[error: MCP tool" in result
+    assert "[error: MCP tool" in result.text
+
+
+@pytest.mark.asyncio
+async def test_execute_tool_returns_tool_result(ctx):
+    """execute_tool always returns a ToolResult."""
+    from decafclaw.media import ToolResult
+    result = await execute_tool(ctx, "think", {"content": "test"})
+    assert isinstance(result, ToolResult)
+    assert result.media == []

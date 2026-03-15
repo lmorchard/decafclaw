@@ -224,7 +224,9 @@ def test_convert_mcp_response_text():
         ],
         "isError": False,
     }
-    assert _convert_mcp_response(result) == "Hello\nWorld"
+    tr = _convert_mcp_response(result)
+    assert tr.text == "Hello\nWorld"
+    assert tr.media == []
 
 
 def test_convert_mcp_response_error():
@@ -232,20 +234,59 @@ def test_convert_mcp_response_error():
         "content": [{"type": "text", "text": "Something broke"}],
         "isError": True,
     }
-    assert _convert_mcp_response(result) == "[error: Something broke]"
+    tr = _convert_mcp_response(result)
+    assert tr.text == "[error: Something broke]"
 
 
-def test_convert_mcp_response_image_placeholder():
+def test_convert_mcp_response_image_media():
+    import base64
+    img_data = base64.b64encode(b"fake-png-data").decode()
     result = {
-        "content": [{"type": "image", "data": "x" * 100}],
+        "content": [{"type": "image", "data": img_data, "mimeType": "image/png"}],
         "isError": False,
     }
-    assert "[image: 100 bytes]" in _convert_mcp_response(result)
+    tr = _convert_mcp_response(result)
+    assert "Image attached" in tr.text
+    assert len(tr.media) == 1
+    assert tr.media[0]["type"] == "file"
+    assert tr.media[0]["data"] == b"fake-png-data"
+    assert tr.media[0]["content_type"] == "image/png"
+
+
+def test_convert_mcp_response_audio_media():
+    import base64
+    audio_data = base64.b64encode(b"fake-wav").decode()
+    result = {
+        "content": [{"type": "audio", "data": audio_data, "mimeType": "audio/wav"}],
+        "isError": False,
+    }
+    tr = _convert_mcp_response(result)
+    assert "Audio attached" in tr.text
+    assert len(tr.media) == 1
+    assert tr.media[0]["content_type"] == "audio/wav"
+
+
+def test_convert_mcp_response_mixed_text_and_image():
+    import base64
+    img_data = base64.b64encode(b"img").decode()
+    result = {
+        "content": [
+            {"type": "text", "text": "Here's your image:"},
+            {"type": "image", "data": img_data, "mimeType": "image/jpeg"},
+        ],
+        "isError": False,
+    }
+    tr = _convert_mcp_response(result)
+    assert "Here's your image:" in tr.text
+    assert "Image attached" in tr.text
+    assert len(tr.media) == 1
 
 
 def test_convert_mcp_response_empty():
     result = {"content": [], "isError": False}
-    assert _convert_mcp_response(result) == "(no content)"
+    tr = _convert_mcp_response(result)
+    assert tr.text == "(no content)"
+    assert tr.media == []
 
 
 # -- connection tests (mocked SDK) --
