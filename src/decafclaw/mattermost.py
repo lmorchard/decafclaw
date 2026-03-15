@@ -223,6 +223,7 @@ class MattermostClient:
         # - Thread messages use root_id
         # This allows threads and top-level to run independently.
         histories = {}              # conv_id -> message history
+        conv_skill_state = {}       # conv_id -> {extra_tools, extra_tool_definitions, activated_skills}
         pending_msgs = {}           # conv_id -> list of accumulated messages
         debounce_timers = {}        # conv_id -> asyncio.Task
         last_response_time = {}     # conv_id -> timestamp of last response
@@ -353,6 +354,14 @@ class MattermostClient:
                 thread_id=root_id or "",
                 conv_id=conv_id,
             )
+
+            # Restore per-conversation skill state from previous turns
+            skill_state = conv_skill_state.get(conv_id)
+            if skill_state:
+                req_ctx.extra_tools = skill_state.get("extra_tools", {})
+                req_ctx.extra_tool_definitions = skill_state.get("extra_tool_definitions", [])
+                req_ctx.activated_skills = skill_state.get("activated_skills", set())
+
             sub_id = self._subscribe_progress(
                 req_ctx.event_bus, req_ctx.context_id, placeholder_id,
                 channel_id=channel_id, root_id=root_id,
@@ -365,6 +374,14 @@ class MattermostClient:
                 last_response_time[conv_id] = time.monotonic()
                 conv_busy[conv_id] = False
                 _record_turn(conv_id)
+
+                # Persist per-conversation skill state for next turn
+                if getattr(req_ctx, "activated_skills", None):
+                    conv_skill_state[conv_id] = {
+                        "extra_tools": getattr(req_ctx, "extra_tools", {}),
+                        "extra_tool_definitions": getattr(req_ctx, "extra_tool_definitions", []),
+                        "activated_skills": getattr(req_ctx, "activated_skills", set()),
+                    }
 
             # Edit placeholder with the actual response
             if placeholder_id:
@@ -466,7 +483,8 @@ class MattermostClient:
                 await client.edit_message(
                     placeholder_id,
                     f"\U0001f6a8 **Confirm {tool_name}:**\n```\n{command}\n```\n"
-                    f"React with \U0001f44d to approve or \U0001f44e to deny.",
+                    f"React with \U0001f44d to approve, \U0001f44e to deny, "
+                    f"or \u2705 to always approve.",
                 )
                 # Poll the placeholder for reactions
                 asyncio.create_task(
@@ -504,8 +522,18 @@ class MattermostClient:
                     # Ignore bot's own reactions
                     if user_id == self.bot_user_id:
                         continue
-                    if emoji in ("+1", "thumbsup"):
-                        log.info(f"Shell command approved by {user_id}")
+                    if emoji in ("white_check_mark", "heavy_check_mark"):
+                        log.info(f"Tool always-approved by {user_id}")
+                        await event_bus.publish({
+                            "type": "tool_confirm_response",
+                            "context_id": context_id,
+                            "tool": tool_name,
+                            "approved": True,
+                            "always": True,
+                        })
+                        return
+                    elif emoji in ("+1", "thumbsup"):
+                        log.info(f"Tool approved by {user_id}")
                         await event_bus.publish({
                             "type": "tool_confirm_response",
                             "context_id": context_id,
@@ -514,7 +542,7 @@ class MattermostClient:
                         })
                         return
                     elif emoji in ("-1", "thumbsdown"):
-                        log.info(f"Shell command denied by {user_id}")
+                        log.info(f"Tool denied by {user_id}")
                         await event_bus.publish({
                             "type": "tool_confirm_response",
                             "context_id": context_id,

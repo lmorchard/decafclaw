@@ -25,9 +25,11 @@ A minimal AI agent for learning how agent frameworks work. Connects to Mattermos
 - `src/decafclaw/compaction.py` — History compaction via summarization
 - `src/decafclaw/embeddings.py` — Semantic search index (SQLite + cosine similarity)
 - `src/decafclaw/todos.py` — Per-conversation to-do lists (markdown checkboxes)
-- `src/decafclaw/prompts/` — System prompt assembly (SOUL.md + AGENT.md + loader)
+- `src/decafclaw/prompts/` — System prompt assembly (SOUL.md + AGENT.md + skill catalog + loader)
+- `src/decafclaw/skills/` — Skills system: discovery, parsing, catalog, bundled skills
+- `src/decafclaw/skills/tabstack/` — Bundled Tabstack skill (SKILL.md + tools.py)
 - `src/decafclaw/eval/` — Eval harness (YAML tests, failure reflection)
-- `src/decafclaw/tools/` — Tool registry: core, memory, tabstack, todo, workspace, shell, conversation
+- `src/decafclaw/tools/` — Tool registry: core, memory, todo, workspace, shell, conversation, skill activation
 
 ## Running
 
@@ -37,7 +39,7 @@ make dev          # Auto-restart on file changes (10s graceful shutdown)
 make debug        # With debug logging
 make run-pro      # With gemini-2.5-pro model
 make lint         # Compile-check all source files
-make test         # Run pytest (64 tests)
+make test         # Run pytest (91 tests)
 make reindex      # Rebuild embedding index from memory files
 make build-eval-fixtures  # Rebuild eval embedding fixtures
 ```
@@ -75,6 +77,9 @@ Session docs live in `.claude/dev-sessions/YYYY-MM-DD-HHMM-slug/` with `spec.md`
 - **Memory lives in `data/{agent_id}/workspace/memories/`.** Daily markdown files, append-only. Tools read context from ctx, not config.
 - **Agent data at `data/{agent_id}/`.** Admin files (SOUL.md, AGENT.md, USER.md, COMPACTION.md, config.yaml) live at the root — read-only to the agent. Agent read/write files live in `workspace/` subdirectory.
 - **System prompt from files.** SOUL.md + AGENT.md bundled in code, overridable at `data/{agent_id}/`. USER.md is workspace-only.
+- **Skills are lazy-loaded.** Skill catalog (name + description) is in the system prompt. Full content and tools only load when the agent calls `activate_skill`. Per-conversation activation via `ctx.extra_tools`.
+- **Skill permissions at agent level.** `data/{agent_id}/skill_permissions.json` — outside the workspace, so the agent can't grant itself permission. User confirms activation with yes/no/always.
+- **Bundled skills in `src/decafclaw/skills/`.** Each skill has SKILL.md (required) + tools.py (optional for native Python tools). Skill scan order: workspace > agent-level > bundled.
 - **LOG_LEVEL env var.** Set `LOG_LEVEL=DEBUG` for verbose logging (default: INFO).
 
 ## Keeping docs current

@@ -1,7 +1,7 @@
 """System prompt assembly from markdown files.
 
 Loads prompt fragments from bundled files and optional workspace overrides.
-Order: SOUL.md + AGENT.md + USER.md (if exists in workspace)
+Order: SOUL.md + AGENT.md + USER.md (if exists in workspace) + skill catalog
 """
 
 import logging
@@ -16,7 +16,7 @@ _PROMPTS_DIR = Path(__file__).parent
 _PROMPT_FILES = ["SOUL.md", "AGENT.md"]
 
 
-def load_system_prompt(config) -> str:
+def load_system_prompt(config):
     """Assemble the system prompt from markdown files.
 
     For each prompt file (SOUL.md, AGENT.md):
@@ -24,7 +24,13 @@ def load_system_prompt(config) -> str:
     2. Fall back to bundled: src/decafclaw/prompts/{file}
 
     Then append USER.md from agent directory if it exists.
+    Finally, append the skill catalog if any skills are discovered.
+
+    Returns:
+        (prompt_text, discovered_skills) tuple
     """
+    from ..skills import discover_skills, build_catalog_text
+
     agent_dir = config.agent_path
     sections = []
 
@@ -51,4 +57,10 @@ def load_system_prompt(config) -> str:
             sections.append(text)
             log.info("Loaded USER.md from workspace")
 
-    return "\n\n".join(sections)
+    # Discover skills and append catalog
+    skills = discover_skills(config)
+    catalog = build_catalog_text(skills)
+    if catalog:
+        sections.append(catalog)
+
+    return "\n\n".join(sections), skills

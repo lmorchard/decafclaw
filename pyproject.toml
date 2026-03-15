@@ -11,6 +11,7 @@ dependencies = [
     "httpx>=0.28.1",
     "numpy>=2.4.3",
     "python-dotenv>=1.2.2",
+    "pyyaml>=6.0",
     "tabstack>=2.3.0",
     "websockets>=16.0",
 ]
