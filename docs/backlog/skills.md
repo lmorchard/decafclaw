@@ -43,15 +43,6 @@ Autonomous project workflow: gather info → spec → plan → to-do → execute
 - User reviews/approves at phase boundaries or lets it run
 - Pairs with: to-do list, scratchpad, sub-agent delegation, tool confirmation
 
-## Tool confirmation / approval flow
-
-Before executing dangerous tools, ask the user for confirmation.
-"I'm about to run `rm -rf /tmp/data`. React with :+1: to confirm."
-
-- Channel-specific approval mechanism (Mattermost reactions, terminal y/n)
-- Configurable per-tool risk levels
-- Reusable interaction pattern
-
 ## Sub-agent delegation
 
 Fork a child agent to handle a subtask concurrently.
@@ -80,21 +71,13 @@ Chunk and store long documents for future reference.
 - Tabstack extract for initial conversion
 - Future: vector embeddings for chunk retrieval
 
-## Scheduled / recurring tasks
+## Proactive outreach (heartbeat enhancements)
 
-"Check this URL every hour and tell me if it changes."
+The heartbeat system enables basic proactive outreach. Enhancements:
 
-- Event bus for notifications
-- Scheduler + task definitions (SQLite or workspace files)
-- Pairs with proactive outreach
-
-## Proactive outreach
-
-The agent messages the user first, not just in response.
-
-- "That URL you asked me to monitor changed"
-- Daily summary of memories or completed tasks
-- Requires scheduled tasks + channel write capability
+- Active hours (restrict heartbeat to time windows)
+- Per-section interval overrides (some tasks hourly, others daily)
+- Agent-initiated DMs based on triggers (not just periodic)
 
 ## Multi-turn structured input
 

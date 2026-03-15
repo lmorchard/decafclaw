@@ -96,6 +96,12 @@ Documentation lives in `docs/` — see `docs/index.md` for the full list. When a
 - **Update `docs/context-map.md`** — if changing system prompt, tool definitions, or context assembly
 - Docs should stay in sync with the code. If you change behavior, check if the docs need updating too. Stale docs are worse than no docs.
 
+**At the end of every dev session:**
+- Clean up `docs/backlog/` — remove items that are done, update items that have changed scope, add new ideas that came up during the session.
+- Review all `docs/` pages for accuracy — features built, config added, files moved.
+- Update `CLAUDE.md` key files list if new modules were added.
+- Backlog is what's ahead, not a history of what's done. Git history is the record.
+
 ## Known gaps
 
 - No hard history size limit (compaction helps but unbounded archive growth)
