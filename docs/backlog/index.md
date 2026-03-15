@@ -10,8 +10,8 @@ on top of it.
 
 ## Backlogs
 
-- [BACKLOG-CORE.md](BACKLOG-CORE.md) — Agent loop, context, conversation management, infrastructure
-- [BACKLOG-SKILLS.md](BACKLOG-SKILLS.md) — Portable skills: memory, wiki, planning, delegation, etc.
-- [BACKLOG-MATTERMOST.md](BACKLOG-MATTERMOST.md) — Mattermost-specific features
-- [BACKLOG-DEVINFRA.md](BACKLOG-DEVINFRA.md) — Developer tools: testing, eval, deployment, observability
+- [core.md](core.md) — Agent loop, context, conversation management, infrastructure
+- [skills.md](skills.md) — Portable skills: memory, wiki, planning, delegation, etc.
+- [mattermost.md](mattermost.md) — Mattermost-specific features
+- [devinfra.md](devinfra.md) — Developer tools: testing, eval, deployment, observability
 
