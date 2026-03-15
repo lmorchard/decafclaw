@@ -11,6 +11,12 @@ async def tool_shell(ctx, command: str) -> str:
     """Run a shell command after user confirmation."""
     log.info(f"[tool:shell] requesting confirmation for: {command}")
 
+    # Admin heartbeat turns auto-approve shell commands (admin-authored prompts)
+    is_heartbeat = getattr(ctx, "user_id", "") == "heartbeat-admin"
+    if is_heartbeat:
+        log.info(f"[tool:shell] auto-approved for heartbeat: {command}")
+        return _execute_command(ctx, command)
+
     # Publish confirmation request
     confirm_event = asyncio.Event()
     confirm_result = {"approved": False}
@@ -42,8 +48,12 @@ async def tool_shell(ctx, command: str) -> str:
         log.info(f"[tool:shell] command denied: {command}")
         return "[error: shell command was denied by user]"
 
-    # Execute the command
-    log.info(f"[tool:shell] executing approved command: {command}")
+    return _execute_command(ctx, command)
+
+
+def _execute_command(ctx, command: str) -> str:
+    """Execute a shell command and return the output."""
+    log.info(f"[tool:shell] executing command: {command}")
     try:
         result = subprocess.run(
             command, shell=True, capture_output=True, text=True, timeout=30,

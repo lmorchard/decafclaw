@@ -30,6 +30,7 @@ A minimal AI agent for learning how agent frameworks work. Connects to Mattermos
 - `src/decafclaw/skills/tabstack/` — Bundled Tabstack skill (SKILL.md + tools.py)
 - `src/decafclaw/eval/` — Eval harness (YAML tests, failure reflection)
 - `src/decafclaw/mcp_client.py` — MCP client: config, registry, server connections, auto-restart
+- `src/decafclaw/heartbeat.py` — Heartbeat: periodic wake-up, section parsing, timer, cycle runner
 - `src/decafclaw/tools/` — Tool registry: core, memory, todo, workspace, shell, conversation, skill activation, MCP status
 
 ## Running
@@ -40,7 +41,7 @@ make dev          # Auto-restart on file changes (10s graceful shutdown)
 make debug        # With debug logging
 make run-pro      # With gemini-2.5-pro model
 make lint         # Compile-check all source files
-make test         # Run pytest (128 tests)
+make test         # Run pytest
 make reindex      # Rebuild embedding index from memory files
 make build-eval-fixtures  # Rebuild eval embedding fixtures
 ```

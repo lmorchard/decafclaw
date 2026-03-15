@@ -85,6 +85,12 @@ class Config:
     def compaction_context_budget(self) -> int:
         return self.compaction_llm_max_tokens or self.compaction_max_tokens
 
+    # Heartbeat settings
+    heartbeat_interval: str = "30m"
+    heartbeat_user: str = ""
+    heartbeat_channel: str = ""
+    heartbeat_suppress_ok: bool = True
+
     # Agent settings (system_prompt is assembled from prompt files at startup)
     system_prompt: str = ""
     max_tool_iterations: int = 10
@@ -124,6 +130,10 @@ def load_config() -> Config:
         agent_user_id=os.getenv("AGENT_USER_ID", Config.agent_user_id),
         tabstack_api_key=os.getenv("TABSTACK_API_KEY", ""),
         tabstack_api_url=os.getenv("TABSTACK_API_URL", ""),
+        heartbeat_interval=os.getenv("HEARTBEAT_INTERVAL", Config.heartbeat_interval),
+        heartbeat_user=os.getenv("HEARTBEAT_USER", ""),
+        heartbeat_channel=os.getenv("HEARTBEAT_CHANNEL", ""),
+        heartbeat_suppress_ok=os.getenv("HEARTBEAT_SUPPRESS_OK", "true").lower() == "true",
         system_prompt=os.getenv("SYSTEM_PROMPT", Config.system_prompt),
         max_tool_iterations=int(os.getenv("MAX_TOOL_ITERATIONS", "10")),
     )

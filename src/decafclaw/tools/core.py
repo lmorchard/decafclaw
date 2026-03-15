@@ -95,10 +95,18 @@ def tool_think(ctx, content: str) -> str:
     return "OK"
 
 
+def tool_current_time(ctx) -> str:
+    """Return the current date and time."""
+    from datetime import datetime
+    now = datetime.now()
+    return now.strftime("%Y-%m-%d %H:%M:%S (%A)")
+
+
 CORE_TOOLS = {
     "web_fetch": tool_web_fetch,
     "debug_context": tool_debug_context,
     "think": tool_think,
+    "current_time": tool_current_time,
 }
 
 CORE_TOOL_DEFINITIONS = [
@@ -124,6 +132,18 @@ CORE_TOOL_DEFINITIONS = [
         "function": {
             "name": "debug_context",
             "description": "Dump the current conversation context for debugging. Writes full context as JSON to workspace/debug_context.json and a summary to workspace/debug_context_summary.txt. Returns a brief summary in the response. Use when asked to inspect or describe your context.",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "current_time",
+            "description": "Get the current date and time. Use this instead of shell commands like 'date'.",
             "parameters": {
                 "type": "object",
                 "properties": {},

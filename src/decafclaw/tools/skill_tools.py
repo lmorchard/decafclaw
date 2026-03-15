@@ -80,9 +80,10 @@ async def tool_activate_skill(ctx, name: str) -> str:
     if name in activated:
         return f"Skill '{name}' is already active."
 
-    # Check permissions
+    # Check permissions — admin heartbeat turns auto-approve (admin-authored)
+    is_heartbeat = getattr(ctx, "user_id", "") == "heartbeat-admin"
     perms = _load_permissions(ctx.config)
-    if perms.get(name) != "always":
+    if not is_heartbeat and perms.get(name) != "always":
         # Need confirmation
         approved, always = await _request_confirmation(ctx, name)
         if not approved:

@@ -213,6 +213,7 @@ class MattermostClient:
         from .agent import run_agent_turn
         from .archive import read_archive
         from .mcp_client import init_mcp, shutdown_mcp
+        from .heartbeat import run_heartbeat_timer
 
         await self.connect()
 
@@ -449,9 +450,35 @@ class MattermostClient:
         for sig in (signal.SIGTERM, signal.SIGINT):
             loop.add_signal_handler(sig, _signal_handler)
 
+        # Start heartbeat timer (runs even without a reporting channel)
+        heartbeat_task = None
+        from .heartbeat import parse_interval
+        if parse_interval(app_ctx.config.heartbeat_interval) is not None:
+            cycle_fn = self._make_heartbeat_cycle(
+                None, app_ctx.event_bus, app_ctx.config
+            )
+            heartbeat_task = asyncio.create_task(
+                run_heartbeat_timer(
+                    app_ctx.config, app_ctx.event_bus, shutdown_event,
+                    on_cycle=cycle_fn,
+                )
+            )
+            has_channel = app_ctx.config.heartbeat_channel or app_ctx.config.heartbeat_user
+            log.info(f"Heartbeat timer started (reporting={'enabled' if has_channel else 'silent'})")
+        else:
+            log.info("Heartbeat disabled (interval not set)")
+
         try:
             await self.listen(on_message_sync, shutdown_event=shutdown_event)
         finally:
+            # Stop heartbeat timer
+            if heartbeat_task:
+                heartbeat_task.cancel()
+                try:
+                    await heartbeat_task
+                except asyncio.CancelledError:
+                    pass
+
             if agent_tasks:
                 log.info(f"Waiting for {len(agent_tasks)} in-flight agent turn(s)...")
                 await asyncio.gather(*agent_tasks, return_exceptions=True)
@@ -570,3 +597,33 @@ class MattermostClient:
 
     async def close(self):
         await self._http.aclose()
+
+    # -- Heartbeat reporting ---------------------------------------------------
+
+    async def _get_dm_channel(self, user_id: str) -> str:
+        """Get or create a DM channel between the bot and a user."""
+        resp = await self._http.post("/channels/direct",
+                                     json=[self.bot_user_id, user_id])
+        resp.raise_for_status()
+        return resp.json()["id"]
+
+    async def _resolve_heartbeat_channel(self, config) -> str | None:
+        """Determine the channel for heartbeat reporting."""
+        if config.heartbeat_channel:
+            return config.heartbeat_channel
+        if config.heartbeat_user:
+            try:
+                return await self._get_dm_channel(config.heartbeat_user)
+            except Exception as e:
+                log.error(f"Could not create DM channel for heartbeat user: {e}")
+                return None
+        return None
+
+    def _make_heartbeat_cycle(self, _channel_id, event_bus, config):
+        """Create an on_cycle callback that runs sections and posts results as they complete."""
+
+        async def on_cycle():
+            from .tools.heartbeat_tools import _run_heartbeat_to_channel
+            await _run_heartbeat_to_channel(config, event_bus)
+
+        return on_cycle
