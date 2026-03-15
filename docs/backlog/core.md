@@ -36,21 +36,6 @@ regular users can't.
 - `execute_tool` checks permissions before running
 - Pairs with multi-user mapping (channel user → agent user)
 
-## Context stats debug tool
-
-Extend `debug_context` (or add `debug_context_stats`) to report token
-budget statistics. Needs access to agent internals — not portable.
-
-- Total prompt_tokens from last LLM call
-- Estimated breakdown: system prompt, tool definitions, conversation
-  summary (if present), history messages, free space remaining
-- Number of messages by role (user, assistant, tool)
-- Number of compactions performed in this conversation
-- Archive file size on disk
-
-Helps diagnose context pressure — "why is the agent forgetting things?"
-might be "tool definitions are eating 30% of your budget."
-
 ## Max message length
 
 Truncate or reject absurdly long messages before sending to the LLM.

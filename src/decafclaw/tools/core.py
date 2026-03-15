@@ -122,9 +122,99 @@ def tool_current_time(ctx) -> str:
     return now.strftime("%Y-%m-%d %H:%M:%S (%A)")
 
 
+def tool_context_stats(ctx) -> str:
+    """Report token budget statistics for the current conversation."""
+    log.info("[tool:context_stats]")
+
+    messages = getattr(ctx, "messages", [])
+    config = ctx.config
+
+    def _estimate_tokens(text):
+        """Rough token estimate: ~4 chars per token for English."""
+        return len(text) // 4 if text else 0
+
+    # System prompt
+    system_msg = next((m for m in messages if m.get("role") == "system"), None)
+    system_chars = len(system_msg.get("content", "")) if system_msg else 0
+    system_tokens = _estimate_tokens(system_msg.get("content", "") if system_msg else "")
+
+    # Tool definitions
+    from . import TOOL_DEFINITIONS
+    extra_tool_defs = getattr(ctx, "extra_tool_definitions", [])
+    from ..mcp_client import get_registry
+    mcp_registry = get_registry()
+    mcp_tool_defs = mcp_registry.get_tool_definitions() if mcp_registry else []
+    all_tool_defs = TOOL_DEFINITIONS + extra_tool_defs + mcp_tool_defs
+    tools_json = json.dumps(all_tool_defs)
+    tools_tokens = _estimate_tokens(tools_json)
+
+    # Messages by role
+    role_counts = {}
+    role_chars = {}
+    for msg in messages:
+        role = msg.get("role", "unknown")
+        role_counts[role] = role_counts.get(role, 0) + 1
+        content = msg.get("content") or ""
+        role_chars[role] = role_chars.get(role, 0) + len(content)
+        # Include tool call JSON in assistant message size
+        if msg.get("tool_calls"):
+            role_chars[role] += len(json.dumps(msg["tool_calls"]))
+
+    # History (everything except system prompt)
+    history_chars = sum(role_chars.get(r, 0) for r in role_chars if r != "system")
+    history_tokens = _estimate_tokens("x" * history_chars)
+
+    # Totals
+    total_estimated = system_tokens + tools_tokens + history_tokens
+    prompt_tokens_actual = getattr(ctx, "total_prompt_tokens", 0)
+    completion_tokens_actual = getattr(ctx, "total_completion_tokens", 0)
+    compaction_max = config.compaction_max_tokens
+
+    # Archive size
+    from ..archive import archive_path
+    conv_id = getattr(ctx, "conv_id", "unknown")
+    archive_file = archive_path(config, conv_id)
+    archive_size = archive_file.stat().st_size if archive_file.exists() else 0
+
+    lines = [
+        "## Context Stats\n",
+        f"**Compaction budget:** {compaction_max:,} tokens",
+        f"**Last prompt tokens (actual):** {prompt_tokens_actual:,}",
+        f"**Total completion tokens:** {completion_tokens_actual:,}",
+        "",
+        "### Estimated breakdown (approx)",
+        f"| Component | Chars | ~Tokens | % of budget |",
+        f"|-----------|-------|---------|-------------|",
+        f"| System prompt | {system_chars:,} | ~{system_tokens:,} | {system_tokens*100//compaction_max if compaction_max else 0}% |",
+        f"| Tool definitions ({len(all_tool_defs)}) | {len(tools_json):,} | ~{tools_tokens:,} | {tools_tokens*100//compaction_max if compaction_max else 0}% |",
+        f"| Conversation history | {history_chars:,} | ~{history_tokens:,} | {history_tokens*100//compaction_max if compaction_max else 0}% |",
+        f"| **Total estimated** | | **~{total_estimated:,}** | **{total_estimated*100//compaction_max if compaction_max else 0}%** |",
+        "",
+        "### Messages by role",
+    ]
+
+    for role in ["system", "user", "assistant", "tool"]:
+        count = role_counts.get(role, 0)
+        chars = role_chars.get(role, 0)
+        if count:
+            lines.append(f"- **{role}**: {count} message(s), {chars:,} chars")
+
+    lines.append(f"\n### Archive")
+    lines.append(f"- **Conversation ID:** {conv_id}")
+    lines.append(f"- **Archive file size:** {archive_size:,} bytes")
+
+    # Activated skills
+    activated = getattr(ctx, "activated_skills", set())
+    if activated:
+        lines.append(f"\n### Active skills: {', '.join(activated)}")
+
+    return "\n".join(lines)
+
+
 CORE_TOOLS = {
     "web_fetch": tool_web_fetch,
     "debug_context": tool_debug_context,
+    "context_stats": tool_context_stats,
     "think": tool_think,
     "current_time": tool_current_time,
 }
@@ -152,6 +242,18 @@ CORE_TOOL_DEFINITIONS = [
         "function": {
             "name": "debug_context",
             "description": "Dump the current conversation context for debugging. Writes full context as JSON to workspace/debug_context.json and a summary to workspace/debug_context_summary.txt. Returns a brief summary in the response. Use when asked to inspect or describe your context.",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "context_stats",
+            "description": "Show token budget statistics for the current conversation. Reports estimated breakdown of system prompt, tool definitions, and history versus the compaction budget. Use when asked about context size, token usage, or why the agent might be forgetting things.",
             "parameters": {
                 "type": "object",
                 "properties": {},
