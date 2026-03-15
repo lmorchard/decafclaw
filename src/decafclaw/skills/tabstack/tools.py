@@ -1,4 +1,4 @@
-"""Tabstack tools — web browsing, extraction, research, and automation."""
+"""Tabstack skill tools — web browsing, extraction, research, and automation."""
 
 import json
 import logging
@@ -6,13 +6,15 @@ from tabstack import AsyncTabstack
 
 log = logging.getLogger(__name__)
 
-# Initialized once from config via init_tabstack()
+# Initialized once via init(config) on skill activation
 _client: AsyncTabstack | None = None
 
 
-def init_tabstack(api_key: str, api_url: str | None = None):
-    """Initialize the Tabstack client. Call once at startup."""
+def init(config):
+    """Initialize the Tabstack client. Called by the skill loader on activation."""
     global _client
+    api_key = config.tabstack_api_key
+    api_url = config.tabstack_api_url or None
     kwargs = {"api_key": api_key}
     if api_url:
         kwargs["base_url"] = api_url
@@ -22,7 +24,7 @@ def init_tabstack(api_key: str, api_url: str | None = None):
 
 def _get_client() -> AsyncTabstack:
     if _client is None:
-        raise RuntimeError("Tabstack not initialized — is TABSTACK_API_KEY set?")
+        raise RuntimeError("Tabstack not initialized — skill not activated?")
     return _client
 
 
@@ -154,7 +156,7 @@ def _log_stream_event(prefix, event):
 
 # -- Registry ---------------------------------------------------------------
 
-TABSTACK_TOOLS = {
+TOOLS = {
     "tabstack_extract_markdown": tool_tabstack_extract_markdown,
     "tabstack_extract_json": tool_tabstack_extract_json,
     "tabstack_generate": tool_tabstack_generate,
@@ -162,7 +164,7 @@ TABSTACK_TOOLS = {
     "tabstack_research": tool_tabstack_research,
 }
 
-TABSTACK_TOOL_DEFINITIONS = [
+TOOL_DEFINITIONS = [
     {
         "type": "function",
         "function": {

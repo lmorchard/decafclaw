@@ -22,55 +22,6 @@ of its own distinct prompt file fed to the agend at the scheduled time,
 and each should be able to define it's own communication channel for
 reporting.
 
-## Skills system with progressive resource loading
-
-The framework for packaging and loading skills, designed for
-portability across agents (DecafClaw, OpenClaw, Nanobot, Picoclaw).
-
-**Approach: build tools first, extract framework second.**
-Build 2-3 more skills as plain tools (to-do list, chain-of-thought,
-wiki). See which ones the agent actually uses well and which gather
-dust. The winners earn portability. Design the framework from real
-usage patterns, not theory. Migration cost is low — moving a tool
-into a skill directory is a refactor, not a rewrite.
-
-**Structure (inspired by Claude Code's SKILL.md pattern):**
-```
-skills/
-  memory/
-    SKILL.md            # Manifest: name, description, frontmatter
-    tools.py            # Tool functions
-    reference.md        # Detailed docs (loaded on demand)
-    examples.md         # Usage examples (loaded on demand)
-```
-
-**Key design elements (from Claude Code analysis):**
-- `SKILL.md` as entrypoint with YAML frontmatter (name, description,
-  allowed tools, invocation control)
-- Description-based auto-discovery — agent sees lightweight index of
-  skill descriptions in system prompt, full content loads on demand
-- Supporting files loaded progressively — SKILL.md references them,
-  agent reads only when needed. Keeps base context lean.
-- Two invocation modes: user-invoked (slash commands in terminal) and
-  model-invoked (agent decides based on description match)
-
-**What to simplify vs Claude Code:**
-- Skip subagent forking initially (we already have context.fork())
-- Skip shell command injection in skill content
-- Skip per-skill tool permission restrictions
-- Start with: skill directory, SKILL.md manifest, tool registration,
-  description-based auto-discovery
-
-**Portability interface — what a host agent must provide:**
-- Context object with user/channel/thread metadata
-- Event bus for progress publishing
-- Workspace directory for file storage
-- Tool registry that accepts skill-provided tools
-- System prompt injection point for skill descriptions
-
-Parallels: Claude Code skills, OpenClaw progressive loading, MCP tool
-discovery, Agent Skills open standard (agentskills.io).
-
 ## MCP server support
 
 Connect external MCP servers as tool providers.

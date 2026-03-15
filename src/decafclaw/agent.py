@@ -97,9 +97,12 @@ async def run_agent_turn(ctx, user_message: str, history: list) -> str:
     for iteration in range(config.max_tool_iterations):
         log.debug(f"Agent iteration {iteration + 1}")
 
+        # Build tool list: base tools + any skill-activated tools on this context
+        all_tools = TOOL_DEFINITIONS + getattr(ctx, "extra_tool_definitions", [])
+
         # Call the LLM
         await ctx.publish("llm_start", iteration=iteration + 1)
-        response = await call_llm(config, messages, tools=TOOL_DEFINITIONS)
+        response = await call_llm(config, messages, tools=all_tools)
         await ctx.publish("llm_end", iteration=iteration + 1)
 
         # Track token usage
@@ -174,6 +177,9 @@ async def run_interactive(ctx):
     print("DecafClaw interactive mode. Type 'quit' to exit.")
     print(f"Model: {config.llm_model}")
     print(f"Tools: {', '.join(t['function']['name'] for t in TOOL_DEFINITIONS)}")
+    skills = getattr(config, "discovered_skills", [])
+    if skills:
+        print(f"Skills: {', '.join(s.name for s in skills)} (activate to use)")
     print()
 
     async def on_progress(event):
@@ -192,13 +198,16 @@ async def run_interactive(ctx):
             command = event.get("command", "")
             tool_name = event.get("tool", "tool")
             print(f"\n  \U0001f6a8 Confirm {tool_name}: {command}")
-            answer = await asyncio.to_thread(input, "  Approve? (y/n): ")
-            approved = answer.strip().lower() in ("y", "yes")
+            answer = await asyncio.to_thread(input, "  Approve? [y]es / [n]o / [a]lways: ")
+            choice = answer.strip().lower()
+            approved = choice in ("y", "yes", "a", "always")
+            always = choice in ("a", "always")
             await ctx.event_bus.publish({
                 "type": "tool_confirm_response",
                 "context_id": event.get("context_id"),
                 "tool": tool_name,
                 "approved": approved,
+                "always": always,
             })
 
     sub_id = ctx.event_bus.subscribe(on_progress)

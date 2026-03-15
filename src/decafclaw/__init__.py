@@ -20,15 +20,10 @@ def main():
 
     # Assemble system prompt from markdown files (bundled + workspace overrides)
     from .prompts import load_system_prompt
-    config.system_prompt = load_system_prompt(config)
+    config.system_prompt, config.discovered_skills = load_system_prompt(config)
 
     bus = EventBus()
     app_ctx = Context(config=config, event_bus=bus)
-
-    # Initialize Tabstack if configured
-    if config.tabstack_api_key:
-        from .tools.tabstack_tools import init_tabstack
-        init_tabstack(config.tabstack_api_key, config.tabstack_api_url or None)
 
     # If Mattermost is configured, run as a bot. Otherwise, interactive mode.
     if config.mattermost_url and config.mattermost_token:

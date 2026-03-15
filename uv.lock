@@ -49,6 +49,7 @@ dependencies = [
     { name = "httpx" },
     { name = "numpy" },
     { name = "python-dotenv" },
+    { name = "pyyaml" },
     { name = "tabstack" },
     { name = "websockets" },
 ]
@@ -70,6 +71,7 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "numpy", specifier = ">=2.4.3" },
     { name = "python-dotenv", specifier = ">=1.2.2" },
+    { name = "pyyaml", specifier = ">=6.0" },
     { name = "tabstack", specifier = ">=2.3.0" },
     { name = "watchfiles", marker = "extra == 'dev'", specifier = ">=1.0.0" },
     { name = "websockets", specifier = ">=16.0" },

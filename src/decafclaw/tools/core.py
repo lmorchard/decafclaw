@@ -3,6 +3,7 @@
 import httpx
 import json
 import logging
+from pathlib import Path
 
 log = logging.getLogger(__name__)
 
@@ -28,7 +29,7 @@ def tool_debug_context(ctx) -> str:
     if messages is None:
         return "[no context available]"
 
-    # Summarize each message
+    # Build full dump with message details
     lines = [f"Total messages: {len(messages)}\n"]
     for i, msg in enumerate(messages):
         role = msg.get("role", "?")
@@ -36,25 +37,50 @@ def tool_debug_context(ctx) -> str:
         tool_calls = msg.get("tool_calls")
         tool_call_id = msg.get("tool_call_id")
 
-        # Truncate long content
-        preview = content[:200] + "..." if len(content) > 200 else content
-
         if role == "system":
-            lines.append(f"[{i}] system: {preview}")
+            lines.append(f"[{i}] system: ({len(content)} chars)")
         elif role == "user":
-            lines.append(f"[{i}] user: {preview}")
+            lines.append(f"[{i}] user: {content[:200]}{'...' if len(content) > 200 else ''}")
         elif role == "assistant":
             if tool_calls:
                 names = [tc["function"]["name"] for tc in tool_calls]
                 lines.append(f"[{i}] assistant: (tool calls: {', '.join(names)})")
             else:
-                lines.append(f"[{i}] assistant: {preview}")
+                lines.append(f"[{i}] assistant: {content[:200]}{'...' if len(content) > 200 else ''}")
         elif role == "tool":
-            lines.append(f"[{i}] tool [{tool_call_id}]: {preview}")
+            lines.append(f"[{i}] tool [{tool_call_id}]: ({len(content)} chars)")
         else:
-            lines.append(f"[{i}] {role}: {preview}")
+            lines.append(f"[{i}] {role}: {content[:200]}{'...' if len(content) > 200 else ''}")
 
-    return "\n".join(lines)
+    # Build the full LLM context: messages + tool definitions
+    from . import TOOL_DEFINITIONS
+    extra_tool_defs = getattr(ctx, "extra_tool_definitions", [])
+    all_tool_defs = TOOL_DEFINITIONS + extra_tool_defs
+
+    tool_names = [t["function"]["name"] for t in all_tool_defs]
+    lines.append(f"\nTool definitions ({len(all_tool_defs)}): {', '.join(tool_names)}")
+    summary = "\n".join(lines)
+
+    full_context = {
+        "messages": messages,
+        "tools": all_tool_defs,
+    }
+
+    # Write full context (no truncation) to workspace file
+    workspace = ctx.config.workspace_path
+    workspace.mkdir(parents=True, exist_ok=True)
+    dump_path = workspace / "debug_context.json"
+    dump_path.write_text(json.dumps(full_context, indent=2, default=str))
+
+    # Also write the summary
+    summary_path = workspace / "debug_context_summary.txt"
+    summary_path.write_text(summary)
+
+    return (
+        f"{summary}\n\n"
+        f"Full context written to workspace/debug_context.json ({dump_path.stat().st_size} bytes)\n"
+        f"Summary written to workspace/debug_context_summary.txt"
+    )
 
 
 def tool_think(ctx, content: str) -> str:
@@ -74,7 +100,7 @@ CORE_TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "web_fetch",
-            "description": "Fetch raw HTML from a URL via HTTP GET. Use this when you need the original markup or headers. For clean readable content from articles or PDFs, prefer tabstack_extract_markdown instead.",
+            "description": "Fetch raw HTML from a URL via HTTP GET. Use this when you need the original markup or headers. If the tabstack skill is activated, prefer tabstack_extract_markdown for clean readable content.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -91,7 +117,7 @@ CORE_TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "debug_context",
-            "description": "Dump the current conversation context for debugging. Shows all messages the LLM can see, including system prompt, user messages, assistant responses, and tool results. Use when asked to inspect or describe your context. IMPORTANT: Always paste the full output of this tool verbatim in your response — do not summarize or paraphrase it.",
+            "description": "Dump the current conversation context for debugging. Writes full context as JSON to workspace/debug_context.json and a summary to workspace/debug_context_summary.txt. Returns a brief summary in the response. Use when asked to inspect or describe your context.",
             "parameters": {
                 "type": "object",
                 "properties": {},
