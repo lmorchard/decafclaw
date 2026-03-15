@@ -13,6 +13,7 @@ RestartSec=5
 TimeoutStopSec=15
 
 # Environment
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 EnvironmentFile=%h/decafclaw/.env
 
 # Logging
