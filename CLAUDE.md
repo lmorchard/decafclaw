@@ -87,12 +87,12 @@ Session docs live in `.claude/dev-sessions/YYYY-MM-DD-HHMM-slug/` with `spec.md`
 
 ## Keeping docs current
 
-When adding features, new tools, config options, or architectural changes:
-- **Add a `docs/` page for major features** — each significant feature should have its own documentation file (e.g., `docs/mcp-servers.md`, `docs/skills.md`). Cover config, usage, examples, and gotchas.
-- **Update `README.md`** — tool table, config table, architecture diagram, project structure
-- **Update `CLAUDE.md`** — conventions, key files, known gaps
-- **Update `docs/CONTEXT-MAP.md`** — if changing system prompt, tool definitions, or context assembly
-- These should stay in sync with the actual codebase. If you change code, check if the docs need updating too.
+Documentation lives in `docs/` — see `docs/index.md` for the full list. When adding features, new tools, config options, or architectural changes:
+- **Update or add a `docs/` page** — each major feature has its own page. If you're adding a new feature, create a new doc and add it to `docs/index.md`. If you're modifying an existing feature, update its doc.
+- **Update `CLAUDE.md`** — key files list, conventions, known gaps
+- **Update `README.md`** — tool table, config table, project structure
+- **Update `docs/context-map.md`** — if changing system prompt, tool definitions, or context assembly
+- Docs should stay in sync with the code. If you change behavior, check if the docs need updating too. Stale docs are worse than no docs.
 
 ## Known gaps
 
