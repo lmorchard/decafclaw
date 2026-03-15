@@ -72,6 +72,12 @@ def tool_debug_context(ctx) -> str:
     dump_path = workspace / "debug_context.json"
     dump_path.write_text(json.dumps(full_context, indent=2, default=str))
 
+    # Write system prompt as a separate readable file
+    system_msg = next((m for m in messages if m.get("role") == "system"), None)
+    if system_msg:
+        prompt_path = workspace / "debug_system_prompt.md"
+        prompt_path.write_text(system_msg.get("content", ""))
+
     # Also write the summary
     summary_path = workspace / "debug_context_summary.txt"
     summary_path.write_text(summary)
