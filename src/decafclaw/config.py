@@ -93,7 +93,7 @@ class Config:
 
     # Agent settings (system_prompt is assembled from prompt files at startup)
     system_prompt: str = ""
-    max_tool_iterations: int = 10
+    max_tool_iterations: int = 30
 
 
 def load_config() -> Config:
@@ -135,5 +135,5 @@ def load_config() -> Config:
         heartbeat_channel=os.getenv("HEARTBEAT_CHANNEL", ""),
         heartbeat_suppress_ok=os.getenv("HEARTBEAT_SUPPRESS_OK", "true").lower() == "true",
         system_prompt=os.getenv("SYSTEM_PROMPT", Config.system_prompt),
-        max_tool_iterations=int(os.getenv("MAX_TOOL_ITERATIONS", "10")),
+        max_tool_iterations=int(os.getenv("MAX_TOOL_ITERATIONS", "30")),
     )

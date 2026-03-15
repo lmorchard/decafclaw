@@ -73,7 +73,7 @@ Edit `.env` with your settings:
 | `LOG_LEVEL` | `INFO` | Logging level (`DEBUG` for verbose) |
 | `MAX_TOOL_ITERATIONS` | `10` | Max tool calls per agent turn |
 
-See [conversations.md](conversations.md) for compaction-specific settings.
+See [conversations.md](conversations.md) for compaction-specific settings and [heartbeat.md](heartbeat.md) for heartbeat settings (`HEARTBEAT_INTERVAL`, `HEARTBEAT_CHANNEL`, `HEARTBEAT_USER`, `HEARTBEAT_SUPPRESS_OK`).
 
 ## Run
 
@@ -98,7 +98,7 @@ If `MATTERMOST_URL` and `MATTERMOST_TOKEN` are set, the agent runs as a Mattermo
 ## Test
 
 ```bash
-make test     # Run pytest (128 tests)
+make test     # Run pytest
 make lint     # Compile-check all Python source files
 ```
 
@@ -106,5 +106,6 @@ make lint     # Compile-check all Python source files
 
 - **[Skills](skills.md)** — skills are discovered automatically from `data/{agent_id}/workspace/skills/`
 - **[MCP Servers](mcp-servers.md)** — configure in `data/{agent_id}/mcp_servers.json`
+- **[Heartbeat](heartbeat.md)** — set `HEARTBEAT_INTERVAL` and `HEARTBEAT_CHANNEL` or `HEARTBEAT_USER`
 - **[Semantic Search](semantic-search.md)** — run `make reindex` after first setup to build the embedding index
 - **Prompt customization** — place custom `SOUL.md`, `AGENT.md`, or `USER.md` in `data/{agent_id}/` to override bundled prompts

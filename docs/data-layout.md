@@ -10,6 +10,7 @@ data/{agent_id}/                    # Admin-level (read-only to agent)
   AGENT.md                          # Capabilities prompt override
   USER.md                           # Per-deployment user context
   COMPACTION.md                     # Custom compaction prompt
+  HEARTBEAT.md                      # Admin heartbeat tasks (auto-approves tools)
   skill_permissions.json            # Skill activation permissions
   mcp_servers.json                  # MCP server configuration
   skills/                           # Admin-managed skills
@@ -27,6 +28,9 @@ data/{agent_id}/                    # Admin-level (read-only to agent)
     skills/                         # Agent-writable skills (ClawHub installs)
       weather/
         SKILL.md
+    media/                          # Media files saved from tool results
+      mcp-image-1.png
+    HEARTBEAT.md                    # Agent-managed heartbeat tasks
     embeddings.db                   # Semantic search index (SQLite)
     debug_context.json              # Debug dump (last debug_context call)
     debug_context_summary.txt       # Debug summary
