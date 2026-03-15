@@ -1,0 +1,24 @@
+[Unit]
+Description=DecafClaw AI Agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/decafclaw
+ExecStart=%h/.local/bin/uv run decafclaw
+Restart=on-failure
+RestartSec=5
+# Stop gracefully (SIGTERM), then force after 15s
+TimeoutStopSec=15
+
+# Environment
+EnvironmentFile=%h/decafclaw/.env
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=decafclaw
+
+[Install]
+WantedBy=default.target

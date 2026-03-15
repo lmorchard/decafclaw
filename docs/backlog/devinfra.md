@@ -39,12 +39,6 @@ and agent decision. SQLite or structured log files.
 HTTP endpoint returning uptime, active conversations, stats.
 Useful once deployed as a persistent service.
 
-## Deployment
-
-- Proxmox VM as persistent service
-- Systemd user service (like picoclaw)
-- Docker container
-
 ## Code cleanup
 
 - Mattermost progress subscriber: refactor `elif` chain to dispatch dict pattern

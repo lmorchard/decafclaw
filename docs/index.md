@@ -3,6 +3,7 @@
 ## Getting Started
 
 - [Installation & Setup](installation.md) — Prerequisites, configuration, running
+- [Deployment](deployment.md) — Systemd service on a Debian VM
 
 ## Features
 
