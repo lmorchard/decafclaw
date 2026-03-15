@@ -535,9 +535,10 @@ class MattermostClient:
         """
         client = self
         compaction_post_id = None
+        compaction_start_time = 0
 
         async def on_progress(event):
-            nonlocal compaction_post_id
+            nonlocal compaction_post_id, compaction_start_time
             if event.get("context_id") != context_id:
                 return
             event_type = event.get("type")
@@ -566,13 +567,24 @@ class MattermostClient:
                     )
                 )
             elif event_type == "compaction_start" and channel_id:
+                import time as _time
+                compaction_start_time = _time.monotonic()
                 compaction_post_id = await client.send(
                     channel_id, "\U0001f4e6 Compacting conversation...",
                     root_id=root_id,
                 )
             elif event_type == "compaction_end" and compaction_post_id:
                 try:
-                    await client.delete_message(compaction_post_id)
+                    import time as _time
+                    elapsed = _time.monotonic() - compaction_start_time
+                    if elapsed < 60:
+                        duration = f"{elapsed:.0f}s"
+                    else:
+                        duration = f"{elapsed/60:.1f}m"
+                    await client.edit_message(
+                        compaction_post_id,
+                        f"\U0001f4e6 Conversation compacted ({duration})",
+                    )
                 except Exception:
                     pass  # best effort
                 compaction_post_id = None
