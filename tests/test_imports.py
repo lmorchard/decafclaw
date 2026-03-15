@@ -47,3 +47,22 @@ def test_import_archive():
 def test_import_compaction():
     from decafclaw.compaction import compact_history
     assert compact_history is not None
+
+
+def test_import_mattermost_client_methods():
+    """Verify MattermostClient has all expected methods (catches class boundary issues)."""
+    from decafclaw.mattermost import MattermostClient
+    assert hasattr(MattermostClient, "run")
+    assert hasattr(MattermostClient, "send")
+    assert hasattr(MattermostClient, "close")
+    assert hasattr(MattermostClient, "_make_heartbeat_cycle")
+    assert hasattr(MattermostClient, "_resolve_heartbeat_channel")
+    assert hasattr(MattermostClient, "_subscribe_progress")
+    assert hasattr(MattermostClient, "_poll_confirmation")
+
+
+def test_import_streaming():
+    from decafclaw.llm import call_llm_streaming
+    from decafclaw.mattermost import StreamingDisplay
+    assert call_llm_streaming is not None
+    assert StreamingDisplay is not None

@@ -14,6 +14,7 @@
 - [Eval Loop](eval-loop.md) — Test prompts and tools with real LLM calls
 - [Heartbeat](heartbeat.md) — Periodic agent wake-up for monitoring and recurring tasks
 - [File Attachments](file-attachments.md) — Upload files, MCP media, workspace image refs, rich cards
+- [Streaming](streaming.md) — Stream LLM tokens as they arrive, configurable throttle
 
 ## Architecture
 

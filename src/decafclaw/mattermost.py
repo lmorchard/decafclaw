@@ -368,9 +368,20 @@ class MattermostClient:
                 req_ctx.extra_tool_definitions = skill_state.get("extra_tool_definitions", [])
                 req_ctx.activated_skills = skill_state.get("activated_skills", set())
 
+            # Set up streaming display if streaming is enabled
+            streaming_display = None
+            if app_ctx.config.llm_streaming and placeholder_id:
+                streaming_display = StreamingDisplay(
+                    self, placeholder_id,
+                    throttle_ms=app_ctx.config.llm_stream_throttle_ms,
+                    show_tool_calls=app_ctx.config.llm_show_tool_calls,
+                )
+                req_ctx.on_stream_chunk = streaming_display.on_chunk
+
             sub_id = self._subscribe_progress(
                 req_ctx.event_bus, req_ctx.context_id, placeholder_id,
                 channel_id=channel_id, root_id=root_id,
+                streaming=app_ctx.config.llm_streaming,
             )
             conv_busy[conv_id] = True
             try:
@@ -397,13 +408,17 @@ class MattermostClient:
             response_text = response.text if hasattr(response, "text") else response
             response_media = response.media if hasattr(response, "media") else []
 
+            # Skip final edit if streaming already updated the placeholder
+            already_streamed = streaming_display and streaming_display._streamed
+
             if response_media:
                 # Edit placeholder with text, send files as separate message
                 from .media import upload_and_collect
-                if placeholder_id:
-                    await self.edit_message(placeholder_id, response_text)
-                else:
-                    await self.send(channel_id, response_text, root_id=root_id)
+                if not already_streamed:
+                    if placeholder_id:
+                        await self.edit_message(placeholder_id, response_text)
+                    else:
+                        await self.send(channel_id, response_text, root_id=root_id)
 
                 handler = MattermostMediaHandler(self._http)
                 file_ids = await upload_and_collect(
@@ -413,6 +428,8 @@ class MattermostClient:
                     await handler.send_with_media(
                         channel_id, "", file_ids, root_id=root_id
                     )
+            elif already_streamed:
+                pass  # streaming display already has the final text
             elif placeholder_id:
                 await self.edit_message(placeholder_id, response_text)
             else:
@@ -511,7 +528,7 @@ class MattermostClient:
             log.info("Shutdown complete")
 
     def _subscribe_progress(self, event_bus, context_id, placeholder_id,
-                            channel_id=None, root_id=None):
+                            channel_id=None, root_id=None, streaming=False):
         """Subscribe to progress events and update the placeholder message.
 
         Returns the subscription ID for later unsubscribe.
@@ -530,7 +547,7 @@ class MattermostClient:
             elif event_type == "tool_start" and placeholder_id:
                 tool_name = event.get("tool", "tool")
                 await client.edit_message(placeholder_id, f"\U0001f527 Running {tool_name}...")
-            elif event_type == "llm_start" and placeholder_id:
+            elif event_type == "llm_start" and placeholder_id and not streaming:
                 await client.edit_message(placeholder_id, "\U0001f4ad Thinking...")
             elif event_type == "tool_confirm_request" and placeholder_id:
                 # Edit placeholder to show confirmation request
@@ -651,3 +668,61 @@ class MattermostClient:
             await _run_heartbeat_to_channel(config, event_bus)
 
         return on_cycle
+
+
+# -- Streaming display ---------------------------------------------------------
+
+
+class StreamingDisplay:
+    """Manages throttled placeholder edits for Mattermost streaming."""
+
+    def __init__(self, client, post_id, throttle_ms=500, show_tool_calls=True):
+        self.client = client
+        self.post_id = post_id
+        self.throttle_ms = throttle_ms
+        self.show_tool_calls = show_tool_calls
+        self.buffer = ""
+        self.tool_suffix = ""
+        self.last_edit_time = 0
+        self._streamed = False  # True if any text was streamed
+
+    async def on_chunk(self, chunk_type, data):
+        """Callback for call_llm_streaming."""
+        if chunk_type == "text":
+            self.tool_suffix = ""  # clear tool suffix when text resumes
+            self.buffer += data
+            self._streamed = True
+            await self._maybe_edit()
+        elif chunk_type == "tool_call_start" and self.show_tool_calls:
+            self.tool_suffix = f"\n\U0001f527 Calling {data['name']}..."
+            await self._maybe_edit()
+        elif chunk_type == "done":
+            await self.flush()
+
+    async def _maybe_edit(self):
+        """Edit placeholder if throttle interval has passed."""
+        import time
+        now = time.monotonic()
+        if (now - self.last_edit_time) * 1000 < self.throttle_ms:
+            return
+        await self._do_edit()
+
+    async def _do_edit(self):
+        """Actually edit the placeholder."""
+        import time
+        self.last_edit_time = time.monotonic()
+        text = self.buffer + self.tool_suffix
+        if not text:
+            return
+        try:
+            await self.client.edit_message(self.post_id, text)
+        except Exception:
+            pass  # silently skip failed edits (429, etc.)
+
+    async def flush(self):
+        """Force final edit with complete text (no tool suffix)."""
+        if self.buffer:
+            try:
+                await self.client.edit_message(self.post_id, self.buffer)
+            except Exception:
+                pass
