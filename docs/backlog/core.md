@@ -3,6 +3,11 @@
 These shape the agent loop, context, and fundamental infrastructure.
 Not portable as skills — they're the platform skills run on.
 
+## More flexible config
+
+Environment variables only go so far for configuration, we should support
+JSON and/or YAML for more expressive and organized configuration.
+
 ## Conversation management
 
 - Per-user history in channels (not just per-channel)
