@@ -22,15 +22,6 @@ of its own distinct prompt file fed to the agend at the scheduled time,
 and each should be able to define it's own communication channel for
 reporting.
 
-## MCP server support
-
-Connect external MCP servers as tool providers.
-
-- Config lists endpoints (stdio or HTTP/SSE)
-- Discover tools on startup, merge into registry
-- `execute_tool` routes calls to the appropriate server
-- Could be bidirectional: DecafClaw exposes its own tools via MCP
-
 ## Linting and CI
 
 Remaining: ruff/flake8 integration, CI integration (GitHub Actions).

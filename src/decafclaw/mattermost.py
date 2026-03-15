@@ -212,8 +212,12 @@ class MattermostClient:
         """Run the bot: connect, listen for messages, and dispatch to the agent."""
         from .agent import run_agent_turn
         from .archive import read_archive
+        from .mcp_client import init_mcp, shutdown_mcp
 
         await self.connect()
+
+        # Connect MCP servers
+        await init_mcp(app_ctx.config)
 
         # Track in-flight agent tasks for graceful shutdown
         agent_tasks = set()
@@ -451,6 +455,7 @@ class MattermostClient:
             if agent_tasks:
                 log.info(f"Waiting for {len(agent_tasks)} in-flight agent turn(s)...")
                 await asyncio.gather(*agent_tasks, return_exceptions=True)
+            await shutdown_mcp()
             await self.close()
             log.info("Shutdown complete")
 

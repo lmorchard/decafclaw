@@ -97,8 +97,12 @@ async def run_agent_turn(ctx, user_message: str, history: list) -> str:
     for iteration in range(config.max_tool_iterations):
         log.debug(f"Agent iteration {iteration + 1}")
 
-        # Build tool list: base tools + any skill-activated tools on this context
+        # Build tool list: base + skill-activated + MCP tools
         all_tools = TOOL_DEFINITIONS + getattr(ctx, "extra_tool_definitions", [])
+        from .mcp_client import get_registry
+        mcp_registry = get_registry()
+        if mcp_registry:
+            all_tools = all_tools + mcp_registry.get_tool_definitions()
 
         # Call the LLM
         await ctx.publish("llm_start", iteration=iteration + 1)
@@ -174,12 +178,22 @@ async def run_interactive(ctx):
     ctx.thread_id = getattr(ctx, "thread_id", "") or ""
     ctx.conv_id = "interactive"
 
+    # Connect MCP servers
+    from .mcp_client import init_mcp, shutdown_mcp, get_registry
+    await init_mcp(config)
+
     print("DecafClaw interactive mode. Type 'quit' to exit.")
     print(f"Model: {config.llm_model}")
     print(f"Tools: {', '.join(t['function']['name'] for t in TOOL_DEFINITIONS)}")
     skills = getattr(config, "discovered_skills", [])
     if skills:
         print(f"Skills: {', '.join(s.name for s in skills)} (activate to use)")
+    mcp_registry = get_registry()
+    if mcp_registry and mcp_registry.servers:
+        parts = []
+        for name, state in mcp_registry.servers.items():
+            parts.append(f"{name} ({len(state.tools)} tools, {state.status})")
+        print(f"MCP: {', '.join(parts)}")
     print()
 
     async def on_progress(event):
@@ -238,3 +252,4 @@ async def run_interactive(ctx):
             print(f"\nagent> {response}\n")
     finally:
         ctx.event_bus.unsubscribe(sub_id)
+        await shutdown_mcp()

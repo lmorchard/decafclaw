@@ -29,7 +29,8 @@ A minimal AI agent for learning how agent frameworks work. Connects to Mattermos
 - `src/decafclaw/skills/` — Skills system: discovery, parsing, catalog, bundled skills
 - `src/decafclaw/skills/tabstack/` — Bundled Tabstack skill (SKILL.md + tools.py)
 - `src/decafclaw/eval/` — Eval harness (YAML tests, failure reflection)
-- `src/decafclaw/tools/` — Tool registry: core, memory, todo, workspace, shell, conversation, skill activation
+- `src/decafclaw/mcp_client.py` — MCP client: config, registry, server connections, auto-restart
+- `src/decafclaw/tools/` — Tool registry: core, memory, todo, workspace, shell, conversation, skill activation, MCP status
 
 ## Running
 
@@ -39,7 +40,7 @@ make dev          # Auto-restart on file changes (10s graceful shutdown)
 make debug        # With debug logging
 make run-pro      # With gemini-2.5-pro model
 make lint         # Compile-check all source files
-make test         # Run pytest (91 tests)
+make test         # Run pytest (128 tests)
 make reindex      # Rebuild embedding index from memory files
 make build-eval-fixtures  # Rebuild eval embedding fixtures
 ```
@@ -80,11 +81,14 @@ Session docs live in `.claude/dev-sessions/YYYY-MM-DD-HHMM-slug/` with `spec.md`
 - **Skills are lazy-loaded.** Skill catalog (name + description) is in the system prompt. Full content and tools only load when the agent calls `activate_skill`. Per-conversation activation via `ctx.extra_tools`.
 - **Skill permissions at agent level.** `data/{agent_id}/skill_permissions.json` — outside the workspace, so the agent can't grant itself permission. User confirms activation with yes/no/always.
 - **Bundled skills in `src/decafclaw/skills/`.** Each skill has SKILL.md (required) + tools.py (optional for native Python tools). Skill scan order: workspace > agent-level > bundled.
+- **MCP servers are globally available.** Configured in `data/{agent_id}/mcp_servers.json` (Claude Code compatible format). Connected eagerly on startup, tools namespaced as `mcp__<server>__<tool>`. Module-level global registry in `mcp_client.py`.
+- **MCP auto-restart.** Crashed stdio servers auto-reconnect on next tool call with exponential backoff (max 3 retries). Use `mcp_status(action="restart")` for manual control.
 - **LOG_LEVEL env var.** Set `LOG_LEVEL=DEBUG` for verbose logging (default: INFO).
 
 ## Keeping docs current
 
 When adding features, new tools, config options, or architectural changes:
+- **Add a `docs/` page for major features** — each significant feature should have its own documentation file (e.g., `docs/mcp-servers.md`, `docs/skills.md`). Cover config, usage, examples, and gotchas.
 - **Update `README.md`** — tool table, config table, architecture diagram, project structure
 - **Update `CLAUDE.md`** — conventions, key files, known gaps
 - **Update `docs/CONTEXT-MAP.md`** — if changing system prompt, tool definitions, or context assembly
