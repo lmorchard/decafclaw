@@ -82,11 +82,31 @@ def tool_debug_context(ctx) -> str:
     summary_path = workspace / "debug_context_summary.txt"
     summary_path.write_text(summary)
 
-    return (
+    summary_text = (
         f"{summary}\n\n"
         f"Full context written to workspace/debug_context.json ({dump_path.stat().st_size} bytes)\n"
         f"Summary written to workspace/debug_context_summary.txt"
     )
+
+    # Return media attachments for the JSON and prompt files
+    from ..media import ToolResult
+    media = [
+        {
+            "type": "file",
+            "filename": "debug_context.json",
+            "data": dump_path.read_bytes(),
+            "content_type": "application/json",
+        },
+    ]
+    if system_msg:
+        media.append({
+            "type": "file",
+            "filename": "debug_system_prompt.md",
+            "data": (system_msg.get("content", "")).encode(),
+            "content_type": "text/markdown",
+        })
+
+    return ToolResult(text=summary_text, media=media)
 
 
 def tool_think(ctx, content: str) -> str:

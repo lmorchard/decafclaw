@@ -160,11 +160,16 @@ def _convert_tool_definition(server_name: str, mcp_tool) -> dict:
     }
 
 
-def _convert_mcp_response(result) -> str:
-    """Convert an MCP tools/call response to a plain string.
+def _convert_mcp_response(result):
+    """Convert an MCP tools/call response to a ToolResult.
 
-    Handles text, image/audio placeholders, and errors.
+    Handles text, image/audio media, and errors.
+    Returns a ToolResult with text and optional media attachments.
     """
+    import base64
+    import mimetypes as _mimetypes
+    from .media import ToolResult
+
     # Handle dict or SDK result object
     if isinstance(result, dict):
         is_error = result.get("isError", False)
@@ -174,6 +179,10 @@ def _convert_mcp_response(result) -> str:
         content = getattr(result, "content", [])
 
     parts = []
+    media = []
+    img_count = 0
+    audio_count = 0
+
     for item in content:
         if isinstance(item, dict):
             item_type = item.get("type", "")
@@ -185,19 +194,53 @@ def _convert_mcp_response(result) -> str:
         if item_type == "text":
             parts.append(text)
         elif item_type == "image":
-            data = item.get("data", "") if isinstance(item, dict) else getattr(item, "data", "")
-            parts.append(f"[image: {len(data)} bytes]")
+            data_str = item.get("data", "") if isinstance(item, dict) else getattr(item, "data", "")
+            mime_type = (item.get("mimeType", "") if isinstance(item, dict)
+                        else getattr(item, "mimeType", "")) or "image/png"
+            ext = _mimetypes.guess_extension(mime_type) or ".png"
+
+            try:
+                data = base64.b64decode(data_str)
+            except Exception:
+                data = data_str.encode() if isinstance(data_str, str) else data_str
+
+            img_count += 1
+            media.append({
+                "type": "file",
+                "filename": f"mcp-image-{img_count}{ext}",
+                "data": data,
+                "content_type": mime_type,
+            })
+            parts.append("Image attached.")
+
         elif item_type == "audio":
-            data = item.get("data", "") if isinstance(item, dict) else getattr(item, "data", "")
-            parts.append(f"[audio: {len(data)} bytes]")
+            data_str = item.get("data", "") if isinstance(item, dict) else getattr(item, "data", "")
+            mime_type = (item.get("mimeType", "") if isinstance(item, dict)
+                        else getattr(item, "mimeType", "")) or "audio/wav"
+            ext = _mimetypes.guess_extension(mime_type) or ".wav"
+
+            try:
+                data = base64.b64decode(data_str)
+            except Exception:
+                data = data_str.encode() if isinstance(data_str, str) else data_str
+
+            audio_count += 1
+            media.append({
+                "type": "file",
+                "filename": f"mcp-audio-{audio_count}{ext}",
+                "data": data,
+                "content_type": mime_type,
+            })
+            parts.append("Audio attached.")
+
         else:
             parts.append(f"[{item_type}: unsupported content type]")
 
     text = "\n".join(parts) if parts else "(no content)"
 
     if is_error:
-        return f"[error: {text}]"
-    return text
+        return ToolResult(text=f"[error: {text}]", media=media)
+    return ToolResult(text=text, media=media)
 
 
 # -- MCP Registry --------------------------------------------------------------
@@ -278,7 +321,7 @@ class MCPRegistry:
             state.retry_count = 0
             log.info(f"MCP server {name!r} connected: {len(state.tools)} tool(s)")
 
-        except Exception as e:
+        except BaseException as e:
             log.warning(f"MCP server {name!r} failed to connect: {e}")
             state.status = "failed"
             # Clean up the exit stack on failure

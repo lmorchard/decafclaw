@@ -36,7 +36,6 @@ class MattermostClient:
             base_url=self.url + "/api/v4",
             headers={
                 "Authorization": f"Bearer {self.token}",
-                "Content-Type": "application/json",
             },
             timeout=30,
         )
@@ -352,6 +351,7 @@ class MattermostClient:
             history = histories[hist_id]
 
             # Fork a request context with user/channel metadata
+            from .media import MattermostMediaHandler
             req_ctx = app_ctx.fork(
                 user_id=app_ctx.config.agent_user_id,
                 channel_id=channel_id,
@@ -359,6 +359,7 @@ class MattermostClient:
                 thread_id=root_id or "",
                 conv_id=conv_id,
             )
+            req_ctx.media_handler = MattermostMediaHandler(self._http)
 
             # Restore per-conversation skill state from previous turns
             skill_state = conv_skill_state.get(conv_id)
@@ -374,6 +375,10 @@ class MattermostClient:
             conv_busy[conv_id] = True
             try:
                 response = await run_agent_turn(req_ctx, combined_text, history)
+            except BaseException as e:
+                log.error(f"Agent turn failed: {e}")
+                from .media import ToolResult
+                response = ToolResult(text=f"[error: agent turn failed: {e}]")
             finally:
                 req_ctx.event_bus.unsubscribe(sub_id)
                 last_response_time[conv_id] = time.monotonic()
@@ -388,11 +393,30 @@ class MattermostClient:
                         "activated_skills": getattr(req_ctx, "activated_skills", set()),
                     }
 
-            # Edit placeholder with the actual response
-            if placeholder_id:
-                await self.edit_message(placeholder_id, response)
+            # Post the response, handling media if present
+            response_text = response.text if hasattr(response, "text") else response
+            response_media = response.media if hasattr(response, "media") else []
+
+            if response_media:
+                # Edit placeholder with text, send files as separate message
+                from .media import upload_and_collect
+                if placeholder_id:
+                    await self.edit_message(placeholder_id, response_text)
+                else:
+                    await self.send(channel_id, response_text, root_id=root_id)
+
+                handler = MattermostMediaHandler(self._http)
+                file_ids = await upload_and_collect(
+                    handler, channel_id, response_media
+                )
+                if file_ids:
+                    await handler.send_with_media(
+                        channel_id, "", file_ids, root_id=root_id
+                    )
+            elif placeholder_id:
+                await self.edit_message(placeholder_id, response_text)
             else:
-                await self.send(channel_id, response, root_id=root_id)
+                await self.send(channel_id, response_text, root_id=root_id)
 
         async def _debounce_fire(conv_id, channel_id):
             """Wait for debounce window, then process accumulated messages."""

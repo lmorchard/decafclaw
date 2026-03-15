@@ -68,10 +68,41 @@ def tool_workspace_list(ctx, path: str = ".") -> str:
         return f"[error: permission denied: {path}]"
 
 
+def tool_file_share(ctx, path: str, message: str = "") -> "ToolResult":
+    """Share a file from the workspace as an attachment."""
+    import mimetypes
+    from ..media import ToolResult
+
+    log.info(f"[tool:file_share] {path}")
+    resolved = _resolve_safe(ctx.config, path)
+    if resolved is None:
+        return ToolResult(text=f"[error: path '{path}' is outside the workspace]")
+    if not resolved.exists():
+        return ToolResult(text=f"[error: file not found: {path}]")
+    if resolved.is_dir():
+        return ToolResult(text=f"[error: '{path}' is a directory, not a file]")
+
+    try:
+        data = resolved.read_bytes()
+        content_type = mimetypes.guess_type(str(resolved))[0] or "application/octet-stream"
+        return ToolResult(
+            text=message or f"Sharing {path}",
+            media=[{
+                "type": "file",
+                "filename": resolved.name,
+                "data": data,
+                "content_type": content_type,
+            }],
+        )
+    except PermissionError:
+        return ToolResult(text=f"[error: permission denied: {path}]")
+
+
 WORKSPACE_TOOLS = {
     "workspace_read": tool_workspace_read,
     "workspace_write": tool_workspace_write,
     "workspace_list": tool_workspace_list,
+    "file_share": tool_file_share,
 }
 
 WORKSPACE_TOOL_DEFINITIONS = [
@@ -110,6 +141,27 @@ WORKSPACE_TOOL_DEFINITIONS = [
                     },
                 },
                 "required": ["path", "content"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "file_share",
+            "description": "Share a file from the workspace as an attachment in the conversation. The file will be uploaded and displayed inline (images) or as a download (other files). Use this to share reports, images, logs, or any workspace file with the user.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Relative path within the workspace",
+                    },
+                    "message": {
+                        "type": "string",
+                        "description": "Optional message to include with the file",
+                    },
+                },
+                "required": ["path"],
             },
         },
     },

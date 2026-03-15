@@ -33,40 +33,50 @@ async def tool_mcp_status(ctx, action: str = "status", server: str = "") -> str:
 
 
 async def _restart(ctx, registry, server_name):
-    """Restart MCP servers, re-reading config."""
-    from ..mcp_client import get_registry, load_mcp_config, init_mcp, shutdown_mcp
+    """Restart MCP servers by scheduling a restart and reporting status.
 
-    if server_name:
-        # Restart a specific server
-        if not registry or server_name not in registry.servers:
-            return f"[error: MCP server '{server_name}' not found]"
+    Due to anyio/asyncio cancel scope incompatibilities, MCP servers
+    cannot be safely disconnected from within a tool call. Instead,
+    we mark servers for reconnection — the auto-restart mechanism
+    will reconnect them on the next tool call.
 
-        # Re-read config to pick up changes
-        configs = load_mcp_config(ctx.config)
-        new_config = next((c for c in configs if c.name == server_name), None)
-        if not new_config:
-            return f"[error: MCP server '{server_name}' not found in config]"
+    For a full reload (all servers), we connect new servers without
+    disconnecting old ones first, then swap the registry.
+    """
+    from ..mcp_client import load_mcp_config, MCPRegistry
+    import decafclaw.mcp_client as _mcp
 
-        await registry.disconnect_server(server_name)
-        await registry.connect_server(new_config)
+    try:
+        if server_name:
+            if not registry or server_name not in registry.servers:
+                return f"[error: MCP server '{server_name}' not found]"
 
-        state = registry.servers.get(server_name)
-        status = state.status if state else "unknown"
-        tool_count = len(state.tools) if state else 0
-        return f"MCP server '{server_name}' restarted: {status}, {tool_count} tool(s)"
+            # Mark server as failed — auto-restart will reconnect on next call
+            state = registry.servers.get(server_name)
+            if state:
+                state.status = "failed"
+                state.retry_count = 0  # reset so auto-restart kicks in
+            return f"MCP server '{server_name}' marked for reconnection. It will reconnect on next use."
 
-    else:
-        # Restart all — full reload
-        await shutdown_mcp()
-        await init_mcp(ctx.config)
+        else:
+            # Full reload: create a fresh registry and connect
+            configs = load_mcp_config(ctx.config)
+            if not configs:
+                return "MCP servers reloaded: no servers configured."
 
-        registry = get_registry()
-        if not registry or not registry.servers:
-            return "MCP servers reloaded: no servers configured."
+            new_registry = MCPRegistry()
+            await new_registry.connect_all(configs)
 
-        connected = sum(1 for s in registry.servers.values() if s.status == "connected")
-        total_tools = sum(len(s.tools) for s in registry.servers.values())
-        return f"MCP servers reloaded: {connected} connected, {total_tools} tool(s)"
+            # Swap the global registry (old one's connections will be GC'd)
+            _mcp._registry = new_registry
+
+            connected = sum(1 for s in new_registry.servers.values() if s.status == "connected")
+            total_tools = sum(len(s.tools) for s in new_registry.servers.values())
+            return f"MCP servers reloaded: {connected} connected, {total_tools} tool(s)"
+
+    except BaseException as e:
+        log.error(f"MCP restart failed: {e}", exc_info=True)
+        return f"[error: MCP restart failed: {e}]"
 
 
 MCP_TOOLS = {

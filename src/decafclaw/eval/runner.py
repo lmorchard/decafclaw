@@ -145,7 +145,8 @@ async def run_test(config: Config, test_case: dict) -> dict:
         ctx.total_completion_tokens = 0
 
         start = time.monotonic()
-        response = await run_agent_turn(ctx, turn["input"], history)
+        result = await run_agent_turn(ctx, turn["input"], history)
+        response = result.text if hasattr(result, "text") else (result or "")
         duration = time.monotonic() - start
         total_duration += duration
 

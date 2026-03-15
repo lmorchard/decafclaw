@@ -31,7 +31,8 @@ A minimal AI agent for learning how agent frameworks work. Connects to Mattermos
 - `src/decafclaw/eval/` — Eval harness (YAML tests, failure reflection)
 - `src/decafclaw/mcp_client.py` — MCP client: config, registry, server connections, auto-restart
 - `src/decafclaw/heartbeat.py` — Heartbeat: periodic wake-up, section parsing, timer, cycle runner
-- `src/decafclaw/tools/` — Tool registry: core, memory, todo, workspace, shell, conversation, skill activation, MCP status
+- `src/decafclaw/media.py` — Media handling: ToolResult, MediaHandler interface, workspace ref scanning
+- `src/decafclaw/tools/` — Tool registry: core, memory, todo, workspace, file_share, shell, conversation, skill activation, MCP status
 
 ## Running
 
