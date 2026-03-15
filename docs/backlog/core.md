@@ -72,7 +72,3 @@ Broader concerns:
 Related: anyio and raw asyncio don't always play nicely together.
 The MCP SDK uses anyio internally while DecafClaw uses raw asyncio.
 
-## Streaming LLM responses
-
-Stream tokens to the placeholder as they arrive instead of waiting for
-the full response. The async architecture already supports this.

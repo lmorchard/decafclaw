@@ -109,9 +109,16 @@ async def run_agent_turn(ctx, user_message: str, history: list):
         if mcp_registry:
             all_tools = all_tools + mcp_registry.get_tool_definitions()
 
-        # Call the LLM
+        # Call the LLM (streaming or all-at-once based on config)
         await ctx.publish("llm_start", iteration=iteration + 1)
-        response = await call_llm(config, messages, tools=all_tools)
+        if config.llm_streaming:
+            from .llm import call_llm_streaming
+            on_chunk = getattr(ctx, "on_stream_chunk", None)
+            response = await call_llm_streaming(
+                config, messages, tools=all_tools, on_chunk=on_chunk
+            )
+        else:
+            response = await call_llm(config, messages, tools=all_tools)
         await ctx.publish("llm_end", iteration=iteration + 1)
 
         # Track token usage
@@ -199,6 +206,16 @@ async def run_interactive(ctx):
     # Set up media handler for terminal mode
     from .media import TerminalMediaHandler
     ctx.media_handler = TerminalMediaHandler(config.workspace_path)
+
+    # Set up streaming callback for terminal mode
+    if config.llm_streaming:
+        async def _terminal_stream_chunk(chunk_type, data):
+            if chunk_type == "text":
+                print(data, end="", flush=True)
+            elif chunk_type == "tool_call_start":
+                print(f"\n  [calling {data['name']}...]", flush=True)
+
+        ctx.on_stream_chunk = _terminal_stream_chunk
 
     # Connect MCP servers
     from .mcp_client import init_mcp, shutdown_mcp, get_registry
@@ -296,8 +313,20 @@ async def run_interactive(ctx):
 
             result = await run_agent_turn(ctx, user_input, history)
             from .media import process_media_for_terminal
-            output = process_media_for_terminal(result, config.workspace_path)
-            print(f"\nagent> {output}\n")
+
+            if config.llm_streaming:
+                # Text was already printed token-by-token; handle media only
+                if result.media:
+                    output = process_media_for_terminal(result, config.workspace_path)
+                    # Print just the media lines (text was already streamed)
+                    media_lines = [l for l in output.split("\n")
+                                   if l.startswith("[file saved:") or l.startswith("[image:")]
+                    if media_lines:
+                        print("\n" + "\n".join(media_lines))
+                print()  # final newline after streamed text
+            else:
+                output = process_media_for_terminal(result, config.workspace_path)
+                print(f"\nagent> {output}\n")
     finally:
         shutdown_event.set()
         heartbeat_task.cancel()

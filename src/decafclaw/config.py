@@ -91,6 +91,11 @@ class Config:
     heartbeat_channel: str = ""
     heartbeat_suppress_ok: bool = True
 
+    # Streaming settings
+    llm_streaming: bool = True
+    llm_show_tool_calls: bool = True
+    llm_stream_throttle_ms: int = 200
+
     # Agent settings (system_prompt is assembled from prompt files at startup)
     system_prompt: str = ""
     max_tool_iterations: int = 30
@@ -134,6 +139,9 @@ def load_config() -> Config:
         heartbeat_user=os.getenv("HEARTBEAT_USER", ""),
         heartbeat_channel=os.getenv("HEARTBEAT_CHANNEL", ""),
         heartbeat_suppress_ok=os.getenv("HEARTBEAT_SUPPRESS_OK", "true").lower() == "true",
+        llm_streaming=os.getenv("LLM_STREAMING", "true").lower() == "true",
+        llm_show_tool_calls=os.getenv("LLM_SHOW_TOOL_CALLS", "true").lower() == "true",
+        llm_stream_throttle_ms=int(os.getenv("LLM_STREAM_THROTTLE_MS", "200")),
         system_prompt=os.getenv("SYSTEM_PROMPT", Config.system_prompt),
         max_tool_iterations=int(os.getenv("MAX_TOOL_ITERATIONS", "30")),
     )

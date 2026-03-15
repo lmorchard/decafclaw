@@ -71,9 +71,17 @@ Edit `.env` with your settings:
 | `DATA_HOME` | `./data` | Root directory for agent data |
 | `AGENT_ID` | `decafclaw` | Agent identifier (used in data paths) |
 | `LOG_LEVEL` | `INFO` | Logging level (`DEBUG` for verbose) |
-| `MAX_TOOL_ITERATIONS` | `10` | Max tool calls per agent turn |
+| `MAX_TOOL_ITERATIONS` | `30` | Max tool calls per agent turn |
 
-See [conversations.md](conversations.md) for compaction-specific settings and [heartbeat.md](heartbeat.md) for heartbeat settings (`HEARTBEAT_INTERVAL`, `HEARTBEAT_CHANNEL`, `HEARTBEAT_USER`, `HEARTBEAT_SUPPRESS_OK`).
+### Streaming
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `LLM_STREAMING` | `true` | Stream tokens as they arrive. `false` = wait for complete response. |
+| `LLM_SHOW_TOOL_CALLS` | `true` | Show tool call names during streaming. |
+| `LLM_STREAM_THROTTLE_MS` | `200` | Min interval between Mattermost placeholder edits (ms). |
+
+See also [streaming.md](streaming.md), [conversations.md](conversations.md) for compaction settings, and [heartbeat.md](heartbeat.md) for heartbeat settings.
 
 ## Run
 
