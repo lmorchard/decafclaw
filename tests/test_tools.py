@@ -86,3 +86,25 @@ async def test_execute_tool_returns_tool_result(ctx):
     result = await execute_tool(ctx, "think", {"content": "test"})
     assert isinstance(result, ToolResult)
     assert result.media == []
+
+
+def test_context_stats(ctx):
+    """context_stats returns a formatted stats report."""
+    from decafclaw.tools.core import tool_context_stats
+    # Set up minimal context state
+    ctx.messages = [
+        {"role": "system", "content": "You are a test agent."},
+        {"role": "user", "content": "Hello"},
+        {"role": "assistant", "content": "Hi there!"},
+    ]
+    ctx.total_prompt_tokens = 100
+    ctx.total_completion_tokens = 20
+
+    result = tool_context_stats(ctx)
+    assert "Context Stats" in result
+    assert "System prompt" in result
+    assert "Tool definitions" in result
+    assert "Conversation history" in result
+    assert "100" in result  # prompt tokens
+    assert "user" in result
+    assert "assistant" in result
