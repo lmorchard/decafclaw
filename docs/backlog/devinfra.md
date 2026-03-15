@@ -2,17 +2,6 @@
 
 Tools, testing, deployment, and observability.
 
-## Heartbeat prompt
-
-We should implement a system that fires every 30 minutes (configurable)
-that wakes up the agent, feeds it a HEARTBEAT.md from workspace or the
-agent directory above. The agent should then perform the prompts therein
-accordingly. This would be good for tasks that require periodic checking, 
-also one-off tasks that can be removed from HEARTBEAT.md after first run.
-
-We might want to allow configuration of a specific a communication method,
-channel, etc for the agent to report results from HEARTBEAT.md prompts.
-
 ## Scheduled tasks
 
 Whereas HEARTBEAT.md runs periodically, scheduled tasks can run at specific

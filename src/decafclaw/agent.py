@@ -180,6 +180,7 @@ async def run_interactive(ctx):
 
     # Connect MCP servers
     from .mcp_client import init_mcp, shutdown_mcp, get_registry
+    from .heartbeat import run_heartbeat_timer
     await init_mcp(config)
 
     print("DecafClaw interactive mode. Type 'quit' to exit.")
@@ -235,6 +236,29 @@ async def run_interactive(ctx):
     else:
         history = []
 
+    # Start heartbeat timer
+    shutdown_event = asyncio.Event()
+    suppress_ok = config.heartbeat_suppress_ok
+
+    async def interactive_heartbeat_reporter(results):
+        from datetime import datetime
+        has_alerts = any(not r["is_ok"] for r in results)
+        if not has_alerts and suppress_ok:
+            return
+        print(f"\n--- Heartbeat \u2014 {datetime.now().strftime('%Y-%m-%d %H:%M')} ---")
+        for result in results:
+            if result["is_ok"] and suppress_ok:
+                continue
+            print(f"[{result['title']}] {result['response']}")
+        print()
+
+    heartbeat_task = asyncio.create_task(
+        run_heartbeat_timer(
+            config, ctx.event_bus, shutdown_event,
+            on_results=interactive_heartbeat_reporter,
+        )
+    )
+
     try:
         while True:
             try:
@@ -251,5 +275,11 @@ async def run_interactive(ctx):
             response = await run_agent_turn(ctx, user_input, history)
             print(f"\nagent> {response}\n")
     finally:
+        shutdown_event.set()
+        heartbeat_task.cancel()
+        try:
+            await heartbeat_task
+        except asyncio.CancelledError:
+            pass
         ctx.event_bus.unsubscribe(sub_id)
         await shutdown_mcp()

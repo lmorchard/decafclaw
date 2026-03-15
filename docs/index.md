@@ -12,6 +12,7 @@
 - [Conversations](conversations.md) — Archive, resume, and compaction of conversation history
 - [Semantic Search](semantic-search.md) — Embedding-based search over memories and conversations
 - [Eval Loop](eval-loop.md) — Test prompts and tools with real LLM calls
+- [Heartbeat](heartbeat.md) — Periodic agent wake-up for monitoring and recurring tasks
 
 ## Architecture
 
