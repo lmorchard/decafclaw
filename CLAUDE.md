@@ -65,6 +65,11 @@ Session docs live in `.claude/dev-sessions/YYYY-MM-DD-HHMM-slug/` with `spec.md`
 - **Events for progress.** Tools publish `tool_status` events via `ctx.publish()`. The agent loop publishes `llm_start/end` and `tool_start/end`. Subscribers (Mattermost, terminal) handle display.
 - **Mattermost concerns stay in `mattermost.py`.** Progress formatting, placeholder management, threading logic — all in `MattermostClient`.
 - **Config via env vars.** All config comes from `.env` / environment. Dataclass defaults in `config.py`.
+- **Use `dataclasses.replace()` to copy Config.** Never copy fields manually — new fields get silently lost. This caused a real bug with semantic search in the eval runner.
+- **Check for running bot instances before starting one.** Only one websocket connection per Mattermost bot account. A second instance silently misses events.
+- **Test live in Mattermost after merging**, not just lint/pytest. Real agent behavior differs from unit tests.
+- **Tool descriptions are a control surface.** Wording changes ("MUST", "NEVER", checklists, "prefer X over Y") measurably change LLM behavior. Use the eval loop to validate.
+- **Group tools by noun, not verb.** `conversation_search` + `conversation_compact` in one module, not scattered across core.
 - **Commit after each logical step.** Lint and test before committing.
 - **One agent turn per conversation at a time.** Concurrent conversations (different threads/channels) are fine.
 - **Memory lives in `data/{agent_id}/workspace/memories/`.** Daily markdown files, append-only. Tools read context from ctx, not config.
