@@ -3,6 +3,9 @@
 # Usage: ./scripts/deploy.sh
 set -euo pipefail
 
+# Ensure uv/uvx/npx are on PATH (needed for non-interactive SSH)
+export PATH="$HOME/.local/bin:$PATH"
+
 REPO_DIR="$HOME/decafclaw"
 cd "$REPO_DIR"
 
