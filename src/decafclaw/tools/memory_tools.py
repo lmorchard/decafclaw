@@ -1,6 +1,7 @@
 """Memory tools — save, search, and recall memories."""
 
 import logging
+
 from .. import memory
 
 log = logging.getLogger(__name__)
@@ -20,8 +21,9 @@ async def tool_memory_save(ctx, tags: list[str], content: str) -> str:
     # Index for semantic search if enabled
     if ctx.config.memory_search_strategy == "semantic":
         try:
-            from .. import embeddings
             from datetime import datetime
+
+            from .. import embeddings
             tag_str = ", ".join(tags)
             channel_name = getattr(ctx, "channel_name", "")
             channel_id = getattr(ctx, "channel_id", "")

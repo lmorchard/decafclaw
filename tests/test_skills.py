@@ -5,9 +5,11 @@ from pathlib import Path
 
 import pytest
 
-from decafclaw.skills import parse_skill_md, discover_skills, build_catalog_text, SkillInfo
+from decafclaw.skills import SkillInfo, build_catalog_text, discover_skills, parse_skill_md
 from decafclaw.tools.skill_tools import (
-    tool_activate_skill, _load_permissions, _save_permission,
+    _load_permissions,
+    _save_permission,
+    tool_activate_skill,
 )
 
 

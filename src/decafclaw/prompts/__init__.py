@@ -29,7 +29,7 @@ def load_system_prompt(config):
     Returns:
         (prompt_text, discovered_skills) tuple
     """
-    from ..skills import discover_skills, build_catalog_text
+    from ..skills import build_catalog_text, discover_skills
 
     agent_dir = config.agent_path
     sections = []

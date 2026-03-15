@@ -1,8 +1,11 @@
 """Tests for workspace file tools — path sandboxing and file sharing."""
 
 from decafclaw.tools.workspace_tools import (
-    tool_workspace_read, tool_workspace_write, tool_workspace_list,
-    tool_file_share, _resolve_safe,
+    _resolve_safe,
+    tool_file_share,
+    tool_workspace_list,
+    tool_workspace_read,
+    tool_workspace_write,
 )
 
 
@@ -23,7 +26,7 @@ def test_resolve_safe_rejects_absolute(config):
 
 
 def test_write_and_read(ctx):
-    result = tool_workspace_write(ctx, "test.txt", "hello world")
+    tool_workspace_write(ctx, "test.txt", "hello world")
     assert "hello world" in tool_workspace_read(ctx, "test.txt")
 
 

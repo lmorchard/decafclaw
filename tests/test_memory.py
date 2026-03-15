@@ -1,6 +1,6 @@
 """Tests for memory operations."""
 
-from decafclaw.memory import save_entry, search_entries, recent_entries, memory_dir
+from decafclaw.memory import memory_dir, recent_entries, save_entry, search_entries
 
 
 def test_memory_dir(config):

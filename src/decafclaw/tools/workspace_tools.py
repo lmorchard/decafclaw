@@ -68,9 +68,10 @@ def tool_workspace_list(ctx, path: str = ".") -> str:
         return f"[error: permission denied: {path}]"
 
 
-def tool_file_share(ctx, path: str, message: str = "") -> "ToolResult":
+def tool_file_share(ctx, path: str, message: str = ""):
     """Share a file from the workspace as an attachment."""
     import mimetypes
+
     from ..media import ToolResult
 
     log.info(f"[tool:file_share] {path}")

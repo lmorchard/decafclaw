@@ -1,13 +1,14 @@
 """Tests for conversation compaction."""
 
-import pytest
 from unittest.mock import AsyncMock, patch
+
+import pytest
 
 from decafclaw.archive import append_message
 from decafclaw.compaction import (
-    _split_into_turns,
-    _flatten_messages,
     _estimate_tokens,
+    _flatten_messages,
+    _split_into_turns,
     compact_history,
 )
 

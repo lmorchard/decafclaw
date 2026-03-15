@@ -279,6 +279,7 @@ def reindex_cli():
     """CLI entry point: rebuild the embedding index from all sources."""
     import asyncio
     import logging
+
     from .config import load_config
 
     logging.basicConfig(
@@ -310,6 +311,7 @@ def search_cli():
     import argparse
     import asyncio
     import logging
+
     from .config import load_config
 
     parser = argparse.ArgumentParser(description="Search DecafClaw embeddings")

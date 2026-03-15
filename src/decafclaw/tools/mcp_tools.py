@@ -7,7 +7,7 @@ log = logging.getLogger(__name__)
 
 async def tool_mcp_status(ctx, action: str = "status", server: str = "") -> str:
     """Show MCP server status or restart servers."""
-    from ..mcp_client import get_registry, load_mcp_config, init_mcp, shutdown_mcp
+    from ..mcp_client import get_registry, init_mcp, load_mcp_config, shutdown_mcp
 
     log.info(f"[tool:mcp_status] action={action} server={server}")
 
@@ -43,8 +43,9 @@ async def _restart(ctx, registry, server_name):
     For a full reload (all servers), we connect new servers without
     disconnecting old ones first, then swap the registry.
     """
-    from ..mcp_client import load_mcp_config, MCPRegistry
     import decafclaw.mcp_client as _mcp
+
+    from ..mcp_client import MCPRegistry, load_mcp_config
 
     try:
         if server_name:

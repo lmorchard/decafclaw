@@ -13,8 +13,8 @@ from pathlib import Path
 import yaml
 
 from ..config import load_config
-from .runner import run_eval
 from .reflect import reflect_on_failure
+from .runner import run_eval
 
 
 def main():

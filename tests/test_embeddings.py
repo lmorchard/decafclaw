@@ -6,10 +6,10 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from decafclaw.embeddings import (
-    _serialize_embedding,
     _deserialize_embedding,
     _entry_hash,
     _get_db,
+    _serialize_embedding,
     index_entry_sync,
     search_similar_sync,
 )

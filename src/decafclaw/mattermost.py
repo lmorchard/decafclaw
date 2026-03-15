@@ -211,8 +211,8 @@ class MattermostClient:
         """Run the bot: connect, listen for messages, and dispatch to the agent."""
         from .agent import run_agent_turn
         from .archive import read_archive
-        from .mcp_client import init_mcp, shutdown_mcp
         from .heartbeat import run_heartbeat_timer
+        from .mcp_client import init_mcp, shutdown_mcp
 
         await self.connect()
 

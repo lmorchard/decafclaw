@@ -1,7 +1,9 @@
 """Shared test fixtures."""
 
-import pytest
 from pathlib import Path
+
+import pytest
+
 from decafclaw.config import Config
 from decafclaw.context import Context
 from decafclaw.events import EventBus

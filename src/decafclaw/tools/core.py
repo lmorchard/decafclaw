@@ -1,9 +1,10 @@
 """Core tools — web fetch, debug, think, compaction."""
 
-import httpx
 import json
 import logging
 from pathlib import Path
+
+import httpx
 
 log = logging.getLogger(__name__)
 
@@ -183,8 +184,8 @@ def tool_context_stats(ctx) -> str:
         f"**Total completion tokens:** {completion_tokens_actual:,}",
         "",
         "### Estimated breakdown (approx)",
-        f"| Component | Chars | ~Tokens | % of budget |",
-        f"|-----------|-------|---------|-------------|",
+        "| Component | Chars | ~Tokens | % of budget |",
+        "|-----------|-------|---------|-------------|",
         f"| System prompt | {system_chars:,} | ~{system_tokens:,} | {system_tokens*100//compaction_max if compaction_max else 0}% |",
         f"| Tool definitions ({len(all_tool_defs)}) | {len(tools_json):,} | ~{tools_tokens:,} | {tools_tokens*100//compaction_max if compaction_max else 0}% |",
         f"| Conversation history | {history_chars:,} | ~{history_tokens:,} | {history_tokens*100//compaction_max if compaction_max else 0}% |",
@@ -199,7 +200,7 @@ def tool_context_stats(ctx) -> str:
         if count:
             lines.append(f"- **{role}**: {count} message(s), {chars:,} chars")
 
-    lines.append(f"\n### Archive")
+    lines.append("\n### Archive")
     lines.append(f"- **Conversation ID:** {conv_id}")
     lines.append(f"- **Archive file size:** {archive_size:,} bytes")
 

@@ -6,11 +6,13 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from decafclaw.media import (
-    ToolResult, extract_workspace_media,
-    TerminalMediaHandler, process_media_for_terminal,
-    MattermostMediaHandler, upload_and_collect,
+    MattermostMediaHandler,
+    TerminalMediaHandler,
+    ToolResult,
+    extract_workspace_media,
+    process_media_for_terminal,
+    upload_and_collect,
 )
-
 
 # -- ToolResult tests --
 

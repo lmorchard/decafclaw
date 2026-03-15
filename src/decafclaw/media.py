@@ -68,7 +68,7 @@ def extract_workspace_media(text: str, workspace_path: Path) -> tuple[str, list[
     missing = []
 
     def _replace(match):
-        alt = match.group(1)
+        _alt = match.group(1)  # captured but not used (stripped from output)
         path = match.group(2)
         full_path = workspace_path / path
 

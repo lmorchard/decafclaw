@@ -1,6 +1,6 @@
 """Tests for to-do list operations."""
 
-from decafclaw.todos import todo_add, todo_complete, todo_list, todo_clear
+from decafclaw.todos import todo_add, todo_clear, todo_complete, todo_list
 
 
 def test_add_and_list(config):

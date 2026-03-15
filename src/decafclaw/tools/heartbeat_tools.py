@@ -28,12 +28,15 @@ async def tool_heartbeat_trigger(ctx) -> str:
 
 async def _run_heartbeat_to_channel(config, event_bus):
     """Run heartbeat sections, optionally posting results to a channel."""
-    from ..heartbeat import (
-        load_heartbeat_sections, build_section_prompt, is_heartbeat_ok,
-    )
+    from datetime import datetime
+
     from ..agent import run_agent_turn
     from ..context import Context
-    from datetime import datetime
+    from ..heartbeat import (
+        build_section_prompt,
+        is_heartbeat_ok,
+        load_heartbeat_sections,
+    )
 
     sections = load_heartbeat_sections(config)
     if not sections:
