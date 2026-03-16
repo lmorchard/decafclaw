@@ -190,6 +190,7 @@ def build_confirm_buttons(config, tool_name: str, command: str,
             {
                 "id": "add_pattern",
                 "name": "Allow Pattern",
+                "style": "default",
                 "integration": {
                     "url": f"{base_url}?token={_make_token('add_pattern')}",
                     "context": {**base_context, "action": "add_pattern"},
@@ -220,6 +221,7 @@ def build_confirm_buttons(config, tool_name: str, command: str,
             {
                 "id": "always",
                 "name": "Always",
+                "style": "default",
                 "integration": {
                     "url": f"{base_url}?token={_make_token('always')}",
                     "context": {**base_context, "action": "always"},
