@@ -8,14 +8,20 @@ This is where the interesting stuff happens. The loop:
 5. Returns the final text response
 """
 
+from __future__ import annotations
+
 import asyncio
 import json
 import logging
+from typing import TYPE_CHECKING
 
 from .archive import append_message
 from .compaction import compact_history
 from .llm import call_llm
 from .tools import TOOL_DEFINITIONS, execute_tool
+
+if TYPE_CHECKING:
+    from .media import ToolResult
 
 log = logging.getLogger(__name__)
 
@@ -147,7 +153,7 @@ async def _execute_tool_calls(ctx, tool_calls, history, messages, pending_media)
 # -- Main agent turn -----------------------------------------------------------
 
 
-async def run_agent_turn(ctx, user_message: str, history: list):
+async def run_agent_turn(ctx, user_message: str, history: list) -> "ToolResult":
     """Process a single user message through the agent loop.
 
     Args:

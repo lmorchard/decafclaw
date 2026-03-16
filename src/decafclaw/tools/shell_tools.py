@@ -32,7 +32,7 @@ def _load_allow_patterns(config) -> list[str]:
         return []
 
 
-def _save_allow_pattern(config, pattern: str):
+def _save_allow_pattern(config, pattern: str) -> None:
     """Add a pattern to the allow list. Called by host-side confirmation handler."""
     path = _allow_patterns_path(config)
     path.parent.mkdir(parents=True, exist_ok=True)

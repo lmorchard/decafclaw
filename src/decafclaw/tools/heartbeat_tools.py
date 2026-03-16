@@ -33,7 +33,7 @@ async def tool_heartbeat_trigger(ctx) -> str:
     return f"Heartbeat triggered: {len(sections)} section(s) queued. No reporting channel configured — running silently."
 
 
-async def _guarded_heartbeat(config, event_bus):
+async def _guarded_heartbeat(config, event_bus) -> None:
     """Run heartbeat with concurrency guard. Lock auto-releases on crash."""
     if _heartbeat_lock.locked():
         log.warning("Heartbeat already running, skipping")
@@ -42,7 +42,7 @@ async def _guarded_heartbeat(config, event_bus):
         await _run_heartbeat_to_channel(config, event_bus)
 
 
-async def _run_heartbeat_to_channel(config, event_bus):
+async def _run_heartbeat_to_channel(config, event_bus) -> None:
     """Run heartbeat sections, optionally posting results to a channel."""
     from datetime import datetime
 
@@ -169,7 +169,7 @@ async def _run_heartbeat_to_channel(config, event_bus):
             await http.aclose()
 
 
-def _make_http_client(config):
+def _make_http_client(config) -> httpx.AsyncClient | None:
     """Create an HTTP client for Mattermost posting. Returns None if not configured."""
     if not config.mattermost_url or not config.mattermost_token:
         return None
@@ -182,7 +182,7 @@ def _make_http_client(config):
     return httpx.AsyncClient(base_url=base_url, headers=headers, timeout=30)
 
 
-async def _resolve_channel(http, config):
+async def _resolve_channel(http, config) -> str | None:
     """Resolve the heartbeat channel ID from config. Returns None if not configured."""
     if config.heartbeat_channel:
         return config.heartbeat_channel
