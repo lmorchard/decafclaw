@@ -9,6 +9,7 @@ from claude_code_sdk import (
     ResultMessage,
     SystemMessage,
     TextBlock,
+    ThinkingBlock,
     ToolResultBlock,
     ToolUseBlock,
     UserMessage,
@@ -43,6 +44,13 @@ class SessionLogger:
                 if isinstance(block, ToolUseBlock):
                     self.tools_used.append(block.name)
                     self._track_file_change(block.name, block.input)
+        elif isinstance(message, UserMessage):
+            # UserMessage contains ToolResultBlocks with command output
+            for block in getattr(message, "content", []):
+                if isinstance(block, ToolResultBlock):
+                    if block.is_error:
+                        content = block.content if isinstance(block.content, str) else str(block.content)
+                        self.errors.append(content[:200])
         elif isinstance(message, ResultMessage):
             if message.total_cost_usd is not None:
                 self.total_cost_usd = message.total_cost_usd
@@ -125,6 +133,13 @@ class SessionLogger:
                 "result": message.result,
             }
         elif isinstance(message, UserMessage):
+            # UserMessage contains ToolResultBlocks with tool output
+            content_blocks = getattr(message, "content", [])
+            if content_blocks:
+                return {
+                    "type": "user",
+                    "content": [self._serialize_block(b) for b in content_blocks],
+                }
             return {"type": "user", "content": str(message)}
         elif isinstance(message, SystemMessage):
             return {"type": "system", "content": str(message)}
@@ -137,6 +152,8 @@ class SessionLogger:
             return {"type": "text", "text": block.text}
         elif isinstance(block, ToolUseBlock):
             return {"type": "tool_use", "name": block.name, "input": block.input}
+        elif isinstance(block, ThinkingBlock):
+            return {"type": "thinking", "thinking": block.thinking}
         elif isinstance(block, ToolResultBlock):
             return {
                 "type": "tool_result",
