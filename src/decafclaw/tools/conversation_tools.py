@@ -3,6 +3,7 @@
 import logging
 
 from .. import embeddings
+from ..media import ToolResult
 
 log = logging.getLogger(__name__)
 
@@ -31,7 +32,7 @@ async def tool_conversation_compact(ctx) -> str:
     from ..compaction import compact_history
     history = getattr(ctx, "history", None)
     if history is None:
-        return "[error: no conversation history available]"
+        return ToolResult(text="[error: no conversation history available]")
     result = await compact_history(ctx, history)
     if result:
         return f"Conversation compacted. History now has {len(history)} messages."
