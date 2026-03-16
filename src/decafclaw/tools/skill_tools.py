@@ -116,6 +116,12 @@ async def tool_activate_skill(ctx, name: str) -> str:
             result_parts.append(
                 f"\n\nThe following tools are now available: {', '.join(tool_names)}"
             )
+            # Store shutdown hook if the skill module defines one
+            shutdown_fn = getattr(module, "shutdown", None)
+            if shutdown_fn:
+                if not hasattr(ctx, "_skill_shutdown_hooks"):
+                    ctx._skill_shutdown_hooks = {}
+                ctx._skill_shutdown_hooks[name] = shutdown_fn
             log.info(f"Activated native skill '{name}' with tools: {tool_names}")
         except Exception as e:
             log.error(f"Failed to load skill '{name}' tools: {e}")
