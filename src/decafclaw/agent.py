@@ -114,7 +114,6 @@ async def _call_llm_with_events(ctx, config, messages, tools) -> dict:
 
 async def _execute_tool_calls(ctx, tool_calls, history, messages, pending_media):
     """Execute tool calls and add results to history. Returns ToolResult if cancelled."""
-    from .media import ToolResult
     for tc in tool_calls:
         cancelled = _check_cancelled(ctx, history)
         if cancelled:
