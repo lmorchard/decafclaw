@@ -6,6 +6,8 @@ import json
 import logging
 from pathlib import Path
 
+from .confirmation import request_confirmation
+
 log = logging.getLogger(__name__)
 
 
@@ -85,7 +87,7 @@ async def tool_activate_skill(ctx, name: str) -> str:
     perms = _load_permissions(ctx.config)
     if not is_heartbeat and perms.get(name) != "always":
         # Need confirmation
-        approved, always = await _request_confirmation(ctx, name)
+        approved, always = await _request_skill_confirmation(ctx, name)
         if not approved:
             return f"[error: activation of skill '{name}' was denied by user]"
         if always:
@@ -127,40 +129,18 @@ async def tool_activate_skill(ctx, name: str) -> str:
     return "\n".join(result_parts)
 
 
-async def _request_confirmation(ctx, skill_name: str) -> tuple[bool, bool]:
+async def _request_skill_confirmation(ctx, skill_name: str) -> tuple[bool, bool]:
     """Request user confirmation for skill activation.
 
     Returns (approved, always) tuple.
     """
-    confirm_event = asyncio.Event()
-    confirm_result = {"approved": False, "always": False}
-
-    def on_confirm(event):
-        if (event.get("type") == "tool_confirm_response"
-                and event.get("context_id") == ctx.context_id
-                and event.get("tool") == "activate_skill"):
-            confirm_result["approved"] = event.get("approved", False)
-            confirm_result["always"] = event.get("always", False)
-            confirm_event.set()
-
-    sub_id = ctx.event_bus.subscribe(on_confirm)
-    try:
-        await ctx.publish(
-            "tool_confirm_request",
-            tool="activate_skill",
-            command=f"Activate skill: {skill_name}",
-            skill_name=skill_name,
-            message=f"Activate skill: **{skill_name}**",
-        )
-        try:
-            await asyncio.wait_for(confirm_event.wait(), timeout=60)
-        except asyncio.TimeoutError:
-            log.info(f"Skill activation confirmation timed out for '{skill_name}'")
-            return False, False
-    finally:
-        ctx.event_bus.unsubscribe(sub_id)
-
-    return confirm_result["approved"], confirm_result["always"]
+    result = await request_confirmation(
+        ctx, tool_name="activate_skill",
+        command=f"Activate skill: {skill_name}",
+        message=f"Activate skill: **{skill_name}**",
+        skill_name=skill_name,
+    )
+    return result.get("approved", False), result.get("always", False)
 
 
 def tool_refresh_skills(ctx) -> str:
