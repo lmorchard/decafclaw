@@ -183,6 +183,8 @@ async def run_agent_turn(ctx, user_message: str, history: list) -> "ToolResult":
 
     prompt_tokens = 0
 
+    accumulated_text_parts = []  # text from iterations that also had tool calls
+
     for iteration in range(config.max_tool_iterations):
         cancelled = _check_cancelled(ctx, history)
         if cancelled:
@@ -204,11 +206,16 @@ async def run_agent_turn(ctx, user_message: str, history: list) -> "ToolResult":
         tool_calls = response.get("tool_calls")
         if tool_calls:
             # Add the assistant's tool-call message to history
-            assistant_msg = {"role": "assistant", "content": response.get("content")}
+            iter_content = response.get("content")
+            assistant_msg = {"role": "assistant", "content": iter_content}
             assistant_msg["tool_calls"] = tool_calls
             history.append(assistant_msg)
             messages.append(assistant_msg)
             _archive(ctx, assistant_msg)
+
+            # Preserve text from this iteration (e.g. "Let me check...")
+            if iter_content:
+                accumulated_text_parts.append(iter_content)
 
             cancelled = await _execute_tool_calls(
                 ctx, tool_calls, history, messages, pending_media
@@ -236,9 +243,11 @@ async def run_agent_turn(ctx, user_message: str, history: list) -> "ToolResult":
             return ToolResult(text=cleaned_text, media=all_media)
         return ToolResult(text=content or "")
 
-    # Hit max iterations
-    msg = (f"[Agent reached max tool iterations ({config.max_tool_iterations}) "
-           f"without a final response]")
+    # Hit max iterations — preserve accumulated text from tool-call iterations
+    limit_note = (f"\n\n[Agent reached max tool iterations "
+                  f"({config.max_tool_iterations}) without a final response]")
+    accumulated = "\n\n".join(accumulated_text_parts)
+    msg = accumulated + limit_note if accumulated else limit_note.strip()
     final_msg = {"role": "assistant", "content": msg}
     history.append(final_msg)
     _archive(ctx, final_msg)

@@ -258,6 +258,33 @@ async def test_run_agent_turn_max_iterations(ctx):
 
 
 @pytest.mark.asyncio
+async def test_run_agent_turn_max_iterations_preserves_text(ctx):
+    """Max iterations preserves text from tool-call iterations."""
+    ctx.config.llm_streaming = False
+    ctx.config.system_prompt = "You are a test bot."
+    ctx.config.max_tool_iterations = 2
+
+    tool_call_response = _mock_llm_response(
+        content="Let me check that for you.",
+        tool_calls=[{
+            "id": "tc1",
+            "function": {
+                "name": "memory_recent",
+                "arguments": "{}",
+            },
+        }],
+    )
+
+    with patch("decafclaw.agent.call_llm", new_callable=AsyncMock) as mock_llm:
+        mock_llm.return_value = tool_call_response
+        history = []
+        result = await run_agent_turn(ctx, "loop forever", history)
+
+    assert "Let me check that for you." in result.text
+    assert "max tool iterations" in result.text
+
+
+@pytest.mark.asyncio
 async def test_run_agent_turn_empty_response(ctx):
     """LLM returns empty content with no tool calls."""
     ctx.config.llm_streaming = False
