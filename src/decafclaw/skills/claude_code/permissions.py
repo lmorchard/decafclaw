@@ -63,14 +63,17 @@ def make_permission_handler(ctx, config):
     from decafclaw.tools.confirmation import request_confirmation
 
     async def can_use_tool(tool_name: str, tool_input: dict, tool_context) -> PermissionResultAllow | PermissionResultDeny:
+        log.info(f"Claude Code permission check: {tool_name}")
+
         # Auto-approve read-only tools
         if tool_name in AUTO_APPROVE_TOOLS:
+            log.info(f"Claude Code auto-approved (read-only): {tool_name}")
             return PermissionResultAllow()
 
         # Check allowlist
         patterns = load_allowlist(config)
         if matches_allowlist(tool_name, patterns):
-            log.debug(f"Claude Code tool {tool_name} auto-approved by allowlist")
+            log.info(f"Claude Code auto-approved (allowlist): {tool_name}")
             return PermissionResultAllow()
 
         # Format the tool call for the confirmation message
@@ -79,6 +82,8 @@ def make_permission_handler(ctx, config):
             input_preview = input_preview[:500] + "..."
         command = f"{tool_name}: {input_preview}"
 
+        log.info(f"Claude Code requesting confirmation for: {tool_name}")
+
         # Request confirmation through DecafClaw's event bus
         result = await request_confirmation(
             ctx,
@@ -86,6 +91,8 @@ def make_permission_handler(ctx, config):
             command=command,
             message=f"Claude Code wants to use **{tool_name}**:\n```json\n{input_preview}\n```",
         )
+
+        log.info(f"Claude Code confirmation result for {tool_name}: {result}")
 
         if not result.get("approved"):
             return PermissionResultDeny(message=f"User denied {tool_name}")
