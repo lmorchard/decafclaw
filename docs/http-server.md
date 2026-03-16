@@ -62,9 +62,18 @@ The shared secret (`HTTP_SECRET`) is included in callback URLs as a query parame
 python3 -c "import secrets; print(secrets.token_urlsafe(32))"
 ```
 
+## Mattermost configuration
+
+Mattermost must be configured to allow outbound requests to the DecafClaw HTTP server:
+
+1. **System Console → Environment → Developer → Allow untrusted internal connections to** — add the DecafClaw hostname or IP (e.g., `192.168.0.149` or `decafclaw.example.com`). Without this, Mattermost silently drops button callback requests to LAN addresses.
+
+2. **System Console → Integrations → Integration Management → Enable interactive messages** — must be enabled (usually on by default).
+
 ## Deployment notes
 
 - The HTTP server runs as an asyncio task in the same process as the bot — no separate service needed.
 - For production, consider putting it behind a reverse proxy (nginx, Caddy) for HTTPS termination.
 - If using the systemd service from `deploy/decafclaw.service`, add the HTTP config vars to your `.env` file. No service changes needed.
 - Ensure the Mattermost server can reach the HTTP port. If using Tailscale, the Tailscale hostname works well as `HTTP_BASE_URL`.
+- If Mattermost and DecafClaw are on the same LAN, use the LAN IP for `HTTP_BASE_URL` (e.g., `http://192.168.0.149:18880`).
