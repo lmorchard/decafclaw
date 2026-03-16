@@ -563,6 +563,15 @@ class MattermostClient:
         for sig in (signal.SIGTERM, signal.SIGINT):
             loop.add_signal_handler(sig, _signal_handler)
 
+        # Start HTTP server for interactive callbacks
+        http_task = None
+        if app_ctx.config.http_enabled:
+            from .http_server import run_http_server
+            http_task = asyncio.create_task(
+                run_http_server(app_ctx.config, app_ctx.event_bus)
+            )
+            log.info(f"HTTP server enabled on {app_ctx.config.http_host}:{app_ctx.config.http_port}")
+
         # Start heartbeat timer
         heartbeat_task = None
         if parse_interval(app_ctx.config.heartbeat_interval) is not None:
@@ -583,6 +592,14 @@ class MattermostClient:
         try:
             await self.listen(on_message_sync, shutdown_event=shutdown_event)
         finally:
+            # Stop HTTP server
+            if http_task:
+                http_task.cancel()
+                try:
+                    await http_task
+                except asyncio.CancelledError:
+                    pass
+
             if heartbeat_task:
                 heartbeat_task.cancel()
                 try:
