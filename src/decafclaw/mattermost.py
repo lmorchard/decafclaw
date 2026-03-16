@@ -688,8 +688,8 @@ class MattermostClient:
         """Create an on_cycle callback that runs sections and posts results as they complete."""
 
         async def on_cycle():
-            from .tools.heartbeat_tools import _run_heartbeat_to_channel
-            await _run_heartbeat_to_channel(config, event_bus)
+            from .tools.heartbeat_tools import _guarded_heartbeat
+            await _guarded_heartbeat(config, event_bus)
 
         return on_cycle
 

@@ -7,10 +7,18 @@ import httpx
 
 log = logging.getLogger(__name__)
 
+# Prevent concurrent heartbeat runs
+_heartbeat_running = False
+
 
 async def tool_heartbeat_trigger(ctx) -> str:
     """Manually trigger a heartbeat cycle, posting results to the configured channel."""
+    global _heartbeat_running
     log.info("[tool:heartbeat_trigger]")
+
+    if _heartbeat_running:
+        return "Heartbeat is already running."
+
     from ..heartbeat import load_heartbeat_sections
 
     sections = load_heartbeat_sections(ctx.config)
@@ -18,12 +26,25 @@ async def tool_heartbeat_trigger(ctx) -> str:
         return "No HEARTBEAT.md sections found. Nothing to run."
 
     # Fire and forget — run the cycle in the background
-    asyncio.create_task(_run_heartbeat_to_channel(ctx.config, ctx.event_bus))
+    asyncio.create_task(_guarded_heartbeat(ctx.config, ctx.event_bus))
 
     has_channel = ctx.config.heartbeat_channel or ctx.config.heartbeat_user
     if has_channel:
         return f"Heartbeat triggered: {len(sections)} section(s) queued. Results will be posted to the heartbeat channel."
     return f"Heartbeat triggered: {len(sections)} section(s) queued. No reporting channel configured — running silently."
+
+
+async def _guarded_heartbeat(config, event_bus):
+    """Run heartbeat with concurrency guard."""
+    global _heartbeat_running
+    if _heartbeat_running:
+        log.warning("Heartbeat already running, skipping")
+        return
+    _heartbeat_running = True
+    try:
+        await _run_heartbeat_to_channel(config, event_bus)
+    finally:
+        _heartbeat_running = False
 
 
 async def _run_heartbeat_to_channel(config, event_bus):
