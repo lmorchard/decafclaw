@@ -115,12 +115,16 @@ async def tool_claude_code_send(ctx, session_id: str, prompt: str) -> str:
     log_dir = _config.workspace_path / "claude-code-logs" if _config else Path("claude-code-logs")
     logger = SessionLogger(log_dir, session.session_id)
 
+    # Wrap prompt as async iterable (required when can_use_tool is set)
+    async def prompt_stream():
+        yield {"role": "user", "content": prompt}
+
     # Stream messages from the SDK
     await ctx.publish("tool_status", tool="claude_code",
                       message=f"Sending to Claude Code ({session.cwd})...")
 
     try:
-        async for message in query(prompt=prompt, options=options):
+        async for message in query(prompt=prompt_stream(), options=options):
             logger.log_message(message)
 
             # Publish progress for Mattermost display
