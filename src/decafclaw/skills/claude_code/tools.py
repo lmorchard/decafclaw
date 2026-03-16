@@ -13,9 +13,9 @@ from claude_code_sdk import (
     query,
 )
 
-from .output import SessionLogger
-from .permissions import make_permission_handler
-from .sessions import SessionManager
+from decafclaw.skills.claude_code.output import SessionLogger
+from decafclaw.skills.claude_code.permissions import make_permission_handler
+from decafclaw.skills.claude_code.sessions import SessionManager
 
 log = logging.getLogger(__name__)
 
@@ -30,7 +30,7 @@ def init(config):
     _config = config
 
     # Parse timeout
-    from ...heartbeat import parse_interval
+    from decafclaw.heartbeat import parse_interval
     timeout_sec = parse_interval(config.claude_code_session_timeout) or 1800
 
     _session_manager = SessionManager(
