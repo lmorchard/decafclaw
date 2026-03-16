@@ -97,6 +97,32 @@ async def tool_claude_code_send(ctx, session_id: str, prompt: str) -> str:
             f"Start a new session with claude_code_start.]"
         )
 
+    # Upfront confirmation — one approval per send, not per tool.
+    # The SDK's can_use_tool callback has reliability issues with repeated
+    # calls, so we confirm before sending to the SDK instead.
+    from decafclaw.skills.claude_code.permissions import load_allowlist, matches_allowlist
+    from decafclaw.tools.confirmation import request_confirmation
+
+    # Skip confirmation if "claude_code_send" is in the allowlist
+    patterns = load_allowlist(_config) if _config else []
+    if not matches_allowlist("claude_code_send", patterns):
+        prompt_preview = prompt[:200] + ("..." if len(prompt) > 200 else "")
+        confirm = await request_confirmation(
+            ctx,
+            tool_name="claude_code_send",
+            command=f"Send to Claude Code: {prompt_preview}",
+            message=(
+                f"**Claude Code** wants to execute a task in `{session.cwd}`:\n"
+                f"```\n{prompt_preview}\n```\n"
+                f"This may read, edit, and create files, and run shell commands."
+            ),
+        )
+        if not confirm.get("approved"):
+            return "[error: Claude Code task was denied by user]"
+        if confirm.get("always"):
+            from decafclaw.skills.claude_code.permissions import save_allowlist_entry
+            save_allowlist_entry(_config, "claude_code_send")
+
     # Check budget
     if session.total_cost_usd >= session.budget_usd:
         return (
@@ -111,11 +137,14 @@ async def tool_claude_code_send(ctx, session_id: str, prompt: str) -> str:
     log_dir.mkdir(parents=True, exist_ok=True)
     stderr_path = log_dir / f"{session.session_id}.stderr.log"
     stderr_file = open(stderr_path, "a")
+    # Use bypassPermissions at the CLI level — the SDK's control protocol
+    # has reliability issues with can_use_tool on repeated tool calls
+    # ("Stream closed" after first response). Instead, we confirm upfront
+    # before sending to the SDK.
     options = ClaudeCodeOptions(
         cwd=session.cwd,
         model=model,
-        permission_mode="default",
-        can_use_tool=make_permission_handler(ctx, _config),
+        permission_mode="bypassPermissions",
         debug_stderr=stderr_file,
     )
 
