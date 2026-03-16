@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from decafclaw.llm import call_llm_streaming
+from decafclaw.llm import _sanitize_tool_call_id, call_llm_streaming
 
 
 class FakeSSEEvent:
@@ -202,3 +202,36 @@ async def test_streaming_callback_error_doesnt_kill_stream():
 
     # Stream should complete despite callback error
     assert result["content"] == "Hello world"
+
+
+# -- Tool call ID sanitization ------------------------------------------------
+
+
+def test_sanitize_tool_call_id_strips_thought():
+    """Strips __thought__ suffix and embedded thinking data."""
+    bloated = "call_abc123__thought__CiUBjz1rX08dN2FAqXPJEb5RHCverhk3Y0b6"
+    assert _sanitize_tool_call_id(bloated) == "call_abc123"
+
+
+def test_sanitize_tool_call_id_preserves_normal():
+    """Normal IDs pass through unchanged."""
+    assert _sanitize_tool_call_id("call_abc123") == "call_abc123"
+
+
+def test_sanitize_tool_call_id_empty():
+    """Empty string passes through."""
+    assert _sanitize_tool_call_id("") == ""
+
+
+@pytest.mark.asyncio
+async def test_streaming_tool_call_id_sanitized():
+    """Streaming tool calls with __thought__ IDs get sanitized."""
+    bloated_id = "call_xyz__thought__CiUBjz1rXlongbase64data"
+    events = _make_tool_call_events("memory_search", ['{}'], tool_id=bloated_id)
+
+    with patch("httpx_sse.aconnect_sse") as mock_sse:
+        mock_sse.return_value = FakeEventSource(events)
+        result = await call_llm_streaming(_config(), [])
+
+    assert result["tool_calls"] is not None
+    assert result["tool_calls"][0]["id"] == "call_xyz"
