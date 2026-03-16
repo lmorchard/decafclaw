@@ -909,7 +909,7 @@ class ConversationDisplay:
         if display_text:
             msg = display_text
         else:
-            msg = f"\U0001f527 {tool_name} \u2192 {result_text}"
+            msg = f"\U0001f527 {tool_name} \u2714\ufe0f"
 
         if self._tool_post_id:
             try:
