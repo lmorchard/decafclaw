@@ -121,6 +121,37 @@ def tool_file_share(ctx, path: str, message: str = "") -> "ToolResult":
         return ToolResult(text=f"[error: permission denied: {path}]")
 
 
+def tool_workspace_edit(ctx, path: str, old_text: str, new_text: str,
+                       replace_all: bool = False) -> str:
+    """Edit a file by replacing exact text matches."""
+    log.info(f"[tool:workspace_edit] {path}")
+    resolved = _resolve_safe(ctx.config, path)
+    if resolved is None:
+        return f"[error: path '{path}' is outside the workspace]"
+    try:
+        content = resolved.read_text()
+    except FileNotFoundError:
+        return f"[error: file not found: {path}]"
+    except PermissionError:
+        return f"[error: permission denied: {path}]"
+
+    count = content.count(old_text)
+    if count == 0:
+        return (f"[error: text not found in {path}. "
+                "Make sure old_text matches exactly, including whitespace and indentation.]")
+    if count > 1 and not replace_all:
+        return (f"[error: found {count} matches in {path}. "
+                "Use replace_all=true for bulk replacement, "
+                "or provide more surrounding context to make old_text unique.]")
+
+    if replace_all:
+        new_content = content.replace(old_text, new_text)
+    else:
+        new_content = content.replace(old_text, new_text, 1)
+    resolved.write_text(new_content)
+    return f"Edited {path}: replaced {count} occurrence(s)"
+
+
 def tool_workspace_append(ctx, path: str, content: str) -> str:
     """Append content to a file in the agent's workspace."""
     log.info(f"[tool:workspace_append] {path}")
@@ -147,6 +178,7 @@ WORKSPACE_TOOLS = {
     "workspace_list": tool_workspace_list,
     "file_share": tool_file_share,
     "workspace_append": tool_workspace_append,
+    "workspace_edit": tool_workspace_edit,
 }
 
 WORKSPACE_TOOL_DEFINITIONS = [
@@ -214,6 +246,35 @@ WORKSPACE_TOOL_DEFINITIONS = [
                     },
                 },
                 "required": ["path", "content"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "workspace_edit",
+            "description": "Edit a file by exact string replacement. Finds old_text and replaces it with new_text. Fails if old_text is not found or matches multiple locations (ambiguous) — provide more surrounding context to make it unique, or set replace_all=true for intentional bulk replacement.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Relative path within the workspace",
+                    },
+                    "old_text": {
+                        "type": "string",
+                        "description": "Exact text to find (must match including whitespace and indentation)",
+                    },
+                    "new_text": {
+                        "type": "string",
+                        "description": "Text to replace old_text with",
+                    },
+                    "replace_all": {
+                        "type": "boolean",
+                        "description": "Replace all occurrences instead of requiring a unique match (default: false)",
+                    },
+                },
+                "required": ["path", "old_text", "new_text"],
             },
         },
     },

@@ -4,6 +4,7 @@ from decafclaw.tools.workspace_tools import (
     _resolve_safe,
     tool_file_share,
     tool_workspace_append,
+    tool_workspace_edit,
     tool_workspace_list,
     tool_workspace_read,
     tool_workspace_write,
@@ -113,6 +114,68 @@ def test_read_out_of_range(ctx):
     # Should just return to end, no error
     assert "error" not in result.lower()
     assert "three" in result
+
+
+# -- workspace_edit tests --
+
+
+def test_edit_simple(ctx):
+    tool_workspace_write(ctx, "code.py", "def hello():\n    print('greet')\n")
+    result = tool_workspace_edit(ctx, "code.py", "hello", "world")
+    assert "replaced 1" in result.lower()
+    content = ctx.config.workspace_path.joinpath("code.py").read_text()
+    assert "def world():" in content
+    assert "print('greet')" in content
+
+
+def test_edit_not_found(ctx):
+    tool_workspace_write(ctx, "code.py", "def hello():\n    pass\n")
+    result = tool_workspace_edit(ctx, "code.py", "nonexistent", "replacement")
+    assert "error" in result.lower()
+    assert "not found" in result.lower()
+
+
+def test_edit_ambiguous(ctx):
+    tool_workspace_write(ctx, "code.py", "foo = 1\nbar = foo\nbaz = foo\n")
+    result = tool_workspace_edit(ctx, "code.py", "foo", "qux")
+    assert "error" in result.lower()
+    assert "3 matches" in result
+
+
+def test_edit_replace_all(ctx):
+    tool_workspace_write(ctx, "code.py", "foo = 1\nbar = foo\nbaz = foo\n")
+    result = tool_workspace_edit(ctx, "code.py", "foo", "qux", replace_all=True)
+    assert "replaced 3" in result.lower()
+    content = ctx.config.workspace_path.joinpath("code.py").read_text()
+    assert "foo" not in content
+    assert content.count("qux") == 3
+
+
+def test_edit_preserves_rest(ctx):
+    tool_workspace_write(ctx, "code.py", "alpha\nbeta\ngamma\n")
+    tool_workspace_edit(ctx, "code.py", "beta", "BETA")
+    content = ctx.config.workspace_path.joinpath("code.py").read_text()
+    assert content == "alpha\nBETA\ngamma\n"
+
+
+def test_edit_multiline(ctx):
+    tool_workspace_write(ctx, "code.py", "def old():\n    pass\n\ndef other():\n    pass\n")
+    tool_workspace_edit(ctx, "code.py", "def old():\n    pass", "def new():\n    return 42")
+    content = ctx.config.workspace_path.joinpath("code.py").read_text()
+    assert "def new():" in content
+    assert "return 42" in content
+    assert "def old()" not in content
+
+
+def test_edit_escape_blocked(ctx):
+    result = tool_workspace_edit(ctx, "../../evil.py", "a", "b")
+    assert "outside" in result.lower()
+
+
+def test_edit_nonexistent_file(ctx):
+    result = tool_workspace_edit(ctx, "nope.py", "a", "b")
+    assert "error" in result.lower()
+    assert "not found" in result.lower()
 
 
 # -- workspace_append tests --
