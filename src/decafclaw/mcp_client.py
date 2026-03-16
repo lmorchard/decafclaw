@@ -96,7 +96,7 @@ def load_mcp_config(config) -> list[MCPServerConfig]:
             continue
 
         # Expand env vars in all string values
-        server_data = _expand_config(server_data)
+        server_data: dict = _expand_config(server_data)  # type: ignore[assignment]
 
         server_type = server_data.get("type", "stdio")
         configs.append(MCPServerConfig(
@@ -443,7 +443,8 @@ class MCPRegistry:
 
         # Increment retry count (connect_server resets it on success,
         # so we only get here on failure)
-        new_state.retry_count = state.retry_count + 1
+        if new_state:
+            new_state.retry_count = state.retry_count + 1
         return False
 
     async def connect_all(self, configs: list[MCPServerConfig]):

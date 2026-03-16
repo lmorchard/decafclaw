@@ -37,6 +37,21 @@ def save_entry(config, channel_name: str, channel_id: str,
     return f"Saved memory tagged [{tag_str}]"
 
 
+def _parse_entries(text: str) -> list[str]:
+    """Split markdown text into individual memory entries on ## headers."""
+    parts = text.split("\n## ")
+    entries = []
+    for part in parts:
+        part = part.strip()
+        if not part:
+            continue
+        # Re-add the header prefix if it was split off
+        if not part.startswith("## "):
+            part = "## " + part
+        entries.append(part)
+    return entries
+
+
 def search_entries(config, query: str, context_lines: int = 3) -> str:
     """Search all memory files using case-insensitive substring matching.
 
@@ -49,22 +64,9 @@ def search_entries(config, query: str, context_lines: int = 3) -> str:
     query_lower = query.lower()
     results = []
 
-    # Collect all .md files sorted by path (chronological)
-    md_files = sorted(base.rglob("*.md"))
-
-    for filepath in md_files:
-        text = filepath.read_text()
-        # Split into entries on "## " headers
-        parts = text.split("\n## ")
+    for filepath in sorted(base.rglob("*.md")):
         rel_path = filepath.relative_to(base)
-
-        for part in parts:
-            part = part.strip()
-            if not part:
-                continue
-            # Re-add the header prefix
-            entry = "## " + part if not part.startswith("## ") else part
-            # Check if query matches anywhere in the entry
+        for entry in _parse_entries(filepath.read_text()):
             if query_lower in entry.lower():
                 results.append(f"### {rel_path}\n\n{entry}")
 
@@ -80,23 +82,10 @@ def recent_entries(config, n: int = 5) -> str:
     if not base.exists():
         return "No memories found"
 
-    # Collect all .md files sorted by path descending (most recent first)
-    md_files = sorted(base.rglob("*.md"), reverse=True)
-
     entries = []
-    for filepath in md_files:
-        text = filepath.read_text()
-        # Split on entry headers (## YYYY-MM-DD HH:MM)
-        parts = text.split("\n## ")
-        # First part may be empty or have no header, skip it
-        for part in reversed(parts):
-            part = part.strip()
-            if not part:
-                continue
-            # Re-add the header prefix if it was split off
-            if not part.startswith("## "):
-                part = "## " + part
-            entries.append(part)
+    for filepath in sorted(base.rglob("*.md"), reverse=True):
+        for entry in reversed(_parse_entries(filepath.read_text())):
+            entries.append(entry)
             if len(entries) >= n:
                 break
         if len(entries) >= n:

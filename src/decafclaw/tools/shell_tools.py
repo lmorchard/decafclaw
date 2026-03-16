@@ -1,11 +1,13 @@
 """Shell tool with confirmation — requires user approval before execution."""
 
-import asyncio
 import fnmatch
 import json
 import logging
 import subprocess
 from pathlib import Path
+
+from ..media import ToolResult
+from .confirmation import request_confirmation
 
 log = logging.getLogger(__name__)
 
@@ -30,7 +32,7 @@ def _load_allow_patterns(config) -> list[str]:
         return []
 
 
-def _save_allow_pattern(config, pattern: str):
+def _save_allow_pattern(config, pattern: str) -> None:
     """Add a pattern to the allow list. Called by host-side confirmation handler."""
     path = _allow_patterns_path(config)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -82,7 +84,7 @@ def _suggest_pattern(command: str) -> str:
     return command
 
 
-async def tool_shell(ctx, command: str) -> str:
+async def tool_shell(ctx, command: str) -> str | ToolResult:
     """Run a shell command after user confirmation."""
     log.info(f"[tool:shell] requesting confirmation for: {command}")
 
@@ -101,47 +103,24 @@ async def tool_shell(ctx, command: str) -> str:
     # Generate suggested pattern for the confirmation message
     suggested_pattern = _suggest_pattern(command)
 
-    # Publish confirmation request with suggested pattern
-    confirm_event = asyncio.Event()
-    confirm_result = {"approved": False, "add_pattern": False}
+    result = await request_confirmation(
+        ctx, tool_name="shell", command=command,
+        message=f"Shell command: `{command}`",
+        suggested_pattern=suggested_pattern,
+    )
 
-    def on_confirm(event):
-        if (event.get("type") == "tool_confirm_response"
-                and event.get("context_id") == ctx.context_id
-                and event.get("tool") == "shell"):
-            confirm_result["approved"] = event.get("approved", False)
-            confirm_result["add_pattern"] = event.get("add_pattern", False)
-            confirm_event.set()
-
-    sub_id = ctx.event_bus.subscribe(on_confirm)
-    try:
-        await ctx.publish("tool_confirm_request",
-                          tool="shell",
-                          command=command,
-                          suggested_pattern=suggested_pattern,
-                          message=f"Shell command: `{command}`")
-
-        # Wait for confirmation (timeout after 60 seconds)
-        try:
-            await asyncio.wait_for(confirm_event.wait(), timeout=60)
-        except asyncio.TimeoutError:
-            log.info(f"[tool:shell] confirmation timed out for: {command}")
-            return "[error: shell command timed out waiting for confirmation]"
-    finally:
-        ctx.event_bus.unsubscribe(sub_id)
-
-    if not confirm_result["approved"]:
+    if not result.get("approved"):
         log.info(f"[tool:shell] command denied: {command}")
-        return "[error: shell command was denied by user]"
+        return ToolResult(text="[error: shell command was denied by user]")
 
     # If user chose to add the pattern, save it
-    if confirm_result["add_pattern"]:
+    if result.get("add_pattern"):
         _save_allow_pattern(ctx.config, suggested_pattern)
 
     return _execute_command(ctx, command)
 
 
-def _execute_command(ctx, command: str) -> str:
+def _execute_command(ctx, command: str) -> str | ToolResult:
     """Execute a shell command and return the output."""
     log.info(f"[tool:shell] executing command: {command}")
     try:
@@ -156,10 +135,10 @@ def _execute_command(ctx, command: str) -> str:
             output += f"\n[exit code: {result.returncode}]"
         return output or "(no output)"
     except subprocess.TimeoutExpired:
-        return "[error: command timed out after 30 seconds]"
+        return ToolResult(text="[error: command timed out after 30 seconds]")
 
 
-async def tool_shell_patterns(ctx, action: str = "list", pattern: str = "") -> str:
+async def tool_shell_patterns(ctx, action: str = "list", pattern: str = "") -> str | ToolResult:
     """Manage shell command allow patterns."""
     log.info(f"[tool:shell_patterns] action={action} pattern={pattern}")
 
@@ -174,31 +153,14 @@ async def tool_shell_patterns(ctx, action: str = "list", pattern: str = "") -> s
 
     elif action == "add" and pattern:
         # This requires confirmation — we're modifying admin config
-        confirm_event = asyncio.Event()
-        confirm_result = {"approved": False}
+        result = await request_confirmation(
+            ctx, tool_name="shell_patterns",
+            command=f"Add shell allow pattern: {pattern}",
+            message=f"Add shell allow pattern: `{pattern}`",
+        )
 
-        def on_confirm(event):
-            if (event.get("type") == "tool_confirm_response"
-                    and event.get("context_id") == ctx.context_id
-                    and event.get("tool") == "shell_patterns"):
-                confirm_result["approved"] = event.get("approved", False)
-                confirm_event.set()
-
-        sub_id = ctx.event_bus.subscribe(on_confirm)
-        try:
-            await ctx.publish("tool_confirm_request",
-                              tool="shell_patterns",
-                              command=f"Add shell allow pattern: {pattern}",
-                              message=f"Add shell allow pattern: `{pattern}`")
-            try:
-                await asyncio.wait_for(confirm_event.wait(), timeout=60)
-            except asyncio.TimeoutError:
-                return "[error: confirmation timed out]"
-        finally:
-            ctx.event_bus.unsubscribe(sub_id)
-
-        if not confirm_result["approved"]:
-            return "[error: denied]"
+        if not result.get("approved"):
+            return ToolResult(text="[error: denied]")
 
         _save_allow_pattern(ctx.config, pattern)
         return f"Added shell allow pattern: `{pattern}`"
@@ -212,7 +174,7 @@ async def tool_shell_patterns(ctx, action: str = "list", pattern: str = "") -> s
         path.write_text(json.dumps(patterns, indent=2) + "\n")
         return f"Removed shell allow pattern: `{pattern}`"
 
-    return "[error: invalid action. Use 'list', 'add', or 'remove'.]"
+    return ToolResult(text="[error: invalid action. Use 'list', 'add', or 'remove'.]")
 
 
 SHELL_TOOLS = {

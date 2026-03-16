@@ -32,7 +32,7 @@ async def tool_mcp_status(ctx, action: str = "status", server: str = "") -> str:
     return "\n".join(lines)
 
 
-async def _restart(ctx, registry, server_name):
+async def _restart(ctx, registry, server_name) -> str:
     """Restart MCP servers by scheduling a restart and reporting status.
 
     Due to anyio/asyncio cancel scope incompatibilities, MCP servers

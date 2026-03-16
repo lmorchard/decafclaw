@@ -5,6 +5,7 @@ import json
 import logging
 import sqlite3
 import struct
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 
@@ -51,6 +52,16 @@ def _get_db(config) -> sqlite3.Connection:
         pass  # column already exists
     conn.commit()
     return conn
+
+
+@contextmanager
+def _open_db(config):
+    """Context manager for embeddings DB — auto-closes on exit."""
+    conn = _get_db(config)
+    try:
+        yield conn
+    finally:
+        conn.close()
 
 
 def _serialize_embedding(vec: list[float]) -> bytes:
@@ -114,8 +125,7 @@ def _set_model(config, conn):
 def index_entry_sync(config, file_path: str, entry_text: str, embedding: list[float],
                      source_type: str = "memory"):
     """Store an entry and its embedding in the index (sync)."""
-    conn = _get_db(config)
-    try:
+    with _open_db(config) as conn:
         _set_model(config, conn)
         conn.execute(
             """INSERT OR IGNORE INTO memory_embeddings
@@ -131,8 +141,6 @@ def index_entry_sync(config, file_path: str, entry_text: str, embedding: list[fl
             ),
         )
         conn.commit()
-    finally:
-        conn.close()
 
 
 def search_similar_sync(config, query_embedding: list[float], top_k: int = 5,
@@ -141,8 +149,7 @@ def search_similar_sync(config, query_embedding: list[float], top_k: int = 5,
 
     If source_type is specified, only search that type. Otherwise search all.
     """
-    conn = _get_db(config)
-    try:
+    with _open_db(config) as conn:
         _check_model(config, conn)
         if source_type:
             rows = conn.execute(
@@ -153,8 +160,6 @@ def search_similar_sync(config, query_embedding: list[float], top_k: int = 5,
             rows = conn.execute(
                 "SELECT entry_text, file_path, embedding FROM memory_embeddings"
             ).fetchall()
-    finally:
-        conn.close()
 
     if not rows:
         return []
@@ -198,13 +203,10 @@ async def search_similar(config, query: str, top_k: int = 5,
     """
     # Check if index needs building (only for memory type)
     if source_type is None or source_type == "memory":
-        conn = _get_db(config)
-        try:
+        with _open_db(config) as conn:
             count = conn.execute(
                 "SELECT COUNT(*) FROM memory_embeddings WHERE source_type = 'memory'"
             ).fetchone()[0]
-        finally:
-            conn.close()
 
         if count == 0:
             log.info("Embedding index is empty, reindexing memories...")

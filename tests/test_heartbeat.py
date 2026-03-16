@@ -13,6 +13,7 @@ from decafclaw.heartbeat import (
     run_heartbeat_cycle,
     run_heartbeat_timer,
 )
+from decafclaw.media import ToolResult
 
 # -- interval parsing tests --
 
@@ -179,7 +180,10 @@ async def test_run_heartbeat_cycle(config):
     admin_path.parent.mkdir(parents=True, exist_ok=True)
     admin_path.write_text("## Task one\n\nDo thing one.\n\n## Task two\n\nDo thing two.\n")
 
-    mock_agent = AsyncMock(side_effect=["Result one", "HEARTBEAT_OK nothing to report"])
+    mock_agent = AsyncMock(side_effect=[
+        ToolResult(text="Result one"),
+        ToolResult(text="HEARTBEAT_OK nothing to report"),
+    ])
     bus = EventBus()
 
     with patch("decafclaw.agent.run_agent_turn", mock_agent):
@@ -217,7 +221,7 @@ async def test_run_heartbeat_cycle_section_failure(config):
         call_count += 1
         if call_count == 1:
             raise RuntimeError("section exploded")
-        return "HEARTBEAT_OK"
+        return ToolResult(text="HEARTBEAT_OK")
 
     with patch("decafclaw.agent.run_agent_turn", flaky_agent):
         results = await run_heartbeat_cycle(config, EventBus())
@@ -240,7 +244,7 @@ async def test_run_heartbeat_cycle_isolated_history(config):
 
     async def capture_agent(ctx, prompt, history):
         histories_seen.append(list(history))  # snapshot
-        return "HEARTBEAT_OK"
+        return ToolResult(text="HEARTBEAT_OK")
 
     with patch("decafclaw.agent.run_agent_turn", capture_agent):
         await run_heartbeat_cycle(config, EventBus())
@@ -294,7 +298,7 @@ async def test_timer_fires_callback(config):
     hb._POLL_INTERVAL = 0.5  # fast polling for tests
 
     try:
-        with patch("decafclaw.agent.run_agent_turn", AsyncMock(return_value="HEARTBEAT_OK")):
+        with patch("decafclaw.agent.run_agent_turn", AsyncMock(return_value=ToolResult(text="HEARTBEAT_OK"))):
             await asyncio.gather(
                 run_heartbeat_timer(config, EventBus(), shutdown, on_results=capture_results),
                 stop_after_one(),
