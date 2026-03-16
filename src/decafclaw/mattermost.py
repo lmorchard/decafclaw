@@ -893,7 +893,7 @@ class ConversationDisplay:
 
     async def on_tool_start(self, tool_name, args):
         """Tool execution starting — finalize text, post tool call message."""
-        msg = f"\U0001f527 Running {tool_name}..."
+        msg = f"\U0001f527 {tool_name}..."
 
         # If still on thinking placeholder with no text, reuse it for the tool call
         if self._current_type == "thinking" and self._current_post_id and not self._text_has_content:
