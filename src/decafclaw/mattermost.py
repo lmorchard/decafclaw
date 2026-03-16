@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import time
+from dataclasses import dataclass, field
 
 import httpx
 import websockets
@@ -13,6 +14,64 @@ log = logging.getLogger(__name__)
 # Status indicators shown in placeholder messages
 THINKING_INDICATOR = "\U0001f4ad Thinking..."
 THINKING_SUFFIX = "\n\U0001f4ad Thinking..."
+
+
+# -- Per-conversation state ----------------------------------------------------
+
+
+@dataclass
+class ConversationState:
+    """Per-conversation state tracked during the bot's lifetime."""
+    history: list = field(default_factory=list)
+    skill_state: dict | None = None
+    pending_msgs: list = field(default_factory=list)
+    debounce_timer: asyncio.Task | None = None
+    last_response_time: float = 0
+    busy: bool = False
+    cancel: asyncio.Event | None = None
+    turn_times: list = field(default_factory=list)
+    paused_until: float = 0
+
+
+# -- Circuit breaker -----------------------------------------------------------
+
+
+class CircuitBreaker:
+    """Rate-limits agent turns per conversation to prevent runaway loops."""
+
+    def __init__(self, max_turns: int, window_sec: int, pause_sec: int):
+        self.max_turns = max_turns
+        self.window_sec = window_sec
+        self.pause_sec = pause_sec
+
+    def is_tripped(self, conv: ConversationState, conv_id: str = "") -> bool:
+        """Check if the circuit breaker has tripped. Mutates conv state."""
+        now = time.monotonic()
+
+        # Check if currently paused
+        if now < conv.paused_until:
+            return True
+
+        # Clean expired entries and check
+        cutoff = now - self.window_sec
+        conv.turn_times = [t for t in conv.turn_times if t > cutoff]
+
+        if len(conv.turn_times) >= self.max_turns:
+            conv.paused_until = now + self.pause_sec
+            log.warning(
+                f"Circuit breaker tripped for {conv_id[:8]}: "
+                f"{len(conv.turn_times)} turns in {self.window_sec}s, "
+                f"pausing for {self.pause_sec}s"
+            )
+            return True
+        return False
+
+    def record_turn(self, conv: ConversationState) -> None:
+        """Record an agent turn for tracking."""
+        conv.turn_times.append(time.monotonic())
+
+
+# -- Mattermost client ---------------------------------------------------------
 
 
 class MattermostClient:
@@ -33,9 +92,11 @@ class MattermostClient:
             ch.strip() for ch in config.mattermost_channel_blocklist.split(",")
             if ch.strip()
         )
-        self.cb_max = config.mattermost_circuit_breaker_max
-        self.cb_window = config.mattermost_circuit_breaker_window_sec
-        self.cb_pause = config.mattermost_circuit_breaker_pause_sec
+        self.circuit_breaker = CircuitBreaker(
+            max_turns=config.mattermost_circuit_breaker_max,
+            window_sec=config.mattermost_circuit_breaker_window_sec,
+            pause_sec=config.mattermost_circuit_breaker_pause_sec,
+        )
         self._http = httpx.AsyncClient(
             base_url=self.url + "/api/v4",
             headers={
@@ -117,8 +178,6 @@ class MattermostClient:
                             log.info("Shutdown requested, stopping listener")
                             return
 
-                        # Use wait_for with a short timeout so we can check
-                        # the shutdown event regularly
                         try:
                             raw = await asyncio.wait_for(ws.recv(), timeout=1.0)
                         except asyncio.TimeoutError:
@@ -211,279 +270,252 @@ class MattermostClient:
             "mentioned": mentioned,
         })
 
+    # -- Conversation processing -----------------------------------------------
+
+    def _get_conv(self, conversations: dict, conv_id: str) -> ConversationState:
+        """Get or create conversation state."""
+        if conv_id not in conversations:
+            conversations[conv_id] = ConversationState()
+        return conversations[conv_id]
+
+    def _prepare_history(self, conv, conv_id, root_id, channel_id, conversations, config):
+        """Get or create conversation history, resuming from archive if available."""
+        from .archive import read_archive
+
+        if root_id:
+            hist_id = root_id
+            if not conv.history:
+                # Try archive first, then fork from channel
+                archived = read_archive(config, hist_id)
+                if archived:
+                    conv.history = archived
+                    log.info(f"Resumed thread {hist_id[:8]} from archive ({len(archived)} messages)")
+                else:
+                    channel_conv = conversations.get(channel_id)
+                    channel_history = channel_conv.history if channel_conv else []
+                    conv.history = list(channel_history)
+                    log.debug(f"Forked thread history {hist_id[:8]} from channel {channel_id[:8]} ({len(channel_history)} msgs)")
+        else:
+            if not conv.history:
+                archived = read_archive(config, channel_id)
+                if archived:
+                    conv.history = archived
+                    log.info(f"Resumed channel {channel_id[:8]} from archive ({len(archived)} messages)")
+
+        return conv.history
+
+    async def _build_request_context(self, app_ctx, conv, conv_id, channel_id,
+                                     root_id, placeholder_id):
+        """Fork a request context and set up streaming, cancellation, and progress."""
+        from .media import MattermostMediaHandler
+
+        req_ctx = app_ctx.fork(
+            user_id=app_ctx.config.agent_user_id,
+            channel_id=channel_id,
+            channel_name="",
+            thread_id=root_id or "",
+            conv_id=conv_id,
+        )
+        req_ctx.media_handler = MattermostMediaHandler(self._http)
+
+        # Restore per-conversation skill state from previous turns
+        if conv.skill_state:
+            req_ctx.extra_tools = conv.skill_state.get("extra_tools", {})
+            req_ctx.extra_tool_definitions = conv.skill_state.get("extra_tool_definitions", [])
+            req_ctx.activated_skills = conv.skill_state.get("activated_skills", set())
+
+        # Set up streaming display if streaming is enabled
+        streaming_display = None
+        if app_ctx.config.llm_streaming and placeholder_id:
+            streaming_display = StreamingDisplay(
+                self, placeholder_id,
+                channel_id=channel_id,
+                throttle_ms=app_ctx.config.llm_stream_throttle_ms,
+                show_tool_calls=app_ctx.config.llm_show_tool_calls,
+            )
+            req_ctx.on_stream_chunk = streaming_display.on_chunk
+
+        # Set up cancellation event and poll for stop reaction
+        cancel_event = asyncio.Event()
+        req_ctx.cancelled = cancel_event
+        conv.cancel = cancel_event
+        cancel_task = None
+        if placeholder_id:
+            cancel_task = asyncio.create_task(
+                self._poll_cancel(placeholder_id, cancel_event)
+            )
+
+        sub_id = self._subscribe_progress(
+            req_ctx.event_bus, req_ctx.context_id, placeholder_id,
+            channel_id=channel_id, root_id=root_id,
+            streaming=app_ctx.config.llm_streaming,
+            streaming_display=streaming_display,
+        )
+
+        return req_ctx, streaming_display, cancel_task, sub_id
+
+    async def _post_response(self, response, channel_id, root_id,
+                             placeholder_id, streaming_display):
+        """Post the agent's response, handling media and streaming state."""
+        response_text = response.text if hasattr(response, "text") else response
+        response_media = response.media if hasattr(response, "media") else []
+
+        # Skip final edit if streaming already updated the placeholder
+        already_streamed = streaming_display and streaming_display._streamed
+
+        if response_media:
+            from .media import MattermostMediaHandler, upload_and_collect
+            if not already_streamed and response_text:
+                if placeholder_id:
+                    await self.edit_message(placeholder_id, response_text)
+                else:
+                    await self.send(channel_id, response_text, root_id=root_id)
+
+            handler = MattermostMediaHandler(self._http)
+            file_ids = await upload_and_collect(
+                handler, channel_id, response_media
+            )
+            if file_ids:
+                await handler.send_with_media(
+                    channel_id, "", file_ids, root_id=root_id
+                )
+        elif already_streamed:
+            if response_text and placeholder_id:
+                await self.edit_message(placeholder_id, response_text)
+        elif placeholder_id and response_text:
+            await self.edit_message(placeholder_id, response_text)
+        elif response_text:
+            await self.send(channel_id, response_text, root_id=root_id)
+
+    async def _process_conversation(self, conv_id, channel_id, msgs,
+                                    app_ctx, conversations):
+        """Process accumulated messages for a conversation."""
+        from .agent import run_agent_turn
+
+        conv = self._get_conv(conversations, conv_id)
+        cooldown_sec = self.cooldown_ms / 1000.0
+
+        # Circuit breaker check
+        if self.circuit_breaker.is_tripped(conv, conv_id):
+            log.warning(f"Dropping messages for paused conversation {conv_id[:8]}")
+            return
+
+        # One agent turn at a time per conversation
+        if conv.busy:
+            if conv.cancel and not conv.cancel.is_set():
+                log.info(f"Conversation {conv_id[:8]} busy, cancelling current turn for new message")
+                conv.cancel.set()
+            else:
+                log.info(f"Conversation {conv_id[:8]} busy, re-queuing {len(msgs)} message(s)")
+            conv.pending_msgs = msgs + conv.pending_msgs
+            conv.debounce_timer = asyncio.create_task(
+                self._debounce_fire(conv_id, channel_id, conversations, app_ctx)
+            )
+            return
+
+        # Cooldown: wait if we responded too recently
+        now = time.monotonic()
+        wait = cooldown_sec - (now - conv.last_response_time)
+        if wait > 0:
+            log.info(f"Cooldown: waiting {wait:.1f}s before responding in {conv_id[:8]}")
+            await asyncio.sleep(wait)
+
+        # Combine accumulated messages into one
+        combined_text = "\n".join(m["text"] for m in msgs)
+        last_msg = msgs[-1]
+
+        # Thread routing
+        is_dm = last_msg.get("channel_type") == "D"
+        already_in_thread = bool(last_msg["root_id"])
+        mentioned = any(m.get("mentioned") for m in msgs)
+        if is_dm and not mentioned and not already_in_thread:
+            root_id = None
+        else:
+            root_id = last_msg["root_id"] or last_msg["post_id"]
+
+        senders = set(m["sender_name"] for m in msgs)
+        log.info(f"Processing {len(msgs)} message(s) from {', '.join(senders)} in {conv_id[:8]}")
+
+        # Send placeholder immediately
+        placeholder_id = await self.send_placeholder(channel_id, root_id=root_id)
+        await self.send_typing(channel_id)
+
+        # Prepare history and request context
+        history = self._prepare_history(
+            conv, conv_id, root_id, channel_id, conversations, app_ctx.config
+        )
+        req_ctx, streaming_display, cancel_task, sub_id = await self._build_request_context(
+            app_ctx, conv, conv_id, channel_id, root_id, placeholder_id
+        )
+
+        conv.busy = True
+        try:
+            response = await run_agent_turn(req_ctx, combined_text, history)
+        except BaseException as e:
+            log.error(f"Agent turn failed: {e}")
+            from .media import ToolResult
+            response = ToolResult(text=f"[error: agent turn failed: {e}]")
+        finally:
+            if cancel_task:
+                cancel_task.cancel()
+                try:
+                    await cancel_task
+                except asyncio.CancelledError:
+                    pass
+            req_ctx.event_bus.unsubscribe(sub_id)
+            conv.last_response_time = time.monotonic()
+            conv.busy = False
+            conv.cancel = None
+            self.circuit_breaker.record_turn(conv)
+
+            # Persist per-conversation skill state for next turn
+            if getattr(req_ctx, "activated_skills", None):
+                conv.skill_state = {
+                    "extra_tools": getattr(req_ctx, "extra_tools", {}),
+                    "extra_tool_definitions": getattr(req_ctx, "extra_tool_definitions", []),
+                    "activated_skills": getattr(req_ctx, "activated_skills", set()),
+                }
+
+        if streaming_display:
+            streaming_display.stop()
+
+        await self._post_response(
+            response, channel_id, root_id, placeholder_id, streaming_display
+        )
+
+    async def _debounce_fire(self, conv_id, channel_id, conversations, app_ctx):
+        """Wait for debounce window, then process accumulated messages."""
+        debounce_sec = self.debounce_ms / 1000.0
+        await asyncio.sleep(debounce_sec)
+        conv = self._get_conv(conversations, conv_id)
+        msgs = conv.pending_msgs
+        conv.pending_msgs = []
+        conv.debounce_timer = None
+        if msgs:
+            await self._process_conversation(
+                conv_id, channel_id, msgs, app_ctx, conversations
+            )
+
+    # -- Main run loop ---------------------------------------------------------
+
     async def run(self, app_ctx):
         """Run the bot: connect, listen for messages, and dispatch to the agent."""
-        from .agent import run_agent_turn
-        from .archive import read_archive
-        from .heartbeat import run_heartbeat_timer
+        from .heartbeat import parse_interval, run_heartbeat_timer
         from .mcp_client import init_mcp, shutdown_mcp
 
         await self.connect()
-
-        # Connect MCP servers
         await init_mcp(app_ctx.config)
 
         # Track in-flight agent tasks for graceful shutdown
         agent_tasks = set()
-
-        # All state is keyed by conversation ID (conv_id):
-        # - Top-level channel messages use channel_id
-        # - Thread messages use root_id
-        # This allows threads and top-level to run independently.
-        histories = {}              # conv_id -> message history
-        conv_skill_state = {}       # conv_id -> {extra_tools, extra_tool_definitions, activated_skills}
-        pending_msgs = {}           # conv_id -> list of accumulated messages
-        debounce_timers = {}        # conv_id -> asyncio.Task
-        last_response_time = {}     # conv_id -> timestamp of last response
-        conv_busy = {}              # conv_id -> True if agent turn in progress
-        conv_cancel = {}            # conv_id -> asyncio.Event for cancelling current turn
-        conv_turn_times = {}        # conv_id -> list of timestamps (circuit breaker)
-        conv_paused_until = {}      # conv_id -> timestamp when pause ends
-
-        # Per-user state
-        user_last_msg_time = {}     # user_id -> timestamp of last accepted message
+        conversations: dict[str, ConversationState] = {}
+        user_last_msg_time: dict[str, float] = {}
 
         debounce_sec = self.debounce_ms / 1000.0
-        cooldown_sec = self.cooldown_ms / 1000.0
         user_rate_sec = self.user_rate_limit_ms / 1000.0
 
-        def _check_circuit_breaker(conv_id):
-            """Check if the circuit breaker has tripped for this conversation.
-            Returns True if the conversation is paused."""
-            now = time.monotonic()
-
-            # Check if currently paused
-            paused_until = conv_paused_until.get(conv_id, 0)
-            if now < paused_until:
-                return True
-
-            # Clean expired entries and check
-            times = conv_turn_times.get(conv_id, [])
-            cutoff = now - self.cb_window
-            times = [t for t in times if t > cutoff]
-            conv_turn_times[conv_id] = times
-
-            if len(times) >= self.cb_max:
-                conv_paused_until[conv_id] = now + self.cb_pause
-                log.warning(
-                    f"Circuit breaker tripped for {conv_id[:8]}: "
-                    f"{len(times)} turns in {self.cb_window}s, "
-                    f"pausing for {self.cb_pause}s"
-                )
-                return True
-            return False
-
-        def _record_turn(conv_id):
-            """Record an agent turn for circuit breaker tracking."""
-            if conv_id not in conv_turn_times:
-                conv_turn_times[conv_id] = []
-            conv_turn_times[conv_id].append(time.monotonic())
-
         def _conv_id_for_msg(msg):
-            """Determine conversation ID: root_id for threads, channel_id for top-level."""
             return msg["root_id"] or msg["channel_id"]
-
-        async def _process_conversation(conv_id, channel_id, msgs):
-            """Process accumulated messages for a conversation."""
-            # Circuit breaker check
-            if _check_circuit_breaker(conv_id):
-                log.warning(f"Dropping messages for paused conversation {conv_id[:8]}")
-                return
-
-            # One agent turn at a time per conversation
-            if conv_busy.get(conv_id):
-                # Cancel the current turn and queue the new message
-                cancel = conv_cancel.get(conv_id)
-                if cancel and not cancel.is_set():
-                    log.info(f"Conversation {conv_id[:8]} busy, cancelling current turn for new message")
-                    cancel.set()
-                else:
-                    log.info(f"Conversation {conv_id[:8]} busy, re-queuing {len(msgs)} message(s)")
-                if conv_id not in pending_msgs:
-                    pending_msgs[conv_id] = []
-                pending_msgs[conv_id] = msgs + pending_msgs[conv_id]
-                debounce_timers[conv_id] = asyncio.create_task(_debounce_fire(conv_id, channel_id))
-                return
-
-            # Cooldown: wait if we responded too recently
-            now = time.monotonic()
-            last = last_response_time.get(conv_id, 0)
-            wait = cooldown_sec - (now - last)
-            if wait > 0:
-                log.info(f"Cooldown: waiting {wait:.1f}s before responding in {conv_id[:8]}")
-                await asyncio.sleep(wait)
-
-            # Combine accumulated messages into one
-            combined_text = "\n".join(m["text"] for m in msgs)
-            # Use the last message for threading context
-            last_msg = msgs[-1]
-
-            # In DM channels, don't start a new thread unless @-mentioned.
-            # Always continue an existing thread.
-            is_dm = last_msg.get("channel_type") == "D"
-            already_in_thread = bool(last_msg["root_id"])
-            mentioned = any(m.get("mentioned") for m in msgs)
-            if is_dm and not mentioned and not already_in_thread:
-                root_id = None
-            else:
-                root_id = last_msg["root_id"] or last_msg["post_id"]
-
-            senders = set(m["sender_name"] for m in msgs)
-            log.info(f"Processing {len(msgs)} message(s) from {', '.join(senders)} in {conv_id[:8]}")
-
-            # Send placeholder immediately
-            placeholder_id = await self.send_placeholder(channel_id, root_id=root_id)
-            await self.send_typing(channel_id)
-
-            # Get or create conversation history.
-            # On first access, try to resume from archive.
-            # Threads get their own history, forked from channel at creation.
-            if root_id:
-                hist_id = root_id
-                if hist_id not in histories:
-                    # Try archive first, then fork from channel
-                    archived = read_archive(app_ctx.config, hist_id)
-                    if archived:
-                        histories[hist_id] = archived
-                        log.info(f"Resumed thread {hist_id[:8]} from archive ({len(archived)} messages)")
-                    else:
-                        channel_history = histories.get(channel_id, [])
-                        histories[hist_id] = list(channel_history)
-                        log.debug(f"Forked thread history {hist_id[:8]} from channel {channel_id[:8]} ({len(channel_history)} msgs)")
-            else:
-                hist_id = channel_id
-                if hist_id not in histories:
-                    archived = read_archive(app_ctx.config, hist_id)
-                    if archived:
-                        histories[hist_id] = archived
-                        log.info(f"Resumed channel {hist_id[:8]} from archive ({len(archived)} messages)")
-                    else:
-                        histories[hist_id] = []
-            history = histories[hist_id]
-
-            # Fork a request context with user/channel metadata
-            from .media import MattermostMediaHandler
-            req_ctx = app_ctx.fork(
-                user_id=app_ctx.config.agent_user_id,
-                channel_id=channel_id,
-                channel_name="",
-                thread_id=root_id or "",
-                conv_id=conv_id,
-            )
-            req_ctx.media_handler = MattermostMediaHandler(self._http)
-
-            # Restore per-conversation skill state from previous turns
-            skill_state = conv_skill_state.get(conv_id)
-            if skill_state:
-                req_ctx.extra_tools = skill_state.get("extra_tools", {})
-                req_ctx.extra_tool_definitions = skill_state.get("extra_tool_definitions", [])
-                req_ctx.activated_skills = skill_state.get("activated_skills", set())
-
-            # Set up streaming display if streaming is enabled
-            streaming_display = None
-            if app_ctx.config.llm_streaming and placeholder_id:
-                streaming_display = StreamingDisplay(
-                    self, placeholder_id,
-                    channel_id=channel_id,
-                    throttle_ms=app_ctx.config.llm_stream_throttle_ms,
-                    show_tool_calls=app_ctx.config.llm_show_tool_calls,
-                )
-                req_ctx.on_stream_chunk = streaming_display.on_chunk
-
-            # Set up cancellation event and poll for 🛑 on placeholder
-            cancel_event = asyncio.Event()
-            req_ctx.cancelled = cancel_event
-            conv_cancel[conv_id] = cancel_event
-            cancel_task = None
-            if placeholder_id:
-                cancel_task = asyncio.create_task(
-                    self._poll_cancel(placeholder_id, cancel_event)
-                )
-
-            sub_id = self._subscribe_progress(
-                req_ctx.event_bus, req_ctx.context_id, placeholder_id,
-                channel_id=channel_id, root_id=root_id,
-                streaming=app_ctx.config.llm_streaming,
-                streaming_display=streaming_display,
-            )
-            conv_busy[conv_id] = True
-            try:
-                response = await run_agent_turn(req_ctx, combined_text, history)
-            except BaseException as e:
-                log.error(f"Agent turn failed: {e}")
-                from .media import ToolResult
-                response = ToolResult(text=f"[error: agent turn failed: {e}]")
-            finally:
-                # Stop cancel polling
-                if cancel_task:
-                    cancel_task.cancel()
-                    try:
-                        await cancel_task
-                    except asyncio.CancelledError:
-                        pass
-                req_ctx.event_bus.unsubscribe(sub_id)
-                last_response_time[conv_id] = time.monotonic()
-                conv_busy[conv_id] = False
-                conv_cancel.pop(conv_id, None)
-                _record_turn(conv_id)
-
-                # Persist per-conversation skill state for next turn
-                if getattr(req_ctx, "activated_skills", None):
-                    conv_skill_state[conv_id] = {
-                        "extra_tools": getattr(req_ctx, "extra_tools", {}),
-                        "extra_tool_definitions": getattr(req_ctx, "extra_tool_definitions", []),
-                        "activated_skills": getattr(req_ctx, "activated_skills", set()),
-                    }
-
-            # Stop thinking indicator now that the turn is complete
-            if streaming_display:
-                streaming_display.stop()
-
-            # Post the response, handling media if present
-            response_text = response.text if hasattr(response, "text") else response
-            response_media = response.media if hasattr(response, "media") else []
-
-            # Skip final edit if streaming already updated the placeholder
-            already_streamed = streaming_display and streaming_display._streamed
-
-            if response_media:
-                # Edit placeholder with text, send files as separate message
-                from .media import upload_and_collect
-                if not already_streamed and response_text:
-                    if placeholder_id:
-                        await self.edit_message(placeholder_id, response_text)
-                    else:
-                        await self.send(channel_id, response_text, root_id=root_id)
-
-                handler = MattermostMediaHandler(self._http)
-                file_ids = await upload_and_collect(
-                    handler, channel_id, response_media
-                )
-                if file_ids:
-                    await handler.send_with_media(
-                        channel_id, "", file_ids, root_id=root_id
-                    )
-            elif already_streamed:
-                # Do a final edit to ensure clean text (no thinking suffix)
-                if response_text and placeholder_id:
-                    await self.edit_message(placeholder_id, response_text)
-            elif placeholder_id and response_text:
-                await self.edit_message(placeholder_id, response_text)
-            elif response_text:
-                await self.send(channel_id, response_text, root_id=root_id)
-
-        async def _debounce_fire(conv_id, channel_id):
-            """Wait for debounce window, then process accumulated messages."""
-            await asyncio.sleep(debounce_sec)
-            msgs = pending_msgs.pop(conv_id, [])
-            debounce_timers.pop(conv_id, None)
-            if msgs:
-                task = asyncio.current_task()
-                agent_tasks.add(task)
-                try:
-                    await _process_conversation(conv_id, channel_id, msgs)
-                finally:
-                    agent_tasks.discard(task)
 
         async def on_message(msg):
             channel_id = msg["channel_id"]
@@ -498,19 +530,35 @@ class MattermostClient:
                 return
             user_last_msg_time[user_id] = now
 
+            conv = self._get_conv(conversations, conv_id)
             log.info(f"Message from {msg['sender_name']} in {conv_id[:8]} "
-                      f"(busy={conv_busy.get(conv_id, False)}): "
+                      f"(busy={conv.busy}): "
                       f"{msg['text'][:50]}")
 
             # Accumulate message by conversation
-            if conv_id not in pending_msgs:
-                pending_msgs[conv_id] = []
-            pending_msgs[conv_id].append(msg)
+            conv.pending_msgs.append(msg)
 
             # Reset debounce timer for this conversation
-            if conv_id in debounce_timers:
-                debounce_timers[conv_id].cancel()
-            debounce_timers[conv_id] = asyncio.create_task(_debounce_fire(conv_id, channel_id))
+            if conv.debounce_timer:
+                conv.debounce_timer.cancel()
+
+            async def debounce_and_process():
+                await asyncio.sleep(debounce_sec)
+                conv_inner = self._get_conv(conversations, conv_id)
+                msgs = conv_inner.pending_msgs
+                conv_inner.pending_msgs = []
+                conv_inner.debounce_timer = None
+                if msgs:
+                    task = asyncio.current_task()
+                    agent_tasks.add(task)
+                    try:
+                        await self._process_conversation(
+                            conv_id, channel_id, msgs, app_ctx, conversations
+                        )
+                    finally:
+                        agent_tasks.discard(task)
+
+            conv.debounce_timer = asyncio.create_task(debounce_and_process())
 
         # Wrap the sync callback from WebSocket into async
         def on_message_sync(msg):
@@ -528,9 +576,8 @@ class MattermostClient:
         for sig in (signal.SIGTERM, signal.SIGINT):
             loop.add_signal_handler(sig, _signal_handler)
 
-        # Start heartbeat timer (runs even without a reporting channel)
+        # Start heartbeat timer
         heartbeat_task = None
-        from .heartbeat import parse_interval
         if parse_interval(app_ctx.config.heartbeat_interval) is not None:
             cycle_fn = self._make_heartbeat_cycle(
                 None, app_ctx.event_bus, app_ctx.config
@@ -549,7 +596,6 @@ class MattermostClient:
         try:
             await self.listen(on_message_sync, shutdown_event=shutdown_event)
         finally:
-            # Stop heartbeat timer
             if heartbeat_task:
                 heartbeat_task.cancel()
                 try:
@@ -563,6 +609,8 @@ class MattermostClient:
             await shutdown_mcp()
             await self.close()
             log.info("Shutdown complete")
+
+    # -- Progress subscription -------------------------------------------------
 
     def _subscribe_progress(self, event_bus, context_id, placeholder_id,
                             channel_id=None, root_id=None, streaming=False,
@@ -601,16 +649,13 @@ class MattermostClient:
                 if not streaming:
                     await client.edit_message(placeholder_id, THINKING_INDICATOR)
                 elif streaming_display:
-                    # Resume thinking indicator for new LLM iteration
                     streaming_display.resume()
                     await streaming_display._maybe_edit()
             elif event_type == "tool_confirm_request" and channel_id:
-                # Post a separate threaded message for each confirmation
                 tool_name = event.get("tool", "tool")
                 command = event.get("command", "")
                 suggested_pattern = event.get("suggested_pattern", "")
 
-                # Build confirmation message
                 msg = (
                     f"\U0001f6a8 **Confirm {tool_name}:**\n```\n{command}\n```\n"
                     f"React: \U0001f44d approve | \U0001f44e deny | \u2705 always"
@@ -659,10 +704,11 @@ class MattermostClient:
 
         return event_bus.subscribe(on_progress)
 
+    # -- Reaction polling ------------------------------------------------------
+
     async def _poll_confirmation(self, post_id, event_bus, context_id, tool_name,
                                  timeout=60, poll_interval=2):
         """Poll a post for thumbs up/down reactions to approve/deny a tool."""
-        import time
 
         async def _resolve(approved, always=False, add_pattern=False, label=""):
             await event_bus.publish({
@@ -673,7 +719,6 @@ class MattermostClient:
                 **({"always": True} if always else {}),
                 **({"add_pattern": True} if add_pattern else {}),
             })
-            # Append the result to the confirmation post
             try:
                 resp = await self._http.get(f"/posts/{post_id}")
                 original_text = resp.json().get("message", "") if resp.status_code == 200 else ""
@@ -690,7 +735,6 @@ class MattermostClient:
                 for r in reactions:
                     emoji = r.get("emoji_name", "")
                     user_id = r.get("user_id", "")
-                    # Ignore bot's own reactions
                     if user_id == self.bot_user_id:
                         continue
                     if emoji in ("notebook",):
@@ -714,12 +758,11 @@ class MattermostClient:
                 log.debug(f"Reaction poll error: {e}")
             await asyncio.sleep(poll_interval)
 
-        # Timeout — deny by default
         log.info(f"Confirmation timed out for {tool_name}")
         await _resolve(False, label="\u23f0 timed out")
 
     async def _poll_cancel(self, post_id, cancel_event, poll_interval=2):
-        """Poll a placeholder post for 🛑 reaction to cancel the agent turn."""
+        """Poll a placeholder post for stop reaction to cancel the agent turn."""
         while not cancel_event.is_set():
             try:
                 resp = await self._http.get(f"/posts/{post_id}/reactions")
@@ -805,8 +848,6 @@ class StreamingDisplay:
         elif chunk_type == "tool_call_start":
             self._thinking = False
         elif chunk_type == "done":
-            # Don't clear _thinking here — the turn may continue with tool calls
-            # flush() is called to write current buffer without thinking suffix
             await self.flush()
 
     def resume(self):
@@ -819,7 +860,6 @@ class StreamingDisplay:
 
     async def _maybe_edit(self):
         """Edit placeholder if throttle interval has passed."""
-        import time
         now = time.monotonic()
         if (now - self.last_edit_time) * 1000 < self.throttle_ms:
             return
@@ -827,13 +867,11 @@ class StreamingDisplay:
 
     async def _do_edit(self):
         """Actually edit the placeholder."""
-        import time
         self.last_edit_time = time.monotonic()
         thinking_suffix = THINKING_SUFFIX if self._thinking else ""
         text = self.buffer + self.tool_suffix + thinking_suffix
         if not text:
             return
-        # Typing indicator (throttled alongside edits)
         try:
             await self.client.send_typing(self._channel_id)
         except Exception:
