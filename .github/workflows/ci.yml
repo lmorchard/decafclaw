@@ -24,5 +24,8 @@ jobs:
       - name: Lint
         run: uv run ruff check src/ tests/
 
+      - name: Type check
+        run: uv run pyright
+
       - name: Test
         run: uv run pytest tests/ -v
