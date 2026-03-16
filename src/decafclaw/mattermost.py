@@ -382,6 +382,7 @@ class MattermostClient:
                 req_ctx.event_bus, req_ctx.context_id, placeholder_id,
                 channel_id=channel_id, root_id=root_id,
                 streaming=app_ctx.config.llm_streaming,
+                streaming_display=streaming_display,
             )
             conv_busy[conv_id] = True
             try:
@@ -528,7 +529,8 @@ class MattermostClient:
             log.info("Shutdown complete")
 
     def _subscribe_progress(self, event_bus, context_id, placeholder_id,
-                            channel_id=None, root_id=None, streaming=False):
+                            channel_id=None, root_id=None, streaming=False,
+                            streaming_display=None):
         """Subscribe to progress events and update the placeholder message.
 
         Returns the subscription ID for later unsubscribe.
@@ -544,10 +546,21 @@ class MattermostClient:
             event_type = event.get("type")
             if event_type == "tool_status" and placeholder_id:
                 tool_name = event.get("tool", "tool")
-                await client.edit_message(placeholder_id, f"\U0001f527 {tool_name}: {event['message']}")
+                if streaming_display and streaming_display._streamed:
+                    streaming_display.tool_suffix = f"\n\U0001f527 {tool_name}: {event['message']}"
+                    await streaming_display._do_edit()
+                else:
+                    await client.edit_message(placeholder_id, f"\U0001f527 {tool_name}: {event['message']}")
             elif event_type == "tool_start" and placeholder_id:
                 tool_name = event.get("tool", "tool")
-                await client.edit_message(placeholder_id, f"\U0001f527 Running {tool_name}...")
+                if streaming_display and streaming_display._streamed:
+                    streaming_display.tool_suffix = f"\n\U0001f527 Running {tool_name}..."
+                    await streaming_display._do_edit()
+                else:
+                    await client.edit_message(placeholder_id, f"\U0001f527 Running {tool_name}...")
+            elif event_type == "tool_end" and streaming_display and streaming_display._streamed:
+                streaming_display.tool_suffix = ""
+                await streaming_display._do_edit()
             elif event_type == "llm_start" and placeholder_id and not streaming:
                 await client.edit_message(placeholder_id, "\U0001f4ad Thinking...")
             elif event_type == "tool_confirm_request" and placeholder_id:
