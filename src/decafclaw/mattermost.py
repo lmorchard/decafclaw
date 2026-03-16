@@ -883,7 +883,11 @@ class ConversationDisplay:
                 await self._finalize_current_text()
                 self._current_type = None
         elif chunk_type == "done":
-            await self.on_text_done()
+            # Only finalize text if we actually streamed text content.
+            # If the LLM went straight to tool calls, preserve the thinking
+            # placeholder for on_tool_start to reuse.
+            if self._text_has_content:
+                await self.on_text_done()
 
     # -- Tool call lifecycle ---------------------------------------------------
 
