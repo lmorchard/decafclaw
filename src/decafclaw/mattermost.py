@@ -324,16 +324,16 @@ class MattermostClient:
             req_ctx.extra_tool_definitions = conv.skill_state.get("extra_tool_definitions", [])
             req_ctx.activated_skills = conv.skill_state.get("activated_skills", set())
 
-        # Set up streaming display if streaming is enabled
-        streaming_display = None
-        if app_ctx.config.llm_streaming and placeholder_id:
-            streaming_display = StreamingDisplay(
-                self, placeholder_id,
-                channel_id=channel_id,
-                throttle_ms=app_ctx.config.llm_stream_throttle_ms,
-                show_tool_calls=app_ctx.config.llm_show_tool_calls,
-            )
-            req_ctx.on_stream_chunk = streaming_display.on_chunk
+        # Create conversation display for this turn
+        conv_display = ConversationDisplay(
+            self, channel_id, root_id,
+            throttle_ms=app_ctx.config.llm_stream_throttle_ms,
+            initial_post_id=placeholder_id,
+        )
+
+        # Set streaming callback
+        if app_ctx.config.llm_streaming:
+            req_ctx.on_stream_chunk = conv_display.on_stream_chunk
 
         # Set up cancellation event and poll for stop reaction
         cancel_event = asyncio.Event()
@@ -346,31 +346,26 @@ class MattermostClient:
             )
 
         sub_id = self._subscribe_progress(
-            req_ctx.event_bus, req_ctx.context_id, placeholder_id,
+            req_ctx.event_bus, req_ctx.context_id,
             channel_id=channel_id, root_id=root_id,
             streaming=app_ctx.config.llm_streaming,
-            streaming_display=streaming_display,
+            conv_display=conv_display,
         )
 
-        return req_ctx, streaming_display, cancel_task, sub_id
+        return req_ctx, conv_display, cancel_task, sub_id
 
-    async def _post_response(self, response, channel_id, root_id,
-                             placeholder_id, streaming_display):
-        """Post the agent's response, handling media and streaming state."""
-        response_text = response.text
+    async def _post_response(self, response, channel_id, root_id, conv_display):
+        """Post any remaining response content not handled by ConversationDisplay.
+
+        ConversationDisplay handles text streaming and tool media during the turn.
+        This handles:
+        - Text-referenced media from the final response (workspace image refs)
+        - Error responses that ConversationDisplay may not have seen
+        """
         response_media = response.media or []
-
-        # Skip final edit if streaming already updated the placeholder
-        already_streamed = streaming_display and streaming_display._streamed
 
         if response_media:
             from .media import MattermostMediaHandler, upload_and_collect
-            if not already_streamed and response_text:
-                if placeholder_id:
-                    await self.edit_message(placeholder_id, response_text)
-                else:
-                    await self.send(channel_id, response_text, root_id=root_id)
-
             handler = MattermostMediaHandler(self._http)
             file_ids = await upload_and_collect(
                 handler, channel_id, response_media
@@ -379,16 +374,6 @@ class MattermostClient:
                 await handler.send_with_media(
                     channel_id, "", file_ids, root_id=root_id
                 )
-        elif already_streamed:
-            if response_text and placeholder_id:
-                await self.edit_message(placeholder_id, response_text)
-        elif placeholder_id and response_text:
-            await self.edit_message(placeholder_id, response_text)
-        elif response_text:
-            await self.send(channel_id, response_text, root_id=root_id)
-        elif placeholder_id:
-            # Empty response — remove placeholder rather than leaving "Thinking..." stuck
-            await self.delete_message(placeholder_id)
 
     async def _process_conversation(self, conv_id, channel_id, msgs,
                                     app_ctx, conversations):
@@ -447,7 +432,7 @@ class MattermostClient:
         history = self._prepare_history(
             conv, conv_id, root_id, channel_id, conversations, app_ctx.config
         )
-        req_ctx, streaming_display, cancel_task, sub_id = await self._build_request_context(
+        req_ctx, conv_display, cancel_task, sub_id = await self._build_request_context(
             app_ctx, conv, conv_id, channel_id, root_id, placeholder_id
         )
 
@@ -479,11 +464,10 @@ class MattermostClient:
                     "activated_skills": getattr(req_ctx, "activated_skills", set()),
                 }
 
-        if streaming_display:
-            streaming_display.stop()
+        await conv_display.finalize()
 
         await self._post_response(
-            response, channel_id, root_id, placeholder_id, streaming_display
+            response, channel_id, root_id, conv_display
         )
 
     async def _debounce_fire(self, conv_id, channel_id, conversations, app_ctx):
@@ -615,69 +599,52 @@ class MattermostClient:
 
     # -- Progress subscription -------------------------------------------------
 
-    def _subscribe_progress(self, event_bus, context_id, placeholder_id,
+    def _subscribe_progress(self, event_bus, context_id,
                             channel_id=None, root_id=None, streaming=False,
-                            streaming_display=None):
-        """Subscribe to progress events and update the placeholder message.
+                            conv_display=None):
+        """Subscribe to progress events and route to ConversationDisplay.
 
         Returns the subscription ID for later unsubscribe.
         """
         client = self
         compaction_post_id = None
-        compaction_start_time = 0
 
         async def on_progress(event):
-            nonlocal compaction_post_id, compaction_start_time
+            nonlocal compaction_post_id
             if event.get("context_id") != context_id:
                 return
             event_type = event.get("type")
-            if event_type == "tool_status" and placeholder_id:
-                tool_name = event.get("tool", "tool")
-                if streaming_display and streaming_display._streamed:
-                    streaming_display.tool_suffix = f"\n\U0001f527 {tool_name}: {event['message']}"
-                    await streaming_display._do_edit()
-                else:
-                    await client.edit_message(placeholder_id, f"\U0001f527 {tool_name}: {event['message']}")
-            elif event_type == "tool_start" and placeholder_id:
-                tool_name = event.get("tool", "tool")
-                if streaming_display and streaming_display._streamed:
-                    streaming_display.tool_suffix = f"\n\U0001f527 Running {tool_name}..."
-                    await streaming_display._do_edit()
-                else:
-                    await client.edit_message(placeholder_id, f"\U0001f527 Running {tool_name}...")
-            elif event_type == "tool_end" and streaming_display and streaming_display._streamed:
-                streaming_display.tool_suffix = ""
-                await streaming_display._do_edit()
-            elif event_type == "llm_start" and placeholder_id:
-                if not streaming:
-                    await client.edit_message(placeholder_id, THINKING_INDICATOR)
-                elif streaming_display:
-                    streaming_display.resume()
-                    await streaming_display._maybe_edit()
-            elif event_type == "tool_confirm_request" and channel_id:
-                tool_name = event.get("tool", "tool")
-                command = event.get("command", "")
-                suggested_pattern = event.get("suggested_pattern", "")
 
-                msg = (
-                    f"\U0001f6a8 **Confirm {tool_name}:**\n```\n{command}\n```\n"
-                    f"React: \U0001f44d approve | \U0001f44e deny | \u2705 always"
+            if event_type == "llm_start" and conv_display:
+                await conv_display.on_llm_start(event.get("iteration", 1))
+            elif event_type == "llm_end" and conv_display and not streaming:
+                # Non-streaming: show text content via ConversationDisplay
+                content = event.get("content")
+                if content:
+                    await conv_display.on_text_complete(content)
+            elif event_type == "tool_start" and conv_display:
+                await conv_display.on_tool_start(
+                    event.get("tool", "tool"), event.get("args", {}))
+            elif event_type == "tool_status" and conv_display:
+                await conv_display.on_tool_status(
+                    event.get("tool", "tool"), event.get("message", ""))
+            elif event_type == "tool_end" and conv_display:
+                await conv_display.on_tool_end(
+                    event.get("tool", "tool"),
+                    event.get("result_text", ""),
+                    event.get("display_text"),
+                    event.get("media", []),
                 )
-                if suggested_pattern and tool_name == "shell":
-                    msg += f" | \U0001f4d3 allow `{suggested_pattern}`"
-
-                confirm_post_id = await client.send(
-                    channel_id, msg, root_id=root_id,
+            elif event_type == "tool_confirm_request" and conv_display:
+                await conv_display.on_confirm_request(
+                    event.get("tool", "tool"),
+                    event.get("command", ""),
+                    event.get("suggested_pattern", ""),
+                    event_bus, context_id,
                 )
-                if confirm_post_id:
-                    asyncio.create_task(
-                        client._poll_confirmation(
-                            confirm_post_id, event_bus, context_id, tool_name
-                        )
-                    )
+            # Compaction stays as-is (separate message)
             elif event_type == "compaction_start" and channel_id:
                 import time as _time
-                compaction_start_time = _time.monotonic()
                 compaction_post_id = await client.send(
                     channel_id, "\U0001f4e6 Compacting conversation...",
                     root_id=root_id,
@@ -818,73 +785,249 @@ class MattermostClient:
         return on_cycle
 
 
-# -- Streaming display ---------------------------------------------------------
+# -- Conversation display ------------------------------------------------------
 
 
-class StreamingDisplay:
-    """Manages throttled placeholder edits for Mattermost streaming."""
+class ConversationDisplay:
+    """Manages a sequence of Mattermost messages for a single agent turn.
 
-    def __init__(self, client, post_id, channel_id="", throttle_ms=500, show_tool_calls=True):
+    Instead of editing one placeholder, posts separate messages for text
+    segments and tool calls, creating a visible trail of agent activity.
+    Works for both streaming and non-streaming mode.
+    """
+
+    def __init__(self, client, channel_id, root_id, throttle_ms=200,
+                 initial_post_id=None):
         self.client = client
-        self.post_id = post_id
         self._channel_id = channel_id
-        self.throttle_ms = throttle_ms
-        self.show_tool_calls = show_tool_calls
-        self.buffer = ""
-        self.tool_suffix = ""
-        self._thinking = True  # show thinking indicator while LLM is generating
-        self.last_edit_time = 0
-        self._streamed = False  # True if any text was streamed
+        self._root_id = root_id
+        self._throttle_ms = throttle_ms
+        self._initial_post_id = initial_post_id
 
-    async def on_chunk(self, chunk_type, data):
-        """Callback for call_llm_streaming."""
-        if chunk_type == "text":
-            self.tool_suffix = ""  # clear tool suffix when text resumes
-            self._thinking = True  # still generating
-            self.buffer += data
-            self._streamed = True
-            await self._maybe_edit()
-        elif chunk_type == "tool_call_start" and self.show_tool_calls:
-            self.tool_suffix = f"\n\U0001f527 Calling {data['name']}..."
-            self._thinking = False
-            await self._maybe_edit()
-        elif chunk_type == "tool_call_start":
-            self._thinking = False
-        elif chunk_type == "done":
-            await self.flush()
+        # Current message state
+        self._current_post_id = initial_post_id
+        self._current_type = "thinking" if initial_post_id else None
+        self._text_buffer = ""
+        self._text_has_content = False  # True if any real text was written
 
-    def resume(self):
-        """Called when a new LLM iteration starts (after tool execution)."""
-        self._thinking = True
+        # Tool call state
+        self._tool_post_id = None
 
-    def stop(self):
-        """Called when the agent turn is complete."""
-        self._thinking = False
+        # Throttling
+        self._last_edit_time = 0
 
-    async def _maybe_edit(self):
-        """Edit placeholder if throttle interval has passed."""
-        now = time.monotonic()
-        if (now - self.last_edit_time) * 1000 < self.throttle_ms:
-            return
-        await self._do_edit()
+        # Turn state
+        self._finalized = False
 
-    async def _do_edit(self):
-        """Actually edit the placeholder."""
-        self.last_edit_time = time.monotonic()
-        thinking_suffix = THINKING_SUFFIX if self._thinking else ""
-        text = self.buffer + self.tool_suffix + thinking_suffix
+    # -- Text streaming --------------------------------------------------------
+
+    async def on_llm_start(self, iteration):
+        """New LLM generation starting."""
+        if iteration == 1:
+            # Initial thinking message already posted
+            self._current_post_id = self._initial_post_id
+            self._current_type = "thinking"
+        else:
+            # After tool calls — finalize previous text, start new thinking msg
+            await self._finalize_current_text()
+            self._text_buffer = ""
+            self._text_has_content = False
+            post_id = await self.client.send(
+                self._channel_id, THINKING_INDICATOR, root_id=self._root_id,
+            )
+            self._current_post_id = post_id
+            self._current_type = "thinking"
+
+    async def on_text_chunk(self, text):
+        """Streaming text chunk — buffer and throttle-edit."""
+        self._text_buffer += text
+        self._text_has_content = True
+        if self._current_type == "thinking":
+            self._current_type = "text"
+        await self._throttled_edit(
+            self._current_post_id, self._text_buffer + THINKING_SUFFIX
+        )
+
+    async def on_text_done(self):
+        """Streaming text segment complete — strip thinking suffix."""
+        if self._current_post_id and self._text_buffer:
+            await self._force_edit(self._current_post_id, self._text_buffer)
+        self._current_type = None
+
+    async def on_text_complete(self, text):
+        """Non-streaming: full text arrives at once."""
         if not text:
             return
+        self._text_buffer = text
+        self._text_has_content = True
+        if self._current_type == "thinking" and self._current_post_id:
+            await self._force_edit(self._current_post_id, text)
+        elif self._current_post_id:
+            await self._force_edit(self._current_post_id, text)
+        else:
+            post_id = await self.client.send(
+                self._channel_id, text, root_id=self._root_id,
+            )
+            self._current_post_id = post_id
+        self._current_type = None
+
+    async def on_stream_chunk(self, chunk_type, data):
+        """Adapter for call_llm_streaming's on_chunk callback."""
+        if chunk_type == "text":
+            await self.on_text_chunk(data)
+        elif chunk_type == "tool_call_start":
+            # LLM is switching to tool calls — finalize text if we have any.
+            # Don't touch thinking placeholder with no text — on_tool_start
+            # will reuse it.
+            if self._text_has_content:
+                await self._finalize_current_text()
+                self._current_type = None
+        elif chunk_type == "done":
+            # Only finalize text if we actually streamed text content.
+            # If the LLM went straight to tool calls, preserve the thinking
+            # placeholder for on_tool_start to reuse.
+            if self._text_has_content:
+                await self.on_text_done()
+
+    # -- Tool call lifecycle ---------------------------------------------------
+
+    async def on_tool_start(self, tool_name, args):
+        """Tool execution starting — finalize text, post tool call message."""
+        msg = f"\U0001f527 {tool_name}..."
+
+        # If still on thinking placeholder with no text, reuse it for the tool call
+        if self._current_type == "thinking" and self._current_post_id and not self._text_has_content:
+            await self._force_edit(self._current_post_id, msg)
+            self._tool_post_id = self._current_post_id
+            self._current_post_id = None
+        else:
+            await self._finalize_current_text()
+            self._tool_post_id = await self.client.send(
+                self._channel_id, msg, root_id=self._root_id,
+            )
+        self._current_type = "tool"
+
+    async def on_tool_status(self, tool_name, message):
+        """Tool status update — edit tool call message."""
+        if self._tool_post_id:
+            try:
+                await self.client.edit_message(
+                    self._tool_post_id,
+                    f"\U0001f527 {tool_name}: {message}",
+                )
+            except Exception:
+                pass
+
+    async def on_tool_end(self, tool_name, result_text, display_text, media):
+        """Tool finished — edit tool call message with result, handle media."""
+        if display_text:
+            msg = display_text
+        else:
+            msg = f"\U0001f527 {tool_name} \u2714\ufe0f"
+
+        if self._tool_post_id:
+            try:
+                await self.client.edit_message(self._tool_post_id, msg)
+            except Exception:
+                pass
+
+            # Attach media to the tool call message
+            if media:
+                try:
+                    from .media import MattermostMediaHandler, upload_and_collect
+                    handler = MattermostMediaHandler(self.client._http)
+                    file_ids = await upload_and_collect(
+                        handler, self._channel_id, media,
+                    )
+                    if file_ids:
+                        await handler.send_with_media(
+                            self._channel_id, "", file_ids,
+                            root_id=self._root_id,
+                        )
+                except Exception as e:
+                    log.debug(f"Failed to attach tool media: {e}")
+
+        self._tool_post_id = None
+        self._current_type = None
+
+    # -- Confirmation ----------------------------------------------------------
+
+    async def on_confirm_request(self, tool_name, command, suggested_pattern,
+                                  event_bus, context_id):
+        """Tool needs confirmation — show prompt on tool call message."""
+        msg = (
+            f"\U0001f6a8 **Confirm {tool_name}:**\n```\n{command}\n```\n"
+            f"React: \U0001f44d approve | \U0001f44e deny | \u2705 always"
+        )
+        if suggested_pattern and tool_name == "shell":
+            msg += f" | \U0001f4d3 allow `{suggested_pattern}`"
+
+        if self._tool_post_id:
+            try:
+                await self.client.edit_message(self._tool_post_id, msg)
+            except Exception:
+                pass
+            confirm_post_id = self._tool_post_id
+        else:
+            confirm_post_id = await self.client.send(
+                self._channel_id, msg, root_id=self._root_id,
+            )
+            self._tool_post_id = confirm_post_id
+
+        if confirm_post_id:
+            asyncio.create_task(
+                self.client._poll_confirmation(
+                    confirm_post_id, event_bus, context_id, tool_name,
+                )
+            )
+
+    # -- Finalization ----------------------------------------------------------
+
+    async def finalize(self):
+        """Agent turn complete — strip thinking suffix, clean up."""
+        if self._finalized:
+            return
+        self._finalized = True
+
+        if self._current_type in ("text", "thinking") and self._current_post_id:
+            if self._text_has_content and self._text_buffer:
+                # Strip thinking suffix — show final text
+                await self._force_edit(self._current_post_id, self._text_buffer)
+            elif self._current_type == "thinking":
+                # Never got any text — delete the thinking placeholder
+                try:
+                    await self.client.delete_message(self._current_post_id)
+                except Exception:
+                    pass
+
+    # -- Helpers ---------------------------------------------------------------
+
+    async def _finalize_current_text(self):
+        """Strip thinking suffix from current text message if active."""
+        if self._current_type in ("text", "thinking") and self._current_post_id:
+            if self._text_has_content and self._text_buffer:
+                await self._force_edit(self._current_post_id, self._text_buffer)
+            self._current_type = None
+
+    async def _throttled_edit(self, post_id, text):
+        """Edit a post if enough time has passed since last edit."""
+        if not post_id or not text:
+            return
+        now = time.monotonic()
+        if (now - self._last_edit_time) * 1000 < self._throttle_ms:
+            return
+        await self._force_edit(post_id, text)
+
+    async def _force_edit(self, post_id, text):
+        """Edit a post immediately, updating the throttle timer."""
+        if not post_id:
+            return
+        self._last_edit_time = time.monotonic()
         try:
             await self.client.send_typing(self._channel_id)
         except Exception:
             pass
         try:
-            await self.client.edit_message(self.post_id, text)
+            await self.client.edit_message(post_id, text)
         except Exception:
-            pass  # silently skip failed edits (429, etc.)
-
-    async def flush(self):
-        """Force edit with current state. Includes thinking suffix if still active."""
-        self.tool_suffix = ""  # clear tool suffix on flush
-        await self._do_edit()
+            pass

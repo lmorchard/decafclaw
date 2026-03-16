@@ -108,7 +108,9 @@ async def _call_llm_with_events(ctx, config, messages, tools) -> dict:
         )
     else:
         response = await call_llm(config, messages, tools=tools)
-    await ctx.publish("llm_end", iteration=iteration)
+    await ctx.publish("llm_end", iteration=iteration,
+                      content=response.get("content"),
+                      has_tool_calls=bool(response.get("tool_calls")))
     return response
 
 
@@ -130,7 +132,10 @@ async def _execute_tool_calls(ctx, tool_calls, history, messages, pending_media)
 
         await ctx.publish("tool_start", tool=fn_name, args=fn_args)
         result = await execute_tool(ctx, fn_name, fn_args)
-        await ctx.publish("tool_end", tool=fn_name)
+        await ctx.publish("tool_end", tool=fn_name,
+                          result_text=result.text[:200],
+                          display_text=getattr(result, "display_text", None),
+                          media=result.media or [])
         log.debug(f"Tool result: {result.text[:200]}...")
 
         # Accumulate media from tool results
