@@ -117,8 +117,14 @@ async def tool_claude_code_send(ctx, session_id: str, prompt: str) -> str:
     logger = SessionLogger(log_dir, session.session_id)
 
     # Wrap prompt as async iterable (required when can_use_tool is set)
+    # Format per SDK docs: type, message, parent_tool_use_id, session_id
     async def prompt_stream():
-        yield {"role": "user", "content": prompt}
+        yield {
+            "type": "user",
+            "message": {"role": "user", "content": prompt},
+            "parent_tool_use_id": None,
+            "session_id": session.sdk_session_id or "default",
+        }
 
     # Stream messages from the SDK
     await ctx.publish("tool_status", tool="claude_code",
