@@ -232,6 +232,7 @@ class MattermostClient:
         debounce_timers = {}        # conv_id -> asyncio.Task
         last_response_time = {}     # conv_id -> timestamp of last response
         conv_busy = {}              # conv_id -> True if agent turn in progress
+        conv_cancel = {}            # conv_id -> asyncio.Event for cancelling current turn
         conv_turn_times = {}        # conv_id -> list of timestamps (circuit breaker)
         conv_paused_until = {}      # conv_id -> timestamp when pause ends
 
@@ -287,7 +288,13 @@ class MattermostClient:
 
             # One agent turn at a time per conversation
             if conv_busy.get(conv_id):
-                log.info(f"Conversation {conv_id[:8]} busy, re-queuing {len(msgs)} message(s)")
+                # Cancel the current turn and queue the new message
+                cancel = conv_cancel.get(conv_id)
+                if cancel and not cancel.is_set():
+                    log.info(f"Conversation {conv_id[:8]} busy, cancelling current turn for new message")
+                    cancel.set()
+                else:
+                    log.info(f"Conversation {conv_id[:8]} busy, re-queuing {len(msgs)} message(s)")
                 if conv_id not in pending_msgs:
                     pending_msgs[conv_id] = []
                 pending_msgs[conv_id] = msgs + pending_msgs[conv_id]
@@ -379,6 +386,16 @@ class MattermostClient:
                 )
                 req_ctx.on_stream_chunk = streaming_display.on_chunk
 
+            # Set up cancellation event and poll for 🛑 on placeholder
+            cancel_event = asyncio.Event()
+            req_ctx.cancelled = cancel_event
+            conv_cancel[conv_id] = cancel_event
+            cancel_task = None
+            if placeholder_id:
+                cancel_task = asyncio.create_task(
+                    self._poll_cancel(placeholder_id, cancel_event)
+                )
+
             sub_id = self._subscribe_progress(
                 req_ctx.event_bus, req_ctx.context_id, placeholder_id,
                 channel_id=channel_id, root_id=root_id,
@@ -393,9 +410,17 @@ class MattermostClient:
                 from .media import ToolResult
                 response = ToolResult(text=f"[error: agent turn failed: {e}]")
             finally:
+                # Stop cancel polling
+                if cancel_task:
+                    cancel_task.cancel()
+                    try:
+                        await cancel_task
+                    except asyncio.CancelledError:
+                        pass
                 req_ctx.event_bus.unsubscribe(sub_id)
                 last_response_time[conv_id] = time.monotonic()
                 conv_busy[conv_id] = False
+                conv_cancel.pop(conv_id, None)
                 _record_turn(conv_id)
 
                 # Persist per-conversation skill state for next turn
@@ -676,6 +701,26 @@ class MattermostClient:
         # Timeout — deny by default
         log.info(f"Confirmation timed out for {tool_name}")
         await _resolve(False, label="\u23f0 timed out")
+
+    async def _poll_cancel(self, post_id, cancel_event, poll_interval=2):
+        """Poll a placeholder post for 🛑 reaction to cancel the agent turn."""
+        while not cancel_event.is_set():
+            try:
+                resp = await self._http.get(f"/posts/{post_id}/reactions")
+                if resp.status_code == 200:
+                    reactions = resp.json()
+                    for r in reactions:
+                        emoji = r.get("emoji_name", "")
+                        user_id = r.get("user_id", "")
+                        if user_id == self.bot_user_id:
+                            continue
+                        if emoji in ("octagonal_sign", "stop_sign", "hand", "raised_hand"):
+                            log.info(f"Agent turn cancelled by {user_id} via reaction")
+                            cancel_event.set()
+                            return
+            except Exception:
+                pass
+            await asyncio.sleep(poll_interval)
 
     async def close(self):
         await self._http.aclose()

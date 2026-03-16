@@ -100,6 +100,15 @@ async def run_agent_turn(ctx, user_message: str, history: list):
     prompt_tokens = 0
 
     for iteration in range(config.max_tool_iterations):
+        # Check for cancellation
+        if getattr(ctx, "cancelled", None) and ctx.cancelled.is_set():
+            log.info("Agent turn cancelled by user")
+            msg = "[Agent turn cancelled by user]"
+            final_msg = {"role": "assistant", "content": msg}
+            history.append(final_msg)
+            _archive(ctx, final_msg)
+            return ToolResult(text=msg)
+
         log.debug(f"Agent iteration {iteration + 1}")
 
         # Build tool list: base + skill-activated + MCP tools
@@ -141,6 +150,15 @@ async def run_agent_turn(ctx, user_message: str, history: list):
 
             # Execute each tool and add results
             for tc in tool_calls:
+                # Check for cancellation between tool calls
+                if getattr(ctx, "cancelled", None) and ctx.cancelled.is_set():
+                    log.info("Agent turn cancelled between tool calls")
+                    msg = "[Agent turn cancelled by user]"
+                    final_msg = {"role": "assistant", "content": msg}
+                    history.append(final_msg)
+                    _archive(ctx, final_msg)
+                    return ToolResult(text=msg)
+
                 fn_name = tc["function"]["name"]
                 fn_args = json.loads(tc["function"]["arguments"])
                 log.info(f"Tool call: {fn_name}({fn_args})")
