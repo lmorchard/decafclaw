@@ -251,17 +251,24 @@ async def run_interactive(ctx):
         elif event_type == "tool_confirm_request":
             command = event.get("command", "")
             tool_name = event.get("tool", "tool")
+            suggested_pattern = event.get("suggested_pattern", "")
             print(f"\n  \U0001f6a8 Confirm {tool_name}: {command}")
-            answer = await asyncio.to_thread(input, "  Approve? [y]es / [n]o / [a]lways: ")
+            if suggested_pattern and tool_name == "shell":
+                prompt = f"  Approve? [y]es / [n]o / [a]lways / [p]attern ({suggested_pattern}): "
+            else:
+                prompt = "  Approve? [y]es / [n]o / [a]lways: "
+            answer = await asyncio.to_thread(input, prompt)
             choice = answer.strip().lower()
-            approved = choice in ("y", "yes", "a", "always")
+            approved = choice in ("y", "yes", "a", "always", "p", "pattern")
             always = choice in ("a", "always")
+            add_pattern = choice in ("p", "pattern")
             await ctx.event_bus.publish({
                 "type": "tool_confirm_response",
                 "context_id": event.get("context_id"),
                 "tool": tool_name,
                 "approved": approved,
                 "always": always,
+                **({"add_pattern": True} if add_pattern else {}),
             })
 
     sub_id = ctx.event_bus.subscribe(on_progress)
