@@ -18,6 +18,15 @@ run-pro:
 lint:
 	uv run ruff check src/ tests/
 
+# Type check with pyright
+typecheck:
+	uv run pyright
+
+# Lint + type check
+check:
+	uv run ruff check src/ tests/
+	uv run pyright
+
 # Auto-fix lint issues
 lint-fix:
 	uv run ruff check --fix src/ tests/

@@ -108,6 +108,9 @@ class Config:
     system_prompt: str = ""
     max_tool_iterations: int = 30
 
+    # Discovered skills (populated by load_system_prompt at startup)
+    discovered_skills: list = field(default_factory=list)
+
 
 def load_config() -> Config:
     load_dotenv()

@@ -357,8 +357,8 @@ class MattermostClient:
     async def _post_response(self, response, channel_id, root_id,
                              placeholder_id, streaming_display):
         """Post the agent's response, handling media and streaming state."""
-        response_text = response.text if hasattr(response, "text") else response
-        response_media = response.media if hasattr(response, "media") else []
+        response_text = response.text
+        response_media = response.media or []
 
         # Skip final edit if streaming already updated the placeholder
         already_streamed = streaming_display and streaming_display._streamed

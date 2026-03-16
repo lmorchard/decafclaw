@@ -26,7 +26,7 @@ async def tool_conversation_search(ctx, query: str) -> str:
     return f"No conversation history found matching '{query}'"
 
 
-async def tool_conversation_compact(ctx) -> str:
+async def tool_conversation_compact(ctx) -> str | ToolResult:
     """Manually trigger conversation compaction."""
     log.info("[tool:conversation_compact]")
     from ..compaction import compact_history

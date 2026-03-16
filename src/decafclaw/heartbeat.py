@@ -168,7 +168,7 @@ async def run_heartbeat_cycle(config, event_bus) -> list[dict]:
 
             prompt = build_section_prompt(section)
             result = await run_agent_turn(ctx, prompt, history=[])
-            response = result.text if hasattr(result, "text") else (result or "")
+            response = result.text
             response = response or "(no response)"
 
             results.append({
