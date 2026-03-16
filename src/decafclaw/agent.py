@@ -185,7 +185,9 @@ async def run_agent_turn(ctx, user_message: str, history: list):
             continue
 
         # No tool calls — we have a final response
-        content = response.get("content", "")
+        content = response.get("content") or ""
+        if not content:
+            log.warning("LLM returned empty content with no tool calls")
         final_msg = {"role": "assistant", "content": content}
         history.append(final_msg)
         _archive(ctx, final_msg)
