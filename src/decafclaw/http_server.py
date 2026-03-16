@@ -172,7 +172,7 @@ def build_confirm_buttons(config, tool_name: str, command: str,
         # position-dependent bug with the third button
         actions = [
             {
-                "id": "add_pattern",
+                "id": "allowpattern",
                 "name": "Allow Pattern",
                 "style": "default",
                 "integration": {
