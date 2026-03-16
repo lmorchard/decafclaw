@@ -114,6 +114,7 @@ async def call_llm_streaming(config, messages, tools=None,
     content_parts = []
     tool_calls_in_progress = {}  # index -> {"id", "function": {"name", "arguments"}}
     usage = None
+    _stream_error = None
 
     async def _emit(chunk_type, data):
         if on_chunk:
@@ -191,6 +192,12 @@ async def call_llm_streaming(config, messages, tools=None,
 
     except Exception as e:
         log.error(f"LLM streaming error: {e}")
+        _stream_error = e
+
+    # If nothing was accumulated and an error occurred, re-raise so the caller
+    # knows the LLM call failed (instead of silently returning empty).
+    if _stream_error and not content_parts and not tool_calls_in_progress:
+        raise _stream_error
 
     # Finalize tool calls
     tool_calls = None

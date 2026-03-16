@@ -3,6 +3,7 @@
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 
 from decafclaw.llm import _sanitize_tool_call_id, call_llm_streaming
@@ -235,3 +236,49 @@ async def test_streaming_tool_call_id_sanitized():
 
     assert result["tool_calls"] is not None
     assert result["tool_calls"][0]["id"] == "call_xyz"
+
+
+# -- Streaming error handling --------------------------------------------------
+
+
+class ErrorEventSource:
+    """Event source that raises after yielding some events."""
+    def __init__(self, events_before_error, error):
+        self._events = events_before_error
+        self._error = error
+
+    async def aiter_sse(self):
+        for event in self._events:
+            yield event
+        raise self._error
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        pass
+
+
+@pytest.mark.asyncio
+async def test_streaming_error_raises_when_nothing_accumulated():
+    """Connection error with no accumulated content re-raises."""
+    with patch("httpx_sse.aconnect_sse") as mock_sse:
+        mock_sse.return_value = ErrorEventSource([], httpx.ConnectError("connection refused"))
+        with pytest.raises(httpx.ConnectError, match="connection refused"):
+            await call_llm_streaming(_config(), [])
+
+
+@pytest.mark.asyncio
+async def test_streaming_error_returns_partial_on_partial_content():
+    """Mid-stream error returns partial content instead of raising."""
+    partial_events = [
+        FakeSSEEvent(json.dumps({"choices": [{"delta": {"content": "Hello"}}]})),
+    ]
+    with patch("httpx_sse.aconnect_sse") as mock_sse:
+        mock_sse.return_value = ErrorEventSource(
+            partial_events, httpx.ReadError("stream interrupted")
+        )
+        result = await call_llm_streaming(_config(), [])
+
+    # Should return the partial content, not raise
+    assert result["content"] == "Hello"
