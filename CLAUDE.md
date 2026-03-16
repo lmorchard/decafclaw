@@ -43,6 +43,8 @@ make dev          # Auto-restart on file changes (10s graceful shutdown)
 make debug        # With debug logging
 make run-pro      # With gemini-2.5-pro model
 make lint         # Compile-check all source files
+make typecheck    # Run pyright type checker
+make check        # Lint + type check combined
 make test         # Run pytest
 make reindex      # Rebuild embedding index from memory files
 make build-eval-fixtures  # Rebuild eval embedding fixtures
