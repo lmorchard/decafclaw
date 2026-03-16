@@ -70,6 +70,11 @@ Mattermost must be configured to allow outbound requests to the DecafClaw HTTP s
 
 2. **System Console → Integrations → Integration Management → Enable interactive messages** — must be enabled (usually on by default).
 
+## Mattermost gotchas
+
+- **Button action IDs must not contain underscores.** Mattermost silently drops HTTP callbacks for interactive message buttons when the action `id` field contains underscores. No error, no log — the click just does nothing. Use camelCase or flat lowercase for button IDs.
+- **"Allow untrusted internal connections"** must include the DecafClaw host (see above).
+
 ## Deployment notes
 
 - The HTTP server runs as an asyncio task in the same process as the bot — no separate service needed.
