@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import fnmatch
 import logging
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -231,6 +233,115 @@ def tool_workspace_append(ctx, path: str, content: str) -> str:
         return f"[error: permission denied: {path}]"
 
 
+def tool_workspace_search(ctx, pattern: str, path: str = ".",
+                          glob: str = "*", context_lines: int = 2) -> str:
+    """Search for a regex pattern across workspace files."""
+    log.info(f"[tool:workspace_search] pattern={pattern!r} path={path} glob={glob}")
+    resolved = _resolve_safe(ctx.config, path)
+    if resolved is None:
+        return f"[error: path '{path}' is outside the workspace]"
+    if not resolved.exists():
+        return f"[error: path not found: {path}]"
+
+    try:
+        regex = re.compile(pattern)
+    except re.error as e:
+        return f"[error: invalid regex pattern: {e}]"
+
+    workspace = ctx.config.workspace_path.resolve()
+    max_matches = 50
+    total_matches = 0
+    output_sections = []
+
+    # Collect files to search
+    if resolved.is_file():
+        files = [resolved]
+    else:
+        files = sorted(f for f in resolved.rglob("*") if f.is_file()
+                       and fnmatch.fnmatch(f.name, glob))
+
+    for fpath in files:
+        try:
+            content = fpath.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, PermissionError):
+            continue
+
+        lines = content.splitlines()
+        file_matches = []
+        for i, line in enumerate(lines):
+            if regex.search(line):
+                file_matches.append(i)
+
+        if not file_matches:
+            continue
+
+        rel_path = fpath.relative_to(workspace)
+        section_lines = [f"--- {rel_path} ---"]
+        shown = set()  # track which lines we've already output
+
+        for match_idx in file_matches:
+            if total_matches >= max_matches:
+                break
+            total_matches += 1
+            start = max(0, match_idx - context_lines)
+            end = min(len(lines), match_idx + context_lines + 1)
+            # Add separator if there's a gap from previous context
+            if shown and start > max(shown) + 1:
+                section_lines.append("  ...")
+            for j in range(start, end):
+                if j in shown:
+                    continue
+                shown.add(j)
+                lineno = j + 1
+                prefix = ">" if j == match_idx else " "
+                section_lines.append(f"{prefix} {lineno:>4}| {lines[j]}")
+
+        output_sections.append("\n".join(section_lines))
+        if total_matches >= max_matches:
+            break
+
+    if not output_sections:
+        return "(no matches)"
+
+    result = "\n\n".join(output_sections)
+    if total_matches >= max_matches:
+        result += f"\n\n(truncated — showing first {max_matches} matches)"
+    return result
+
+
+def tool_workspace_glob(ctx, pattern: str, path: str = ".") -> str:
+    """Find files by glob pattern in the workspace."""
+    log.info(f"[tool:workspace_glob] pattern={pattern!r} path={path}")
+    resolved = _resolve_safe(ctx.config, path)
+    if resolved is None:
+        return f"[error: path '{path}' is outside the workspace]"
+    if not resolved.exists():
+        return f"[error: path not found: {path}]"
+    if not resolved.is_dir():
+        return f"[error: '{path}' is not a directory]"
+
+    workspace = ctx.config.workspace_path.resolve()
+    max_results = 200
+    matches = []
+    for fpath in sorted(resolved.rglob(pattern)):
+        rel = fpath.relative_to(workspace)
+        if fpath.is_file():
+            size = fpath.stat().st_size
+            matches.append(f"{rel} ({size}B)")
+        else:
+            matches.append(f"{rel}/")
+        if len(matches) >= max_results:
+            break
+
+    if not matches:
+        return "(no matches)"
+
+    result = "\n".join(matches)
+    if len(matches) >= max_results:
+        result += f"\n\n(truncated — showing first {max_results} results)"
+    return result
+
+
 WORKSPACE_TOOLS = {
     "workspace_read": tool_workspace_read,
     "workspace_write": tool_workspace_write,
@@ -240,6 +351,8 @@ WORKSPACE_TOOLS = {
     "workspace_edit": tool_workspace_edit,
     "workspace_insert": tool_workspace_insert,
     "workspace_replace_lines": tool_workspace_replace_lines,
+    "workspace_search": tool_workspace_search,
+    "workspace_glob": tool_workspace_glob,
 }
 
 WORKSPACE_TOOL_DEFINITIONS = [
@@ -390,6 +503,56 @@ WORKSPACE_TOOL_DEFINITIONS = [
                     },
                 },
                 "required": ["path", "start_line", "end_line"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "workspace_search",
+            "description": "Search for a regex pattern across files in the workspace. Returns matching lines with line numbers and surrounding context, grouped by file. Use the glob parameter to filter file types (e.g. '*.py'). Pass a specific file path to search within one file.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "pattern": {
+                        "type": "string",
+                        "description": "Regex pattern to search for",
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "Directory or file to search in (default: workspace root)",
+                    },
+                    "glob": {
+                        "type": "string",
+                        "description": "Filename glob filter (default: '*' for all files). Examples: '*.py', '*.md', '*.json'",
+                    },
+                    "context_lines": {
+                        "type": "integer",
+                        "description": "Lines of context to show around each match (default: 2)",
+                    },
+                },
+                "required": ["pattern"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "workspace_glob",
+            "description": "Find files by name/glob pattern, recursively. Returns matching file paths relative to workspace root with file sizes. Useful for finding files by extension or name pattern.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "pattern": {
+                        "type": "string",
+                        "description": "Glob pattern to match filenames (e.g. '*.py', 'config*', '*.md')",
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "Directory to search from (default: workspace root)",
+                    },
+                },
+                "required": ["pattern"],
             },
         },
     },
