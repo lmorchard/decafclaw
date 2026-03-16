@@ -8,15 +8,14 @@ import httpx
 log = logging.getLogger(__name__)
 
 # Prevent concurrent heartbeat runs
-_heartbeat_running = False
+_heartbeat_lock = asyncio.Lock()
 
 
 async def tool_heartbeat_trigger(ctx) -> str:
     """Manually trigger a heartbeat cycle, posting results to the configured channel."""
-    global _heartbeat_running
     log.info("[tool:heartbeat_trigger]")
 
-    if _heartbeat_running:
+    if _heartbeat_lock.locked():
         return "Heartbeat is already running."
 
     from ..heartbeat import load_heartbeat_sections
@@ -35,16 +34,12 @@ async def tool_heartbeat_trigger(ctx) -> str:
 
 
 async def _guarded_heartbeat(config, event_bus):
-    """Run heartbeat with concurrency guard."""
-    global _heartbeat_running
-    if _heartbeat_running:
+    """Run heartbeat with concurrency guard. Lock auto-releases on crash."""
+    if _heartbeat_lock.locked():
         log.warning("Heartbeat already running, skipping")
         return
-    _heartbeat_running = True
-    try:
+    async with _heartbeat_lock:
         await _run_heartbeat_to_channel(config, event_bus)
-    finally:
-        _heartbeat_running = False
 
 
 async def _run_heartbeat_to_channel(config, event_bus):
