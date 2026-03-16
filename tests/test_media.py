@@ -31,6 +31,14 @@ def test_tool_result_with_media():
     assert r.media[0]["filename"] == "test.png"
 
 
+def test_tool_result_display_text():
+    r = ToolResult(text="result", display_text="custom display")
+    assert r.display_text == "custom display"
+    # Default is None
+    r2 = ToolResult(text="result")
+    assert r2.display_text is None
+
+
 def test_tool_result_from_text():
     r = ToolResult.from_text("simple")
     assert r.text == "simple"
