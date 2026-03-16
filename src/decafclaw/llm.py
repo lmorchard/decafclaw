@@ -8,6 +8,17 @@ import httpx
 log = logging.getLogger(__name__)
 
 
+def _sanitize_tool_call_id(tc_id: str) -> str:
+    """Strip LiteLLM's embedded thinking data from tool call IDs.
+
+    LiteLLM packs Gemini thinking tokens into tool_call_id fields as base64
+    after a ``__thought__`` delimiter (e.g. ``call_abc123__thought__CiUB...``).
+    These can be ~3KB+ each and bloat conversation history. The actual ID is
+    just the part before ``__thought__``.
+    """
+    return tc_id.split("__thought__")[0]
+
+
 async def call_llm(config, messages, tools=None,
                    llm_url=None, llm_model=None, llm_api_key=None) -> dict:
     """Call the LLM and return the response message.
@@ -51,9 +62,14 @@ async def call_llm(config, messages, tools=None,
                   f"completion={usage.get('completion_tokens')}")
     log.debug(f"LLM response: content={bool(message.get('content'))}, tool_calls={len(message.get('tool_calls', []))}")
 
+    tool_calls = message.get("tool_calls")
+    if tool_calls:
+        for tc in tool_calls:
+            tc["id"] = _sanitize_tool_call_id(tc.get("id", ""))
+
     return {
         "content": message.get("content"),
-        "tool_calls": message.get("tool_calls"),
+        "tool_calls": tool_calls,
         "role": "assistant",
         "usage": usage,
     }
@@ -145,8 +161,9 @@ async def call_llm_streaming(config, messages, tools=None,
 
                             if idx not in tool_calls_in_progress:
                                 # New tool call
+                                raw_id = tc_delta.get("id", f"call_{idx}")
                                 tool_calls_in_progress[idx] = {
-                                    "id": tc_delta.get("id", f"call_{idx}"),
+                                    "id": _sanitize_tool_call_id(raw_id),
                                     "type": "function",
                                     "function": {
                                         "name": func.get("name", ""),
