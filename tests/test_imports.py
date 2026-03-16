@@ -63,6 +63,6 @@ def test_import_mattermost_client_methods():
 
 def test_import_streaming():
     from decafclaw.llm import call_llm_streaming
-    from decafclaw.mattermost import StreamingDisplay
+    from decafclaw.mattermost import ConversationDisplay
     assert call_llm_streaming is not None
-    assert StreamingDisplay is not None
+    assert ConversationDisplay is not None
