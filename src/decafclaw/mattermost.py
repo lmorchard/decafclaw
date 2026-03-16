@@ -12,7 +12,7 @@ log = logging.getLogger(__name__)
 
 # Status indicators shown in placeholder messages
 THINKING_INDICATOR = "\U0001f4ad Thinking..."
-THINKING_SUFFIX = "\n\u2601\ufe0f Thinking..."
+THINKING_SUFFIX = "\n\U0001f4ad Thinking..."
 
 
 class MattermostClient:
@@ -435,6 +435,10 @@ class MattermostClient:
                         "activated_skills": getattr(req_ctx, "activated_skills", set()),
                     }
 
+            # Stop thinking indicator now that the turn is complete
+            if streaming_display:
+                streaming_display.stop()
+
             # Post the response, handling media if present
             response_text = response.text if hasattr(response, "text") else response
             response_media = response.media if hasattr(response, "media") else []
@@ -792,12 +796,17 @@ class StreamingDisplay:
         elif chunk_type == "tool_call_start":
             self._thinking = False
         elif chunk_type == "done":
-            self._thinking = False
+            # Don't clear _thinking here — the turn may continue with tool calls
+            # flush() is called to write current buffer without thinking suffix
             await self.flush()
 
     def resume(self):
         """Called when a new LLM iteration starts (after tool execution)."""
         self._thinking = True
+
+    def stop(self):
+        """Called when the agent turn is complete."""
+        self._thinking = False
 
     async def _maybe_edit(self):
         """Edit placeholder if throttle interval has passed."""
@@ -826,9 +835,6 @@ class StreamingDisplay:
             pass  # silently skip failed edits (429, etc.)
 
     async def flush(self):
-        """Force final edit with complete text (no tool suffix)."""
-        if self.buffer:
-            try:
-                await self.client.edit_message(self.post_id, self.buffer)
-            except Exception:
-                pass
+        """Force edit with current state. Includes thinking suffix if still active."""
+        self.tool_suffix = ""  # clear tool suffix on flush
+        await self._do_edit()
