@@ -449,7 +449,7 @@ class MattermostClient:
             if response_media:
                 # Edit placeholder with text, send files as separate message
                 from .media import upload_and_collect
-                if not already_streamed:
+                if not already_streamed and response_text:
                     if placeholder_id:
                         await self.edit_message(placeholder_id, response_text)
                     else:
@@ -464,10 +464,12 @@ class MattermostClient:
                         channel_id, "", file_ids, root_id=root_id
                     )
             elif already_streamed:
-                pass  # streaming display already has the final text
-            elif placeholder_id:
+                # Do a final edit to ensure clean text (no thinking suffix)
+                if response_text and placeholder_id:
+                    await self.edit_message(placeholder_id, response_text)
+            elif placeholder_id and response_text:
                 await self.edit_message(placeholder_id, response_text)
-            else:
+            elif response_text:
                 await self.send(channel_id, response_text, root_id=root_id)
 
         async def _debounce_fire(conv_id, channel_id):
