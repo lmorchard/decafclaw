@@ -181,6 +181,10 @@ async def compact_history(ctx, history: list) -> bool:
     budget = config.compaction_context_budget
     estimated = _estimate_tokens(flattened)
 
+    import time as _time
+    before_messages = len(history)
+    compact_start_time = _time.monotonic()
+
     try:
         await ctx.publish("compaction_start")
 
@@ -198,7 +202,13 @@ async def compact_history(ctx, history: list) -> bool:
         log.error(f"Compaction LLM call failed: {e}")
         return False
     finally:
-        await ctx.publish("compaction_end")
+        elapsed = _time.monotonic() - compact_start_time
+        after_messages = len(history)
+        await ctx.publish("compaction_end",
+                          before_messages=before_messages,
+                          after_messages=after_messages,
+                          elapsed_sec=round(elapsed, 1),
+                          estimated_tokens_before=estimated)
 
     # Rebuild history: summary + recent messages
     summary_msg = {"role": "user", "content": f"[Conversation summary]: {summary}"}

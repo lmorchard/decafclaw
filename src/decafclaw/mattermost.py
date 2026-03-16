@@ -636,15 +636,22 @@ class MattermostClient:
                 )
             elif event_type == "compaction_end" and compaction_post_id:
                 try:
-                    import time as _time
-                    elapsed = _time.monotonic() - compaction_start_time
+                    elapsed = event.get("elapsed_sec", 0)
+                    before = event.get("before_messages", 0)
+                    after = event.get("after_messages", 0)
+                    est_tokens = event.get("estimated_tokens_before", 0)
                     if elapsed < 60:
                         duration = f"{elapsed:.0f}s"
                     else:
                         duration = f"{elapsed/60:.1f}m"
+                    details = f"{duration}"
+                    if before and after:
+                        details += f", {before} → {after} messages"
+                    if est_tokens:
+                        details += f", ~{est_tokens:,} tokens compacted"
                     await client.edit_message(
                         compaction_post_id,
-                        f"\U0001f4e6 Conversation compacted ({duration})",
+                        f"\U0001f4e6 Conversation compacted ({details})",
                     )
                 except Exception:
                     pass  # best effort
