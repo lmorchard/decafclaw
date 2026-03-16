@@ -194,9 +194,39 @@ async def run_heartbeat_cycle(config, event_bus) -> list[dict]:
 # -- Heartbeat timer -----------------------------------------------------------
 
 
+def _heartbeat_timestamp_path(config):
+    """Path to the file that persists the last heartbeat time."""
+    return config.workspace_path / ".heartbeat_last_run"
+
+
+def _read_last_heartbeat(config) -> float:
+    """Read the last heartbeat timestamp from disk. Returns 0 if not found."""
+    path = _heartbeat_timestamp_path(config)
+    try:
+        if path.exists():
+            return float(path.read_text().strip())
+    except (ValueError, OSError):
+        pass
+    return 0
+
+
+def _write_last_heartbeat(config):
+    """Write the current time as the last heartbeat timestamp."""
+    path = _heartbeat_timestamp_path(config)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(str(time.time()))
+
+
+# Poll interval for checking if heartbeat is due (seconds)
+_POLL_INTERVAL = 60
+
+
 async def run_heartbeat_timer(config, event_bus, shutdown_event,
                               on_cycle=None, on_results=None):
     """Run the heartbeat timer loop.
+
+    Persists the last heartbeat time to disk so the timer survives
+    restarts. Polls every 60s to check if the interval has elapsed.
 
     Args:
         config: Agent config with heartbeat_interval
@@ -211,22 +241,33 @@ async def run_heartbeat_timer(config, event_bus, shutdown_event,
         log.info("Heartbeat disabled (no interval configured)")
         return
 
-    log.info(f"Heartbeat timer starting: interval={config.heartbeat_interval} ({interval}s)")
+    last_run = _read_last_heartbeat(config)
+    if last_run > 0:
+        elapsed = time.time() - last_run
+        remaining = max(0, interval - elapsed)
+        log.info(f"Heartbeat timer starting: interval={config.heartbeat_interval} ({interval}s), "
+                 f"last run {elapsed:.0f}s ago, next in {remaining:.0f}s")
+    else:
+        log.info(f"Heartbeat timer starting: interval={config.heartbeat_interval} ({interval}s), "
+                 f"no previous run recorded")
 
     cycle_running = False
 
     while not shutdown_event.is_set():
-        # Sleep for the interval, but wake on shutdown
+        # Poll every _POLL_INTERVAL seconds (or less if shutdown)
         try:
-            await asyncio.wait_for(shutdown_event.wait(), timeout=interval)
-            # If we get here, shutdown was signaled
-            break
+            await asyncio.wait_for(shutdown_event.wait(), timeout=_POLL_INTERVAL)
+            break  # shutdown signaled
         except asyncio.TimeoutError:
-            # Normal — interval elapsed, time for a heartbeat
-            pass
+            pass  # normal — check if heartbeat is due
 
         if shutdown_event.is_set():
             break
+
+        # Check if enough time has passed since last heartbeat
+        last_run = _read_last_heartbeat(config)
+        if last_run > 0 and (time.time() - last_run) < interval:
+            continue  # not yet due
 
         # Overlap protection
         if cycle_running:
@@ -236,12 +277,11 @@ async def run_heartbeat_timer(config, event_bus, shutdown_event,
         cycle_running = True
         try:
             log.info("Heartbeat cycle starting")
+            _write_last_heartbeat(config)
 
             if on_cycle:
-                # Custom cycle handler (e.g., streaming Mattermost reporter)
                 await on_cycle()
             else:
-                # Default: run cycle, then report
                 results = await run_heartbeat_cycle(config, event_bus)
                 if on_results and results:
                     try:

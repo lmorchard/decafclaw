@@ -289,11 +289,18 @@ async def test_timer_fires_callback(config):
             await asyncio.sleep(0.1)
         shutdown.set()
 
-    with patch("decafclaw.agent.run_agent_turn", AsyncMock(return_value="HEARTBEAT_OK")):
-        await asyncio.gather(
-            run_heartbeat_timer(config, EventBus(), shutdown, on_results=capture_results),
-            stop_after_one(),
-        )
+    import decafclaw.heartbeat as hb
+    original_poll = hb._POLL_INTERVAL
+    hb._POLL_INTERVAL = 0.5  # fast polling for tests
+
+    try:
+        with patch("decafclaw.agent.run_agent_turn", AsyncMock(return_value="HEARTBEAT_OK")):
+            await asyncio.gather(
+                run_heartbeat_timer(config, EventBus(), shutdown, on_results=capture_results),
+                stop_after_one(),
+            )
+    finally:
+        hb._POLL_INTERVAL = original_poll
 
     assert len(results_received) == 1
     assert results_received[0][0]["is_ok"] is True
@@ -312,7 +319,14 @@ async def test_timer_respects_shutdown(config):
         await asyncio.sleep(0.1)
         shutdown.set()
 
-    await asyncio.gather(
-        run_heartbeat_timer(config, EventBus(), shutdown),
-        signal_shutdown(),
-    )
+    import decafclaw.heartbeat as hb
+    original_poll = hb._POLL_INTERVAL
+    hb._POLL_INTERVAL = 0.5
+
+    try:
+        await asyncio.gather(
+            run_heartbeat_timer(config, EventBus(), shutdown),
+            signal_shutdown(),
+        )
+    finally:
+        hb._POLL_INTERVAL = original_poll
