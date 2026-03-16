@@ -152,6 +152,65 @@ def tool_workspace_edit(ctx, path: str, old_text: str, new_text: str,
     return f"Edited {path}: replaced {count} occurrence(s)"
 
 
+def tool_workspace_insert(ctx, path: str, line_number: int, content: str) -> str:
+    """Insert text at a specific line number in a workspace file."""
+    log.info(f"[tool:workspace_insert] {path} at line {line_number}")
+    resolved = _resolve_safe(ctx.config, path)
+    if resolved is None:
+        return f"[error: path '{path}' is outside the workspace]"
+    try:
+        existing = resolved.read_text()
+    except FileNotFoundError:
+        return f"[error: file not found: {path}]"
+    except PermissionError:
+        return f"[error: permission denied: {path}]"
+
+    lines = existing.splitlines(keepends=True)
+    if line_number < 1 or line_number > len(lines) + 1:
+        return (f"[error: line_number {line_number} is out of range. "
+                f"File has {len(lines)} lines, valid range is 1-{len(lines) + 1}.]")
+
+    # Ensure content ends with newline for clean insertion
+    if content and not content.endswith("\n"):
+        content += "\n"
+    insert_lines = content.splitlines(keepends=True)
+    lines[line_number - 1:line_number - 1] = insert_lines
+    resolved.write_text("".join(lines))
+    return f"Inserted {len(insert_lines)} line(s) at line {line_number} in {path}"
+
+
+def tool_workspace_replace_lines(ctx, path: str, start_line: int, end_line: int,
+                                 content: str = "") -> str:
+    """Replace a range of lines in a workspace file."""
+    log.info(f"[tool:workspace_replace_lines] {path} lines {start_line}-{end_line}")
+    resolved = _resolve_safe(ctx.config, path)
+    if resolved is None:
+        return f"[error: path '{path}' is outside the workspace]"
+    try:
+        existing = resolved.read_text()
+    except FileNotFoundError:
+        return f"[error: file not found: {path}]"
+    except PermissionError:
+        return f"[error: permission denied: {path}]"
+
+    lines = existing.splitlines(keepends=True)
+    if start_line < 1 or end_line < start_line or end_line > len(lines):
+        return (f"[error: invalid line range {start_line}-{end_line}. "
+                f"File has {len(lines)} lines.]")
+
+    if content:
+        if not content.endswith("\n"):
+            content += "\n"
+        new_lines = content.splitlines(keepends=True)
+    else:
+        new_lines = []
+    lines[start_line - 1:end_line] = new_lines
+    resolved.write_text("".join(lines))
+    if not content:
+        return f"Deleted lines {start_line}-{end_line} from {path}"
+    return f"Replaced lines {start_line}-{end_line} with {len(new_lines)} line(s) in {path}"
+
+
 def tool_workspace_append(ctx, path: str, content: str) -> str:
     """Append content to a file in the agent's workspace."""
     log.info(f"[tool:workspace_append] {path}")
@@ -179,6 +238,8 @@ WORKSPACE_TOOLS = {
     "file_share": tool_file_share,
     "workspace_append": tool_workspace_append,
     "workspace_edit": tool_workspace_edit,
+    "workspace_insert": tool_workspace_insert,
+    "workspace_replace_lines": tool_workspace_replace_lines,
 }
 
 WORKSPACE_TOOL_DEFINITIONS = [
@@ -275,6 +336,60 @@ WORKSPACE_TOOL_DEFINITIONS = [
                     },
                 },
                 "required": ["path", "old_text", "new_text"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "workspace_insert",
+            "description": "Insert text at a specific line number in a workspace file, pushing existing content down. Line numbers are 1-based. Use workspace_read first to see line numbers.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Relative path within the workspace",
+                    },
+                    "line_number": {
+                        "type": "integer",
+                        "description": "Line number to insert at (1-based). Existing content at this line moves down.",
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "Text to insert",
+                    },
+                },
+                "required": ["path", "line_number", "content"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "workspace_replace_lines",
+            "description": "Replace a range of lines (1-based, inclusive) with new content. Pass empty content to delete lines. Use workspace_read first to see line numbers.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Relative path within the workspace",
+                    },
+                    "start_line": {
+                        "type": "integer",
+                        "description": "First line to replace (1-based, inclusive)",
+                    },
+                    "end_line": {
+                        "type": "integer",
+                        "description": "Last line to replace (1-based, inclusive)",
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "Replacement text (empty string to delete lines)",
+                    },
+                },
+                "required": ["path", "start_line", "end_line"],
             },
         },
     },

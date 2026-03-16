@@ -5,8 +5,10 @@ from decafclaw.tools.workspace_tools import (
     tool_file_share,
     tool_workspace_append,
     tool_workspace_edit,
+    tool_workspace_insert,
     tool_workspace_list,
     tool_workspace_read,
+    tool_workspace_replace_lines,
     tool_workspace_write,
 )
 
@@ -176,6 +178,106 @@ def test_edit_nonexistent_file(ctx):
     result = tool_workspace_edit(ctx, "nope.py", "a", "b")
     assert "error" in result.lower()
     assert "not found" in result.lower()
+
+
+# -- workspace_insert tests --
+
+
+def test_insert_at_beginning(ctx):
+    tool_workspace_write(ctx, "f.txt", "line1\nline2\n")
+    tool_workspace_insert(ctx, "f.txt", 1, "new_first")
+    content = ctx.config.workspace_path.joinpath("f.txt").read_text()
+    assert content.startswith("new_first\n")
+    assert "line1\n" in content
+
+
+def test_insert_at_middle(ctx):
+    tool_workspace_write(ctx, "f.txt", "aaa\nccc\n")
+    tool_workspace_insert(ctx, "f.txt", 2, "bbb")
+    content = ctx.config.workspace_path.joinpath("f.txt").read_text()
+    lines = content.splitlines()
+    assert lines == ["aaa", "bbb", "ccc"]
+
+
+def test_insert_at_end(ctx):
+    tool_workspace_write(ctx, "f.txt", "aaa\nbbb\n")
+    tool_workspace_insert(ctx, "f.txt", 3, "ccc")
+    content = ctx.config.workspace_path.joinpath("f.txt").read_text()
+    assert "ccc" in content
+    assert content.splitlines()[-1] == "ccc"
+
+
+def test_insert_invalid_line(ctx):
+    tool_workspace_write(ctx, "f.txt", "one\ntwo\n")
+    result = tool_workspace_insert(ctx, "f.txt", 0, "bad")
+    assert "error" in result.lower()
+    result = tool_workspace_insert(ctx, "f.txt", 100, "bad")
+    assert "error" in result.lower()
+
+
+def test_insert_multiline_content(ctx):
+    tool_workspace_write(ctx, "f.txt", "aaa\nddd\n")
+    tool_workspace_insert(ctx, "f.txt", 2, "bbb\nccc")
+    content = ctx.config.workspace_path.joinpath("f.txt").read_text()
+    lines = content.splitlines()
+    assert lines == ["aaa", "bbb", "ccc", "ddd"]
+
+
+def test_insert_escape_blocked(ctx):
+    result = tool_workspace_insert(ctx, "../../evil.txt", 1, "bad")
+    assert "outside" in result.lower()
+
+
+# -- workspace_replace_lines tests --
+
+
+def test_replace_lines_basic(ctx):
+    tool_workspace_write(ctx, "f.txt", "aaa\nbbb\nccc\nddd\n")
+    result = tool_workspace_replace_lines(ctx, "f.txt", 2, 3, "BBB\nCCC")
+    assert "replaced" in result.lower()
+    content = ctx.config.workspace_path.joinpath("f.txt").read_text()
+    lines = content.splitlines()
+    assert lines == ["aaa", "BBB", "CCC", "ddd"]
+
+
+def test_replace_lines_delete(ctx):
+    tool_workspace_write(ctx, "f.txt", "aaa\nbbb\nccc\nddd\n")
+    result = tool_workspace_replace_lines(ctx, "f.txt", 2, 3)
+    assert "deleted" in result.lower()
+    content = ctx.config.workspace_path.joinpath("f.txt").read_text()
+    lines = content.splitlines()
+    assert lines == ["aaa", "ddd"]
+
+
+def test_replace_lines_expand(ctx):
+    tool_workspace_write(ctx, "f.txt", "aaa\nbbb\nccc\n")
+    tool_workspace_replace_lines(ctx, "f.txt", 2, 2, "x1\nx2\nx3\nx4\nx5")
+    content = ctx.config.workspace_path.joinpath("f.txt").read_text()
+    lines = content.splitlines()
+    assert lines == ["aaa", "x1", "x2", "x3", "x4", "x5", "ccc"]
+
+
+def test_replace_lines_shrink(ctx):
+    tool_workspace_write(ctx, "f.txt", "aaa\nb1\nb2\nb3\nb4\nb5\nccc\n")
+    tool_workspace_replace_lines(ctx, "f.txt", 2, 6, "bbb")
+    content = ctx.config.workspace_path.joinpath("f.txt").read_text()
+    lines = content.splitlines()
+    assert lines == ["aaa", "bbb", "ccc"]
+
+
+def test_replace_lines_invalid_range(ctx):
+    tool_workspace_write(ctx, "f.txt", "aaa\nbbb\nccc\n")
+    result = tool_workspace_replace_lines(ctx, "f.txt", 3, 2, "x")
+    assert "error" in result.lower()
+    result = tool_workspace_replace_lines(ctx, "f.txt", 0, 2, "x")
+    assert "error" in result.lower()
+    result = tool_workspace_replace_lines(ctx, "f.txt", 1, 100, "x")
+    assert "error" in result.lower()
+
+
+def test_replace_lines_escape_blocked(ctx):
+    result = tool_workspace_replace_lines(ctx, "../../evil.txt", 1, 2, "x")
+    assert "outside" in result.lower()
 
 
 # -- workspace_append tests --
