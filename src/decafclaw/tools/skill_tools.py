@@ -44,6 +44,8 @@ def _load_native_tools(skill_info) -> tuple[dict, list, object]:
     spec = importlib.util.spec_from_file_location(
         f"decafclaw_skill_{skill_info.name}", tools_path
     )
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Could not load module spec for {tools_path}")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     tools = getattr(module, "TOOLS", {})

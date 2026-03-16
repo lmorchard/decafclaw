@@ -84,7 +84,7 @@ def _suggest_pattern(command: str) -> str:
     return command
 
 
-async def tool_shell(ctx, command: str) -> str:
+async def tool_shell(ctx, command: str) -> str | ToolResult:
     """Run a shell command after user confirmation."""
     log.info(f"[tool:shell] requesting confirmation for: {command}")
 
@@ -120,7 +120,7 @@ async def tool_shell(ctx, command: str) -> str:
     return _execute_command(ctx, command)
 
 
-def _execute_command(ctx, command: str) -> str:
+def _execute_command(ctx, command: str) -> str | ToolResult:
     """Execute a shell command and return the output."""
     log.info(f"[tool:shell] executing command: {command}")
     try:
@@ -138,7 +138,7 @@ def _execute_command(ctx, command: str) -> str:
         return ToolResult(text="[error: command timed out after 30 seconds]")
 
 
-async def tool_shell_patterns(ctx, action: str = "list", pattern: str = "") -> str:
+async def tool_shell_patterns(ctx, action: str = "list", pattern: str = "") -> str | ToolResult:
     """Manage shell command allow patterns."""
     log.info(f"[tool:shell_patterns] action={action} pattern={pattern}")
 

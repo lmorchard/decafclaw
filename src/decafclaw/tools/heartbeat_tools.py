@@ -118,7 +118,7 @@ async def _run_heartbeat_to_channel(config, event_bus) -> None:
 
             prompt = build_section_prompt(section)
             result = await run_agent_turn(ctx, prompt, history=[])
-            response = result.text if hasattr(result, "text") else (result or "")
+            response = result.text
             response = response or "(no response)"
             ok = is_heartbeat_ok(response)
         except Exception as e:

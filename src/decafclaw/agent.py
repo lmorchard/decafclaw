@@ -28,7 +28,7 @@ log = logging.getLogger(__name__)
 
 def _conv_id(ctx) -> str:
     """Get conversation ID from context."""
-    return getattr(ctx, "conv_id", None) or getattr(ctx, "channel_id", "unknown")
+    return getattr(ctx, "conv_id", None) or getattr(ctx, "channel_id", None) or "unknown"
 
 
 def _archive(ctx, msg) -> None:
