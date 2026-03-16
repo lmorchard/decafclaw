@@ -1002,6 +1002,9 @@ class ConversationDisplay:
                 config, tool_name, command, suggested_pattern,
                 context_id, msg,
             )
+            if attachments:
+                import json as _json
+                log.debug(f"Confirm buttons: {_json.dumps(attachments, indent=2)}")
 
         if self._tool_post_id:
             # Edit existing post — can't add attachments to edit, so send new

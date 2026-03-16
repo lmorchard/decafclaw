@@ -298,8 +298,9 @@ def test_buttons_styles(http_config):
     assert styles["deny"] == "danger"
 
 
-def test_buttons_create_token_in_registry(http_config):
+def test_buttons_create_tokens_in_registry(http_config):
     registry = get_token_registry()
     before = len(registry)
     build_confirm_buttons(http_config, "shell", "ls", "ls *", "ctx-1", "msg")
-    assert len(registry) == before + 1
+    # One token per button (3 for shell: approve, deny, add_pattern)
+    assert len(registry) == before + 3

@@ -82,14 +82,15 @@ def create_app(config, event_bus) -> Starlette:
 
         body = await request.json()
         context = body.get("context", {})
-        action = context.get("action", "")
 
         # Use token data if available, fall back to POST body context
         if token_data:
+            action = token_data.get("action", "") or context.get("action", "")
             context_id = token_data["context_id"]
             tool_name = token_data["tool"]
             original_message = token_data["original_message"]
         else:
+            action = context.get("action", "")
             context_id = context.get("context_id", "")
             tool_name = context.get("tool", "")
             original_message = context.get("original_message", "")
@@ -147,16 +148,19 @@ def build_confirm_buttons(config, tool_name: str, command: str,
     if not config.http_enabled:
         return []
 
-    # Generate a single-use token for this confirmation
-    token = _token_registry.create(
-        context_id=context_id,
-        tool_name=tool_name,
-        original_message=original_message[:2000],
-        server_secret=config.http_secret,
-    )
-    callback_url = f"{config.http_callback_base}/actions/confirm?token={token}"
+    def _make_token(action: str) -> str:
+        """Generate a per-button token."""
+        return _token_registry.create(
+            context_id=context_id,
+            tool_name=tool_name,
+            original_message=original_message[:2000],
+            server_secret=config.http_secret,
+            action=action,
+        )
 
-    # Base context included in every button (action is the only variable)
+    base_url = f"{config.http_callback_base}/actions/confirm"
+
+    # Base context included in every button
     base_context = {
         "context_id": context_id,
         "tool": tool_name,
@@ -170,7 +174,7 @@ def build_confirm_buttons(config, tool_name: str, command: str,
                 "name": "Approve",
                 "style": "primary",
                 "integration": {
-                    "url": callback_url,
+                    "url": f"{base_url}?token={_make_token('approve')}",
                     "context": {**base_context, "action": "approve"},
                 },
             },
@@ -179,7 +183,7 @@ def build_confirm_buttons(config, tool_name: str, command: str,
                 "name": "Deny",
                 "style": "danger",
                 "integration": {
-                    "url": callback_url,
+                    "url": f"{base_url}?token={_make_token('deny')}",
                     "context": {**base_context, "action": "deny"},
                 },
             },
@@ -187,12 +191,8 @@ def build_confirm_buttons(config, tool_name: str, command: str,
                 "id": "add_pattern",
                 "name": f"Allow: {suggested_pattern}",
                 "integration": {
-                    "url": callback_url,
-                    "context": {
-                        **base_context,
-                        "action": "add_pattern",
-                        "suggested_pattern": suggested_pattern,
-                    },
+                    "url": f"{base_url}?token={_make_token('add_pattern')}",
+                    "context": {**base_context, "action": "add_pattern"},
                 },
             },
         ]
@@ -204,7 +204,7 @@ def build_confirm_buttons(config, tool_name: str, command: str,
                 "name": "Approve",
                 "style": "primary",
                 "integration": {
-                    "url": callback_url,
+                    "url": f"{base_url}?token={_make_token('approve')}",
                     "context": {**base_context, "action": "approve"},
                 },
             },
@@ -213,7 +213,7 @@ def build_confirm_buttons(config, tool_name: str, command: str,
                 "name": "Deny",
                 "style": "danger",
                 "integration": {
-                    "url": callback_url,
+                    "url": f"{base_url}?token={_make_token('deny')}",
                     "context": {**base_context, "action": "deny"},
                 },
             },
@@ -221,7 +221,7 @@ def build_confirm_buttons(config, tool_name: str, command: str,
                 "id": "always",
                 "name": "Always",
                 "integration": {
-                    "url": callback_url,
+                    "url": f"{base_url}?token={_make_token('always')}",
                     "context": {**base_context, "action": "always"},
                 },
             },
