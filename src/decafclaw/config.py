@@ -107,6 +107,12 @@ class Config:
     system_prompt: str = ""
     max_tool_iterations: int = 200
 
+    # Claude Code skill settings
+    claude_code_model: str = ""  # empty = SDK default
+    claude_code_budget_default: float = 2.0
+    claude_code_budget_max: float = 10.0
+    claude_code_session_timeout: str = "30m"
+
     # Discovered skills (populated by load_system_prompt at startup)
     discovered_skills: list = field(default_factory=list)
 
@@ -151,6 +157,10 @@ def load_config() -> Config:
         heartbeat_suppress_ok=_parse_bool(os.getenv("HEARTBEAT_SUPPRESS_OK", ""), default=True),
         llm_streaming=_parse_bool(os.getenv("LLM_STREAMING", ""), default=True),
         llm_stream_throttle_ms=int(os.getenv("LLM_STREAM_THROTTLE_MS", "200")),
+        claude_code_model=os.getenv("CLAUDE_CODE_MODEL", ""),
+        claude_code_budget_default=float(os.getenv("CLAUDE_CODE_BUDGET_DEFAULT", "2.0")),
+        claude_code_budget_max=float(os.getenv("CLAUDE_CODE_BUDGET_MAX", "10.0")),
+        claude_code_session_timeout=os.getenv("CLAUDE_CODE_SESSION_TIMEOUT", "30m"),
         system_prompt=os.getenv("SYSTEM_PROMPT", Config.system_prompt),
         max_tool_iterations=int(os.getenv("MAX_TOOL_ITERATIONS", "30")),
     )
