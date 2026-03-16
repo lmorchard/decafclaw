@@ -7,6 +7,7 @@ from pathlib import Path
 from claude_code_sdk import (
     AssistantMessage,
     ClaudeCodeOptions,
+    HookMatcher,
     ResultMessage,
     TextBlock,
     ToolUseBlock,
@@ -137,14 +138,19 @@ async def tool_claude_code_send(ctx, session_id: str, prompt: str) -> str:
     log_dir.mkdir(parents=True, exist_ok=True)
     stderr_path = log_dir / f"{session.session_id}.stderr.log"
     stderr_file = open(stderr_path, "a")
-    # Use bypassPermissions at the CLI level — the SDK's control protocol
-    # has reliability issues with can_use_tool on repeated tool calls
-    # ("Stream closed" after first response). Instead, we confirm upfront
-    # before sending to the SDK.
+    # Dummy PreToolUse hook — required workaround for can_use_tool in
+    # streaming mode. Without this, the stream closes before the permission
+    # callback fires on subsequent tool calls.
+    # See: https://github.com/anthropics/claude-code/issues/24607
+    async def _keep_stream_alive(input_data, tool_use_id, context):
+        return {}
+
     options = ClaudeCodeOptions(
         cwd=session.cwd,
         model=model,
-        permission_mode="bypassPermissions",
+        permission_mode="default",
+        can_use_tool=make_permission_handler(ctx, _config),
+        hooks={"PreToolUse": [HookMatcher(matcher=None, hooks=[_keep_stream_alive])]},  # type: ignore[list-item]
         debug_stderr=stderr_file,
     )
 
