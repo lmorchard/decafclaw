@@ -76,26 +76,32 @@ def make_permission_handler(ctx, config):
             log.info(f"Claude Code auto-approved (allowlist): {tool_name}")
             return PermissionResultAllow()
 
+        # Format the tool call for the confirmation message
+        input_preview = json.dumps(tool_input, indent=2)
+        if len(input_preview) > 500:
+            input_preview = input_preview[:500] + "..."
+
         log.info(f"Claude Code requesting confirmation for: {tool_name}")
 
-        # TODO: Route through Mattermost confirmation flow once the async
-        # bridge timing issue with the SDK control protocol is resolved.
-        # The request_confirmation() call works in-process, but the SDK's
-        # control protocol disconnects ("Stream closed") before the
-        # Mattermost reaction poll can complete (~2s polling interval
-        # vs SDK's tight timeout).
-        #
-        # Future fix options:
-        # 1. Find SDK timeout config for control protocol responses
-        # 2. Use a faster confirmation mechanism (not reaction polling)
-        # 3. Pre-approve patterns and only confirm novel commands
-        #
-        # For now, auto-approve and log.
-        log.warning(f"Claude Code auto-approving {tool_name} (confirmation bridge WIP)")
-        await ctx.publish(
-            "tool_status", tool="claude_code",
-            message=f"Auto-approved: {tool_name}",
+        # Request confirmation through DecafClaw's event bus.
+        # SDK has 60s timeout on control protocol — plenty of time for
+        # Mattermost reaction polling.
+        result = await request_confirmation(
+            ctx,
+            tool_name=f"claude_code:{tool_name}",
+            command=f"{tool_name}: {input_preview}",
+            message=f"Claude Code wants to use **{tool_name}**:\n```json\n{input_preview}\n```",
         )
+
+        log.info(f"Claude Code confirmation result for {tool_name}: approved={result.get('approved')}")
+
+        if not result.get("approved"):
+            return PermissionResultDeny(message=f"User denied {tool_name}")
+
+        # If "always" approved, add to allowlist
+        if result.get("always"):
+            save_allowlist_entry(config, tool_name)
+
         return PermissionResultAllow()
 
     return can_use_tool

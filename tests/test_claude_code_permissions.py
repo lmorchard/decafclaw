@@ -11,6 +11,7 @@ from decafclaw.skills.claude_code.permissions import (
     matches_allowlist,
     save_allowlist_entry,
 )
+from decafclaw.tools.confirmation import request_confirmation
 
 # -- Allowlist tests -----------------------------------------------------------
 
@@ -84,16 +85,50 @@ async def test_requests_confirmation_for_unknown_tool(ctx):
 
 
 @pytest.mark.asyncio
-async def test_unknown_tools_auto_approved_wip(ctx):
-    """WIP: Unknown tools are auto-approved until the confirmation bridge is fixed."""
+async def test_denied_confirmation_blocks_tool(ctx):
     handler = make_permission_handler(ctx, ctx.config)
-    result = await handler("Bash", {"command": "ls"}, None)
-    assert result.behavior == "allow"
+
+    async def deny():
+        await asyncio.sleep(0.05)
+        await ctx.event_bus.publish({
+            "type": "tool_confirm_response",
+            "context_id": ctx.context_id,
+            "tool": "claude_code:Bash",
+            "approved": False,
+        })
+
+    asyncio.create_task(deny())
+    result = await handler("Bash", {"command": "rm -rf /"}, None)
+    assert result.behavior == "deny"
 
 
 @pytest.mark.asyncio
-async def test_write_auto_approved_wip(ctx):
-    """WIP: Write tools are auto-approved until the confirmation bridge is fixed."""
+async def test_always_approval_adds_to_allowlist(ctx):
+    ctx.config.agent_path.mkdir(parents=True, exist_ok=True)
     handler = make_permission_handler(ctx, ctx.config)
-    result = await handler("Write", {"file_path": "test.py", "content": "x"}, None)
+
+    async def approve_always():
+        await asyncio.sleep(0.05)
+        await ctx.event_bus.publish({
+            "type": "tool_confirm_response",
+            "context_id": ctx.context_id,
+            "tool": "claude_code:Edit",
+            "approved": True,
+            "always": True,
+        })
+
+    asyncio.create_task(approve_always())
+    result = await handler("Edit", {"file_path": "test.py"}, None)
     assert result.behavior == "allow"
+    patterns = load_allowlist(ctx.config)
+    assert "Edit" in patterns
+
+
+@pytest.mark.asyncio
+async def test_timeout_denies_tool(ctx):
+    # Short timeout — no one responds
+    result = await request_confirmation(
+        ctx, tool_name="claude_code:Write", command="test",
+        message="test", timeout=0.1,
+    )
+    assert result["approved"] is False
