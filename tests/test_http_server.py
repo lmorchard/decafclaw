@@ -1,13 +1,16 @@
 """Tests for HTTP server routes and button building."""
 
 import asyncio
-import json
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 
 from decafclaw.events import EventBus
-from decafclaw.http_server import build_confirm_buttons, create_app
+from decafclaw.http_server import (
+    build_confirm_buttons,
+    create_app,
+    get_token_registry,
+)
 
 
 @pytest.fixture
@@ -38,6 +41,15 @@ async def client(app):
         yield c
 
 
+@pytest.fixture(autouse=True)
+def clean_token_registry():
+    """Ensure token registry is clean between tests."""
+    registry = get_token_registry()
+    registry._tokens.clear()
+    yield
+    registry._tokens.clear()
+
+
 # -- Health route tests --------------------------------------------------------
 
 
@@ -48,18 +60,39 @@ async def test_health(client):
     assert resp.json() == {"status": "ok"}
 
 
+# -- Token registry tests -----------------------------------------------------
+
+
+def test_token_create_and_consume():
+    registry = get_token_registry()
+    token = registry.create("ctx-1", "shell", "test msg")
+    assert len(token) > 16  # urlsafe base64, should be ~32 chars
+
+    data = registry.consume(token)
+    assert data is not None
+    assert data["context_id"] == "ctx-1"
+    assert data["tool"] == "shell"
+    assert data["original_message"] == "test msg"
+
+
+def test_token_single_use():
+    registry = get_token_registry()
+    token = registry.create("ctx-1", "shell", "msg")
+    registry.consume(token)
+    # Second consume returns None
+    assert registry.consume(token) is None
+
+
+def test_token_invalid():
+    registry = get_token_registry()
+    assert registry.consume("nonexistent-token") is None
+
+
 # -- Confirm callback tests ----------------------------------------------------
 
 
-def _confirm_body(action="approve", context_id="ctx-123", tool="shell",
-                  original_message="test message", **extra_context):
-    context = {
-        "action": action,
-        "context_id": context_id,
-        "tool": tool,
-        "original_message": original_message,
-        **extra_context,
-    }
+def _confirm_body(action="approve", **extra_context):
+    context = {"action": action, **extra_context}
     return {
         "user_id": "user-abc",
         "post_id": "post-def",
@@ -70,42 +103,84 @@ def _confirm_body(action="approve", context_id="ctx-123", tool="shell",
 
 
 @pytest.mark.asyncio
-async def test_confirm_rejects_bad_secret(client):
+async def test_confirm_rejects_no_auth(client):
     resp = await client.post(
-        "/actions/confirm?secret=wrong",
+        "/actions/confirm",
         json=_confirm_body(),
     )
     assert resp.status_code == 403
 
 
 @pytest.mark.asyncio
-async def test_confirm_approve_publishes_event(client, bus):
+async def test_confirm_rejects_bad_token(client):
+    resp = await client.post(
+        "/actions/confirm?token=fake-token",
+        json=_confirm_body(),
+    )
+    assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_confirm_with_valid_token(client, bus):
     received = []
     bus.subscribe(lambda e: received.append(e))
 
+    token = get_token_registry().create("ctx-1", "shell", "original msg")
     resp = await client.post(
-        "/actions/confirm?secret=test-secret",
-        json=_confirm_body(action="approve", context_id="ctx-1", tool="shell"),
+        f"/actions/confirm?token={token}",
+        json=_confirm_body(action="approve"),
     )
     assert resp.status_code == 200
-
-    # Give the async subscriber a tick
     await asyncio.sleep(0)
 
     assert len(received) == 1
-    assert received[0]["type"] == "tool_confirm_response"
     assert received[0]["context_id"] == "ctx-1"
     assert received[0]["tool"] == "shell"
     assert received[0]["approved"] is True
 
 
 @pytest.mark.asyncio
-async def test_confirm_deny_publishes_event(client, bus):
+async def test_confirm_token_is_single_use(client, bus):
+    token = get_token_registry().create("ctx-1", "shell", "msg")
+
+    resp1 = await client.post(
+        f"/actions/confirm?token={token}",
+        json=_confirm_body(action="approve"),
+    )
+    assert resp1.status_code == 200
+
+    # Second use of same token fails
+    resp2 = await client.post(
+        f"/actions/confirm?token={token}",
+        json=_confirm_body(action="approve"),
+    )
+    assert resp2.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_confirm_with_static_secret_fallback(client, bus):
+    """Static secret still works as fallback."""
     received = []
     bus.subscribe(lambda e: received.append(e))
 
     resp = await client.post(
         "/actions/confirm?secret=test-secret",
+        json=_confirm_body(action="approve", context_id="ctx-2", tool="shell"),
+    )
+    assert resp.status_code == 200
+    await asyncio.sleep(0)
+
+    assert received[0]["context_id"] == "ctx-2"
+
+
+@pytest.mark.asyncio
+async def test_confirm_deny(client, bus):
+    received = []
+    bus.subscribe(lambda e: received.append(e))
+
+    token = get_token_registry().create("ctx-1", "shell", "msg")
+    resp = await client.post(
+        f"/actions/confirm?token={token}",
         json=_confirm_body(action="deny"),
     )
     assert resp.status_code == 200
@@ -115,13 +190,14 @@ async def test_confirm_deny_publishes_event(client, bus):
 
 
 @pytest.mark.asyncio
-async def test_confirm_always_publishes_event(client, bus):
+async def test_confirm_always(client, bus):
     received = []
     bus.subscribe(lambda e: received.append(e))
 
+    token = get_token_registry().create("ctx-1", "activate_skill", "msg")
     resp = await client.post(
-        "/actions/confirm?secret=test-secret",
-        json=_confirm_body(action="always", tool="activate_skill"),
+        f"/actions/confirm?token={token}",
+        json=_confirm_body(action="always"),
     )
     assert resp.status_code == 200
     await asyncio.sleep(0)
@@ -131,13 +207,14 @@ async def test_confirm_always_publishes_event(client, bus):
 
 
 @pytest.mark.asyncio
-async def test_confirm_add_pattern_publishes_event(client, bus):
+async def test_confirm_add_pattern(client, bus):
     received = []
     bus.subscribe(lambda e: received.append(e))
 
+    token = get_token_registry().create("ctx-1", "shell", "msg")
     resp = await client.post(
-        "/actions/confirm?secret=test-secret",
-        json=_confirm_body(action="add_pattern", tool="shell"),
+        f"/actions/confirm?token={token}",
+        json=_confirm_body(action="add_pattern"),
     )
     assert resp.status_code == 200
     await asyncio.sleep(0)
@@ -147,14 +224,14 @@ async def test_confirm_add_pattern_publishes_event(client, bus):
 
 
 @pytest.mark.asyncio
-async def test_confirm_response_updates_message(client):
+async def test_confirm_response_includes_original_message(client):
+    token = get_token_registry().create("ctx-1", "shell", "original text here")
     resp = await client.post(
-        "/actions/confirm?secret=test-secret",
-        json=_confirm_body(action="approve", original_message="original text"),
+        f"/actions/confirm?token={token}",
+        json=_confirm_body(action="approve"),
     )
     data = resp.json()
-    assert "update" in data
-    assert "original text" in data["update"]["message"]
+    assert "original text here" in data["update"]["message"]
     assert "Approved" in data["update"]["message"]
     assert data["update"]["props"]["attachments"] == []
 
@@ -170,7 +247,7 @@ def test_buttons_empty_when_http_disabled(config):
     assert result == []
 
 
-def test_buttons_have_callback_url(http_config):
+def test_buttons_have_token_in_callback_url(http_config):
     result = build_confirm_buttons(
         http_config, "shell", "ls", "ls *", "ctx-1", "msg"
     )
@@ -178,7 +255,7 @@ def test_buttons_have_callback_url(http_config):
     actions = result[0]["actions"]
     for action in actions:
         url = action["integration"]["url"]
-        assert "test-secret" in url
+        assert "token=" in url
         assert "/actions/confirm" in url
 
 
@@ -189,7 +266,6 @@ def test_shell_buttons_approve_deny_pattern(http_config):
     actions = result[0]["actions"]
     action_ids = [a["id"] for a in actions]
     assert action_ids == ["approve", "deny", "add_pattern"]
-    # No "always" for shell
     assert "always" not in action_ids
 
 
@@ -200,7 +276,6 @@ def test_other_tool_buttons_approve_deny_always(http_config):
     actions = result[0]["actions"]
     action_ids = [a["id"] for a in actions]
     assert action_ids == ["approve", "deny", "always"]
-    # No "add_pattern" for non-shell
     assert "add_pattern" not in action_ids
 
 
@@ -211,7 +286,6 @@ def test_buttons_context_includes_required_fields(http_config):
     ctx = result[0]["actions"][0]["integration"]["context"]
     assert ctx["context_id"] == "ctx-abc"
     assert ctx["tool"] == "shell"
-    assert ctx["original_message"] == "original msg"
 
 
 def test_buttons_styles(http_config):
@@ -224,10 +298,8 @@ def test_buttons_styles(http_config):
     assert styles["deny"] == "danger"
 
 
-def test_buttons_truncate_long_original_message(http_config):
-    long_msg = "x" * 5000
-    result = build_confirm_buttons(
-        http_config, "shell", "cmd", "cmd *", "ctx-1", long_msg
-    )
-    ctx = result[0]["actions"][0]["integration"]["context"]
-    assert len(ctx["original_message"]) == 2000
+def test_buttons_create_token_in_registry(http_config):
+    registry = get_token_registry()
+    before = len(registry)
+    build_confirm_buttons(http_config, "shell", "ls", "ls *", "ctx-1", "msg")
+    assert len(registry) == before + 1
