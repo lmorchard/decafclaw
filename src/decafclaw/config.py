@@ -107,6 +107,23 @@ class Config:
     system_prompt: str = ""
     max_tool_iterations: int = 200
 
+    # HTTP server settings
+    http_enabled: bool = False
+    http_host: str = "0.0.0.0"
+    http_port: int = 18880
+    http_secret: str = ""
+    http_base_url: str = ""  # auto-detected if empty
+
+    @property
+    def http_callback_base(self) -> str:
+        """Base URL for HTTP callbacks. Auto-detected from host/port if not set."""
+        if self.http_base_url:
+            return self.http_base_url.rstrip("/")
+        return f"http://{self.http_host}:{self.http_port}"
+
+    # Mattermost confirmation settings
+    mattermost_disable_emoji_confirms: bool = False
+
     # Claude Code skill settings
     claude_code_model: str = ""  # empty = SDK default
     claude_code_budget_default: float = 2.0
@@ -157,6 +174,13 @@ def load_config() -> Config:
         heartbeat_suppress_ok=_parse_bool(os.getenv("HEARTBEAT_SUPPRESS_OK", ""), default=True),
         llm_streaming=_parse_bool(os.getenv("LLM_STREAMING", ""), default=True),
         llm_stream_throttle_ms=int(os.getenv("LLM_STREAM_THROTTLE_MS", "200")),
+        http_enabled=_parse_bool(os.getenv("HTTP_ENABLED", ""), default=False),
+        http_host=os.getenv("HTTP_HOST", Config.http_host),
+        http_port=int(os.getenv("HTTP_PORT", "18880")),
+        http_secret=os.getenv("HTTP_SECRET", ""),
+        http_base_url=os.getenv("HTTP_BASE_URL", ""),
+        mattermost_disable_emoji_confirms=_parse_bool(
+            os.getenv("MATTERMOST_DISABLE_EMOJI_CONFIRMS", ""), default=False),
         claude_code_model=os.getenv("CLAUDE_CODE_MODEL", ""),
         claude_code_budget_default=float(os.getenv("CLAUDE_CODE_BUDGET_DEFAULT", "2.0")),
         claude_code_budget_max=float(os.getenv("CLAUDE_CODE_BUDGET_MAX", "10.0")),
