@@ -66,7 +66,7 @@ class Config:
     compaction_llm_url: str = ""        # default: falls back to llm_url
     compaction_llm_model: str = ""      # default: falls back to llm_model
     compaction_llm_api_key: str = ""    # default: falls back to llm_api_key
-    compaction_max_tokens: int = 500000 # compact when prompt_tokens exceeds this
+    compaction_max_tokens: int = 100000 # compact when prompt_tokens exceeds this
     compaction_llm_max_tokens: int = 0  # compaction LLM's context budget (0 = use compaction_max_tokens)
     compaction_preserve_turns: int = 5  # keep this many recent turns intact
 
@@ -124,7 +124,7 @@ def load_config() -> Config:
         compaction_llm_url=os.getenv("COMPACTION_LLM_URL", ""),
         compaction_llm_model=os.getenv("COMPACTION_LLM_MODEL", ""),
         compaction_llm_api_key=os.getenv("COMPACTION_LLM_API_KEY", ""),
-        compaction_max_tokens=int(os.getenv("COMPACTION_MAX_TOKENS", "500000")),
+        compaction_max_tokens=int(os.getenv("COMPACTION_MAX_TOKENS", "100000")),
         compaction_llm_max_tokens=int(os.getenv("COMPACTION_LLM_MAX_TOKENS", "0")),
         compaction_preserve_turns=int(os.getenv("COMPACTION_PRESERVE_TURNS", "5")),
         embedding_model=os.getenv("EMBEDDING_MODEL", Config.embedding_model),
