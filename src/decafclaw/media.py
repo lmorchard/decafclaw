@@ -18,6 +18,7 @@ class ToolResult:
 
     text: str
     media: list[dict] = field(default_factory=list)
+    display_text: str | None = None
 
     @classmethod
     def from_text(cls, text: str) -> "ToolResult":
