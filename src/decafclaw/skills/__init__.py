@@ -24,7 +24,6 @@ class SkillInfo:
     has_native_tools: bool = False
     requires_env: list[str] = field(default_factory=list)
     user_invocable: bool = True
-    disable_model_invocation: bool = False
 
 
 def parse_skill_md(path: Path) -> SkillInfo | None:
@@ -40,19 +39,9 @@ def parse_skill_md(path: Path) -> SkillInfo | None:
         return None
 
     # Split frontmatter from body
-    frontmatter, body = _split_frontmatter(text)
-    if frontmatter is None:
-        log.warning(f"No YAML frontmatter in {path}")
-        return None
-
-    try:
-        meta = yaml.safe_load(frontmatter)
-    except yaml.YAMLError as e:
-        log.warning(f"Unparseable YAML in {path}: {e}")
-        return None
-
-    if not isinstance(meta, dict):
-        log.warning(f"YAML frontmatter is not a mapping in {path}")
+    meta, body = _split_frontmatter(text)
+    if meta is None:
+        log.warning(f"No valid YAML frontmatter in {path}")
         return None
 
     name = meta.get("name")
@@ -81,28 +70,37 @@ def parse_skill_md(path: Path) -> SkillInfo | None:
         has_native_tools=has_native_tools,
         requires_env=requires_env,
         user_invocable=meta.get("user-invocable", True),
-        disable_model_invocation=meta.get("disable-model-invocation", False),
     )
 
 
-def _split_frontmatter(text: str) -> tuple[str | None, str]:
+def _split_frontmatter(text: str) -> tuple[dict | None, str]:
     """Split YAML frontmatter from markdown body.
 
-    Returns (frontmatter_str, body_str). frontmatter_str is None
-    if no valid frontmatter delimiters found.
+    Returns (parsed_dict, body_str). parsed_dict is None
+    if no valid frontmatter delimiters found or YAML is invalid.
     """
     stripped = text.strip()
     if not stripped.startswith("---"):
         return None, text
 
-    # Find the closing ---
-    end = stripped.find("---", 3)
+    # Find the closing --- (skip the opening one)
+    end = stripped.find("\n---", 3)
     if end == -1:
         return None, text
 
-    frontmatter = stripped[3:end].strip()
-    body = stripped[end + 3:]
-    return frontmatter, body
+    frontmatter_str = stripped[3:end].strip()
+    body = stripped[end + 4:]  # skip past \n---
+
+    try:
+        parsed = yaml.safe_load(frontmatter_str)
+    except yaml.YAMLError as e:
+        log.warning(f"Unparseable YAML frontmatter: {e}")
+        return None, text
+
+    if not isinstance(parsed, dict):
+        return None, text
+
+    return parsed, body
 
 
 def discover_skills(config) -> list[SkillInfo]:

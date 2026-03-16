@@ -35,7 +35,6 @@ def test_parse_valid_skill_md(tmp_path):
     assert info.has_native_tools is False
     assert info.requires_env == []
     assert info.user_invocable is True
-    assert info.disable_model_invocation is False
 
 
 def test_parse_all_fields(tmp_path):
@@ -44,7 +43,6 @@ def test_parse_all_fields(tmp_path):
         "name: full-skill\n"
         "description: Full featured skill.\n"
         "user-invocable: false\n"
-        "disable-model-invocation: true\n"
         "requires:\n"
         "  env:\n"
         "    - API_KEY\n"
@@ -57,7 +55,6 @@ def test_parse_all_fields(tmp_path):
     assert info.has_native_tools is True
     assert info.requires_env == ["API_KEY", "SECRET"]
     assert info.user_invocable is False
-    assert info.disable_model_invocation is True
 
 
 def test_parse_minimal_skill_md(tmp_path):
