@@ -49,11 +49,10 @@ These are loaded into context only when the skill is activated.
 | `description` | Yes | What the skill does, max 1024 chars. Shown in catalog. |
 | `requires.env` | No | Env vars that must be set. Skill hidden if unmet. |
 | `user-invocable` | No | Bool, default true. (Parsed but not enforced yet.) |
-| `disable-model-invocation` | No | Bool, default false. (Parsed but not enforced yet.) |
 
 ### Native Python tools (tools.py)
 
-Optional. If present, the skill registers structured tools that the LLM calls directly:
+Optional. If present, the skill registers structured tools that the LLM calls directly. This is a DecafClaw extension to the Agent Skills standard — the standard itself defines shell-based skills only. Native tools provide structured function calling with typed parameters, which is more reliable and efficient than shell-based execution.
 
 ```python
 TOOLS = {
@@ -74,9 +73,38 @@ TOOL_DEFINITIONS = [
 def init(config):
     """Optional. Called once on first activation. Can be async."""
     pass
+
+async def shutdown():
+    """Optional. Called to clean up resources (e.g., close clients)."""
+    pass
 ```
 
 All tool functions receive `ctx` as first parameter.
+
+**Important:** Skills are loaded dynamically via `importlib.spec_from_file_location`, which does not set Python package context. This means `tools.py` **must use absolute imports**, not relative imports:
+
+```python
+# CORRECT — absolute imports
+from decafclaw.skills.my_skill.helpers import some_function
+from decafclaw.tools.confirmation import request_confirmation
+
+# WRONG — relative imports will fail at runtime
+from .helpers import some_function
+from ...tools.confirmation import request_confirmation
+```
+
+### Multi-module skills
+
+Skills can have multiple Python modules. The skill loader only imports `tools.py`, but that file can import from sibling modules using absolute imports. For example, the `claude_code` skill has:
+
+```
+claude_code/
+  SKILL.md
+  tools.py          # Entry point — imports from siblings
+  sessions.py       # Session lifecycle management
+  permissions.py    # Permission handling
+  output.py         # Output logging and summaries
+```
 
 ### Shell-based skills
 
@@ -120,6 +148,21 @@ Activated skills and their tools are scoped to the current conversation. Other c
 Web browsing, content extraction, research, and browser automation via the Tabstack API. Requires `TABSTACK_API_KEY`.
 
 Tools: `tabstack_extract_markdown`, `tabstack_extract_json`, `tabstack_generate`, `tabstack_automate`, `tabstack_research`
+
+### claude_code
+
+Delegates coding tasks to [Claude Code](https://claude.com/claude-code) as a subagent. The agent can start sessions, send coding tasks, and get results back — all within Mattermost conversations. Requires `ANTHROPIC_API_KEY`.
+
+Tools: `claude_code_start`, `claude_code_send`, `claude_code_stop`, `claude_code_sessions`
+
+Features:
+- Persistent sessions via SDK `resume` (one per working directory, 30min idle expiration)
+- Working directory sandboxed to the agent workspace
+- Full output logged to JSONL, concise summaries returned to save tokens
+- Configurable model, budget (default + max), and session timeout
+- Upfront user confirmation per task via Mattermost reactions
+
+**Note:** Per-tool permission control (`can_use_tool` callback) is blocked by an upstream SDK bug. Currently uses `bypassPermissions` with upfront confirmation as a workaround. See [issue #53](https://github.com/lmorchard/decafclaw/issues/53) for details and upstream tracking.
 
 ## Using community skills
 

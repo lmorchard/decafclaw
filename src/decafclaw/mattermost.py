@@ -114,11 +114,13 @@ class MattermostClient:
         self.bot_username = me.get("username", self.bot_username)
         log.info(f"Authenticated as @{self.bot_username} ({self.bot_user_id})")
 
-    async def send(self, channel_id, message, root_id=None):
+    async def send(self, channel_id, message, root_id=None, attachments=None):
         """Send a message to a channel. Returns the post ID."""
         body = {"channel_id": channel_id, "message": message}
         if root_id:
             body["root_id"] = root_id
+        if attachments:
+            body["props"] = {"attachments": attachments}
         resp = await self._http.post("/posts", json=body)
         resp.raise_for_status()
         return resp.json().get("id")
@@ -329,6 +331,7 @@ class MattermostClient:
             self, channel_id, root_id,
             throttle_ms=app_ctx.config.llm_stream_throttle_ms,
             initial_post_id=placeholder_id,
+            config=app_ctx.config,
         )
 
         # Set streaming callback
@@ -563,6 +566,15 @@ class MattermostClient:
         for sig in (signal.SIGTERM, signal.SIGINT):
             loop.add_signal_handler(sig, _signal_handler)
 
+        # Start HTTP server for interactive callbacks
+        http_task = None
+        if app_ctx.config.http_enabled:
+            from .http_server import run_http_server
+            http_task = asyncio.create_task(
+                run_http_server(app_ctx.config, app_ctx.event_bus)
+            )
+            log.info(f"HTTP server enabled on {app_ctx.config.http_host}:{app_ctx.config.http_port}")
+
         # Start heartbeat timer
         heartbeat_task = None
         if parse_interval(app_ctx.config.heartbeat_interval) is not None:
@@ -583,6 +595,14 @@ class MattermostClient:
         try:
             await self.listen(on_message_sync, shutdown_event=shutdown_event)
         finally:
+            # Stop HTTP server
+            if http_task:
+                http_task.cancel()
+                try:
+                    await http_task
+                except asyncio.CancelledError:
+                    pass
+
             if heartbeat_task:
                 heartbeat_task.cancel()
                 try:
@@ -707,12 +727,12 @@ class MattermostClient:
                     user_id = r.get("user_id", "")
                     if user_id == self.bot_user_id:
                         continue
-                    if emoji in ("notebook",):
+                    if emoji in ("notebook",) and tool_name == "shell":
                         log.info(f"Tool approved with pattern by {user_id}")
                         await _resolve(True, add_pattern=True,
                                        label="\U0001f4d3 approved + pattern added")
                         return
-                    elif emoji in ("white_check_mark", "heavy_check_mark"):
+                    elif emoji in ("white_check_mark", "heavy_check_mark") and tool_name != "shell":
                         log.info(f"Tool always-approved by {user_id}")
                         await _resolve(True, always=True, label="\u2705 always approved")
                         return
@@ -797,12 +817,13 @@ class ConversationDisplay:
     """
 
     def __init__(self, client, channel_id, root_id, throttle_ms=200,
-                 initial_post_id=None):
+                 initial_post_id=None, config=None):
         self.client = client
         self._channel_id = channel_id
         self._root_id = root_id
         self._throttle_ms = throttle_ms
         self._initial_post_id = initial_post_id
+        self._config = config
 
         # Current message state
         self._current_post_id = initial_post_id
@@ -954,27 +975,60 @@ class ConversationDisplay:
 
     async def on_confirm_request(self, tool_name, command, suggested_pattern,
                                   event_bus, context_id):
-        """Tool needs confirmation — show prompt on tool call message."""
-        msg = (
-            f"\U0001f6a8 **Confirm {tool_name}:**\n```\n{command}\n```\n"
-            f"React: \U0001f44d approve | \U0001f44e deny | \u2705 always"
-        )
-        if suggested_pattern and tool_name == "shell":
-            msg += f" | \U0001f4d3 allow `{suggested_pattern}`"
+        """Tool needs confirmation — show prompt with buttons and/or emoji."""
+        from .http_server import build_confirm_buttons
+
+        config = self._config
+
+        # Build the confirmation message text
+        msg = f"\U0001f6a8 **Confirm {tool_name}:**\n```\n{command}\n```"
+
+        # Add emoji instructions (unless disabled)
+        # Show emoji instructions if enabled (default: on when HTTP off, off when HTTP on)
+        show_emoji = not config or config.mattermost_enable_emoji_confirms
+        if show_emoji:
+            if tool_name == "shell" and suggested_pattern:
+                msg += (
+                    f"\nReact: \U0001f44d approve | \U0001f44e deny"
+                    f" | \U0001f4d3 allow `{suggested_pattern}`"
+                )
+            else:
+                msg += "\nReact: \U0001f44d approve | \U0001f44e deny | \u2705 always"
+
+        # Build interactive button attachments
+        attachments = []
+        if config:
+            attachments = build_confirm_buttons(
+                config, tool_name, command, suggested_pattern,
+                context_id, msg,
+            )
+            if attachments:
+                import json as _json
+                log.debug(f"Confirm buttons: {_json.dumps(attachments, indent=2)}")
 
         if self._tool_post_id:
-            try:
-                await self.client.edit_message(self._tool_post_id, msg)
-            except Exception:
-                pass
-            confirm_post_id = self._tool_post_id
+            # Edit existing post — can't add attachments to edit, so send new
+            if attachments:
+                confirm_post_id = await self.client.send(
+                    self._channel_id, msg, root_id=self._root_id,
+                    attachments=attachments,
+                )
+            else:
+                try:
+                    await self.client.edit_message(self._tool_post_id, msg)
+                except Exception:
+                    pass
+                confirm_post_id = self._tool_post_id
         else:
             confirm_post_id = await self.client.send(
                 self._channel_id, msg, root_id=self._root_id,
+                attachments=attachments,
             )
             self._tool_post_id = confirm_post_id
 
-        if confirm_post_id:
+        # Start emoji reaction polling (unless emoji is disabled)
+        # Start emoji reaction polling if emoji confirms are enabled
+        if confirm_post_id and show_emoji:
             asyncio.create_task(
                 self.client._poll_confirmation(
                     confirm_post_id, event_bus, context_id, tool_name,
