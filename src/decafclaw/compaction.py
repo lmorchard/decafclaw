@@ -198,6 +198,17 @@ async def compact_history(ctx, history: list) -> bool:
             log.warning("Compaction LLM returned empty summary, skipping")
             return False
 
+        # Rebuild history: summary + recent messages
+        summary_msg = {"role": "user", "content": f"[Conversation summary]: {summary}"}
+
+        history.clear()
+        history.append(summary_msg)
+        history.extend(recent_messages)
+
+        log.info(f"Compaction complete: {len(old_messages)} messages -> "
+                 f"1 summary + {len(recent_messages)} recent = {len(history)} total")
+        return True
+
     except Exception as e:
         log.error(f"Compaction LLM call failed: {e}")
         return False
@@ -209,14 +220,3 @@ async def compact_history(ctx, history: list) -> bool:
                           after_messages=after_messages,
                           elapsed_sec=round(elapsed, 1),
                           estimated_tokens_before=estimated)
-
-    # Rebuild history: summary + recent messages
-    summary_msg = {"role": "user", "content": f"[Conversation summary]: {summary}"}
-
-    history.clear()
-    history.append(summary_msg)
-    history.extend(recent_messages)
-
-    log.info(f"Compaction complete: {len(old_messages)} messages -> "
-             f"1 summary + {len(recent_messages)} recent = {len(history)} total")
-    return True
