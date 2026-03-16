@@ -100,11 +100,16 @@ async def tool_claude_code_send(ctx, session_id: str, prompt: str) -> str:
 
     # Build options
     model = session.model or (_config.claude_code_model if _config else None) or None
+    log_dir = _config.workspace_path / "claude-code-logs" if _config else Path("claude-code-logs")
+    log_dir.mkdir(parents=True, exist_ok=True)
+    stderr_path = log_dir / f"{session.session_id}.stderr.log"
+    stderr_file = open(stderr_path, "a")
     options = ClaudeCodeOptions(
         cwd=session.cwd,
         model=model,
         permission_mode="default",
         can_use_tool=make_permission_handler(ctx, _config),
+        debug_stderr=stderr_file,
     )
 
     # Resume existing session if we have an SDK session ID from a previous send
@@ -112,8 +117,7 @@ async def tool_claude_code_send(ctx, session_id: str, prompt: str) -> str:
         options.resume = session.sdk_session_id
         options.continue_conversation = True
 
-    # Set up logger
-    log_dir = _config.workspace_path / "claude-code-logs" if _config else Path("claude-code-logs")
+    # Set up logger (log_dir already created above for stderr)
     logger = SessionLogger(log_dir, session.session_id)
 
     # Wrap prompt as async iterable (required when can_use_tool is set)
@@ -158,6 +162,8 @@ async def tool_claude_code_send(ctx, session_id: str, prompt: str) -> str:
     except Exception as e:
         log.error(f"Claude Code SDK error: {e}", exc_info=True)
         return f"[error: Claude Code failed: {e}]"
+    finally:
+        stderr_file.close()
 
     # Update session state
     session.send_count += 1
