@@ -76,6 +76,7 @@ Session docs live in `.claude/dev-sessions/YYYY-MM-DD-HHMM-slug/` with `spec.md`
 - **Tool descriptions are a control surface.** Wording changes ("MUST", "NEVER", checklists, "prefer X over Y") measurably change LLM behavior. Use the eval loop to validate.
 - **Group tools by noun, not verb.** `conversation_search` + `conversation_compact` in one module, not scattered across core.
 - **Commit after each logical step.** Lint and test before committing.
+- **Work in a branch for iterative changes.** When making multiple related fixes (especially to UX-sensitive code like streaming/placeholder logic), work in a branch and test the full set before merging to main. Don't push rapid-fire fixes directly to main — regressions compound.
 - **One agent turn per conversation at a time.** Concurrent conversations (different threads/channels) are fine.
 - **Memory lives in `data/{agent_id}/workspace/memories/`.** Daily markdown files, append-only. Tools read context from ctx, not config.
 - **Agent data at `data/{agent_id}/`.** Admin files (SOUL.md, AGENT.md, USER.md, COMPACTION.md, config.yaml) live at the root — read-only to the agent. Agent read/write files live in `workspace/` subdirectory.
