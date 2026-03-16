@@ -430,9 +430,9 @@ class MattermostClient:
                     await handler.send_with_media(
                         channel_id, "", file_ids, root_id=root_id
                     )
-            elif placeholder_id and response_text:
-                # Always do the final edit to ensure correct text is shown
-                # (streaming may have shown raw text before workspace ref stripping)
+            elif already_streamed:
+                pass  # streaming display already has the final text
+            elif placeholder_id:
                 await self.edit_message(placeholder_id, response_text)
             else:
                 await self.send(channel_id, response_text, root_id=root_id)
@@ -562,10 +562,8 @@ class MattermostClient:
             elif event_type == "tool_end" and streaming_display and streaming_display._streamed:
                 streaming_display.tool_suffix = ""
                 await streaming_display._do_edit()
-            elif event_type == "llm_start" and placeholder_id:
-                # Show "Thinking..." only if streaming hasn't started yet
-                if not streaming or not (streaming_display and streaming_display._streamed):
-                    await client.edit_message(placeholder_id, "\U0001f4ad Thinking...")
+            elif event_type == "llm_start" and placeholder_id and not streaming:
+                await client.edit_message(placeholder_id, "\U0001f4ad Thinking...")
             elif event_type == "tool_confirm_request" and channel_id:
                 # Post a separate threaded message for each confirmation
                 tool_name = event.get("tool", "tool")
@@ -730,11 +728,6 @@ class StreamingDisplay:
             self.tool_suffix = ""  # clear tool suffix when text resumes
             self.buffer += data
             self._streamed = True
-            # Send typing indicator periodically
-            try:
-                await self.client.send_typing(self._channel_id)
-            except Exception:
-                pass
             await self._maybe_edit()
         elif chunk_type == "tool_call_start" and self.show_tool_calls:
             self.tool_suffix = f"\n\U0001f527 Calling {data['name']}..."
