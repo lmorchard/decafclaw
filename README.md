@@ -60,6 +60,9 @@ See [docs/installation.md](docs/installation.md) for full setup and configuratio
 | `workspace_append` | Append content to a file |
 | `workspace_search` | Regex search across workspace files |
 | `workspace_glob` | Find files by name/glob pattern |
+| `workspace_move` | Move or rename a file within the workspace |
+| `workspace_delete` | Delete a file from the workspace |
+| `workspace_diff` | Unified diff between two workspace files |
 | `file_share` | Share workspace files as Mattermost attachments |
 | `shell` | Run shell commands (requires user confirmation) |
 | `activate_skill` | Load a skill's tools into the conversation |
