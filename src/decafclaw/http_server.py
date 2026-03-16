@@ -191,7 +191,7 @@ def build_confirm_buttons(config, tool_name: str, command: str,
             },
             {
                 "id": "allowpattern",
-                "name": "Allow Pattern",
+                "name": f"Allow Pattern: {suggested_pattern}",
                 "style": "default",
                 "integration": {
                     "url": f"{base_url}?token={_make_token('add_pattern')}",
