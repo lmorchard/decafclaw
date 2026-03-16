@@ -386,6 +386,9 @@ class MattermostClient:
             await self.edit_message(placeholder_id, response_text)
         elif response_text:
             await self.send(channel_id, response_text, root_id=root_id)
+        elif placeholder_id:
+            # Empty response — remove placeholder rather than leaving "Thinking..." stuck
+            await self.delete_message(placeholder_id)
 
     async def _process_conversation(self, conv_id, channel_id, msgs,
                                     app_ctx, conversations):
