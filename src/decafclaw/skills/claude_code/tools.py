@@ -107,7 +107,7 @@ async def tool_claude_code_send(ctx, session_id: str, prompt: str) -> str:
     options = ClaudeCodeOptions(
         cwd=session.cwd,
         model=model,
-        permission_mode="default",
+        permission_mode="acceptEdits",
         can_use_tool=make_permission_handler(ctx, _config),
         debug_stderr=stderr_file,
     )
