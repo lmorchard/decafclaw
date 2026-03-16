@@ -563,22 +563,25 @@ class MattermostClient:
                 await streaming_display._do_edit()
             elif event_type == "llm_start" and placeholder_id and not streaming:
                 await client.edit_message(placeholder_id, "\U0001f4ad Thinking...")
-            elif event_type == "tool_confirm_request" and placeholder_id:
-                # Edit placeholder to show confirmation request
+            elif event_type == "tool_confirm_request" and channel_id:
+                # Post a separate threaded message for each confirmation
+                # (don't edit the placeholder — preserves streamed text,
+                # and each confirmation gets its own post for reactions)
                 tool_name = event.get("tool", "tool")
                 command = event.get("command", "")
-                await client.edit_message(
-                    placeholder_id,
+                confirm_post_id = await client.send(
+                    channel_id,
                     f"\U0001f6a8 **Confirm {tool_name}:**\n```\n{command}\n```\n"
                     f"React with \U0001f44d to approve, \U0001f44e to deny, "
                     f"or \u2705 to always approve.",
+                    root_id=root_id,
                 )
-                # Poll the placeholder for reactions
-                asyncio.create_task(
-                    client._poll_confirmation(
-                        placeholder_id, event_bus, context_id, tool_name
+                if confirm_post_id:
+                    asyncio.create_task(
+                        client._poll_confirmation(
+                            confirm_post_id, event_bus, context_id, tool_name
+                        )
                     )
-                )
             elif event_type == "compaction_start" and channel_id:
                 import time as _time
                 compaction_start_time = _time.monotonic()
@@ -608,6 +611,21 @@ class MattermostClient:
                                  timeout=60, poll_interval=2):
         """Poll a post for thumbs up/down reactions to approve/deny a tool."""
         import time
+
+        async def _resolve(approved, always=False, label=""):
+            await event_bus.publish({
+                "type": "tool_confirm_response",
+                "context_id": context_id,
+                "tool": tool_name,
+                "approved": approved,
+                **({"always": True} if always else {}),
+            })
+            # Edit the confirmation post to show the result
+            try:
+                await self.edit_message(post_id, f"\U0001f6a8 **{tool_name}** — {label}")
+            except Exception:
+                pass
+
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             try:
@@ -622,31 +640,15 @@ class MattermostClient:
                         continue
                     if emoji in ("white_check_mark", "heavy_check_mark"):
                         log.info(f"Tool always-approved by {user_id}")
-                        await event_bus.publish({
-                            "type": "tool_confirm_response",
-                            "context_id": context_id,
-                            "tool": tool_name,
-                            "approved": True,
-                            "always": True,
-                        })
+                        await _resolve(True, always=True, label="\u2705 always approved")
                         return
                     elif emoji in ("+1", "thumbsup"):
                         log.info(f"Tool approved by {user_id}")
-                        await event_bus.publish({
-                            "type": "tool_confirm_response",
-                            "context_id": context_id,
-                            "tool": tool_name,
-                            "approved": True,
-                        })
+                        await _resolve(True, label="\U0001f44d approved")
                         return
                     elif emoji in ("-1", "thumbsdown"):
                         log.info(f"Tool denied by {user_id}")
-                        await event_bus.publish({
-                            "type": "tool_confirm_response",
-                            "context_id": context_id,
-                            "tool": tool_name,
-                            "approved": False,
-                        })
+                        await _resolve(False, label="\U0001f44e denied")
                         return
             except Exception as e:
                 log.debug(f"Reaction poll error: {e}")
@@ -654,12 +656,7 @@ class MattermostClient:
 
         # Timeout — deny by default
         log.info(f"Confirmation timed out for {tool_name}")
-        await event_bus.publish({
-            "type": "tool_confirm_response",
-            "context_id": context_id,
-            "tool": tool_name,
-            "approved": False,
-        })
+        await _resolve(False, label="\u23f0 timed out")
 
     async def close(self):
         await self._http.aclose()
