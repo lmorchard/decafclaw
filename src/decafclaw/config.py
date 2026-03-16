@@ -122,7 +122,7 @@ class Config:
         return f"http://{self.http_host}:{self.http_port}"
 
     # Mattermost confirmation settings
-    mattermost_disable_emoji_confirms: bool = False
+    mattermost_enable_emoji_confirms: bool = True  # auto-set to False when http_enabled
 
     # Claude Code skill settings
     claude_code_model: str = ""  # empty = SDK default
@@ -179,8 +179,9 @@ def load_config() -> Config:
         http_port=int(os.getenv("HTTP_PORT", "18880")),
         http_secret=os.getenv("HTTP_SECRET", ""),
         http_base_url=os.getenv("HTTP_BASE_URL", ""),
-        mattermost_disable_emoji_confirms=_parse_bool(
-            os.getenv("MATTERMOST_DISABLE_EMOJI_CONFIRMS", ""), default=False),
+        mattermost_enable_emoji_confirms=_parse_bool(
+            os.getenv("MATTERMOST_ENABLE_EMOJI_CONFIRMS", ""),
+            default=not _parse_bool(os.getenv("HTTP_ENABLED", ""), default=False)),
         claude_code_model=os.getenv("CLAUDE_CODE_MODEL", ""),
         claude_code_budget_default=float(os.getenv("CLAUDE_CODE_BUDGET_DEFAULT", "2.0")),
         claude_code_budget_max=float(os.getenv("CLAUDE_CODE_BUDGET_MAX", "10.0")),

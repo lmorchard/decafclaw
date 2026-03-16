@@ -31,7 +31,7 @@ Clicking a button sends an HTTP POST to DecafClaw's callback endpoint. The handl
 
 ### Emoji fallback
 
-Emoji reactions still work alongside buttons. Both paths can resolve the same confirmation — whichever arrives first wins. Set `MATTERMOST_DISABLE_EMOJI_CONFIRMS=true` to hide the emoji instructions.
+Emoji reactions still work alongside buttons. Both paths can resolve the same confirmation — whichever arrives first wins. Emoji instructions are hidden automatically when `HTTP_ENABLED=true`. Set `MATTERMOST_ENABLE_EMOJI_CONFIRMS=true` to force them on alongside buttons.
 
 ## Configuration
 
@@ -42,7 +42,7 @@ Emoji reactions still work alongside buttons. Both paths can resolve the same co
 | `HTTP_PORT` | `18880` | Listen port |
 | `HTTP_SECRET` | `""` | Shared secret for callback verification (required) |
 | `HTTP_BASE_URL` | `""` | External URL for callbacks (auto-detected from host/port if empty) |
-| `MATTERMOST_DISABLE_EMOJI_CONFIRMS` | `false` | Hide emoji reaction instructions |
+| `MATTERMOST_ENABLE_EMOJI_CONFIRMS` | auto | Show emoji reaction instructions (default: true when HTTP off, false when HTTP on) |
 
 ## Routes
 
