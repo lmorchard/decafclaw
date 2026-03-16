@@ -1,10 +1,85 @@
 """Shell tool with confirmation — requires user approval before execution."""
 
 import asyncio
+import fnmatch
+import json
 import logging
 import subprocess
+from pathlib import Path
 
 log = logging.getLogger(__name__)
+
+
+def _allow_patterns_path(config) -> Path:
+    """Path to the shell allow patterns file (outside workspace, admin-managed)."""
+    return config.agent_path / "shell_allow_patterns.json"
+
+
+def _load_allow_patterns(config) -> list[str]:
+    """Load shell allow patterns from disk. Returns [] if missing or corrupt."""
+    path = _allow_patterns_path(config)
+    if not path.exists():
+        return []
+    try:
+        data = json.loads(path.read_text())
+        if isinstance(data, list):
+            return data
+        return data.get("patterns", [])
+    except (json.JSONDecodeError, OSError) as e:
+        log.warning(f"Could not read shell allow patterns: {e}")
+        return []
+
+
+def _save_allow_pattern(config, pattern: str):
+    """Add a pattern to the allow list. Called by host-side confirmation handler."""
+    path = _allow_patterns_path(config)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    patterns = _load_allow_patterns(config)
+    if pattern not in patterns:
+        patterns.append(pattern)
+        path.write_text(json.dumps(patterns, indent=2) + "\n")
+        log.info(f"Added shell allow pattern: {pattern}")
+
+
+def _command_matches_pattern(command: str, patterns: list[str]) -> bool:
+    """Check if a command matches any allow pattern (glob-style)."""
+    for pattern in patterns:
+        if fnmatch.fnmatch(command, pattern):
+            return True
+    return False
+
+
+def _suggest_pattern(command: str) -> str:
+    """Generate a suggested allow pattern from a command.
+
+    Heuristic: keep the executable and script/subcommand path, wildcard the args.
+    """
+    parts = command.strip().split()
+    if not parts:
+        return command
+
+    # For commands like "python script.py --args", keep "python script.py *"
+    # For commands like "git status", keep "git status"
+    # For commands like "make test", keep "make test"
+
+    exe = parts[0]
+
+    # If second part looks like a file path or subcommand, keep it
+    if len(parts) >= 2:
+        second = parts[1]
+        # Keep the second part if it looks like a path or known subcommand
+        if "/" in second or "." in second:
+            # Executable + script path + wildcard
+            if len(parts) > 2:
+                return f"{exe} {second} *"
+            return f"{exe} {second}"
+        # For commands like "git status", "make test" — keep as-is if short
+        if len(parts) <= 2:
+            return command
+        # For "git diff HEAD~1" etc — keep subcommand, wildcard rest
+        return f"{exe} {second} *"
+
+    return command
 
 
 async def tool_shell(ctx, command: str) -> str:
@@ -17,15 +92,25 @@ async def tool_shell(ctx, command: str) -> str:
         log.info(f"[tool:shell] auto-approved for heartbeat: {command}")
         return _execute_command(ctx, command)
 
-    # Publish confirmation request
+    # Check allow patterns
+    patterns = _load_allow_patterns(ctx.config)
+    if _command_matches_pattern(command, patterns):
+        log.info(f"[tool:shell] auto-approved by pattern: {command}")
+        return _execute_command(ctx, command)
+
+    # Generate suggested pattern for the confirmation message
+    suggested_pattern = _suggest_pattern(command)
+
+    # Publish confirmation request with suggested pattern
     confirm_event = asyncio.Event()
-    confirm_result = {"approved": False}
+    confirm_result = {"approved": False, "add_pattern": False}
 
     def on_confirm(event):
         if (event.get("type") == "tool_confirm_response"
                 and event.get("context_id") == ctx.context_id
                 and event.get("tool") == "shell"):
             confirm_result["approved"] = event.get("approved", False)
+            confirm_result["add_pattern"] = event.get("add_pattern", False)
             confirm_event.set()
 
     sub_id = ctx.event_bus.subscribe(on_confirm)
@@ -33,6 +118,7 @@ async def tool_shell(ctx, command: str) -> str:
         await ctx.publish("tool_confirm_request",
                           tool="shell",
                           command=command,
+                          suggested_pattern=suggested_pattern,
                           message=f"Shell command: `{command}`")
 
         # Wait for confirmation (timeout after 60 seconds)
@@ -47,6 +133,10 @@ async def tool_shell(ctx, command: str) -> str:
     if not confirm_result["approved"]:
         log.info(f"[tool:shell] command denied: {command}")
         return "[error: shell command was denied by user]"
+
+    # If user chose to add the pattern, save it
+    if confirm_result["add_pattern"]:
+        _save_allow_pattern(ctx.config, suggested_pattern)
 
     return _execute_command(ctx, command)
 
@@ -69,17 +159,101 @@ def _execute_command(ctx, command: str) -> str:
         return "[error: command timed out after 30 seconds]"
 
 
+async def tool_shell_patterns(ctx, action: str = "list", pattern: str = "") -> str:
+    """Manage shell command allow patterns."""
+    log.info(f"[tool:shell_patterns] action={action} pattern={pattern}")
+
+    if action == "list":
+        patterns = _load_allow_patterns(ctx.config)
+        if not patterns:
+            return "No shell allow patterns configured."
+        lines = ["**Shell allow patterns:**\n"]
+        for p in patterns:
+            lines.append(f"- `{p}`")
+        return "\n".join(lines)
+
+    elif action == "add" and pattern:
+        # This requires confirmation — we're modifying admin config
+        confirm_event = asyncio.Event()
+        confirm_result = {"approved": False}
+
+        def on_confirm(event):
+            if (event.get("type") == "tool_confirm_response"
+                    and event.get("context_id") == ctx.context_id
+                    and event.get("tool") == "shell_patterns"):
+                confirm_result["approved"] = event.get("approved", False)
+                confirm_event.set()
+
+        sub_id = ctx.event_bus.subscribe(on_confirm)
+        try:
+            await ctx.publish("tool_confirm_request",
+                              tool="shell_patterns",
+                              command=f"Add shell allow pattern: {pattern}",
+                              message=f"Add shell allow pattern: `{pattern}`")
+            try:
+                await asyncio.wait_for(confirm_event.wait(), timeout=60)
+            except asyncio.TimeoutError:
+                return "[error: confirmation timed out]"
+        finally:
+            ctx.event_bus.unsubscribe(sub_id)
+
+        if not confirm_result["approved"]:
+            return "[error: denied]"
+
+        _save_allow_pattern(ctx.config, pattern)
+        return f"Added shell allow pattern: `{pattern}`"
+
+    elif action == "remove" and pattern:
+        patterns = _load_allow_patterns(ctx.config)
+        if pattern not in patterns:
+            return f"Pattern `{pattern}` not found."
+        patterns.remove(pattern)
+        path = _allow_patterns_path(ctx.config)
+        path.write_text(json.dumps(patterns, indent=2) + "\n")
+        return f"Removed shell allow pattern: `{pattern}`"
+
+    return "[error: invalid action. Use 'list', 'add', or 'remove'.]"
+
+
 SHELL_TOOLS = {
     "shell": tool_shell,
+    "shell_patterns": tool_shell_patterns,
 }
 
 SHELL_TOOL_DEFINITIONS = [
     {
         "type": "function",
         "function": {
+            "name": "shell_patterns",
+            "description": (
+                "Manage shell command allow patterns. Patterns auto-approve matching "
+                "shell commands without confirmation. Use 'list' to see current patterns, "
+                "'add' to add a new pattern (requires confirmation), 'remove' to remove one."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["list", "add", "remove"],
+                        "description": "Action to perform (default: list)",
+                    },
+                    "pattern": {
+                        "type": "string",
+                        "description": "Glob pattern (for add/remove). Example: 'python scripts/*.py *'",
+                    },
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "shell",
             "description": (
-                "Run a shell command. REQUIRES USER CONFIRMATION before execution. "
+                "Run a shell command. REQUIRES USER CONFIRMATION before execution "
+                "unless the command matches an admin-configured allow pattern. "
                 "The command runs in the workspace directory. Use for tasks that "
                 "need system interaction: checking disk space, running scripts, "
                 "installing packages, etc. The user will see the command and must "

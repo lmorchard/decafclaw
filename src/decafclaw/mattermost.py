@@ -565,16 +565,20 @@ class MattermostClient:
                 await client.edit_message(placeholder_id, "\U0001f4ad Thinking...")
             elif event_type == "tool_confirm_request" and channel_id:
                 # Post a separate threaded message for each confirmation
-                # (don't edit the placeholder — preserves streamed text,
-                # and each confirmation gets its own post for reactions)
                 tool_name = event.get("tool", "tool")
                 command = event.get("command", "")
-                confirm_post_id = await client.send(
-                    channel_id,
+                suggested_pattern = event.get("suggested_pattern", "")
+
+                # Build confirmation message
+                msg = (
                     f"\U0001f6a8 **Confirm {tool_name}:**\n```\n{command}\n```\n"
-                    f"React with \U0001f44d to approve, \U0001f44e to deny, "
-                    f"or \u2705 to always approve.",
-                    root_id=root_id,
+                    f"React: \U0001f44d approve | \U0001f44e deny | \u2705 always"
+                )
+                if suggested_pattern and tool_name == "shell":
+                    msg += f" | \U0001f4d3 allow `{suggested_pattern}`"
+
+                confirm_post_id = await client.send(
+                    channel_id, msg, root_id=root_id,
                 )
                 if confirm_post_id:
                     asyncio.create_task(
@@ -612,13 +616,14 @@ class MattermostClient:
         """Poll a post for thumbs up/down reactions to approve/deny a tool."""
         import time
 
-        async def _resolve(approved, always=False, label=""):
+        async def _resolve(approved, always=False, add_pattern=False, label=""):
             await event_bus.publish({
                 "type": "tool_confirm_response",
                 "context_id": context_id,
                 "tool": tool_name,
                 "approved": approved,
                 **({"always": True} if always else {}),
+                **({"add_pattern": True} if add_pattern else {}),
             })
             # Append the result to the confirmation post
             try:
@@ -640,7 +645,12 @@ class MattermostClient:
                     # Ignore bot's own reactions
                     if user_id == self.bot_user_id:
                         continue
-                    if emoji in ("white_check_mark", "heavy_check_mark"):
+                    if emoji in ("notebook",):
+                        log.info(f"Tool approved with pattern by {user_id}")
+                        await _resolve(True, add_pattern=True,
+                                       label="\U0001f4d3 approved + pattern added")
+                        return
+                    elif emoji in ("white_check_mark", "heavy_check_mark"):
                         log.info(f"Tool always-approved by {user_id}")
                         await _resolve(True, always=True, label="\u2705 always approved")
                         return
