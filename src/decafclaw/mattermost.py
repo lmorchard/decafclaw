@@ -876,9 +876,12 @@ class ConversationDisplay:
         if chunk_type == "text":
             await self.on_text_chunk(data)
         elif chunk_type == "tool_call_start":
-            # LLM is switching to tool calls — finalize text
-            await self._finalize_current_text()
-            self._current_type = None
+            # LLM is switching to tool calls — finalize text if we have any.
+            # Don't touch thinking placeholder with no text — on_tool_start
+            # will reuse it.
+            if self._text_has_content:
+                await self._finalize_current_text()
+                self._current_type = None
         elif chunk_type == "done":
             await self.on_text_done()
 
