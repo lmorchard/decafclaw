@@ -10,6 +10,10 @@ import websockets
 
 log = logging.getLogger(__name__)
 
+# Status indicators shown in placeholder messages
+THINKING_INDICATOR = "\U0001f4ad Thinking..."
+THINKING_SUFFIX = "\n\u2601\ufe0f Thinking..."
+
 
 class MattermostClient:
     """Minimal Mattermost client for a single bot."""
@@ -58,7 +62,7 @@ class MattermostClient:
         resp.raise_for_status()
         return resp.json().get("id")
 
-    async def send_placeholder(self, channel_id, root_id=None, text="\U0001f4ad Thinking..."):
+    async def send_placeholder(self, channel_id, root_id=None, text=THINKING_INDICATOR):
         """Send a placeholder message and return its post ID."""
         body = {"channel_id": channel_id, "message": text}
         if root_id:
@@ -589,12 +593,11 @@ class MattermostClient:
                 await streaming_display._do_edit()
             elif event_type == "llm_start" and placeholder_id:
                 if not streaming:
-                    await client.edit_message(placeholder_id, "\U0001f4ad Thinking...")
-                # Always send typing indicator at LLM call start
-                try:
-                    await client.send_typing(channel_id or "")
-                except Exception:
-                    pass
+                    await client.edit_message(placeholder_id, THINKING_INDICATOR)
+                elif streaming_display:
+                    # Resume thinking indicator for new LLM iteration
+                    streaming_display.resume()
+                    await streaming_display._maybe_edit()
             elif event_type == "tool_confirm_request" and channel_id:
                 # Post a separate threaded message for each confirmation
                 tool_name = event.get("tool", "tool")
@@ -770,6 +773,7 @@ class StreamingDisplay:
         self.show_tool_calls = show_tool_calls
         self.buffer = ""
         self.tool_suffix = ""
+        self._thinking = True  # show thinking indicator while LLM is generating
         self.last_edit_time = 0
         self._streamed = False  # True if any text was streamed
 
@@ -777,14 +781,23 @@ class StreamingDisplay:
         """Callback for call_llm_streaming."""
         if chunk_type == "text":
             self.tool_suffix = ""  # clear tool suffix when text resumes
+            self._thinking = True  # still generating
             self.buffer += data
             self._streamed = True
             await self._maybe_edit()
         elif chunk_type == "tool_call_start" and self.show_tool_calls:
             self.tool_suffix = f"\n\U0001f527 Calling {data['name']}..."
+            self._thinking = False
             await self._maybe_edit()
+        elif chunk_type == "tool_call_start":
+            self._thinking = False
         elif chunk_type == "done":
+            self._thinking = False
             await self.flush()
+
+    def resume(self):
+        """Called when a new LLM iteration starts (after tool execution)."""
+        self._thinking = True
 
     async def _maybe_edit(self):
         """Edit placeholder if throttle interval has passed."""
@@ -795,10 +808,11 @@ class StreamingDisplay:
         await self._do_edit()
 
     async def _do_edit(self):
-        """Actually edit the placeholder and send typing indicator."""
+        """Actually edit the placeholder."""
         import time
         self.last_edit_time = time.monotonic()
-        text = self.buffer + self.tool_suffix
+        thinking_suffix = THINKING_SUFFIX if self._thinking else ""
+        text = self.buffer + self.tool_suffix + thinking_suffix
         if not text:
             return
         # Typing indicator (throttled alongside edits)
