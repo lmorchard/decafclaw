@@ -1,7 +1,13 @@
 """Workspace file tools — sandboxed to the agent's workspace directory."""
 
+from __future__ import annotations
+
 import logging
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ..media import ToolResult
 
 log = logging.getLogger(__name__)
 
@@ -68,7 +74,7 @@ def tool_workspace_list(ctx, path: str = ".") -> str:
         return f"[error: permission denied: {path}]"
 
 
-def tool_file_share(ctx, path: str, message: str = ""):
+def tool_file_share(ctx, path: str, message: str = "") -> "ToolResult":
     """Share a file from the workspace as an attachment."""
     import mimetypes
 

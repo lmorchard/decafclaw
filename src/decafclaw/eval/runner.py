@@ -146,7 +146,7 @@ async def run_test(config: Config, test_case: dict) -> dict:
 
         start = time.monotonic()
         result = await run_agent_turn(ctx, turn["input"], history)
-        response = result.text if hasattr(result, "text") else (result or "")
+        response = result.text
         duration = time.monotonic() - start
         total_duration += duration
 

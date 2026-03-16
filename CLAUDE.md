@@ -33,6 +33,7 @@ A minimal AI agent for learning how agent frameworks work. Connects to Mattermos
 - `src/decafclaw/heartbeat.py` — Heartbeat: periodic wake-up, section parsing, timer, cycle runner
 - `src/decafclaw/media.py` — Media handling: ToolResult, MediaHandler interface, workspace ref scanning
 - `src/decafclaw/tools/` — Tool registry: core, memory, todo, workspace, file_share, shell, conversation, skill activation, MCP status
+- `src/decafclaw/tools/confirmation.py` — Shared confirmation request helper (event-bus-based user approval)
 
 ## Running
 
@@ -42,6 +43,8 @@ make dev          # Auto-restart on file changes (10s graceful shutdown)
 make debug        # With debug logging
 make run-pro      # With gemini-2.5-pro model
 make lint         # Compile-check all source files
+make typecheck    # Run pyright type checker
+make check        # Lint + type check combined
 make test         # Run pytest
 make reindex      # Rebuild embedding index from memory files
 make build-eval-fixtures  # Rebuild eval embedding fixtures
@@ -65,6 +68,9 @@ Session docs live in `.claude/dev-sessions/YYYY-MM-DD-HHMM-slug/` with `spec.md`
 
 - **Keep it simple.** This is a learning project. Prefer clarity over abstraction.
 - **Files on disk, human-readable.** All agent state uses files you can read, edit, and inspect: markdown for memories and to-dos, JSONL for conversation archives, SQLite for embeddings. No opaque databases. Crash-recoverable by design.
+- **Tool error returns use `ToolResult`.** Error returns should use `ToolResult(text="[error: ...]")` rather than bare strings, for consistency across all tool modules.
+- **Use `asyncio.Lock` for concurrency guards.** Prefer `asyncio.Lock` over boolean flags — locks auto-release on exception, preventing stuck state.
+- **Conversation state in `ConversationState` dataclass.** Per-conversation state (history, skill state, busy flag, etc.) is tracked via `ConversationState` in mattermost.py, not parallel dicts.
 - **Tools receive `ctx` as first param.** All tool functions take a runtime context, even if they don't use it yet.
 - **Sync vs async tools.** `execute_tool` auto-detects via `asyncio.iscoroutinefunction`. Sync tools run in `asyncio.to_thread`.
 - **Events for progress.** Tools publish `tool_status` events via `ctx.publish()`. The agent loop publishes `llm_start/end` and `tool_start/end`. Subscribers (Mattermost, terminal) handle display.
@@ -98,7 +104,6 @@ Documentation lives in `docs/` — see `docs/index.md` for the full list. When a
 - Docs should stay in sync with the code. If you change behavior, check if the docs need updating too. Stale docs are worse than no docs.
 
 **At the end of every dev session:**
-- Clean up `docs/backlog/` — remove items that are done, update items that have changed scope, add new ideas that came up during the session.
 - Review all `docs/` pages for accuracy — features built, config added, files moved.
 - Update `CLAUDE.md` key files list if new modules were added.
 - Backlog is what's ahead, not a history of what's done. Git history is the record.

@@ -6,6 +6,8 @@ from pathlib import Path
 
 import httpx
 
+from ..media import ToolResult
+
 log = logging.getLogger(__name__)
 
 
@@ -23,7 +25,7 @@ def tool_web_fetch(ctx, url: str) -> str:
         return f"[error: {e}]"
 
 
-def tool_debug_context(ctx) -> str:
+def tool_debug_context(ctx) -> str | ToolResult:
     """Dump the current conversation context for debugging."""
     log.info("[tool:debug_context]")
     messages = getattr(ctx, "messages", None)
@@ -90,7 +92,6 @@ def tool_debug_context(ctx) -> str:
     )
 
     # Return media attachments for the JSON and prompt files
-    from ..media import ToolResult
     media = [
         {
             "type": "file",

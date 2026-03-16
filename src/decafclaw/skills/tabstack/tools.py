@@ -46,7 +46,7 @@ async def tool_tabstack_extract_json(ctx, url: str, json_schema: dict) -> str:
     log.info(f"[tool:tabstack_extract_json] {url}")
     try:
         result = await _get_client().extract.json(url=url, json_schema=json_schema)
-        return json.dumps(result.data, indent=2)
+        return json.dumps(result.data, indent=2)  # type: ignore[attr-defined]
     except Exception as e:
         return f"[error: {e}]"
 
@@ -58,7 +58,7 @@ async def tool_tabstack_generate(ctx, url: str, json_schema: dict, instructions:
         result = await _get_client().generate.json(
             url=url, json_schema=json_schema, instructions=instructions
         )
-        return json.dumps(result.data, indent=2)
+        return json.dumps(result.data, indent=2)  # type: ignore[attr-defined]
     except Exception as e:
         return f"[error: {e}]"
 
@@ -70,7 +70,7 @@ async def tool_tabstack_automate(ctx, task: str, url: str | None = None) -> str:
         kwargs = {"task": task}
         if url:
             kwargs["url"] = url
-        stream = await _get_client().agent.automate(**kwargs)
+        stream = await _get_client().agent.automate(**kwargs)  # type: ignore[arg-type]
 
         final_answer = None
         async for event in stream:
@@ -95,7 +95,7 @@ async def tool_tabstack_research(ctx, query: str, mode: str = "balanced") -> str
     """Search the web, analyze multiple sources, and synthesize an answer."""
     log.info(f"[tool:tabstack_research] query={query} mode={mode}")
     try:
-        stream = await _get_client().agent.research(query=query, mode=mode)
+        stream = await _get_client().agent.research(query=query, mode=mode)  # type: ignore[arg-type]
 
         final_answer = None
         async for event in stream:

@@ -6,6 +6,8 @@ import json
 import logging
 from pathlib import Path
 
+from .confirmation import request_confirmation
+
 log = logging.getLogger(__name__)
 
 
@@ -26,7 +28,7 @@ def _load_permissions(config) -> dict:
         return {}
 
 
-def _save_permission(config, skill_name: str, value: str):
+def _save_permission(config, skill_name: str, value: str) -> None:
     """Save a skill permission. Called by the host-side confirmation handler."""
     path = _permissions_path(config)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -36,12 +38,14 @@ def _save_permission(config, skill_name: str, value: str):
     log.info(f"Saved skill permission: {skill_name}={value}")
 
 
-def _load_native_tools(skill_info):
+def _load_native_tools(skill_info) -> tuple[dict, list, object]:
     """Import tools.py from a skill directory and return (TOOLS, TOOL_DEFINITIONS, module)."""
     tools_path = skill_info.location / "tools.py"
     spec = importlib.util.spec_from_file_location(
         f"decafclaw_skill_{skill_info.name}", tools_path
     )
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Could not load module spec for {tools_path}")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     tools = getattr(module, "TOOLS", {})
@@ -49,7 +53,7 @@ def _load_native_tools(skill_info):
     return tools, tool_defs, module
 
 
-async def _call_init(module, config):
+async def _call_init(module, config) -> None:
     """Call module.init(config) if it exists, handling sync or async."""
     init_fn = getattr(module, "init", None)
     if init_fn is None:
@@ -85,7 +89,7 @@ async def tool_activate_skill(ctx, name: str) -> str:
     perms = _load_permissions(ctx.config)
     if not is_heartbeat and perms.get(name) != "always":
         # Need confirmation
-        approved, always = await _request_confirmation(ctx, name)
+        approved, always = await _request_skill_confirmation(ctx, name)
         if not approved:
             return f"[error: activation of skill '{name}' was denied by user]"
         if always:
@@ -127,40 +131,18 @@ async def tool_activate_skill(ctx, name: str) -> str:
     return "\n".join(result_parts)
 
 
-async def _request_confirmation(ctx, skill_name: str) -> tuple[bool, bool]:
+async def _request_skill_confirmation(ctx, skill_name: str) -> tuple[bool, bool]:
     """Request user confirmation for skill activation.
 
     Returns (approved, always) tuple.
     """
-    confirm_event = asyncio.Event()
-    confirm_result = {"approved": False, "always": False}
-
-    def on_confirm(event):
-        if (event.get("type") == "tool_confirm_response"
-                and event.get("context_id") == ctx.context_id
-                and event.get("tool") == "activate_skill"):
-            confirm_result["approved"] = event.get("approved", False)
-            confirm_result["always"] = event.get("always", False)
-            confirm_event.set()
-
-    sub_id = ctx.event_bus.subscribe(on_confirm)
-    try:
-        await ctx.publish(
-            "tool_confirm_request",
-            tool="activate_skill",
-            command=f"Activate skill: {skill_name}",
-            skill_name=skill_name,
-            message=f"Activate skill: **{skill_name}**",
-        )
-        try:
-            await asyncio.wait_for(confirm_event.wait(), timeout=60)
-        except asyncio.TimeoutError:
-            log.info(f"Skill activation confirmation timed out for '{skill_name}'")
-            return False, False
-    finally:
-        ctx.event_bus.unsubscribe(sub_id)
-
-    return confirm_result["approved"], confirm_result["always"]
+    result = await request_confirmation(
+        ctx, tool_name="activate_skill",
+        command=f"Activate skill: {skill_name}",
+        message=f"Activate skill: **{skill_name}**",
+        skill_name=skill_name,
+    )
+    return result.get("approved", False), result.get("always", False)
 
 
 def tool_refresh_skills(ctx) -> str:

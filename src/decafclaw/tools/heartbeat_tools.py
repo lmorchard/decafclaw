@@ -8,15 +8,14 @@ import httpx
 log = logging.getLogger(__name__)
 
 # Prevent concurrent heartbeat runs
-_heartbeat_running = False
+_heartbeat_lock = asyncio.Lock()
 
 
 async def tool_heartbeat_trigger(ctx) -> str:
     """Manually trigger a heartbeat cycle, posting results to the configured channel."""
-    global _heartbeat_running
     log.info("[tool:heartbeat_trigger]")
 
-    if _heartbeat_running:
+    if _heartbeat_lock.locked():
         return "Heartbeat is already running."
 
     from ..heartbeat import load_heartbeat_sections
@@ -34,20 +33,16 @@ async def tool_heartbeat_trigger(ctx) -> str:
     return f"Heartbeat triggered: {len(sections)} section(s) queued. No reporting channel configured — running silently."
 
 
-async def _guarded_heartbeat(config, event_bus):
-    """Run heartbeat with concurrency guard."""
-    global _heartbeat_running
-    if _heartbeat_running:
+async def _guarded_heartbeat(config, event_bus) -> None:
+    """Run heartbeat with concurrency guard. Lock auto-releases on crash."""
+    if _heartbeat_lock.locked():
         log.warning("Heartbeat already running, skipping")
         return
-    _heartbeat_running = True
-    try:
+    async with _heartbeat_lock:
         await _run_heartbeat_to_channel(config, event_bus)
-    finally:
-        _heartbeat_running = False
 
 
-async def _run_heartbeat_to_channel(config, event_bus):
+async def _run_heartbeat_to_channel(config, event_bus) -> None:
     """Run heartbeat sections, optionally posting results to a channel."""
     from datetime import datetime
 
@@ -123,7 +118,7 @@ async def _run_heartbeat_to_channel(config, event_bus):
 
             prompt = build_section_prompt(section)
             result = await run_agent_turn(ctx, prompt, history=[])
-            response = result.text if hasattr(result, "text") else (result or "")
+            response = result.text
             response = response or "(no response)"
             ok = is_heartbeat_ok(response)
         except Exception as e:
@@ -174,7 +169,7 @@ async def _run_heartbeat_to_channel(config, event_bus):
             await http.aclose()
 
 
-def _make_http_client(config):
+def _make_http_client(config) -> httpx.AsyncClient | None:
     """Create an HTTP client for Mattermost posting. Returns None if not configured."""
     if not config.mattermost_url or not config.mattermost_token:
         return None
@@ -187,7 +182,7 @@ def _make_http_client(config):
     return httpx.AsyncClient(base_url=base_url, headers=headers, timeout=30)
 
 
-async def _resolve_channel(http, config):
+async def _resolve_channel(http, config) -> str | None:
     """Resolve the heartbeat channel ID from config. Returns None if not configured."""
     if config.heartbeat_channel:
         return config.heartbeat_channel

@@ -7,6 +7,13 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 
+def _parse_bool(value: str, default: bool = False) -> bool:
+    """Parse a string to boolean. Returns default if empty/None."""
+    if not value:
+        return default
+    return value.strip().lower() in ("true", "1", "yes")
+
+
 @dataclass
 class Config:
     # LLM settings
@@ -101,6 +108,9 @@ class Config:
     system_prompt: str = ""
     max_tool_iterations: int = 30
 
+    # Discovered skills (populated by load_system_prompt at startup)
+    discovered_skills: list = field(default_factory=list)
+
 
 def load_config() -> Config:
     load_dotenv()
@@ -111,11 +121,11 @@ def load_config() -> Config:
         mattermost_url=os.getenv("MATTERMOST_URL", ""),
         mattermost_token=os.getenv("MATTERMOST_TOKEN", ""),
         mattermost_bot_username=os.getenv("MATTERMOST_BOT_USERNAME", ""),
-        mattermost_ignore_bots=os.getenv("MATTERMOST_IGNORE_BOTS", "true").lower() == "true",
-        mattermost_ignore_webhooks=os.getenv("MATTERMOST_IGNORE_WEBHOOKS", "false").lower() == "true",
+        mattermost_ignore_bots=_parse_bool(os.getenv("MATTERMOST_IGNORE_BOTS", ""), default=True),
+        mattermost_ignore_webhooks=_parse_bool(os.getenv("MATTERMOST_IGNORE_WEBHOOKS", ""), default=False),
         mattermost_debounce_ms=int(os.getenv("MATTERMOST_DEBOUNCE_MS", "1000")),
         mattermost_cooldown_ms=int(os.getenv("MATTERMOST_COOLDOWN_MS", "1000")),
-        mattermost_require_mention=os.getenv("MATTERMOST_REQUIRE_MENTION", "true").lower() == "true",
+        mattermost_require_mention=_parse_bool(os.getenv("MATTERMOST_REQUIRE_MENTION", ""), default=True),
         mattermost_user_rate_limit_ms=int(os.getenv("MATTERMOST_USER_RATE_LIMIT_MS", "500")),
         mattermost_channel_blocklist=os.getenv("MATTERMOST_CHANNEL_BLOCKLIST", ""),
         mattermost_circuit_breaker_max=int(os.getenv("MATTERMOST_CIRCUIT_BREAKER_MAX", "10")),
@@ -139,9 +149,9 @@ def load_config() -> Config:
         heartbeat_interval=os.getenv("HEARTBEAT_INTERVAL", Config.heartbeat_interval),
         heartbeat_user=os.getenv("HEARTBEAT_USER", ""),
         heartbeat_channel=os.getenv("HEARTBEAT_CHANNEL", ""),
-        heartbeat_suppress_ok=os.getenv("HEARTBEAT_SUPPRESS_OK", "true").lower() == "true",
-        llm_streaming=os.getenv("LLM_STREAMING", "true").lower() == "true",
-        llm_show_tool_calls=os.getenv("LLM_SHOW_TOOL_CALLS", "true").lower() == "true",
+        heartbeat_suppress_ok=_parse_bool(os.getenv("HEARTBEAT_SUPPRESS_OK", ""), default=True),
+        llm_streaming=_parse_bool(os.getenv("LLM_STREAMING", ""), default=True),
+        llm_show_tool_calls=_parse_bool(os.getenv("LLM_SHOW_TOOL_CALLS", ""), default=True),
         llm_stream_throttle_ms=int(os.getenv("LLM_STREAM_THROTTLE_MS", "200")),
         system_prompt=os.getenv("SYSTEM_PROMPT", Config.system_prompt),
         max_tool_iterations=int(os.getenv("MAX_TOOL_ITERATIONS", "30")),
