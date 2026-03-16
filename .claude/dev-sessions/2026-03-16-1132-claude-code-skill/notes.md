@@ -29,3 +29,19 @@
 **No `max_budget_usd` on options** — budget control not directly available. We'll need to track cost from ResultMessage and enforce on our side.
 
 **Spec adjustment:** Session management simplifies significantly. Session = stored session_id + metadata. No client lifecycle. `claude_code_stop` just forgets the session_id. Idle expiration = same (forget the ID). `shutdown()` hook becomes unnecessary for now.
+
+## Implementation Progress
+
+- **Phase 1** — SDK installed (claude-code-sdk 0.0.25), skeleton created, API verified
+- **Phase 2** — SessionManager with 18 tests (create, expire, stop, list, budget clamping)
+- **Phase 3** — Permission bridge with 11 tests (auto-approve, allowlist, confirmation flow)
+- **Phase 4** — Output logger with 9 tests (JSONL logging, metric tracking, summaries)
+- **Phase 5** — All four tools wired up, config fields added, shutdown hook capture
+- **Phase 6** — Merged into earlier phases (SKILL.md in Phase 1, config in Phase 5)
+- **Phase 7** — Docs updated. Ready for live testing.
+
+## Architecture Decisions
+
+1. **`query()` + `resume` over `ClaudeSDKClient`** — each `claude_code_send` is an independent SDK call that resumes via session_id. No persistent connection to manage. Simpler error handling, no connection lifecycle.
+2. **Budget enforcement on our side** — SDK has no `max_budget_usd`. We track `total_cost_usd` from `ResultMessage` and refuse new sends when budget exhausted.
+3. **Lazy expiration** — no background timer. Sessions are checked for expiry on access. Simplest correct approach.
