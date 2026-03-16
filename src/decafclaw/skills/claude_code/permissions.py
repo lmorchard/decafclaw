@@ -60,7 +60,7 @@ def make_permission_handler(ctx, config):
     Returns an async function compatible with ClaudeCodeOptions.can_use_tool.
     Signature: async (tool_name, tool_input, context) -> PermissionResultAllow | PermissionResultDeny
     """
-    from ...tools.confirmation import request_confirmation
+    from decafclaw.tools.confirmation import request_confirmation
 
     async def can_use_tool(tool_name: str, tool_input: dict, tool_context) -> PermissionResultAllow | PermissionResultDeny:
         # Auto-approve read-only tools
