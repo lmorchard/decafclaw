@@ -6,6 +6,7 @@ import logging
 import subprocess
 from pathlib import Path
 
+from ..media import ToolResult
 from .confirmation import request_confirmation
 
 log = logging.getLogger(__name__)
@@ -110,7 +111,7 @@ async def tool_shell(ctx, command: str) -> str:
 
     if not result.get("approved"):
         log.info(f"[tool:shell] command denied: {command}")
-        return "[error: shell command was denied by user]"
+        return ToolResult(text="[error: shell command was denied by user]")
 
     # If user chose to add the pattern, save it
     if result.get("add_pattern"):
@@ -134,7 +135,7 @@ def _execute_command(ctx, command: str) -> str:
             output += f"\n[exit code: {result.returncode}]"
         return output or "(no output)"
     except subprocess.TimeoutExpired:
-        return "[error: command timed out after 30 seconds]"
+        return ToolResult(text="[error: command timed out after 30 seconds]")
 
 
 async def tool_shell_patterns(ctx, action: str = "list", pattern: str = "") -> str:
@@ -159,7 +160,7 @@ async def tool_shell_patterns(ctx, action: str = "list", pattern: str = "") -> s
         )
 
         if not result.get("approved"):
-            return "[error: denied]"
+            return ToolResult(text="[error: denied]")
 
         _save_allow_pattern(ctx.config, pattern)
         return f"Added shell allow pattern: `{pattern}`"
@@ -173,7 +174,7 @@ async def tool_shell_patterns(ctx, action: str = "list", pattern: str = "") -> s
         path.write_text(json.dumps(patterns, indent=2) + "\n")
         return f"Removed shell allow pattern: `{pattern}`"
 
-    return "[error: invalid action. Use 'list', 'add', or 'remove'.]"
+    return ToolResult(text="[error: invalid action. Use 'list', 'add', or 'remove'.]")
 
 
 SHELL_TOOLS = {
