@@ -10,6 +10,7 @@ Connects to Mattermost as a chat bot (or runs in terminal mode), calls an LLM wi
 - **[Skills](docs/skills.md)** — portable tool packages following the [Agent Skills](https://agentskills.io) standard
 - **[MCP servers](docs/mcp-servers.md)** — connect external tools via the Model Context Protocol (stdio + HTTP)
 - **[Heartbeat](docs/heartbeat.md)** — periodic agent tasks with threaded Mattermost reporting
+- **[Interactive buttons](docs/http-server.md)** — Mattermost button confirmations with HTTP callback server
 - **[File attachments](docs/file-attachments.md)** — upload images, files, and rich media to Mattermost
 - **[Streaming](docs/streaming.md)** — token-by-token response streaming with throttled edits
 - **[Memory](docs/memory.md)** — persistent file-based memory with semantic search
@@ -99,6 +100,8 @@ make dev          # Auto-restart on file changes
 make debug        # With debug logging
 make test         # Run pytest
 make lint         # Ruff linting
+make typecheck    # Pyright type checking
+make check        # Lint + type check combined
 make lint-fix     # Auto-fix lint issues
 make fmt          # Format with ruff
 ```
