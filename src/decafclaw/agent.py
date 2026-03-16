@@ -237,7 +237,8 @@ async def run_agent_turn(ctx, user_message: str, history: list) -> "ToolResult":
         return ToolResult(text=content or "")
 
     # Hit max iterations
-    msg = "[Agent reached max tool iterations without a final response]"
+    msg = (f"[Agent reached max tool iterations ({config.max_tool_iterations}) "
+           f"without a final response]")
     final_msg = {"role": "assistant", "content": msg}
     history.append(final_msg)
     _archive(ctx, final_msg)
