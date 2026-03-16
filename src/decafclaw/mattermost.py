@@ -373,6 +373,7 @@ class MattermostClient:
             if app_ctx.config.llm_streaming and placeholder_id:
                 streaming_display = StreamingDisplay(
                     self, placeholder_id,
+                    channel_id=channel_id,
                     throttle_ms=app_ctx.config.llm_stream_throttle_ms,
                     show_tool_calls=app_ctx.config.llm_show_tool_calls,
                 )
@@ -429,12 +430,10 @@ class MattermostClient:
                     await handler.send_with_media(
                         channel_id, "", file_ids, root_id=root_id
                     )
-            elif already_streamed:
-                pass  # streaming display already has the final text
-            elif placeholder_id:
-                # Don't edit to empty — keep the placeholder visible
-                if response_text:
-                    await self.edit_message(placeholder_id, response_text)
+            elif placeholder_id and response_text:
+                # Always do the final edit to ensure correct text is shown
+                # (streaming may have shown raw text before workspace ref stripping)
+                await self.edit_message(placeholder_id, response_text)
             else:
                 await self.send(channel_id, response_text, root_id=root_id)
 
@@ -714,9 +713,10 @@ class MattermostClient:
 class StreamingDisplay:
     """Manages throttled placeholder edits for Mattermost streaming."""
 
-    def __init__(self, client, post_id, throttle_ms=500, show_tool_calls=True):
+    def __init__(self, client, post_id, channel_id="", throttle_ms=500, show_tool_calls=True):
         self.client = client
         self.post_id = post_id
+        self._channel_id = channel_id
         self.throttle_ms = throttle_ms
         self.show_tool_calls = show_tool_calls
         self.buffer = ""
@@ -730,6 +730,11 @@ class StreamingDisplay:
             self.tool_suffix = ""  # clear tool suffix when text resumes
             self.buffer += data
             self._streamed = True
+            # Send typing indicator periodically
+            try:
+                await self.client.send_typing(self._channel_id)
+            except Exception:
+                pass
             await self._maybe_edit()
         elif chunk_type == "tool_call_start" and self.show_tool_calls:
             self.tool_suffix = f"\n\U0001f527 Calling {data['name']}..."
