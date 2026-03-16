@@ -21,20 +21,36 @@ def _resolve_safe(config, path_str: str) -> Path | None:
     return target
 
 
-def tool_workspace_read(ctx, path: str) -> str:
-    """Read a file from the agent's workspace."""
+def tool_workspace_read(ctx, path: str, start_line: int | None = None,
+                        end_line: int | None = None) -> str:
+    """Read a file from the agent's workspace, optionally a line range."""
     log.info(f"[tool:workspace_read] {path}")
     resolved = _resolve_safe(ctx.config, path)
     if resolved is None:
         return f"[error: path '{path}' is outside the workspace]"
     try:
-        return resolved.read_text()
+        content = resolved.read_text()
     except FileNotFoundError:
         return f"[error: file not found: {path}]"
     except IsADirectoryError:
         return f"[error: '{path}' is a directory, not a file]"
     except PermissionError:
         return f"[error: permission denied: {path}]"
+
+    all_lines = content.splitlines()
+    total = len(all_lines)
+    # Determine range (1-based, inclusive)
+    start = max(1, start_line or 1)
+    end = min(total, end_line or total)
+    selected = all_lines[start - 1:end]
+    width = len(str(end))
+    numbered = [f"{str(start + i).rjust(width)}| {line}"
+                for i, line in enumerate(selected)]
+    partial = start_line is not None or end_line is not None
+    if partial:
+        header = f"Lines {start}-{end} of {total}:\n"
+        return header + "\n".join(numbered)
+    return "\n".join(numbered)
 
 
 def tool_workspace_write(ctx, path: str, content: str) -> str:
@@ -117,13 +133,21 @@ WORKSPACE_TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "workspace_read",
-            "description": "Read a file from your workspace. Paths are relative to the workspace root. You cannot access files outside the workspace.",
+            "description": "Read a file from your workspace. Returns content with line numbers. Optionally read a specific line range with start_line/end_line (1-based, inclusive). Paths are relative to the workspace root.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "path": {
                         "type": "string",
                         "description": "Relative path within the workspace",
+                    },
+                    "start_line": {
+                        "type": "integer",
+                        "description": "First line to read (1-based, inclusive). Omit to start from beginning.",
+                    },
+                    "end_line": {
+                        "type": "integer",
+                        "description": "Last line to read (1-based, inclusive). Omit to read to end of file.",
                     },
                 },
                 "required": ["path"],

@@ -65,6 +65,55 @@ def test_list_empty(ctx):
     assert "error" not in result.lower()
 
 
+# -- workspace_read line number tests --
+
+
+def test_read_with_line_numbers(ctx):
+    tool_workspace_write(ctx, "numbered.txt", "alpha\nbeta\ngamma")
+    result = tool_workspace_read(ctx, "numbered.txt")
+    assert "1| alpha" in result
+    assert "2| beta" in result
+    assert "3| gamma" in result
+
+
+def test_read_start_line(ctx):
+    tool_workspace_write(ctx, "lines.txt", "a\nb\nc\nd\ne")
+    result = tool_workspace_read(ctx, "lines.txt", start_line=3)
+    assert "Lines 3-5 of 5:" in result
+    assert "c" in result
+    assert "d" in result
+    assert "e" in result
+    assert "a" not in result
+
+
+def test_read_end_line(ctx):
+    tool_workspace_write(ctx, "lines.txt", "a\nb\nc\nd\ne")
+    result = tool_workspace_read(ctx, "lines.txt", end_line=2)
+    assert "Lines 1-2 of 5:" in result
+    assert "a" in result
+    assert "b" in result
+    assert "c" not in result
+
+
+def test_read_line_range(ctx):
+    tool_workspace_write(ctx, "lines.txt", "aaa\nbbb\nccc\nddd\neee")
+    result = tool_workspace_read(ctx, "lines.txt", start_line=2, end_line=4)
+    assert "Lines 2-4 of 5:" in result
+    assert "bbb" in result
+    assert "ccc" in result
+    assert "ddd" in result
+    assert "aaa" not in result
+    assert "eee" not in result
+
+
+def test_read_out_of_range(ctx):
+    tool_workspace_write(ctx, "short.txt", "one\ntwo\nthree")
+    result = tool_workspace_read(ctx, "short.txt", end_line=100)
+    # Should just return to end, no error
+    assert "error" not in result.lower()
+    assert "three" in result
+
+
 # -- file_share tests --
 
 
