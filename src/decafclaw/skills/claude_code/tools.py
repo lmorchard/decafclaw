@@ -50,13 +50,20 @@ def _get_manager() -> SessionManager:
 
 async def tool_claude_code_start(ctx, cwd: str, description: str = "",
                                   model: str = "", budget_usd: float = 0) -> str:
-    """Start a new Claude Code session for a working directory."""
+    """Start a new Claude Code session for a working directory within the workspace."""
     log.info(f"[tool:claude_code_start] cwd={cwd}")
     manager = _get_manager()
 
-    # Validate cwd exists
-    if not Path(cwd).is_dir():
-        return f"[error: directory not found: {cwd}]"
+    # Resolve cwd relative to workspace and enforce sandbox
+    workspace = _config.workspace_path if _config else Path(".")
+    resolved = (workspace / cwd).resolve()
+    workspace_resolved = workspace.resolve()
+    if not str(resolved).startswith(str(workspace_resolved)):
+        return f"[error: path must be within the workspace ({workspace})]"
+    if not resolved.is_dir():
+        resolved.mkdir(parents=True, exist_ok=True)
+        log.info(f"Created workspace directory: {resolved}")
+    cwd = str(resolved)
 
     try:
         session = manager.create(
