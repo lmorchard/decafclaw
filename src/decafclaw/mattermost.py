@@ -620,9 +620,11 @@ class MattermostClient:
                 "approved": approved,
                 **({"always": True} if always else {}),
             })
-            # Edit the confirmation post to show the result
+            # Append the result to the confirmation post
             try:
-                await self.edit_message(post_id, f"\U0001f6a8 **{tool_name}** — {label}")
+                resp = await self._http.get(f"/posts/{post_id}")
+                original_text = resp.json().get("message", "") if resp.status_code == 200 else ""
+                await self.edit_message(post_id, f"{original_text}\n\n**Result:** {label}")
             except Exception:
                 pass
 
