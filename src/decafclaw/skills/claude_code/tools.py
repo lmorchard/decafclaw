@@ -103,6 +103,7 @@ async def tool_claude_code_send(ctx, session_id: str, prompt: str) -> str:
     options = ClaudeCodeOptions(
         cwd=session.cwd,
         model=model,
+        permission_mode="default",
         can_use_tool=make_permission_handler(ctx, _config),
     )
 
@@ -125,6 +126,7 @@ async def tool_claude_code_send(ctx, session_id: str, prompt: str) -> str:
 
     try:
         async for message in query(prompt=prompt_stream(), options=options):
+            log.debug(f"Claude Code message: {type(message).__name__}")
             logger.log_message(message)
 
             # Publish progress for Mattermost display
