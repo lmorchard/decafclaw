@@ -324,16 +324,16 @@ class MattermostClient:
             req_ctx.extra_tool_definitions = conv.skill_state.get("extra_tool_definitions", [])
             req_ctx.activated_skills = conv.skill_state.get("activated_skills", set())
 
-        # Set up streaming display if streaming is enabled
-        streaming_display = None
-        if app_ctx.config.llm_streaming and placeholder_id:
-            streaming_display = StreamingDisplay(
-                self, placeholder_id,
-                channel_id=channel_id,
-                throttle_ms=app_ctx.config.llm_stream_throttle_ms,
-                show_tool_calls=app_ctx.config.llm_show_tool_calls,
-            )
-            req_ctx.on_stream_chunk = streaming_display.on_chunk
+        # Create conversation display for this turn
+        conv_display = ConversationDisplay(
+            self, channel_id, root_id,
+            throttle_ms=app_ctx.config.llm_stream_throttle_ms,
+            initial_post_id=placeholder_id,
+        )
+
+        # Set streaming callback
+        if app_ctx.config.llm_streaming:
+            req_ctx.on_stream_chunk = conv_display.on_stream_chunk
 
         # Set up cancellation event and poll for stop reaction
         cancel_event = asyncio.Event()
@@ -346,31 +346,26 @@ class MattermostClient:
             )
 
         sub_id = self._subscribe_progress(
-            req_ctx.event_bus, req_ctx.context_id, placeholder_id,
+            req_ctx.event_bus, req_ctx.context_id,
             channel_id=channel_id, root_id=root_id,
             streaming=app_ctx.config.llm_streaming,
-            streaming_display=streaming_display,
+            conv_display=conv_display,
         )
 
-        return req_ctx, streaming_display, cancel_task, sub_id
+        return req_ctx, conv_display, cancel_task, sub_id
 
-    async def _post_response(self, response, channel_id, root_id,
-                             placeholder_id, streaming_display):
-        """Post the agent's response, handling media and streaming state."""
-        response_text = response.text
+    async def _post_response(self, response, channel_id, root_id, conv_display):
+        """Post any remaining response content not handled by ConversationDisplay.
+
+        ConversationDisplay handles text streaming and tool media during the turn.
+        This handles:
+        - Text-referenced media from the final response (workspace image refs)
+        - Error responses that ConversationDisplay may not have seen
+        """
         response_media = response.media or []
-
-        # Skip final edit if streaming already updated the placeholder
-        already_streamed = streaming_display and streaming_display._streamed
 
         if response_media:
             from .media import MattermostMediaHandler, upload_and_collect
-            if not already_streamed and response_text:
-                if placeholder_id:
-                    await self.edit_message(placeholder_id, response_text)
-                else:
-                    await self.send(channel_id, response_text, root_id=root_id)
-
             handler = MattermostMediaHandler(self._http)
             file_ids = await upload_and_collect(
                 handler, channel_id, response_media
@@ -379,16 +374,6 @@ class MattermostClient:
                 await handler.send_with_media(
                     channel_id, "", file_ids, root_id=root_id
                 )
-        elif already_streamed:
-            if response_text and placeholder_id:
-                await self.edit_message(placeholder_id, response_text)
-        elif placeholder_id and response_text:
-            await self.edit_message(placeholder_id, response_text)
-        elif response_text:
-            await self.send(channel_id, response_text, root_id=root_id)
-        elif placeholder_id:
-            # Empty response — remove placeholder rather than leaving "Thinking..." stuck
-            await self.delete_message(placeholder_id)
 
     async def _process_conversation(self, conv_id, channel_id, msgs,
                                     app_ctx, conversations):
@@ -447,7 +432,7 @@ class MattermostClient:
         history = self._prepare_history(
             conv, conv_id, root_id, channel_id, conversations, app_ctx.config
         )
-        req_ctx, streaming_display, cancel_task, sub_id = await self._build_request_context(
+        req_ctx, conv_display, cancel_task, sub_id = await self._build_request_context(
             app_ctx, conv, conv_id, channel_id, root_id, placeholder_id
         )
 
@@ -479,11 +464,10 @@ class MattermostClient:
                     "activated_skills": getattr(req_ctx, "activated_skills", set()),
                 }
 
-        if streaming_display:
-            streaming_display.stop()
+        await conv_display.finalize()
 
         await self._post_response(
-            response, channel_id, root_id, placeholder_id, streaming_display
+            response, channel_id, root_id, conv_display
         )
 
     async def _debounce_fire(self, conv_id, channel_id, conversations, app_ctx):
@@ -615,69 +599,52 @@ class MattermostClient:
 
     # -- Progress subscription -------------------------------------------------
 
-    def _subscribe_progress(self, event_bus, context_id, placeholder_id,
+    def _subscribe_progress(self, event_bus, context_id,
                             channel_id=None, root_id=None, streaming=False,
-                            streaming_display=None):
-        """Subscribe to progress events and update the placeholder message.
+                            conv_display=None):
+        """Subscribe to progress events and route to ConversationDisplay.
 
         Returns the subscription ID for later unsubscribe.
         """
         client = self
         compaction_post_id = None
-        compaction_start_time = 0
 
         async def on_progress(event):
-            nonlocal compaction_post_id, compaction_start_time
+            nonlocal compaction_post_id
             if event.get("context_id") != context_id:
                 return
             event_type = event.get("type")
-            if event_type == "tool_status" and placeholder_id:
-                tool_name = event.get("tool", "tool")
-                if streaming_display and streaming_display._streamed:
-                    streaming_display.tool_suffix = f"\n\U0001f527 {tool_name}: {event['message']}"
-                    await streaming_display._do_edit()
-                else:
-                    await client.edit_message(placeholder_id, f"\U0001f527 {tool_name}: {event['message']}")
-            elif event_type == "tool_start" and placeholder_id:
-                tool_name = event.get("tool", "tool")
-                if streaming_display and streaming_display._streamed:
-                    streaming_display.tool_suffix = f"\n\U0001f527 Running {tool_name}..."
-                    await streaming_display._do_edit()
-                else:
-                    await client.edit_message(placeholder_id, f"\U0001f527 Running {tool_name}...")
-            elif event_type == "tool_end" and streaming_display and streaming_display._streamed:
-                streaming_display.tool_suffix = ""
-                await streaming_display._do_edit()
-            elif event_type == "llm_start" and placeholder_id:
-                if not streaming:
-                    await client.edit_message(placeholder_id, THINKING_INDICATOR)
-                elif streaming_display:
-                    streaming_display.resume()
-                    await streaming_display._maybe_edit()
-            elif event_type == "tool_confirm_request" and channel_id:
-                tool_name = event.get("tool", "tool")
-                command = event.get("command", "")
-                suggested_pattern = event.get("suggested_pattern", "")
 
-                msg = (
-                    f"\U0001f6a8 **Confirm {tool_name}:**\n```\n{command}\n```\n"
-                    f"React: \U0001f44d approve | \U0001f44e deny | \u2705 always"
+            if event_type == "llm_start" and conv_display:
+                await conv_display.on_llm_start(event.get("iteration", 1))
+            elif event_type == "llm_end" and conv_display and not streaming:
+                # Non-streaming: show text content via ConversationDisplay
+                content = event.get("content")
+                if content:
+                    await conv_display.on_text_complete(content)
+            elif event_type == "tool_start" and conv_display:
+                await conv_display.on_tool_start(
+                    event.get("tool", "tool"), event.get("args", {}))
+            elif event_type == "tool_status" and conv_display:
+                await conv_display.on_tool_status(
+                    event.get("tool", "tool"), event.get("message", ""))
+            elif event_type == "tool_end" and conv_display:
+                await conv_display.on_tool_end(
+                    event.get("tool", "tool"),
+                    event.get("result_text", ""),
+                    event.get("display_text"),
+                    event.get("media", []),
                 )
-                if suggested_pattern and tool_name == "shell":
-                    msg += f" | \U0001f4d3 allow `{suggested_pattern}`"
-
-                confirm_post_id = await client.send(
-                    channel_id, msg, root_id=root_id,
+            elif event_type == "tool_confirm_request" and conv_display:
+                await conv_display.on_confirm_request(
+                    event.get("tool", "tool"),
+                    event.get("command", ""),
+                    event.get("suggested_pattern", ""),
+                    event_bus, context_id,
                 )
-                if confirm_post_id:
-                    asyncio.create_task(
-                        client._poll_confirmation(
-                            confirm_post_id, event_bus, context_id, tool_name
-                        )
-                    )
+            # Compaction stays as-is (separate message)
             elif event_type == "compaction_start" and channel_id:
                 import time as _time
-                compaction_start_time = _time.monotonic()
                 compaction_post_id = await client.send(
                     channel_id, "\U0001f4e6 Compacting conversation...",
                     root_id=root_id,
