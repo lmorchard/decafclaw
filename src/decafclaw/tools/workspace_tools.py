@@ -121,11 +121,32 @@ def tool_file_share(ctx, path: str, message: str = "") -> "ToolResult":
         return ToolResult(text=f"[error: permission denied: {path}]")
 
 
+def tool_workspace_append(ctx, path: str, content: str) -> str:
+    """Append content to a file in the agent's workspace."""
+    log.info(f"[tool:workspace_append] {path}")
+    resolved = _resolve_safe(ctx.config, path)
+    if resolved is None:
+        return f"[error: path '{path}' is outside the workspace]"
+    try:
+        resolved.parent.mkdir(parents=True, exist_ok=True)
+        if resolved.exists():
+            existing = resolved.read_text()
+            if existing and not existing.endswith("\n"):
+                content = "\n" + content
+            resolved.write_text(existing + content)
+        else:
+            resolved.write_text(content)
+        return f"Appended {len(content)} characters to {path}"
+    except PermissionError:
+        return f"[error: permission denied: {path}]"
+
+
 WORKSPACE_TOOLS = {
     "workspace_read": tool_workspace_read,
     "workspace_write": tool_workspace_write,
     "workspace_list": tool_workspace_list,
     "file_share": tool_file_share,
+    "workspace_append": tool_workspace_append,
 }
 
 WORKSPACE_TOOL_DEFINITIONS = [
@@ -169,6 +190,27 @@ WORKSPACE_TOOL_DEFINITIONS = [
                     "content": {
                         "type": "string",
                         "description": "Content to write to the file",
+                    },
+                },
+                "required": ["path", "content"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "workspace_append",
+            "description": "Append content to the end of a file in your workspace. Creates the file (and parent directories) if it doesn't exist. Adds a newline separator if the file doesn't end with one.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Relative path within the workspace",
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "Content to append to the file",
                     },
                 },
                 "required": ["path", "content"],

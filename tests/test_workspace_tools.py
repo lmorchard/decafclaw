@@ -3,6 +3,7 @@
 from decafclaw.tools.workspace_tools import (
     _resolve_safe,
     tool_file_share,
+    tool_workspace_append,
     tool_workspace_list,
     tool_workspace_read,
     tool_workspace_write,
@@ -112,6 +113,35 @@ def test_read_out_of_range(ctx):
     # Should just return to end, no error
     assert "error" not in result.lower()
     assert "three" in result
+
+
+# -- workspace_append tests --
+
+
+def test_append_creates_file(ctx):
+    result = tool_workspace_append(ctx, "new.txt", "hello")
+    assert "Appended" in result
+    content = ctx.config.workspace_path.joinpath("new.txt").read_text()
+    assert content == "hello"
+
+
+def test_append_to_existing(ctx):
+    tool_workspace_write(ctx, "log.txt", "line1\n")
+    tool_workspace_append(ctx, "log.txt", "line2\n")
+    content = ctx.config.workspace_path.joinpath("log.txt").read_text()
+    assert content == "line1\nline2\n"
+
+
+def test_append_adds_newline(ctx):
+    tool_workspace_write(ctx, "no_newline.txt", "first")
+    tool_workspace_append(ctx, "no_newline.txt", "second")
+    content = ctx.config.workspace_path.joinpath("no_newline.txt").read_text()
+    assert content == "first\nsecond"
+
+
+def test_append_escape_blocked(ctx):
+    result = tool_workspace_append(ctx, "../../evil.txt", "bad")
+    assert "outside" in result.lower()
 
 
 # -- file_share tests --
