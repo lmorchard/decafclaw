@@ -432,7 +432,9 @@ class MattermostClient:
             elif already_streamed:
                 pass  # streaming display already has the final text
             elif placeholder_id:
-                await self.edit_message(placeholder_id, response_text)
+                # Don't edit to empty — keep the placeholder visible
+                if response_text:
+                    await self.edit_message(placeholder_id, response_text)
             else:
                 await self.send(channel_id, response_text, root_id=root_id)
 
@@ -561,8 +563,10 @@ class MattermostClient:
             elif event_type == "tool_end" and streaming_display and streaming_display._streamed:
                 streaming_display.tool_suffix = ""
                 await streaming_display._do_edit()
-            elif event_type == "llm_start" and placeholder_id and not streaming:
-                await client.edit_message(placeholder_id, "\U0001f4ad Thinking...")
+            elif event_type == "llm_start" and placeholder_id:
+                # Show "Thinking..." only if streaming hasn't started yet
+                if not streaming or not (streaming_display and streaming_display._streamed):
+                    await client.edit_message(placeholder_id, "\U0001f4ad Thinking...")
             elif event_type == "tool_confirm_request" and channel_id:
                 # Post a separate threaded message for each confirmation
                 tool_name = event.get("tool", "tool")
