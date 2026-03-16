@@ -265,7 +265,7 @@ def test_shell_buttons_approve_deny_pattern(http_config):
     )
     actions = result[0]["actions"]
     action_ids = [a["id"] for a in actions]
-    assert action_ids == ["approve", "deny", "add_pattern"]
+    assert action_ids == ["approve", "deny", "allowpattern"]
     assert "always" not in action_ids
 
 

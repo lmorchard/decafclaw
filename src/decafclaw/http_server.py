@@ -167,19 +167,10 @@ def build_confirm_buttons(config, tool_name: str, command: str,
     }
 
     if tool_name == "shell" and suggested_pattern:
-        # Shell tool: Allow Pattern / Approve / Deny (no Always)
-        # NOTE: Allow Pattern is first to test if Mattermost has a
-        # position-dependent bug with the third button
+        # Shell tool: Approve / Deny / Allow Pattern (no Always)
+        # NOTE: button IDs must not contain underscores — Mattermost
+        # silently drops callbacks for buttons with underscores in the ID.
         actions = [
-            {
-                "id": "allowpattern",
-                "name": "Allow Pattern",
-                "style": "default",
-                "integration": {
-                    "url": f"{base_url}?token={_make_token('add_pattern')}",
-                    "context": {**base_context, "action": "add_pattern"},
-                },
-            },
             {
                 "id": "approve",
                 "name": "Approve",
@@ -196,6 +187,15 @@ def build_confirm_buttons(config, tool_name: str, command: str,
                 "integration": {
                     "url": f"{base_url}?token={_make_token('deny')}",
                     "context": {**base_context, "action": "deny"},
+                },
+            },
+            {
+                "id": "allowpattern",
+                "name": "Allow Pattern",
+                "style": "default",
+                "integration": {
+                    "url": f"{base_url}?token={_make_token('add_pattern')}",
+                    "context": {**base_context, "action": "add_pattern"},
                 },
             },
         ]
