@@ -562,8 +562,14 @@ class MattermostClient:
             elif event_type == "tool_end" and streaming_display and streaming_display._streamed:
                 streaming_display.tool_suffix = ""
                 await streaming_display._do_edit()
-            elif event_type == "llm_start" and placeholder_id and not streaming:
-                await client.edit_message(placeholder_id, "\U0001f4ad Thinking...")
+            elif event_type == "llm_start" and placeholder_id:
+                if not streaming:
+                    await client.edit_message(placeholder_id, "\U0001f4ad Thinking...")
+                # Always send typing indicator at LLM call start
+                try:
+                    await client.send_typing(channel_id or "")
+                except Exception:
+                    pass
             elif event_type == "tool_confirm_request" and channel_id:
                 # Post a separate threaded message for each confirmation
                 tool_name = event.get("tool", "tool")
@@ -744,12 +750,17 @@ class StreamingDisplay:
         await self._do_edit()
 
     async def _do_edit(self):
-        """Actually edit the placeholder."""
+        """Actually edit the placeholder and send typing indicator."""
         import time
         self.last_edit_time = time.monotonic()
         text = self.buffer + self.tool_suffix
         if not text:
             return
+        # Typing indicator (throttled alongside edits)
+        try:
+            await self.client.send_typing(self._channel_id)
+        except Exception:
+            pass
         try:
             await self.client.edit_message(self.post_id, text)
         except Exception:
