@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import difflib
+import fnmatch
 import logging
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -10,6 +13,26 @@ if TYPE_CHECKING:
     from ..media import ToolResult
 
 log = logging.getLogger(__name__)
+
+# Max lines returned by workspace_read when no line range is specified
+MAX_READ_LINES = 200
+# Context lines shown in edit tool mini-diffs
+EDIT_CONTEXT_LINES = 3
+
+
+def _mini_diff(old_text: str, new_text: str, path: str = "") -> str:
+    """Generate a compact unified diff for edit tool output."""
+    old_lines = old_text.splitlines(keepends=True)
+    new_lines = new_text.splitlines(keepends=True)
+    diff = list(difflib.unified_diff(
+        old_lines, new_lines,
+        fromfile=f"a/{path}" if path else "before",
+        tofile=f"b/{path}" if path else "after",
+        n=EDIT_CONTEXT_LINES,
+    ))
+    if not diff:
+        return ""
+    return "".join(diff)
 
 
 def _resolve_safe(config, path_str: str) -> Path | None:
@@ -21,20 +44,48 @@ def _resolve_safe(config, path_str: str) -> Path | None:
     return target
 
 
-def tool_workspace_read(ctx, path: str) -> str:
-    """Read a file from the agent's workspace."""
+def tool_workspace_read(ctx, path: str, start_line: int | None = None,
+                        end_line: int | None = None) -> str:
+    """Read a file from the agent's workspace, optionally a line range."""
     log.info(f"[tool:workspace_read] {path}")
     resolved = _resolve_safe(ctx.config, path)
     if resolved is None:
         return f"[error: path '{path}' is outside the workspace]"
     try:
-        return resolved.read_text()
+        content = resolved.read_text()
     except FileNotFoundError:
         return f"[error: file not found: {path}]"
     except IsADirectoryError:
         return f"[error: '{path}' is a directory, not a file]"
     except PermissionError:
         return f"[error: permission denied: {path}]"
+
+    all_lines = content.splitlines()
+    total = len(all_lines)
+    partial = start_line is not None or end_line is not None
+
+    # Large file guard: cap full reads at MAX_READ_LINES
+    if not partial and total > MAX_READ_LINES:
+        end = MAX_READ_LINES
+        selected = all_lines[:end]
+        width = len(str(end))
+        numbered = [f"{str(i + 1).rjust(width)}| {line}"
+                    for i, line in enumerate(selected)]
+        header = (f"File has {total} lines, showing first {MAX_READ_LINES}. "
+                  f"Use start_line/end_line to read specific sections.\n")
+        return header + "\n".join(numbered)
+
+    # Determine range (1-based, inclusive)
+    start = max(1, start_line or 1)
+    end = min(total, end_line or total)
+    selected = all_lines[start - 1:end]
+    width = len(str(end))
+    numbered = [f"{str(start + i).rjust(width)}| {line}"
+                for i, line in enumerate(selected)]
+    if partial:
+        header = f"Lines {start}-{end} of {total}:\n"
+        return header + "\n".join(numbered)
+    return "\n".join(numbered)
 
 
 def tool_workspace_write(ctx, path: str, content: str) -> str:
@@ -105,11 +156,324 @@ def tool_file_share(ctx, path: str, message: str = "") -> "ToolResult":
         return ToolResult(text=f"[error: permission denied: {path}]")
 
 
+def tool_workspace_move(ctx, path: str, destination: str) -> str:
+    """Move or rename a file within the workspace."""
+    log.info(f"[tool:workspace_move] {path} -> {destination}")
+    resolved_src = _resolve_safe(ctx.config, path)
+    if resolved_src is None:
+        return f"[error: path '{path}' is outside the workspace]"
+    resolved_dst = _resolve_safe(ctx.config, destination)
+    if resolved_dst is None:
+        return f"[error: destination '{destination}' is outside the workspace]"
+    if not resolved_src.exists():
+        return f"[error: file not found: {path}]"
+    if resolved_dst.exists():
+        return f"[error: destination already exists: {destination}]"
+    try:
+        resolved_dst.parent.mkdir(parents=True, exist_ok=True)
+        resolved_src.rename(resolved_dst)
+        return f"Moved {path} -> {destination}"
+    except PermissionError:
+        return "[error: permission denied]"
+
+
+def tool_workspace_delete(ctx, path: str) -> str:
+    """Delete a file from the workspace."""
+    log.info(f"[tool:workspace_delete] {path}")
+    resolved = _resolve_safe(ctx.config, path)
+    if resolved is None:
+        return f"[error: path '{path}' is outside the workspace]"
+    if not resolved.exists():
+        return f"[error: file not found: {path}]"
+    if resolved.is_dir():
+        return f"[error: '{path}' is a directory. Use shell to remove directories.]"
+    try:
+        resolved.unlink()
+        return f"Deleted {path}"
+    except PermissionError:
+        return f"[error: permission denied: {path}]"
+
+
+def tool_workspace_edit(ctx, path: str, old_text: str, new_text: str,
+                       replace_all: bool = False) -> str:
+    """Edit a file by replacing exact text matches."""
+    log.info(f"[tool:workspace_edit] {path}")
+    resolved = _resolve_safe(ctx.config, path)
+    if resolved is None:
+        return f"[error: path '{path}' is outside the workspace]"
+    try:
+        content = resolved.read_text()
+    except FileNotFoundError:
+        return f"[error: file not found: {path}]"
+    except PermissionError:
+        return f"[error: permission denied: {path}]"
+
+    count = content.count(old_text)
+    if count == 0:
+        return (f"[error: text not found in {path}. "
+                "Make sure old_text matches exactly, including whitespace and indentation.]")
+    if count > 1 and not replace_all:
+        return (f"[error: found {count} matches in {path}. "
+                "Use replace_all=true for bulk replacement, "
+                "or provide more surrounding context to make old_text unique.]")
+
+    if replace_all:
+        new_content = content.replace(old_text, new_text)
+    else:
+        new_content = content.replace(old_text, new_text, 1)
+    resolved.write_text(new_content)
+    summary = f"Edited {path}: replaced {count} occurrence(s)"
+    diff = _mini_diff(content, new_content, path)
+    if diff:
+        return f"{summary}\n\n{diff}"
+    return summary
+
+
+def tool_workspace_insert(ctx, path: str, line_number: int, content: str) -> str:
+    """Insert text at a specific line number in a workspace file."""
+    log.info(f"[tool:workspace_insert] {path} at line {line_number}")
+    resolved = _resolve_safe(ctx.config, path)
+    if resolved is None:
+        return f"[error: path '{path}' is outside the workspace]"
+    try:
+        existing = resolved.read_text()
+    except FileNotFoundError:
+        return f"[error: file not found: {path}]"
+    except PermissionError:
+        return f"[error: permission denied: {path}]"
+
+    lines = existing.splitlines(keepends=True)
+    if line_number < 1 or line_number > len(lines) + 1:
+        return (f"[error: line_number {line_number} is out of range. "
+                f"File has {len(lines)} lines, valid range is 1-{len(lines) + 1}.]")
+
+    # Ensure content ends with newline for clean insertion
+    if content and not content.endswith("\n"):
+        content += "\n"
+    insert_lines = content.splitlines(keepends=True)
+    new_lines = list(lines)
+    new_lines[line_number - 1:line_number - 1] = insert_lines
+    resolved.write_text("".join(new_lines))
+    summary = f"Inserted {len(insert_lines)} line(s) at line {line_number} in {path}"
+    diff = _mini_diff(existing, "".join(new_lines), path)
+    if diff:
+        return f"{summary}\n\n{diff}"
+    return summary
+
+
+def tool_workspace_replace_lines(ctx, path: str, start_line: int, end_line: int,
+                                 content: str = "") -> str:
+    """Replace a range of lines in a workspace file."""
+    log.info(f"[tool:workspace_replace_lines] {path} lines {start_line}-{end_line}")
+    resolved = _resolve_safe(ctx.config, path)
+    if resolved is None:
+        return f"[error: path '{path}' is outside the workspace]"
+    try:
+        existing = resolved.read_text()
+    except FileNotFoundError:
+        return f"[error: file not found: {path}]"
+    except PermissionError:
+        return f"[error: permission denied: {path}]"
+
+    lines = existing.splitlines(keepends=True)
+    if start_line < 1 or end_line < start_line or end_line > len(lines):
+        return (f"[error: invalid line range {start_line}-{end_line}. "
+                f"File has {len(lines)} lines.]")
+
+    if content:
+        if not content.endswith("\n"):
+            content += "\n"
+        replacement = content.splitlines(keepends=True)
+    else:
+        replacement = []
+    new_lines = list(lines)
+    new_lines[start_line - 1:end_line] = replacement
+    resolved.write_text("".join(new_lines))
+    if not content:
+        summary = f"Deleted lines {start_line}-{end_line} from {path}"
+    else:
+        summary = f"Replaced lines {start_line}-{end_line} with {len(replacement)} line(s) in {path}"
+    diff = _mini_diff(existing, "".join(new_lines), path)
+    if diff:
+        return f"{summary}\n\n{diff}"
+    return summary
+
+
+def tool_workspace_append(ctx, path: str, content: str) -> str:
+    """Append content to a file in the agent's workspace."""
+    log.info(f"[tool:workspace_append] {path}")
+    resolved = _resolve_safe(ctx.config, path)
+    if resolved is None:
+        return f"[error: path '{path}' is outside the workspace]"
+    try:
+        resolved.parent.mkdir(parents=True, exist_ok=True)
+        if resolved.exists():
+            existing = resolved.read_text()
+            if existing and not existing.endswith("\n"):
+                content = "\n" + content
+            resolved.write_text(existing + content)
+        else:
+            resolved.write_text(content)
+        return f"Appended {len(content)} characters to {path}"
+    except PermissionError:
+        return f"[error: permission denied: {path}]"
+
+
+def tool_workspace_diff(ctx, path1: str, path2: str, context_lines: int = 3) -> str:
+    """Show a unified diff between two workspace files."""
+    log.info(f"[tool:workspace_diff] {path1} vs {path2}")
+    resolved1 = _resolve_safe(ctx.config, path1)
+    if resolved1 is None:
+        return f"[error: path '{path1}' is outside the workspace]"
+    resolved2 = _resolve_safe(ctx.config, path2)
+    if resolved2 is None:
+        return f"[error: path '{path2}' is outside the workspace]"
+    try:
+        lines1 = resolved1.read_text().splitlines(keepends=True)
+    except FileNotFoundError:
+        return f"[error: file not found: {path1}]"
+    except PermissionError:
+        return f"[error: permission denied: {path1}]"
+    try:
+        lines2 = resolved2.read_text().splitlines(keepends=True)
+    except FileNotFoundError:
+        return f"[error: file not found: {path2}]"
+    except PermissionError:
+        return f"[error: permission denied: {path2}]"
+
+    diff = list(difflib.unified_diff(
+        lines1, lines2,
+        fromfile=path1, tofile=path2,
+        n=context_lines,
+    ))
+    if not diff:
+        return f"Files are identical: {path1} and {path2}"
+    return "".join(diff)
+
+
+def tool_workspace_search(ctx, pattern: str, path: str = ".",
+                          glob: str = "*", context_lines: int = 2) -> str:
+    """Search for a regex pattern across workspace files."""
+    log.info(f"[tool:workspace_search] pattern={pattern!r} path={path} glob={glob}")
+    resolved = _resolve_safe(ctx.config, path)
+    if resolved is None:
+        return f"[error: path '{path}' is outside the workspace]"
+    if not resolved.exists():
+        return f"[error: path not found: {path}]"
+
+    try:
+        regex = re.compile(pattern)
+    except re.error as e:
+        return f"[error: invalid regex pattern: {e}]"
+
+    workspace = ctx.config.workspace_path.resolve()
+    max_matches = 50
+    total_matches = 0
+    output_sections = []
+
+    # Collect files to search
+    if resolved.is_file():
+        files = [resolved]
+    else:
+        files = sorted(f for f in resolved.rglob("*") if f.is_file()
+                       and fnmatch.fnmatch(f.name, glob))
+
+    for fpath in files:
+        try:
+            content = fpath.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, PermissionError):
+            continue
+
+        lines = content.splitlines()
+        file_matches = []
+        for i, line in enumerate(lines):
+            if regex.search(line):
+                file_matches.append(i)
+
+        if not file_matches:
+            continue
+
+        rel_path = fpath.relative_to(workspace)
+        section_lines = [f"--- {rel_path} ---"]
+        shown = set()  # track which lines we've already output
+
+        for match_idx in file_matches:
+            if total_matches >= max_matches:
+                break
+            total_matches += 1
+            start = max(0, match_idx - context_lines)
+            end = min(len(lines), match_idx + context_lines + 1)
+            # Add separator if there's a gap from previous context
+            if shown and start > max(shown) + 1:
+                section_lines.append("  ...")
+            for j in range(start, end):
+                if j in shown:
+                    continue
+                shown.add(j)
+                lineno = j + 1
+                prefix = ">" if j == match_idx else " "
+                section_lines.append(f"{prefix} {lineno:>4}| {lines[j]}")
+
+        output_sections.append("\n".join(section_lines))
+        if total_matches >= max_matches:
+            break
+
+    if not output_sections:
+        return "(no matches)"
+
+    result = "\n\n".join(output_sections)
+    if total_matches >= max_matches:
+        result += f"\n\n(truncated — showing first {max_matches} matches)"
+    return result
+
+
+def tool_workspace_glob(ctx, pattern: str, path: str = ".") -> str:
+    """Find files by glob pattern in the workspace."""
+    log.info(f"[tool:workspace_glob] pattern={pattern!r} path={path}")
+    resolved = _resolve_safe(ctx.config, path)
+    if resolved is None:
+        return f"[error: path '{path}' is outside the workspace]"
+    if not resolved.exists():
+        return f"[error: path not found: {path}]"
+    if not resolved.is_dir():
+        return f"[error: '{path}' is not a directory]"
+
+    workspace = ctx.config.workspace_path.resolve()
+    max_results = 200
+    matches = []
+    for fpath in sorted(resolved.rglob(pattern)):
+        rel = fpath.relative_to(workspace)
+        if fpath.is_file():
+            size = fpath.stat().st_size
+            matches.append(f"{rel} ({size}B)")
+        else:
+            matches.append(f"{rel}/")
+        if len(matches) >= max_results:
+            break
+
+    if not matches:
+        return "(no matches)"
+
+    result = "\n".join(matches)
+    if len(matches) >= max_results:
+        result += f"\n\n(truncated — showing first {max_results} results)"
+    return result
+
+
 WORKSPACE_TOOLS = {
     "workspace_read": tool_workspace_read,
     "workspace_write": tool_workspace_write,
     "workspace_list": tool_workspace_list,
     "file_share": tool_file_share,
+    "workspace_append": tool_workspace_append,
+    "workspace_edit": tool_workspace_edit,
+    "workspace_insert": tool_workspace_insert,
+    "workspace_replace_lines": tool_workspace_replace_lines,
+    "workspace_search": tool_workspace_search,
+    "workspace_glob": tool_workspace_glob,
+    "workspace_move": tool_workspace_move,
+    "workspace_delete": tool_workspace_delete,
+    "workspace_diff": tool_workspace_diff,
 }
 
 WORKSPACE_TOOL_DEFINITIONS = [
@@ -117,13 +481,21 @@ WORKSPACE_TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "workspace_read",
-            "description": "Read a file from your workspace. Paths are relative to the workspace root. You cannot access files outside the workspace.",
+            "description": "Read a file from your workspace. Returns content with line numbers. Optionally read a specific line range with start_line/end_line (1-based, inclusive). Paths are relative to the workspace root.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "path": {
                         "type": "string",
                         "description": "Relative path within the workspace",
+                    },
+                    "start_line": {
+                        "type": "integer",
+                        "description": "First line to read (1-based, inclusive). Omit to start from beginning.",
+                    },
+                    "end_line": {
+                        "type": "integer",
+                        "description": "Last line to read (1-based, inclusive). Omit to read to end of file.",
                     },
                 },
                 "required": ["path"],
@@ -148,6 +520,223 @@ WORKSPACE_TOOL_DEFINITIONS = [
                     },
                 },
                 "required": ["path", "content"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "workspace_append",
+            "description": "Append content to the end of a file in your workspace. Creates the file (and parent directories) if it doesn't exist. Adds a newline separator if the file doesn't end with one.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Relative path within the workspace",
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "Content to append to the file",
+                    },
+                },
+                "required": ["path", "content"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "workspace_edit",
+            "description": "Edit a file by exact string replacement. Finds old_text and replaces it with new_text. Fails if old_text is not found or matches multiple locations (ambiguous) — provide more surrounding context to make it unique, or set replace_all=true for intentional bulk replacement.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Relative path within the workspace",
+                    },
+                    "old_text": {
+                        "type": "string",
+                        "description": "Exact text to find (must match including whitespace and indentation)",
+                    },
+                    "new_text": {
+                        "type": "string",
+                        "description": "Text to replace old_text with",
+                    },
+                    "replace_all": {
+                        "type": "boolean",
+                        "description": "Replace all occurrences instead of requiring a unique match (default: false)",
+                    },
+                },
+                "required": ["path", "old_text", "new_text"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "workspace_insert",
+            "description": "Insert text at a specific line number in a workspace file, pushing existing content down. Line numbers are 1-based. Use workspace_read first to see line numbers.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Relative path within the workspace",
+                    },
+                    "line_number": {
+                        "type": "integer",
+                        "description": "Line number to insert at (1-based). Existing content at this line moves down.",
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "Text to insert",
+                    },
+                },
+                "required": ["path", "line_number", "content"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "workspace_replace_lines",
+            "description": "Replace a range of lines (1-based, inclusive) with new content. Pass empty content to delete lines. Use workspace_read first to see line numbers.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Relative path within the workspace",
+                    },
+                    "start_line": {
+                        "type": "integer",
+                        "description": "First line to replace (1-based, inclusive)",
+                    },
+                    "end_line": {
+                        "type": "integer",
+                        "description": "Last line to replace (1-based, inclusive)",
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "Replacement text (empty string to delete lines)",
+                    },
+                },
+                "required": ["path", "start_line", "end_line"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "workspace_search",
+            "description": "Search for a regex pattern across files in the workspace. Returns matching lines with line numbers and surrounding context, grouped by file. Use the glob parameter to filter file types (e.g. '*.py'). Pass a specific file path to search within one file.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "pattern": {
+                        "type": "string",
+                        "description": "Regex pattern to search for",
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "Directory or file to search in (default: workspace root)",
+                    },
+                    "glob": {
+                        "type": "string",
+                        "description": "Filename glob filter (default: '*' for all files). Examples: '*.py', '*.md', '*.json'",
+                    },
+                    "context_lines": {
+                        "type": "integer",
+                        "description": "Lines of context to show around each match (default: 2)",
+                    },
+                },
+                "required": ["pattern"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "workspace_glob",
+            "description": "Find files by name/glob pattern, recursively. Returns matching file paths relative to workspace root with file sizes. Useful for finding files by extension or name pattern.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "pattern": {
+                        "type": "string",
+                        "description": "Glob pattern to match filenames (e.g. '*.py', 'config*', '*.md')",
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "Directory to search from (default: workspace root)",
+                    },
+                },
+                "required": ["pattern"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "workspace_move",
+            "description": "Move or rename a file within the workspace. Fails if the destination already exists.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Current relative path of the file",
+                    },
+                    "destination": {
+                        "type": "string",
+                        "description": "New relative path for the file",
+                    },
+                },
+                "required": ["path", "destination"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "workspace_delete",
+            "description": "Delete a file from the workspace. Cannot delete directories.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Relative path of the file to delete",
+                    },
+                },
+                "required": ["path"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "workspace_diff",
+            "description": "Show a unified diff between two workspace files. Useful for comparing versions, checking what changed, or reviewing differences.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path1": {
+                        "type": "string",
+                        "description": "Relative path to the first file",
+                    },
+                    "path2": {
+                        "type": "string",
+                        "description": "Relative path to the second file",
+                    },
+                    "context_lines": {
+                        "type": "integer",
+                        "description": "Lines of context around each change (default: 3)",
+                    },
+                },
+                "required": ["path1", "path2"],
             },
         },
     },

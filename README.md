@@ -53,7 +53,16 @@ See [docs/installation.md](docs/installation.md) for full setup and configuratio
 | `conversation_search` | Search past conversations semantically |
 | `conversation_compact` | Manually trigger conversation compaction |
 | `todo_add/complete/list/clear` | Per-conversation to-do lists |
-| `workspace_read/write/list` | Sandboxed file operations |
+| `workspace_read/write/list` | Sandboxed file operations (read supports line ranges) |
+| `workspace_edit` | Exact string replacement in workspace files |
+| `workspace_insert` | Insert text at a specific line number |
+| `workspace_replace_lines` | Replace or delete a range of lines |
+| `workspace_append` | Append content to a file |
+| `workspace_search` | Regex search across workspace files |
+| `workspace_glob` | Find files by name/glob pattern |
+| `workspace_move` | Move or rename a file within the workspace |
+| `workspace_delete` | Delete a file from the workspace |
+| `workspace_diff` | Unified diff between two workspace files |
 | `file_share` | Share workspace files as Mattermost attachments |
 | `shell` | Run shell commands (requires user confirmation) |
 | `activate_skill` | Load a skill's tools into the conversation |
