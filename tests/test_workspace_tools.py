@@ -5,10 +5,12 @@ from decafclaw.tools.workspace_tools import (
     tool_file_share,
     tool_workspace_append,
     tool_workspace_edit,
+    tool_workspace_glob,
     tool_workspace_insert,
     tool_workspace_list,
     tool_workspace_read,
     tool_workspace_replace_lines,
+    tool_workspace_search,
     tool_workspace_write,
 )
 
@@ -306,6 +308,120 @@ def test_append_adds_newline(ctx):
 
 def test_append_escape_blocked(ctx):
     result = tool_workspace_append(ctx, "../../evil.txt", "bad")
+    assert "outside" in result.lower()
+
+
+# -- workspace_search tests --
+
+
+def test_search_basic(ctx):
+    tool_workspace_write(ctx, "hello.txt", "hello world\ngoodbye world\n")
+    result = tool_workspace_search(ctx, "hello")
+    assert "hello.txt" in result
+    assert "hello world" in result
+
+
+def test_search_regex(ctx):
+    tool_workspace_write(ctx, "data.txt", "count: 42\nname: alice\ncount: 7\n")
+    result = tool_workspace_search(ctx, r"\d+")
+    assert "42" in result
+    assert "7" in result
+
+
+def test_search_multiple_files(ctx):
+    tool_workspace_write(ctx, "a.txt", "needle here\n")
+    tool_workspace_write(ctx, "b.txt", "needle there\n")
+    result = tool_workspace_search(ctx, "needle")
+    assert "a.txt" in result
+    assert "b.txt" in result
+
+
+def test_search_glob_filter(ctx):
+    tool_workspace_write(ctx, "code.py", "needle in python\n")
+    tool_workspace_write(ctx, "doc.md", "needle in markdown\n")
+    result = tool_workspace_search(ctx, "needle", glob="*.py")
+    assert "code.py" in result
+    assert "doc.md" not in result
+
+
+def test_search_context_lines(ctx):
+    tool_workspace_write(ctx, "f.txt", "aaa\nbbb\nccc\nddd\neee\n")
+    result = tool_workspace_search(ctx, "ccc", context_lines=1)
+    assert "bbb" in result
+    assert "ddd" in result
+    # aaa should not appear with only 1 line of context
+    assert "aaa" not in result
+
+
+def test_search_single_file(ctx):
+    tool_workspace_write(ctx, "target.txt", "find me\n")
+    tool_workspace_write(ctx, "other.txt", "find me too\n")
+    result = tool_workspace_search(ctx, "find", path="target.txt")
+    assert "target.txt" in result
+    assert "other.txt" not in result
+
+
+def test_search_no_matches(ctx):
+    tool_workspace_write(ctx, "f.txt", "nothing here\n")
+    result = tool_workspace_search(ctx, "zzzzz")
+    assert result == "(no matches)"
+
+
+def test_search_invalid_regex(ctx):
+    ctx.config.workspace_path.mkdir(parents=True, exist_ok=True)
+    result = tool_workspace_search(ctx, "[invalid")
+    assert "error" in result.lower()
+    assert "regex" in result.lower()
+
+
+def test_search_escape_blocked(ctx):
+    result = tool_workspace_search(ctx, "test", path="../../etc")
+    assert "outside" in result.lower()
+
+
+# -- workspace_glob tests --
+
+
+def test_glob_basic(ctx):
+    tool_workspace_write(ctx, "a.py", "python\n")
+    tool_workspace_write(ctx, "b.py", "python\n")
+    tool_workspace_write(ctx, "c.txt", "text\n")
+    result = tool_workspace_glob(ctx, "*.py")
+    assert "a.py" in result
+    assert "b.py" in result
+    assert "c.txt" not in result
+
+
+def test_glob_nested(ctx):
+    tool_workspace_write(ctx, "sub/deep/file.py", "nested\n")
+    result = tool_workspace_glob(ctx, "*.py")
+    assert "sub/deep/file.py" in result
+
+
+def test_glob_specific_name(ctx):
+    tool_workspace_write(ctx, "config.yaml", "key: val\n")
+    tool_workspace_write(ctx, "other.yaml", "key: val\n")
+    result = tool_workspace_glob(ctx, "config.yaml")
+    assert "config.yaml" in result
+    assert "other.yaml" not in result
+
+
+def test_glob_no_matches(ctx):
+    tool_workspace_write(ctx, "a.txt", "text\n")
+    result = tool_workspace_glob(ctx, "*.zzz")
+    assert result == "(no matches)"
+
+
+def test_glob_with_subpath(ctx):
+    tool_workspace_write(ctx, "src/a.py", "code\n")
+    tool_workspace_write(ctx, "tests/b.py", "test\n")
+    result = tool_workspace_glob(ctx, "*.py", path="src")
+    assert "src/a.py" in result
+    assert "tests/b.py" not in result
+
+
+def test_glob_escape_blocked(ctx):
+    result = tool_workspace_glob(ctx, "*.py", path="../../etc")
     assert "outside" in result.lower()
 
 
