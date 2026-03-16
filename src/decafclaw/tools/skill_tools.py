@@ -28,7 +28,7 @@ def _load_permissions(config) -> dict:
         return {}
 
 
-def _save_permission(config, skill_name: str, value: str):
+def _save_permission(config, skill_name: str, value: str) -> None:
     """Save a skill permission. Called by the host-side confirmation handler."""
     path = _permissions_path(config)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -38,7 +38,7 @@ def _save_permission(config, skill_name: str, value: str):
     log.info(f"Saved skill permission: {skill_name}={value}")
 
 
-def _load_native_tools(skill_info):
+def _load_native_tools(skill_info) -> tuple[dict, list, object]:
     """Import tools.py from a skill directory and return (TOOLS, TOOL_DEFINITIONS, module)."""
     tools_path = skill_info.location / "tools.py"
     spec = importlib.util.spec_from_file_location(
@@ -51,7 +51,7 @@ def _load_native_tools(skill_info):
     return tools, tool_defs, module
 
 
-async def _call_init(module, config):
+async def _call_init(module, config) -> None:
     """Call module.init(config) if it exists, handling sync or async."""
     init_fn = getattr(module, "init", None)
     if init_fn is None:

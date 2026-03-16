@@ -11,7 +11,7 @@ class Context:
         self.event_bus = event_bus
         self.context_id = context_id or uuid4().hex[:12]
 
-    def fork(self, **overrides):
+    def fork(self, **overrides) -> "Context":
         """Create a child context with a new ID, sharing the event bus."""
         config = overrides.pop("config", self.config)
         child = Context(
@@ -22,7 +22,7 @@ class Context:
             setattr(child, key, value)
         return child
 
-    async def publish(self, event_type: str, **kwargs):
+    async def publish(self, event_type: str, **kwargs) -> None:
         """Convenience: publish an event with context_id auto-included."""
         event = {"type": event_type, "context_id": self.context_id, **kwargs}
         await self.event_bus.publish(event)

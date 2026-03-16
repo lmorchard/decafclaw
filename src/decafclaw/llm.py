@@ -9,7 +9,7 @@ log = logging.getLogger(__name__)
 
 
 async def call_llm(config, messages, tools=None,
-                   llm_url=None, llm_model=None, llm_api_key=None):
+                   llm_url=None, llm_model=None, llm_api_key=None) -> dict:
     """Call the LLM and return the response message.
 
     Optional overrides (llm_url, llm_model, llm_api_key) allow calling
@@ -61,7 +61,7 @@ async def call_llm(config, messages, tools=None,
 
 async def call_llm_streaming(config, messages, tools=None,
                               on_chunk=None,
-                              llm_url=None, llm_model=None, llm_api_key=None):
+                              llm_url=None, llm_model=None, llm_api_key=None) -> dict:
     """Call the LLM with streaming, invoking on_chunk for each token.
 
     Args:
