@@ -984,7 +984,9 @@ class ConversationDisplay:
         msg = f"\U0001f6a8 **Confirm {tool_name}:**\n```\n{command}\n```"
 
         # Add emoji instructions (unless disabled)
-        if not (config and config.mattermost_disable_emoji_confirms):
+        # Show emoji instructions if enabled (default: on when HTTP off, off when HTTP on)
+        show_emoji = not config or config.mattermost_enable_emoji_confirms
+        if show_emoji:
             if tool_name == "shell" and suggested_pattern:
                 msg += (
                     f"\nReact: \U0001f44d approve | \U0001f44e deny"
@@ -1022,7 +1024,8 @@ class ConversationDisplay:
             self._tool_post_id = confirm_post_id
 
         # Start emoji reaction polling (unless emoji is disabled)
-        if confirm_post_id and not (config and config.mattermost_disable_emoji_confirms):
+        # Start emoji reaction polling if emoji confirms are enabled
+        if confirm_post_id and show_emoji:
             asyncio.create_task(
                 self.client._poll_confirmation(
                     confirm_post_id, event_bus, context_id, tool_name,
