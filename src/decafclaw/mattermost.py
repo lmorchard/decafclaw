@@ -886,11 +886,18 @@ class ConversationDisplay:
 
     async def on_tool_start(self, tool_name, args):
         """Tool execution starting — finalize text, post tool call message."""
-        await self._finalize_current_text()
         msg = f"\U0001f527 Running {tool_name}..."
-        self._tool_post_id = await self.client.send(
-            self._channel_id, msg, root_id=self._root_id,
-        )
+
+        # If still on thinking placeholder with no text, reuse it for the tool call
+        if self._current_type == "thinking" and self._current_post_id and not self._text_has_content:
+            await self._force_edit(self._current_post_id, msg)
+            self._tool_post_id = self._current_post_id
+            self._current_post_id = None
+        else:
+            await self._finalize_current_text()
+            self._tool_post_id = await self.client.send(
+                self._channel_id, msg, root_id=self._root_id,
+            )
         self._current_type = "tool"
 
     async def on_tool_status(self, tool_name, message):
