@@ -1,13 +1,17 @@
 """Tests for workspace file tools — path sandboxing and file sharing."""
 
 from decafclaw.tools.workspace_tools import (
+    MAX_READ_LINES,
     _resolve_safe,
     tool_file_share,
     tool_workspace_append,
+    tool_workspace_delete,
+    tool_workspace_diff,
     tool_workspace_edit,
     tool_workspace_glob,
     tool_workspace_insert,
     tool_workspace_list,
+    tool_workspace_move,
     tool_workspace_read,
     tool_workspace_replace_lines,
     tool_workspace_search,
@@ -118,6 +122,155 @@ def test_read_out_of_range(ctx):
     # Should just return to end, no error
     assert "error" not in result.lower()
     assert "three" in result
+
+
+# -- workspace_read large file guard --
+
+
+def test_read_large_file_capped(ctx):
+    lines = [f"line {i}" for i in range(1, 500)]
+    tool_workspace_write(ctx, "big.txt", "\n".join(lines))
+    result = tool_workspace_read(ctx, "big.txt")
+    assert f"showing first {MAX_READ_LINES}" in result.lower()
+    assert "line 1" in result
+    assert f"line {MAX_READ_LINES}" in result
+    assert f"line {MAX_READ_LINES + 1}" not in result
+
+
+def test_read_large_file_with_range_not_capped(ctx):
+    lines = [f"line {i}" for i in range(1, 500)]
+    tool_workspace_write(ctx, "big.txt", "\n".join(lines))
+    result = tool_workspace_read(ctx, "big.txt", start_line=1, end_line=300)
+    assert "line 300" in result
+    assert "showing first" not in result.lower()
+
+
+# -- workspace_move tests --
+
+
+def test_move_basic(ctx):
+    tool_workspace_write(ctx, "old.txt", "content")
+    result = tool_workspace_move(ctx, "old.txt", "new.txt")
+    assert "moved" in result.lower()
+    assert not ctx.config.workspace_path.joinpath("old.txt").exists()
+    assert ctx.config.workspace_path.joinpath("new.txt").read_text() == "content"
+
+
+def test_move_to_subdir(ctx):
+    tool_workspace_write(ctx, "file.txt", "data")
+    tool_workspace_move(ctx, "file.txt", "sub/dir/file.txt")
+    assert ctx.config.workspace_path.joinpath("sub/dir/file.txt").read_text() == "data"
+
+
+def test_move_not_found(ctx):
+    result = tool_workspace_move(ctx, "nope.txt", "dest.txt")
+    assert "error" in result.lower()
+    assert "not found" in result.lower()
+
+
+def test_move_destination_exists(ctx):
+    tool_workspace_write(ctx, "a.txt", "aaa")
+    tool_workspace_write(ctx, "b.txt", "bbb")
+    result = tool_workspace_move(ctx, "a.txt", "b.txt")
+    assert "error" in result.lower()
+    assert "already exists" in result.lower()
+
+
+def test_move_escape_blocked_src(ctx):
+    result = tool_workspace_move(ctx, "../../evil.txt", "dest.txt")
+    assert "outside" in result.lower()
+
+
+def test_move_escape_blocked_dst(ctx):
+    tool_workspace_write(ctx, "ok.txt", "data")
+    result = tool_workspace_move(ctx, "ok.txt", "../../evil.txt")
+    assert "outside" in result.lower()
+
+
+# -- workspace_delete tests --
+
+
+def test_delete_basic(ctx):
+    tool_workspace_write(ctx, "doomed.txt", "bye")
+    result = tool_workspace_delete(ctx, "doomed.txt")
+    assert "deleted" in result.lower()
+    assert not ctx.config.workspace_path.joinpath("doomed.txt").exists()
+
+
+def test_delete_not_found(ctx):
+    result = tool_workspace_delete(ctx, "nope.txt")
+    assert "error" in result.lower()
+    assert "not found" in result.lower()
+
+
+def test_delete_directory_blocked(ctx):
+    ctx.config.workspace_path.joinpath("mydir").mkdir(parents=True)
+    result = tool_workspace_delete(ctx, "mydir")
+    assert "error" in result.lower()
+    assert "directory" in result.lower()
+
+
+def test_delete_escape_blocked(ctx):
+    result = tool_workspace_delete(ctx, "../../evil.txt")
+    assert "outside" in result.lower()
+
+
+# -- workspace_diff tests --
+
+
+def test_diff_shows_changes(ctx):
+    tool_workspace_write(ctx, "v1.txt", "line1\nline2\nline3\n")
+    tool_workspace_write(ctx, "v2.txt", "line1\nLINE2\nline3\n")
+    result = tool_workspace_diff(ctx, "v1.txt", "v2.txt")
+    assert "-line2" in result
+    assert "+LINE2" in result
+    assert "v1.txt" in result
+    assert "v2.txt" in result
+
+
+def test_diff_identical(ctx):
+    tool_workspace_write(ctx, "a.txt", "same\n")
+    tool_workspace_write(ctx, "b.txt", "same\n")
+    result = tool_workspace_diff(ctx, "a.txt", "b.txt")
+    assert "identical" in result.lower()
+
+
+def test_diff_not_found(ctx):
+    tool_workspace_write(ctx, "exists.txt", "data\n")
+    result = tool_workspace_diff(ctx, "exists.txt", "nope.txt")
+    assert "error" in result.lower()
+    assert "not found" in result.lower()
+
+
+def test_diff_escape_blocked(ctx):
+    result = tool_workspace_diff(ctx, "../../evil.txt", "other.txt")
+    assert "outside" in result.lower()
+
+
+# -- edit tools mini-diff output --
+
+
+def test_edit_returns_diff(ctx):
+    tool_workspace_write(ctx, "f.txt", "aaa\nbbb\nccc\n")
+    result = tool_workspace_edit(ctx, "f.txt", "bbb", "BBB")
+    assert "---" in result  # diff header
+    assert "-bbb" in result
+    assert "+BBB" in result
+
+
+def test_insert_returns_diff(ctx):
+    tool_workspace_write(ctx, "f.txt", "aaa\nccc\n")
+    result = tool_workspace_insert(ctx, "f.txt", 2, "bbb")
+    assert "---" in result
+    assert "+bbb" in result
+
+
+def test_replace_lines_returns_diff(ctx):
+    tool_workspace_write(ctx, "f.txt", "aaa\nbbb\nccc\n")
+    result = tool_workspace_replace_lines(ctx, "f.txt", 2, 2, "BBB")
+    assert "---" in result
+    assert "-bbb" in result
+    assert "+BBB" in result
 
 
 # -- workspace_edit tests --

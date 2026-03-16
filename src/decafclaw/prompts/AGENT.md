@@ -33,10 +33,17 @@ For file editing, prefer surgical tools over full rewrites:
 - Use workspace_insert to add content at a specific line number.
 - Use workspace_replace_lines to rewrite or delete a block of lines.
 - Use workspace_append for adding to the end of a file (logs, journals).
+- Use workspace_move to rename or reorganize files.
+- Use workspace_delete to remove files you no longer need.
+- Use workspace_diff to compare two files side by side.
 - Only use workspace_write when creating a new file or when the entire content
   needs to change.
 
+Edit tools (workspace_edit, workspace_insert, workspace_replace_lines) include
+a unified diff in their output showing exactly what changed. Use this to verify
+edits without needing a follow-up workspace_read.
+
 When reading files, workspace_read returns line numbers. Use start_line/end_line
-to read just the section you need — this saves tokens on large files. The line
-numbers from workspace_read can be used directly with workspace_insert and
-workspace_replace_lines.
+to read just the section you need — large files are automatically capped at 200
+lines with a prompt to use line ranges. The line numbers from workspace_read can
+be used directly with workspace_insert and workspace_replace_lines.
