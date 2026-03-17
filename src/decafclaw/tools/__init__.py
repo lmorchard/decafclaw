@@ -24,6 +24,31 @@ TOOL_DEFINITIONS = (CORE_TOOL_DEFINITIONS
                     + MCP_TOOL_DEFINITIONS + HEARTBEAT_TOOL_DEFINITIONS)
 
 
+async def _run_with_cancel(coro, cancel_event):
+    """Run a coroutine, cancelling it if cancel_event fires first.
+
+    Returns (task, interrupted) where interrupted is a ToolResult if the
+    turn was cancelled, or None if the coroutine completed normally.
+    """
+    tool_task = asyncio.create_task(coro)
+    if cancel_event:
+        cancel_task = asyncio.create_task(cancel_event.wait())
+        done, _ = await asyncio.wait(
+            [tool_task, cancel_task], return_when=asyncio.FIRST_COMPLETED
+        )
+        cancel_task.cancel()
+        if tool_task not in done:
+            tool_task.cancel()
+            try:
+                await tool_task
+            except (asyncio.CancelledError, Exception):
+                pass
+            return tool_task, ToolResult(text="[tool interrupted: agent turn cancelled]")
+    else:
+        await tool_task
+    return tool_task, None
+
+
 def _to_tool_result(value) -> ToolResult:
     """Normalize a tool return value to ToolResult."""
     if isinstance(value, ToolResult):
@@ -57,24 +82,10 @@ async def execute_tool(ctx, name: str, arguments: dict) -> ToolResult:
             if fn:
                 try:
                     cancel_event = getattr(ctx, "cancelled", None)
-                    tool_task = asyncio.create_task(fn(arguments))
-                    if cancel_event:
-                        cancel_task = asyncio.create_task(cancel_event.wait())
-                        done, _ = await asyncio.wait(
-                            [tool_task, cancel_task], return_when=asyncio.FIRST_COMPLETED
-                        )
-                        cancel_task.cancel()
-                        if tool_task not in done:
-                            tool_task.cancel()
-                            try:
-                                await tool_task
-                            except (asyncio.CancelledError, Exception):
-                                pass
-                            return ToolResult(text="[tool interrupted: agent turn cancelled]")
-                        result = tool_task.result()
-                    else:
-                        result = await tool_task
-                    return _to_tool_result(result)
+                    tool_task, interrupted = await _run_with_cancel(fn(arguments), cancel_event)
+                    if interrupted:
+                        return interrupted
+                    return _to_tool_result(tool_task.result())
                 except Exception as e:
                     return ToolResult(text=f"[error executing {name}: {e}]")
         return ToolResult(text=f"[error: MCP tool '{name}' not available]")
@@ -86,28 +97,10 @@ async def execute_tool(ctx, name: str, arguments: dict) -> ToolResult:
         return ToolResult(text=f"[error: unknown tool: {name}]")
     cancel_event = getattr(ctx, "cancelled", None)
     try:
-        if asyncio.iscoroutinefunction(fn):
-            tool_task = asyncio.create_task(fn(ctx, **arguments))
-        else:
-            tool_task = asyncio.create_task(asyncio.to_thread(fn, ctx, **arguments))
-
-        if cancel_event:
-            cancel_task = asyncio.create_task(cancel_event.wait())
-            done, _ = await asyncio.wait(
-                [tool_task, cancel_task], return_when=asyncio.FIRST_COMPLETED
-            )
-            cancel_task.cancel()
-            if tool_task not in done:
-                tool_task.cancel()
-                try:
-                    await tool_task
-                except (asyncio.CancelledError, Exception):
-                    pass
-                return ToolResult(text="[tool interrupted: agent turn cancelled]")
-            result = tool_task.result()
-        else:
-            result = await tool_task
-
-        return _to_tool_result(result)
+        coro = fn(ctx, **arguments) if asyncio.iscoroutinefunction(fn) else asyncio.to_thread(fn, ctx, **arguments)
+        tool_task, interrupted = await _run_with_cancel(coro, cancel_event)
+        if interrupted:
+            return interrupted
+        return _to_tool_result(tool_task.result())
     except Exception as e:
         return ToolResult(text=f"[error executing {name}: {e}]")
