@@ -64,6 +64,35 @@ async def _call_init(module, config) -> None:
         await asyncio.to_thread(init_fn, config)
 
 
+async def restore_skills(ctx) -> None:
+    """Re-activate skills recorded in ctx.activated_skills, without permission checks.
+
+    Called at the start of each web gateway turn to restore skills that were
+    active in a previous turn or server session.
+    """
+    skill_names = set(getattr(ctx, "activated_skills", set()))
+    if not skill_names:
+        return
+    discovered = getattr(ctx.config, "discovered_skills", [])
+    skill_map = {s.name: s for s in discovered}
+    for name in skill_names:
+        skill_info = skill_map.get(name)
+        if not skill_info or not skill_info.has_native_tools:
+            continue
+        try:
+            tools, tool_defs, module = _load_native_tools(skill_info)
+            await _call_init(module, ctx.config)
+            if not hasattr(ctx, "extra_tools"):
+                ctx.extra_tools = {}
+            ctx.extra_tools.update(tools)
+            if not hasattr(ctx, "extra_tool_definitions"):
+                ctx.extra_tool_definitions = []
+            ctx.extra_tool_definitions.extend(tool_defs)
+            log.info(f"Restored skill '{name}' with tools: {list(tools.keys())}")
+        except Exception as e:
+            log.error(f"Failed to restore skill '{name}': {e}")
+
+
 async def tool_activate_skill(ctx, name: str) -> str:
     """Activate a skill to make its capabilities available in this conversation."""
     log.info(f"[tool:activate_skill] name={name}")
