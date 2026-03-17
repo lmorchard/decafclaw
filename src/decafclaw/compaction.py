@@ -17,6 +17,15 @@ Summarize the following conversation, preserving:
 
 Be concise but don't lose critical details. Format as a brief narrative."""
 
+INCREMENTAL_COMPACTION_PROMPT = """\
+You have an existing conversation summary and new turns that need to be incorporated.
+Update the summary to include the new information while preserving all important details
+from the original summary. Do not lose any key facts, decisions, or user preferences.
+
+Be concise but don't lose critical details. Format as a brief narrative."""
+
+SUMMARY_PREFIX = "[Conversation summary]: "
+
 
 def _load_compaction_prompt(config) -> str:
     """Load custom prompt from workspace, or use default."""
@@ -24,6 +33,24 @@ def _load_compaction_prompt(config) -> str:
     if prompt_path.exists():
         return prompt_path.read_text().strip()
     return DEFAULT_COMPACTION_PROMPT
+
+
+def _extract_previous_summary(config, conv_id: str) -> tuple[str | None, str | None]:
+    """Extract the previous summary text and the last compacted timestamp.
+
+    Returns (summary_text, last_timestamp) or (None, None) if no
+    previous compaction exists.
+    """
+    compacted = read_compacted_history(config, conv_id)
+    if not compacted:
+        return None, None
+    first = compacted[0]
+    content = first.get("content", "")
+    if first.get("role") == "user" and content.startswith(SUMMARY_PREFIX):
+        summary_text = content[len(SUMMARY_PREFIX):]
+        last_ts = compacted[-1].get("timestamp", "")
+        return summary_text, last_ts
+    return None, None
 
 
 def _split_into_turns(messages: list[dict]) -> list[list[dict]]:
@@ -139,8 +166,9 @@ async def _chunked_summarize(ctx, config, turns: list[list[dict]],
 async def compact_history(ctx, history: list) -> bool:
     """Compact conversation history using the archive as source.
 
-    Reads the full archive, splits into old/recent, summarizes old
-    messages, and replaces history with [summary] + [recent].
+    If a previous compaction exists, performs incremental compaction:
+    folds only newly-old turns into the existing summary. Otherwise
+    falls back to full compaction from scratch.
 
     Returns True if compaction was performed, False if skipped.
     """
@@ -164,22 +192,60 @@ async def compact_history(ctx, history: list) -> bool:
     # Split: old turns to summarize, recent turns to keep
     old_turns = turns[:-preserve]
     recent_turns = turns[-preserve:]
-
     old_messages = [msg for turn in old_turns for msg in turn]
     recent_messages = [msg for turn in recent_turns for msg in turn]
 
+    # Check for incremental compaction
+    prev_summary, prev_last_ts = _extract_previous_summary(config, conv_id)
+    incremental = False
+    newly_old_turns: list[list[dict]] = []
+
+    if prev_summary and prev_last_ts:
+        # Find how many archive messages existed at the time of the last
+        # compaction by finding the boundary using the last compacted timestamp.
+        # Everything in the archive up to that timestamp was covered.
+        prev_archive_len = 0
+        for i, msg in enumerate(archive):
+            if msg.get("timestamp", "") <= prev_last_ts:
+                prev_archive_len = i + 1
+            else:
+                break
+
+        # At the previous compaction, the old turns covered archive[0:prev_old_count].
+        # The recent turns covered archive[prev_old_count:prev_archive_len].
+        # Now old_turns may extend further. Newly-old turns are those whose
+        # messages start at or after prev_old_count in the archive.
+        # prev_old_count = prev_archive_len - prev_recent_count, but we don't
+        # know prev_recent_count directly. However, the summary message in the
+        # sidecar replaced everything before the recent window. The recent
+        # messages in the sidecar correspond to the last N messages of the
+        # archive at that time. We can count: the compacted sidecar had
+        # (total_compacted - 1) recent messages covering archive positions
+        # [prev_archive_len - (total_compacted - 1) : prev_archive_len].
+        compacted = read_compacted_history(config, conv_id)
+        prev_recent_count = len(compacted) - 1 if compacted else 0
+        prev_old_msg_count = prev_archive_len - prev_recent_count
+
+        # Walk old_turns to find those with messages past the previous boundary
+        msg_idx = 0
+        for turn in old_turns:
+            turn_end = msg_idx + len(turn)
+            if turn_end > prev_old_msg_count:
+                newly_old_turns.append(turn)
+            msg_idx = turn_end
+
+        if not newly_old_turns:
+            log.info("No newly-old turns since last compaction, skipping")
+            return False
+        incremental = True
+
     log.info(f"Compacting {len(old_messages)} messages ({len(old_turns)} turns) "
-             f"into summary, preserving {len(recent_messages)} messages ({len(recent_turns)} turns)")
+             f"into summary, preserving {len(recent_messages)} messages "
+             f"({len(recent_turns)} turns)"
+             f"{f', incremental ({len(newly_old_turns)} new turns)' if incremental else ''}")
 
-    # Load the summarization prompt
-    prompt = _load_compaction_prompt(config)
-
-    # Flatten old messages
-    flattened = _flatten_messages(old_messages)
-
-    # Check if we need chunked compaction
     budget = config.compaction_context_budget
-    estimated = _estimate_tokens(flattened)
+    estimated = 0
 
     import time as _time
     before_messages = len(history)
@@ -188,18 +254,40 @@ async def compact_history(ctx, history: list) -> bool:
     try:
         await ctx.publish("compaction_start")
 
-        if estimated > budget:
-            log.info(f"Flattened text ({estimated} est. tokens) exceeds compaction budget ({budget}), using chunked compaction")
-            summary = await _chunked_summarize(ctx, config, old_turns, prompt, budget)
+        if incremental:
+            # Fold newly-old turns into existing summary
+            newly_old_flat = _flatten_messages(
+                [msg for turn in newly_old_turns for msg in turn])
+            combined_input = (
+                f"Existing summary:\n{prev_summary}\n\n"
+                f"New conversation turns to incorporate:\n{newly_old_flat}"
+            )
+            estimated = _estimate_tokens(combined_input)
+            log.info(f"Incremental summarization: ~{estimated} est. tokens")
+            summary = await _single_summarize(
+                ctx, config, combined_input, INCREMENTAL_COMPACTION_PROMPT)
         else:
-            summary = await _single_summarize(ctx, config, flattened, prompt)
+            # Full compaction from scratch
+            prompt = _load_compaction_prompt(config)
+            flattened = _flatten_messages(old_messages)
+            estimated = _estimate_tokens(flattened)
+            if estimated > budget:
+                log.info(f"Flattened text ({estimated} est. tokens) exceeds "
+                         f"budget ({budget}), using chunked compaction")
+                summary = await _chunked_summarize(
+                    ctx, config, old_turns, prompt, budget)
+            else:
+                summary = await _single_summarize(ctx, config, flattened, prompt)
 
         if not summary:
             log.warning("Compaction LLM returned empty summary, skipping")
             return False
 
         # Rebuild history: summary + recent messages
-        summary_msg = {"role": "user", "content": f"[Conversation summary]: {summary}"}
+        summary_msg = {
+            "role": "user",
+            "content": f"{SUMMARY_PREFIX}{summary}",
+        }
 
         history.clear()
         history.append(summary_msg)
