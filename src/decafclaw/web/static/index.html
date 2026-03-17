@@ -21,10 +21,14 @@
   <div id="app">
     <login-view></login-view>
     <div id="chat-layout" class="hidden">
+      <div id="sidebar-backdrop"></div>
       <conversation-sidebar></conversation-sidebar>
       <div id="sidebar-resize-handle"></div>
       <div id="chat-main">
-        <div id="connection-banner" class="hidden">Reconnecting...</div>
+        <div id="mobile-header">
+          <button id="hamburger-btn" class="hamburger-btn" aria-label="Open sidebar">&#9776;</button>
+          <div id="connection-banner" class="hidden">Reconnecting...</div>
+        </div>
         <chat-view></chat-view>
         <chat-input></chat-input>
       </div>
