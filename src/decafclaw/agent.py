@@ -105,8 +105,9 @@ async def _call_llm_with_events(ctx, config, messages, tools) -> dict:
     if config.llm_streaming:
         from .llm import call_llm_streaming
         on_chunk = getattr(ctx, "on_stream_chunk", None)
+        cancel_event = getattr(ctx, "cancelled", None)
         response = await call_llm_streaming(
-            config, messages, tools=tools, on_chunk=on_chunk
+            config, messages, tools=tools, on_chunk=on_chunk, cancel_event=cancel_event
         )
     else:
         response = await call_llm(config, messages, tools=tools)
