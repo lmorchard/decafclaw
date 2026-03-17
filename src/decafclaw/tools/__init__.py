@@ -67,11 +67,30 @@ async def execute_tool(ctx, name: str, arguments: dict) -> ToolResult:
     fn = extra_tools.get(name) or TOOLS.get(name)
     if fn is None:
         return ToolResult(text=f"[error: unknown tool: {name}]")
+    cancel_event = getattr(ctx, "cancelled", None)
     try:
         if asyncio.iscoroutinefunction(fn):
-            result = await fn(ctx, **arguments)
+            tool_task = asyncio.create_task(fn(ctx, **arguments))
         else:
-            result = await asyncio.to_thread(fn, ctx, **arguments)
+            tool_task = asyncio.create_task(asyncio.to_thread(fn, ctx, **arguments))
+
+        if cancel_event:
+            cancel_task = asyncio.create_task(cancel_event.wait())
+            done, _ = await asyncio.wait(
+                [tool_task, cancel_task], return_when=asyncio.FIRST_COMPLETED
+            )
+            cancel_task.cancel()
+            if tool_task not in done:
+                tool_task.cancel()
+                try:
+                    await tool_task
+                except (asyncio.CancelledError, Exception):
+                    pass
+                return ToolResult(text="[tool interrupted: agent turn cancelled]")
+            result = tool_task.result()
+        else:
+            result = await tool_task
+
         return _to_tool_result(result)
     except Exception as e:
         return ToolResult(text=f"[error executing {name}: {e}]")
