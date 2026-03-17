@@ -101,7 +101,9 @@ make debug        # With debug logging
 make test         # Run pytest
 make lint         # Ruff linting
 make typecheck    # Pyright type checking
-make check        # Lint + type check combined
+make check-js     # TypeScript/JSDoc type checking
+make check        # Lint + type check (Python + JS)
+make vendor       # Rebuild web UI vendor bundle
 make lint-fix     # Auto-fix lint issues
 make fmt          # Format with ruff
 ```
