@@ -180,6 +180,26 @@ async function init() {
 
 init();
 
+// Mobile sidebar open/close
+const hamburgerBtn = document.getElementById('hamburger-btn');
+const sidebarBackdrop = document.getElementById('sidebar-backdrop');
+
+hamburgerBtn?.addEventListener('click', () => sidebar?.openMobile());
+sidebarBackdrop?.addEventListener('click', () => {
+  sidebar?.closeMobile();
+  sidebarBackdrop.classList.remove('visible');
+});
+
+// Keep backdrop in sync with sidebar mobile state
+store.addEventListener('change', () => {});  // ensure sidebar re-renders
+if (sidebar) {
+  const observer = new MutationObserver(() => {
+    const isOpen = sidebar.hasAttribute('mobile-open');
+    sidebarBackdrop?.classList.toggle('visible', isOpen);
+  });
+  observer.observe(sidebar, { attributes: true, attributeFilter: ['mobile-open'] });
+}
+
 // Sidebar drag resize
 const resizeHandle = document.getElementById('sidebar-resize-handle');
 const MIN_WIDTH = 160;
