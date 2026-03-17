@@ -75,12 +75,17 @@ async def restore_skills(ctx) -> None:
         return
     discovered = getattr(ctx.config, "discovered_skills", [])
     skill_map = {s.name: s for s in discovered}
+    existing_tools = set(getattr(ctx, "extra_tools", {}).keys())
     for name in skill_names:
         skill_info = skill_map.get(name)
         if not skill_info or not skill_info.has_native_tools:
             continue
         try:
             tools, tool_defs, module = _load_native_tools(skill_info)
+            # Skip if these tools are already loaded (e.g. from persisted skill state)
+            if all(t in existing_tools for t in tools):
+                log.debug(f"Skill '{name}' tools already loaded, skipping restore")
+                continue
             await _call_init(module, ctx.config)
             if not hasattr(ctx, "extra_tools"):
                 ctx.extra_tools = {}

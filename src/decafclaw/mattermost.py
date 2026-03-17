@@ -134,12 +134,14 @@ class MattermostClient:
         resp.raise_for_status()
         return resp.json().get("id")
 
-    async def edit_message(self, post_id, message):
-        """Edit an existing post's content."""
-        resp = await self._http.put(f"/posts/{post_id}/patch", json={
-            "id": post_id,
-            "message": message,
-        })
+    async def edit_message(self, post_id, message=None, props=None):
+        """Edit an existing post's content and/or props."""
+        body: dict = {"id": post_id}
+        if message is not None:
+            body["message"] = message
+        if props is not None:
+            body["props"] = props
+        resp = await self._http.put(f"/posts/{post_id}/patch", json=body)
         resp.raise_for_status()
 
     async def delete_message(self, post_id):
@@ -344,6 +346,7 @@ class MattermostClient:
             throttle_ms=app_ctx.config.llm_stream_throttle_ms,
             initial_post_id=placeholder_id,
             config=app_ctx.config,
+            conv_id=conv_id,
         )
 
         # Set streaming callback
@@ -359,6 +362,23 @@ class MattermostClient:
             cancel_task = asyncio.create_task(
                 self._poll_cancel(placeholder_id, cancel_event)
             )
+
+        # Attach interactive Stop button to messages during this turn
+        from .http_server import build_stop_button
+        stop_attachments = build_stop_button(app_ctx.config, conv_id)
+        if stop_attachments and placeholder_id:
+            conv_display._stop_attachments = stop_attachments
+            conv_display._stop_on_post = placeholder_id
+            # Patch placeholder to include the stop button
+            await self.edit_message(
+                placeholder_id, THINKING_INDICATOR,
+                props={"attachments": stop_attachments},
+            )
+            # Subscribe to cancel_turn events from the button callback
+            def on_cancel(event):
+                if event.get("type") == "cancel_turn" and event.get("conv_id") == conv_id:
+                    cancel_event.set()
+            conv_display._cancel_sub = req_ctx.event_bus.subscribe(on_cancel)
 
         sub_id = self._subscribe_progress(
             req_ctx.event_bus, req_ctx.context_id,
@@ -458,6 +478,10 @@ class MattermostClient:
             log.error(f"Agent turn failed: {e}")
             from .media import ToolResult
             response = ToolResult(text=f"[error: agent turn failed: {e}]")
+            # Show error on the placeholder instead of leaving it to be deleted
+            if conv_display._current_post_id and not conv_display._text_has_content:
+                conv_display._text_buffer = f"\u26a0\ufe0f {e}"
+                conv_display._text_has_content = True
         finally:
             if cancel_task:
                 cancel_task.cancel()
@@ -466,6 +490,9 @@ class MattermostClient:
                 except asyncio.CancelledError:
                     pass
             req_ctx.event_bus.unsubscribe(sub_id)
+            cancel_sub = getattr(conv_display, "_cancel_sub", None)
+            if cancel_sub is not None:
+                req_ctx.event_bus.unsubscribe(cancel_sub)
             conv.last_response_time = time.monotonic()
             conv.busy = False
             conv.cancel = None
@@ -775,13 +802,14 @@ class ConversationDisplay:
     """
 
     def __init__(self, client, channel_id, root_id, throttle_ms=200,
-                 initial_post_id=None, config=None):
+                 initial_post_id=None, config=None, conv_id=None):
         self.client = client
         self._channel_id = channel_id
         self._root_id = root_id
         self._throttle_ms = throttle_ms
         self._initial_post_id = initial_post_id
         self._config = config
+        self._conv_id = conv_id
 
         # Current message state
         self._current_post_id = initial_post_id
@@ -797,6 +825,9 @@ class ConversationDisplay:
 
         # Turn state
         self._finalized = False
+        self._stop_attachments: list[dict] | None = None
+        self._stop_on_post: str | None = None  # post ID that currently has the button
+        self._cancel_sub: str | None = None
 
     # -- Text streaming --------------------------------------------------------
 
@@ -813,9 +844,12 @@ class ConversationDisplay:
             self._text_has_content = False
             post_id = await self.client.send(
                 self._channel_id, THINKING_INDICATOR, root_id=self._root_id,
+                attachments=self._stop_attachments,
             )
             self._current_post_id = post_id
             self._current_type = "thinking"
+            if self._stop_attachments:
+                self._stop_on_post = post_id
 
     async def on_text_chunk(self, text):
         """Streaming text chunk — buffer and throttle-edit."""
@@ -846,8 +880,11 @@ class ConversationDisplay:
         else:
             post_id = await self.client.send(
                 self._channel_id, text, root_id=self._root_id,
+                attachments=self._stop_attachments,
             )
             self._current_post_id = post_id
+            if self._stop_attachments:
+                self._stop_on_post = post_id
         self._current_type = None
 
     async def on_stream_chunk(self, chunk_type, data):
@@ -883,7 +920,10 @@ class ConversationDisplay:
             await self._finalize_current_text()
             self._tool_post_id = await self.client.send(
                 self._channel_id, msg, root_id=self._root_id,
+                attachments=self._stop_attachments,
             )
+            if self._stop_attachments:
+                self._stop_on_post = self._tool_post_id
         self._current_type = "tool"
 
     async def on_tool_status(self, tool_name, message):
@@ -906,7 +946,11 @@ class ConversationDisplay:
 
         if self._tool_post_id:
             try:
-                await self.client.edit_message(self._tool_post_id, msg)
+                await self.client.edit_message(
+                    self._tool_post_id, msg, props={"attachments": []},
+                )
+                if self._stop_on_post == self._tool_post_id:
+                    self._stop_on_post = None
             except Exception:
                 pass
 
@@ -1012,13 +1056,49 @@ class ConversationDisplay:
                 except Exception:
                     pass
 
+        # Strip stop button from whichever post currently has it
+        if self._stop_on_post:
+            await self._strip_stop_from(self._stop_on_post)
+        self._stop_attachments = None
+
     # -- Helpers ---------------------------------------------------------------
 
+    async def _strip_stop_from(self, post_id):
+        """Explicitly strip stop button attachments from a post.
+
+        Fetches the post first to preserve its message text — a props-only
+        edit with no message causes Mattermost to show '(message deleted)'.
+        """
+        if not post_id:
+            return
+        try:
+            resp = await self.client._http.get(f"/posts/{post_id}")
+            resp.raise_for_status()
+            current_text = resp.json().get("message", "")
+            await self.client.edit_message(
+                post_id, current_text, props={"attachments": []},
+            )
+        except Exception:
+            pass
+        if self._stop_on_post == post_id:
+            self._stop_on_post = None
+
     async def _finalize_current_text(self):
-        """Strip thinking suffix from current text message if active."""
+        """Strip thinking suffix and stop button from current text message."""
         if self._current_type in ("text", "thinking") and self._current_post_id:
             if self._text_has_content and self._text_buffer:
-                await self._force_edit(self._current_post_id, self._text_buffer)
+                # Final text edit + strip stop button in one call
+                try:
+                    await self.client.edit_message(
+                        self._current_post_id, self._text_buffer,
+                        props={"attachments": []},
+                    )
+                    if self._stop_on_post == self._current_post_id:
+                        self._stop_on_post = None
+                except Exception:
+                    pass
+            else:
+                await self._strip_stop_from(self._current_post_id)
             self._current_type = None
 
     async def _throttled_edit(self, post_id, text):
@@ -1031,7 +1111,10 @@ class ConversationDisplay:
         await self._force_edit(post_id, text)
 
     async def _force_edit(self, post_id, text):
-        """Edit a post immediately, updating the throttle timer."""
+        """Edit a post immediately, updating the throttle timer.
+
+        Text-only edit — does not touch props/attachments.
+        """
         if not post_id:
             return
         self._last_edit_time = time.monotonic()
