@@ -108,12 +108,12 @@ export class ConversationSidebar extends LitElement {
     return html`
       <div class="sidebar-header">
         <h3>Conversations</h3>
-        <button class="outline" @click=${this.#handleNew} title="New conversation">+</button>
         <button class="collapse-btn" @click=${this.#toggleCollapse} title="Collapse sidebar">‹</button>
       </div>
       <div class="conv-list">
+        <button class="new-conv-btn outline" @click=${this.#handleNew} title="New conversation (⌘K)">+ New conversation</button>
         ${this._conversations.length === 0
-          ? html`<p style="padding: 0.5rem; color: var(--pico-muted-color); font-size: 0.9rem;">No conversations yet</p>`
+          ? nothing
           : this._conversations.map(c => html`
             <div
               class="conv-item ${c.conv_id === this._activeId ? 'active' : ''}"
