@@ -214,6 +214,12 @@ export class ConversationStore extends EventTarget {
           this.#currentConvId = null;
           this.#currentMessages = [];
         }
+        // Add to archived list so it appears immediately if the section is open
+        this.#archivedConversations = [
+          { conv_id: msg.conv_id, title: msg.title,
+            created_at: msg.created_at, updated_at: msg.updated_at },
+          ...this.#archivedConversations,
+        ];
         break;
 
       case 'archived_list':

@@ -187,7 +187,9 @@ async def websocket_chat(websocket: WebSocket, config, event_bus, app_ctx):
                 if conv and conv.user_id == username:
                     index.archive(conv_id)
                     active_conv_ids.discard(conv_id)
-                    await ws_send({"type": "conv_archived", "conv_id": conv_id})
+                    await ws_send({"type": "conv_archived", "conv_id": conv_id,
+                                   "title": conv.title, "created_at": conv.created_at,
+                                   "updated_at": conv.updated_at})
                     # Refresh the conversation list
                     convs = index.list_for_user(username)
                     await ws_send({
