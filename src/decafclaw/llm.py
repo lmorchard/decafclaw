@@ -77,6 +77,7 @@ async def call_llm(config, messages, tools=None,
 
 async def call_llm_streaming(config, messages, tools=None,
                               on_chunk=None,
+                              cancel_event=None,
                               llm_url=None, llm_model=None, llm_api_key=None) -> dict:
     """Call the LLM with streaming, invoking on_chunk for each token.
 
@@ -128,6 +129,9 @@ async def call_llm_streaming(config, messages, tools=None,
             async with aconnect_sse(client, "POST", url, json=body,
                                      headers=headers, timeout=httpx.Timeout(120.0)) as event_source:
                 async for event in event_source.aiter_sse():
+                    if cancel_event and cancel_event.is_set():
+                        log.info("LLM streaming cancelled by user")
+                        break
                     if event.data == "[DONE]":
                         break
 
