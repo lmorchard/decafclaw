@@ -110,7 +110,25 @@ async def _call_llm_with_events(ctx, config, messages, tools) -> dict:
             config, messages, tools=tools, on_chunk=on_chunk, cancel_event=cancel_event
         )
     else:
-        response = await call_llm(config, messages, tools=tools)
+        cancel_event = getattr(ctx, "cancelled", None)
+        if cancel_event:
+            llm_task = asyncio.create_task(call_llm(config, messages, tools=tools))
+            cancel_task = asyncio.create_task(cancel_event.wait())
+            done, _ = await asyncio.wait(
+                [llm_task, cancel_task], return_when=asyncio.FIRST_COMPLETED
+            )
+            cancel_task.cancel()
+            if llm_task not in done:
+                llm_task.cancel()
+                try:
+                    await llm_task
+                except (asyncio.CancelledError, Exception):
+                    pass
+                response = {"content": "", "tool_calls": None, "role": "assistant", "usage": {}}
+            else:
+                response = llm_task.result()
+        else:
+            response = await call_llm(config, messages, tools=tools)
     await ctx.publish("llm_end", iteration=iteration,
                       content=response.get("content"),
                       has_tool_calls=bool(response.get("tool_calls")))
