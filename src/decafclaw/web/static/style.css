@@ -662,6 +662,22 @@ conversation-sidebar .collapse-btn:hover {
   color: var(--pico-color);
 }
 
+conversation-sidebar .mobile-close-btn {
+  display: none;
+  background: none;
+  border: none;
+  font-size: 1.3rem;
+  line-height: 1;
+  padding: 0.15rem 0.3rem;
+  margin: 0;
+  cursor: pointer;
+  color: var(--pico-muted-color);
+}
+
+conversation-sidebar .mobile-close-btn:hover {
+  color: var(--pico-color);
+}
+
 /* Resize handle */
 #sidebar-resize-handle {
   width: 4px;
@@ -674,4 +690,108 @@ conversation-sidebar .collapse-btn:hover {
 #sidebar-resize-handle:hover,
 #sidebar-resize-handle.dragging {
   background: var(--pico-primary);
+}
+
+/* Mobile header (hamburger + connection banner) */
+#mobile-header {
+  display: contents; /* desktop: transparent wrapper, children flow normally */
+}
+
+/* Sidebar backdrop */
+#sidebar-backdrop {
+  display: none;
+}
+
+/* Hamburger button — hidden on desktop */
+.hamburger-btn {
+  display: none;
+}
+
+/* ── Mobile (< 640px) ───────────────────────────────────────────────────── */
+@media (max-width: 639px) {
+  /* Wider message bubbles */
+  chat-message .message {
+    max-width: 95%;
+  }
+
+  /* Pin chat input to bottom of viewport */
+  chat-input {
+    position: sticky;
+    bottom: 0;
+    z-index: 10;
+    background: var(--pico-background-color);
+  }
+
+  /* Hide drag-to-resize handle */
+  #sidebar-resize-handle {
+    display: none;
+  }
+
+  /* Mobile header bar */
+  #mobile-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.35rem 0.75rem;
+    border-bottom: 1px solid var(--pico-muted-border-color);
+    background: var(--pico-background-color);
+  }
+
+  /* Hamburger button */
+  .hamburger-btn {
+    display: block;
+    background: none;
+    border: none;
+    font-size: 1.4rem;
+    line-height: 1;
+    padding: 0.1rem 0.25rem;
+    margin: 0;
+    cursor: pointer;
+    color: var(--pico-color);
+    flex-shrink: 0;
+  }
+
+  /* Connection banner sits in the header row on mobile */
+  #connection-banner {
+    flex: 1;
+    text-align: center;
+    padding: 0;
+    font-size: 0.8rem;
+    background: transparent;
+    color: var(--pico-del-color);
+  }
+
+  /* Off-canvas sidebar overlay */
+  conversation-sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    height: 100%;
+    z-index: 200;
+    transform: translateX(-100%);
+    transition: transform 0.25s ease;
+    box-shadow: 2px 0 12px rgba(0, 0, 0, 0.2);
+  }
+
+  conversation-sidebar[mobile-open] {
+    transform: translateX(0);
+  }
+
+  /* Semi-transparent backdrop */
+  #sidebar-backdrop {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.4);
+    z-index: 199;
+  }
+
+  #sidebar-backdrop.visible {
+    display: block;
+  }
+
+  /* Mobile close button inside sidebar */
+  .mobile-close-btn {
+    display: block !important;
+  }
 }

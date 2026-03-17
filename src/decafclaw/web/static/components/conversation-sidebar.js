@@ -11,6 +11,7 @@ export class ConversationSidebar extends LitElement {
     _contextUsage: { type: Number, state: true },
     _contextLimit: { type: Number, state: true },
     _collapsed: { type: Boolean, state: true },
+    _mobileOpen: { type: Boolean, state: true },
   };
 
   createRenderRoot() { return this; }
@@ -26,6 +27,15 @@ export class ConversationSidebar extends LitElement {
     this._contextUsage = 0;
     this._contextLimit = 0;
     this._collapsed = localStorage.getItem('sidebar-collapsed') === 'true';
+    this._mobileOpen = false;
+  }
+
+  openMobile() {
+    this._mobileOpen = true;
+  }
+
+  closeMobile() {
+    this._mobileOpen = false;
   }
 
   connectedCallback() {
@@ -52,6 +62,7 @@ export class ConversationSidebar extends LitElement {
       this._onStoreChange();
     }
     this.toggleAttribute('collapsed', this._collapsed);
+    this.toggleAttribute('mobile-open', this._mobileOpen);
   }
 
   #toggleCollapse() {
@@ -66,6 +77,7 @@ export class ConversationSidebar extends LitElement {
   /** @param {string} convId */
   #handleSelect(convId) {
     this.store?.selectConversation(convId);
+    this.closeMobile();
   }
 
   /** @param {string} convId */
@@ -108,6 +120,7 @@ export class ConversationSidebar extends LitElement {
     return html`
       <div class="sidebar-header">
         <h3>Conversations</h3>
+        <button class="mobile-close-btn" @click=${() => this.closeMobile()} title="Close sidebar">&#10005;</button>
         <button class="collapse-btn" @click=${this.#toggleCollapse} title="Collapse sidebar">‹</button>
       </div>
       <div class="conv-list">
