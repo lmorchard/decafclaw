@@ -4,9 +4,11 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from decafclaw.archive import append_message
+from decafclaw.archive import append_message, write_compacted_history
 from decafclaw.compaction import (
+    SUMMARY_PREFIX,
     _estimate_tokens,
+    _extract_previous_summary,
     _flatten_messages,
     _split_into_turns,
     compact_history,
@@ -183,4 +185,81 @@ class TestCompactHistory:
         with patch("decafclaw.compaction.call_llm", new_callable=AsyncMock, return_value=mock_response):
             result = await compact_history(ctx, history)
 
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_incremental_compaction(self, ctx, config):
+        """Second compaction should only summarize newly-old turns."""
+        conv_id = "test-conv"
+        # Create 10 turns
+        for i in range(10):
+            append_message(config, conv_id, {"role": "user", "content": f"message {i}"})
+            append_message(config, conv_id, {"role": "assistant", "content": f"response {i}"})
+
+        ctx.config.compaction_preserve_turns = 5
+
+        # Simulate a previous compaction that summarized turns 0-4,
+        # preserving turns 5-9 (10 messages) as recent.
+        prev_summary = f"{SUMMARY_PREFIX}Summary of turns 0-4."
+        prev_recent = []
+        for i in range(5, 10):
+            prev_recent.append({"role": "user", "content": f"message {i}"})
+            prev_recent.append({"role": "assistant", "content": f"response {i}"})
+        write_compacted_history(config, conv_id, [
+            {"role": "user", "content": prev_summary},
+            *prev_recent,
+        ])
+
+        # Now add 3 more turns (turns 10-12) to the archive
+        for i in range(10, 13):
+            append_message(config, conv_id, {"role": "user", "content": f"message {i}"})
+            append_message(config, conv_id, {"role": "assistant", "content": f"response {i}"})
+
+        # 13 turns total, preserve 5 → 8 old turns.
+        # Previous compaction covered 5 old turns. So 3 newly-old turns.
+        history = [{"role": "user", "content": "placeholder"}]
+
+        mock_response = {
+            "content": "Updated summary including turns 0-7.",
+            "tool_calls": None,
+            "role": "assistant",
+            "usage": None,
+        }
+
+        with patch("decafclaw.compaction.call_llm", new_callable=AsyncMock, return_value=mock_response) as mock_llm:
+            result = await compact_history(ctx, history)
+
+        assert result is True
+        # Verify the LLM was called with incremental prompt (existing summary + new turns)
+        call_args = mock_llm.call_args
+        messages = call_args[0][1]  # second positional arg
+        user_content = messages[1]["content"]
+        assert "Existing summary:" in user_content
+        assert "Summary of turns 0-4." in user_content
+        assert "New conversation turns to incorporate:" in user_content
+
+    @pytest.mark.asyncio
+    async def test_incremental_skips_when_no_new_turns(self, ctx, config):
+        """If no turns have aged out since last compaction, skip."""
+        conv_id = "test-conv"
+        # Create 8 turns
+        for i in range(8):
+            append_message(config, conv_id, {"role": "user", "content": f"message {i}"})
+            append_message(config, conv_id, {"role": "assistant", "content": f"response {i}"})
+
+        ctx.config.compaction_preserve_turns = 5
+
+        # Previous compaction summarized turns 0-2, preserved turns 3-7 (10 msgs).
+        prev_recent = []
+        for i in range(3, 8):
+            prev_recent.append({"role": "user", "content": f"message {i}"})
+            prev_recent.append({"role": "assistant", "content": f"response {i}"})
+        write_compacted_history(config, conv_id, [
+            {"role": "user", "content": f"{SUMMARY_PREFIX}Summary of turns 0-2."},
+            *prev_recent,
+        ])
+
+        # No new messages added — same 8 turns, same boundary.
+        history = [{"role": "user", "content": "placeholder"}]
+        result = await compact_history(ctx, history)
         assert result is False
