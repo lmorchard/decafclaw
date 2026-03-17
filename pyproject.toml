@@ -27,6 +27,7 @@ dev = ["watchfiles>=1.0.0"]
 decafclaw = "decafclaw:main"
 decafclaw-reindex = "decafclaw.embeddings:reindex_cli"
 decafclaw-search = "decafclaw.embeddings:search_cli"
+decafclaw-token = "decafclaw.web.auth:token_cli"
 
 [build-system]
 requires = ["hatchling"]

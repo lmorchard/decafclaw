@@ -36,6 +36,9 @@ A minimal AI agent for learning how agent frameworks work. Connects to Mattermos
 - `src/decafclaw/media.py` — Media handling: ToolResult, MediaHandler interface, workspace ref scanning
 - `src/decafclaw/tools/` — Tool registry: core, memory, todo, workspace, file_share, shell, conversation, skill activation, MCP status
 - `src/decafclaw/tools/confirmation.py` — Shared confirmation request helper (event-bus-based user approval)
+- `src/decafclaw/runner.py` — Top-level orchestrator: manages MCP, HTTP server, Mattermost, heartbeat as parallel tasks
+- `src/decafclaw/web/` — Web gateway: auth, conversations, WebSocket chat handler
+- `src/decafclaw/web/static/` — Frontend: Lit web components, service layer (AuthClient, WebSocketClient, ConversationStore)
 
 ## Running
 
@@ -46,8 +49,10 @@ make debug        # With debug logging
 make run-pro      # With gemini-2.5-pro model
 make lint         # Compile-check all source files
 make typecheck    # Run pyright type checker
-make check        # Lint + type check combined
+make check-js     # Type check JS (tsc --checkJs)
+make check        # Lint + type check combined (Python + JS)
 make test         # Run pytest
+make vendor       # Rebuild web UI vendor bundle (npm + esbuild)
 make reindex      # Rebuild embedding index from memory files
 make build-eval-fixtures  # Rebuild eval embedding fixtures
 ```

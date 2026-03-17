@@ -61,6 +61,8 @@ async def _index_conversation_message(ctx, msg) -> None:
 
 async def _maybe_compact(ctx, config, history, prompt_tokens) -> None:
     """Trigger compaction if token budget is exceeded."""
+    log.info(f"Compaction check: prompt_tokens={prompt_tokens}, "
+             f"threshold={config.compaction_max_tokens}")
     if prompt_tokens and prompt_tokens > config.compaction_max_tokens:
         log.info(f"Token budget exceeded ({prompt_tokens} > {config.compaction_max_tokens}), "
                  f"triggering compaction")
@@ -133,7 +135,7 @@ async def _execute_tool_calls(ctx, tool_calls, history, messages, pending_media)
         await ctx.publish("tool_start", tool=fn_name, args=fn_args)
         result = await execute_tool(ctx, fn_name, fn_args)
         await ctx.publish("tool_end", tool=fn_name,
-                          result_text=result.text[:200],
+                          result_text=result.text,
                           display_text=getattr(result, "display_text", None),
                           media=result.media or [])
         log.debug(f"Tool result: {result.text[:200]}...")
@@ -205,8 +207,9 @@ async def run_agent_turn(ctx, user_message: str, history: list) -> "ToolResult":
         usage = response.get("usage")
         if usage:
             prompt_tokens = usage.get("prompt_tokens", 0)
-            ctx.total_prompt_tokens += usage.get("prompt_tokens", 0)
+            ctx.total_prompt_tokens += prompt_tokens
             ctx.total_completion_tokens += usage.get("completion_tokens", 0)
+            ctx.last_prompt_tokens = prompt_tokens
 
         tool_calls = response.get("tool_calls")
         if tool_calls:
