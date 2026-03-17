@@ -3,7 +3,7 @@
 import logging
 from pathlib import Path
 
-from .archive import read_archive
+from .archive import read_archive, read_compacted_history, write_compacted_history
 from .llm import call_llm
 
 log = logging.getLogger(__name__)
@@ -158,7 +158,7 @@ async def compact_history(ctx, history: list) -> bool:
     preserve = config.compaction_preserve_turns
 
     if len(turns) <= preserve:
-        log.debug(f"Only {len(turns)} turns, need >{preserve} to compact")
+        log.info(f"Compaction skipped: only {len(turns)} turns, need >{preserve} to compact")
         return False
 
     # Split: old turns to summarize, recent turns to keep
@@ -204,6 +204,9 @@ async def compact_history(ctx, history: list) -> bool:
         history.clear()
         history.append(summary_msg)
         history.extend(recent_messages)
+
+        # Persist compacted working history so future turns don't re-expand from archive
+        write_compacted_history(config, conv_id, list(history))
 
         log.info(f"Compaction complete: {len(old_messages)} messages -> "
                  f"1 summary + {len(recent_messages)} recent = {len(history)} total")

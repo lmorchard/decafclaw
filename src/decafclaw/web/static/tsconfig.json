@@ -1,0 +1,21 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ES2022",
+    "lib": ["ES2023", "DOM"],
+    "moduleResolution": "bundler",
+    "checkJs": true,
+    "allowJs": true,
+    "noEmit": true,
+    "strict": false,
+    "skipLibCheck": true,
+    "baseUrl": ".",
+    "paths": {
+      "lit": ["./node_modules/lit"],
+      "lit/*": ["./node_modules/lit/*"],
+      "marked": ["./node_modules/marked"],
+      "dompurify": ["./node_modules/dompurify"]
+    }
+  },
+  "include": ["app.js", "lib/**/*.js", "components/**/*.js"]
+}

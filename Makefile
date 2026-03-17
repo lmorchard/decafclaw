@@ -22,10 +22,15 @@ lint:
 typecheck:
 	uv run pyright
 
-# Lint + type check
+# Type check JS (requires npm install in static/)
+check-js:
+	cd src/decafclaw/web/static && npx tsc --noEmit
+
+# Lint + type check (Python + JS)
 check:
 	uv run ruff check src/ tests/
 	uv run pyright
+	cd src/decafclaw/web/static && npx tsc --noEmit
 
 # Auto-fix lint issues
 lint-fix:
@@ -42,6 +47,12 @@ test:
 # Rebuild production embedding index from memory files
 reindex:
 	uv run decafclaw-reindex
+
+# Build web UI vendor bundle (npm + esbuild)
+# Run after changing JS dependencies in src/decafclaw/web/static/package.json
+# Requires Node.js. Output is committed to git, so only needed for dev.
+vendor:
+	cd src/decafclaw/web/static && npm install && npm run build
 
 # Rebuild eval embedding fixtures (run when changing embedding models)
 build-eval-fixtures:

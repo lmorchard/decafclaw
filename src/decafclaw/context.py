@@ -31,6 +31,7 @@ class Context:
         self.activated_skills: set = set()
         self.total_prompt_tokens: int = 0
         self.total_completion_tokens: int = 0
+        self.last_prompt_tokens: int = 0
         self.allowed_tools: set | None = None
 
     def fork(self, **overrides) -> "Context":

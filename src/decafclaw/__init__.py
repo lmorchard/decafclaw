@@ -28,12 +28,11 @@ def main():
     bus = EventBus()
     app_ctx = Context(config=config, event_bus=bus)
 
-    # If Mattermost is configured, run as a bot. Otherwise, interactive mode.
-    if config.mattermost_url and config.mattermost_token:
+    # Server mode (Mattermost and/or HTTP) vs interactive terminal mode
+    if config.mattermost_url or config.http_enabled:
         try:
-            from .mattermost import MattermostClient
-            client = MattermostClient(config)
-            asyncio.run(client.run(app_ctx))
+            from .runner import run_all
+            asyncio.run(run_all(app_ctx))
         except KeyboardInterrupt:
             log.info("Interrupted by user")
         except BaseException as e:

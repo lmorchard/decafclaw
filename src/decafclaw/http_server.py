@@ -3,11 +3,13 @@
 import hashlib
 import logging
 import secrets
+from pathlib import Path
 
 from starlette.applications import Starlette
 from starlette.requests import Request
-from starlette.responses import JSONResponse
-from starlette.routing import Route
+from starlette.responses import FileResponse, JSONResponse
+from starlette.routing import Mount, Route, WebSocketRoute
+from starlette.staticfiles import StaticFiles
 
 log = logging.getLogger(__name__)
 
@@ -60,7 +62,7 @@ def get_token_registry() -> ConfirmTokenRegistry:
     return _token_registry
 
 
-def create_app(config, event_bus) -> Starlette:
+def create_app(config, event_bus, app_ctx=None) -> Starlette:
     """Create the Starlette ASGI app with routes."""
 
     async def health(request: Request) -> JSONResponse:
@@ -129,10 +131,186 @@ def create_app(config, event_bus) -> Starlette:
             }
         })
 
+    # -- Auth routes -----------------------------------------------------------
+
+    async def auth_login(request: Request) -> JSONResponse:
+        """Validate token, set session cookie."""
+        from .web.auth import validate_token
+        body = await request.json()
+        token = body.get("token", "")
+        username = validate_token(config, token)
+        if not username:
+            return JSONResponse({"error": "invalid token"}, status_code=401)
+        response = JSONResponse({"username": username})
+        response.set_cookie(
+            "decafclaw_session", token,
+            httponly=True, samesite="lax", max_age=30 * 24 * 3600,
+        )
+        return response
+
+    async def auth_logout(request: Request) -> JSONResponse:
+        """Clear session cookie."""
+        response = JSONResponse({"ok": True})
+        response.delete_cookie("decafclaw_session")
+        return response
+
+    async def auth_me(request: Request) -> JSONResponse:
+        """Return current authenticated user."""
+        from .web.auth import get_current_user
+        username = get_current_user(request, config)
+        if not username:
+            return JSONResponse({"error": "not authenticated"}, status_code=401)
+        return JSONResponse({"username": username})
+
+    # -- Conversation routes ---------------------------------------------------
+
+    def _require_auth(request):
+        """Helper: get username from cookie or None."""
+        from .web.auth import get_current_user
+        return get_current_user(request, config)
+
+    async def list_conversations(request: Request) -> JSONResponse:
+        """List conversations for the authenticated user."""
+        username = _require_auth(request)
+        if not username:
+            return JSONResponse({"error": "not authenticated"}, status_code=401)
+        from .web.conversations import ConversationIndex
+        index = ConversationIndex(config)
+        convs = index.list_for_user(username)
+        return JSONResponse([{
+            "conv_id": c.conv_id, "title": c.title,
+            "created_at": c.created_at, "updated_at": c.updated_at,
+        } for c in convs])
+
+    async def create_conversation(request: Request) -> JSONResponse:
+        """Create a new conversation."""
+        username = _require_auth(request)
+        if not username:
+            return JSONResponse({"error": "not authenticated"}, status_code=401)
+        body = await request.json()
+        from .web.conversations import ConversationIndex
+        index = ConversationIndex(config)
+        conv = index.create(username, title=body.get("title", ""))
+        return JSONResponse({
+            "conv_id": conv.conv_id, "title": conv.title,
+            "created_at": conv.created_at, "updated_at": conv.updated_at,
+        }, status_code=201)
+
+    async def get_conversation(request: Request) -> JSONResponse:
+        """Get conversation metadata."""
+        username = _require_auth(request)
+        if not username:
+            return JSONResponse({"error": "not authenticated"}, status_code=401)
+        conv_id = request.path_params["id"]
+        from .web.conversations import ConversationIndex
+        index = ConversationIndex(config)
+        conv = index.get(conv_id)
+        if not conv or conv.user_id != username:
+            return JSONResponse({"error": "not found"}, status_code=404)
+        return JSONResponse({
+            "conv_id": conv.conv_id, "title": conv.title,
+            "created_at": conv.created_at, "updated_at": conv.updated_at,
+        })
+
+    async def rename_conversation(request: Request) -> JSONResponse:
+        """Rename a conversation."""
+        username = _require_auth(request)
+        if not username:
+            return JSONResponse({"error": "not authenticated"}, status_code=401)
+        conv_id = request.path_params["id"]
+        body = await request.json()
+        from .web.conversations import ConversationIndex
+        index = ConversationIndex(config)
+        conv = index.get(conv_id)
+        if not conv or conv.user_id != username:
+            return JSONResponse({"error": "not found"}, status_code=404)
+        updated = index.rename(conv_id, body.get("title", ""))
+        if not updated:
+            return JSONResponse({"error": "not found"}, status_code=404)
+        return JSONResponse({
+            "conv_id": updated.conv_id, "title": updated.title,
+            "created_at": updated.created_at, "updated_at": updated.updated_at,
+        })
+
+    async def get_conversation_history(request: Request) -> JSONResponse:
+        """Load paginated conversation history."""
+        username = _require_auth(request)
+        if not username:
+            return JSONResponse({"error": "not authenticated"}, status_code=401)
+        conv_id = request.path_params["id"]
+        from .web.conversations import ConversationIndex
+        index = ConversationIndex(config)
+        conv = index.get(conv_id)
+        if not conv or conv.user_id != username:
+            return JSONResponse({"error": "not found"}, status_code=404)
+        limit = int(request.query_params.get("limit", "50"))
+        before = request.query_params.get("before", "")
+        messages, has_more = index.load_history(conv_id, limit=limit, before=before)
+        return JSONResponse({"messages": messages, "has_more": has_more})
+
+    async def serve_workspace_file(request: Request):
+        """Serve a file from the agent workspace (authenticated, read-only)."""
+        username = _require_auth(request)
+        if not username:
+            return JSONResponse({"error": "not authenticated"}, status_code=401)
+        file_path = request.path_params.get("path", "")
+        if not file_path:
+            return JSONResponse({"error": "path required"}, status_code=400)
+        # Resolve and sandbox to workspace
+        import mimetypes
+        workspace = config.workspace_path.resolve()
+        resolved = (workspace / file_path).resolve()
+        if not str(resolved).startswith(str(workspace)):
+            return JSONResponse({"error": "path outside workspace"}, status_code=403)
+        if not resolved.is_file():
+            return JSONResponse({"error": "not found"}, status_code=404)
+        content_type = mimetypes.guess_type(str(resolved))[0] or "application/octet-stream"
+        return FileResponse(str(resolved), media_type=content_type)
+
+    async def archive_conversation(request: Request) -> JSONResponse:
+        """Archive a conversation (hide from list, keep data)."""
+        username = _require_auth(request)
+        if not username:
+            return JSONResponse({"error": "not authenticated"}, status_code=401)
+        conv_id = request.path_params["id"]
+        from .web.conversations import ConversationIndex
+        index = ConversationIndex(config)
+        conv = index.get(conv_id)
+        if not conv or conv.user_id != username:
+            return JSONResponse({"error": "not found"}, status_code=404)
+        index.archive(conv_id)
+        return JSONResponse({"ok": True})
+
+    # -- WebSocket route -------------------------------------------------------
+
+    async def ws_chat(websocket):
+        from .web.websocket import websocket_chat
+        await websocket_chat(websocket, config, event_bus, app_ctx)
+
     routes = [
         Route("/health", health, methods=["GET"]),
         Route("/actions/confirm", handle_confirm, methods=["POST"]),
+        Route("/api/auth/login", auth_login, methods=["POST"]),
+        Route("/api/auth/logout", auth_logout, methods=["POST"]),
+        Route("/api/auth/me", auth_me, methods=["GET"]),
+        Route("/api/conversations", list_conversations, methods=["GET"]),
+        Route("/api/conversations", create_conversation, methods=["POST"]),
+        Route("/api/conversations/{id}", get_conversation, methods=["GET"]),
+        Route("/api/conversations/{id}", rename_conversation, methods=["PATCH"]),
+        Route("/api/conversations/{id}/history", get_conversation_history, methods=["GET"]),
+        Route("/api/conversations/{id}/archive", archive_conversation, methods=["POST"]),
+        Route("/api/workspace/{path:path}", serve_workspace_file, methods=["GET"]),
+        WebSocketRoute("/ws/chat", ws_chat),
     ]
+
+    # Static file serving for web UI
+    static_dir = Path(__file__).parent / "web" / "static"
+    if static_dir.is_dir():
+        async def serve_index(request: Request):
+            return FileResponse(static_dir / "index.html")
+
+        routes.append(Route("/", serve_index, methods=["GET"]))
+        routes.append(Mount("/static", StaticFiles(directory=str(static_dir)), name="static"))
 
     return Starlette(routes=routes)
 
@@ -237,10 +415,10 @@ def build_confirm_buttons(config, tool_name: str, command: str,
     }]
 
 
-async def run_http_server(config, event_bus) -> None:
+async def run_http_server(config, event_bus, app_ctx=None) -> None:
     """Start the HTTP server as an asyncio task."""
     import uvicorn
-    app = create_app(config, event_bus)
+    app = create_app(config, event_bus, app_ctx=app_ctx)
     server_config = uvicorn.Config(
         app,
         host=config.http_host,
