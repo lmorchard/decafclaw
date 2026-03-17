@@ -212,6 +212,16 @@ async def run_agent_turn(ctx, user_message: str, history: list) -> "ToolResult":
 
     try:
         # Add user message to history
+        # Truncate oversized user messages
+        max_len = config.max_message_length
+        if max_len and len(user_message) > max_len:
+            original_len = len(user_message)
+            user_message = (
+                user_message[:max_len]
+                + f"\n\n[truncated at {max_len:,} chars, original was {original_len:,}]"
+            )
+            log.warning(f"User message truncated: {original_len:,} -> {max_len:,} chars")
+
         user_msg = {"role": "user", "content": user_message}
         history.append(user_msg)
         _archive(ctx, user_msg)
