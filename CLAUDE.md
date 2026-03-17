@@ -59,6 +59,10 @@ make build-eval-fixtures  # Rebuild eval embedding fixtures
 
 **Important:** Only one bot instance can connect to Mattermost at a time. A second instance will silently miss websocket events. Les likely has `make dev` running in another terminal — do NOT start `make run`, `make dev`, or `make debug` without checking first. If you need to run an instance for log capture or debugging, ask Les to kill the existing one.
 
+## Project board
+
+Work is tracked on the [GitHub project board](https://github.com/users/lmorchard/projects/6). Items in **Ready** are prioritized next-up work; everything else is **Backlog**. When picking what to work on, check the Ready column first. When filing new issues, add them to the project board.
+
 ## Dev sessions
 
 Session docs live in `.claude/dev-sessions/YYYY-MM-DD-HHMM-slug/` with `spec.md`, `plan.md`, and `notes.md`.
