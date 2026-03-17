@@ -189,97 +189,116 @@ async def run_agent_turn(ctx, user_message: str, history: list) -> "ToolResult":
     Returns:
         ToolResult with the agent's text response and any accumulated media.
     """
+    from .archive import read_skills_state, write_skills_state
     from .media import ToolResult, extract_workspace_media
+    from .tools.skill_tools import restore_skills
 
     config = ctx.config
     ctx.history = history
+
+    # Restore previously-activated skills from the sidecar (survives restarts).
+    # Merge with any skills already on ctx (e.g. set by Mattermost in-session state).
+    conv_id = getattr(ctx, "conv_id", None) or getattr(ctx, "channel_id", "")
+    if conv_id:
+        persisted = read_skills_state(config, conv_id)
+        existing = set(getattr(ctx, "activated_skills", set()))
+        if persisted - existing:
+            ctx.activated_skills = existing | persisted
+    await restore_skills(ctx)
     ctx.total_prompt_tokens = getattr(ctx, "total_prompt_tokens", 0)
     ctx.total_completion_tokens = getattr(ctx, "total_completion_tokens", 0)
 
     pending_media = []
 
-    # Add user message to history
-    user_msg = {"role": "user", "content": user_message}
-    history.append(user_msg)
-    _archive(ctx, user_msg)
+    try:
+        # Add user message to history
+        user_msg = {"role": "user", "content": user_message}
+        history.append(user_msg)
+        _archive(ctx, user_msg)
 
-    # Build the messages array: system prompt + history
-    messages = [{"role": "system", "content": config.system_prompt}] + history
-    ctx.messages = messages
+        # Build the messages array: system prompt + history
+        messages = [{"role": "system", "content": config.system_prompt}] + history
+        ctx.messages = messages
 
-    prompt_tokens = 0
+        prompt_tokens = 0
 
-    accumulated_text_parts = []  # text from iterations that also had tool calls
+        accumulated_text_parts = []  # text from iterations that also had tool calls
 
-    for iteration in range(config.max_tool_iterations):
-        cancelled = _check_cancelled(ctx, history)
-        if cancelled:
-            return cancelled
-
-        log.debug(f"Agent iteration {iteration + 1}")
-        ctx._current_iteration = iteration + 1
-
-        all_tools = _build_tool_list(ctx)
-        response = await _call_llm_with_events(ctx, config, messages, all_tools)
-
-        # Track token usage
-        usage = response.get("usage")
-        if usage:
-            prompt_tokens = usage.get("prompt_tokens", 0)
-            ctx.total_prompt_tokens += prompt_tokens
-            ctx.total_completion_tokens += usage.get("completion_tokens", 0)
-            ctx.last_prompt_tokens = prompt_tokens
-
-        tool_calls = response.get("tool_calls")
-        if tool_calls:
-            # Add the assistant's tool-call message to history
-            iter_content = response.get("content")
-            assistant_msg = {"role": "assistant", "content": iter_content}
-            assistant_msg["tool_calls"] = tool_calls
-            history.append(assistant_msg)
-            messages.append(assistant_msg)
-            _archive(ctx, assistant_msg)
-
-            # Preserve text from this iteration (e.g. "Let me check...")
-            if iter_content:
-                accumulated_text_parts.append(iter_content)
-
-            cancelled = await _execute_tool_calls(
-                ctx, tool_calls, history, messages, pending_media
-            )
+        for iteration in range(config.max_tool_iterations):
+            cancelled = _check_cancelled(ctx, history)
             if cancelled:
                 return cancelled
-            continue
 
-        # No tool calls — final response
-        content = response.get("content") or ""
-        if not content:
-            log.warning("LLM returned empty content with no tool calls")
-        final_msg = {"role": "assistant", "content": content}
+            log.debug(f"Agent iteration {iteration + 1}")
+            ctx._current_iteration = iteration + 1
+
+            all_tools = _build_tool_list(ctx)
+            response = await _call_llm_with_events(ctx, config, messages, all_tools)
+
+            # Track token usage
+            usage = response.get("usage")
+            if usage:
+                prompt_tokens = usage.get("prompt_tokens", 0)
+                ctx.total_prompt_tokens += prompt_tokens
+                ctx.total_completion_tokens += usage.get("completion_tokens", 0)
+                ctx.last_prompt_tokens = prompt_tokens
+
+            tool_calls = response.get("tool_calls")
+            if tool_calls:
+                # Add the assistant's tool-call message to history
+                iter_content = response.get("content")
+                assistant_msg = {"role": "assistant", "content": iter_content}
+                assistant_msg["tool_calls"] = tool_calls
+                history.append(assistant_msg)
+                messages.append(assistant_msg)
+                _archive(ctx, assistant_msg)
+
+                # Preserve text from this iteration (e.g. "Let me check...")
+                if iter_content:
+                    accumulated_text_parts.append(iter_content)
+
+                cancelled = await _execute_tool_calls(
+                    ctx, tool_calls, history, messages, pending_media
+                )
+                if cancelled:
+                    return cancelled
+                continue
+
+            # No tool calls — final response
+            content = response.get("content") or ""
+            if not content:
+                log.warning("LLM returned empty content with no tool calls")
+            final_msg = {"role": "assistant", "content": content}
+            history.append(final_msg)
+            _archive(ctx, final_msg)
+            await _maybe_compact(ctx, config, history, prompt_tokens)
+
+            # Scan for workspace image references and combine with tool media
+            cleaned_text, workspace_media = extract_workspace_media(
+                content or "", config.workspace_path
+            )
+            all_media = pending_media + workspace_media
+
+            if all_media:
+                return ToolResult(text=cleaned_text, media=all_media)
+            return ToolResult(text=content or "")
+
+        # Hit max iterations — preserve accumulated text from tool-call iterations
+        limit_note = (f"\n\n[Agent reached max tool iterations "
+                      f"({config.max_tool_iterations}) without a final response]")
+        accumulated = "\n\n".join(accumulated_text_parts)
+        msg = accumulated + limit_note if accumulated else limit_note.strip()
+        final_msg = {"role": "assistant", "content": msg}
         history.append(final_msg)
         _archive(ctx, final_msg)
         await _maybe_compact(ctx, config, history, prompt_tokens)
+        return ToolResult(text=msg)
 
-        # Scan for workspace image references and combine with tool media
-        cleaned_text, workspace_media = extract_workspace_media(
-            content or "", config.workspace_path
-        )
-        all_media = pending_media + workspace_media
-
-        if all_media:
-            return ToolResult(text=cleaned_text, media=all_media)
-        return ToolResult(text=content or "")
-
-    # Hit max iterations — preserve accumulated text from tool-call iterations
-    limit_note = (f"\n\n[Agent reached max tool iterations "
-                  f"({config.max_tool_iterations}) without a final response]")
-    accumulated = "\n\n".join(accumulated_text_parts)
-    msg = accumulated + limit_note if accumulated else limit_note.strip()
-    final_msg = {"role": "assistant", "content": msg}
-    history.append(final_msg)
-    _archive(ctx, final_msg)
-    await _maybe_compact(ctx, config, history, prompt_tokens)
-    return ToolResult(text=msg)
+    finally:
+        # Persist activated skills after every turn so they survive restarts
+        activated = getattr(ctx, "activated_skills", None)
+        if conv_id and activated:
+            write_skills_state(config, conv_id, activated)
 
 
 # -- Interactive mode helpers --------------------------------------------------

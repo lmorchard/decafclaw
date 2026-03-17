@@ -280,18 +280,30 @@ class MattermostClient:
             conversations[conv_id] = ConversationState()
         return conversations[conv_id]
 
+    @staticmethod
+    def _restore_from_archive(config, conv_id):
+        """Load history from compacted sidecar + newer archive entries, or full archive."""
+        from .archive import read_archive, read_compacted_history
+
+        compacted = read_compacted_history(config, conv_id)
+        if compacted:
+            full = read_archive(config, conv_id)
+            last_ts = compacted[-1].get("timestamp", "")
+            newer = [m for m in full if m.get("timestamp", "") > last_ts]
+            return compacted + newer
+
+        archived = read_archive(config, conv_id)
+        return archived if archived else None
+
     def _prepare_history(self, conv, conv_id, root_id, channel_id, conversations, config):
         """Get or create conversation history, resuming from archive if available."""
-        from .archive import read_archive
-
         if root_id:
             hist_id = root_id
             if not conv.history:
-                # Try archive first, then fork from channel
-                archived = read_archive(config, hist_id)
-                if archived:
-                    conv.history = archived
-                    log.info(f"Resumed thread {hist_id[:8]} from archive ({len(archived)} messages)")
+                restored = self._restore_from_archive(config, hist_id)
+                if restored:
+                    conv.history = restored
+                    log.info(f"Resumed thread {hist_id[:8]} from archive ({len(restored)} messages)")
                 else:
                     channel_conv = conversations.get(channel_id)
                     channel_history = channel_conv.history if channel_conv else []
@@ -299,10 +311,10 @@ class MattermostClient:
                     log.debug(f"Forked thread history {hist_id[:8]} from channel {channel_id[:8]} ({len(channel_history)} msgs)")
         else:
             if not conv.history:
-                archived = read_archive(config, channel_id)
-                if archived:
-                    conv.history = archived
-                    log.info(f"Resumed channel {channel_id[:8]} from archive ({len(archived)} messages)")
+                restored = self._restore_from_archive(config, channel_id)
+                if restored:
+                    conv.history = restored
+                    log.info(f"Resumed channel {channel_id[:8]} from archive ({len(restored)} messages)")
 
         return conv.history
 
