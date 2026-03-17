@@ -56,7 +56,24 @@ async def execute_tool(ctx, name: str, arguments: dict) -> ToolResult:
             fn = mcp_tools.get(name)
             if fn:
                 try:
-                    result = await fn(arguments)
+                    cancel_event = getattr(ctx, "cancelled", None)
+                    tool_task = asyncio.create_task(fn(arguments))
+                    if cancel_event:
+                        cancel_task = asyncio.create_task(cancel_event.wait())
+                        done, _ = await asyncio.wait(
+                            [tool_task, cancel_task], return_when=asyncio.FIRST_COMPLETED
+                        )
+                        cancel_task.cancel()
+                        if tool_task not in done:
+                            tool_task.cancel()
+                            try:
+                                await tool_task
+                            except (asyncio.CancelledError, Exception):
+                                pass
+                            return ToolResult(text="[tool interrupted: agent turn cancelled]")
+                        result = tool_task.result()
+                    else:
+                        result = await tool_task
                     return _to_tool_result(result)
                 except Exception as e:
                     return ToolResult(text=f"[error executing {name}: {e}]")
