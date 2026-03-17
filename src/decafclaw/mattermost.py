@@ -488,13 +488,13 @@ class MattermostClient:
 
     # -- Main run loop ---------------------------------------------------------
 
-    async def run(self, app_ctx):
-        """Run the bot: connect, listen for messages, and dispatch to the agent."""
-        from .heartbeat import parse_interval, run_heartbeat_timer
-        from .mcp_client import init_mcp, shutdown_mcp
+    async def run(self, app_ctx, shutdown_event):
+        """Run the bot: connect, listen for messages, and dispatch to the agent.
 
+        Called by the top-level orchestrator (runner.py). MCP, HTTP server,
+        heartbeat, and signal handling are managed by the orchestrator.
+        """
         await self.connect()
-        await init_mcp(app_ctx.config)
 
         # Track in-flight agent tasks for graceful shutdown
         agent_tasks = set()
@@ -554,68 +554,14 @@ class MattermostClient:
         def on_message_sync(msg):
             asyncio.get_event_loop().create_task(on_message(msg))
 
-        # Graceful shutdown support
-        import signal
-        shutdown_event = asyncio.Event()
-
-        def _signal_handler():
-            log.info("Shutdown signal received, finishing in-flight turns...")
-            shutdown_event.set()
-
-        loop = asyncio.get_event_loop()
-        for sig in (signal.SIGTERM, signal.SIGINT):
-            loop.add_signal_handler(sig, _signal_handler)
-
-        # Start HTTP server for interactive callbacks
-        http_task = None
-        if app_ctx.config.http_enabled:
-            from .http_server import run_http_server
-            http_task = asyncio.create_task(
-                run_http_server(app_ctx.config, app_ctx.event_bus)
-            )
-            log.info(f"HTTP server enabled on {app_ctx.config.http_host}:{app_ctx.config.http_port}")
-
-        # Start heartbeat timer
-        heartbeat_task = None
-        if parse_interval(app_ctx.config.heartbeat_interval) is not None:
-            cycle_fn = self._make_heartbeat_cycle(
-                None, app_ctx.event_bus, app_ctx.config
-            )
-            heartbeat_task = asyncio.create_task(
-                run_heartbeat_timer(
-                    app_ctx.config, app_ctx.event_bus, shutdown_event,
-                    on_cycle=cycle_fn,
-                )
-            )
-            has_channel = app_ctx.config.heartbeat_channel or app_ctx.config.heartbeat_user
-            log.info(f"Heartbeat timer started (reporting={'enabled' if has_channel else 'silent'})")
-        else:
-            log.info("Heartbeat disabled (interval not set)")
-
         try:
             await self.listen(on_message_sync, shutdown_event=shutdown_event)
         finally:
-            # Stop HTTP server
-            if http_task:
-                http_task.cancel()
-                try:
-                    await http_task
-                except asyncio.CancelledError:
-                    pass
-
-            if heartbeat_task:
-                heartbeat_task.cancel()
-                try:
-                    await heartbeat_task
-                except asyncio.CancelledError:
-                    pass
-
             if agent_tasks:
                 log.info(f"Waiting for {len(agent_tasks)} in-flight agent turn(s)...")
                 await asyncio.gather(*agent_tasks, return_exceptions=True)
-            await shutdown_mcp()
             await self.close()
-            log.info("Shutdown complete")
+            log.info("Mattermost client stopped")
 
     # -- Progress subscription -------------------------------------------------
 

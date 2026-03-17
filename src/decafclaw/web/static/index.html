@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DecafClaw</title>
+  <link rel="stylesheet" href="/static/vendor/bundle/pico.min.css">
+  <link rel="stylesheet" href="/static/style.css">
+  <script type="importmap">
+  {
+    "imports": {
+      "lit": "/static/vendor/bundle/lit.js",
+      "lit/directives/unsafe-html.js": "/static/vendor/bundle/lit-unsafe-html.js",
+      "marked": "/static/vendor/bundle/marked.js",
+      "dompurify": "/static/vendor/bundle/dompurify.js"
+    }
+  }
+  </script>
+</head>
+<body>
+  <div id="app">
+    <login-view></login-view>
+    <div id="chat-layout" class="hidden">
+      <conversation-sidebar></conversation-sidebar>
+      <div id="sidebar-resize-handle"></div>
+      <div id="chat-main">
+        <div id="connection-banner" class="hidden">Reconnecting...</div>
+        <chat-view></chat-view>
+        <chat-input></chat-input>
+      </div>
+    </div>
+  </div>
+  <div id="toast-container"></div>
+  <script type="module" src="/static/app.js"></script>
+</body>
+</html>

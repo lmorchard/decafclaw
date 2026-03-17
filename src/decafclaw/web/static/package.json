@@ -1,0 +1,19 @@
+{
+  "name": "decafclaw-web-vendor",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Vendor dependencies for DecafClaw web UI",
+  "scripts": {
+    "build": "node build-vendor.mjs",
+    "clean": "rm -rf vendor/bundle node_modules"
+  },
+  "dependencies": {
+    "@picocss/pico": "^2.0.0",
+    "dompurify": "^3.3.0",
+    "lit": "^3.3.0",
+    "marked": "^15.0.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0"
+  }
+}
