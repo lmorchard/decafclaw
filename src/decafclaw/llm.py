@@ -197,6 +197,20 @@ async def call_llm_streaming(config, messages, tools=None,
     except Exception as e:
         log.error(f"LLM streaming error: {e}")
         _stream_error = e
+        # If SSE failed (likely non-SSE error response), retry non-streaming
+        # to capture the actual error body from the LLM.
+        if "text/event-stream" in str(e):
+            try:
+                async with httpx.AsyncClient() as diag_client:
+                    diag_body = {**body, "stream": False}
+                    diag_body.pop("stream_options", None)
+                    diag = await diag_client.post(
+                        url, json=diag_body, headers=headers,
+                        timeout=httpx.Timeout(30.0),
+                    )
+                    log.error(f"LLM error detail ({diag.status_code}): {diag.text[:2000]}")
+            except Exception as diag_err:
+                log.error(f"LLM diagnostic request also failed: {diag_err}")
 
     # If nothing was accumulated and an error occurred, re-raise so the caller
     # knows the LLM call failed (instead of silently returning empty).
