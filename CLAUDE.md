@@ -61,7 +61,14 @@ make build-eval-fixtures  # Rebuild eval embedding fixtures
 
 ## Project board
 
-Work is tracked on the [GitHub project board](https://github.com/users/lmorchard/projects/6). Items in **Ready** are prioritized next-up work; everything else is **Backlog**. When picking what to work on, check the Ready column first. When filing new issues, add them to the project board.
+Work is tracked on the [GitHub project board](https://github.com/users/lmorchard/projects/6) with columns: **Backlog**, **Ready**, **In progress**, **In review**, **Done**. Fields: Priority (P0/P1/P2), Size (XS/S/M/L/XL).
+
+- Check **Ready** first when picking work. Consult the board at the start of each session.
+- Move items to **In progress** when starting work on them.
+- Move to **In review** when a PR is up.
+- Move to **Done** when merged (or let GitHub auto-close via `Closes #N`).
+- When filing new issues, add them to the project board with priority and size.
+- When triaging or reprioritizing, update the board — it's the source of truth for what's next.
 
 ## Dev sessions
 
