@@ -24,6 +24,9 @@ export class ChatInput extends LitElement {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       this.#handleSend();
+    } else if (e.key === 'Escape' && this.busy) {
+      e.preventDefault();
+      this.#handleStop();
     }
   }
 
