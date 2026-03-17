@@ -90,6 +90,15 @@ conversation-sidebar .conv-list {
   padding: 0.5rem;
 }
 
+conversation-sidebar .new-conv-btn {
+  display: block;
+  width: 100%;
+  text-align: left;
+  margin-bottom: 0.5rem;
+  font-size: 0.9rem;
+  padding: 0.4rem 0.75rem;
+}
+
 conversation-sidebar .conv-item {
   padding: 0.5rem 0.75rem;
   border-radius: 4px;
