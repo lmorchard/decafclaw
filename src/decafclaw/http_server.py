@@ -287,9 +287,34 @@ def create_app(config, event_bus, app_ctx=None) -> Starlette:
         from .web.websocket import websocket_chat
         await websocket_chat(websocket, config, event_bus, app_ctx)
 
+    async def handle_cancel(request: Request) -> JSONResponse:
+        """Handle Mattermost interactive button callback for stop/cancel."""
+        token = request.query_params.get("token", "")
+        token_data = _token_registry.consume(token)
+
+        if not token_data:
+            log.warning("Cancel callback rejected: invalid or expired token")
+            return JSONResponse({"error": "unauthorized"}, status_code=403)
+
+        conv_id = token_data["context_id"]
+        log.info(f"Cancel button pressed for conversation {conv_id[:8]}")
+
+        await event_bus.publish({
+            "type": "cancel_turn",
+            "conv_id": conv_id,
+        })
+
+        return JSONResponse({
+            "update": {
+                "message": "\u23f9\ufe0f Stopped",
+                "props": {"attachments": []},
+            }
+        })
+
     routes = [
         Route("/health", health, methods=["GET"]),
         Route("/actions/confirm", handle_confirm, methods=["POST"]),
+        Route("/actions/cancel", handle_cancel, methods=["POST"]),
         Route("/api/auth/login", auth_login, methods=["POST"]),
         Route("/api/auth/logout", auth_logout, methods=["POST"]),
         Route("/api/auth/me", auth_me, methods=["GET"]),
@@ -412,6 +437,38 @@ def build_confirm_buttons(config, tool_name: str, command: str,
     return [{
         "text": "",
         "actions": actions,
+    }]
+
+
+def build_stop_button(config, conv_id: str) -> list[dict]:
+    """Build a Mattermost attachment with a Stop button for cancelling an agent turn.
+
+    Returns [] if HTTP server is not enabled.
+    """
+    if not config.http_enabled:
+        return []
+
+    token = _token_registry.create(
+        context_id=conv_id,
+        tool_name="_cancel",
+        original_message="",
+        server_secret=config.http_secret,
+    )
+    base_url = f"{config.http_callback_base}/actions/cancel"
+
+    return [{
+        "text": "",
+        "actions": [
+            {
+                "id": "stop",
+                "name": "Stop",
+                "style": "danger",
+                "integration": {
+                    "url": f"{base_url}?token={token}",
+                    "context": {"conv_id": conv_id},
+                },
+            },
+        ],
     }]
 
 
