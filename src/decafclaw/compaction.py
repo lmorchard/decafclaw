@@ -71,7 +71,7 @@ def _split_into_turns(messages: list[dict]) -> list[list[dict]]:
     return turns
 
 
-def _flatten_messages(messages: list[dict]) -> str:
+def flatten_messages(messages: list[dict]) -> str:
     """Flatten messages into a readable text format for the compaction LLM."""
     lines = []
     for msg in messages:
@@ -99,7 +99,7 @@ def _flatten_messages(messages: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def _estimate_tokens(text: str) -> int:
+def estimate_tokens(text: str) -> int:
     """Rough token estimate: ~4 characters per token."""
     return len(text) // 4
 
@@ -127,8 +127,8 @@ async def _chunked_summarize(ctx, config, turns: list[list[dict]],
     current_size = 0
 
     for turn in turns:
-        turn_text = _flatten_messages(turn)
-        turn_size = _estimate_tokens(turn_text)
+        turn_text = flatten_messages(turn)
+        turn_size = estimate_tokens(turn_text)
         # Leave room for the prompt (~500 tokens)
         if current_size + turn_size > budget - 500 and current_chunk:
             chunks.append(current_chunk)
@@ -143,7 +143,7 @@ async def _chunked_summarize(ctx, config, turns: list[list[dict]],
     # Summarize each chunk
     chunk_summaries = []
     for i, chunk in enumerate(chunks):
-        flattened = _flatten_messages(chunk)
+        flattened = flatten_messages(chunk)
         log.info(f"Summarizing chunk {i + 1}/{len(chunks)}")
         summary = await _single_summarize(ctx, config, flattened, prompt)
         if summary:
@@ -156,7 +156,7 @@ async def _chunked_summarize(ctx, config, turns: list[list[dict]],
     combined = "\n\n---\n\n".join(chunk_summaries)
 
     # If combined summaries are still too long, do a final pass
-    if _estimate_tokens(combined) > budget:
+    if estimate_tokens(combined) > budget:
         log.info("Combined summaries too long, doing final summarize pass")
         return await _single_summarize(ctx, config, combined, prompt)
 
@@ -256,21 +256,21 @@ async def compact_history(ctx, history: list) -> bool:
 
         if incremental:
             # Fold newly-old turns into existing summary
-            newly_old_flat = _flatten_messages(
+            newly_old_flat = flatten_messages(
                 [msg for turn in newly_old_turns for msg in turn])
             combined_input = (
                 f"Existing summary:\n{prev_summary}\n\n"
                 f"New conversation turns to incorporate:\n{newly_old_flat}"
             )
-            estimated = _estimate_tokens(combined_input)
+            estimated = estimate_tokens(combined_input)
             log.info(f"Incremental summarization: ~{estimated} est. tokens")
             summary = await _single_summarize(
                 ctx, config, combined_input, INCREMENTAL_COMPACTION_PROMPT)
         else:
             # Full compaction from scratch
             prompt = _load_compaction_prompt(config)
-            flattened = _flatten_messages(old_messages)
-            estimated = _estimate_tokens(flattened)
+            flattened = flatten_messages(old_messages)
+            estimated = estimate_tokens(flattened)
             if estimated > budget:
                 log.info(f"Flattened text ({estimated} est. tokens) exceeds "
                          f"budget ({budget}), using chunked compaction")
