@@ -17,16 +17,16 @@ Tools for reading and surgically editing markdown notes organized by headings, c
 - **Tags**: `#hashtags` anywhere in a line — `#word`, `#CamelCase`, or `#multi-word-tag`. Tags can appear on checklist items or plain prose lines. They're used for cross-section categorization (e.g. `#storyidea`, `#research`, `#urgent`).
 - **Prose lines**: Not all content in a section is checklist items. Sections can contain plain prose paragraphs, indented sub-items, and other markdown. Tags work on both checklist items and prose lines — use `match` to select a prose line by substring, or `index` to select a checklist item by position.
 
-## Getting Started
+## Getting Started — REQUIRED before any other vault tool
 
-**Before using any other vault tools, you MUST set the vault base path.** Follow these steps in order:
+**You MUST set the vault base path before using any other vault tools.** Follow these steps in order — do NOT skip to asking the user:
 
-1. **Check `vault_get_path`** — the path may already be set from earlier in this conversation.
-2. **If not set, search memory** for the vault path (e.g. `memory_search("markdown vault path")` or `memory_search("vault base")`). The user has likely told you before.
-3. **If memory has it**, call `vault_set_path` with the remembered path.
-4. **Only if memory has nothing**, ask the user where their vault is located within the workspace.
+1. Call `vault_get_path` — the path may already be set from earlier in this conversation. If it returns a path, you're done.
+2. If not set, call `memory_search("markdown vault base path")` to check if the user has told you the path before. **You MUST call memory_search — do not skip this step.**
+3. If memory returns a vault path, call `vault_set_path` with that path.
+4. **Only if memory_search returns nothing relevant**, ask the user where their vault is located.
 
-Do NOT skip straight to asking the user — always check memory first.
+**NEVER ask the user for the vault path without searching memory first.**
 
 ## Available Tools
 
