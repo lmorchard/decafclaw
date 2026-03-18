@@ -650,11 +650,22 @@ def init(config):
     log.info(f"Markdown vault initialized at workspace {_workspace_path}")
 
 
-def _resolve(file: str) -> Path:
-    """Resolve a relative file path within the workspace, with safety check."""
+def _resolve(file: str, ctx=None) -> Path:
+    """Resolve a relative file path within the vault, with safety check.
+
+    If ctx has a vault_base_path set, file paths are resolved relative to that
+    subdirectory within the workspace. Otherwise they resolve from workspace root.
+    """
     if _workspace_path is None:
         raise RuntimeError("Vault not initialized — skill not activated?")
-    resolved = (_workspace_path / file).resolve()
+    base = _workspace_path
+    if ctx is not None:
+        vault_base = getattr(ctx, "vault_base_path", None)
+        if vault_base:
+            base = (_workspace_path / vault_base).resolve()
+            if not base.is_relative_to(_workspace_path):
+                raise ValueError(f"Vault base path escapes workspace: {vault_base}")
+    resolved = (base / file).resolve()
     if not resolved.is_relative_to(_workspace_path):
         raise ValueError(f"Path escapes workspace: {file}")
     return resolved
@@ -663,11 +674,42 @@ def _resolve(file: str) -> Path:
 # -- Tool implementations ---------------------------------------------------
 
 
+def tool_vault_set_path(ctx, path: str) -> ToolResult:
+    """Set the vault base path (relative to workspace) for this conversation.
+
+    All subsequent vault tool calls will resolve file paths relative to this
+    directory. For example, set_path("obsidian/main") means vault_read("journals/today.md")
+    resolves to workspace/obsidian/main/journals/today.md.
+    """
+    log.info(f"[tool:vault_set_path] path={path!r}")
+    try:
+        if _workspace_path is None:
+            return ToolResult(text="[error: vault not initialized]")
+        base = (_workspace_path / path).resolve()
+        if not base.is_relative_to(_workspace_path):
+            return ToolResult(text=f"[error: path escapes workspace: {path}]")
+        if not base.is_dir():
+            return ToolResult(text=f"[error: not a directory: {path}]")
+        ctx.vault_base_path = path
+        return ToolResult(text=f"Vault base path set to: {path}")
+    except Exception as e:
+        return ToolResult(text=f"[error: {e}]")
+
+
+def tool_vault_get_path(ctx) -> ToolResult:
+    """Get the current vault base path for this conversation."""
+    log.info("[tool:vault_get_path]")
+    base = getattr(ctx, "vault_base_path", None)
+    if base:
+        return ToolResult(text=base)
+    return ToolResult(text="(not set — using workspace root)")
+
+
 def tool_vault_read(ctx, file: str) -> ToolResult:
     """Read an entire markdown file as text."""
     log.info(f"[tool:vault_read] file={file!r}")
     try:
-        path = _resolve(file)
+        path = _resolve(file, ctx)
         if not path.is_file():
             return ToolResult(text=f"[error: file not found: {file}]")
         return ToolResult(text=path.read_text())
@@ -686,12 +728,12 @@ def tool_vault_create_file(
     """
     log.info(f"[tool:vault_create_file] file={file!r} template={template!r}")
     try:
-        path = _resolve(file)
+        path = _resolve(file, ctx)
         if path.exists():
             return ToolResult(text=f"[error: file already exists: {file}]")
 
         if template:
-            tmpl_path = _resolve(template)
+            tmpl_path = _resolve(template, ctx)
             if not tmpl_path.is_file():
                 return ToolResult(text=f"[error: template not found: {template}]")
             import datetime
@@ -712,7 +754,7 @@ def tool_vault_list(ctx, path: str = "") -> ToolResult:
     """List markdown files at a path within the vault."""
     log.info(f"[tool:vault_list] path={path!r}")
     try:
-        target = _resolve(path)
+        target = _resolve(path, ctx)
         if not target.is_dir():
             return ToolResult(text=f"[error: not a directory: {path}]")
 
@@ -735,7 +777,7 @@ def tool_vault_show(ctx, file: str, section: str | None = None) -> ToolResult:
     """Show a section's content, or the document outline if no section given."""
     log.info(f"[tool:vault_show] file={file!r} section={section!r}")
     try:
-        doc = Document.from_file(_resolve(file))
+        doc = Document.from_file(_resolve(file, ctx))
         if section:
             sec = doc.find_section(section)
             if not sec:
@@ -755,7 +797,7 @@ def tool_vault_items(ctx, file: str, section: str) -> ToolResult:
     """List checklist items in a section with their indices."""
     log.info(f"[tool:vault_items] file={file!r} section={section!r}")
     try:
-        doc = Document.from_file(_resolve(file))
+        doc = Document.from_file(_resolve(file, ctx))
         sec = doc.find_section(section)
         if not sec:
             return ToolResult(text=f"[error: section not found: {section}]")
@@ -775,7 +817,7 @@ def tool_vault_check(ctx, file: str, section: str, match: str | None = None, ind
     """Mark a checklist item as done."""
     log.info(f"[tool:vault_check] file={file!r} section={section!r} match={match!r} index={index!r}")
     try:
-        path = _resolve(file)
+        path = _resolve(file, ctx)
         doc = Document.from_file(path)
         sec = doc.find_section(section)
         if not sec:
@@ -792,7 +834,7 @@ def tool_vault_uncheck(ctx, file: str, section: str, match: str | None = None, i
     """Mark a checklist item as not done."""
     log.info(f"[tool:vault_uncheck] file={file!r} section={section!r} match={match!r} index={index!r}")
     try:
-        path = _resolve(file)
+        path = _resolve(file, ctx)
         doc = Document.from_file(path)
         sec = doc.find_section(section)
         if not sec:
@@ -809,7 +851,7 @@ def tool_vault_append(ctx, file: str, section: str, text: str) -> ToolResult:
     """Append text to the end of a section."""
     log.info(f"[tool:vault_append] file={file!r} section={section!r}")
     try:
-        path = _resolve(file)
+        path = _resolve(file, ctx)
         doc = Document.from_file(path)
         sec = doc.find_section(section)
         if not sec:
@@ -825,7 +867,7 @@ def tool_vault_prepend(ctx, file: str, section: str, text: str) -> ToolResult:
     """Prepend text to the start of a section."""
     log.info(f"[tool:vault_prepend] file={file!r} section={section!r}")
     try:
-        path = _resolve(file)
+        path = _resolve(file, ctx)
         doc = Document.from_file(path)
         sec = doc.find_section(section)
         if not sec:
@@ -841,7 +883,7 @@ def tool_vault_insert(ctx, file: str, section: str, index: int, text: str) -> To
     """Insert text at a specific item index within a section."""
     log.info(f"[tool:vault_insert] file={file!r} section={section!r} index={index}")
     try:
-        path = _resolve(file)
+        path = _resolve(file, ctx)
         doc = Document.from_file(path)
         sec = doc.find_section(section)
         if not sec:
@@ -857,7 +899,7 @@ def tool_vault_delete(ctx, file: str, section: str, match: str | None = None, in
     """Delete a checklist item from a section."""
     log.info(f"[tool:vault_delete] file={file!r} section={section!r} match={match!r} index={index!r}")
     try:
-        path = _resolve(file)
+        path = _resolve(file, ctx)
         doc = Document.from_file(path)
         sec = doc.find_section(section)
         if not sec:
@@ -877,7 +919,7 @@ def tool_vault_add_section(
     """Add a new section to a markdown file."""
     log.info(f"[tool:vault_add_section] file={file!r} title={title!r} level={level}")
     try:
-        path = _resolve(file)
+        path = _resolve(file, ctx)
         doc = Document.from_file(path)
         if doc.add_section(title, level=level, content=content, after=after, before=before, parent=parent):
             doc.save(path)
@@ -891,7 +933,7 @@ def tool_vault_remove_section(ctx, file: str, section: str) -> ToolResult:
     """Remove a section (heading + all content including children)."""
     log.info(f"[tool:vault_remove_section] file={file!r} section={section!r}")
     try:
-        path = _resolve(file)
+        path = _resolve(file, ctx)
         doc = Document.from_file(path)
         removed = doc.remove_section(section)
         if removed is not None:
@@ -909,7 +951,7 @@ def tool_vault_move_section(
     """Move a section (heading + content + children) to a new position."""
     log.info(f"[tool:vault_move_section] file={file!r} section={section!r}")
     try:
-        path = _resolve(file)
+        path = _resolve(file, ctx)
         doc = Document.from_file(path)
         if doc.move_section(section, after=after, before=before):
             doc.save(path)
@@ -926,7 +968,7 @@ def tool_vault_replace_item(
     """Replace a checklist item's text, preserving its checked state."""
     log.info(f"[tool:vault_replace_item] file={file!r} section={section!r}")
     try:
-        path = _resolve(file)
+        path = _resolve(file, ctx)
         doc = Document.from_file(path)
         sec = doc.find_section(section)
         if not sec:
@@ -946,7 +988,7 @@ def tool_vault_move_item(
     """Move a checklist item from one section to another."""
     log.info(f"[tool:vault_move_item] file={file!r} from={from_section!r} to={to_section!r}")
     try:
-        path = _resolve(file)
+        path = _resolve(file, ctx)
         doc = Document.from_file(path)
         from_sec = doc.find_section(from_section)
         if not from_sec:
@@ -966,7 +1008,7 @@ def tool_vault_bulk_check(ctx, file: str, section: str) -> ToolResult:
     """Mark all checklist items in a section as done."""
     log.info(f"[tool:vault_bulk_check] file={file!r} section={section!r}")
     try:
-        path = _resolve(file)
+        path = _resolve(file, ctx)
         doc = Document.from_file(path)
         sec = doc.find_section(section)
         if not sec:
@@ -982,7 +1024,7 @@ def tool_vault_bulk_uncheck(ctx, file: str, section: str) -> ToolResult:
     """Mark all checklist items in a section as not done."""
     log.info(f"[tool:vault_bulk_uncheck] file={file!r} section={section!r}")
     try:
-        path = _resolve(file)
+        path = _resolve(file, ctx)
         doc = Document.from_file(path)
         sec = doc.find_section(section)
         if not sec:
@@ -998,7 +1040,7 @@ def tool_vault_find_items(ctx, file: str, query: str) -> ToolResult:
     """Search all sections for checklist items matching a substring."""
     log.info(f"[tool:vault_find_items] file={file!r} query={query!r}")
     try:
-        path = _resolve(file)
+        path = _resolve(file, ctx)
         doc = Document.from_file(path)
         results = doc.find_items(query)
         if not results:
@@ -1016,7 +1058,7 @@ def tool_vault_rename_section(ctx, file: str, section: str, title: str) -> ToolR
     """Rename a section's heading text."""
     log.info(f"[tool:vault_rename_section] file={file!r} section={section!r} title={title!r}")
     try:
-        path = _resolve(file)
+        path = _resolve(file, ctx)
         doc = Document.from_file(path)
         if doc.rename_section(section, title):
             doc.save(path)
@@ -1030,7 +1072,7 @@ def tool_vault_replace_section(ctx, file: str, section: str, content: str) -> To
     """Replace a section's body content, preserving heading and children."""
     log.info(f"[tool:vault_replace_section] file={file!r} section={section!r}")
     try:
-        path = _resolve(file)
+        path = _resolve(file, ctx)
         doc = Document.from_file(path)
         if doc.replace_section_content(section, content):
             doc.save(path)
@@ -1044,7 +1086,7 @@ def tool_vault_tags(ctx, file: str) -> ToolResult:
     """List all unique tags in a markdown file."""
     log.info(f"[tool:vault_tags] file={file!r}")
     try:
-        path = _resolve(file)
+        path = _resolve(file, ctx)
         doc = Document.from_file(path)
         tags = doc.list_tags()
         if not tags:
@@ -1058,7 +1100,7 @@ def tool_vault_tagged(ctx, file: str, tag: str) -> ToolResult:
     """Find all lines with a given tag."""
     log.info(f"[tool:vault_tagged] file={file!r} tag={tag!r}")
     try:
-        path = _resolve(file)
+        path = _resolve(file, ctx)
         doc = Document.from_file(path)
         results = doc.find_tagged(tag)
         if not results:
@@ -1079,7 +1121,7 @@ def tool_vault_add_tag(
     """Add a tag to a checklist item."""
     log.info(f"[tool:vault_add_tag] file={file!r} section={section!r} tag={tag!r}")
     try:
-        path = _resolve(file)
+        path = _resolve(file, ctx)
         doc = Document.from_file(path)
         sec = doc.find_section(section)
         if not sec:
@@ -1099,7 +1141,7 @@ def tool_vault_remove_tag(
     """Remove a tag from a checklist item."""
     log.info(f"[tool:vault_remove_tag] file={file!r} section={section!r} tag={tag!r}")
     try:
-        path = _resolve(file)
+        path = _resolve(file, ctx)
         doc = Document.from_file(path)
         sec = doc.find_section(section)
         if not sec:
@@ -1131,8 +1173,8 @@ def tool_vault_move_items(
     """Move multiple checklist items between files/sections."""
     log.info(f"[tool:vault_move_items] {from_file!r}:{from_section!r} -> {to_file!r}:{to_section!r}")
     try:
-        from_path = _resolve(from_file)
-        to_path = _resolve(to_file)
+        from_path = _resolve(from_file, ctx)
+        to_path = _resolve(to_file, ctx)
         from_doc = Document.from_file(from_path)
         to_doc = Document.from_file(to_path) if to_path != from_path else from_doc
 
@@ -1159,6 +1201,8 @@ def tool_vault_move_items(
 # -- Registry ---------------------------------------------------------------
 
 TOOLS = {
+    "vault_set_path": tool_vault_set_path,
+    "vault_get_path": tool_vault_get_path,
     "vault_daily_path": tool_vault_daily_path,
     "vault_move_items": tool_vault_move_items,
     "vault_read": tool_vault_read,
@@ -1189,6 +1233,35 @@ TOOLS = {
 }
 
 TOOL_DEFINITIONS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "vault_set_path",
+            "description": "Set the vault base path for this conversation. All file paths in other vault tools will resolve relative to this directory within the workspace. Call this before using other vault tools. Example: vault_set_path('obsidian/main') means vault_read('journals/today.md') reads workspace/obsidian/main/journals/today.md.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Relative path from workspace root to the vault directory (e.g. 'obsidian/main')",
+                    },
+                },
+                "required": ["path"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "vault_get_path",
+            "description": "Get the current vault base path for this conversation. Returns the path set by vault_set_path, or indicates that the workspace root is being used.",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+            },
+        },
+    },
     {
         "type": "function",
         "function": {

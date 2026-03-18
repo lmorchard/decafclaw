@@ -9,7 +9,8 @@ Tools for reading and surgically editing markdown notes organized by headings, c
 
 ## Concepts
 
-- **File**: A markdown file within the agent's workspace, addressed by relative path (e.g. `journals/2026/2026-03-17.md`)
+- **Vault base path**: The vault may live in a subdirectory of the workspace (e.g. `obsidian/main`). Use `vault_set_path` at the start of a conversation to set this. Once set, all file paths in other vault tools resolve relative to the vault base — you don't need to include the base in every path. Use `vault_get_path` to check the current setting.
+- **File**: A markdown file within the vault, addressed by relative path (e.g. `journals/2026/2026-03-17.md`). Paths are relative to the vault base path if set, otherwise relative to the workspace root.
 - **Section path**: Slash-separated heading path within a file (e.g. `today`, `notes/standup`). Case-insensitive, wiki-link-aware (`[[someday]]` matches `someday`)
 - **Item selection**: Checklist items within a section are selected by `match` (substring) or `index` (0-based position, negatives ok). You must provide one or the other.
 - **Checklist format**: Items are `- [ ] text` (unchecked) or `- [x] text` (checked). When creating new items with `vault_append`, `vault_prepend`, or `vault_insert`, always use this format — e.g. `- [ ] buy groceries`. Plain text without the checkbox prefix will be inserted as prose, not a checklist item.
@@ -17,6 +18,14 @@ Tools for reading and surgically editing markdown notes organized by headings, c
 - **Prose lines**: Not all content in a section is checklist items. Sections can contain plain prose paragraphs, indented sub-items, and other markdown. Tags work on both checklist items and prose lines — use `match` to select a prose line by substring, or `index` to select a checklist item by position.
 
 ## Available Tools
+
+### Vault path
+
+#### `vault_set_path` — Set the vault base path
+Set the subdirectory within the workspace where the vault lives (e.g. `obsidian/main`). **Call this before using other vault tools** if the vault isn't at the workspace root. All file paths in subsequent calls resolve relative to this base.
+
+#### `vault_get_path` — Get the current vault base path
+Returns the current vault base path, or indicates none is set (using workspace root).
 
 ### File operations
 
@@ -150,6 +159,8 @@ Common daily note tasks:
 
 | Task | Tool |
 |------|------|
+| Set vault location within workspace | `vault_set_path` |
+| Check current vault location | `vault_get_path` |
 | Get a daily journal path | `vault_daily_path` |
 | Read an entire file | `vault_read` |
 | Create a new file (or from template) | `vault_create_file` |
