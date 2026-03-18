@@ -21,15 +21,29 @@ async def request_confirmation(
     May also contain "always", "add_pattern", etc. depending on the
     response.
 
+    Matches responses by context_id + tool_name. When tool_call_id is
+    available (via ctx.current_tool_call_id), it's included in the request
+    and used for stricter matching — required for concurrent tool calls
+    to the same tool.
+
     Times out after `timeout` seconds, returning {"approved": False}.
     """
     confirm_event = asyncio.Event()
     result = {"approved": False}
+    tool_call_id = getattr(ctx, "current_tool_call_id", "")
+    # Match against the context_id used for publishing (event_context_id if set,
+    # otherwise context_id). Child agents publish under the parent's event_context_id.
+    match_context_id = getattr(ctx, "event_context_id", "") or ctx.context_id
 
     def on_confirm(event):
         if (event.get("type") == "tool_confirm_response"
-                and event.get("context_id") == ctx.context_id
+                and event.get("context_id") == match_context_id
                 and event.get("tool") == tool_name):
+            # When both sides have tool_call_id, require match (concurrent safety).
+            # If the response omits it, accept anyway (backward compat with older UIs).
+            resp_id = event.get("tool_call_id", "")
+            if tool_call_id and resp_id and resp_id != tool_call_id:
+                return
             result.update(event)
             confirm_event.set()
 
@@ -40,6 +54,7 @@ async def request_confirmation(
             tool=tool_name,
             command=command,
             message=message,
+            tool_call_id=tool_call_id,
             **extra_event_fields,
         )
         try:

@@ -34,6 +34,8 @@ class Context:
         self.total_completion_tokens: int = 0
         self.last_prompt_tokens: int = 0
         self.allowed_tools: set | None = None
+        self.current_tool_call_id: str = ""
+        self.event_context_id: str = ""  # publish events under this ID instead of context_id
 
     def fork(self, **overrides) -> "Context":
         """Create a child context with a new ID, sharing the event bus."""
@@ -46,7 +48,41 @@ class Context:
             setattr(child, key, value)
         return child
 
+    def fork_for_tool_call(self, tool_call_id: str) -> "Context":
+        """Create a lightweight context fork for a concurrent tool call.
+
+        Shares the same context_id and event_bus so events route correctly,
+        but has its own current_tool_call_id so concurrent tools don't race.
+        """
+        child = Context(
+            config=self.config,
+            event_bus=self.event_bus,
+            context_id=self.context_id,
+        )
+        child.current_tool_call_id = tool_call_id
+        child.event_context_id = self.event_context_id
+        child.cancelled = self.cancelled
+        child.extra_tools = self.extra_tools
+        child.extra_tool_definitions = self.extra_tool_definitions
+        child.activated_skills = self.activated_skills
+        child.skill_data = self.skill_data
+        child.allowed_tools = self.allowed_tools
+        child.conv_id = self.conv_id
+        child.channel_id = self.channel_id
+        child.channel_name = self.channel_name
+        child.thread_id = self.thread_id
+        child.user_id = self.user_id
+        child.media_handler = self.media_handler
+        return child
+
     async def publish(self, event_type: str, **kwargs) -> None:
-        """Convenience: publish an event with context_id auto-included."""
-        event = {"type": event_type, "context_id": self.context_id, **kwargs}
+        """Convenience: publish an event with context_id auto-included.
+
+        Automatically includes tool_call_id from current_tool_call_id
+        when set, unless explicitly provided in kwargs.
+        """
+        ctx_id = self.event_context_id or self.context_id
+        event = {"type": event_type, "context_id": ctx_id, **kwargs}
+        if self.current_tool_call_id and "tool_call_id" not in kwargs:
+            event["tool_call_id"] = self.current_tool_call_id
         await self.event_bus.publish(event)

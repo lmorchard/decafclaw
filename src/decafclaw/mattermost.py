@@ -627,18 +627,26 @@ class MattermostClient:
                 content = event.get("content")
                 if content:
                     await conv_display.on_text_complete(content)
+            elif event_type == "text_before_tools" and conv_display:
+                # Flush any streamed text before tool calls start
+                content = event.get("text", "")
+                if content and not streaming:
+                    await conv_display.on_text_complete(content)
             elif event_type == "tool_start" and conv_display:
                 await conv_display.on_tool_start(
-                    event.get("tool", "tool"), event.get("args", {}))
+                    event.get("tool", "tool"), event.get("args", {}),
+                    tool_call_id=event.get("tool_call_id", ""))
             elif event_type == "tool_status" and conv_display:
                 await conv_display.on_tool_status(
-                    event.get("tool", "tool"), event.get("message", ""))
+                    event.get("tool", "tool"), event.get("message", ""),
+                    tool_call_id=event.get("tool_call_id", ""))
             elif event_type == "tool_end" and conv_display:
                 await conv_display.on_tool_end(
                     event.get("tool", "tool"),
                     event.get("result_text", ""),
                     event.get("display_text"),
                     event.get("media", []),
+                    tool_call_id=event.get("tool_call_id", ""),
                 )
             elif event_type == "tool_confirm_request" and conv_display:
                 await conv_display.on_confirm_request(
@@ -646,6 +654,7 @@ class MattermostClient:
                     event.get("command", ""),
                     event.get("suggested_pattern", ""),
                     event_bus, context_id,
+                    tool_call_id=event.get("tool_call_id", ""),
                 )
             # Compaction stays as-is (separate message)
             elif event_type == "compaction_start" and channel_id:
@@ -682,7 +691,7 @@ class MattermostClient:
     # -- Reaction polling ------------------------------------------------------
 
     async def _poll_confirmation(self, post_id, event_bus, context_id, tool_name,
-                                 timeout=60, poll_interval=2):
+                                 timeout=60, poll_interval=2, tool_call_id=""):
         """Poll a post for thumbs up/down reactions to approve/deny a tool."""
 
         async def _resolve(approved, always=False, add_pattern=False, label=""):
@@ -691,6 +700,7 @@ class MattermostClient:
                 "context_id": context_id,
                 "tool": tool_name,
                 "approved": approved,
+                **({"tool_call_id": tool_call_id} if tool_call_id else {}),
                 **({"always": True} if always else {}),
                 **({"add_pattern": True} if add_pattern else {}),
             })
@@ -817,8 +827,9 @@ class ConversationDisplay:
         self._text_buffer = ""
         self._text_has_content = False  # True if any real text was written
 
-        # Tool call state
-        self._tool_post_id = None
+        # Tool call state — maps tool_call_id → Mattermost post ID
+        self._tool_posts: dict[str, str] = {}
+        self._tools_text_finalized = False
 
         # Throttling
         self._last_edit_time = 0
@@ -907,49 +918,64 @@ class ConversationDisplay:
 
     # -- Tool call lifecycle ---------------------------------------------------
 
-    async def on_tool_start(self, tool_name, args):
+    async def on_tool_start(self, tool_name, args, tool_call_id=""):
         """Tool execution starting — finalize text, post tool call message."""
         msg = f"\U0001f527 {tool_name}..."
 
-        # If still on thinking placeholder with no text, reuse it for the tool call
-        if self._current_type == "thinking" and self._current_post_id and not self._text_has_content:
-            await self._force_edit(self._current_post_id, msg)
-            self._tool_post_id = self._current_post_id
-            self._current_post_id = None
+        # First tool in a batch: finalize text / reuse thinking placeholder
+        if not self._tools_text_finalized:
+            self._tools_text_finalized = True
+            if self._current_type == "thinking" and self._current_post_id and not self._text_has_content:
+                await self._force_edit(self._current_post_id, msg)
+                post_id = self._current_post_id
+                self._current_post_id = None
+            else:
+                await self._finalize_current_text()
+                post_id = await self.client.send(
+                    self._channel_id, msg, root_id=self._root_id,
+                    attachments=self._stop_attachments,
+                )
+                if self._stop_attachments:
+                    self._stop_on_post = post_id
         else:
-            await self._finalize_current_text()
-            self._tool_post_id = await self.client.send(
+            # Subsequent concurrent tool — always a new post
+            post_id = await self.client.send(
                 self._channel_id, msg, root_id=self._root_id,
-                attachments=self._stop_attachments,
             )
-            if self._stop_attachments:
-                self._stop_on_post = self._tool_post_id
+
+        self._tool_posts[tool_call_id] = post_id
         self._current_type = "tool"
 
-    async def on_tool_status(self, tool_name, message):
-        """Tool status update — edit tool call message."""
-        if self._tool_post_id:
+    async def on_tool_status(self, tool_name, message, tool_call_id=""):
+        """Tool status update — edit the tool call's progress message."""
+        post_id = self._tool_posts.get(tool_call_id)
+        if not post_id and self._tool_posts:
+            # Fallback: use most recent post if tool_call_id not found
+            post_id = list(self._tool_posts.values())[-1]
+        if post_id:
             try:
                 await self.client.edit_message(
-                    self._tool_post_id,
+                    post_id,
                     f"\U0001f527 {tool_name}: {message}",
                 )
             except Exception:
                 pass
 
-    async def on_tool_end(self, tool_name, result_text, display_text, media):
+    async def on_tool_end(self, tool_name, result_text, display_text, media,
+                          tool_call_id=""):
         """Tool finished — edit tool call message with result, handle media."""
         if display_text:
             msg = display_text
         else:
             msg = f"\U0001f527 {tool_name} \u2714\ufe0f"
 
-        if self._tool_post_id:
+        post_id = self._tool_posts.pop(tool_call_id, None)
+        if post_id:
             try:
                 await self.client.edit_message(
-                    self._tool_post_id, msg, props={"attachments": []},
+                    post_id, msg, props={"attachments": []},
                 )
-                if self._stop_on_post == self._tool_post_id:
+                if self._stop_on_post == post_id:
                     self._stop_on_post = None
             except Exception:
                 pass
@@ -970,13 +996,15 @@ class ConversationDisplay:
                 except Exception as e:
                     log.debug(f"Failed to attach tool media: {e}")
 
-        self._tool_post_id = None
-        self._current_type = None
+        # Reset tool state when all concurrent tools are done
+        if not self._tool_posts:
+            self._current_type = None
+            self._tools_text_finalized = False
 
     # -- Confirmation ----------------------------------------------------------
 
     async def on_confirm_request(self, tool_name, command, suggested_pattern,
-                                  event_bus, context_id):
+                                  event_bus, context_id, tool_call_id=""):
         """Tool needs confirmation — show prompt with buttons and/or emoji."""
         from .http_server import build_confirm_buttons
 
@@ -1002,13 +1030,14 @@ class ConversationDisplay:
         if config:
             attachments = build_confirm_buttons(
                 config, tool_name, command, suggested_pattern,
-                context_id, msg,
+                context_id, msg, tool_call_id=tool_call_id,
             )
             if attachments:
                 import json as _json
                 log.debug(f"Confirm buttons: {_json.dumps(attachments, indent=2)}")
 
-        if self._tool_post_id:
+        tool_post_id = self._tool_posts.get(tool_call_id)
+        if tool_post_id:
             # Edit existing post — can't add attachments to edit, so send new
             if attachments:
                 confirm_post_id = await self.client.send(
@@ -1017,23 +1046,23 @@ class ConversationDisplay:
                 )
             else:
                 try:
-                    await self.client.edit_message(self._tool_post_id, msg)
+                    await self.client.edit_message(tool_post_id, msg)
                 except Exception:
                     pass
-                confirm_post_id = self._tool_post_id
+                confirm_post_id = tool_post_id
         else:
             confirm_post_id = await self.client.send(
                 self._channel_id, msg, root_id=self._root_id,
                 attachments=attachments,
             )
-            self._tool_post_id = confirm_post_id
+            self._tool_posts[tool_call_id] = confirm_post_id
 
-        # Start emoji reaction polling (unless emoji is disabled)
         # Start emoji reaction polling if emoji confirms are enabled
         if confirm_post_id and show_emoji:
             asyncio.create_task(
                 self.client._poll_confirmation(
                     confirm_post_id, event_bus, context_id, tool_name,
+                    tool_call_id=tool_call_id,
                 )
             )
 

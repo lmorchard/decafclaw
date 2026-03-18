@@ -8,44 +8,65 @@ log = logging.getLogger(__name__)
 
 DEFAULT_CHILD_SYSTEM_PROMPT = (
     "Complete the following task. Be concise and focused. "
-    "Return your result directly."
+    "Return your result directly.\n\n"
+    "IMPORTANT: You have tools available — check your tool list and USE them. "
+    "Do NOT say you lack capabilities without first checking your available tools. "
+    "When a skill below shows bash/curl commands, run them with the shell tool."
 )
 
 
-async def _run_child_turn(parent_ctx, task, tools, system_prompt=None):
-    """Run a single child agent turn with restricted tools and config.
+async def _run_child_turn(parent_ctx, task):
+    """Run a single child agent turn, inheriting parent's tools and skills.
 
     Returns the child's text response, or an error string on failure.
     """
     from ..agent import run_agent_turn
+    from . import TOOLS
 
     config = parent_ctx.config
-    child_prompt = system_prompt or DEFAULT_CHILD_SYSTEM_PROMPT
+
+    # Build child system prompt: base + activated skill bodies
+    activated = getattr(parent_ctx, "activated_skills", set())
+    skill_map = {s.name: s for s in getattr(config, "discovered_skills", [])}
+    prompt_parts = [DEFAULT_CHILD_SYSTEM_PROMPT]
+    for name in sorted(activated):
+        skill = skill_map.get(name)
+        if skill and skill.body:
+            prompt_parts.append(f"\n\n--- Skill: {name} ---\n{skill.body}")
 
     # Fork context with fresh ID, propagate cancel event
     parent_conv = getattr(parent_ctx, "conv_id", "") or getattr(parent_ctx, "channel_id", "")
     child_config = replace(
         config,
         max_tool_iterations=config.child_max_tool_iterations,
-        system_prompt=child_prompt,
+        system_prompt="\n".join(prompt_parts),
     )
-    # Children don't discover or activate skills — they get a flat tool list
+    # Children don't discover or activate skills — they inherit parent's
     child_config.discovered_skills = []
     child_ctx = parent_ctx.fork(config=child_config)
     child_ctx.conv_id = f"{parent_conv}--child-{child_ctx.context_id[:8]}"
     child_ctx.cancelled = getattr(parent_ctx, "cancelled", None)
 
-    # Restrict tools — exclude delegate, skill tools, and confirmation-prone tools.
-    # Children see a flat tool list, no skills concept.
-    excluded = {"delegate", "activate_skill", "refresh_skills"}
-    allowed = set(tools) - excluded
-    child_ctx.allowed_tools = allowed
+    # Route child events to the parent's UI subscriber so confirmations
+    # and tool progress are visible in the parent conversation
+    parent_event_id = getattr(parent_ctx, "event_context_id", "") or parent_ctx.context_id
+    child_ctx.event_context_id = parent_event_id
 
-    # Carry over parent's activated skill tools (callables + definitions)
+    # Child inherits parent's tools minus delegation/activation.
+    # If parent has restricted allowed_tools, respect that restriction.
+    excluded = {"delegate_task", "activate_skill", "refresh_skills"}
+    all_tools = set(TOOLS) | set(getattr(parent_ctx, "extra_tools", {}))
+    parent_allowed = getattr(parent_ctx, "allowed_tools", None)
+    if parent_allowed is not None:
+        all_tools = all_tools & parent_allowed
+    child_ctx.allowed_tools = all_tools - excluded
+
+    # Carry over parent's activated skill tools and data
     child_ctx.extra_tools = getattr(parent_ctx, "extra_tools", {})
     child_ctx.extra_tool_definitions = getattr(parent_ctx, "extra_tool_definitions", [])
+    child_ctx.skill_data = getattr(parent_ctx, "skill_data", {})
 
-    # Clear skill state so children can't activate or see skills
+    # Clear skill state so children can't activate new skills
     child_ctx.activated_skills = set()
 
     # No streaming for child agents
@@ -65,100 +86,44 @@ async def _run_child_turn(parent_ctx, task, tools, system_prompt=None):
         return f"[subtask failed: {e}]"
 
 
-async def tool_delegate(ctx, tasks: list) -> str:
-    """Delegate subtasks to child agents, running them concurrently."""
-    log.info(f"[tool:delegate] {len(tasks)} task(s)")
+async def tool_delegate_task(ctx, task: str) -> str:
+    """Delegate a subtask to a child agent."""
+    log.info(f"[tool:delegate_task] {task[:80]}...")
 
-    if not tasks:
-        return "[error: no tasks provided]"
+    if not task or not task.strip():
+        return "[error: task description is required]"
 
-    # Validate
-    for i, t in enumerate(tasks):
-        if not isinstance(t, dict) or "task" not in t or "tools" not in t:
-            return f"[error: task {i + 1} must have 'task' and 'tools' fields]"
-        if not isinstance(t["task"], str) or not t["task"].strip():
-            return f"[error: task {i + 1} 'task' must be a non-empty string]"
-        if not isinstance(t["tools"], list) or not all(isinstance(x, str) for x in t["tools"]):
-            return f"[error: task {i + 1} 'tools' must be a list of strings]"
-
-    # Publish progress: what we're delegating
-    task_summaries = []
-    for i, t in enumerate(tasks):
-        tools_str = ", ".join(t["tools"]) if t["tools"] else "none"
-        preview = t["task"][:80] + ("..." if len(t["task"]) > 80 else "")
-        task_summaries.append(f"{i + 1}. {preview} (tools: {tools_str})")
-    status_msg = f"Delegating {len(tasks)} subtask(s):\n" + "\n".join(task_summaries)
-    await ctx.publish("tool_status", tool_name="delegate", message=status_msg)
-
-    if len(tasks) == 1:
-        # Single task — run directly, return result
-        t = tasks[0]
-        result = await _run_child_turn(
-            ctx, t["task"], t["tools"], t.get("system_prompt"),
-        )
-        return result
-
-    # Multiple tasks — run concurrently
-    coros = [
-        _run_child_turn(ctx, t["task"], t["tools"], t.get("system_prompt"))
-        for t in tasks
-    ]
-    results = await asyncio.gather(*coros, return_exceptions=True)
-
-    parts = []
-    for i, result in enumerate(results):
-        if isinstance(result, Exception):
-            parts.append(f"Task {i + 1}: [error: {result}]")
-        else:
-            parts.append(f"Task {i + 1}: {result}")
-    return "\n\n".join(parts)
+    return await _run_child_turn(ctx, task)
 
 
 DELEGATE_TOOLS = {
-    "delegate": tool_delegate,
+    "delegate_task": tool_delegate_task,
 }
 
 DELEGATE_TOOL_DEFINITIONS = [
     {
         "type": "function",
         "function": {
-            "name": "delegate",
+            "name": "delegate_task",
             "description": (
-                "Delegate subtasks to child agents. Each task runs as an independent "
-                "agent turn with its own tool set. Multiple tasks run concurrently. "
-                "Use this when a request has independent parts that can be handled "
-                "in parallel (e.g. researching multiple topics, searching different "
-                "sources). Provide enough context in each task description for the "
-                "child agent to work independently."
+                "Delegate a subtask to a child agent. The child runs as an "
+                "independent agent turn with access to the same tools and "
+                "skills. Use when a request has an independent part that can "
+                "be handled separately. For parallel work, call delegate_task "
+                "multiple times in the same response."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "tasks": {
-                        "type": "array",
-                        "description": "List of subtasks to delegate",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "task": {
-                                    "type": "string",
-                                    "description": "Task description — becomes the child agent's input",
-                                },
-                                "tools": {
-                                    "type": "array",
-                                    "items": {"type": "string"},
-                                    "description": "Tool names the child agent can use",
-                                },
-                                "system_prompt": {
-                                    "type": "string",
-                                    "description": "Optional system prompt override for this child",
-                                },
-                            },
-                            "required": ["task", "tools"],
-                        },
+                    "task": {
+                        "type": "string",
+                        "description": (
+                            "Task description with enough context for the "
+                            "child agent to work independently"
+                        ),
                     },
                 },
-                "required": ["tasks"],
+                "required": ["task"],
             },
         },
     },
