@@ -9,6 +9,7 @@ import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 log = logging.getLogger(__name__)
 
@@ -253,12 +254,12 @@ class MCPServerState:
 
     config: MCPServerConfig
     status: str = "disconnected"  # connected, disconnected, failed
-    session: object = None  # ClientSession when connected
+    session: Any = None  # ClientSession when connected
     tools: dict = field(default_factory=dict)  # namespaced_name -> callable
     tool_definitions: list = field(default_factory=list)  # OpenAI-style defs
     retry_count: int = 0
     last_retry_time: float = 0.0
-    _exit_stack: object = None  # AsyncExitStack for managing context lifetimes
+    _exit_stack: Any = None  # AsyncExitStack for managing context lifetimes
 
 
 class MCPRegistry:

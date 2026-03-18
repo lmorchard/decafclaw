@@ -22,12 +22,21 @@ lint:
 typecheck:
 	uv run pyright
 
-# Type check JS (requires npm install in static/)
-check-js:
+# Install all dependencies (Python + JS)
+install:
+	uv sync
+	cd src/decafclaw/web/static && npm install
+
+# Install JS dependencies in static/
+install-js:
+	cd src/decafclaw/web/static && npm install
+
+# Type check JS (runs npm install if needed)
+check-js: install-js
 	cd src/decafclaw/web/static && npx tsc --noEmit
 
 # Lint + type check (Python + JS)
-check:
+check: install-js
 	uv run ruff check src/ tests/
 	uv run pyright
 	cd src/decafclaw/web/static && npx tsc --noEmit
