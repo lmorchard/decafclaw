@@ -147,7 +147,15 @@ async def call_llm_streaming(config, messages, tools=None,
 
                     choices = chunk.get("choices", [])
                     if not choices:
+                        # Log chunks with no choices (may contain error info)
+                        if chunk.get("error") or not chunk.get("usage"):
+                            log.debug(f"LLM chunk with no choices: {json.dumps(chunk)[:500]}")
                         continue
+
+                    # Log non-normal finish reasons
+                    finish_reason = choices[0].get("finish_reason")
+                    if finish_reason and finish_reason not in ("stop", "tool_calls"):
+                        log.warning(f"LLM finish_reason: {finish_reason}")
 
                     delta = choices[0].get("delta", {})
 

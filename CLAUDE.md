@@ -34,7 +34,8 @@ A minimal AI agent for learning how agent frameworks work. Connects to Mattermos
 - `src/decafclaw/mcp_client.py` — MCP client: config, registry, server connections, auto-restart
 - `src/decafclaw/heartbeat.py` — Heartbeat: periodic wake-up, section parsing, timer, cycle runner
 - `src/decafclaw/media.py` — Media handling: ToolResult, MediaHandler interface, workspace ref scanning
-- `src/decafclaw/tools/` — Tool registry: core, memory, todo, workspace, file_share, shell, conversation, skill activation, MCP status
+- `src/decafclaw/tools/` — Tool registry: core, memory, todo, workspace, file_share, shell, conversation, skill activation, MCP status, delegation
+- `src/decafclaw/tools/delegate.py` — Sub-agent delegation: fork child agents for concurrent subtasks
 - `src/decafclaw/tools/confirmation.py` — Shared confirmation request helper (event-bus-based user approval)
 - `src/decafclaw/runner.py` — Top-level orchestrator: manages MCP, HTTP server, Mattermost, heartbeat as parallel tasks
 - `src/decafclaw/web/` — Web gateway: auth, conversations, WebSocket chat handler
