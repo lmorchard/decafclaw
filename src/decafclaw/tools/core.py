@@ -11,11 +11,12 @@ from ..media import ToolResult
 log = logging.getLogger(__name__)
 
 
-def tool_web_fetch(ctx, url: str) -> str:
+async def tool_web_fetch(ctx, url: str) -> str:
     """Fetch a URL and return the raw response body as text."""
     log.info(f"[tool:web_fetch] {url}")
     try:
-        resp = httpx.get(url, timeout=30, follow_redirects=True)
+        async with httpx.AsyncClient(follow_redirects=True, timeout=30) as client:
+            resp = await client.get(url)
         resp.raise_for_status()
         text = resp.text
         if len(text) > 50000:
