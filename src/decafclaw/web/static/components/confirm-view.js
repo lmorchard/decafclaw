@@ -22,11 +22,12 @@ export class ConfirmView extends LitElement {
   /**
    * @param {string} contextId
    * @param {string} tool
+   * @param {string} toolCallId
    * @param {boolean} approved
    * @param {object} [extra]
    */
-  #handleConfirm(contextId, tool, approved, extra = {}) {
-    this.store?.respondToConfirm(contextId, tool, approved, extra);
+  #handleConfirm(contextId, tool, toolCallId, approved, extra = {}) {
+    this.store?.respondToConfirm(contextId, tool, toolCallId, approved, extra);
   }
 
   render() {
@@ -39,18 +40,18 @@ export class ConfirmView extends LitElement {
           <pre class="confirm-command">${c.command}</pre>
         </div>
         <div class="confirm-buttons">
-          <button class="outline" @click=${() => this.#handleConfirm(c.context_id, c.tool, true)}>
+          <button class="outline" @click=${() => this.#handleConfirm(c.context_id, c.tool, c.tool_call_id, true)}>
             Approve
           </button>
-          <button class="outline secondary" @click=${() => this.#handleConfirm(c.context_id, c.tool, false)}>
+          <button class="outline secondary" @click=${() => this.#handleConfirm(c.context_id, c.tool, c.tool_call_id, false)}>
             Deny
           </button>
           ${c.tool === 'shell' && c.suggested_pattern ? html`
-            <button class="outline" @click=${() => this.#handleConfirm(c.context_id, c.tool, true, { add_pattern: true })}>
+            <button class="outline" @click=${() => this.#handleConfirm(c.context_id, c.tool, c.tool_call_id, true, { add_pattern: true })}>
               Allow: ${c.suggested_pattern}
             </button>
           ` : html`
-            <button class="outline" @click=${() => this.#handleConfirm(c.context_id, c.tool, true, { always: true })}>
+            <button class="outline" @click=${() => this.#handleConfirm(c.context_id, c.tool, c.tool_call_id, true, { always: true })}>
               Always
             </button>
           `}

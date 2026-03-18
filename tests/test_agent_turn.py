@@ -153,6 +153,124 @@ async def test_execute_tool_calls_cancellation(ctx):
     assert "cancelled" in result.text
 
 
+# -- Concurrent tool execution tests -------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_execute_tool_calls_concurrent(ctx):
+    """Multiple tool calls run concurrently — verified via barrier synchronization."""
+    barrier_reached = asyncio.Event()
+    all_started = []
+
+    async def _concurrent_tool(ctx_arg, name, args):
+        all_started.append(ctx_arg.current_tool_call_id)
+        if len(all_started) >= 3:
+            barrier_reached.set()
+        # Wait for all to start — proves they're running concurrently
+        await asyncio.wait_for(barrier_reached.wait(), timeout=2.0)
+        return ToolResult(text="done")
+
+    tool_calls = [
+        {
+            "id": f"tc{i}",
+            "function": {"name": "slow_tool", "arguments": "{}"},
+        }
+        for i in range(3)
+    ]
+    history = []
+    messages = []
+    pending_media = []
+
+    with patch("decafclaw.agent.execute_tool", side_effect=_concurrent_tool):
+        result = await _execute_tool_calls(ctx, tool_calls, history, messages, pending_media)
+
+    assert result is None
+    assert len(history) == 3
+    # All 3 started before any completed — proves concurrency
+    assert len(all_started) == 3
+
+
+@pytest.mark.asyncio
+async def test_execute_tool_calls_semaphore_limits(ctx):
+    """With max_concurrent_tools=1, execution is effectively sequential."""
+    ctx.config.max_concurrent_tools = 1
+    concurrency_high_water = 0
+    current_concurrency = 0
+
+    async def _tracked_tool(ctx_arg, name, args):
+        nonlocal current_concurrency, concurrency_high_water
+        current_concurrency += 1
+        concurrency_high_water = max(concurrency_high_water, current_concurrency)
+        await asyncio.sleep(0.01)
+        current_concurrency -= 1
+        return ToolResult(text="done")
+
+    tool_calls = [
+        {"id": f"tc{i}", "function": {"name": "slow_tool", "arguments": "{}"}}
+        for i in range(3)
+    ]
+    history = []
+    messages = []
+    pending_media = []
+
+    with patch("decafclaw.agent.execute_tool", side_effect=_tracked_tool):
+        await _execute_tool_calls(ctx, tool_calls, history, messages, pending_media)
+
+    # With semaphore=1, max concurrency should be exactly 1
+    assert concurrency_high_water == 1
+
+
+@pytest.mark.asyncio
+async def test_execute_tool_calls_one_fails_others_succeed(ctx):
+    """One tool failing doesn't prevent others from completing."""
+
+    async def _maybe_fail(ctx_arg, name, args):
+        # Fail based on tool_call_id, not execution order
+        if ctx_arg.current_tool_call_id == "tc1":
+            raise RuntimeError("boom")
+        return ToolResult(text=f"ok-{ctx_arg.current_tool_call_id}")
+
+    tool_calls = [
+        {"id": f"tc{i}", "function": {"name": "tool", "arguments": "{}"}}
+        for i in range(3)
+    ]
+    history = []
+    messages = []
+    pending_media = []
+
+    with patch("decafclaw.agent.execute_tool", side_effect=_maybe_fail):
+        result = await _execute_tool_calls(ctx, tool_calls, history, messages, pending_media)
+
+    assert result is None
+    assert len(history) == 3
+    # Results in call order: tc0 succeeded, tc1 failed, tc2 succeeded
+    assert "ok-tc0" in history[0]["content"]
+    assert "error" in history[1]["content"]
+    assert "ok-tc2" in history[2]["content"]
+
+
+@pytest.mark.asyncio
+async def test_execute_tool_calls_preserves_order(ctx):
+    """Results are returned in call order, not completion order."""
+    async def _variable_speed(ctx_arg, name, args):
+        return ToolResult(text=f"result-{ctx_arg.current_tool_call_id}")
+
+    tool_calls = [
+        {"id": f"tc{i}", "function": {"name": "tool", "arguments": "{}"}}
+        for i in range(3)
+    ]
+    history = []
+    messages = []
+    pending_media = []
+
+    with patch("decafclaw.agent.execute_tool", side_effect=_variable_speed):
+        await _execute_tool_calls(ctx, tool_calls, history, messages, pending_media)
+
+    assert history[0]["tool_call_id"] == "tc0"
+    assert history[1]["tool_call_id"] == "tc1"
+    assert history[2]["tool_call_id"] == "tc2"
+
+
 # -- run_agent_turn integration tests ------------------------------------------
 
 

@@ -174,44 +174,124 @@ async def _call_llm_with_events(ctx, config, messages, tools) -> dict:
     return response
 
 
-async def _execute_tool_calls(ctx, tool_calls, history, messages, pending_media):
-    """Execute tool calls and add results to history. Returns ToolResult if cancelled."""
-    for tc in tool_calls:
-        cancelled = _check_cancelled(ctx, history)
-        if cancelled:
-            return cancelled
+async def _execute_single_tool(call_ctx, tc, semaphore):
+    """Execute one tool call. Returns (tool_msg, media_list).
 
-        fn_name = tc["function"]["name"]
+    Designed to run concurrently — uses its own forked ctx so
+    current_tool_call_id doesn't race with other calls.
+    """
+    from .media import ToolResult
+
+    tool_call_id = tc["id"]
+    fn_name = tc["function"]["name"]
+    try:
+        fn_args = json.loads(tc["function"]["arguments"])
+    except json.JSONDecodeError as e:
+        log.error(f"Malformed tool call arguments for {fn_name}: {e}")
+        fn_args = {}
+
+    log.info(f"Tool call: {fn_name}({fn_args})")
+
+    result = ToolResult(text=f"[error: {fn_name} did not complete]")
+    async with semaphore:
         try:
-            fn_args = json.loads(tc["function"]["arguments"])
-        except json.JSONDecodeError as e:
-            log.error(f"Malformed tool call arguments for {fn_name}: {e}")
-            fn_args = {}
+            await call_ctx.publish("tool_start", tool=fn_name, args=fn_args,
+                                   tool_call_id=tool_call_id)
+            result = await execute_tool(call_ctx, fn_name, fn_args)
+            log.debug(f"Tool result [{fn_name}]: {result.text[:200]}...")
+        except asyncio.CancelledError:
+            result = ToolResult(text=f"[cancelled: {fn_name}]")
+        except Exception as e:
+            log.error(f"Tool call {fn_name} failed: {e}", exc_info=True)
+            result = ToolResult(text=f"[error executing {fn_name}: {e}]")
+        finally:
+            await call_ctx.publish("tool_end", tool=fn_name,
+                                   result_text=result.text,
+                                   display_text=getattr(result, "display_text", None),
+                                   media=result.media or [],
+                                   tool_call_id=tool_call_id)
 
-        log.info(f"Tool call: {fn_name}({fn_args})")
+    tool_msg = {
+        "role": "tool",
+        "tool_call_id": tool_call_id,
+        "content": result.text,
+    }
+    _archive(call_ctx, tool_msg)
+    return tool_msg, result.media or []
 
-        await ctx.publish("tool_start", tool=fn_name, args=fn_args)
-        result = await execute_tool(ctx, fn_name, fn_args)
-        await ctx.publish("tool_end", tool=fn_name,
-                          result_text=result.text,
-                          display_text=getattr(result, "display_text", None),
-                          media=result.media or [])
-        log.debug(f"Tool result: {result.text[:200]}...")
 
-        # Accumulate media from tool results
-        if result.media:
-            pending_media.extend(result.media)
+async def _execute_tool_calls(ctx, tool_calls, history, messages, pending_media):
+    """Execute tool calls concurrently, add results to history.
 
-        tool_msg = {
-            "role": "tool",
-            "tool_call_id": tc["id"],
-            "content": result.text,
-        }
-        history.append(tool_msg)
-        messages.append(tool_msg)
-        _archive(ctx, tool_msg)
+    Returns ToolResult if cancelled, None otherwise.
+    """
+    cancelled = _check_cancelled(ctx, history)
+    if cancelled:
+        return cancelled
 
-    return None  # not cancelled
+    semaphore = asyncio.Semaphore(ctx.config.max_concurrent_tools)
+
+    # Fork ctx per tool call so concurrent tools don't race on current_tool_call_id
+    tasks = []
+    for tc in tool_calls:
+        call_ctx = ctx.fork_for_tool_call(tc["id"])
+        task = asyncio.create_task(
+            _execute_single_tool(call_ctx, tc, semaphore),
+            name=f"tool-{tc['function']['name']}-{tc['id'][:8]}",
+        )
+        tasks.append(task)
+
+    # Cancel watcher: if the cancel event fires, cancel all in-flight tasks
+    cancel_event = getattr(ctx, "cancelled", None)
+
+    async def _cancel_watcher():
+        if cancel_event:
+            await cancel_event.wait()
+            for t in tasks:
+                t.cancel()
+
+    watcher = asyncio.create_task(_cancel_watcher()) if cancel_event else None
+
+    try:
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+    finally:
+        if watcher:
+            watcher.cancel()
+            try:
+                await watcher
+            except asyncio.CancelledError:
+                pass
+
+    # Check if we were cancelled during execution
+    cancelled = _check_cancelled(ctx, history)
+    if cancelled:
+        return cancelled
+
+    # Collect results in original call order (gather preserves order)
+    for i, result in enumerate(results):
+        if isinstance(result, BaseException):
+            # Task was cancelled or failed — gather with return_exceptions.
+            # _execute_single_tool normally handles errors internally,
+            # so this only fires for unexpected failures (e.g. CancelledError
+            # from the cancel watcher).
+            err_type = type(result).__name__
+            err_text = str(result) or err_type
+            tool_msg = {
+                "role": "tool",
+                "tool_call_id": tool_calls[i]["id"],
+                "content": f"[error: {err_text}]",
+            }
+            history.append(tool_msg)
+            messages.append(tool_msg)
+            _archive(ctx, tool_msg)
+        else:
+            tool_msg, media = result  # type: ignore[misc]
+            history.append(tool_msg)
+            messages.append(tool_msg)
+            if media:
+                pending_media.extend(media)
+
+    return None
 
 
 # -- Main agent turn -----------------------------------------------------------
@@ -307,9 +387,12 @@ async def run_agent_turn(ctx, user_message: str, history: list) -> "ToolResult":
                 messages.append(assistant_msg)
                 _archive(ctx, assistant_msg)
 
-                # Preserve text from this iteration (e.g. "Let me check...")
+                # Flush any text content to the UI before starting tool execution.
+                # Without this, text like "Let me check the weather..." appears
+                # after tool results instead of before.
                 if iter_content:
                     accumulated_text_parts.append(iter_content)
+                    await ctx.publish("text_before_tools", text=iter_content)
 
                 cancelled = await _execute_tool_calls(
                     ctx, tool_calls, history, messages, pending_media
