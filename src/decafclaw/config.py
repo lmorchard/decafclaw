@@ -109,6 +109,14 @@ class Config:
     max_concurrent_tools: int = 5    # max parallel tool calls per model response
     max_message_length: int = 50000  # truncate user messages beyond this (chars)
 
+    # Tool search / deferred loading
+    tool_context_budget_pct: float = 0.10  # fraction of compaction_max_tokens for tool defs
+    always_loaded_tools: str = ""  # comma-separated tool names to add to always-loaded set
+
+    @property
+    def tool_context_budget(self) -> int:
+        return int(self.compaction_max_tokens * self.tool_context_budget_pct)
+
     # Child agent (delegation) settings
     child_max_tool_iterations: int = 10
     child_timeout_sec: int = 300
@@ -195,6 +203,8 @@ def load_config() -> Config:
         system_prompt=os.getenv("SYSTEM_PROMPT", Config.system_prompt),
         max_tool_iterations=int(os.getenv("MAX_TOOL_ITERATIONS", "30")),
         max_concurrent_tools=int(os.getenv("MAX_CONCURRENT_TOOLS", "5")),
+        tool_context_budget_pct=float(os.getenv("TOOL_CONTEXT_BUDGET_PCT", "0.10")),
+        always_loaded_tools=os.getenv("ALWAYS_LOADED_TOOLS", ""),
         max_message_length=int(os.getenv("MAX_MESSAGE_LENGTH", "50000")),
         child_max_tool_iterations=int(os.getenv("CHILD_MAX_TOOL_ITERATIONS", "10")),
         child_timeout_sec=int(os.getenv("CHILD_TIMEOUT_SEC", "300")),

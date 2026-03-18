@@ -69,11 +69,12 @@ def test_check_cancelled_not_set(ctx):
 
 
 def test_build_tool_list_base_tools(ctx):
-    tools = _build_tool_list(ctx)
-    # Should have at least the base tools
+    tools, deferred_text = _build_tool_list(ctx)
+    # Should have at least the base tools, no deferral on small set
     assert len(tools) > 0
     names = [t["function"]["name"] for t in tools]
     assert "memory_save" in names
+    assert deferred_text is None
 
 
 def test_build_tool_list_with_extra_tools(ctx):
@@ -82,7 +83,7 @@ def test_build_tool_list_with_extra_tools(ctx):
         "function": {"name": "custom_tool", "parameters": {}},
     }
     ctx.extra_tool_definitions = [extra_def]
-    tools = _build_tool_list(ctx)
+    tools, _ = _build_tool_list(ctx)
     names = [t["function"]["name"] for t in tools]
     assert "custom_tool" in names
 
