@@ -70,7 +70,7 @@ See [docs/installation.md](docs/installation.md) for full setup and configuratio
 | `refresh_skills` | Re-scan skill directories |
 | `mcp_status` | Show/restart MCP server connections |
 | `heartbeat_trigger` | Manually fire a heartbeat cycle |
-| `delegate` | Fork child agents for concurrent subtasks |
+| `delegate_task` | Delegate a subtask to a child agent (call multiple times for parallel work) |
 
 Skills and MCP servers provide additional tools on demand.
 
