@@ -147,12 +147,12 @@ async def websocket_chat(websocket: WebSocket, config, event_bus, app_ctx):
                 if not before:
                     from ..archive import read_archive as _read_archive
                     from ..archive import read_compacted_history
-                    from ..compaction import _estimate_tokens, _flatten_messages
+                    from ..compaction import estimate_tokens, flatten_messages
                     working = read_compacted_history(config, conv_id) \
                         or _read_archive(config, conv_id)
                     if working:
-                        estimated_tokens = _estimate_tokens(
-                            _flatten_messages(working)
+                        estimated_tokens = estimate_tokens(
+                            flatten_messages(working)
                         )
                 response = {
                     "type": "conv_history",
