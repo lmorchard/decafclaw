@@ -128,7 +128,7 @@ def tool_context_stats(ctx) -> str:
     """Report token budget statistics for the current conversation."""
     log.info("[tool:context_stats]")
 
-    messages = getattr(ctx, "messages", [])
+    messages = getattr(ctx, "messages", None) or []
     config = ctx.config
 
     def _estimate_tokens(text):

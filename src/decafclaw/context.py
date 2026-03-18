@@ -51,28 +51,23 @@ class Context:
     def fork_for_tool_call(self, tool_call_id: str) -> "Context":
         """Create a lightweight context fork for a concurrent tool call.
 
-        Shares the same context_id and event_bus so events route correctly,
-        but has its own current_tool_call_id so concurrent tools don't race.
+        Shallow-copies all fields from the parent so new fields are
+        automatically inherited. Only overrides what must differ:
+        current_tool_call_id (the purpose of the fork) and token
+        counters (fresh per-call, not accumulated into parent).
         """
         child = Context(
             config=self.config,
             event_bus=self.event_bus,
             context_id=self.context_id,
         )
+        # Copy all fields from parent, then override specifics
+        child.__dict__.update(self.__dict__)
         child.current_tool_call_id = tool_call_id
-        child.event_context_id = self.event_context_id
-        child.cancelled = self.cancelled
-        child.extra_tools = self.extra_tools
-        child.extra_tool_definitions = self.extra_tool_definitions
-        child.activated_skills = self.activated_skills
-        child.skill_data = self.skill_data
-        child.allowed_tools = self.allowed_tools
-        child.conv_id = self.conv_id
-        child.channel_id = self.channel_id
-        child.channel_name = self.channel_name
-        child.thread_id = self.thread_id
-        child.user_id = self.user_id
-        child.media_handler = self.media_handler
+        # Fresh token counters — don't accumulate child usage into parent
+        child.total_prompt_tokens = 0
+        child.total_completion_tokens = 0
+        child.last_prompt_tokens = 0
         return child
 
     async def publish(self, event_type: str, **kwargs) -> None:
