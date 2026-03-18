@@ -23,6 +23,14 @@ from .tools import TOOL_DEFINITIONS, execute_tool
 if TYPE_CHECKING:
     from .media import ToolResult
 
+# Cache preloaded skill definitions by config id, avoiding Config mutation
+_skill_def_cache: dict[int, list] = {}
+
+
+def invalidate_skill_cache(config) -> None:
+    """Clear the cached skill definitions for a config. Call after refresh_skills."""
+    _skill_def_cache.pop(id(config), None)
+
 log = logging.getLogger(__name__)
 
 
@@ -97,8 +105,9 @@ def _collect_all_tool_defs(ctx) -> list:
     all_tools = list(TOOL_DEFINITIONS) + getattr(ctx, "extra_tool_definitions", [])
 
     # Pre-load tool definitions from discovered skills (stable tool list).
-    # Cached on config to avoid re-executing tools.py every iteration.
-    _cached = getattr(ctx.config, "_preloaded_skill_defs", None)
+    # Cached by config id to avoid re-executing tools.py every iteration.
+    config_id = id(ctx.config)
+    _cached = _skill_def_cache.get(config_id)
     if _cached is None:
         _cached = []
         for skill_info in getattr(ctx.config, "discovered_skills", []):
@@ -109,7 +118,7 @@ def _collect_all_tool_defs(ctx) -> list:
                     _cached.extend(tool_defs)
                 except Exception as e:
                     log.warning(f"Failed to pre-load skill '{skill_info.name}' tools: {e}")
-        ctx.config._preloaded_skill_defs = _cached
+        _skill_def_cache[config_id] = _cached
 
     preloaded_names = {t.get("function", {}).get("name") for t in all_tools}
     for td in _cached:
