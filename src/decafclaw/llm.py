@@ -124,6 +124,7 @@ async def call_llm_streaming(config, messages, tools=None,
             except Exception as e:
                 log.debug(f"Stream chunk callback error: {e}")
 
+    _all_events = []  # collect for diagnostic on empty response
     try:
         async with httpx.AsyncClient() as client:
             async with aconnect_sse(client, "POST", url, json=body,
@@ -135,10 +136,18 @@ async def call_llm_streaming(config, messages, tools=None,
                     if event.data == "[DONE]":
                         break
 
+                    # Log non-default SSE event types (e.g. "error")
+                    event_type = getattr(event, "event", None)
+                    if event_type and event_type != "message":
+                        log.warning(f"LLM SSE event type={event_type}: {event.data[:500]}")
+
                     try:
                         chunk = json.loads(event.data)
                     except json.JSONDecodeError:
+                        log.debug(f"LLM non-JSON SSE data: {event.data[:200]}")
                         continue
+
+                    _all_events.append(chunk)
 
                     # Check for usage in final chunk
                     chunk_usage = chunk.get("usage")
@@ -244,6 +253,12 @@ async def call_llm_streaming(config, messages, tools=None,
                   f"completion={usage.get('completion_tokens')}")
     log.debug(f"LLM streaming response: content={bool(content)}, "
               f"tool_calls={len(tool_calls) if tool_calls else 0}")
+
+    # Dump full event stream on empty response for diagnostics
+    if not content and not tool_calls_in_progress and _all_events:
+        log.warning(f"LLM returned empty — full SSE event dump ({len(_all_events)} events):")
+        for i, evt in enumerate(_all_events):
+            log.warning(f"  event[{i}]: {json.dumps(evt)[:500]}")
 
     return {
         "content": content,
