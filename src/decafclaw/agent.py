@@ -228,7 +228,7 @@ async def run_agent_turn(ctx, user_message: str, history: list) -> "ToolResult":
     Returns:
         ToolResult with the agent's text response and any accumulated media.
     """
-    from .archive import read_skills_state, write_skills_state
+    from .archive import read_skill_data, read_skills_state, write_skill_data, write_skills_state
     from .media import ToolResult, extract_workspace_media
     from .tools.skill_tools import restore_skills
 
@@ -243,6 +243,10 @@ async def run_agent_turn(ctx, user_message: str, history: list) -> "ToolResult":
         existing = set(getattr(ctx, "activated_skills", set()))
         if persisted - existing:
             ctx.activated_skills = existing | persisted
+        # Restore skill_data (e.g. vault base path) from sidecar
+        persisted_data = read_skill_data(config, conv_id)
+        existing_data = getattr(ctx, "skill_data", {})
+        ctx.skill_data = {**persisted_data, **existing_data}
     await restore_skills(ctx)
     ctx.total_prompt_tokens = getattr(ctx, "total_prompt_tokens", 0)
     ctx.total_completion_tokens = getattr(ctx, "total_completion_tokens", 0)
@@ -351,10 +355,14 @@ async def run_agent_turn(ctx, user_message: str, history: list) -> "ToolResult":
         return ToolResult(text=msg)
 
     finally:
-        # Persist activated skills after every turn so they survive restarts
-        activated = getattr(ctx, "activated_skills", None)
-        if conv_id and activated:
-            write_skills_state(config, conv_id, activated)
+        # Persist activated skills and skill_data after every turn
+        if conv_id:
+            activated = getattr(ctx, "activated_skills", None)
+            if activated:
+                write_skills_state(config, conv_id, activated)
+            skill_data = getattr(ctx, "skill_data", {})
+            if skill_data:
+                write_skill_data(config, conv_id, skill_data)
 
 
 # -- Interactive mode helpers --------------------------------------------------
