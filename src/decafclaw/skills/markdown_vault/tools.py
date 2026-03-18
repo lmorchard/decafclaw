@@ -650,21 +650,36 @@ def init(config):
     log.info(f"Markdown vault initialized at workspace {_workspace_path}")
 
 
+def _get_vault_base(ctx) -> str | None:
+    """Read the vault base path from ctx.skill_data."""
+    skill_data = getattr(ctx, "skill_data", {}) if ctx else {}
+    return skill_data.get("vault_base_path")
+
+
+def _set_vault_base(ctx, path: str) -> None:
+    """Store the vault base path in ctx.skill_data."""
+    if not hasattr(ctx, "skill_data"):
+        ctx.skill_data = {}
+    ctx.skill_data["vault_base_path"] = path
+
+
 def _resolve(file: str, ctx=None) -> Path:
     """Resolve a relative file path within the vault, with safety check.
 
-    If ctx has a vault_base_path set, file paths are resolved relative to that
-    subdirectory within the workspace. Otherwise they resolve from workspace root.
+    Requires a vault base path to be set via vault_set_path. This ensures the
+    agent explicitly configures which vault it's working with.
     """
     if _workspace_path is None:
         raise RuntimeError("Vault not initialized — skill not activated?")
-    base = _workspace_path
-    if ctx is not None:
-        vault_base = getattr(ctx, "vault_base_path", None)
-        if vault_base:
-            base = (_workspace_path / vault_base).resolve()
-            if not base.is_relative_to(_workspace_path):
-                raise ValueError(f"Vault base path escapes workspace: {vault_base}")
+    vault_base = _get_vault_base(ctx)
+    if not vault_base:
+        raise ValueError(
+            "No vault base path set. Use vault_set_path to set the vault "
+            "location within the workspace before using other vault tools."
+        )
+    base = (_workspace_path / vault_base).resolve()
+    if not base.is_relative_to(_workspace_path):
+        raise ValueError(f"Vault base path escapes workspace: {vault_base}")
     resolved = (base / file).resolve()
     if not resolved.is_relative_to(_workspace_path):
         raise ValueError(f"Path escapes workspace: {file}")
@@ -690,7 +705,7 @@ def tool_vault_set_path(ctx, path: str) -> ToolResult:
             return ToolResult(text=f"[error: path escapes workspace: {path}]")
         if not base.is_dir():
             return ToolResult(text=f"[error: not a directory: {path}]")
-        ctx.vault_base_path = path
+        _set_vault_base(ctx, path)
         return ToolResult(text=f"Vault base path set to: {path}")
     except Exception as e:
         return ToolResult(text=f"[error: {e}]")
@@ -699,10 +714,10 @@ def tool_vault_set_path(ctx, path: str) -> ToolResult:
 def tool_vault_get_path(ctx) -> ToolResult:
     """Get the current vault base path for this conversation."""
     log.info("[tool:vault_get_path]")
-    base = getattr(ctx, "vault_base_path", None)
+    base = _get_vault_base(ctx)
     if base:
         return ToolResult(text=base)
-    return ToolResult(text="(not set — using workspace root)")
+    return ToolResult(text="(not set — use vault_set_path first)")
 
 
 def tool_vault_read(ctx, file: str) -> ToolResult:
