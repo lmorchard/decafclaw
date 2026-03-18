@@ -241,11 +241,13 @@ async def websocket_chat(websocket: WebSocket, config, event_bus, app_ctx):
 
             elif msg_type == "confirm_response":
                 # Bridge confirmation back to event bus
+                tool_call_id = msg.get("tool_call_id", "")
                 await event_bus.publish({
                     "type": "tool_confirm_response",
                     "context_id": msg.get("context_id", ""),
                     "tool": msg.get("tool", ""),
                     "approved": msg.get("approved", False),
+                    **({"tool_call_id": tool_call_id} if tool_call_id else {}),
                     **({"always": True} if msg.get("always") else {}),
                     **({"add_pattern": True} if msg.get("add_pattern") else {}),
                 })
@@ -326,10 +328,21 @@ async def _run_agent_turn(websocket, app_ctx, config, event_bus,
                     })
                     streaming_buffer["text"] = ""
 
+            elif event_type == "text_before_tools":
+                # Flush streamed text as a complete message before tools start
+                text = streaming_buffer["text"] or event.get("text", "")
+                if text:
+                    await ws_send({
+                        "type": "message_complete", "conv_id": conv_id,
+                        "role": "assistant", "text": text,
+                    })
+                    streaming_buffer["text"] = ""
+
             elif event_type == "tool_start":
                 await ws_send({
                     "type": "tool_start", "conv_id": conv_id,
                     "tool": event.get("tool", ""),
+                    "tool_call_id": event.get("tool_call_id", ""),
                 })
 
             elif event_type == "tool_status":
@@ -337,6 +350,7 @@ async def _run_agent_turn(websocket, app_ctx, config, event_bus,
                     "type": "tool_status", "conv_id": conv_id,
                     "tool": event.get("tool", ""),
                     "message": event.get("message", ""),
+                    "tool_call_id": event.get("tool_call_id", ""),
                 })
 
             elif event_type == "tool_end":
@@ -344,6 +358,7 @@ async def _run_agent_turn(websocket, app_ctx, config, event_bus,
                     "type": "tool_end", "conv_id": conv_id,
                     "tool": event.get("tool", ""),
                     "result_text": event.get("result_text", ""),
+                    "tool_call_id": event.get("tool_call_id", ""),
                 })
 
             elif event_type == "tool_confirm_request":
@@ -355,6 +370,7 @@ async def _run_agent_turn(websocket, app_ctx, config, event_bus,
                     "command": event.get("command", ""),
                     "suggested_pattern": event.get("suggested_pattern", ""),
                     "message": event.get("message", ""),
+                    "tool_call_id": event.get("tool_call_id", ""),
                 })
 
             elif event_type == "compaction_end":

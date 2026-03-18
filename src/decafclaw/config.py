@@ -106,6 +106,7 @@ class Config:
     # Agent settings (system_prompt is assembled from prompt files at startup)
     system_prompt: str = ""
     max_tool_iterations: int = 200
+    max_concurrent_tools: int = 5    # max parallel tool calls per model response
     max_message_length: int = 50000  # truncate user messages beyond this (chars)
 
     # Child agent (delegation) settings
@@ -193,6 +194,7 @@ def load_config() -> Config:
         claude_code_session_timeout=os.getenv("CLAUDE_CODE_SESSION_TIMEOUT", "30m"),
         system_prompt=os.getenv("SYSTEM_PROMPT", Config.system_prompt),
         max_tool_iterations=int(os.getenv("MAX_TOOL_ITERATIONS", "30")),
+        max_concurrent_tools=int(os.getenv("MAX_CONCURRENT_TOOLS", "5")),
         max_message_length=int(os.getenv("MAX_MESSAGE_LENGTH", "50000")),
         child_max_tool_iterations=int(os.getenv("CHILD_MAX_TOOL_ITERATIONS", "10")),
         child_timeout_sec=int(os.getenv("CHILD_TIMEOUT_SEC", "300")),

@@ -1,39 +1,42 @@
 # Sub-Agent Delegation
 
-The `delegate` tool lets the agent fork child agents to handle focused subtasks. Multiple tasks run concurrently.
+The `delegate_task` tool lets the agent fork a child agent to handle a focused subtask. For parallel work, the agent calls `delegate_task` multiple times in the same response — the agent loop runs them concurrently.
 
 ## Usage
 
-The agent calls the `delegate` tool with a list of tasks:
+The agent calls `delegate_task` with a task description:
 
 ```json
-{
-  "tasks": [
-    {"task": "Look up the weather in Portland", "tools": ["tabstack_research"]},
-    {"task": "Search my memories for cocktail recipes", "tools": ["memory_search"]}
-  ]
-}
+{"task": "Look up the weather in Portland"}
 ```
 
-Each task spawns an independent child agent that:
+For parallel subtasks, the model emits multiple `delegate_task` calls in one response:
+
+```json
+// tool_call 1
+{"task": "Look up the weather in Portland"}
+// tool_call 2
+{"task": "Search my memories for cocktail recipes"}
+```
+
+Each call spawns an independent child agent that:
 - Gets a fresh, empty conversation history
-- Only has access to the specified tools
+- Inherits the parent's tools and activated skills (minus `delegate_task` to prevent recursion)
 - Uses a focused system prompt ("Complete the following task. Be concise and focused. Return your result directly.")
 - Shares the parent's cancel event (so user cancellation stops children too)
+- Inherits skill_data (e.g. vault base path)
 
-## Task fields
+## Parameters
 
 | Field | Required | Description |
 |-------|----------|-------------|
 | `task` | Yes | Task description — becomes the child agent's user message |
-| `tools` | Yes | List of tool names the child can use |
-| `system_prompt` | No | Override the default child system prompt |
 
 ## Results
 
-- **Single task**: returns the child's text response directly
-- **Multiple tasks**: returns labeled results (`Task 1: ...\nTask 2: ...`)
-- **Failures**: returned as error text per task — one child failing doesn't cancel siblings
+- Returns the child's text response directly
+- Failures returned as error text — one child failing doesn't affect siblings
+- Timeouts return `[subtask timed out after Ns]`
 
 ## Configuration
 
@@ -41,10 +44,11 @@ Each task spawns an independent child agent that:
 |---------|---------|-------------|
 | `CHILD_MAX_TOOL_ITERATIONS` | 10 | Max tool call rounds per child agent |
 | `CHILD_TIMEOUT_SEC` | 300 | Timeout in seconds per child agent |
+| `MAX_CONCURRENT_TOOLS` | 5 | Max parallel tool calls (applies to all tools, including concurrent delegate_task calls) |
 
-## Limitations (v1)
+## Limitations
 
-- No nested delegation — children cannot call `delegate`
+- No nested delegation — children cannot call `delegate_task`
 - Children use the same LLM model as the parent
-- No streaming of child progress to the UI
+- No streaming of child LLM text to the UI (tool progress and confirmations are visible)
 - No persistent child conversations — results are ephemeral

@@ -91,11 +91,13 @@ def create_app(config, event_bus, app_ctx=None) -> Starlette:
             context_id = token_data["context_id"]
             tool_name = token_data["tool"]
             original_message = token_data["original_message"]
+            tool_call_id = token_data.get("tool_call_id", "")
         else:
             action = context.get("action", "")
             context_id = context.get("context_id", "")
             tool_name = context.get("tool", "")
             original_message = context.get("original_message", "")
+            tool_call_id = context.get("tool_call_id", "")
 
         log.info(f"Confirm callback: action={action} tool={tool_name} context={context_id[:8]}")
 
@@ -110,6 +112,7 @@ def create_app(config, event_bus, app_ctx=None) -> Starlette:
             "context_id": context_id,
             "tool": tool_name,
             "approved": approved,
+            **({"tool_call_id": tool_call_id} if tool_call_id else {}),
             **({"always": True} if always else {}),
             **({"add_pattern": True} if add_pattern else {}),
         })
@@ -342,7 +345,7 @@ def create_app(config, event_bus, app_ctx=None) -> Starlette:
 
 def build_confirm_buttons(config, tool_name: str, command: str,
                           suggested_pattern: str, context_id: str,
-                          original_message: str) -> list[dict]:
+                          original_message: str, tool_call_id: str = "") -> list[dict]:
     """Build Mattermost attachment with interactive action buttons.
 
     Returns the attachments list to include in a post's props.
@@ -359,6 +362,7 @@ def build_confirm_buttons(config, tool_name: str, command: str,
             original_message=original_message[:2000],
             server_secret=config.http_secret,
             action=action,
+            tool_call_id=tool_call_id,
         )
 
     base_url = f"{config.http_callback_base}/actions/confirm"
@@ -367,6 +371,7 @@ def build_confirm_buttons(config, tool_name: str, command: str,
     base_context = {
         "context_id": context_id,
         "tool": tool_name,
+        **({"tool_call_id": tool_call_id} if tool_call_id else {}),
     }
 
     if tool_name == "shell" and suggested_pattern:
@@ -472,8 +477,12 @@ def build_stop_button(config, conv_id: str) -> list[dict]:
     }]
 
 
+_http_server = None  # uvicorn.Server instance, set by run_http_server
+
+
 async def run_http_server(config, event_bus, app_ctx=None) -> None:
     """Start the HTTP server as an asyncio task."""
+    global _http_server
     import uvicorn
     app = create_app(config, event_bus, app_ctx=app_ctx)
     server_config = uvicorn.Config(
@@ -482,6 +491,12 @@ async def run_http_server(config, event_bus, app_ctx=None) -> None:
         port=config.http_port,
         log_level="info",
     )
-    server = uvicorn.Server(server_config)
+    _http_server = uvicorn.Server(server_config)
     log.info(f"HTTP server starting on {config.http_host}:{config.http_port}")
-    await server.serve()
+    await _http_server.serve()
+
+
+async def shutdown_http_server() -> None:
+    """Gracefully shut down the HTTP server (avoids CancelledError tracebacks)."""
+    if _http_server is not None:
+        _http_server.should_exit = True
