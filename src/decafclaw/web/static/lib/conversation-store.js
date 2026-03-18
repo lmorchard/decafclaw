@@ -22,6 +22,7 @@
  * @typedef {object} PendingConfirm
  * @property {string} context_id
  * @property {string} tool
+ * @property {string} tool_call_id
  * @property {string} command
  * @property {string} suggested_pattern
  * @property {string} message
@@ -174,19 +175,25 @@ export class ConversationStore extends EventTarget {
   /**
    * @param {string} contextId
    * @param {string} tool
+   * @param {string} toolCallId
    * @param {boolean} approved
    * @param {object} [extra]
    */
-  respondToConfirm(contextId, tool, approved, extra = {}) {
+  respondToConfirm(contextId, tool, toolCallId = '', approved = false, extra = {}) {
     this.#ws.send({
       type: 'confirm_response',
       context_id: contextId,
       tool,
       approved,
+      ...(toolCallId ? { tool_call_id: toolCallId } : {}),
       ...extra,
     });
-    // Remove from pending
-    this.#pendingConfirms = this.#pendingConfirms.filter(c => c.context_id !== contextId);
+    // Remove only this specific confirm
+    if (toolCallId) {
+      this.#pendingConfirms = this.#pendingConfirms.filter(c => c.tool_call_id !== toolCallId);
+    } else {
+      this.#pendingConfirms = this.#pendingConfirms.filter(c => !(c.context_id === contextId && c.tool === tool));
+    }
     this.#emitChange();
   }
 
@@ -327,6 +334,7 @@ export class ConversationStore extends EventTarget {
         this.#pendingConfirms = [...this.#pendingConfirms, {
           context_id: msg.context_id,
           tool: msg.tool,
+          tool_call_id: msg.tool_call_id || '',
           command: msg.command || '',
           suggested_pattern: msg.suggested_pattern || '',
           message: msg.message || '',

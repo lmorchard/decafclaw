@@ -35,7 +35,7 @@ A minimal AI agent for learning how agent frameworks work. Connects to Mattermos
 - `src/decafclaw/heartbeat.py` — Heartbeat: periodic wake-up, section parsing, timer, cycle runner
 - `src/decafclaw/media.py` — Media handling: ToolResult, MediaHandler interface, workspace ref scanning
 - `src/decafclaw/tools/` — Tool registry: core, memory, todo, workspace, file_share, shell, conversation, skill activation, MCP status, delegation
-- `src/decafclaw/tools/delegate.py` — Sub-agent delegation: fork child agents for concurrent subtasks
+- `src/decafclaw/tools/delegate.py` — Sub-agent delegation: `delegate_task` forks a child agent for a single subtask (call multiple times for parallel work)
 - `src/decafclaw/tools/confirmation.py` — Shared confirmation request helper (event-bus-based user approval)
 - `src/decafclaw/runner.py` — Top-level orchestrator: manages MCP, HTTP server, Mattermost, heartbeat as parallel tasks
 - `src/decafclaw/web/` — Web gateway: auth, conversations, WebSocket chat handler
@@ -92,6 +92,7 @@ Session docs live in `.claude/dev-sessions/YYYY-MM-DD-HHMM-slug/` with `spec.md`
 - **Conversation state in `ConversationState` dataclass.** Per-conversation state (history, skill state, busy flag, etc.) is tracked via `ConversationState` in mattermost.py, not parallel dicts.
 - **Tools receive `ctx` as first param.** All tool functions take a runtime context, even if they don't use it yet.
 - **Sync vs async tools.** `execute_tool` auto-detects via `asyncio.iscoroutinefunction`. Sync tools run in `asyncio.to_thread`.
+- **Tool calls run concurrently.** When the model emits multiple tool calls in one response, they execute via `asyncio.gather` with a semaphore (`max_concurrent_tools`, default 5). Each call gets a forked ctx with its own `current_tool_call_id`. All tool events carry `tool_call_id` for UI correlation.
 - **Events for progress.** Tools publish `tool_status` events via `ctx.publish()`. The agent loop publishes `llm_start/end` and `tool_start/end`. Subscribers (Mattermost, terminal) handle display.
 - **Mattermost concerns stay in `mattermost.py`.** Progress formatting, placeholder management, threading logic — all in `MattermostClient`.
 - **Mattermost PATCH API quirks.** Omitting `props` from a PATCH preserves existing props (including attachments). To strip attachments, you must explicitly send `props: {"attachments": []}`. However, sending a PATCH with only `props` and no `message` field clears the message text, showing "(message deleted)". Always include the message text when patching props — fetch it first if needed.
@@ -101,6 +102,7 @@ Session docs live in `.claude/dev-sessions/YYYY-MM-DD-HHMM-slug/` with `spec.md`
 - **Test live in Mattermost after merging**, not just lint/pytest. Real agent behavior differs from unit tests.
 - **Tool descriptions are a control surface.** Wording changes ("MUST", "NEVER", checklists, "prefer X over Y") measurably change LLM behavior. Use the eval loop to validate.
 - **Group tools by noun, not verb.** `conversation_search` + `conversation_compact` in one module, not scattered across core.
+- **Zero tolerance for warnings and traceback noise.** Warnings, tracebacks, and noisy error output obscure real issues. If you see them — even on shutdown, even if they're "harmless" — fix them. Catch exceptions at the right level, suppress expected cancellation errors, and keep logs clean.
 - **Commit after each logical step.** Lint and test before committing.
 - **Work in a branch for iterative changes.** When making multiple related fixes (especially to UX-sensitive code like streaming/placeholder logic), work in a branch and test the full set before merging to main. Don't push rapid-fire fixes directly to main — regressions compound.
 - **One agent turn per conversation at a time.** Concurrent conversations (different threads/channels) are fine.
