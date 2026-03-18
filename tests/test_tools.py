@@ -111,3 +111,24 @@ def test_context_stats(ctx):
     assert "100" in result  # prompt tokens
     assert "user" in result
     assert "assistant" in result
+
+
+def test_context_stats_with_none_messages(ctx):
+    """context_stats works when ctx.messages is None (before first iteration)."""
+    from decafclaw.tools.core import tool_context_stats
+    ctx.messages = None
+    result = tool_context_stats(ctx)
+    assert "Context Stats" in result
+
+
+def test_context_stats_in_forked_ctx(ctx):
+    """context_stats works in a fork_for_tool_call ctx (messages inherited)."""
+    from decafclaw.tools.core import tool_context_stats
+    ctx.messages = [
+        {"role": "system", "content": "You are a test agent."},
+        {"role": "user", "content": "Hello"},
+    ]
+    forked = ctx.fork_for_tool_call("call_123")
+    result = tool_context_stats(forked)
+    assert "Context Stats" in result
+    assert "user" in result
