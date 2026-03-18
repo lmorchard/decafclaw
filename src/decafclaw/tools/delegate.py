@@ -44,6 +44,7 @@ async def _run_child_turn(parent_ctx, task, tools, system_prompt=None):
     # Carry over parent's activated skill tools (callables + definitions)
     child_ctx.extra_tools = getattr(parent_ctx, "extra_tools", {})
     child_ctx.extra_tool_definitions = getattr(parent_ctx, "extra_tool_definitions", [])
+    child_ctx.skill_data = getattr(parent_ctx, "skill_data", {})
 
     # Clear skill state so children can't activate or see skills
     child_ctx.activated_skills = set()

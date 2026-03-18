@@ -29,6 +29,7 @@ class Context:
         self.extra_tools: dict = {}
         self.extra_tool_definitions: list = []
         self.activated_skills: set = set()
+        self.skill_data: dict = {}  # generic per-conversation state for skills
         self.total_prompt_tokens: int = 0
         self.total_completion_tokens: int = 0
         self.last_prompt_tokens: int = 0

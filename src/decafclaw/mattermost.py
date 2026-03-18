@@ -339,6 +339,7 @@ class MattermostClient:
             req_ctx.extra_tools = conv.skill_state.get("extra_tools", {})
             req_ctx.extra_tool_definitions = conv.skill_state.get("extra_tool_definitions", [])
             req_ctx.activated_skills = conv.skill_state.get("activated_skills", set())
+            req_ctx.skill_data = conv.skill_state.get("skill_data", {})
 
         # Create conversation display for this turn
         conv_display = ConversationDisplay(
@@ -504,6 +505,7 @@ class MattermostClient:
                     "extra_tools": getattr(req_ctx, "extra_tools", {}),
                     "extra_tool_definitions": getattr(req_ctx, "extra_tool_definitions", []),
                     "activated_skills": getattr(req_ctx, "activated_skills", set()),
+                    "skill_data": getattr(req_ctx, "skill_data", {}),
                 }
 
         await conv_display.finalize()
