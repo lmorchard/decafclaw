@@ -674,8 +674,9 @@ def _resolve(file: str, ctx=None) -> Path:
     vault_base = _get_vault_base(ctx)
     if not vault_base:
         raise ValueError(
-            "No vault base path set. Use vault_set_path to set the vault "
-            "location within the workspace before using other vault tools."
+            "No vault base path set. Call memory_search(\"markdown vault "
+            "base path\") to look it up, then call vault_set_path with the "
+            "result. Only ask the user if memory has nothing."
         )
     base = (_workspace_path / vault_base).resolve()
     if not base.is_relative_to(_workspace_path):
@@ -1252,7 +1253,7 @@ TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "vault_set_path",
-            "description": "Set the vault base path for this conversation. All file paths in other vault tools will resolve relative to this directory within the workspace. Call this before using other vault tools. Example: vault_set_path('obsidian/main') means vault_read('journals/today.md') reads workspace/obsidian/main/journals/today.md.",
+            "description": "REQUIRED before any other vault tool. Set the vault base path for this conversation. If you don't know the path, call memory_search(\"markdown vault base path\") first — do NOT ask the user without checking memory. All file paths in other vault tools resolve relative to this directory. Example: vault_set_path('obsidian/main').",
             "parameters": {
                 "type": "object",
                 "properties": {
