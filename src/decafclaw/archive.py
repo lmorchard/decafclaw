@@ -75,6 +75,28 @@ def read_skills_state(config, conv_id: str) -> set[str]:
         return set()
 
 
+def _skill_data_path(config, conv_id: str) -> Path:
+    return config.workspace_path / "conversations" / f"{conv_id}.skill_data.json"
+
+
+def write_skill_data(config, conv_id: str, data: dict) -> None:
+    """Persist skill_data dict for a conversation to a sidecar file."""
+    path = _skill_data_path(config, conv_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data) + "\n")
+
+
+def read_skill_data(config, conv_id: str) -> dict:
+    """Read persisted skill_data, or empty dict if none."""
+    path = _skill_data_path(config, conv_id)
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
 def read_archive(config, conv_id: str) -> list[dict]:
     """Read all messages from a conversation archive."""
     path = archive_path(config, conv_id)
