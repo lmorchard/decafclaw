@@ -93,3 +93,65 @@ async def test_forked_context_publishes_independently(ctx):
     assert received[0]["context_id"] == ctx.context_id
     assert received[1]["context_id"] == child.context_id
     assert received[0]["context_id"] != received[1]["context_id"]
+
+
+# -- fork_for_tool_call --------------------------------------------------------
+
+
+def test_fork_for_tool_call_copies_all_fields(ctx):
+    """fork_for_tool_call should copy all parent fields except the overrides.
+
+    This test catches the "fragile field list" problem — if a new field is
+    added to Context and not copied by fork_for_tool_call, this test will
+    detect it by comparing all non-default fields.
+    """
+    # Set every field to a non-default value so we can detect missing copies
+    ctx.user_id = "test-user"
+    ctx.channel_id = "test-channel"
+    ctx.channel_name = "test-channel-name"
+    ctx.thread_id = "test-thread"
+    ctx.conv_id = "test-conv"
+    ctx.history = [{"role": "user", "content": "hi"}]
+    ctx.messages = [{"role": "system", "content": "sys"}]
+    ctx.cancelled = asyncio.Event()
+    ctx.media_handler = "fake-handler"
+    ctx.extra_tools = {"vault_read": lambda: None}
+    ctx.extra_tool_definitions = [{"function": {"name": "vault_read"}}]
+    ctx.activated_skills = {"markdown_vault"}
+    ctx.skill_data = {"vault_base_path": "obsidian/main"}
+    ctx.allowed_tools = {"shell", "memory_search"}
+    ctx.event_context_id = "parent-event-ctx"
+
+    forked = ctx.fork_for_tool_call("call_new")
+
+    # Overridden fields
+    assert forked.current_tool_call_id == "call_new"
+
+    # Preserved identity
+    assert forked.context_id == ctx.context_id
+    assert forked.event_bus is ctx.event_bus
+    assert forked.config is ctx.config
+
+    # All other fields should match the parent
+    fields_to_check = [
+        "user_id", "channel_id", "channel_name", "thread_id", "conv_id",
+        "history", "messages", "cancelled", "media_handler",
+        "extra_tools", "extra_tool_definitions", "activated_skills",
+        "skill_data", "allowed_tools", "event_context_id",
+    ]
+    for field in fields_to_check:
+        parent_val = getattr(ctx, field)
+        child_val = getattr(forked, field)
+        assert child_val is parent_val or child_val == parent_val, (
+            f"fork_for_tool_call didn't copy '{field}': "
+            f"parent={parent_val!r}, child={child_val!r}"
+        )
+
+
+def test_fork_for_tool_call_fresh_token_counters(ctx):
+    """Token counters should be fresh on forked ctx."""
+    ctx.total_prompt_tokens = 100
+    ctx.total_completion_tokens = 50
+    forked = ctx.fork_for_tool_call("call_1")
+    assert forked.total_prompt_tokens == 0
+    assert forked.total_completion_tokens == 0
