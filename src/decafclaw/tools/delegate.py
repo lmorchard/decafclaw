@@ -54,7 +54,7 @@ async def _run_child_turn(parent_ctx, task):
 
     # Child inherits parent's tools minus delegation/activation.
     # If parent has restricted allowed_tools, respect that restriction.
-    excluded = {"delegate_task", "activate_skill", "refresh_skills"}
+    excluded = {"delegate_task", "activate_skill", "refresh_skills", "tool_search"}
     all_tools = set(TOOLS) | set(getattr(parent_ctx, "extra_tools", {}))
     parent_allowed = getattr(parent_ctx, "allowed_tools", None)
     if parent_allowed is not None:

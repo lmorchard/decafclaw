@@ -88,16 +88,11 @@ def _check_cancelled(ctx, history):
     return None
 
 
-def _build_tool_list(ctx) -> list:
-    """Assemble the full tool list: base + skill + MCP tools.
+def _collect_all_tool_defs(ctx) -> list:
+    """Gather all available tool definitions (core + skill + MCP + extra).
 
-    Pre-loads tool definitions from all discovered skills with native tools,
-    even if not yet activated. This keeps the tool list stable across iterations
-    — some LLMs (Gemini) return empty responses when tools change mid-conversation.
-    Actual tool callables are only registered on activation.
-
-    If ctx.allowed_tools is set, filter to only those tools so the LLM
-    only sees what the context is permitted to use (e.g. child agents).
+    Does NOT apply allowed_tools filter — returns the full unfiltered set
+    so classification can see everything before deciding what to defer.
     """
     all_tools = list(TOOL_DEFINITIONS) + getattr(ctx, "extra_tool_definitions", [])
 
@@ -128,13 +123,47 @@ def _build_tool_list(ctx) -> list:
     if mcp_registry:
         all_tools = all_tools + mcp_registry.get_tool_definitions()
 
+    return all_tools
+
+
+def _build_tool_list(ctx) -> tuple[list, str | None]:
+    """Build the tool list, with optional deferred mode.
+
+    Returns (tool_definitions, deferred_text) where deferred_text is
+    None if all tools fit in the budget, or a system prompt block
+    listing deferred tools when the budget is exceeded.
+    """
+    from .tools.search_tools import SEARCH_TOOL_DEFINITIONS
+    from .tools.tool_registry import (
+        build_deferred_list_text,
+        classify_tools,
+        get_fetched_tools,
+    )
+
+    all_defs = _collect_all_tool_defs(ctx)
+    fetched = get_fetched_tools(ctx)
+    active, deferred = classify_tools(all_defs, ctx.config, fetched)
+
+    # Apply allowed_tools filter to the active set only
     allowed = getattr(ctx, "allowed_tools", None)
     if allowed is not None:
-        all_tools = [
-            t for t in all_tools
+        active = [
+            t for t in active
             if t.get("function", {}).get("name") in allowed
         ]
-    return all_tools
+
+    if not deferred:
+        return active, None
+
+    # Deferred mode: set the pool on ctx and add tool_search
+    ctx.deferred_tool_pool = deferred
+    active = active + SEARCH_TOOL_DEFINITIONS
+
+    # Build deferred list text for system prompt
+    core_names = {td.get("function", {}).get("name", "") for td in TOOL_DEFINITIONS}
+    deferred_text = build_deferred_list_text(deferred, core_names=core_names)
+
+    return active, deferred_text
 
 
 async def _call_llm_with_events(ctx, config, messages, tools) -> dict:
@@ -353,6 +382,9 @@ async def run_agent_turn(ctx, user_message: str, history: list) -> "ToolResult":
         messages = [{"role": "system", "content": config.system_prompt}] + history
         ctx.messages = messages
 
+        # Slot for deferred tools system message (replaced each iteration)
+        deferred_msg: dict | None = None
+
         prompt_tokens = 0
         empty_retries = 0
 
@@ -366,7 +398,23 @@ async def run_agent_turn(ctx, user_message: str, history: list) -> "ToolResult":
             log.debug(f"Agent iteration {iteration + 1}")
             ctx._current_iteration = iteration + 1
 
-            all_tools = _build_tool_list(ctx)
+            all_tools, deferred_text = _build_tool_list(ctx)
+
+            # Inject/update deferred tool list in messages
+            if deferred_text:
+                new_msg = {"role": "system", "content": deferred_text}
+                if deferred_msg is not None and deferred_msg in messages:
+                    idx = messages.index(deferred_msg)
+                    messages[idx] = new_msg
+                else:
+                    # Insert after the first system message
+                    messages.insert(1, new_msg)
+                deferred_msg = new_msg
+            elif deferred_msg is not None and deferred_msg in messages:
+                # No longer in deferred mode — remove the block
+                messages.remove(deferred_msg)
+                deferred_msg = None
+
             response = await _call_llm_with_events(ctx, config, messages, all_tools)
 
             # Track token usage

@@ -1,6 +1,7 @@
 """Tool registry — combines core and built-in tools. Skill tools loaded on demand."""
 
 import asyncio
+import logging
 
 from ..media import ToolResult
 from .conversation_tools import CONVERSATION_TOOL_DEFINITIONS, CONVERSATION_TOOLS
@@ -13,6 +14,8 @@ from .shell_tools import SHELL_TOOL_DEFINITIONS, SHELL_TOOLS
 from .skill_tools import SKILL_TOOL_DEFINITIONS, SKILL_TOOLS
 from .todo_tools import TODO_TOOL_DEFINITIONS, TODO_TOOLS
 from .workspace_tools import WORKSPACE_TOOL_DEFINITIONS, WORKSPACE_TOOLS
+
+log = logging.getLogger(__name__)
 
 # Combined registry (tabstack via skill, MCP tools via registry)
 TOOLS = {**CORE_TOOLS, **MEMORY_TOOLS, **TODO_TOOLS,
@@ -92,11 +95,22 @@ async def execute_tool(ctx, name: str, arguments: dict) -> ToolResult:
                     return ToolResult(text=f"[error executing {name}: {e}]")
         return ToolResult(text=f"[error: MCP tool '{name}' not available]")
 
-    # Check skill-provided tools first, then global registry
+    # Check skill-provided tools first, then global registry, then search tools
+    from .search_tools import SEARCH_TOOLS
+
     extra_tools = getattr(ctx, "extra_tools", {})
-    fn = extra_tools.get(name) or TOOLS.get(name)
+    fn = extra_tools.get(name) or TOOLS.get(name) or SEARCH_TOOLS.get(name)
     if fn is None:
-        return ToolResult(text=f"[error: unknown tool: {name}]")
+        # Check if tool is in the deferred pool — auto-fetch if so
+        deferred_pool = getattr(ctx, "deferred_tool_pool", [])
+        deferred_names = {td.get("function", {}).get("name") for td in deferred_pool}
+        if name in deferred_names:
+            log.debug(f"Auto-fetching deferred tool: {name}")
+            from .tool_registry import add_fetched_tools
+            add_fetched_tools(ctx, {name})
+            fn = extra_tools.get(name) or TOOLS.get(name)
+        if fn is None:
+            return ToolResult(text=f"[error: unknown tool: {name}]")
     cancel_event = getattr(ctx, "cancelled", None)
     try:
         coro = fn(ctx, **arguments) if asyncio.iscoroutinefunction(fn) else asyncio.to_thread(fn, ctx, **arguments)
