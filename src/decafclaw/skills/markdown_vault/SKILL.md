@@ -17,6 +17,17 @@ Tools for reading and surgically editing markdown notes organized by headings, c
 - **Tags**: `#hashtags` anywhere in a line — `#word`, `#CamelCase`, or `#multi-word-tag`. Tags can appear on checklist items or plain prose lines. They're used for cross-section categorization (e.g. `#storyidea`, `#research`, `#urgent`).
 - **Prose lines**: Not all content in a section is checklist items. Sections can contain plain prose paragraphs, indented sub-items, and other markdown. Tags work on both checklist items and prose lines — use `match` to select a prose line by substring, or `index` to select a checklist item by position.
 
+## Getting Started
+
+**Before using any other vault tools, you MUST set the vault base path.** Follow these steps in order:
+
+1. **Check `vault_get_path`** — the path may already be set from earlier in this conversation.
+2. **If not set, search memory** for the vault path (e.g. `memory_search("markdown vault path")` or `memory_search("vault base")`). The user has likely told you before.
+3. **If memory has it**, call `vault_set_path` with the remembered path.
+4. **Only if memory has nothing**, ask the user where their vault is located within the workspace.
+
+Do NOT skip straight to asking the user — always check memory first.
+
 ## Available Tools
 
 ### Vault path
