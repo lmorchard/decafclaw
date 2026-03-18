@@ -752,10 +752,10 @@ def tool_vault_create_file(
             tmpl_path = _resolve(template, ctx)
             if not tmpl_path.is_file():
                 return ToolResult(text=f"[error: template not found: {template}]")
-            import datetime
             body = tmpl_path.read_text()
             today = datetime.date.today().isoformat()
-            body = body.replace("{{date}}", today)
+            # Replace {{date}} and {{date:FORMAT}} variants (e.g. {{date:YYYY-MM-DD}})
+            body = re.sub(r"\{\{date(?::[^}]*)?\}\}", today, body)
         else:
             body = content
 
