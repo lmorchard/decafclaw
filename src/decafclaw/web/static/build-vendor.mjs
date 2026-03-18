@@ -54,6 +54,8 @@ for (const bundle of bundles) {
     minify: true,
     target: 'es2022',
     platform: 'browser',
+    mainFields: ['module', 'main'],
+    conditions: ['import', 'module', 'browser', 'default'],
   });
 }
 
