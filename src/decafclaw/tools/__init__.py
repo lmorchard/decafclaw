@@ -5,6 +5,7 @@ import asyncio
 from ..media import ToolResult
 from .conversation_tools import CONVERSATION_TOOL_DEFINITIONS, CONVERSATION_TOOLS
 from .core import CORE_TOOL_DEFINITIONS, CORE_TOOLS
+from .delegate import DELEGATE_TOOL_DEFINITIONS, DELEGATE_TOOLS
 from .heartbeat_tools import HEARTBEAT_TOOL_DEFINITIONS, HEARTBEAT_TOOLS
 from .mcp_tools import MCP_TOOL_DEFINITIONS, MCP_TOOLS
 from .memory_tools import MEMORY_TOOL_DEFINITIONS, MEMORY_TOOLS
@@ -16,12 +17,13 @@ from .workspace_tools import WORKSPACE_TOOL_DEFINITIONS, WORKSPACE_TOOLS
 # Combined registry (tabstack via skill, MCP tools via registry)
 TOOLS = {**CORE_TOOLS, **MEMORY_TOOLS, **TODO_TOOLS,
          **CONVERSATION_TOOLS, **WORKSPACE_TOOLS, **SHELL_TOOLS,
-         **SKILL_TOOLS, **MCP_TOOLS, **HEARTBEAT_TOOLS}
+         **SKILL_TOOLS, **MCP_TOOLS, **HEARTBEAT_TOOLS, **DELEGATE_TOOLS}
 TOOL_DEFINITIONS = (CORE_TOOL_DEFINITIONS
                     + MEMORY_TOOL_DEFINITIONS + TODO_TOOL_DEFINITIONS
                     + CONVERSATION_TOOL_DEFINITIONS + WORKSPACE_TOOL_DEFINITIONS
                     + SHELL_TOOL_DEFINITIONS + SKILL_TOOL_DEFINITIONS
-                    + MCP_TOOL_DEFINITIONS + HEARTBEAT_TOOL_DEFINITIONS)
+                    + MCP_TOOL_DEFINITIONS + HEARTBEAT_TOOL_DEFINITIONS
+                    + DELEGATE_TOOL_DEFINITIONS)
 
 
 async def _run_with_cancel(coro, cancel_event):
