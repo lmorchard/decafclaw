@@ -62,10 +62,7 @@ async def websocket_chat(websocket: WebSocket, config, event_bus, app_ctx):
                 convs = index.list_for_user(username)
                 await ws_send({
                     "type": "conv_list",
-                    "conversations": [{
-                        "conv_id": c.conv_id, "title": c.title,
-                        "created_at": c.created_at, "updated_at": c.updated_at,
-                    } for c in convs],
+                    "conversations": [c.to_dict() for c in convs],
                 })
 
             elif msg_type == "list_archived":
@@ -73,10 +70,7 @@ async def websocket_chat(websocket: WebSocket, config, event_bus, app_ctx):
                 archived = [c for c in convs if c.archived]
                 await ws_send({
                     "type": "archived_list",
-                    "conversations": [{
-                        "conv_id": c.conv_id, "title": c.title,
-                        "created_at": c.created_at, "updated_at": c.updated_at,
-                    } for c in archived],
+                    "conversations": [c.to_dict() for c in archived],
                 })
 
             elif msg_type == "unarchive_conv":
@@ -89,19 +83,13 @@ async def websocket_chat(websocket: WebSocket, config, event_bus, app_ctx):
                     active = index.list_for_user(username)
                     await ws_send({
                         "type": "conv_list",
-                        "conversations": [{
-                            "conv_id": c.conv_id, "title": c.title,
-                            "created_at": c.created_at, "updated_at": c.updated_at,
-                        } for c in active],
+                        "conversations": [c.to_dict() for c in active],
                     })
                     all_convs = index.list_for_user(username, include_archived=True)
                     archived = [c for c in all_convs if c.archived]
                     await ws_send({
                         "type": "archived_list",
-                        "conversations": [{
-                            "conv_id": c.conv_id, "title": c.title,
-                            "created_at": c.created_at, "updated_at": c.updated_at,
-                        } for c in archived],
+                        "conversations": [c.to_dict() for c in archived],
                     })
                 else:
                     await ws_send({"type": "error", "message": "Conversation not found"})
@@ -110,11 +98,7 @@ async def websocket_chat(websocket: WebSocket, config, event_bus, app_ctx):
                 title = msg.get("title", "")
                 conv = index.create(username, title=title)
                 active_conv_ids.add(conv.conv_id)
-                await ws_send({
-                    "type": "conv_created",
-                    "conv_id": conv.conv_id, "title": conv.title,
-                    "created_at": conv.created_at, "updated_at": conv.updated_at,
-                })
+                await ws_send({"type": "conv_created", **conv.to_dict()})
 
             elif msg_type == "select_conv":
                 conv_id = msg.get("conv_id", "")
@@ -187,17 +171,12 @@ async def websocket_chat(websocket: WebSocket, config, event_bus, app_ctx):
                 if conv and conv.user_id == username:
                     index.archive(conv_id)
                     active_conv_ids.discard(conv_id)
-                    await ws_send({"type": "conv_archived", "conv_id": conv_id,
-                                   "title": conv.title, "created_at": conv.created_at,
-                                   "updated_at": conv.updated_at})
+                    await ws_send({"type": "conv_archived", **conv.to_dict()})
                     # Refresh the conversation list
                     convs = index.list_for_user(username)
                     await ws_send({
                         "type": "conv_list",
-                        "conversations": [{
-                            "conv_id": c.conv_id, "title": c.title,
-                            "created_at": c.created_at, "updated_at": c.updated_at,
-                        } for c in convs],
+                        "conversations": [c.to_dict() for c in convs],
                     })
                 else:
                     await ws_send({"type": "error", "message": "Conversation not found"})

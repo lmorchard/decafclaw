@@ -180,10 +180,7 @@ def create_app(config, event_bus, app_ctx=None) -> Starlette:
         from .web.conversations import ConversationIndex
         index = ConversationIndex(config)
         convs = index.list_for_user(username)
-        return JSONResponse([{
-            "conv_id": c.conv_id, "title": c.title,
-            "created_at": c.created_at, "updated_at": c.updated_at,
-        } for c in convs])
+        return JSONResponse([c.to_dict() for c in convs])
 
     async def create_conversation(request: Request) -> JSONResponse:
         """Create a new conversation."""
@@ -194,10 +191,7 @@ def create_app(config, event_bus, app_ctx=None) -> Starlette:
         from .web.conversations import ConversationIndex
         index = ConversationIndex(config)
         conv = index.create(username, title=body.get("title", ""))
-        return JSONResponse({
-            "conv_id": conv.conv_id, "title": conv.title,
-            "created_at": conv.created_at, "updated_at": conv.updated_at,
-        }, status_code=201)
+        return JSONResponse(conv.to_dict(), status_code=201)
 
     async def get_conversation(request: Request) -> JSONResponse:
         """Get conversation metadata."""
@@ -210,10 +204,7 @@ def create_app(config, event_bus, app_ctx=None) -> Starlette:
         conv = index.get(conv_id)
         if not conv or conv.user_id != username:
             return JSONResponse({"error": "not found"}, status_code=404)
-        return JSONResponse({
-            "conv_id": conv.conv_id, "title": conv.title,
-            "created_at": conv.created_at, "updated_at": conv.updated_at,
-        })
+        return JSONResponse(conv.to_dict())
 
     async def rename_conversation(request: Request) -> JSONResponse:
         """Rename a conversation."""
@@ -230,10 +221,7 @@ def create_app(config, event_bus, app_ctx=None) -> Starlette:
         updated = index.rename(conv_id, body.get("title", ""))
         if not updated:
             return JSONResponse({"error": "not found"}, status_code=404)
-        return JSONResponse({
-            "conv_id": updated.conv_id, "title": updated.title,
-            "created_at": updated.created_at, "updated_at": updated.updated_at,
-        })
+        return JSONResponse(updated.to_dict())
 
     async def get_conversation_history(request: Request) -> JSONResponse:
         """Load paginated conversation history."""
