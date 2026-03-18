@@ -89,12 +89,51 @@ def _check_cancelled(ctx, history):
 
 
 def _build_tool_list(ctx) -> list:
-    """Assemble the full tool list: base + skill-activated + MCP tools."""
-    all_tools = TOOL_DEFINITIONS + getattr(ctx, "extra_tool_definitions", [])
+    """Assemble the full tool list: base + skill + MCP tools.
+
+    Pre-loads tool definitions from all discovered skills with native tools,
+    even if not yet activated. This keeps the tool list stable across iterations
+    — some LLMs (Gemini) return empty responses when tools change mid-conversation.
+    Actual tool callables are only registered on activation.
+
+    If ctx.allowed_tools is set, filter to only those tools so the LLM
+    only sees what the context is permitted to use (e.g. child agents).
+    """
+    all_tools = list(TOOL_DEFINITIONS) + getattr(ctx, "extra_tool_definitions", [])
+
+    # Pre-load tool definitions from discovered skills (stable tool list).
+    # Cached on config to avoid re-executing tools.py every iteration.
+    _cached = getattr(ctx.config, "_preloaded_skill_defs", None)
+    if _cached is None:
+        _cached = []
+        for skill_info in getattr(ctx.config, "discovered_skills", []):
+            if skill_info.has_native_tools:
+                try:
+                    from .tools.skill_tools import _load_native_tools
+                    _, tool_defs, _ = _load_native_tools(skill_info)
+                    _cached.extend(tool_defs)
+                except Exception as e:
+                    log.warning(f"Failed to pre-load skill '{skill_info.name}' tools: {e}")
+        ctx.config._preloaded_skill_defs = _cached
+
+    preloaded_names = {t.get("function", {}).get("name") for t in all_tools}
+    for td in _cached:
+        name = td.get("function", {}).get("name")
+        if name and name not in preloaded_names:
+            all_tools.append(td)
+            preloaded_names.add(name)
+
     from .mcp_client import get_registry
     mcp_registry = get_registry()
     if mcp_registry:
         all_tools = all_tools + mcp_registry.get_tool_definitions()
+
+    allowed = getattr(ctx, "allowed_tools", None)
+    if allowed is not None:
+        all_tools = [
+            t for t in all_tools
+            if t.get("function", {}).get("name") in allowed
+        ]
     return all_tools
 
 
@@ -231,6 +270,7 @@ async def run_agent_turn(ctx, user_message: str, history: list) -> "ToolResult":
         ctx.messages = messages
 
         prompt_tokens = 0
+        empty_retries = 0
 
         accumulated_text_parts = []  # text from iterations that also had tool calls
 
@@ -277,7 +317,13 @@ async def run_agent_turn(ctx, user_message: str, history: list) -> "ToolResult":
             # No tool calls — final response
             content = response.get("content") or ""
             if not content:
-                log.warning("LLM returned empty content with no tool calls")
+                # Retry once on empty response — Gemini sometimes returns
+                # 0 completion tokens, especially after tool list changes.
+                if empty_retries < 1:
+                    empty_retries += 1
+                    log.warning("LLM returned empty response, retrying")
+                    continue
+                log.warning("LLM returned empty content with no tool calls (after retry)")
             final_msg = {"role": "assistant", "content": content}
             history.append(final_msg)
             _archive(ctx, final_msg)
