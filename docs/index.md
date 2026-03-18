@@ -17,6 +17,7 @@
 - [File Attachments](file-attachments.md) — Upload files, MCP media, workspace image refs, rich cards
 - [Streaming](streaming.md) — Stream LLM tokens as they arrive, configurable throttle
 - [HTTP Server & Interactive Buttons](http-server.md) — Button-based confirmations, HTTP callback server
+- [Sub-Agent Delegation](delegation.md) — Fork child agents for concurrent subtasks
 
 ## Architecture
 
