@@ -467,6 +467,8 @@ class MCPRegistry:
         if state._exit_stack:
             try:
                 await state._exit_stack.__aexit__(None, None, None)
+            except asyncio.CancelledError:
+                log.debug(f"MCP server {name!r} disconnect cancelled")
             except Exception as e:
                 log.debug(f"Error closing MCP server {name!r}: {e}")
             state._exit_stack = None
@@ -486,6 +488,8 @@ class MCPRegistry:
             )
         except asyncio.TimeoutError:
             log.warning("MCP disconnect timed out after 5s")
+        except asyncio.CancelledError:
+            log.debug("MCP disconnect cancelled during shutdown")
 
     async def _disconnect_all_inner(self):
         for name in list(self.servers.keys()):

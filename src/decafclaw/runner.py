@@ -101,7 +101,18 @@ async def run_all(app_ctx):
 
         # Stop subsystems in reverse order
         await _cancel_task(heartbeat_task, "heartbeat")
-        await _cancel_task(http_task, "HTTP server")
+
+        # Graceful HTTP server shutdown (avoids uvicorn CancelledError tracebacks)
+        if http_task:
+            from .http_server import shutdown_http_server
+            await shutdown_http_server()
+            try:
+                await asyncio.wait_for(http_task, timeout=5)
+            except asyncio.TimeoutError:
+                log.warning("HTTP server shutdown timed out, cancelling")
+                await _cancel_task(http_task, "HTTP server")
+            except asyncio.CancelledError:
+                pass
 
         # Mattermost handles its own in-flight task cleanup
         if mattermost_task:
