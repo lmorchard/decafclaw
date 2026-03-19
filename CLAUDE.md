@@ -38,6 +38,7 @@ A minimal AI agent for learning how agent frameworks work. Connects to Mattermos
 - `src/decafclaw/tools/delegate.py` — Sub-agent delegation: `delegate_task` forks a child agent for a single subtask (call multiple times for parallel work)
 - `src/decafclaw/tools/tool_registry.py` — Tool classification (always-loaded vs deferred), token estimation, deferred list formatting
 - `src/decafclaw/tools/search_tools.py` — `tool_search` tool: keyword and exact-name lookup for deferred tools
+- `src/decafclaw/commands.py` — User-invokable commands: trigger parsing, argument substitution, execution (fork/inline)
 - `src/decafclaw/tools/confirmation.py` — Shared confirmation request helper (event-bus-based user approval)
 - `src/decafclaw/runner.py` — Top-level orchestrator: manages MCP, HTTP server, Mattermost, heartbeat as parallel tasks
 - `src/decafclaw/web/` — Web gateway: auth, conversations, WebSocket chat handler
@@ -114,6 +115,7 @@ Session docs live in `.claude/dev-sessions/YYYY-MM-DD-HHMM-slug/` with `spec.md`
 - **Agent data at `data/{agent_id}/`.** Admin files (SOUL.md, AGENT.md, USER.md, COMPACTION.md, config.yaml) live at the root — read-only to the agent. Agent read/write files live in `workspace/` subdirectory.
 - **System prompt from files.** SOUL.md + AGENT.md bundled in code, overridable at `data/{agent_id}/`. USER.md is workspace-only.
 - **Skills are lazy-loaded.** Skill catalog (name + description) is in the system prompt. Full content and tools only load when the agent calls `activate_skill`. Per-conversation activation via `ctx.extra_tools`.
+- **User-invokable commands.** Skills with `user-invocable: true` can be triggered by `!name` (Mattermost) or `/name` (web UI). Supports `$ARGUMENTS`/`$0`/`$1` substitution, `context: fork` for isolated execution, and `allowed-tools` for tool pre-approval. `!help`/`/help` lists available commands.
 - **Skill permissions at agent level.** `data/{agent_id}/skill_permissions.json` — outside the workspace, so the agent can't grant itself permission. User confirms activation with yes/no/always.
 - **Bundled skills in `src/decafclaw/skills/`.** Each skill has SKILL.md (required) + tools.py (optional for native Python tools). Skill scan order: workspace > agent-level > bundled.
 - **Skills must use absolute imports.** The skill loader uses `importlib.spec_from_file_location` without package context, so relative imports (`from .` or `from ...`) fail at runtime. Use `from decafclaw.skills.my_skill.module import ...` instead.
