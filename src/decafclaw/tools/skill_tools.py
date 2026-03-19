@@ -130,7 +130,21 @@ async def tool_activate_skill(ctx, name: str) -> str | ToolResult:
         if always:
             _save_permission(ctx.config, name, "always")
 
-    # Activate the skill
+    # Activate the skill (shared logic)
+    result = await activate_skill_internal(ctx, skill_info)
+    if isinstance(result, ToolResult):
+        return result
+    return result
+
+
+async def activate_skill_internal(ctx, skill_info) -> str | ToolResult:
+    """Activate a skill: load tools, register on ctx, mark active.
+
+    Shared by tool_activate_skill (with permission checks) and
+    command execution (without permission checks). Returns the
+    skill body text on success.
+    """
+    name = skill_info.name
     result_parts = [skill_info.body]
 
     if skill_info.has_native_tools:
@@ -138,20 +152,13 @@ async def tool_activate_skill(ctx, name: str) -> str | ToolResult:
             tools, tool_defs, module = _load_native_tools(skill_info)
             await _call_init(module, ctx.config)
 
-            # Register on context
-            if not hasattr(ctx, "extra_tools"):
-                ctx.extra_tools = {}
             ctx.extra_tools.update(tools)
-
-            if not hasattr(ctx, "extra_tool_definitions"):
-                ctx.extra_tool_definitions = []
             ctx.extra_tool_definitions.extend(tool_defs)
 
             tool_names = list(tools.keys())
             result_parts.append(
                 f"\n\nThe following tools are now available: {', '.join(tool_names)}"
             )
-            # Store shutdown hook if the skill module defines one
             shutdown_fn = getattr(module, "shutdown", None)
             if shutdown_fn:
                 if not hasattr(ctx, "_skill_shutdown_hooks"):
@@ -164,11 +171,7 @@ async def tool_activate_skill(ctx, name: str) -> str | ToolResult:
     else:
         log.info(f"Activated shell-based skill '{name}'")
 
-    # Mark as activated
-    if not hasattr(ctx, "activated_skills"):
-        ctx.activated_skills = set()
     ctx.activated_skills.add(name)
-
     return "\n".join(result_parts)
 
 

@@ -119,12 +119,64 @@ async def _handle_send(ws_send, index, username, msg, state):
         await ws_send({"type": "error", "message": "Conversation not found"})
         return
 
+    # -- Command detection --
+    from ..commands import format_help, parse_command_trigger
+    from ..skills import find_command
+
+    trigger = parse_command_trigger(text, prefix="/")
+    log.debug(f"Command trigger check: text={text!r} trigger={trigger}")
+    if trigger:
+        cmd_name, cmd_args = trigger
+        if cmd_name == "help":
+            discovered = getattr(state["config"], "discovered_skills", [])
+            help_text = format_help(discovered, prefix="/")
+            await ws_send({
+                "type": "message_complete", "conv_id": conv_id,
+                "role": "assistant", "text": help_text, "final": True,
+            })
+            return
+        discovered = getattr(state["config"], "discovered_skills", [])
+        command_skill = find_command(cmd_name, discovered)
+        if command_skill is None:
+            await ws_send({
+                "type": "message_complete", "conv_id": conv_id,
+                "role": "assistant", "final": True,
+                "text": f"Unknown command: `{cmd_name}`. Type `/help` for available commands.",
+            })
+            return
+
+        # Fork mode: execute and return response without agent turn
+        if command_skill.context == "fork":
+            from ..commands import execute_command
+            from ..context import Context
+
+            ctx = Context(config=state["config"], event_bus=state["event_bus"])
+            ctx.user_id = username
+            ctx.conv_id = conv_id
+            try:
+                mode, result = await execute_command(ctx, command_skill, cmd_args)
+            except Exception as e:
+                result = f"[error: command failed: {e}]"
+            await ws_send({
+                "type": "message_complete", "conv_id": conv_id,
+                "role": "assistant", "text": result, "final": True,
+            })
+            return
+
+        # Inline mode: substitute body, pass skill info to _run_agent_turn
+        from ..commands import substitute_arguments
+
+        text = substitute_arguments(command_skill.body, cmd_args)
+        state["_command_skill"] = command_skill
+
     cancel_event = asyncio.Event()
     state["cancel_events"][conv_id] = cancel_event
+    command_skill = state.pop("_command_skill", None)
     task = asyncio.create_task(
         _run_agent_turn(
             state["websocket"], state["app_ctx"], state["config"], state["event_bus"],
             index, conv_id, username, text, cancel_event,
+            command_skill=command_skill,
         )
     )
     state["agent_tasks"].add(task)
@@ -231,7 +283,8 @@ async def websocket_chat(websocket: WebSocket, config, event_bus, app_ctx):
 
 
 async def _run_agent_turn(websocket, app_ctx, config, event_bus,
-                          index, conv_id, username, text, cancel_event=None):
+                          index, conv_id, username, text, cancel_event=None,
+                          command_skill=None):
     """Run an agent turn for a web conversation, streaming events to WebSocket."""
     from ..agent import run_agent_turn  # deferred: circular dep
     from ..archive import read_archive
@@ -251,6 +304,12 @@ async def _run_agent_turn(websocket, app_ctx, config, event_bus,
     ctx.channel_name = "web"
     ctx.thread_id = ""
     ctx.conv_id = conv_id
+    # Apply command skill state (inline mode) — activate on the real ctx
+    if command_skill:
+        ctx.preapproved_tools = set(command_skill.allowed_tools)
+        if command_skill.has_native_tools and command_skill.name not in ctx.activated_skills:
+            from ..tools.skill_tools import activate_skill_internal
+            await activate_skill_internal(ctx, command_skill)
     if cancel_event:
         ctx.cancelled = cancel_event
 

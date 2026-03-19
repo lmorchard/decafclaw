@@ -28,6 +28,11 @@ async def request_confirmation(
 
     Times out after `timeout` seconds, returning {"approved": False}.
     """
+    # Check command pre-approval before prompting
+    if tool_name in ctx.preapproved_tools:
+        log.info(f"Confirmation pre-approved for {tool_name}")
+        return {"approved": True}
+
     confirm_event = asyncio.Event()
     result = {"approved": False}
     tool_call_id = ctx.current_tool_call_id
