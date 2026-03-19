@@ -118,5 +118,15 @@ async def execute_tool(ctx, name: str, arguments: dict) -> ToolResult:
         if interrupted:
             return interrupted
         return _to_tool_result(tool_task.result())
+    except TypeError as e:
+        # Common: model guesses wrong parameter names (e.g. 'path' instead of 'file').
+        # Include expected params in the error to help the model self-correct.
+        import inspect
+        try:
+            sig = inspect.signature(fn)
+            params = [p for p in sig.parameters if p != "ctx"]
+            return ToolResult(text=f"[error executing {name}: {e}. Expected parameters: {', '.join(params)}]")
+        except (ValueError, TypeError):
+            return ToolResult(text=f"[error executing {name}: {e}]")
     except Exception as e:
         return ToolResult(text=f"[error executing {name}: {e}]")
