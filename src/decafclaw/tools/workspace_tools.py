@@ -18,7 +18,7 @@ MAX_READ_LINES = 200
 EDIT_CONTEXT_LINES = 3
 
 
-def _mini_diff(old_text: str, new_text: str, path: str = "") -> str | ToolResult:
+def _mini_diff(old_text: str, new_text: str, path: str = "") -> str:
     """Generate a compact unified diff for edit tool output."""
     old_lines = old_text.splitlines(keepends=True)
     new_lines = new_text.splitlines(keepends=True)
@@ -34,10 +34,14 @@ def _mini_diff(old_text: str, new_text: str, path: str = "") -> str | ToolResult
 
 
 def _resolve_safe(config, path_str: str) -> Path | None:
-    """Resolve a path within the workspace, rejecting escapes."""
+    """Resolve a path within the workspace, rejecting escapes.
+
+    Uses Path.is_relative_to for containment check (not string prefix),
+    which correctly handles cases like '/tmp/ws' vs '/tmp/ws2/...'.
+    """
     workspace = config.workspace_path.resolve()
     target = (workspace / path_str).resolve()
-    if not str(target).startswith(str(workspace)):
+    if not target.is_relative_to(workspace):
         return None
     return target
 

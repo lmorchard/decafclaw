@@ -41,7 +41,7 @@ async def _handle_unarchive_conv(ws_send, index, username, msg, state):
 async def _handle_create_conv(ws_send, index, username, msg, state):
     title = msg.get("title", "")
     conv = index.create(username, title=title)
-    state["active_conv_ids"].add(conv.conv_id)
+
     await ws_send({"type": "conv_created", **conv.to_dict()})
 
 
@@ -49,7 +49,7 @@ async def _handle_select_conv(ws_send, index, username, msg, state):
     conv_id = msg.get("conv_id", "")
     conv = index.get(conv_id)
     if conv and conv.user_id == username:
-        state["active_conv_ids"].add(conv_id)
+
         await ws_send({"type": "conv_selected", "conv_id": conv_id})
     else:
         await ws_send({"type": "error", "message": f"Conversation not found: {conv_id}"})
@@ -100,7 +100,7 @@ async def _handle_archive_conv(ws_send, index, username, msg, state):
     conv = index.get(conv_id)
     if conv and conv.user_id == username:
         index.archive(conv_id)
-        state["active_conv_ids"].discard(conv_id)
+
         await ws_send({"type": "conv_archived", **conv.to_dict()})
         convs = index.list_for_user(username)
         await ws_send({"type": "conv_list", "conversations": [c.to_dict() for c in convs]})
@@ -195,7 +195,6 @@ async def websocket_chat(websocket: WebSocket, config, event_bus, app_ctx):
 
     index = ConversationIndex(config)
     state = {
-        "active_conv_ids": set(),
         "agent_tasks": set(),
         "cancel_events": {},
         "config": config,

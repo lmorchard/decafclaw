@@ -43,6 +43,18 @@ def test_resolve_safe_rejects_absolute(config):
     assert result is None
 
 
+def test_resolve_safe_rejects_prefix_attack(config, tmp_data):
+    """Workspace '/tmp/ws' should not allow access to '/tmp/ws2/...'."""
+    # Create a sibling directory whose name starts with the workspace path
+    sibling = tmp_data / config.agent_id / "workspace2"
+    sibling.mkdir(parents=True, exist_ok=True)
+    (sibling / "secret.txt").write_text("secret")
+    # The attack: workspace is '.../workspace', try to reach '.../workspace2'
+    # by using a relative path that resolves to the sibling
+    result = _resolve_safe(config, "../workspace2/secret.txt")
+    assert result is None
+
+
 def test_write_and_read(ctx):
     tool_workspace_write(ctx, "test.txt", "hello world")
     assert "hello world" in tool_workspace_read(ctx, "test.txt")
