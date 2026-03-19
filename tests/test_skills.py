@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from decafclaw.media import ToolResult
 from decafclaw.skills import SkillInfo, build_catalog_text, discover_skills, parse_skill_md
 from decafclaw.tools.skill_tools import (
     _load_permissions,
@@ -22,6 +23,12 @@ def _write_skill(skill_dir, frontmatter, body="Some instructions.", tools_py=Fal
 
 
 # -- parse_skill_md tests --
+
+
+
+def _text(result):
+    """Extract text from str or ToolResult."""
+    return result.text if isinstance(result, ToolResult) else result
 
 
 def test_parse_valid_skill_md(tmp_path):
@@ -236,8 +243,8 @@ async def test_activate_unknown_skill(ctx):
     """Activating an unknown skill returns an error."""
     ctx.config.discovered_skills = []
     result = await tool_activate_skill(ctx, name="nonexistent")
-    assert "[error:" in result
-    assert "not found" in result
+    assert "[error:" in _text(result)
+    assert "not found" in _text(result)
 
 
 @pytest.mark.asyncio
@@ -249,7 +256,7 @@ async def test_activate_already_active(ctx, tmp_path):
     _save_permission(ctx.config, skill.name, "always")
 
     result = await tool_activate_skill(ctx, name=skill.name)
-    assert "already active" in result
+    assert "already active" in _text(result)
 
 
 @pytest.mark.asyncio
@@ -260,7 +267,7 @@ async def test_activate_with_always_permission(ctx, tmp_path):
     _save_permission(ctx.config, skill.name, "always")
 
     result = await tool_activate_skill(ctx, name=skill.name)
-    assert "Instructions here." in result
+    assert "Instructions here." in _text(result)
     assert skill.name in getattr(ctx, "activated_skills", set())
 
 
@@ -303,7 +310,7 @@ async def test_activate_native_skill(ctx, tmp_path):
     _save_permission(ctx.config, "native-skill", "always")
 
     result = await tool_activate_skill(ctx, name="native-skill")
-    assert "Native instructions." in result
-    assert "native_test" in result
+    assert "Native instructions." in _text(result)
+    assert "native_test" in _text(result)
     assert "native_test" in ctx.extra_tools
     assert len(ctx.extra_tool_definitions) == 1

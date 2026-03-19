@@ -11,7 +11,7 @@ from ..media import ToolResult
 log = logging.getLogger(__name__)
 
 
-async def tool_web_fetch(ctx, url: str) -> str:
+async def tool_web_fetch(ctx, url: str) -> str | ToolResult:
     """Fetch a URL and return the raw response body as text."""
     log.info(f"[tool:web_fetch] {url}")
     try:
@@ -23,7 +23,7 @@ async def tool_web_fetch(ctx, url: str) -> str:
             text = text[:50000] + "\n\n[truncated at 50000 chars]"
         return text
     except httpx.HTTPError as e:
-        return f"[error: {e}]"
+        return ToolResult(text=f"[error: {e}]")
 
 
 def tool_debug_context(ctx) -> str | ToolResult:
@@ -112,20 +112,20 @@ def tool_debug_context(ctx) -> str | ToolResult:
     return ToolResult(text=summary_text, media=media)
 
 
-def tool_think(ctx, content: str) -> str:
+def tool_think(ctx, content: str) -> str | ToolResult:
     """Internal reasoning scratchpad — hidden from the user."""
     log.info(f"[tool:think] {content[:100]}...")
     return "OK"
 
 
-def tool_current_time(ctx) -> str:
+def tool_current_time(ctx) -> str | ToolResult:
     """Return the current date and time."""
     from datetime import datetime
     now = datetime.now()
     return now.strftime("%Y-%m-%d %H:%M:%S (%A)")
 
 
-def tool_context_stats(ctx) -> str:
+def tool_context_stats(ctx) -> str | ToolResult:
     """Report token budget statistics for the current conversation."""
     log.info("[tool:context_stats]")
 
