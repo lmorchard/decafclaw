@@ -9,19 +9,176 @@ from starlette.websockets import WebSocket, WebSocketDisconnect
 log = logging.getLogger(__name__)
 
 
-async def websocket_chat(websocket: WebSocket, config, event_bus, app_ctx):
-    """Handle a WebSocket chat connection.
+# -- WebSocket message handlers ------------------------------------------------
 
-    Authenticates from cookie, then enters a message loop:
-    - Receives JSON commands from the browser
-    - Dispatches to handlers (send, create_conv, list_convs, etc.)
-    - Forwards event bus events to the browser for active conversations
-    """
+
+async def _handle_list_convs(ws_send, index, username, msg, state):
+    convs = index.list_for_user(username)
+    await ws_send({"type": "conv_list", "conversations": [c.to_dict() for c in convs]})
+
+
+async def _handle_list_archived(ws_send, index, username, msg, state):
+    convs = index.list_for_user(username, include_archived=True)
+    archived = [c for c in convs if c.archived]
+    await ws_send({"type": "archived_list", "conversations": [c.to_dict() for c in archived]})
+
+
+async def _handle_unarchive_conv(ws_send, index, username, msg, state):
+    conv_id = msg.get("conv_id", "")
+    conv = index.get(conv_id)
+    if conv and conv.user_id == username:
+        index.unarchive(conv_id)
+        await ws_send({"type": "conv_unarchived", "conv_id": conv_id})
+        active = index.list_for_user(username)
+        await ws_send({"type": "conv_list", "conversations": [c.to_dict() for c in active]})
+        all_convs = index.list_for_user(username, include_archived=True)
+        archived = [c for c in all_convs if c.archived]
+        await ws_send({"type": "archived_list", "conversations": [c.to_dict() for c in archived]})
+    else:
+        await ws_send({"type": "error", "message": "Conversation not found"})
+
+
+async def _handle_create_conv(ws_send, index, username, msg, state):
+    title = msg.get("title", "")
+    conv = index.create(username, title=title)
+    state["active_conv_ids"].add(conv.conv_id)
+    await ws_send({"type": "conv_created", **conv.to_dict()})
+
+
+async def _handle_select_conv(ws_send, index, username, msg, state):
+    conv_id = msg.get("conv_id", "")
+    conv = index.get(conv_id)
+    if conv and conv.user_id == username:
+        state["active_conv_ids"].add(conv_id)
+        await ws_send({"type": "conv_selected", "conv_id": conv_id})
+    else:
+        await ws_send({"type": "error", "message": f"Conversation not found: {conv_id}"})
+
+
+async def _handle_load_history(ws_send, index, username, msg, state):
+    config = state["config"]
+    conv_id = msg.get("conv_id", "")
+    conv = index.get(conv_id)
+    if not conv or conv.user_id != username:
+        await ws_send({"type": "error", "message": "Conversation not found"})
+        return
+    limit = msg.get("limit", 50)
+    before = msg.get("before", "")
+    messages, has_more = index.load_history(conv_id, limit=limit, before=before)
+    estimated_tokens = None
+    if not before:
+        from ..archive import read_archive as _read_archive
+        from ..archive import read_compacted_history
+        from ..compaction import estimate_tokens, flatten_messages
+        working = read_compacted_history(config, conv_id) or _read_archive(config, conv_id)
+        if working:
+            estimated_tokens = estimate_tokens(flatten_messages(working))
+    response = {
+        "type": "conv_history", "conv_id": conv_id,
+        "messages": messages, "has_more": has_more,
+        "context_limit": config.compaction_max_tokens,
+    }
+    if estimated_tokens is not None:
+        response["estimated_tokens"] = estimated_tokens
+    await ws_send(response)
+
+
+async def _handle_rename_conv(ws_send, index, username, msg, state):
+    conv_id = msg.get("conv_id", "")
+    title = msg.get("title", "")
+    conv = index.get(conv_id)
+    if conv and conv.user_id == username:
+        updated = index.rename(conv_id, title)
+        if updated:
+            await ws_send({"type": "conv_renamed", "conv_id": conv_id, "title": updated.title})
+    else:
+        await ws_send({"type": "error", "message": "Conversation not found"})
+
+
+async def _handle_archive_conv(ws_send, index, username, msg, state):
+    conv_id = msg.get("conv_id", "")
+    conv = index.get(conv_id)
+    if conv and conv.user_id == username:
+        index.archive(conv_id)
+        state["active_conv_ids"].discard(conv_id)
+        await ws_send({"type": "conv_archived", **conv.to_dict()})
+        convs = index.list_for_user(username)
+        await ws_send({"type": "conv_list", "conversations": [c.to_dict() for c in convs]})
+    else:
+        await ws_send({"type": "error", "message": "Conversation not found"})
+
+
+async def _handle_send(ws_send, index, username, msg, state):
+    conv_id = msg.get("conv_id", "")
+    text = msg.get("text", "").strip()
+    if not conv_id or not text:
+        await ws_send({"type": "error", "message": "conv_id and text required"})
+        return
+    conv = index.get(conv_id)
+    if not conv or conv.user_id != username:
+        await ws_send({"type": "error", "message": "Conversation not found"})
+        return
+
+    cancel_event = asyncio.Event()
+    state["cancel_events"][conv_id] = cancel_event
+    task = asyncio.create_task(
+        _run_agent_turn(
+            state["websocket"], state["app_ctx"], state["config"], state["event_bus"],
+            index, conv_id, username, text, cancel_event,
+        )
+    )
+    state["agent_tasks"].add(task)
+
+    def _on_task_done(t, cid=conv_id):
+        state["agent_tasks"].discard(t)
+        state["cancel_events"].pop(cid, None)
+    task.add_done_callback(_on_task_done)
+
+
+async def _handle_cancel_turn(ws_send, index, username, msg, state):
+    conv_id = msg.get("conv_id", "")
+    event = state["cancel_events"].get(conv_id)
+    if event:
+        log.info(f"Cancelling agent turn for {conv_id}")
+        event.set()
+
+
+async def _handle_confirm_response(ws_send, index, username, msg, state):
+    tool_call_id = msg.get("tool_call_id", "")
+    await state["event_bus"].publish({
+        "type": "tool_confirm_response",
+        "context_id": msg.get("context_id", ""),
+        "tool": msg.get("tool", ""),
+        "approved": msg.get("approved", False),
+        **({"tool_call_id": tool_call_id} if tool_call_id else {}),
+        **({"always": True} if msg.get("always") else {}),
+        **({"add_pattern": True} if msg.get("add_pattern") else {}),
+    })
+
+
+_HANDLERS = {
+    "list_convs": _handle_list_convs,
+    "list_archived": _handle_list_archived,
+    "unarchive_conv": _handle_unarchive_conv,
+    "create_conv": _handle_create_conv,
+    "select_conv": _handle_select_conv,
+    "load_history": _handle_load_history,
+    "rename_conv": _handle_rename_conv,
+    "archive_conv": _handle_archive_conv,
+    "send": _handle_send,
+    "cancel_turn": _handle_cancel_turn,
+    "confirm_response": _handle_confirm_response,
+}
+
+
+# -- Main WebSocket handler ----------------------------------------------------
+
+
+async def websocket_chat(websocket: WebSocket, config, event_bus, app_ctx):
+    """Handle a WebSocket chat connection."""
     from .auth import get_current_user
     from .conversations import ConversationIndex
 
-    # Authenticate from cookie
-    # Starlette exposes cookies before accept
     username = get_current_user(websocket, config)
     if not username:
         await websocket.close(code=4001, reason="Not authenticated")
@@ -31,21 +188,21 @@ async def websocket_chat(websocket: WebSocket, config, event_bus, app_ctx):
     log.info(f"WebSocket connected: {username}")
 
     async def ws_send(msg):
-        """Send JSON to WebSocket, ignoring errors if connection closed."""
         try:
             await websocket.send_json(msg)
         except Exception:
             pass
 
     index = ConversationIndex(config)
-    active_conv_ids: set[str] = set()
-    agent_tasks: set[asyncio.Task] = set()
-    cancel_events: dict[str, asyncio.Event] = {}
-
-    # Note: per-turn event forwarding is handled in _run_agent_turn(),
-    # which subscribes to the event bus for each turn's context_id.
-    # No top-level event bus subscription needed here — _run_agent_turn
-    # sends chunk, message_complete, tool_start, etc. directly to the WebSocket.
+    state = {
+        "active_conv_ids": set(),
+        "agent_tasks": set(),
+        "cancel_events": {},
+        "config": config,
+        "event_bus": event_bus,
+        "app_ctx": app_ctx,
+        "websocket": websocket,
+    }
 
     try:
         while True:
@@ -57,191 +214,18 @@ async def websocket_chat(websocket: WebSocket, config, event_bus, app_ctx):
                 continue
 
             msg_type = msg.get("type", "")
-
-            if msg_type == "list_convs":
-                convs = index.list_for_user(username)
-                await ws_send({
-                    "type": "conv_list",
-                    "conversations": [c.to_dict() for c in convs],
-                })
-
-            elif msg_type == "list_archived":
-                convs = index.list_for_user(username, include_archived=True)
-                archived = [c for c in convs if c.archived]
-                await ws_send({
-                    "type": "archived_list",
-                    "conversations": [c.to_dict() for c in archived],
-                })
-
-            elif msg_type == "unarchive_conv":
-                conv_id = msg.get("conv_id", "")
-                conv = index.get(conv_id)
-                if conv and conv.user_id == username:
-                    index.unarchive(conv_id)
-                    await ws_send({"type": "conv_unarchived", "conv_id": conv_id})
-                    # Refresh both lists
-                    active = index.list_for_user(username)
-                    await ws_send({
-                        "type": "conv_list",
-                        "conversations": [c.to_dict() for c in active],
-                    })
-                    all_convs = index.list_for_user(username, include_archived=True)
-                    archived = [c for c in all_convs if c.archived]
-                    await ws_send({
-                        "type": "archived_list",
-                        "conversations": [c.to_dict() for c in archived],
-                    })
-                else:
-                    await ws_send({"type": "error", "message": "Conversation not found"})
-
-            elif msg_type == "create_conv":
-                title = msg.get("title", "")
-                conv = index.create(username, title=title)
-                active_conv_ids.add(conv.conv_id)
-                await ws_send({"type": "conv_created", **conv.to_dict()})
-
-            elif msg_type == "select_conv":
-                conv_id = msg.get("conv_id", "")
-                conv = index.get(conv_id)
-                if conv and conv.user_id == username:
-                    active_conv_ids.add(conv_id)
-                    await ws_send({
-                        "type": "conv_selected", "conv_id": conv_id,
-                    })
-                else:
-                    await ws_send({
-                        "type": "error", "message": f"Conversation not found: {conv_id}",
-                    })
-
-            elif msg_type == "load_history":
-                conv_id = msg.get("conv_id", "")
-                conv = index.get(conv_id)
-                if not conv or conv.user_id != username:
-                    await ws_send({
-                        "type": "error", "message": "Conversation not found",
-                    })
-                    continue
-                limit = msg.get("limit", 50)
-                before = msg.get("before", "")
-                messages, has_more = index.load_history(
-                    conv_id, limit=limit, before=before
-                )
-                # On initial load (not paginating), estimate current context size
-                estimated_tokens = None
-                if not before:
-                    from ..archive import read_archive as _read_archive
-                    from ..archive import read_compacted_history
-                    from ..compaction import estimate_tokens, flatten_messages
-                    working = read_compacted_history(config, conv_id) \
-                        or _read_archive(config, conv_id)
-                    if working:
-                        estimated_tokens = estimate_tokens(
-                            flatten_messages(working)
-                        )
-                response = {
-                    "type": "conv_history",
-                    "conv_id": conv_id,
-                    "messages": messages,
-                    "has_more": has_more,
-                    "context_limit": config.compaction_max_tokens,
-                }
-                if estimated_tokens is not None:
-                    response["estimated_tokens"] = estimated_tokens
-                await ws_send(response)
-
-            elif msg_type == "rename_conv":
-                conv_id = msg.get("conv_id", "")
-                title = msg.get("title", "")
-                conv = index.get(conv_id)
-                if conv and conv.user_id == username:
-                    updated = index.rename(conv_id, title)
-                    if updated:
-                        await ws_send({
-                            "type": "conv_renamed",
-                            "conv_id": conv_id, "title": updated.title,
-                        })
-                else:
-                    await ws_send({
-                        "type": "error", "message": "Conversation not found",
-                    })
-
-            elif msg_type == "archive_conv":
-                conv_id = msg.get("conv_id", "")
-                conv = index.get(conv_id)
-                if conv and conv.user_id == username:
-                    index.archive(conv_id)
-                    active_conv_ids.discard(conv_id)
-                    await ws_send({"type": "conv_archived", **conv.to_dict()})
-                    # Refresh the conversation list
-                    convs = index.list_for_user(username)
-                    await ws_send({
-                        "type": "conv_list",
-                        "conversations": [c.to_dict() for c in convs],
-                    })
-                else:
-                    await ws_send({"type": "error", "message": "Conversation not found"})
-
-            elif msg_type == "send":
-                conv_id = msg.get("conv_id", "")
-                text = msg.get("text", "").strip()
-                if not conv_id or not text:
-                    await ws_send({
-                        "type": "error", "message": "conv_id and text required",
-                    })
-                    continue
-                conv = index.get(conv_id)
-                if not conv or conv.user_id != username:
-                    await ws_send({
-                        "type": "error", "message": "Conversation not found",
-                    })
-                    continue
-
-                # Run agent turn in background task
-                cancel_event = asyncio.Event()
-                cancel_events[conv_id] = cancel_event
-                task = asyncio.create_task(
-                    _run_agent_turn(
-                        websocket, app_ctx, config, event_bus,
-                        index, conv_id, username, text, cancel_event,
-                    )
-                )
-                agent_tasks.add(task)
-                def _on_task_done(t, cid=conv_id):
-                    agent_tasks.discard(t)
-                    cancel_events.pop(cid, None)
-                task.add_done_callback(_on_task_done)
-
-            elif msg_type == "cancel_turn":
-                conv_id = msg.get("conv_id", "")
-                event = cancel_events.get(conv_id)
-                if event:
-                    log.info(f"Cancelling agent turn for {conv_id}")
-                    event.set()
-
-            elif msg_type == "confirm_response":
-                # Bridge confirmation back to event bus
-                tool_call_id = msg.get("tool_call_id", "")
-                await event_bus.publish({
-                    "type": "tool_confirm_response",
-                    "context_id": msg.get("context_id", ""),
-                    "tool": msg.get("tool", ""),
-                    "approved": msg.get("approved", False),
-                    **({"tool_call_id": tool_call_id} if tool_call_id else {}),
-                    **({"always": True} if msg.get("always") else {}),
-                    **({"add_pattern": True} if msg.get("add_pattern") else {}),
-                })
-
+            handler = _HANDLERS.get(msg_type)
+            if handler:
+                await handler(ws_send, index, username, msg, state)
             else:
-                await ws_send({
-                    "type": "error", "message": f"Unknown message type: {msg_type}",
-                })
+                await ws_send({"type": "error", "message": f"Unknown message type: {msg_type}"})
 
     except WebSocketDisconnect:
         log.info(f"WebSocket disconnected: {username}")
     except Exception as e:
         log.error(f"WebSocket error for {username}: {e}", exc_info=True)
     finally:
-        # Wait for in-flight agent tasks
+        agent_tasks = state["agent_tasks"]
         if agent_tasks:
             log.info(f"Waiting for {len(agent_tasks)} in-flight web agent turn(s)")
             await asyncio.gather(*agent_tasks, return_exceptions=True)
