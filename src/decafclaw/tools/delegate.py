@@ -20,8 +20,8 @@ async def _run_child_turn(parent_ctx, task):
 
     Returns the child's text response, or an error string on failure.
     """
-    from ..agent import run_agent_turn
-    from . import TOOLS
+    from ..agent import run_agent_turn  # deferred: circular dep
+    from . import TOOLS  # deferred: circular dep
 
     config = parent_ctx.config
 

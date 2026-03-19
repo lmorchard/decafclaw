@@ -188,7 +188,7 @@ async def _request_skill_confirmation(ctx, skill_name: str) -> tuple[bool, bool]
 def tool_refresh_skills(ctx) -> str:
     """Re-discover skills and update the system prompt catalog."""
     log.info("[tool:refresh_skills]")
-    from ..agent import invalidate_skill_cache
+    from ..agent import invalidate_skill_cache  # deferred: circular dep
     from ..prompts import load_system_prompt
     config = ctx.config
     config.system_prompt, config.discovered_skills = load_system_prompt(config)

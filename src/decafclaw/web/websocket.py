@@ -250,7 +250,7 @@ async def websocket_chat(websocket: WebSocket, config, event_bus, app_ctx):
 async def _run_agent_turn(websocket, app_ctx, config, event_bus,
                           index, conv_id, username, text, cancel_event=None):
     """Run an agent turn for a web conversation, streaming events to WebSocket."""
-    from ..agent import run_agent_turn
+    from ..agent import run_agent_turn  # deferred: circular dep
     from ..archive import read_archive
     from ..context import Context
 

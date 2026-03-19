@@ -91,7 +91,7 @@ def build_deferred_list_text(
         return ""
 
     if core_names is None:
-        from . import TOOL_DEFINITIONS
+        from . import TOOL_DEFINITIONS  # deferred: circular dep
         core_names = {
             td.get("function", {}).get("name", "") for td in TOOL_DEFINITIONS
         }
