@@ -364,7 +364,7 @@ class MattermostClient:
             )
 
         # Attach interactive Stop button to messages during this turn
-        from .http_server import build_stop_button
+        from .mattermost_ui import build_stop_button
         stop_attachments = build_stop_button(app_ctx.config, conv_id)
         if stop_attachments and placeholder_id:
             conv_display._stop_attachments = stop_attachments
@@ -1006,7 +1006,7 @@ class ConversationDisplay:
     async def on_confirm_request(self, tool_name, command, suggested_pattern,
                                   event_bus, context_id, tool_call_id=""):
         """Tool needs confirmation — show prompt with buttons and/or emoji."""
-        from .http_server import build_confirm_buttons
+        from .mattermost_ui import build_confirm_buttons
 
         config = self._config
 

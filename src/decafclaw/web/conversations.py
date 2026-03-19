@@ -20,6 +20,15 @@ class ConversationMeta:
     updated_at: str  # ISO timestamp
     archived: bool = False
 
+    def to_dict(self) -> dict:
+        """Serialize to dict for API/websocket responses (excludes internal fields)."""
+        return {
+            "conv_id": self.conv_id,
+            "title": self.title,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+        }
+
 
 class ConversationIndex:
     """Manages the conversation metadata index for the web UI.

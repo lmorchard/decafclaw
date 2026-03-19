@@ -5,11 +5,17 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from decafclaw.media import ToolResult
 from decafclaw.tools.delegate import (
     DEFAULT_CHILD_SYSTEM_PROMPT,
     _run_child_turn,
     tool_delegate_task,
 )
+
+
+def _text(result):
+    """Extract text from str or ToolResult."""
+    return result.text if isinstance(result, ToolResult) else result
 
 
 def _mock_llm_response(content="child result"):
@@ -95,7 +101,7 @@ class TestRunChildTurn:
         with patch("decafclaw.agent.run_agent_turn", new_callable=AsyncMock, side_effect=slow_turn):
             result = await _run_child_turn(ctx, "slow task")
 
-        assert "timed out" in result
+        assert "timed out" in _text(result)
 
     @pytest.mark.asyncio
     async def test_child_error(self, ctx):
@@ -103,8 +109,8 @@ class TestRunChildTurn:
         with patch("decafclaw.agent.run_agent_turn", new_callable=AsyncMock, side_effect=Exception("boom")):
             result = await _run_child_turn(ctx, "bad task")
 
-        assert "subtask failed" in result
-        assert "boom" in result
+        assert "subtask failed" in _text(result)
+        assert "boom" in _text(result)
 
     @pytest.mark.asyncio
     async def test_cancel_propagation(self, ctx):
@@ -135,10 +141,10 @@ class TestToolDelegateTask:
     async def test_empty_task(self, ctx):
         """Empty task returns error."""
         result = await tool_delegate_task(ctx, "")
-        assert "error" in result
+        assert "error" in _text(result)
 
     @pytest.mark.asyncio
     async def test_whitespace_task(self, ctx):
         """Whitespace-only task returns error."""
         result = await tool_delegate_task(ctx, "   ")
-        assert "error" in result
+        assert "error" in _text(result)

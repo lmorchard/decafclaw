@@ -201,7 +201,7 @@ def load_config() -> Config:
         claude_code_budget_max=float(os.getenv("CLAUDE_CODE_BUDGET_MAX", "10.0")),
         claude_code_session_timeout=os.getenv("CLAUDE_CODE_SESSION_TIMEOUT", "30m"),
         system_prompt=os.getenv("SYSTEM_PROMPT", Config.system_prompt),
-        max_tool_iterations=int(os.getenv("MAX_TOOL_ITERATIONS", "30")),
+        max_tool_iterations=int(os.getenv("MAX_TOOL_ITERATIONS", "200")),
         max_concurrent_tools=int(os.getenv("MAX_CONCURRENT_TOOLS", "5")),
         tool_context_budget_pct=float(os.getenv("TOOL_CONTEXT_BUDGET_PCT", "0.10")),
         always_loaded_tools=os.getenv("ALWAYS_LOADED_TOOLS", ""),

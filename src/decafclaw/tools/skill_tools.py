@@ -6,6 +6,7 @@ import json
 import logging
 from pathlib import Path
 
+from ..media import ToolResult
 from .confirmation import request_confirmation
 
 log = logging.getLogger(__name__)
@@ -70,12 +71,12 @@ async def restore_skills(ctx) -> None:
     Called at the start of each web gateway turn to restore skills that were
     active in a previous turn or server session.
     """
-    skill_names = set(getattr(ctx, "activated_skills", set()))
+    skill_names = set(ctx.activated_skills)
     if not skill_names:
         return
     discovered = getattr(ctx.config, "discovered_skills", [])
     skill_map = {s.name: s for s in discovered}
-    existing_tools = set(getattr(ctx, "extra_tools", {}).keys())
+    existing_tools = set(ctx.extra_tools.keys())
     for name in skill_names:
         skill_info = skill_map.get(name)
         if not skill_info or not skill_info.has_native_tools:
@@ -98,7 +99,7 @@ async def restore_skills(ctx) -> None:
             log.error(f"Failed to restore skill '{name}': {e}")
 
 
-async def tool_activate_skill(ctx, name: str) -> str:
+async def tool_activate_skill(ctx, name: str) -> str | ToolResult:
     """Activate a skill to make its capabilities available in this conversation."""
     log.info(f"[tool:activate_skill] name={name}")
 
@@ -111,21 +112,21 @@ async def tool_activate_skill(ctx, name: str) -> str:
             break
 
     if skill_info is None:
-        return f"[error: skill '{name}' not found. Check Available Skills in your instructions.]"
+        return ToolResult(text=f"[error: skill '{name}' not found. Check Available Skills in your instructions.]")
 
     # Check if already activated
-    activated = getattr(ctx, "activated_skills", set())
+    activated = ctx.activated_skills
     if name in activated:
         return f"Skill '{name}' is already active."
 
     # Check permissions — admin heartbeat turns auto-approve (admin-authored)
-    is_heartbeat = getattr(ctx, "user_id", "") == "heartbeat-admin"
+    is_heartbeat = ctx.user_id == "heartbeat-admin"
     perms = _load_permissions(ctx.config)
     if not is_heartbeat and perms.get(name) != "always":
         # Need confirmation
         approved, always = await _request_skill_confirmation(ctx, name)
         if not approved:
-            return f"[error: activation of skill '{name}' was denied by user]"
+            return ToolResult(text=f"[error: activation of skill '{name}' was denied by user]")
         if always:
             _save_permission(ctx.config, name, "always")
 
@@ -159,7 +160,7 @@ async def tool_activate_skill(ctx, name: str) -> str:
             log.info(f"Activated native skill '{name}' with tools: {tool_names}")
         except Exception as e:
             log.error(f"Failed to load skill '{name}' tools: {e}")
-            return f"[error: failed to load skill '{name}': {e}]"
+            return ToolResult(text=f"[error: failed to load skill '{name}': {e}]")
     else:
         log.info(f"Activated shell-based skill '{name}'")
 
@@ -185,12 +186,14 @@ async def _request_skill_confirmation(ctx, skill_name: str) -> tuple[bool, bool]
     return result.get("approved", False), result.get("always", False)
 
 
-def tool_refresh_skills(ctx) -> str:
+def tool_refresh_skills(ctx) -> str | ToolResult:
     """Re-discover skills and update the system prompt catalog."""
     log.info("[tool:refresh_skills]")
+    from ..agent import invalidate_skill_cache  # deferred: circular dep
     from ..prompts import load_system_prompt
     config = ctx.config
     config.system_prompt, config.discovered_skills = load_system_prompt(config)
+    invalidate_skill_cache(config)
     skill_names = [s.name for s in config.discovered_skills]
     return f"Skills refreshed. Available skills: {', '.join(skill_names) or '(none)'}"
 
