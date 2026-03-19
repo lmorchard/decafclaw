@@ -80,7 +80,7 @@ Session docs live in `.claude/dev-sessions/YYYY-MM-DD-HHMM-slug/` with `spec.md`
 **Session protocol:**
 1. Start session → create directory and files
 2. Brainstorm → iterative Q&A to develop spec
-3. **Review spec for critical gaps** — always do a review pass before planning
+3. **Review spec for critical gaps** — after writing the spec, always do a self-review pass: check for missing edge cases, interaction effects, and ambiguities. Fix any critical gaps found before moving to planning.
 4. Plan → break into steps with prompts
 5. Execute → implement, lint, test, commit per phase
 6. Retro → write notes, squash, merge
