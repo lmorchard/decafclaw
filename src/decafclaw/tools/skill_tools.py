@@ -6,6 +6,7 @@ import json
 import logging
 from pathlib import Path
 
+from ..media import ToolResult
 from .confirmation import request_confirmation
 
 log = logging.getLogger(__name__)
@@ -98,7 +99,7 @@ async def restore_skills(ctx) -> None:
             log.error(f"Failed to restore skill '{name}': {e}")
 
 
-async def tool_activate_skill(ctx, name: str) -> str:
+async def tool_activate_skill(ctx, name: str) -> str | ToolResult:
     """Activate a skill to make its capabilities available in this conversation."""
     log.info(f"[tool:activate_skill] name={name}")
 
@@ -111,7 +112,7 @@ async def tool_activate_skill(ctx, name: str) -> str:
             break
 
     if skill_info is None:
-        return f"[error: skill '{name}' not found. Check Available Skills in your instructions.]"
+        return ToolResult(text=f"[error: skill '{name}' not found. Check Available Skills in your instructions.]")
 
     # Check if already activated
     activated = ctx.activated_skills
@@ -125,7 +126,7 @@ async def tool_activate_skill(ctx, name: str) -> str:
         # Need confirmation
         approved, always = await _request_skill_confirmation(ctx, name)
         if not approved:
-            return f"[error: activation of skill '{name}' was denied by user]"
+            return ToolResult(text=f"[error: activation of skill '{name}' was denied by user]")
         if always:
             _save_permission(ctx.config, name, "always")
 
@@ -159,7 +160,7 @@ async def tool_activate_skill(ctx, name: str) -> str:
             log.info(f"Activated native skill '{name}' with tools: {tool_names}")
         except Exception as e:
             log.error(f"Failed to load skill '{name}' tools: {e}")
-            return f"[error: failed to load skill '{name}': {e}]"
+            return ToolResult(text=f"[error: failed to load skill '{name}': {e}]")
     else:
         log.info(f"Activated shell-based skill '{name}'")
 
@@ -185,7 +186,7 @@ async def _request_skill_confirmation(ctx, skill_name: str) -> tuple[bool, bool]
     return result.get("approved", False), result.get("always", False)
 
 
-def tool_refresh_skills(ctx) -> str:
+def tool_refresh_skills(ctx) -> str | ToolResult:
     """Re-discover skills and update the system prompt catalog."""
     log.info("[tool:refresh_skills]")
     from ..agent import invalidate_skill_cache  # deferred: circular dep
