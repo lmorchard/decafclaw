@@ -652,7 +652,7 @@ def init(config):
 
 def _get_vault_base(ctx) -> str | None:
     """Read the vault base path from ctx.skill_data."""
-    skill_data = getattr(ctx, "skill_data", {}) if ctx else {}
+    skill_data = ctx.skill_data if ctx else {}
     return skill_data.get("vault_base_path")
 
 

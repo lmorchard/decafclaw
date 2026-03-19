@@ -12,9 +12,9 @@ async def tool_memory_save(ctx, tags: list[str], content: str) -> str:
     log.info(f"[tool:memory_save] tags={tags}")
     result = memory.save_entry(
         config=ctx.config,
-        channel_name=getattr(ctx, "channel_name", ""),
-        channel_id=getattr(ctx, "channel_id", ""),
-        thread_id=getattr(ctx, "thread_id", ""),
+        channel_name=ctx.channel_name,
+        channel_id=ctx.channel_id,
+        thread_id=ctx.thread_id,
         tags=tags,
         content=content,
     )
@@ -25,9 +25,9 @@ async def tool_memory_save(ctx, tags: list[str], content: str) -> str:
 
             from .. import embeddings
             tag_str = ", ".join(tags)
-            channel_name = getattr(ctx, "channel_name", "")
-            channel_id = getattr(ctx, "channel_id", "")
-            thread_id = getattr(ctx, "thread_id", "")
+            channel_name = ctx.channel_name
+            channel_id = ctx.channel_id
+            thread_id = ctx.thread_id
             # Format like the actual markdown entry for consistent embeddings
             entry_text = f"## {datetime.now():%Y-%m-%d %H:%M}\n\n"
             if channel_name or channel_id:

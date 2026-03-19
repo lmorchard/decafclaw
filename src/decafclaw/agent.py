@@ -36,7 +36,7 @@ log = logging.getLogger(__name__)
 
 def _conv_id(ctx) -> str:
     """Get conversation ID from context."""
-    return getattr(ctx, "conv_id", None) or getattr(ctx, "channel_id", None) or "unknown"
+    return ctx.conv_id or ctx.channel_id or "unknown"
 
 
 def _archive(ctx, msg) -> None:
@@ -86,7 +86,7 @@ async def _maybe_compact(ctx, config, history, prompt_tokens) -> None:
 def _check_cancelled(ctx, history):
     """Check if the agent turn has been cancelled. Returns ToolResult or None."""
     from .media import ToolResult
-    if getattr(ctx, "cancelled", None) and ctx.cancelled.is_set():
+    if ctx.cancelled and ctx.cancelled.is_set():
         log.info("Agent turn cancelled by user")
         msg = "[Agent turn cancelled by user]"
         final_msg = {"role": "assistant", "content": msg}
@@ -102,7 +102,7 @@ def _collect_all_tool_defs(ctx) -> list:
     Does NOT apply allowed_tools filter — returns the full unfiltered set
     so classification can see everything before deciding what to defer.
     """
-    all_tools = list(TOOL_DEFINITIONS) + getattr(ctx, "extra_tool_definitions", [])
+    all_tools = list(TOOL_DEFINITIONS) + ctx.extra_tool_definitions
 
     # Pre-load tool definitions from discovered skills (stable tool list).
     # Cached by config id to avoid re-executing tools.py every iteration.
@@ -154,7 +154,7 @@ def _build_tool_list(ctx) -> tuple[list, str | None]:
     active, deferred = classify_tools(all_defs, ctx.config, fetched)
 
     # Apply allowed_tools filter to the active set only
-    allowed = getattr(ctx, "allowed_tools", None)
+    allowed = ctx.allowed_tools
     if allowed is not None:
         active = [
             t for t in active
@@ -177,17 +177,17 @@ def _build_tool_list(ctx) -> tuple[list, str | None]:
 
 async def _call_llm_with_events(ctx, config, messages, tools) -> dict:
     """Call the LLM with event publishing for progress tracking."""
-    iteration = getattr(ctx, "_current_iteration", 1)
+    iteration = ctx._current_iteration
     await ctx.publish("llm_start", iteration=iteration)
     if config.llm_streaming:
         from .llm import call_llm_streaming
-        on_chunk = getattr(ctx, "on_stream_chunk", None)
-        cancel_event = getattr(ctx, "cancelled", None)
+        on_chunk = ctx.on_stream_chunk
+        cancel_event = ctx.cancelled
         response = await call_llm_streaming(
             config, messages, tools=tools, on_chunk=on_chunk, cancel_event=cancel_event
         )
     else:
-        cancel_event = getattr(ctx, "cancelled", None)
+        cancel_event = ctx.cancelled
         if cancel_event:
             llm_task = asyncio.create_task(call_llm(config, messages, tools=tools))
             cancel_task = asyncio.create_task(cancel_event.wait())
@@ -280,7 +280,7 @@ async def _execute_tool_calls(ctx, tool_calls, history, messages, pending_media)
         tasks.append(task)
 
     # Cancel watcher: if the cancel event fires, cancel all in-flight tasks
-    cancel_event = getattr(ctx, "cancelled", None)
+    cancel_event = ctx.cancelled
 
     async def _cancel_watcher():
         if cancel_event:
@@ -355,19 +355,17 @@ async def run_agent_turn(ctx, user_message: str, history: list) -> "ToolResult":
 
     # Restore previously-activated skills from the sidecar (survives restarts).
     # Merge with any skills already on ctx (e.g. set by Mattermost in-session state).
-    conv_id = getattr(ctx, "conv_id", None) or getattr(ctx, "channel_id", "")
+    conv_id = ctx.conv_id or ctx.channel_id
     if conv_id:
         persisted = read_skills_state(config, conv_id)
-        existing = set(getattr(ctx, "activated_skills", set()))
+        existing = set(ctx.activated_skills)
         if persisted - existing:
             ctx.activated_skills = existing | persisted
         # Restore skill_data (e.g. vault base path) from sidecar
         persisted_data = read_skill_data(config, conv_id)
-        existing_data = getattr(ctx, "skill_data", {})
+        existing_data = ctx.skill_data
         ctx.skill_data = {**persisted_data, **existing_data}
     await restore_skills(ctx)
-    ctx.total_prompt_tokens = getattr(ctx, "total_prompt_tokens", 0)
-    ctx.total_completion_tokens = getattr(ctx, "total_completion_tokens", 0)
 
     pending_media = []
 
@@ -497,10 +495,10 @@ async def run_agent_turn(ctx, user_message: str, history: list) -> "ToolResult":
     finally:
         # Persist activated skills and skill_data after every turn
         if conv_id:
-            activated = getattr(ctx, "activated_skills", None)
+            activated = ctx.activated_skills
             if activated:
                 write_skills_state(config, conv_id, activated)
-            skill_data = getattr(ctx, "skill_data", {})
+            skill_data = ctx.skill_data
             if skill_data:
                 write_skill_data(config, conv_id, skill_data)
 
@@ -513,10 +511,10 @@ def _setup_interactive_context(ctx) -> None:
     from .media import TerminalMediaHandler
     config = ctx.config
 
-    ctx.user_id = getattr(ctx, "user_id", None) or config.agent_user_id
-    ctx.channel_id = getattr(ctx, "channel_id", "") or "interactive"
-    ctx.channel_name = getattr(ctx, "channel_name", "") or "interactive"
-    ctx.thread_id = getattr(ctx, "thread_id", "") or ""
+    ctx.user_id = ctx.user_id or config.agent_user_id
+    ctx.channel_id = ctx.channel_id or "interactive"
+    ctx.channel_name = ctx.channel_name or "interactive"
+    ctx.thread_id = ctx.thread_id or ""
     ctx.conv_id = "interactive"
     ctx.media_handler = TerminalMediaHandler(config.workspace_path)
 

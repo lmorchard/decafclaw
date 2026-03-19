@@ -30,10 +30,10 @@ async def request_confirmation(
     """
     confirm_event = asyncio.Event()
     result = {"approved": False}
-    tool_call_id = getattr(ctx, "current_tool_call_id", "")
+    tool_call_id = ctx.current_tool_call_id
     # Match against the context_id used for publishing (event_context_id if set,
     # otherwise context_id). Child agents publish under the parent's event_context_id.
-    match_context_id = getattr(ctx, "event_context_id", "") or ctx.context_id
+    match_context_id = ctx.event_context_id or ctx.context_id
 
     def on_confirm(event):
         if (event.get("type") == "tool_confirm_response"

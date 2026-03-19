@@ -10,28 +10,28 @@ log = logging.getLogger(__name__)
 def tool_todo_add(ctx, item: str) -> str:
     """Add a to-do item."""
     log.info(f"[tool:todo_add] {item}")
-    conv_id = getattr(ctx, "conv_id", "default")
+    conv_id = (ctx.conv_id or "default")
     return todos.todo_add(ctx.config, conv_id, item)
 
 
 def tool_todo_complete(ctx, index: int) -> str:
     """Mark a to-do item as complete."""
     log.info(f"[tool:todo_complete] #{index}")
-    conv_id = getattr(ctx, "conv_id", "default")
+    conv_id = (ctx.conv_id or "default")
     return todos.todo_complete(ctx.config, conv_id, index)
 
 
 def tool_todo_list(ctx) -> str:
     """List all to-do items."""
     log.info("[tool:todo_list]")
-    conv_id = getattr(ctx, "conv_id", "default")
+    conv_id = (ctx.conv_id or "default")
     return todos.todo_list(ctx.config, conv_id)
 
 
 def tool_todo_clear(ctx) -> str:
     """Clear the to-do list."""
     log.info("[tool:todo_clear]")
-    conv_id = getattr(ctx, "conv_id", "default")
+    conv_id = (ctx.conv_id or "default")
     return todos.todo_clear(ctx.config, conv_id)
 
 
