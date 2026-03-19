@@ -12,6 +12,11 @@ from decafclaw.skills.markdown_vault.tools import (
     extract_tags,
     move_item_across_files,
     normalize_title,
+    tool_md_create,
+    tool_md_move_lines,
+    tool_md_section,
+    tool_md_show,
+    tool_vault_daily_path,
 )
 
 # -- Fixture document used by most tests --
@@ -1056,3 +1061,171 @@ class TestRoundTrip:
         doc = Document.from_file(p)
         doc.save(p)
         assert p.read_text() == SAMPLE
+
+
+# -- New tool tests (5 tools) -------------------------------------------------
+
+
+class _FakeConfig:
+    def __init__(self, workspace):
+        self.workspace_path = workspace
+
+
+class _FakeCtx:
+    def __init__(self, workspace):
+        self.config = _FakeConfig(workspace)
+
+
+class TestVaultDailyPath:
+    def test_with_base_path(self):
+        ctx = _FakeCtx(None)
+        result = tool_vault_daily_path(ctx, base_path="obsidian/main")
+        import datetime as dt
+        today = dt.date.today().isoformat()
+        assert result.text == f"obsidian/main/journals/{dt.date.today().year}/{today}.md"
+
+    def test_without_base_path(self):
+        ctx = _FakeCtx(None)
+        result = tool_vault_daily_path(ctx)
+        assert "journals/" in result.text
+        assert result.text.startswith("journals/")
+
+    def test_with_offset(self):
+        ctx = _FakeCtx(None)
+        result = tool_vault_daily_path(ctx, base_path="vault", offset=-1)
+        assert "vault/journals/" in result.text
+
+
+class TestMdShow:
+    def test_outline(self, tmp_path):
+        p = tmp_path / "test.md"
+        p.write_text("# today\n- [ ] task one\n\n# tomorrow\n- [ ] task two\n")
+        ctx = _FakeCtx(tmp_path)
+        result = tool_md_show(ctx, file="test.md")
+        assert "# today" in result.text
+        assert "# tomorrow" in result.text
+        assert "1:" in result.text  # line numbers
+
+    def test_section_content(self, tmp_path):
+        p = tmp_path / "test.md"
+        p.write_text("# today\n- [ ] task one\n- [x] done task\n\n# tomorrow\n")
+        ctx = _FakeCtx(tmp_path)
+        result = tool_md_show(ctx, file="test.md", section="today")
+        assert "task one" in result.text
+        assert "done task" in result.text
+        assert "2:" in result.text  # line numbers on content
+
+    def test_section_not_found(self, tmp_path):
+        p = tmp_path / "test.md"
+        p.write_text("# today\n")
+        ctx = _FakeCtx(tmp_path)
+        result = tool_md_show(ctx, file="test.md", section="nonexistent")
+        assert "error" in result.text
+
+    def test_file_not_found(self, tmp_path):
+        ctx = _FakeCtx(tmp_path)
+        result = tool_md_show(ctx, file="nope.md")
+        assert "error" in result.text
+
+
+class TestMdMoveLines:
+    def test_move_lines_between_files(self, tmp_path):
+        src = tmp_path / "yesterday.md"
+        src.write_text("# today\n- [ ] task A\n- [ ] task B\n- [x] done\n\n# tonight\n")
+        dst = tmp_path / "today.md"
+        dst.write_text("# today\n- [ ] existing\n\n# tonight\n")
+        ctx = _FakeCtx(tmp_path)
+
+        result = tool_md_move_lines(ctx, "yesterday.md", "today.md", "today", "2,3")
+        assert "Moved 2" in result.text
+
+        # Source should have lost lines 2,3
+        src_text = src.read_text()
+        assert "task A" not in src_text
+        assert "task B" not in src_text
+        assert "done" in src_text  # line 4 stays
+
+        # Target should have gained them
+        dst_text = dst.read_text()
+        assert "task A" in dst_text
+        assert "task B" in dst_text
+
+    def test_same_file_move(self, tmp_path):
+        """Move lines within the same file between sections."""
+        p = tmp_path / "notes.md"
+        p.write_text("# today\n- [ ] task A\n- [ ] task B\n\n# tomorrow\n")
+        ctx = _FakeCtx(tmp_path)
+
+        result = tool_md_move_lines(ctx, "notes.md", "notes.md", "tomorrow", "2,3")
+        assert "Moved 2" in result.text
+
+        text = p.read_text()
+        # Lines should be gone from today
+        assert text.index("# tomorrow") < text.index("task A")
+        assert text.index("# tomorrow") < text.index("task B")
+
+    def test_invalid_line_number(self, tmp_path):
+        src = tmp_path / "test.md"
+        src.write_text("# today\nline\n")
+        dst = tmp_path / "other.md"
+        dst.write_text("# today\n")
+        ctx = _FakeCtx(tmp_path)
+        result = tool_md_move_lines(ctx, "test.md", "other.md", "today", "999")
+        assert "error" in result.text
+
+
+class TestMdSection:
+    def test_add_section(self, tmp_path):
+        p = tmp_path / "test.md"
+        p.write_text("# existing\ncontent\n")
+        ctx = _FakeCtx(tmp_path)
+        result = tool_md_section(ctx, "test.md", action="add", title="new section")
+        assert "Added" in result.text
+        assert "# new section" in p.read_text()
+
+    def test_remove_section(self, tmp_path):
+        p = tmp_path / "test.md"
+        p.write_text("# keep\ncontent\n\n# remove me\nstuff\n")
+        ctx = _FakeCtx(tmp_path)
+        result = tool_md_section(ctx, "test.md", action="remove", section="remove me")
+        assert "Removed" in result.text
+        assert "remove me" not in p.read_text()
+
+    def test_rename_section(self, tmp_path):
+        p = tmp_path / "test.md"
+        p.write_text("# old name\ncontent\n")
+        ctx = _FakeCtx(tmp_path)
+        result = tool_md_section(ctx, "test.md", action="rename", section="old name", title="new name")
+        assert "Renamed" in result.text
+        assert "# new name" in p.read_text()
+
+
+class TestMdCreate:
+    def test_create_with_content(self, tmp_path):
+        ctx = _FakeCtx(tmp_path)
+        result = tool_md_create(ctx, "new.md", content="# Hello\n")
+        assert "Done" in result.text
+        assert (tmp_path / "new.md").read_text() == "# Hello\n"
+
+    def test_create_from_template(self, tmp_path):
+        tmpl = tmp_path / "template.md"
+        tmpl.write_text("# {{date}}\n")
+        ctx = _FakeCtx(tmp_path)
+        result = tool_md_create(ctx, "new.md", template="template.md")
+        assert "Done" in result.text
+        import datetime as dt
+        assert dt.date.today().isoformat() in (tmp_path / "new.md").read_text()
+
+    def test_wont_overwrite(self, tmp_path):
+        p = tmp_path / "exists.md"
+        p.write_text("original")
+        ctx = _FakeCtx(tmp_path)
+        result = tool_md_create(ctx, "exists.md", content="overwrite")
+        assert "error" in result.text
+        assert p.read_text() == "original"
+
+    def test_creates_parent_dirs(self, tmp_path):
+        ctx = _FakeCtx(tmp_path)
+        result = tool_md_create(ctx, "sub/dir/new.md", content="# Deep\n")
+        assert "Done" in result.text
+        assert (tmp_path / "sub" / "dir" / "new.md").exists()
