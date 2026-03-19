@@ -359,8 +359,11 @@ async def _run_agent_turn(websocket, app_ctx, config, event_bus,
                     "after_messages": event.get("after_messages", 0),
                 })
 
-        asyncio.create_task(_forward())
+        task = asyncio.create_task(_forward())
+        forward_tasks.add(task)
+        task.add_done_callback(forward_tasks.discard)
 
+    forward_tasks: set[asyncio.Task] = set()
     turn_sub_id = event_bus.subscribe(on_turn_event)
 
     try:

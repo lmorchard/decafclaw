@@ -38,6 +38,9 @@ def invalidate_skill_cache(config) -> None:
 
 log = logging.getLogger(__name__)
 
+# Track background tasks to prevent GC and surface exceptions
+_background_tasks: set[asyncio.Task] = set()
+
 
 def _conv_id(ctx) -> str:
     """Get conversation ID from context."""
@@ -56,7 +59,9 @@ def _archive(ctx, msg) -> None:
     if ctx.config.embedding_model and msg.get("role") in ("user", "assistant"):
         content = msg.get("content")
         if content and len(content) > 20:  # skip trivial messages
-            asyncio.create_task(_index_conversation_message(ctx, msg))
+            task = asyncio.create_task(_index_conversation_message(ctx, msg))
+            _background_tasks.add(task)
+            task.add_done_callback(_background_tasks.discard)
 
 
 async def _index_conversation_message(ctx, msg) -> None:
