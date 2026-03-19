@@ -28,7 +28,7 @@ def create_app(config, event_bus, app_ctx=None) -> Starlette:
 
         # Also check static secret as fallback (defense in depth)
         secret = request.query_params.get("secret", "")
-        has_valid_secret = config.http_secret and secret == config.http_secret
+        has_valid_secret = config.http.secret and secret == config.http.secret
 
         if not token_data and not has_valid_secret:
             log.warning("Confirm callback rejected: invalid token and no valid secret")
@@ -293,12 +293,12 @@ async def run_http_server(config, event_bus, app_ctx=None) -> None:
     app = create_app(config, event_bus, app_ctx=app_ctx)
     server_config = uvicorn.Config(
         app,
-        host=config.http_host,
-        port=config.http_port,
+        host=config.http.host,
+        port=config.http.port,
         log_level="info",
     )
     _http_server = uvicorn.Server(server_config)
-    log.info(f"HTTP server starting on {config.http_host}:{config.http_port}")
+    log.info(f"HTTP server starting on {config.http.host}:{config.http.port}")
     await _http_server.serve()
 
 

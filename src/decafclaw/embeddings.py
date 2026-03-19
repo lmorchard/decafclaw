@@ -82,21 +82,20 @@ def _entry_hash(text: str) -> str:
 
 async def embed_text(config, text: str) -> list[float] | None:
     """Call the embedding API and return the vector."""
-    url = config.effective_embedding_url
-    api_key = config.effective_embedding_api_key
+    ec = config.embedding.resolved(config)
 
     body = {
-        "model": config.embedding_model,
+        "model": ec.model,
         "input": text,
     }
     headers = {
         "Content-Type": "application/json",
-        "Authorization": f"Bearer {api_key}",
+        "Authorization": f"Bearer {ec.api_key}",
     }
 
     try:
         async with httpx.AsyncClient() as client:
-            resp = await client.post(url, json=body, headers=headers, timeout=30)
+            resp = await client.post(ec.url, json=body, headers=headers, timeout=30)
         resp.raise_for_status()
         data = resp.json()
         return data["data"][0]["embedding"]
@@ -108,9 +107,9 @@ async def embed_text(config, text: str) -> list[float] | None:
 def _check_model(config, conn):
     """Verify the DB was built with the same embedding model. Warns on mismatch."""
     row = conn.execute("SELECT value FROM metadata WHERE key='embedding_model'").fetchone()
-    if row and row[0] != config.embedding_model:
+    if row and row[0] != config.embedding.model:
         log.warning(f"Embedding model mismatch: DB was built with '{row[0]}', "
-                    f"config uses '{config.embedding_model}'. "
+                    f"config uses '{config.embedding.model}'. "
                     f"Run 'decafclaw-reindex' to rebuild.")
 
 
@@ -118,7 +117,7 @@ def _set_model(config, conn):
     """Record which embedding model was used."""
     conn.execute(
         "INSERT OR REPLACE INTO metadata (key, value) VALUES ('embedding_model', ?)",
-        (config.embedding_model,),
+        (config.embedding.model,),
     )
 
 
@@ -297,7 +296,7 @@ def reindex_cli():
         db_path.unlink()
         print(f"Deleted existing index: {db_path}")
 
-    print(f"Embedding model: {config.embedding_model}")
+    print(f"Embedding model: {config.embedding.model}")
 
     async def _reindex_all():
         mem_count = await reindex_all(config)

@@ -27,7 +27,7 @@ async def tool_heartbeat_trigger(ctx) -> str:
     # Fire and forget — run the cycle in the background
     asyncio.create_task(_guarded_heartbeat(ctx.config, ctx.event_bus))
 
-    has_channel = ctx.config.heartbeat_channel or ctx.config.heartbeat_user
+    has_channel = ctx.config.heartbeat.channel or ctx.config.heartbeat.user
     if has_channel:
         return f"Heartbeat triggered: {len(sections)} section(s) queued. Results will be posted to the heartbeat channel."
     return f"Heartbeat triggered: {len(sections)} section(s) queued. No reporting channel configured — running silently."
@@ -67,7 +67,7 @@ async def _run_heartbeat_to_channel(config, event_bus) -> None:
         except Exception as e:
             log.error(f"Failed to resolve heartbeat channel: {e}")
 
-    suppress_ok = config.heartbeat_suppress_ok
+    suppress_ok = config.heartbeat.suppress_ok
     timestamp_str = datetime.now().strftime("%Y-%m-%d %H:%M")
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
 
@@ -154,12 +154,12 @@ async def _run_heartbeat_to_channel(config, event_bus) -> None:
 
 def _make_http_client(config) -> httpx.AsyncClient | None:
     """Create an HTTP client for Mattermost posting. Returns None if not configured."""
-    if not config.mattermost_url or not config.mattermost_token:
+    if not config.mattermost.url or not config.mattermost.token:
         return None
 
-    base_url = config.mattermost_url.rstrip("/") + "/api/v4"
+    base_url = config.mattermost.url.rstrip("/") + "/api/v4"
     headers = {
-        "Authorization": f"Bearer {config.mattermost_token}",
+        "Authorization": f"Bearer {config.mattermost.token}",
         "Content-Type": "application/json",
     }
     return httpx.AsyncClient(base_url=base_url, headers=headers, timeout=30)
@@ -167,16 +167,16 @@ def _make_http_client(config) -> httpx.AsyncClient | None:
 
 async def _resolve_channel(http, config) -> str | None:
     """Resolve the heartbeat channel ID from config. Returns None if not configured."""
-    if config.heartbeat_channel:
-        return config.heartbeat_channel
+    if config.heartbeat.channel:
+        return config.heartbeat.channel
 
-    if config.heartbeat_user:
+    if config.heartbeat.user:
         me_resp = await http.get("/users/me")
         me_resp.raise_for_status()
         bot_user_id = me_resp.json()["id"]
 
         dm_resp = await http.post("/channels/direct",
-                                 json=[bot_user_id, config.heartbeat_user])
+                                 json=[bot_user_id, config.heartbeat.user])
         dm_resp.raise_for_status()
         return dm_resp.json()["id"]
 

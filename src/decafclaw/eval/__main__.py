@@ -53,7 +53,7 @@ def main():
         sys.exit(1)
 
     config = load_config()
-    model_name = args.model or config.llm_model
+    model_name = args.model or config.llm.model
     judge_model = args.judge_model or model_name
 
     print(f"\ndecafclaw eval — {model_name} — {args.path}\n")

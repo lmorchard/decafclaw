@@ -73,7 +73,8 @@ def _make_tool_call_events(name, arguments_chunks, tool_id="call_0", index=0):
 def _config():
     """Minimal config for testing."""
     from decafclaw.config import Config
-    return Config(llm_url="http://test/v1/chat/completions")
+    from decafclaw.config_types import LlmConfig
+    return Config(llm=LlmConfig(url="http://test/v1/chat/completions"))
 
 
 @pytest.mark.asyncio

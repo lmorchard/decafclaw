@@ -3,6 +3,7 @@
 ## Getting Started
 
 - [Installation & Setup](installation.md) — Prerequisites, configuration, running
+- [Configuration Reference](config.md) — Config file, env vars, CLI tool, all settings
 - [Deployment](deployment.md) — Systemd service on a Debian VM
 
 ## Features
