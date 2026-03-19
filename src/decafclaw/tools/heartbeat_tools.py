@@ -46,12 +46,9 @@ async def _run_heartbeat_to_channel(config, event_bus) -> None:
     """Run heartbeat sections, optionally posting results to a channel."""
     from datetime import datetime
 
-    from ..agent import run_agent_turn
-    from ..context import Context
     from ..heartbeat import (
-        build_section_prompt,
-        is_heartbeat_ok,
         load_heartbeat_sections,
+        run_section_turn,
     )
 
     sections = load_heartbeat_sections(config)
@@ -105,26 +102,12 @@ async def _run_heartbeat_to_channel(config, event_bus) -> None:
     async def run_section(i, section):
         title = section["title"]
         post_id = section_post_ids.get(i)
-        log.info(f"Heartbeat section {i + 1}/{len(sections)}: {title}")
 
-        try:
-            source = section.get("source", "workspace")
-            ctx = Context(config=config, event_bus=event_bus)
-            ctx.user_id = f"heartbeat-{source}"
-            ctx.channel_id = "heartbeat"
-            ctx.channel_name = "heartbeat"
-            ctx.thread_id = ""
-            ctx.conv_id = f"heartbeat-{timestamp}-{i}"
-
-            prompt = build_section_prompt(section)
-            result = await run_agent_turn(ctx, prompt, history=[])
-            response = result.text
-            response = response or "(no response)"
-            ok = is_heartbeat_ok(response)
-        except Exception as e:
-            log.error(f"Heartbeat section '{title}' failed: {e}", exc_info=True)
-            response = f"[error: {e}]"
-            ok = False
+        turn_result = await run_section_turn(
+            config, event_bus, section, timestamp, i,
+        )
+        response = turn_result["response"]
+        ok = turn_result["is_ok"]
 
         section_results.append(ok)
 
