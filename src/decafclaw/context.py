@@ -37,6 +37,7 @@ class Context:
         self.current_tool_call_id: str = ""
         self.event_context_id: str = ""  # publish events under this ID instead of context_id
         self.deferred_tool_pool: list = []  # tool defs available via tool_search
+        self.preapproved_tools: set = set()  # tools pre-approved by command invocation
         self._current_iteration: int = 1
 
     def fork(self, **overrides) -> "Context":

@@ -24,6 +24,9 @@ class SkillInfo:
     has_native_tools: bool = False
     requires_env: list[str] = field(default_factory=list)
     user_invocable: bool = True
+    allowed_tools: list[str] = field(default_factory=list)
+    context: str = "inline"  # "inline" or "fork"
+    argument_hint: str = ""
 
 
 def parse_skill_md(path: Path) -> SkillInfo | None:
@@ -62,6 +65,12 @@ def parse_skill_md(path: Path) -> SkillInfo | None:
     requires = meta.get("requires", {})
     requires_env = requires.get("env", []) if isinstance(requires, dict) else []
 
+    # Parse allowed-tools: comma-separated string → list
+    allowed_tools_raw = meta.get("allowed-tools", "")
+    allowed_tools = [
+        t.strip() for t in allowed_tools_raw.split(",") if t.strip()
+    ] if allowed_tools_raw else []
+
     return SkillInfo(
         name=name,
         description=description,
@@ -69,7 +78,10 @@ def parse_skill_md(path: Path) -> SkillInfo | None:
         body=body.strip(),
         has_native_tools=has_native_tools,
         requires_env=requires_env,
-        user_invocable=meta.get("user-invocable", True),
+        user_invocable=meta.get("user-invocable", meta.get("user_invocable", True)),
+        allowed_tools=allowed_tools,
+        context=meta.get("context", "inline"),
+        argument_hint=meta.get("argument-hint", ""),
     )
 
 
@@ -172,3 +184,19 @@ def build_catalog_text(skills: list[SkillInfo]) -> str:
         lines.append(f"- **{skill.name}**: {skill.description}")
 
     return "\n".join(lines)
+
+
+def find_command(name: str, discovered_skills: list[SkillInfo]) -> SkillInfo | None:
+    """Find a user-invokable command by name. Returns first match."""
+    for skill in discovered_skills:
+        if skill.user_invocable and skill.name == name:
+            return skill
+    return None
+
+
+def list_commands(discovered_skills: list[SkillInfo]) -> list[SkillInfo]:
+    """Return all user-invokable commands, sorted by name."""
+    return sorted(
+        [s for s in discovered_skills if s.user_invocable],
+        key=lambda s: s.name,
+    )

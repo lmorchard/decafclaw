@@ -459,6 +459,29 @@ class MattermostClient:
         senders = set(m["sender_name"] for m in msgs)
         log.info(f"Processing {len(msgs)} message(s) from {', '.join(senders)} in {conv_id[:8]}")
 
+        # -- Command detection (before ctx creation) --
+        from .commands import execute_command, format_help, parse_command_trigger
+        from .skills import find_command
+
+        command_skill = None
+        trigger = parse_command_trigger(combined_text, prefix="!")
+        if trigger:
+            cmd_name, cmd_args = trigger
+            if cmd_name == "help":
+                discovered = getattr(app_ctx.config, "discovered_skills", [])
+                help_text = format_help(discovered, prefix="!")
+                await self.send(channel_id, help_text, root_id=root_id)
+                return
+            discovered = getattr(app_ctx.config, "discovered_skills", [])
+            command_skill = find_command(cmd_name, discovered)
+            if command_skill is None:
+                await self.send(
+                    channel_id,
+                    f"Unknown command: `{cmd_name}`. Type `!help` for available commands.",
+                    root_id=root_id,
+                )
+                return
+
         # Send placeholder immediately
         placeholder_id = await self.send_placeholder(channel_id, root_id=root_id)
         await self.send_typing(channel_id)
@@ -470,6 +493,37 @@ class MattermostClient:
         req_ctx, conv_display, cancel_task, sub_id = await self._build_request_context(
             app_ctx, conv, conv_id, channel_id, root_id, placeholder_id
         )
+
+        # -- Command execution (after ctx creation) --
+        if command_skill and trigger:
+            _, cmd_args = trigger
+            if command_skill.context == "fork":
+                # Fork mode: run in subagent, send response directly
+                conv.busy = True
+                try:
+                    mode, result = await execute_command(req_ctx, command_skill, cmd_args)
+                    from .media import ToolResult
+                    response = ToolResult(text=result)
+                except BaseException as e:
+                    log.error(f"Command '{command_skill.name}' failed: {e}")
+                    from .media import ToolResult
+                    response = ToolResult(text=f"[error: command failed: {e}]")
+                finally:
+                    req_ctx.event_bus.unsubscribe(sub_id)
+                    cancel_sub = getattr(conv_display, "_cancel_sub", None)
+                    if cancel_sub is not None:
+                        req_ctx.event_bus.unsubscribe(cancel_sub)
+                    conv.last_response_time = time.monotonic()
+                    conv.busy = False
+                    self.circuit_breaker.record_turn(conv)
+
+                await conv_display.finalize()
+                await self._post_response(response, channel_id, root_id, conv_display)
+                return
+            else:
+                # Inline mode: replace combined_text, set preapproved_tools
+                mode, combined_text = await execute_command(req_ctx, command_skill, cmd_args)
+                # preapproved_tools already set on req_ctx by execute_command
 
         conv.busy = True
         try:

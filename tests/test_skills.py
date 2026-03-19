@@ -110,6 +110,64 @@ def test_parse_no_frontmatter(tmp_path):
     assert info is None
 
 
+def test_parse_command_frontmatter(tmp_path):
+    """Parse allowed-tools, context, argument-hint from frontmatter."""
+    skill_dir = tmp_path / "migrate-todos"
+    _write_skill(
+        skill_dir,
+        'name: migrate-todos\ndescription: "Migrate todos"\n'
+        'allowed-tools: vault_read, vault_write, shell\n'
+        'context: fork\n'
+        'argument-hint: "[date]"',
+        body="Do the migration. $ARGUMENTS",
+    )
+    info = parse_skill_md(skill_dir / "SKILL.md")
+    assert info is not None
+    assert info.allowed_tools == ["vault_read", "vault_write", "shell"]
+    assert info.context == "fork"
+    assert info.argument_hint == "[date]"
+
+
+def test_parse_command_frontmatter_defaults(tmp_path):
+    """New frontmatter fields have sensible defaults."""
+    skill_dir = tmp_path / "basic"
+    _write_skill(skill_dir, 'name: basic\ndescription: "A basic skill"')
+    info = parse_skill_md(skill_dir / "SKILL.md")
+    assert info is not None
+    assert info.allowed_tools == []
+    assert info.context == "inline"
+    assert info.argument_hint == ""
+
+
+# -- find_command / list_commands tests --
+
+
+def test_find_command():
+    from decafclaw.skills import find_command
+    skills = [
+        SkillInfo(name="weather", description="Weather", location=Path("."), user_invocable=True),
+        SkillInfo(name="tabstack", description="Tabstack", location=Path("."), user_invocable=False),
+        SkillInfo(name="migrate", description="Migrate", location=Path("."), user_invocable=True),
+    ]
+    assert find_command("weather", skills) is not None
+    assert find_command("weather", skills).name == "weather"
+    assert find_command("tabstack", skills) is None  # not user_invocable
+    assert find_command("nonexistent", skills) is None
+
+
+def test_list_commands():
+    from decafclaw.skills import list_commands
+    skills = [
+        SkillInfo(name="weather", description="Weather", location=Path("."), user_invocable=True),
+        SkillInfo(name="tabstack", description="Tabstack", location=Path("."), user_invocable=False),
+        SkillInfo(name="migrate", description="Migrate", location=Path("."), user_invocable=True),
+    ]
+    cmds = list_commands(skills)
+    assert len(cmds) == 2
+    assert cmds[0].name == "migrate"  # sorted
+    assert cmds[1].name == "weather"
+
+
 # -- discover_skills tests --
 
 

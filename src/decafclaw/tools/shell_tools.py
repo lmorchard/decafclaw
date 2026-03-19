@@ -94,6 +94,11 @@ async def tool_shell(ctx, command: str) -> str | ToolResult:
         log.info(f"[tool:shell] auto-approved for heartbeat: {command}")
         return _execute_command(ctx, command)
 
+    # Command pre-approved tools bypass confirmation
+    if "shell" in ctx.preapproved_tools:
+        log.info(f"[tool:shell] pre-approved by command: {command}")
+        return _execute_command(ctx, command)
+
     # Check allow patterns
     patterns = _load_allow_patterns(ctx.config)
     if _command_matches_pattern(command, patterns):
