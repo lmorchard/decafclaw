@@ -31,9 +31,9 @@ async def call_llm(config, messages, tools=None,
       - "tool_calls": list or None (tool calls the LLM wants to make)
       - "usage": dict or None (token usage from the API)
     """
-    url = llm_url or config.llm_url
-    model = llm_model or config.llm_model
-    api_key = llm_api_key or config.llm_api_key
+    url = llm_url or config.llm.url
+    model = llm_model or config.llm.model
+    api_key = llm_api_key or config.llm.api_key
 
     body = {
         "model": model,
@@ -90,9 +90,9 @@ async def call_llm_streaming(config, messages, tools=None,
     """
     from httpx_sse import aconnect_sse
 
-    url = llm_url or config.llm_url
-    model = llm_model or config.llm_model
-    api_key = llm_api_key or config.llm_api_key
+    url = llm_url or config.llm.url
+    model = llm_model or config.llm.model
+    api_key = llm_api_key or config.llm.api_key
 
     body = {
         "model": model,

@@ -78,24 +78,21 @@ class MattermostClient:
     """Minimal Mattermost client for a single bot."""
 
     def __init__(self, config):
-        self.url = config.mattermost_url.rstrip("/")
-        self.token = config.mattermost_token
+        self.url = config.mattermost.url.rstrip("/")
+        self.token = config.mattermost.token
         self.bot_user_id = None
-        self.bot_username = config.mattermost_bot_username
-        self.ignore_bots = config.mattermost_ignore_bots
-        self.ignore_webhooks = config.mattermost_ignore_webhooks
-        self.debounce_ms = config.mattermost_debounce_ms
-        self.cooldown_ms = config.mattermost_cooldown_ms
-        self.require_mention = config.mattermost_require_mention
-        self.user_rate_limit_ms = config.mattermost_user_rate_limit_ms
-        self.channel_blocklist = set(
-            ch.strip() for ch in config.mattermost_channel_blocklist.split(",")
-            if ch.strip()
-        )
+        self.bot_username = config.mattermost.bot_username
+        self.ignore_bots = config.mattermost.ignore_bots
+        self.ignore_webhooks = config.mattermost.ignore_webhooks
+        self.debounce_ms = config.mattermost.debounce_ms
+        self.cooldown_ms = config.mattermost.cooldown_ms
+        self.require_mention = config.mattermost.require_mention
+        self.user_rate_limit_ms = config.mattermost.user_rate_limit_ms
+        self.channel_blocklist = set(config.mattermost.channel_blocklist)
         self.circuit_breaker = CircuitBreaker(
-            max_turns=config.mattermost_circuit_breaker_max,
-            window_sec=config.mattermost_circuit_breaker_window_sec,
-            pause_sec=config.mattermost_circuit_breaker_pause_sec,
+            max_turns=config.mattermost.circuit_breaker_max,
+            window_sec=config.mattermost.circuit_breaker_window_sec,
+            pause_sec=config.mattermost.circuit_breaker_pause_sec,
         )
         self._http = httpx.AsyncClient(
             base_url=self.url + "/api/v4",
@@ -326,7 +323,7 @@ class MattermostClient:
         from .media import MattermostMediaHandler
 
         req_ctx = app_ctx.fork(
-            user_id=app_ctx.config.agent_user_id,
+            user_id=app_ctx.config.agent.user_id,
             channel_id=channel_id,
             channel_name="",
             thread_id=root_id or "",
@@ -343,14 +340,14 @@ class MattermostClient:
         # Create conversation display for this turn
         conv_display = ConversationDisplay(
             self, channel_id, root_id,
-            throttle_ms=app_ctx.config.llm_stream_throttle_ms,
+            throttle_ms=app_ctx.config.mattermost.stream_throttle_ms,
             initial_post_id=placeholder_id,
             config=app_ctx.config,
             conv_id=conv_id,
         )
 
         # Set streaming callback
-        if app_ctx.config.llm_streaming:
+        if app_ctx.config.llm.streaming:
             req_ctx.on_stream_chunk = conv_display.on_stream_chunk
 
         # Set up cancellation event and poll for stop reaction
@@ -383,7 +380,7 @@ class MattermostClient:
         sub_id = self._subscribe_progress(
             req_ctx.event_bus, req_ctx.context_id,
             channel_id=channel_id, root_id=root_id,
-            streaming=app_ctx.config.llm_streaming,
+            streaming=app_ctx.config.llm.streaming,
             conv_display=conv_display,
         )
 
@@ -1069,7 +1066,7 @@ class ConversationDisplay:
 
         # Add emoji instructions (unless disabled)
         # Show emoji instructions if enabled (default: on when HTTP off, off when HTTP on)
-        show_emoji = not config or config.mattermost_enable_emoji_confirms
+        show_emoji = not config or config.mattermost.enable_emoji_confirms
         if show_emoji:
             if tool_name == "shell" and suggested_pattern:
                 msg += (

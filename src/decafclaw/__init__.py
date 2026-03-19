@@ -19,6 +19,13 @@ def main():
         format="%(asctime)s %(name)s %(levelname)s: %(message)s",
     )
 
+    # CLI subcommand: python -m decafclaw config ...
+    if len(sys.argv) > 1 and sys.argv[1] == "config":
+        sys.argv = sys.argv[1:]  # shift so argparse sees "config show"
+        from .config_cli import main as config_main
+        config_main()
+        return
+
     config = load_config()
 
     # Assemble system prompt from markdown files (bundled + workspace overrides)
@@ -29,7 +36,7 @@ def main():
     app_ctx = Context(config=config, event_bus=bus)
 
     # Server mode (Mattermost and/or HTTP) vs interactive terminal mode
-    if config.mattermost_url or config.http_enabled:
+    if config.mattermost.url or config.http.enabled:
         try:
             from .runner import run_all
             asyncio.run(run_all(app_ctx))

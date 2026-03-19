@@ -110,11 +110,12 @@ async def _single_summarize(ctx, config, flattened_text: str, prompt: str) -> st
         {"role": "system", "content": prompt},
         {"role": "user", "content": flattened_text},
     ]
+    cc = config.compaction.resolved(config)
     response = await call_llm(
         config, summary_messages,
-        llm_url=config.compaction_url,
-        llm_model=config.compaction_model,
-        llm_api_key=config.compaction_api_key,
+        llm_url=cc.url,
+        llm_model=cc.model,
+        llm_api_key=cc.api_key,
     )
     return response.get("content", "")
 
@@ -183,7 +184,7 @@ async def compact_history(ctx, history: list) -> bool:
 
     # Split into turns
     turns = _split_into_turns(archive)
-    preserve = config.compaction_preserve_turns
+    preserve = config.compaction.preserve_turns
 
     if len(turns) <= preserve:
         log.info(f"Compaction skipped: only {len(turns)} turns, need >{preserve} to compact")

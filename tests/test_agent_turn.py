@@ -194,7 +194,7 @@ async def test_execute_tool_calls_concurrent(ctx):
 @pytest.mark.asyncio
 async def test_execute_tool_calls_semaphore_limits(ctx):
     """With max_concurrent_tools=1, execution is effectively sequential."""
-    ctx.config.max_concurrent_tools = 1
+    ctx.config.agent.max_concurrent_tools = 1
     concurrency_high_water = 0
     current_concurrency = 0
 
@@ -288,7 +288,7 @@ def _mock_llm_response(content="Hello!", tool_calls=None, usage=None):
 @pytest.mark.asyncio
 async def test_run_agent_turn_simple_response(ctx):
     """LLM returns a simple text response with no tool calls."""
-    ctx.config.llm_streaming = False
+    ctx.config.llm.streaming = False
     ctx.config.system_prompt = "You are a test bot."
 
     with patch("decafclaw.agent.call_llm", new_callable=AsyncMock) as mock_llm:
@@ -307,7 +307,7 @@ async def test_run_agent_turn_simple_response(ctx):
 @pytest.mark.asyncio
 async def test_run_agent_turn_with_tool_call(ctx):
     """LLM calls a tool, gets result, then responds."""
-    ctx.config.llm_streaming = False
+    ctx.config.llm.streaming = False
     ctx.config.system_prompt = "You are a test bot."
 
     tool_call_response = _mock_llm_response(
@@ -340,7 +340,7 @@ async def test_run_agent_turn_with_tool_call(ctx):
 @pytest.mark.asyncio
 async def test_run_agent_turn_cancellation(ctx):
     """Turn is cancelled before LLM is called."""
-    ctx.config.llm_streaming = False
+    ctx.config.llm.streaming = False
     ctx.config.system_prompt = "You are a test bot."
     ctx.cancelled = asyncio.Event()
     ctx.cancelled.set()
@@ -353,9 +353,9 @@ async def test_run_agent_turn_cancellation(ctx):
 @pytest.mark.asyncio
 async def test_run_agent_turn_max_iterations(ctx):
     """LLM keeps calling tools until max iterations is reached."""
-    ctx.config.llm_streaming = False
+    ctx.config.llm.streaming = False
     ctx.config.system_prompt = "You are a test bot."
-    ctx.config.max_tool_iterations = 2
+    ctx.config.agent.max_tool_iterations = 2
 
     tool_call_response = _mock_llm_response(
         content=None,
@@ -379,9 +379,9 @@ async def test_run_agent_turn_max_iterations(ctx):
 @pytest.mark.asyncio
 async def test_run_agent_turn_max_iterations_preserves_text(ctx):
     """Max iterations preserves text from tool-call iterations."""
-    ctx.config.llm_streaming = False
+    ctx.config.llm.streaming = False
     ctx.config.system_prompt = "You are a test bot."
-    ctx.config.max_tool_iterations = 2
+    ctx.config.agent.max_tool_iterations = 2
 
     tool_call_response = _mock_llm_response(
         content="Let me check that for you.",
@@ -406,7 +406,7 @@ async def test_run_agent_turn_max_iterations_preserves_text(ctx):
 @pytest.mark.asyncio
 async def test_run_agent_turn_empty_response(ctx):
     """LLM returns empty content with no tool calls."""
-    ctx.config.llm_streaming = False
+    ctx.config.llm.streaming = False
     ctx.config.system_prompt = "You are a test bot."
 
     with patch("decafclaw.agent.call_llm", new_callable=AsyncMock) as mock_llm:
@@ -420,7 +420,7 @@ async def test_run_agent_turn_empty_response(ctx):
 @pytest.mark.asyncio
 async def test_run_agent_turn_tracks_token_usage(ctx):
     """Token usage from LLM response is accumulated on context."""
-    ctx.config.llm_streaming = False
+    ctx.config.llm.streaming = False
     ctx.config.system_prompt = "You are a test bot."
 
     with patch("decafclaw.agent.call_llm", new_callable=AsyncMock) as mock_llm:
@@ -437,7 +437,7 @@ async def test_run_agent_turn_tracks_token_usage(ctx):
 @pytest.mark.asyncio
 async def test_run_agent_turn_archives_messages(ctx):
     """Messages are archived during the turn."""
-    ctx.config.llm_streaming = False
+    ctx.config.llm.streaming = False
     ctx.config.system_prompt = "You are a test bot."
 
     with patch("decafclaw.agent.call_llm", new_callable=AsyncMock) as mock_llm:

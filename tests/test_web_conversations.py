@@ -138,11 +138,11 @@ def test_load_history_pagination(config):
 
 @pytest.fixture
 def http_config(config):
-    config.http_enabled = True
-    config.http_secret = "test-secret"
-    config.http_host = "127.0.0.1"
-    config.http_port = 18880
-    config.http_base_url = ""
+    config.http.enabled = True
+    config.http.secret = "test-secret"
+    config.http.host = "127.0.0.1"
+    config.http.port = 18880
+    config.http.base_url = ""
     config.agent_path.mkdir(parents=True, exist_ok=True)
     return config
 

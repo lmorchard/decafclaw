@@ -119,7 +119,7 @@ class TestCompactHistory:
     @pytest.mark.asyncio
     async def test_compacts_when_enough_turns(self, ctx, populated_archive):
         """With 8 turns and preserve=5, should compact 3 old turns."""
-        ctx.config.compaction_preserve_turns = 5
+        ctx.config.compaction.preserve_turns = 5
         history = [
             {"role": "user", "content": f"message {i}"}
             for i in range(8)
@@ -148,7 +148,7 @@ class TestCompactHistory:
         append_message(config, conv_id, {"role": "user", "content": "hello"})
         append_message(config, conv_id, {"role": "assistant", "content": "hi"})
 
-        ctx.config.compaction_preserve_turns = 5
+        ctx.config.compaction.preserve_turns = 5
         history = [{"role": "user", "content": "hello"}]
 
         result = await compact_history(ctx, history)
@@ -164,7 +164,7 @@ class TestCompactHistory:
     @pytest.mark.asyncio
     async def test_handles_llm_failure(self, ctx, populated_archive):
         """If LLM call fails, should return False and not modify history."""
-        ctx.config.compaction_preserve_turns = 5
+        ctx.config.compaction.preserve_turns = 5
         history = [{"role": "user", "content": "test"}]
         original_len = len(history)
 
@@ -177,7 +177,7 @@ class TestCompactHistory:
     @pytest.mark.asyncio
     async def test_handles_empty_summary(self, ctx, populated_archive):
         """If LLM returns empty summary, should skip."""
-        ctx.config.compaction_preserve_turns = 5
+        ctx.config.compaction.preserve_turns = 5
         history = [{"role": "user", "content": "test"}]
 
         mock_response = {"content": "", "tool_calls": None, "role": "assistant", "usage": None}
@@ -196,7 +196,7 @@ class TestCompactHistory:
             append_message(config, conv_id, {"role": "user", "content": f"message {i}"})
             append_message(config, conv_id, {"role": "assistant", "content": f"response {i}"})
 
-        ctx.config.compaction_preserve_turns = 5
+        ctx.config.compaction.preserve_turns = 5
 
         # Simulate a previous compaction that summarized turns 0-4,
         # preserving turns 5-9 (10 messages) as recent.
@@ -247,7 +247,7 @@ class TestCompactHistory:
             append_message(config, conv_id, {"role": "user", "content": f"message {i}"})
             append_message(config, conv_id, {"role": "assistant", "content": f"response {i}"})
 
-        ctx.config.compaction_preserve_turns = 5
+        ctx.config.compaction.preserve_turns = 5
 
         # Previous compaction summarized turns 0-2, preserved turns 3-7 (10 msgs).
         prev_recent = []

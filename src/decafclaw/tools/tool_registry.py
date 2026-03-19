@@ -20,11 +20,7 @@ def estimate_tool_tokens(tool_defs: list[dict]) -> int:
 
 def get_always_loaded_names(config) -> set[str]:
     """Return the set of tool names that should always be loaded."""
-    extra = {
-        name.strip()
-        for name in getattr(config, "always_loaded_tools", "").split(",")
-        if name.strip()
-    }
+    extra = set(config.agent.always_loaded_tools)
     return DEFAULT_ALWAYS_LOADED | extra
 
 
@@ -41,7 +37,7 @@ def classify_tools(
     if fetched_names is None:
         fetched_names = set()
 
-    budget = getattr(config, "tool_context_budget", 10000)
+    budget = config.tool_context_budget
     total_tokens = estimate_tool_tokens(all_tool_defs)
 
     if total_tokens <= budget:

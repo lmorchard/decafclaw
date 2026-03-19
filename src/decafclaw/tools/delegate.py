@@ -40,7 +40,7 @@ async def _run_child_turn(parent_ctx, task):
     parent_conv = getattr(parent_ctx, "conv_id", "") or getattr(parent_ctx, "channel_id", "")
     child_config = replace(
         config,
-        max_tool_iterations=config.child_max_tool_iterations,
+        agent=replace(config.agent, max_tool_iterations=config.agent.child_max_tool_iterations),
         system_prompt="\n".join(prompt_parts),
     )
     # Children don't discover or activate skills — they inherit parent's
@@ -76,7 +76,7 @@ async def _run_child_turn(parent_ctx, task):
     # No streaming for child agents
     child_ctx.on_stream_chunk = None
 
-    timeout = config.child_timeout_sec
+    timeout = config.agent.child_timeout_sec
 
     try:
         result = await asyncio.wait_for(
