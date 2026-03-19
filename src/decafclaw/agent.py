@@ -13,15 +13,20 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from typing import TYPE_CHECKING
 
 from .archive import append_message
 from .compaction import compact_history
+from .embeddings import index_entry
 from .llm import call_llm
+from .media import ToolResult, extract_workspace_media
+from .persistence import read_skill_data, read_skills_state, write_skill_data, write_skills_state
 from .tools import TOOL_DEFINITIONS, execute_tool
-
-if TYPE_CHECKING:
-    from .media import ToolResult
+from .tools.search_tools import SEARCH_TOOL_DEFINITIONS
+from .tools.tool_registry import (
+    build_deferred_list_text,
+    classify_tools,
+    get_fetched_tools,
+)
 
 # Cache preloaded skill definitions by config id, avoiding Config mutation
 _skill_def_cache: dict[int, list] = {}
@@ -57,7 +62,6 @@ def _archive(ctx, msg) -> None:
 async def _index_conversation_message(ctx, msg) -> None:
     """Index a conversation message for semantic search (background)."""
     try:
-        from .embeddings import index_entry
         conv_id = _conv_id(ctx)
         role = msg.get("role", "unknown")
         content = msg.get("content", "")
@@ -85,7 +89,6 @@ async def _maybe_compact(ctx, config, history, prompt_tokens) -> None:
 
 def _check_cancelled(ctx, history):
     """Check if the agent turn has been cancelled. Returns ToolResult or None."""
-    from .media import ToolResult
     if ctx.cancelled and ctx.cancelled.is_set():
         log.info("Agent turn cancelled by user")
         msg = "[Agent turn cancelled by user]"
@@ -142,13 +145,6 @@ def _build_tool_list(ctx) -> tuple[list, str | None]:
     None if all tools fit in the budget, or a system prompt block
     listing deferred tools when the budget is exceeded.
     """
-    from .tools.search_tools import SEARCH_TOOL_DEFINITIONS
-    from .tools.tool_registry import (
-        build_deferred_list_text,
-        classify_tools,
-        get_fetched_tools,
-    )
-
     all_defs = _collect_all_tool_defs(ctx)
     fetched = get_fetched_tools(ctx)
     active, deferred = classify_tools(all_defs, ctx.config, fetched)
@@ -218,8 +214,6 @@ async def _execute_single_tool(call_ctx, tc, semaphore):
     Designed to run concurrently — uses its own forked ctx so
     current_tool_call_id doesn't race with other calls.
     """
-    from .media import ToolResult
-
     tool_call_id = tc["id"]
     fn_name = tc["function"]["name"]
     try:
@@ -346,9 +340,7 @@ async def run_agent_turn(ctx, user_message: str, history: list) -> "ToolResult":
     Returns:
         ToolResult with the agent's text response and any accumulated media.
     """
-    from .media import ToolResult, extract_workspace_media
-    from .persistence import read_skill_data, read_skills_state, write_skill_data, write_skills_state
-    from .tools.skill_tools import restore_skills
+    from .tools.skill_tools import restore_skills  # deferred: circular dep
 
     config = ctx.config
     ctx.history = history
