@@ -142,7 +142,7 @@ def build_deferred_list_text(
 
 def get_fetched_tools(ctx) -> set[str]:
     """Read the fetched tools set from ctx.skill_data."""
-    skill_data = getattr(ctx, "skill_data", {})
+    skill_data = ctx.skill_data
     raw = skill_data.get("fetched_tools", [])
     if isinstance(raw, set):
         return raw

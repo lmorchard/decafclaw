@@ -70,12 +70,12 @@ async def restore_skills(ctx) -> None:
     Called at the start of each web gateway turn to restore skills that were
     active in a previous turn or server session.
     """
-    skill_names = set(getattr(ctx, "activated_skills", set()))
+    skill_names = set(ctx.activated_skills)
     if not skill_names:
         return
     discovered = getattr(ctx.config, "discovered_skills", [])
     skill_map = {s.name: s for s in discovered}
-    existing_tools = set(getattr(ctx, "extra_tools", {}).keys())
+    existing_tools = set(ctx.extra_tools.keys())
     for name in skill_names:
         skill_info = skill_map.get(name)
         if not skill_info or not skill_info.has_native_tools:
@@ -114,12 +114,12 @@ async def tool_activate_skill(ctx, name: str) -> str:
         return f"[error: skill '{name}' not found. Check Available Skills in your instructions.]"
 
     # Check if already activated
-    activated = getattr(ctx, "activated_skills", set())
+    activated = ctx.activated_skills
     if name in activated:
         return f"Skill '{name}' is already active."
 
     # Check permissions — admin heartbeat turns auto-approve (admin-authored)
-    is_heartbeat = getattr(ctx, "user_id", "") == "heartbeat-admin"
+    is_heartbeat = ctx.user_id == "heartbeat-admin"
     perms = _load_permissions(ctx.config)
     if not is_heartbeat and perms.get(name) != "always":
         # Need confirmation

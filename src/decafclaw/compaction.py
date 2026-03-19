@@ -173,7 +173,7 @@ async def compact_history(ctx, history: list) -> bool:
     Returns True if compaction was performed, False if skipped.
     """
     config = ctx.config
-    conv_id = getattr(ctx, "conv_id", None) or getattr(ctx, "channel_id", "unknown")
+    conv_id = ctx.conv_id or ctx.channel_id or "unknown"
 
     # Read the full archive
     archive = read_archive(config, conv_id)

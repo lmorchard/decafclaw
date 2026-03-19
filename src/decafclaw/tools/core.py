@@ -29,7 +29,7 @@ async def tool_web_fetch(ctx, url: str) -> str:
 def tool_debug_context(ctx) -> str | ToolResult:
     """Dump the current conversation context for debugging."""
     log.info("[tool:debug_context]")
-    messages = getattr(ctx, "messages", None)
+    messages = ctx.messages
     if messages is None:
         return "[no context available]"
 
@@ -58,7 +58,7 @@ def tool_debug_context(ctx) -> str | ToolResult:
 
     # Build the full LLM context: messages + tool definitions
     from . import TOOL_DEFINITIONS
-    extra_tool_defs = getattr(ctx, "extra_tool_definitions", [])
+    extra_tool_defs = ctx.extra_tool_definitions
     all_tool_defs = TOOL_DEFINITIONS + extra_tool_defs
 
     tool_names = [t["function"]["name"] for t in all_tool_defs]
@@ -129,7 +129,7 @@ def tool_context_stats(ctx) -> str:
     """Report token budget statistics for the current conversation."""
     log.info("[tool:context_stats]")
 
-    messages = getattr(ctx, "messages", None) or []
+    messages = ctx.messages or []
     config = ctx.config
 
     def _estimate_tokens(text):
@@ -143,7 +143,7 @@ def tool_context_stats(ctx) -> str:
 
     # Tool definitions
     from . import TOOL_DEFINITIONS
-    extra_tool_defs = getattr(ctx, "extra_tool_definitions", [])
+    extra_tool_defs = ctx.extra_tool_definitions
     from ..mcp_client import get_registry
     mcp_registry = get_registry()
     mcp_tool_defs = mcp_registry.get_tool_definitions() if mcp_registry else []
@@ -169,13 +169,13 @@ def tool_context_stats(ctx) -> str:
 
     # Totals
     total_estimated = system_tokens + tools_tokens + history_tokens
-    prompt_tokens_actual = getattr(ctx, "total_prompt_tokens", 0)
-    completion_tokens_actual = getattr(ctx, "total_completion_tokens", 0)
+    prompt_tokens_actual = ctx.total_prompt_tokens
+    completion_tokens_actual = ctx.total_completion_tokens
     compaction_max = config.compaction_max_tokens
 
     # Archive size
     from ..archive import archive_path
-    conv_id = getattr(ctx, "conv_id", "unknown")
+    conv_id = (ctx.conv_id or "unknown")
     archive_file = archive_path(config, conv_id)
     archive_size = archive_file.stat().st_size if archive_file.exists() else 0
 
@@ -207,7 +207,7 @@ def tool_context_stats(ctx) -> str:
     lines.append(f"- **Archive file size:** {archive_size:,} bytes")
 
     # Activated skills
-    activated = getattr(ctx, "activated_skills", set())
+    activated = ctx.activated_skills
     if activated:
         lines.append(f"\n### Active skills: {', '.join(activated)}")
 

@@ -36,6 +36,8 @@ class Context:
         self.allowed_tools: set | None = None
         self.current_tool_call_id: str = ""
         self.event_context_id: str = ""  # publish events under this ID instead of context_id
+        self.deferred_tool_pool: list = []  # tool defs available via tool_search
+        self._current_iteration: int = 1
 
     def fork(self, **overrides) -> "Context":
         """Create a child context with a new ID, sharing the event bus."""
@@ -61,7 +63,10 @@ class Context:
             event_bus=self.event_bus,
             context_id=self.context_id,
         )
-        # Copy all fields from parent, then override specifics
+        # Copy all fields from parent, then override specifics.
+        # Note: mutable containers (dicts, sets, lists) are shared by reference.
+        # This is intentional — concurrent tool calls read shared state but don't
+        # mutate extra_tools, skill_data, etc. during execution.
         child.__dict__.update(self.__dict__)
         child.current_tool_call_id = tool_call_id
         # Fresh token counters — don't accumulate child usage into parent

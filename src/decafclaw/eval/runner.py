@@ -169,8 +169,8 @@ async def run_test(config: Config, test_case: dict) -> dict:
                 break
 
     # Gather cumulative metrics
-    prompt_tokens = getattr(ctx, "total_prompt_tokens", 0)
-    completion_tokens = getattr(ctx, "total_completion_tokens", 0)
+    prompt_tokens = ctx.total_prompt_tokens
+    completion_tokens = ctx.total_completion_tokens
     total_tool_calls = _count_tool_calls(history)
 
     # For single-turn, keep flat response; for multi-turn, show last response
