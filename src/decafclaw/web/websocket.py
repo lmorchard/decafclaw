@@ -76,7 +76,7 @@ async def _handle_load_history(ws_send, index, username, msg, state):
     response = {
         "type": "conv_history", "conv_id": conv_id,
         "messages": messages, "has_more": has_more,
-        "context_limit": config.compaction_max_tokens,
+        "context_limit": config.compaction.max_tokens,
     }
     if estimated_tokens is not None:
         response["estimated_tokens"] = estimated_tokens
@@ -323,7 +323,7 @@ async def _run_agent_turn(websocket, app_ctx, config, event_bus,
             # (next iteration) or message_complete (end of turn)
             pass
 
-    if config.llm_streaming:
+    if config.llm.streaming:
         ctx.on_stream_chunk = on_stream_chunk
 
     # Track streaming state across LLM iterations
@@ -442,7 +442,7 @@ async def _run_agent_turn(websocket, app_ctx, config, event_bus,
                 "completion_tokens": ctx.total_completion_tokens,
                 "total_tokens": ctx.total_prompt_tokens + ctx.total_completion_tokens,
             },
-            "context_limit": config.compaction_max_tokens,
+            "context_limit": config.compaction.max_tokens,
         })
 
         # Update conversation metadata

@@ -18,6 +18,8 @@ A minimal AI agent for learning how agent frameworks work. Connects to Mattermos
 - `src/decafclaw/mattermost.py` — Mattermost client, message handling, flood protection, progress subscriber
 - `src/decafclaw/llm.py` — LLM client (OpenAI-compatible)
 - `src/decafclaw/config.py` — Dataclass config from env vars / .env
+- `src/decafclaw/config_types.py` — Config sub-dataclasses (LlmConfig, MattermostConfig, etc.)
+- `src/decafclaw/config_cli.py` — CLI tool for config show/get/set
 - `src/decafclaw/context.py` — Forkable runtime context
 - `src/decafclaw/events.py` — In-process pub/sub event bus
 - `src/decafclaw/memory.py` — Memory file read/write operations
@@ -59,6 +61,7 @@ make test         # Run pytest
 make vendor       # Rebuild web UI vendor bundle (npm + esbuild)
 make reindex      # Rebuild embedding index from memory files
 make build-eval-fixtures  # Rebuild eval embedding fixtures
+make config       # Show resolved config values
 ```
 
 **Important:** Only one bot instance can connect to Mattermost at a time. A second instance will silently miss websocket events. Les likely has `make dev` running in another terminal — do NOT start `make run`, `make dev`, or `make debug` without checking first. If you need to run an instance for log capture or debugging, ask Les to kill the existing one.
@@ -100,8 +103,8 @@ Session docs live in `.claude/dev-sessions/YYYY-MM-DD-HHMM-slug/` with `spec.md`
 - **Events for progress.** Tools publish `tool_status` events via `ctx.publish()`. The agent loop publishes `llm_start/end` and `tool_start/end`. Subscribers (Mattermost, terminal) handle display.
 - **Mattermost concerns stay in `mattermost.py`.** Progress formatting, placeholder management, threading logic — all in `MattermostClient`.
 - **Mattermost PATCH API quirks.** Omitting `props` from a PATCH preserves existing props (including attachments). To strip attachments, you must explicitly send `props: {"attachments": []}`. However, sending a PATCH with only `props` and no `message` field clears the message text, showing "(message deleted)". Always include the message text when patching props — fetch it first if needed.
-- **Config via env vars.** All config comes from `.env` / environment. Dataclass defaults in `config.py`.
-- **Use `dataclasses.replace()` to copy Config.** Never copy fields manually — new fields get silently lost. This caused a real bug with semantic search in the eval runner.
+- **Config via defaults → config.json → env vars.** Config is resolved in priority order: dataclass defaults → `data/{agent_id}/config.json` → env vars. Env vars are highest priority. Dataclass defaults in `config.py`, sub-dataclasses in `config_types.py`.
+- **Use `dataclasses.replace()` to copy Config.** Never copy fields manually — new fields get silently lost. This caused a real bug with semantic search in the eval runner. For nested sub-dataclasses, use the nested pattern: `dataclasses.replace(config, agent=dataclasses.replace(config.agent, data_home=tmp, id="eval"))`.
 - **Check for running bot instances before starting one.** Only one websocket connection per Mattermost bot account. A second instance silently misses events.
 - **Test live in Mattermost after merging**, not just lint/pytest. Real agent behavior differs from unit tests.
 - **Tool descriptions are a control surface.** Wording changes ("MUST", "NEVER", checklists, "prefer X over Y") measurably change LLM behavior. Use the eval loop to validate.

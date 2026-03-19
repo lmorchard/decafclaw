@@ -171,7 +171,7 @@ def tool_context_stats(ctx) -> str | ToolResult:
     total_estimated = system_tokens + tools_tokens + history_tokens
     prompt_tokens_actual = ctx.total_prompt_tokens
     completion_tokens_actual = ctx.total_completion_tokens
-    compaction_max = config.compaction_max_tokens
+    compaction_max = config.compaction.max_tokens
 
     # Archive size
     from ..archive import archive_path

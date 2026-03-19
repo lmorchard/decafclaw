@@ -1,11 +1,40 @@
-"""Configuration loaded from environment variables / .env file."""
+"""Configuration loaded from config.json, environment variables, and defaults.
 
+Resolution order (first non-empty wins):
+  1. Environment variable (systematic name, then alias)
+  2. Config file value (data/{agent_id}/config.json)
+  3. Dataclass default
+"""
+
+import json
+import logging
 import os
 from dataclasses import dataclass, field
+from dataclasses import fields as dc_fields
 from pathlib import Path
+from typing import Any, get_origin
 
 from dotenv import load_dotenv
 
+from .config_types import (
+    AgentConfig,
+    ClaudeCodeConfig,
+    CompactionConfig,
+    EmbeddingConfig,
+    HeartbeatConfig,
+    HttpConfig,
+    LlmConfig,
+    MattermostConfig,
+    SkillsConfig,
+    TabstackConfig,
+)
+
+log = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Parsing helpers
+# ---------------------------------------------------------------------------
 
 def _parse_bool(value: str, default: bool = False) -> bool:
     """Parse a string to boolean. Returns default if empty/None."""
@@ -14,198 +43,268 @@ def _parse_bool(value: str, default: bool = False) -> bool:
     return value.strip().lower() in ("true", "1", "yes")
 
 
+def _parse_list(value: str) -> list[str]:
+    """Parse env var to list. Try JSON first, fall back to comma-split."""
+    value = value.strip()
+    if not value:
+        return []
+    if value.startswith("["):
+        try:
+            parsed = json.loads(value)
+            if isinstance(parsed, list):
+                return [str(item) for item in parsed]
+        except json.JSONDecodeError:
+            pass
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def _coerce(value: str, field_type) -> object:
+    """Coerce a string value to the target field type."""
+    origin = get_origin(field_type)
+    if origin is list:
+        return _parse_list(value)
+    if field_type is bool:
+        return _parse_bool(value)
+    if field_type is int:
+        return int(value)
+    if field_type is float:
+        return float(value)
+    return value
+
+
+# ---------------------------------------------------------------------------
+# Generic sub-config loader
+# ---------------------------------------------------------------------------
+
+def _load_sub_config(
+    dc_class: type,
+    json_data: dict,
+    env_prefix: str,
+    env_aliases: dict[str, str] | None = None,
+) -> Any:
+    """Build a sub-config dataclass from JSON data + env vars + defaults.
+
+    For each field:
+      1. Check env var {ENV_PREFIX}_{FIELD_UPPER} (skipped if prefix empty)
+      2. Check env alias from field metadata or env_aliases dict
+      3. Check json_data[field_name]
+      4. Fall through to dataclass default
+    """
+    kwargs: dict[str, object] = {}
+    aliases = env_aliases or {}
+
+    # Resolve type hints (may be strings due to __future__.annotations)
+    import typing
+    hints = typing.get_type_hints(dc_class)
+
+    for f in dc_fields(dc_class):
+        field_type = hints.get(f.name, f.type)
+        env_val = None
+
+        # 1. Systematic env var: PREFIX_FIELDNAME
+        if env_prefix:
+            env_name = f"{env_prefix}_{f.name.upper()}"
+            env_val = os.getenv(env_name)
+
+        # 2. Env alias from field metadata or explicit aliases dict
+        if not env_val:
+            alias = f.metadata.get("env_alias") or aliases.get(f.name)
+            if alias:
+                env_val = os.getenv(alias)
+
+        if env_val is not None and env_val != "":
+            kwargs[f.name] = _coerce(env_val, field_type)
+        elif f.name in json_data:
+            json_val = json_data[f.name]
+            # JSON already has correct types for most things
+            if isinstance(json_val, str) and field_type not in (str, "str"):
+                kwargs[f.name] = _coerce(json_val, field_type)
+            else:
+                kwargs[f.name] = json_val
+        # else: use dataclass default
+
+    return dc_class(**kwargs)
+
+
+# ---------------------------------------------------------------------------
+# Top-level Config
+# ---------------------------------------------------------------------------
+
 @dataclass
 class Config:
-    # LLM settings
-    llm_url: str = "http://192.168.0.199:4000/v1/chat/completions"
-    llm_model: str = "gemini-2.5-flash"
-    llm_api_key: str = "dummy"
+    llm: LlmConfig = field(default_factory=LlmConfig)
+    mattermost: MattermostConfig = field(default_factory=MattermostConfig)
+    compaction: CompactionConfig = field(default_factory=CompactionConfig)
+    embedding: EmbeddingConfig = field(default_factory=EmbeddingConfig)
+    heartbeat: HeartbeatConfig = field(default_factory=HeartbeatConfig)
+    http: HttpConfig = field(default_factory=HttpConfig)
+    agent: AgentConfig = field(default_factory=AgentConfig)
+    skills: SkillsConfig = field(default_factory=SkillsConfig)
 
-    # Mattermost settings
-    mattermost_url: str = ""  # e.g. "https://comms.lmorchard.com"
-    mattermost_token: str = ""
-    mattermost_bot_username: str = ""
-    mattermost_ignore_bots: bool = True
-    mattermost_ignore_webhooks: bool = False
-    mattermost_debounce_ms: int = 1000  # batch messages within this window
-    mattermost_cooldown_ms: int = 1000  # min time between agent turns per channel
-    mattermost_require_mention: bool = True  # in public/private channels, only respond when @-mentioned
-    mattermost_user_rate_limit_ms: int = 500  # min time between messages per user
-    mattermost_channel_blocklist: str = ""  # comma-separated channel IDs to ignore
-    mattermost_circuit_breaker_max: int = 10  # max agent turns per channel in window
-    mattermost_circuit_breaker_window_sec: int = 30  # sliding window for circuit breaker
-    mattermost_circuit_breaker_pause_sec: int = 60  # pause duration after breaker trips
+    # Custom environment variables from config.json "env" section
+    env: dict[str, str] = field(default_factory=dict)
 
-    # Workspace settings
-    data_home: str = "./data"
-    agent_id: str = "decafclaw"
-    agent_user_id: str = "user"  # single configured user (temporary)
+    # Runtime-only (not in config file)
+    system_prompt: str = ""
+    discovered_skills: list = field(default_factory=list)
+
+    def apply_env(self) -> None:
+        """Apply env vars from the config. Only sets vars not already in the environment.
+
+        Priority: real env vars > .env file > config.json env section.
+        Call at startup and after config reload.
+        """
+        for key, value in self.env.items():
+            if key not in os.environ:
+                os.environ[key] = value
 
     @property
     def agent_path(self) -> Path:
         """Admin-level agent directory (read-only to agent)."""
-        return Path(self.data_home) / self.agent_id
+        return Path(self.agent.data_home) / self.agent.id
 
     @property
     def workspace_path(self) -> Path:
         """Agent read/write sandbox."""
-        return Path(self.data_home) / self.agent_id / "workspace"
-
-    # Embedding / semantic search settings
-    embedding_model: str = "text-embedding-004"
-    embedding_url: str = ""      # default: falls back to llm_url
-    embedding_api_key: str = ""  # default: falls back to llm_api_key
-    memory_search_strategy: str = "substring"  # substring | semantic
-
-    @property
-    def effective_embedding_url(self) -> str:
-        return self.embedding_url or self.llm_url.replace("/chat/completions", "/embeddings")
-
-    @property
-    def effective_embedding_api_key(self) -> str:
-        return self.embedding_api_key or self.llm_api_key
-
-    # Tabstack settings
-    tabstack_api_key: str = ""
-    tabstack_api_url: str = ""  # empty = SDK default (production)
-
-    # Compaction settings
-    compaction_llm_url: str = ""        # default: falls back to llm_url
-    compaction_llm_model: str = ""      # default: falls back to llm_model
-    compaction_llm_api_key: str = ""    # default: falls back to llm_api_key
-    compaction_max_tokens: int = 100000 # compact when prompt_tokens exceeds this
-    compaction_llm_max_tokens: int = 0  # compaction LLM's context budget (0 = use compaction_max_tokens)
-    compaction_preserve_turns: int = 5  # keep this many recent turns intact
-
-    @property
-    def compaction_url(self) -> str:
-        return self.compaction_llm_url or self.llm_url
-
-    @property
-    def compaction_model(self) -> str:
-        return self.compaction_llm_model or self.llm_model
-
-    @property
-    def compaction_api_key(self) -> str:
-        return self.compaction_llm_api_key or self.llm_api_key
-
-    @property
-    def compaction_context_budget(self) -> int:
-        return self.compaction_llm_max_tokens or self.compaction_max_tokens
-
-    # Heartbeat settings
-    heartbeat_interval: str = "30m"
-    heartbeat_user: str = ""
-    heartbeat_channel: str = ""
-    heartbeat_suppress_ok: bool = True
-
-    # Streaming settings
-    llm_streaming: bool = True
-    llm_stream_throttle_ms: int = 200
-
-    # Agent settings (system_prompt is assembled from prompt files at startup)
-    system_prompt: str = ""
-    max_tool_iterations: int = 200
-    max_concurrent_tools: int = 5    # max parallel tool calls per model response
-    max_message_length: int = 50000  # truncate user messages beyond this (chars)
-
-    # Tool search / deferred loading
-    tool_context_budget_pct: float = 0.10  # fraction of compaction_max_tokens for tool defs
-    always_loaded_tools: str = ""  # comma-separated tool names to add to always-loaded set
-
-    @property
-    def tool_context_budget(self) -> int:
-        return int(self.compaction_max_tokens * self.tool_context_budget_pct)
-
-    # Child agent (delegation) settings
-    child_max_tool_iterations: int = 10
-    child_timeout_sec: int = 300
-
-    # HTTP server settings
-    http_enabled: bool = False
-    http_host: str = "0.0.0.0"
-    http_port: int = 18880
-    http_secret: str = ""
-    http_base_url: str = ""  # auto-detected if empty
+        return self.agent_path / "workspace"
 
     @property
     def http_callback_base(self) -> str:
         """Base URL for HTTP callbacks. Auto-detected from host/port if not set."""
-        if self.http_base_url:
-            return self.http_base_url.rstrip("/")
-        return f"http://{self.http_host}:{self.http_port}"
+        if self.http.base_url:
+            return self.http.base_url.rstrip("/")
+        return f"http://{self.http.host}:{self.http.port}"
 
-    # Mattermost confirmation settings
-    mattermost_enable_emoji_confirms: bool = True  # auto-set to False when http_enabled
+    @property
+    def tool_context_budget(self) -> int:
+        return int(self.compaction.max_tokens * self.agent.tool_context_budget_pct)
 
-    # Claude Code skill settings
-    claude_code_model: str = ""  # empty = SDK default
-    claude_code_budget_default: float = 2.0
-    claude_code_budget_max: float = 10.0
-    claude_code_session_timeout: str = "30m"
+    @property
+    def compaction_context_budget(self) -> int:
+        return self.compaction.llm_max_tokens or self.compaction.max_tokens
 
-    # Discovered skills (populated by load_system_prompt at startup)
-    discovered_skills: list = field(default_factory=list)
 
+
+# ---------------------------------------------------------------------------
+# Loader
+# ---------------------------------------------------------------------------
 
 def load_config() -> Config:
+    """Load config from defaults → config.json → env vars."""
     load_dotenv()
-    return Config(
-        llm_url=os.getenv("LLM_URL", Config.llm_url),
-        llm_model=os.getenv("LLM_MODEL", Config.llm_model),
-        llm_api_key=os.getenv("LLM_API_KEY", Config.llm_api_key),
-        mattermost_url=os.getenv("MATTERMOST_URL", ""),
-        mattermost_token=os.getenv("MATTERMOST_TOKEN", ""),
-        mattermost_bot_username=os.getenv("MATTERMOST_BOT_USERNAME", ""),
-        mattermost_ignore_bots=_parse_bool(os.getenv("MATTERMOST_IGNORE_BOTS", ""), default=True),
-        mattermost_ignore_webhooks=_parse_bool(os.getenv("MATTERMOST_IGNORE_WEBHOOKS", ""), default=False),
-        mattermost_debounce_ms=int(os.getenv("MATTERMOST_DEBOUNCE_MS", "1000")),
-        mattermost_cooldown_ms=int(os.getenv("MATTERMOST_COOLDOWN_MS", "1000")),
-        mattermost_require_mention=_parse_bool(os.getenv("MATTERMOST_REQUIRE_MENTION", ""), default=True),
-        mattermost_user_rate_limit_ms=int(os.getenv("MATTERMOST_USER_RATE_LIMIT_MS", "500")),
-        mattermost_channel_blocklist=os.getenv("MATTERMOST_CHANNEL_BLOCKLIST", ""),
-        mattermost_circuit_breaker_max=int(os.getenv("MATTERMOST_CIRCUIT_BREAKER_MAX", "10")),
-        mattermost_circuit_breaker_window_sec=int(os.getenv("MATTERMOST_CIRCUIT_BREAKER_WINDOW_SEC", "30")),
-        mattermost_circuit_breaker_pause_sec=int(os.getenv("MATTERMOST_CIRCUIT_BREAKER_PAUSE_SEC", "60")),
-        compaction_llm_url=os.getenv("COMPACTION_LLM_URL", ""),
-        compaction_llm_model=os.getenv("COMPACTION_LLM_MODEL", ""),
-        compaction_llm_api_key=os.getenv("COMPACTION_LLM_API_KEY", ""),
-        compaction_max_tokens=int(os.getenv("COMPACTION_MAX_TOKENS", "100000")),
-        compaction_llm_max_tokens=int(os.getenv("COMPACTION_LLM_MAX_TOKENS", "0")),
-        compaction_preserve_turns=int(os.getenv("COMPACTION_PRESERVE_TURNS", "5")),
-        embedding_model=os.getenv("EMBEDDING_MODEL", Config.embedding_model),
-        embedding_url=os.getenv("EMBEDDING_URL", ""),
-        embedding_api_key=os.getenv("EMBEDDING_API_KEY", ""),
-        memory_search_strategy=os.getenv("MEMORY_SEARCH_STRATEGY", Config.memory_search_strategy),
-        data_home=os.getenv("DATA_HOME", Config.data_home),
-        agent_id=os.getenv("AGENT_ID", Config.agent_id),
-        agent_user_id=os.getenv("AGENT_USER_ID", Config.agent_user_id),
-        tabstack_api_key=os.getenv("TABSTACK_API_KEY", ""),
-        tabstack_api_url=os.getenv("TABSTACK_API_URL", ""),
-        heartbeat_interval=os.getenv("HEARTBEAT_INTERVAL", Config.heartbeat_interval),
-        heartbeat_user=os.getenv("HEARTBEAT_USER", ""),
-        heartbeat_channel=os.getenv("HEARTBEAT_CHANNEL", ""),
-        heartbeat_suppress_ok=_parse_bool(os.getenv("HEARTBEAT_SUPPRESS_OK", ""), default=True),
-        llm_streaming=_parse_bool(os.getenv("LLM_STREAMING", ""), default=True),
-        llm_stream_throttle_ms=int(os.getenv("LLM_STREAM_THROTTLE_MS", "200")),
-        http_enabled=_parse_bool(os.getenv("HTTP_ENABLED", ""), default=False),
-        http_host=os.getenv("HTTP_HOST", Config.http_host),
-        http_port=int(os.getenv("HTTP_PORT", "18880")),
-        http_secret=os.getenv("HTTP_SECRET", ""),
-        http_base_url=os.getenv("HTTP_BASE_URL", ""),
-        mattermost_enable_emoji_confirms=_parse_bool(
-            os.getenv("MATTERMOST_ENABLE_EMOJI_CONFIRMS", ""),
-            default=not _parse_bool(os.getenv("HTTP_ENABLED", ""), default=False)),
-        claude_code_model=os.getenv("CLAUDE_CODE_MODEL", ""),
-        claude_code_budget_default=float(os.getenv("CLAUDE_CODE_BUDGET_DEFAULT", "2.0")),
-        claude_code_budget_max=float(os.getenv("CLAUDE_CODE_BUDGET_MAX", "10.0")),
-        claude_code_session_timeout=os.getenv("CLAUDE_CODE_SESSION_TIMEOUT", "30m"),
-        system_prompt=os.getenv("SYSTEM_PROMPT", Config.system_prompt),
-        max_tool_iterations=int(os.getenv("MAX_TOOL_ITERATIONS", "200")),
-        max_concurrent_tools=int(os.getenv("MAX_CONCURRENT_TOOLS", "5")),
-        tool_context_budget_pct=float(os.getenv("TOOL_CONTEXT_BUDGET_PCT", "0.10")),
-        always_loaded_tools=os.getenv("ALWAYS_LOADED_TOOLS", ""),
-        max_message_length=int(os.getenv("MAX_MESSAGE_LENGTH", "50000")),
-        child_max_tool_iterations=int(os.getenv("CHILD_MAX_TOOL_ITERATIONS", "10")),
-        child_timeout_sec=int(os.getenv("CHILD_TIMEOUT_SEC", "300")),
+
+    # Bootstrap: resolve data_home and agent_id from env only
+    data_home = os.getenv("DATA_HOME", AgentConfig.data_home)
+    agent_id = os.getenv("AGENT_ID", AgentConfig.id)
+
+    # Load config file if it exists
+    config_path = Path(data_home) / agent_id / "config.json"
+    file_data: dict = {}
+    if config_path.exists():
+        try:
+            file_data = json.loads(config_path.read_text())
+        except (json.JSONDecodeError, OSError) as exc:
+            log.warning("Failed to load %s: %s", config_path, exc)
+
+    # Build each sub-config
+    llm = _load_sub_config(
+        LlmConfig, file_data.get("llm", {}), "LLM")
+
+    mattermost = _load_sub_config(
+        MattermostConfig, file_data.get("mattermost", {}), "MATTERMOST",
+        env_aliases={"stream_throttle_ms": "LLM_STREAM_THROTTLE_MS"})
+
+    compaction = _load_sub_config(
+        CompactionConfig, file_data.get("compaction", {}), "COMPACTION",
+        env_aliases={
+            "url": "COMPACTION_LLM_URL",
+            "model": "COMPACTION_LLM_MODEL",
+            "api_key": "COMPACTION_LLM_API_KEY",
+            "llm_max_tokens": "COMPACTION_LLM_MAX_TOKENS",
+        })
+
+    embedding = _load_sub_config(
+        EmbeddingConfig, file_data.get("embedding", {}), "EMBEDDING",
+        env_aliases={"search_strategy": "MEMORY_SEARCH_STRATEGY"})
+
+    heartbeat = _load_sub_config(
+        HeartbeatConfig, file_data.get("heartbeat", {}), "HEARTBEAT")
+
+    http = _load_sub_config(
+        HttpConfig, file_data.get("http", {}), "HTTP")
+
+    agent = _load_sub_config(
+        AgentConfig, file_data.get("agent", {}), "",
+        env_aliases={
+            "data_home": "DATA_HOME",
+            "id": "AGENT_ID",
+            "user_id": "AGENT_USER_ID",
+            "max_tool_iterations": "MAX_TOOL_ITERATIONS",
+            "max_concurrent_tools": "MAX_CONCURRENT_TOOLS",
+            "max_message_length": "MAX_MESSAGE_LENGTH",
+            "tool_context_budget_pct": "TOOL_CONTEXT_BUDGET_PCT",
+            "always_loaded_tools": "ALWAYS_LOADED_TOOLS",
+            "child_max_tool_iterations": "CHILD_MAX_TOOL_ITERATIONS",
+            "child_timeout_sec": "CHILD_TIMEOUT_SEC",
+        })
+
+    # Force bootstrap values — these determine the config file location,
+    # so the JSON file must not override them
+    agent.data_home = data_home
+    agent.id = agent_id
+
+    # Skills sub-configs
+    skills_data = file_data.get("skills", {})
+    tabstack = _load_sub_config(
+        TabstackConfig, skills_data.get("tabstack", {}), "SKILLS_TABSTACK")
+    claude_code = _load_sub_config(
+        ClaudeCodeConfig, skills_data.get("claude_code", {}), "SKILLS_CLAUDE_CODE")
+    skills = SkillsConfig(tabstack=tabstack, claude_code=claude_code)
+
+    # Custom env vars from config file
+    env_vars: dict[str, str] = {
+        str(k): str(v) for k, v in file_data.get("env", {}).items()
+    }
+
+    # Runtime-only field
+    system_prompt = os.getenv("SYSTEM_PROMPT", "")
+
+    config = Config(
+        llm=llm,
+        mattermost=mattermost,
+        compaction=compaction,
+        embedding=embedding,
+        heartbeat=heartbeat,
+        http=http,
+        agent=agent,
+        skills=skills,
+        env=env_vars,
+        system_prompt=system_prompt,
     )
+
+    # Apply custom env vars (only sets those not already in environment)
+    config.apply_env()
+
+    return config
+
+
+def reload_env(config: Config) -> dict[str, str]:
+    """Re-read the env section from config.json and apply new vars.
+
+    Returns dict of newly applied vars (name → value).
+    """
+    config_path = config.agent_path / "config.json"
+    if not config_path.exists():
+        return {}
+    try:
+        file_data = json.loads(config_path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return {}
+    new_env = {str(k): str(v) for k, v in file_data.get("env", {}).items()}
+    applied: dict[str, str] = {}
+    for key, value in new_env.items():
+        if key not in os.environ:
+            os.environ[key] = value
+            applied[key] = value
+    config.env = new_env
+    return applied

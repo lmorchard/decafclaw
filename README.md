@@ -29,6 +29,7 @@ uv sync
 # Configure
 cp .env.example .env
 # Edit .env with your LLM endpoint and optional Mattermost keys
+# Or use data/{agent_id}/config.json — env vars take priority
 
 # Run interactively (no Mattermost needed)
 make run
@@ -107,6 +108,7 @@ make check        # Lint + type check (Python + JS)
 make vendor       # Rebuild web UI vendor bundle
 make lint-fix     # Auto-fix lint issues
 make fmt          # Format with ruff
+make config       # Show resolved config values
 ```
 
 ## What this is NOT

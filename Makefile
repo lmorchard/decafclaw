@@ -63,6 +63,10 @@ reindex:
 vendor:
 	cd src/decafclaw/web/static && npm install && npm run build
 
+# Show resolved config
+config:
+	uv run decafclaw config show
+
 # Rebuild eval embedding fixtures (run when changing embedding models)
 build-eval-fixtures:
 	uv run python scripts/build-eval-fixtures.py

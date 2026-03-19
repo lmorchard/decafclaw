@@ -56,7 +56,7 @@ def _archive(ctx, msg) -> None:
 
     # Index user/assistant messages for conversation search (fire and forget)
     # Requires an embedding model to be configured
-    if ctx.config.embedding_model and msg.get("role") in ("user", "assistant"):
+    if ctx.config.embedding.model and msg.get("role") in ("user", "assistant"):
         content = msg.get("content")
         if content and len(content) > 20:  # skip trivial messages
             task = asyncio.create_task(_index_conversation_message(ctx, msg))
@@ -79,9 +79,9 @@ async def _index_conversation_message(ctx, msg) -> None:
 async def _maybe_compact(ctx, config, history, prompt_tokens) -> None:
     """Trigger compaction if token budget is exceeded."""
     log.info(f"Compaction check: prompt_tokens={prompt_tokens}, "
-             f"threshold={config.compaction_max_tokens}")
-    if prompt_tokens and prompt_tokens > config.compaction_max_tokens:
-        log.info(f"Token budget exceeded ({prompt_tokens} > {config.compaction_max_tokens}), "
+             f"threshold={config.compaction.max_tokens}")
+    if prompt_tokens and prompt_tokens > config.compaction.max_tokens:
+        log.info(f"Token budget exceeded ({prompt_tokens} > {config.compaction.max_tokens}), "
                  f"triggering compaction")
         try:
             await compact_history(ctx, history)
@@ -180,7 +180,7 @@ async def _call_llm_with_events(ctx, config, messages, tools) -> dict:
     """Call the LLM with event publishing for progress tracking."""
     iteration = ctx._current_iteration
     await ctx.publish("llm_start", iteration=iteration)
-    if config.llm_streaming:
+    if config.llm.streaming:
         from .llm import call_llm_streaming
         on_chunk = ctx.on_stream_chunk
         cancel_event = ctx.cancelled
@@ -266,7 +266,7 @@ async def _execute_tool_calls(ctx, tool_calls, history, messages, pending_media)
     if cancelled:
         return cancelled
 
-    semaphore = asyncio.Semaphore(ctx.config.max_concurrent_tools)
+    semaphore = asyncio.Semaphore(ctx.config.agent.max_concurrent_tools)
 
     # Fork ctx per tool call so concurrent tools don't race on current_tool_call_id
     tasks = []
@@ -369,7 +369,7 @@ async def run_agent_turn(ctx, user_message: str, history: list) -> "ToolResult":
     try:
         # Add user message to history
         # Truncate oversized user messages
-        max_len = config.max_message_length
+        max_len = config.agent.max_message_length
         if max_len and len(user_message) > max_len:
             original_len = len(user_message)
             user_message = (
@@ -394,7 +394,7 @@ async def run_agent_turn(ctx, user_message: str, history: list) -> "ToolResult":
 
         accumulated_text_parts = []  # text from iterations that also had tool calls
 
-        for iteration in range(config.max_tool_iterations):
+        for iteration in range(config.agent.max_tool_iterations):
             cancelled = _check_cancelled(ctx, history)
             if cancelled:
                 return cancelled
@@ -480,7 +480,7 @@ async def run_agent_turn(ctx, user_message: str, history: list) -> "ToolResult":
 
         # Hit max iterations — preserve accumulated text from tool-call iterations
         limit_note = (f"\n\n[Agent reached max tool iterations "
-                      f"({config.max_tool_iterations}) without a final response]")
+                      f"({config.agent.max_tool_iterations}) without a final response]")
         accumulated = "\n\n".join(accumulated_text_parts)
         msg = accumulated + limit_note if accumulated else limit_note.strip()
         final_msg = {"role": "assistant", "content": msg}
@@ -515,7 +515,7 @@ def _setup_interactive_context(ctx) -> None:
     ctx.conv_id = "interactive"
     ctx.media_handler = TerminalMediaHandler(config.workspace_path)
 
-    if config.llm_streaming:
+    if config.llm.streaming:
         async def _terminal_stream_chunk(chunk_type, data):
             if chunk_type == "text":
                 print(data, end="", flush=True)
@@ -530,7 +530,7 @@ def _print_banner(config) -> None:
     from .mcp_client import get_registry
 
     print("DecafClaw interactive mode. Type 'quit' to exit.")
-    print(f"Model: {config.llm_model}")
+    print(f"Model: {config.llm.model}")
     print(f"Tools: {', '.join(t['function']['name'] for t in TOOL_DEFINITIONS)}")
     skills = getattr(config, "discovered_skills", [])
     if skills:
@@ -648,7 +648,7 @@ async def run_interactive(ctx):
             result = await run_agent_turn(ctx, user_input, history)
             from .media import process_media_for_terminal
 
-            if config.llm_streaming:
+            if config.llm.streaming:
                 # Text was already printed token-by-token; handle media only
                 if result.media:
                     output = process_media_for_terminal(result, config.workspace_path)

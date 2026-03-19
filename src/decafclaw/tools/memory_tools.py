@@ -19,7 +19,7 @@ async def tool_memory_save(ctx, tags: list[str], content: str) -> str:
         content=content,
     )
     # Index for semantic search if enabled
-    if ctx.config.memory_search_strategy == "semantic":
+    if ctx.config.embedding.search_strategy == "semantic":
         try:
             from datetime import datetime
 
@@ -43,9 +43,9 @@ async def tool_memory_save(ctx, tags: list[str], content: str) -> str:
 
 async def tool_memory_search(ctx, query: str) -> str:
     """Search memories."""
-    log.info(f"[tool:memory_search] query={query} strategy={ctx.config.memory_search_strategy}")
+    log.info(f"[tool:memory_search] query={query} strategy={ctx.config.embedding.search_strategy}")
 
-    if ctx.config.memory_search_strategy == "semantic":
+    if ctx.config.embedding.search_strategy == "semantic":
         try:
             from .. import embeddings
             # Ensure index exists (reindex on first search if needed)

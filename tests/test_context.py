@@ -54,7 +54,8 @@ def test_fork_accepts_overrides(ctx):
 
 
 def test_fork_can_override_config(ctx):
-    new_config = Config(data_home="/tmp/other", agent_id="other-agent")
+    from decafclaw.config_types import AgentConfig
+    new_config = Config(agent=AgentConfig(data_home="/tmp/other", id="other-agent"))
     child = ctx.fork(config=new_config)
     assert child.config is new_config
     assert child.config is not ctx.config
