@@ -3,22 +3,23 @@
 import json
 
 from decafclaw.config import Config
+from decafclaw.config_types import MattermostConfig
 from decafclaw.mattermost import MattermostClient
 
 
 def _make_config(**overrides):
     """Create a config with Mattermost settings."""
     defaults = dict(
-        mattermost_url="https://mm.example.com",
-        mattermost_token="test-token",
-        mattermost_bot_username="testbot",
-        mattermost_ignore_bots=True,
-        mattermost_ignore_webhooks=False,
-        mattermost_require_mention=True,
-        mattermost_channel_blocklist="",
+        url="https://mm.example.com",
+        token="test-token",
+        bot_username="testbot",
+        ignore_bots=True,
+        ignore_webhooks=False,
+        require_mention=True,
+        channel_blocklist=[],
     )
     defaults.update(overrides)
-    return Config(**defaults)
+    return Config(mattermost=MattermostConfig(**defaults))
 
 
 def _make_client(config=None):
@@ -89,7 +90,7 @@ def test_ignores_empty_messages():
 
 
 def test_ignores_bot_messages_when_configured():
-    client = _make_client(_make_config(mattermost_ignore_bots=True))
+    client = _make_client(_make_config(ignore_bots=True))
     received = []
     evt = _make_event(from_bot="true")
     client._handle_posted(evt, received.append)
@@ -97,7 +98,7 @@ def test_ignores_bot_messages_when_configured():
 
 
 def test_allows_bot_messages_when_not_configured():
-    client = _make_client(_make_config(mattermost_ignore_bots=False))
+    client = _make_client(_make_config(ignore_bots=False))
     received = []
     evt = _make_event(from_bot="true", channel_type="D")
     client._handle_posted(evt, received.append)
@@ -105,7 +106,7 @@ def test_allows_bot_messages_when_not_configured():
 
 
 def test_ignores_webhook_messages_when_configured():
-    client = _make_client(_make_config(mattermost_ignore_webhooks=True))
+    client = _make_client(_make_config(ignore_webhooks=True))
     received = []
     evt = _make_event(from_webhook="true")
     client._handle_posted(evt, received.append)
@@ -113,7 +114,7 @@ def test_ignores_webhook_messages_when_configured():
 
 
 def test_allows_webhook_messages_when_not_configured():
-    client = _make_client(_make_config(mattermost_ignore_webhooks=False))
+    client = _make_client(_make_config(ignore_webhooks=False))
     received = []
     evt = _make_event(from_webhook="true", channel_type="D")
     client._handle_posted(evt, received.append)
@@ -121,7 +122,7 @@ def test_allows_webhook_messages_when_not_configured():
 
 
 def test_channel_blocklist():
-    config = _make_config(mattermost_channel_blocklist="blocked-chan,other-blocked")
+    config = _make_config(channel_blocklist=["blocked-chan", "other-blocked"])
     client = _make_client(config)
     received = []
     evt = _make_event(channel_id="blocked-chan")
@@ -130,7 +131,7 @@ def test_channel_blocklist():
 
 
 def test_channel_not_in_blocklist():
-    config = _make_config(mattermost_channel_blocklist="blocked-chan")
+    config = _make_config(channel_blocklist=["blocked-chan"])
     client = _make_client(config)
     received = []
     evt = _make_event(channel_id="allowed-chan", channel_type="D")
@@ -140,7 +141,7 @@ def test_channel_not_in_blocklist():
 
 def test_require_mention_in_public_channel():
     """In public channels with require_mention, messages without @-mention are ignored."""
-    config = _make_config(mattermost_require_mention=True)
+    config = _make_config(require_mention=True)
     client = _make_client(config)
     received = []
     evt = _make_event(message="hello", channel_type="O")
@@ -150,7 +151,7 @@ def test_require_mention_in_public_channel():
 
 def test_mention_in_public_channel():
     """In public channels, messages with @-mention are dispatched."""
-    config = _make_config(mattermost_require_mention=True)
+    config = _make_config(require_mention=True)
     client = _make_client(config)
     received = []
     evt = _make_event(message="@testbot hello", channel_type="O")
@@ -162,7 +163,7 @@ def test_mention_in_public_channel():
 
 def test_dm_does_not_require_mention():
     """DM messages don't require @-mention even if require_mention is True."""
-    config = _make_config(mattermost_require_mention=True)
+    config = _make_config(require_mention=True)
     client = _make_client(config)
     received = []
     evt = _make_event(message="hello", channel_type="D")
@@ -172,7 +173,7 @@ def test_dm_does_not_require_mention():
 
 def test_thread_reply_does_not_require_mention():
     """Thread replies don't require @-mention."""
-    config = _make_config(mattermost_require_mention=True)
+    config = _make_config(require_mention=True)
     client = _make_client(config)
     received = []
     evt = _make_event(message="hello", channel_type="O", root_id="parent-post-id")

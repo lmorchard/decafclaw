@@ -51,15 +51,15 @@ async def run_all(app_ctx):
 
     try:
         # Start HTTP server (button callbacks + web gateway)
-        if config.http_enabled:
+        if config.http.enabled:
             from .http_server import run_http_server
             http_task = asyncio.create_task(
                 run_http_server(config, app_ctx.event_bus, app_ctx=app_ctx)
             )
-            log.info(f"HTTP server enabled on {config.http_host}:{config.http_port}")
+            log.info(f"HTTP server enabled on {config.http.host}:{config.http.port}")
 
         # Start Mattermost client
-        if config.mattermost_url and config.mattermost_token:
+        if config.mattermost.url and config.mattermost.token:
             from .mattermost import MattermostClient
             client = MattermostClient(config)
             mattermost_task = asyncio.create_task(
@@ -68,9 +68,9 @@ async def run_all(app_ctx):
             log.info("Mattermost client starting")
 
         # Start heartbeat timer
-        if parse_interval(config.heartbeat_interval) is not None:
+        if parse_interval(config.heartbeat.interval) is not None:
             # Use Mattermost heartbeat cycle if available, otherwise basic
-            if config.mattermost_url and config.mattermost_token:
+            if config.mattermost.url and config.mattermost.token:
                 from .tools.heartbeat_tools import _guarded_heartbeat
 
                 async def on_cycle():
@@ -88,7 +88,7 @@ async def run_all(app_ctx):
                         config, app_ctx.event_bus, shutdown_event,
                     )
                 )
-            has_channel = config.heartbeat_channel or config.heartbeat_user
+            has_channel = config.heartbeat.channel or config.heartbeat.user
             log.info(f"Heartbeat timer started (reporting={'enabled' if has_channel else 'silent'})")
         else:
             log.info("Heartbeat disabled (interval not set)")

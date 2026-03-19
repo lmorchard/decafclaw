@@ -55,7 +55,7 @@ class TestGetAlwaysLoadedNames:
         assert "shell" in names
 
     def test_user_override_extends(self, config):
-        config.always_loaded_tools = "my_custom_tool,another_one"
+        config.agent.always_loaded_tools = ["my_custom_tool", "another_one"]
         names = get_always_loaded_names(config)
         assert "my_custom_tool" in names
         assert "another_one" in names
@@ -63,7 +63,7 @@ class TestGetAlwaysLoadedNames:
         assert "think" in names
 
     def test_empty_override(self, config):
-        config.always_loaded_tools = ""
+        config.agent.always_loaded_tools = []
         names = get_always_loaded_names(config)
         assert names == DEFAULT_ALWAYS_LOADED
 
@@ -75,7 +75,7 @@ class TestClassifyTools:
     def test_under_budget_no_deferral(self, config):
         """When tools fit in budget, all are active, none deferred."""
         tools = [_make_tool_def(f"tool_{i}") for i in range(3)]
-        config.compaction_max_tokens = 1000000  # huge budget
+        config.compaction.max_tokens = 1000000  # huge budget
         active, deferred = classify_tools(tools, config)
         assert len(active) == 3
         assert len(deferred) == 0
@@ -86,7 +86,7 @@ class TestClassifyTools:
         tools = [_make_tool_def(f"tool_{i}", "x" * 200) for i in range(20)]
         # Add an always-loaded tool
         tools.append(_make_tool_def("think", "Internal reasoning"))
-        config.compaction_max_tokens = 100  # tiny budget → 10 token budget
+        config.compaction.max_tokens = 100  # tiny budget → 10 token budget
 
         active, deferred = classify_tools(tools, config)
         active_names = {td["function"]["name"] for td in active}
@@ -100,7 +100,7 @@ class TestClassifyTools:
     def test_fetched_tools_in_active(self, config):
         """Fetched tools stay in the active set."""
         tools = [_make_tool_def(f"tool_{i}", "x" * 200) for i in range(20)]
-        config.compaction_max_tokens = 100
+        config.compaction.max_tokens = 100
 
         active, deferred = classify_tools(tools, config, fetched_names={"tool_5"})
         active_names = {td["function"]["name"] for td in active}

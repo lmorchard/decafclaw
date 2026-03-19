@@ -246,7 +246,7 @@ async def run_heartbeat_timer(config, event_bus, shutdown_event,
                   (running + reporting). If provided, on_results is ignored.
         on_results: optional async callback(results) called after the default cycle.
     """
-    interval = parse_interval(config.heartbeat_interval)
+    interval = parse_interval(config.heartbeat.interval)
     if interval is None:
         log.info("Heartbeat disabled (no interval configured)")
         return
@@ -255,10 +255,10 @@ async def run_heartbeat_timer(config, event_bus, shutdown_event,
     if last_run > 0:
         elapsed = time.time() - last_run
         remaining = max(0, interval - elapsed)
-        log.info(f"Heartbeat timer starting: interval={config.heartbeat_interval} ({interval}s), "
+        log.info(f"Heartbeat timer starting: interval={config.heartbeat.interval} ({interval}s), "
                  f"last run {elapsed:.0f}s ago, next in {remaining:.0f}s")
     else:
-        log.info(f"Heartbeat timer starting: interval={config.heartbeat_interval} ({interval}s), "
+        log.info(f"Heartbeat timer starting: interval={config.heartbeat.interval} ({interval}s), "
                  f"no previous run recorded")
 
     cycle_running = False

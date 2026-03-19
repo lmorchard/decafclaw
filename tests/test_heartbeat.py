@@ -260,7 +260,7 @@ async def test_run_heartbeat_cycle_isolated_history(config):
 @pytest.mark.asyncio
 async def test_timer_disabled(config):
     """Timer returns immediately when interval is disabled."""
-    config.heartbeat_interval = ""
+    config.heartbeat.interval = ""
     shutdown = asyncio.Event()
     # Should return immediately, not block
     await asyncio.wait_for(
@@ -274,7 +274,7 @@ async def test_timer_fires_callback(config):
     """Timer fires on_results callback after interval."""
     from decafclaw.events import EventBus
 
-    config.heartbeat_interval = "1"  # 1 second
+    config.heartbeat.interval = "1"  # 1 second
 
     admin_path = config.agent_path / "HEARTBEAT.md"
     admin_path.parent.mkdir(parents=True, exist_ok=True)
@@ -315,7 +315,7 @@ async def test_timer_respects_shutdown(config):
     """Timer stops when shutdown event is set."""
     from decafclaw.events import EventBus
 
-    config.heartbeat_interval = "300"  # 5 minutes — would block without shutdown
+    config.heartbeat.interval = "300"  # 5 minutes — would block without shutdown
     shutdown = asyncio.Event()
 
     # Signal shutdown after a short delay

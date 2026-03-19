@@ -64,7 +64,7 @@ def build_confirm_buttons(config, tool_name: str, command: str,
     Returns the attachments list to include in a post's props.
     Returns [] if HTTP server is not enabled.
     """
-    if not config.http_enabled:
+    if not config.http.enabled:
         return []
 
     def _make_token(action: str) -> str:
@@ -72,7 +72,7 @@ def build_confirm_buttons(config, tool_name: str, command: str,
             context_id=context_id,
             tool_name=tool_name,
             original_message=original_message[:2000],
-            server_secret=config.http_secret,
+            server_secret=config.http.secret,
             action=action,
             tool_call_id=tool_call_id,
         )
@@ -161,14 +161,14 @@ def build_stop_button(config, conv_id: str) -> list[dict]:
 
     Returns [] if HTTP server is not enabled.
     """
-    if not config.http_enabled:
+    if not config.http.enabled:
         return []
 
     token = _token_registry.create(
         context_id=conv_id,
         tool_name="_cancel",
         original_message="",
-        server_secret=config.http_secret,
+        server_secret=config.http.secret,
     )
     base_url = f"{config.http_callback_base}/actions/cancel"
 

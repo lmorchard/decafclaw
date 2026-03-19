@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from decafclaw.config import Config
+from decafclaw.config_types import AgentConfig
 from decafclaw.context import Context
 from decafclaw.events import EventBus
 
@@ -19,9 +20,11 @@ def tmp_data(tmp_path):
 def config(tmp_data):
     """Provides a Config pointing at temporary directories."""
     return Config(
-        data_home=str(tmp_data),
-        agent_id="test-agent",
-        agent_user_id="testuser",
+        agent=AgentConfig(
+            data_home=str(tmp_data),
+            id="test-agent",
+            user_id="testuser",
+        ),
     )
 
 

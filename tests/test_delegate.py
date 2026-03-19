@@ -43,7 +43,7 @@ class TestRunChildTurn:
         # Check the child context
         call_args = mock_run.call_args
         child_ctx = call_args[0][0]
-        assert child_ctx.config.max_tool_iterations == 10
+        assert child_ctx.config.agent.max_tool_iterations == 10
         assert child_ctx.config.system_prompt == DEFAULT_CHILD_SYSTEM_PROMPT
 
     @pytest.mark.asyncio
@@ -96,7 +96,7 @@ class TestRunChildTurn:
         async def slow_turn(*args, **kwargs):
             await asyncio.sleep(10)
 
-        ctx.config.child_timeout_sec = 0.1
+        ctx.config.agent.child_timeout_sec = 0.1
 
         with patch("decafclaw.agent.run_agent_turn", new_callable=AsyncMock, side_effect=slow_turn):
             result = await _run_child_turn(ctx, "slow task")

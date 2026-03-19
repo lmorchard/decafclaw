@@ -13,11 +13,11 @@ from decafclaw.mattermost_ui import build_confirm_buttons, get_token_registry
 @pytest.fixture
 def http_config(config):
     """Config with HTTP enabled."""
-    config.http_enabled = True
-    config.http_secret = "test-secret"
-    config.http_host = "127.0.0.1"
-    config.http_port = 18880
-    config.http_base_url = ""
+    config.http.enabled = True
+    config.http.secret = "test-secret"
+    config.http.host = "127.0.0.1"
+    config.http.port = 18880
+    config.http.base_url = ""
     return config
 
 
@@ -237,7 +237,7 @@ async def test_confirm_response_includes_original_message(client):
 
 
 def test_buttons_empty_when_http_disabled(config):
-    config.http_enabled = False
+    config.http.enabled = False
     result = build_confirm_buttons(
         config, "shell", "ls", "ls *", "ctx-1", "msg"
     )

@@ -97,4 +97,4 @@ def test_model_sentinel(config):
     row = conn.execute("SELECT value FROM metadata WHERE key='embedding_model'").fetchone()
     conn.close()
     assert row is not None
-    assert row[0] == config.embedding_model
+    assert row[0] == config.embedding.model

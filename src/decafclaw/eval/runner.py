@@ -42,7 +42,7 @@ async def _setup_workspace(config, test_case: dict):
         )
 
     # Index memories for semantic search if strategy is semantic
-    if config.memory_search_strategy == "semantic" and memories:
+    if config.embedding.search_strategy == "semantic" and memories:
         from ..embeddings import index_entry
         for mem in memories:
             tag_str = ", ".join(mem.get("tags", []))
@@ -117,7 +117,7 @@ async def run_test(config: Config, test_case: dict) -> dict:
     ctx.channel_id = "eval"
     ctx.channel_name = "eval"
     ctx.thread_id = ""
-    ctx.user_id = config.agent_user_id
+    ctx.user_id = config.agent.user_id
 
     # Set allowed tools if specified (disallowed tools return an error)
     allowed_tools = test_case.get("allowed_tools")
@@ -201,9 +201,9 @@ async def run_eval(yaml_data: list[dict], config: Config,
     import tempfile
 
     if model:
-        config.llm_model = model
+        config.llm.model = model
 
-    effective_model = config.llm_model
+    effective_model = config.llm.model
     timestamp = datetime.now().strftime("%Y-%m-%d-%H%M")
 
     results = {
@@ -222,8 +222,7 @@ async def run_eval(yaml_data: list[dict], config: Config,
         with tempfile.TemporaryDirectory() as tmp:
             from dataclasses import replace
             test_config = replace(config,
-                data_home=tmp,
-                agent_id="eval",
+                agent=replace(config.agent, data_home=tmp, id="eval"),
             )
 
             result = await run_test(test_config, test_case)
