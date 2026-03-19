@@ -11,24 +11,25 @@ from ..media import ToolResult
 log = logging.getLogger(__name__)
 
 
-def tool_web_fetch(ctx, url: str) -> str:
+async def tool_web_fetch(ctx, url: str) -> str | ToolResult:
     """Fetch a URL and return the raw response body as text."""
     log.info(f"[tool:web_fetch] {url}")
     try:
-        resp = httpx.get(url, timeout=30, follow_redirects=True)
+        async with httpx.AsyncClient(follow_redirects=True, timeout=30) as client:
+            resp = await client.get(url)
         resp.raise_for_status()
         text = resp.text
         if len(text) > 50000:
             text = text[:50000] + "\n\n[truncated at 50000 chars]"
         return text
     except httpx.HTTPError as e:
-        return f"[error: {e}]"
+        return ToolResult(text=f"[error: {e}]")
 
 
 def tool_debug_context(ctx) -> str | ToolResult:
     """Dump the current conversation context for debugging."""
     log.info("[tool:debug_context]")
-    messages = getattr(ctx, "messages", None)
+    messages = ctx.messages
     if messages is None:
         return "[no context available]"
 
@@ -57,7 +58,7 @@ def tool_debug_context(ctx) -> str | ToolResult:
 
     # Build the full LLM context: messages + tool definitions
     from . import TOOL_DEFINITIONS
-    extra_tool_defs = getattr(ctx, "extra_tool_definitions", [])
+    extra_tool_defs = ctx.extra_tool_definitions
     all_tool_defs = TOOL_DEFINITIONS + extra_tool_defs
 
     tool_names = [t["function"]["name"] for t in all_tool_defs]
@@ -111,24 +112,24 @@ def tool_debug_context(ctx) -> str | ToolResult:
     return ToolResult(text=summary_text, media=media)
 
 
-def tool_think(ctx, content: str) -> str:
+def tool_think(ctx, content: str) -> str | ToolResult:
     """Internal reasoning scratchpad — hidden from the user."""
     log.info(f"[tool:think] {content[:100]}...")
     return "OK"
 
 
-def tool_current_time(ctx) -> str:
+def tool_current_time(ctx) -> str | ToolResult:
     """Return the current date and time."""
     from datetime import datetime
     now = datetime.now()
     return now.strftime("%Y-%m-%d %H:%M:%S (%A)")
 
 
-def tool_context_stats(ctx) -> str:
+def tool_context_stats(ctx) -> str | ToolResult:
     """Report token budget statistics for the current conversation."""
     log.info("[tool:context_stats]")
 
-    messages = getattr(ctx, "messages", None) or []
+    messages = ctx.messages or []
     config = ctx.config
 
     def _estimate_tokens(text):
@@ -142,7 +143,7 @@ def tool_context_stats(ctx) -> str:
 
     # Tool definitions
     from . import TOOL_DEFINITIONS
-    extra_tool_defs = getattr(ctx, "extra_tool_definitions", [])
+    extra_tool_defs = ctx.extra_tool_definitions
     from ..mcp_client import get_registry
     mcp_registry = get_registry()
     mcp_tool_defs = mcp_registry.get_tool_definitions() if mcp_registry else []
@@ -168,13 +169,13 @@ def tool_context_stats(ctx) -> str:
 
     # Totals
     total_estimated = system_tokens + tools_tokens + history_tokens
-    prompt_tokens_actual = getattr(ctx, "total_prompt_tokens", 0)
-    completion_tokens_actual = getattr(ctx, "total_completion_tokens", 0)
+    prompt_tokens_actual = ctx.total_prompt_tokens
+    completion_tokens_actual = ctx.total_completion_tokens
     compaction_max = config.compaction_max_tokens
 
     # Archive size
     from ..archive import archive_path
-    conv_id = getattr(ctx, "conv_id", "unknown")
+    conv_id = (ctx.conv_id or "unknown")
     archive_file = archive_path(config, conv_id)
     archive_size = archive_file.stat().st_size if archive_file.exists() else 0
 
@@ -206,7 +207,7 @@ def tool_context_stats(ctx) -> str:
     lines.append(f"- **Archive file size:** {archive_size:,} bytes")
 
     # Activated skills
-    activated = getattr(ctx, "activated_skills", set())
+    activated = ctx.activated_skills
     if activated:
         lines.append(f"\n### Active skills: {', '.join(activated)}")
 

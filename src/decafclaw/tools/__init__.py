@@ -73,7 +73,7 @@ async def execute_tool(ctx, name: str, arguments: dict) -> ToolResult:
     first, then the global registry.
     """
     # Check allowed tools list (used by eval runner)
-    allowed = getattr(ctx, "allowed_tools", None)
+    allowed = ctx.allowed_tools
     if allowed is not None and name not in allowed:
         return ToolResult(text=f"[error: tool '{name}' is not available in this context]")
 
@@ -86,7 +86,7 @@ async def execute_tool(ctx, name: str, arguments: dict) -> ToolResult:
             fn = mcp_tools.get(name)
             if fn:
                 try:
-                    cancel_event = getattr(ctx, "cancelled", None)
+                    cancel_event = ctx.cancelled
                     tool_task, interrupted = await _run_with_cancel(fn(arguments), cancel_event)
                     if interrupted:
                         return interrupted
@@ -98,11 +98,11 @@ async def execute_tool(ctx, name: str, arguments: dict) -> ToolResult:
     # Check skill-provided tools first, then global registry, then search tools
     from .search_tools import SEARCH_TOOLS
 
-    extra_tools = getattr(ctx, "extra_tools", {})
+    extra_tools = ctx.extra_tools
     fn = extra_tools.get(name) or TOOLS.get(name) or SEARCH_TOOLS.get(name)
     if fn is None:
         # Check if tool is in the deferred pool — auto-fetch if so
-        deferred_pool = getattr(ctx, "deferred_tool_pool", [])
+        deferred_pool = ctx.deferred_tool_pool
         deferred_names = {td.get("function", {}).get("name") for td in deferred_pool}
         if name in deferred_names:
             log.debug(f"Auto-fetching deferred tool: {name}")
@@ -111,7 +111,7 @@ async def execute_tool(ctx, name: str, arguments: dict) -> ToolResult:
             fn = extra_tools.get(name) or TOOLS.get(name)
         if fn is None:
             return ToolResult(text=f"[error: unknown tool: {name}]")
-    cancel_event = getattr(ctx, "cancelled", None)
+    cancel_event = ctx.cancelled
     try:
         coro = fn(ctx, **arguments) if asyncio.iscoroutinefunction(fn) else asyncio.to_thread(fn, ctx, **arguments)
         tool_task, interrupted = await _run_with_cancel(coro, cancel_event)

@@ -30,7 +30,7 @@ async def tool_conversation_compact(ctx) -> str | ToolResult:
     """Manually trigger conversation compaction."""
     log.info("[tool:conversation_compact]")
     from ..compaction import compact_history
-    history = getattr(ctx, "history", None)
+    history = ctx.history
     if history is None:
         return ToolResult(text="[error: no conversation history available]")
     result = await compact_history(ctx, history)

@@ -4,6 +4,8 @@ import asyncio
 import logging
 from dataclasses import replace
 
+from ..media import ToolResult
+
 log = logging.getLogger(__name__)
 
 DEFAULT_CHILD_SYSTEM_PROMPT = (
@@ -20,8 +22,8 @@ async def _run_child_turn(parent_ctx, task):
 
     Returns the child's text response, or an error string on failure.
     """
-    from ..agent import run_agent_turn
-    from . import TOOLS
+    from ..agent import run_agent_turn  # deferred: circular dep
+    from . import TOOLS  # deferred: circular dep
 
     config = parent_ctx.config
 
@@ -86,12 +88,12 @@ async def _run_child_turn(parent_ctx, task):
         return f"[subtask failed: {e}]"
 
 
-async def tool_delegate_task(ctx, task: str) -> str:
+async def tool_delegate_task(ctx, task: str) -> str | ToolResult:
     """Delegate a subtask to a child agent."""
     log.info(f"[tool:delegate_task] {task[:80]}...")
 
     if not task or not task.strip():
-        return "[error: task description is required]"
+        return ToolResult(text="[error: task description is required]")
 
     return await _run_child_turn(ctx, task)
 

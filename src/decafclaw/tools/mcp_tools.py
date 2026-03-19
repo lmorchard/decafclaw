@@ -2,10 +2,12 @@
 
 import logging
 
+from ..media import ToolResult
+
 log = logging.getLogger(__name__)
 
 
-async def tool_mcp_status(ctx, action: str = "status", server: str = "") -> str:
+async def tool_mcp_status(ctx, action: str = "status", server: str = "") -> str | ToolResult:
     """Show MCP server status or restart servers."""
     from ..mcp_client import get_registry, init_mcp, load_mcp_config, shutdown_mcp
 
@@ -32,7 +34,7 @@ async def tool_mcp_status(ctx, action: str = "status", server: str = "") -> str:
     return "\n".join(lines)
 
 
-async def _restart(ctx, registry, server_name) -> str:
+async def _restart(ctx, registry, server_name) -> str | ToolResult:
     """Restart MCP servers by scheduling a restart and reporting status.
 
     Due to anyio/asyncio cancel scope incompatibilities, MCP servers
@@ -50,7 +52,7 @@ async def _restart(ctx, registry, server_name) -> str:
     try:
         if server_name:
             if not registry or server_name not in registry.servers:
-                return f"[error: MCP server '{server_name}' not found]"
+                return ToolResult(text=f"[error: MCP server '{server_name}' not found]")
 
             # Mark server as failed — auto-restart will reconnect on next call
             state = registry.servers.get(server_name)
@@ -77,7 +79,7 @@ async def _restart(ctx, registry, server_name) -> str:
 
     except BaseException as e:
         log.error(f"MCP restart failed: {e}", exc_info=True)
-        return f"[error: MCP restart failed: {e}]"
+        return ToolResult(text=f"[error: MCP restart failed: {e}]")
 
 
 MCP_TOOLS = {

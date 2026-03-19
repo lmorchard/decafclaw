@@ -89,7 +89,7 @@ async def tool_shell(ctx, command: str) -> str | ToolResult:
     log.info(f"[tool:shell] requesting confirmation for: {command}")
 
     # Admin heartbeat turns auto-approve shell commands (admin-authored prompts)
-    is_heartbeat = getattr(ctx, "user_id", "") == "heartbeat-admin"
+    is_heartbeat = ctx.user_id == "heartbeat-admin"
     if is_heartbeat:
         log.info(f"[tool:shell] auto-approved for heartbeat: {command}")
         return _execute_command(ctx, command)

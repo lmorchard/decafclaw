@@ -7,11 +7,11 @@ import pytest
 from decafclaw.archive import append_message, write_compacted_history
 from decafclaw.compaction import (
     SUMMARY_PREFIX,
-    _estimate_tokens,
     _extract_previous_summary,
-    _flatten_messages,
     _split_into_turns,
     compact_history,
+    estimate_tokens,
+    flatten_messages,
 )
 
 
@@ -70,7 +70,7 @@ class TestFlattenMessages:
             {"role": "user", "content": "hello"},
             {"role": "assistant", "content": "hi there"},
         ]
-        result = _flatten_messages(messages)
+        result = flatten_messages(messages)
         assert "User: hello" in result
         assert "Assistant: hi there" in result
 
@@ -83,7 +83,7 @@ class TestFlattenMessages:
             {"role": "tool", "tool_call_id": "tc1", "content": "file1.txt\nfile2.txt"},
             {"role": "assistant", "content": "Found 2 files."},
         ]
-        result = _flatten_messages(messages)
+        result = flatten_messages(messages)
         assert "User: run ls" in result
         assert "Assistant: Let me check." in result
         assert "[called tools: shell]" in result
@@ -94,16 +94,16 @@ class TestFlattenMessages:
         messages = [
             {"role": "tool", "tool_call_id": "tc1", "content": "x" * 1000},
         ]
-        result = _flatten_messages(messages)
+        result = flatten_messages(messages)
         assert "..." in result
         assert len(result) < 1000
 
 
 class TestEstimateTokens:
     def test_basic(self):
-        assert _estimate_tokens("1234") == 1
-        assert _estimate_tokens("12345678") == 2
-        assert _estimate_tokens("") == 0
+        assert estimate_tokens("1234") == 1
+        assert estimate_tokens("12345678") == 2
+        assert estimate_tokens("") == 0
 
 
 class TestCompactHistory:

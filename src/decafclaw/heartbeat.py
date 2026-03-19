@@ -136,15 +136,56 @@ def build_section_prompt(section: dict) -> str:
 # -- Heartbeat cycle runner ----------------------------------------------------
 
 
+async def run_section_turn(
+    config, event_bus, section: dict, timestamp: str, index: int,
+) -> dict:
+    """Run a single heartbeat section as an agent turn.
+
+    Returns {"title": str, "response": str, "is_ok": bool, "context_id": str | None}.
+    Shared by run_heartbeat_cycle and heartbeat_tools._run_heartbeat_to_channel.
+    """
+    from .agent import run_agent_turn  # deferred: circular dep
+    from .context import Context
+
+    title = section["title"]
+    log.info(f"Heartbeat section {index + 1}: {title}")
+
+    try:
+        source = section.get("source", "workspace")
+        ctx = Context(config=config, event_bus=event_bus)
+        ctx.user_id = f"heartbeat-{source}"
+        ctx.channel_id = "heartbeat"
+        ctx.channel_name = "heartbeat"
+        ctx.thread_id = ""
+        ctx.conv_id = f"heartbeat-{timestamp}-{index}"
+
+        prompt = build_section_prompt(section)
+        result = await run_agent_turn(ctx, prompt, history=[])
+        response = result.text or "(no response)"
+        ok = is_heartbeat_ok(response)
+        log.info(f"Heartbeat section '{title}': {'OK' if ok else 'ALERT'}")
+
+        return {
+            "title": title,
+            "response": response,
+            "is_ok": ok,
+            "context_id": ctx.context_id,
+        }
+    except Exception as e:
+        log.error(f"Heartbeat section '{title}' failed: {e}", exc_info=True)
+        return {
+            "title": title,
+            "response": f"[error: heartbeat section failed: {e}]",
+            "is_ok": False,
+            "context_id": None,
+        }
+
+
 async def run_heartbeat_cycle(config, event_bus) -> list[dict]:
     """Execute one heartbeat cycle — read sections and run each as an agent turn.
 
     Returns list of {"title": str, "response": str, "is_ok": bool} dicts.
     """
-    # Late imports to avoid circular dependency
-    from .agent import run_agent_turn  # noqa: F811
-    from .context import Context
-
     sections = load_heartbeat_sections(config)
     if not sections:
         log.debug("Heartbeat: no sections found, skipping")
@@ -154,39 +195,8 @@ async def run_heartbeat_cycle(config, event_bus) -> list[dict]:
     results = []
 
     for i, section in enumerate(sections):
-        title = section["title"]
-        log.info(f"Heartbeat section {i + 1}/{len(sections)}: {title}")
-
-        try:
-            source = section.get("source", "workspace")
-            ctx = Context(config=config, event_bus=event_bus)
-            ctx.user_id = f"heartbeat-{source}"
-            ctx.channel_id = "heartbeat"
-            ctx.channel_name = "heartbeat"
-            ctx.thread_id = ""
-            ctx.conv_id = f"heartbeat-{timestamp}-{i}"
-
-            prompt = build_section_prompt(section)
-            result = await run_agent_turn(ctx, prompt, history=[])
-            response = result.text
-            response = response or "(no response)"
-
-            results.append({
-                "title": title,
-                "response": response,
-                "is_ok": is_heartbeat_ok(response),
-                "context_id": ctx.context_id,
-            })
-            log.info(f"Heartbeat section '{title}': {'OK' if results[-1]['is_ok'] else 'ALERT'}")
-
-        except Exception as e:
-            log.error(f"Heartbeat section '{title}' failed: {e}", exc_info=True)
-            results.append({
-                "title": title,
-                "response": f"[error: heartbeat section failed: {e}]",
-                "is_ok": False,
-                "context_id": None,
-            })
+        result = await run_section_turn(config, event_bus, section, timestamp, i)
+        results.append(result)
 
     return results
 

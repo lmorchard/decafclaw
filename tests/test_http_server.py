@@ -6,11 +6,8 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from decafclaw.events import EventBus
-from decafclaw.http_server import (
-    build_confirm_buttons,
-    create_app,
-    get_token_registry,
-)
+from decafclaw.http_server import create_app
+from decafclaw.mattermost_ui import build_confirm_buttons, get_token_registry
 
 
 @pytest.fixture

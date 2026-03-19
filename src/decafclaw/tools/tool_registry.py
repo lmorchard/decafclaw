@@ -91,7 +91,7 @@ def build_deferred_list_text(
         return ""
 
     if core_names is None:
-        from . import TOOL_DEFINITIONS
+        from . import TOOL_DEFINITIONS  # deferred: circular dep
         core_names = {
             td.get("function", {}).get("name", "") for td in TOOL_DEFINITIONS
         }
@@ -142,7 +142,7 @@ def build_deferred_list_text(
 
 def get_fetched_tools(ctx) -> set[str]:
     """Read the fetched tools set from ctx.skill_data."""
-    skill_data = getattr(ctx, "skill_data", {})
+    skill_data = ctx.skill_data
     raw = skill_data.get("fetched_tools", [])
     if isinstance(raw, set):
         return raw

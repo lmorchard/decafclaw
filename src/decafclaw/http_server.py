@@ -1,8 +1,6 @@
 """HTTP server — Starlette ASGI app for interactive callbacks and future web UI."""
 
-import hashlib
 import logging
-import secrets
 from pathlib import Path
 
 from starlette.applications import Starlette
@@ -11,55 +9,9 @@ from starlette.responses import FileResponse, JSONResponse
 from starlette.routing import Mount, Route, WebSocketRoute
 from starlette.staticfiles import StaticFiles
 
+from .mattermost_ui import get_token_registry
+
 log = logging.getLogger(__name__)
-
-
-class ConfirmTokenRegistry:
-    """Single-use token registry for confirmation callbacks.
-
-    Each pending confirmation gets a unique token. The token maps to the
-    confirmation metadata (context_id, tool, original_message). Tokens are
-    consumed on use — a captured URL cannot be replayed.
-    """
-
-    def __init__(self):
-        self._tokens: dict[str, dict] = {}
-
-    def create(self, context_id: str, tool_name: str,
-               original_message: str, server_secret: str = "", **extra) -> str:
-        """Generate a token for a pending confirmation. Returns the token.
-
-        If server_secret is provided, the token is an HMAC of a random
-        nonce — making it both unguessable and tied to the server secret.
-        """
-        nonce = secrets.token_urlsafe(24)
-        if server_secret:
-            token = hashlib.sha256(f"{server_secret}:{nonce}".encode()).hexdigest()[:32]
-        else:
-            token = nonce
-        self._tokens[token] = {
-            "context_id": context_id,
-            "tool": tool_name,
-            "original_message": original_message,
-            **extra,
-        }
-        return token
-
-    def consume(self, token: str) -> dict | None:
-        """Look up and remove a token. Returns the metadata or None."""
-        return self._tokens.pop(token, None)
-
-    def __len__(self) -> int:
-        return len(self._tokens)
-
-
-# Module-level registry shared between create_app and build_confirm_buttons
-_token_registry = ConfirmTokenRegistry()
-
-
-def get_token_registry() -> ConfirmTokenRegistry:
-    """Get the global token registry."""
-    return _token_registry
 
 
 def create_app(config, event_bus, app_ctx=None) -> Starlette:
@@ -72,7 +24,7 @@ def create_app(config, event_bus, app_ctx=None) -> Starlette:
         """Handle Mattermost interactive button callbacks for tool confirmation."""
         # Verify token (single-use, per-confirmation)
         token = request.query_params.get("token", "")
-        token_data = _token_registry.consume(token)
+        token_data = get_token_registry().consume(token)
 
         # Also check static secret as fallback (defense in depth)
         secret = request.query_params.get("secret", "")
@@ -180,10 +132,7 @@ def create_app(config, event_bus, app_ctx=None) -> Starlette:
         from .web.conversations import ConversationIndex
         index = ConversationIndex(config)
         convs = index.list_for_user(username)
-        return JSONResponse([{
-            "conv_id": c.conv_id, "title": c.title,
-            "created_at": c.created_at, "updated_at": c.updated_at,
-        } for c in convs])
+        return JSONResponse([c.to_dict() for c in convs])
 
     async def create_conversation(request: Request) -> JSONResponse:
         """Create a new conversation."""
@@ -194,10 +143,7 @@ def create_app(config, event_bus, app_ctx=None) -> Starlette:
         from .web.conversations import ConversationIndex
         index = ConversationIndex(config)
         conv = index.create(username, title=body.get("title", ""))
-        return JSONResponse({
-            "conv_id": conv.conv_id, "title": conv.title,
-            "created_at": conv.created_at, "updated_at": conv.updated_at,
-        }, status_code=201)
+        return JSONResponse(conv.to_dict(), status_code=201)
 
     async def get_conversation(request: Request) -> JSONResponse:
         """Get conversation metadata."""
@@ -210,10 +156,7 @@ def create_app(config, event_bus, app_ctx=None) -> Starlette:
         conv = index.get(conv_id)
         if not conv or conv.user_id != username:
             return JSONResponse({"error": "not found"}, status_code=404)
-        return JSONResponse({
-            "conv_id": conv.conv_id, "title": conv.title,
-            "created_at": conv.created_at, "updated_at": conv.updated_at,
-        })
+        return JSONResponse(conv.to_dict())
 
     async def rename_conversation(request: Request) -> JSONResponse:
         """Rename a conversation."""
@@ -230,10 +173,7 @@ def create_app(config, event_bus, app_ctx=None) -> Starlette:
         updated = index.rename(conv_id, body.get("title", ""))
         if not updated:
             return JSONResponse({"error": "not found"}, status_code=404)
-        return JSONResponse({
-            "conv_id": updated.conv_id, "title": updated.title,
-            "created_at": updated.created_at, "updated_at": updated.updated_at,
-        })
+        return JSONResponse(updated.to_dict())
 
     async def get_conversation_history(request: Request) -> JSONResponse:
         """Load paginated conversation history."""
@@ -293,7 +233,7 @@ def create_app(config, event_bus, app_ctx=None) -> Starlette:
     async def handle_cancel(request: Request) -> JSONResponse:
         """Handle Mattermost interactive button callback for stop/cancel."""
         token = request.query_params.get("token", "")
-        token_data = _token_registry.consume(token)
+        token_data = get_token_registry().consume(token)
 
         if not token_data:
             log.warning("Cancel callback rejected: invalid or expired token")
@@ -341,140 +281,6 @@ def create_app(config, event_bus, app_ctx=None) -> Starlette:
         routes.append(Mount("/static", StaticFiles(directory=str(static_dir)), name="static"))
 
     return Starlette(routes=routes)
-
-
-def build_confirm_buttons(config, tool_name: str, command: str,
-                          suggested_pattern: str, context_id: str,
-                          original_message: str, tool_call_id: str = "") -> list[dict]:
-    """Build Mattermost attachment with interactive action buttons.
-
-    Returns the attachments list to include in a post's props.
-    Returns [] if HTTP server is not enabled.
-    """
-    if not config.http_enabled:
-        return []
-
-    def _make_token(action: str) -> str:
-        """Generate a per-button token."""
-        return _token_registry.create(
-            context_id=context_id,
-            tool_name=tool_name,
-            original_message=original_message[:2000],
-            server_secret=config.http_secret,
-            action=action,
-            tool_call_id=tool_call_id,
-        )
-
-    base_url = f"{config.http_callback_base}/actions/confirm"
-
-    # Base context included in every button
-    base_context = {
-        "context_id": context_id,
-        "tool": tool_name,
-        **({"tool_call_id": tool_call_id} if tool_call_id else {}),
-    }
-
-    if tool_name == "shell" and suggested_pattern:
-        # Shell tool: Approve / Deny / Allow Pattern (no Always)
-        # NOTE: button IDs must not contain underscores — Mattermost
-        # silently drops callbacks for buttons with underscores in the ID.
-        actions = [
-            {
-                "id": "approve",
-                "name": "Approve",
-                "style": "primary",
-                "integration": {
-                    "url": f"{base_url}?token={_make_token('approve')}",
-                    "context": {**base_context, "action": "approve"},
-                },
-            },
-            {
-                "id": "deny",
-                "name": "Deny",
-                "style": "danger",
-                "integration": {
-                    "url": f"{base_url}?token={_make_token('deny')}",
-                    "context": {**base_context, "action": "deny"},
-                },
-            },
-            {
-                "id": "allowpattern",
-                "name": f"Allow Pattern: {suggested_pattern}",
-                "style": "default",
-                "integration": {
-                    "url": f"{base_url}?token={_make_token('add_pattern')}",
-                    "context": {**base_context, "action": "add_pattern"},
-                },
-            },
-        ]
-    else:
-        # Other tools: Approve / Deny / Always
-        actions = [
-            {
-                "id": "approve",
-                "name": "Approve",
-                "style": "primary",
-                "integration": {
-                    "url": f"{base_url}?token={_make_token('approve')}",
-                    "context": {**base_context, "action": "approve"},
-                },
-            },
-            {
-                "id": "deny",
-                "name": "Deny",
-                "style": "danger",
-                "integration": {
-                    "url": f"{base_url}?token={_make_token('deny')}",
-                    "context": {**base_context, "action": "deny"},
-                },
-            },
-            {
-                "id": "always",
-                "name": "Always",
-                "style": "default",
-                "integration": {
-                    "url": f"{base_url}?token={_make_token('always')}",
-                    "context": {**base_context, "action": "always"},
-                },
-            },
-        ]
-
-    return [{
-        "text": "",
-        "actions": actions,
-    }]
-
-
-def build_stop_button(config, conv_id: str) -> list[dict]:
-    """Build a Mattermost attachment with a Stop button for cancelling an agent turn.
-
-    Returns [] if HTTP server is not enabled.
-    """
-    if not config.http_enabled:
-        return []
-
-    token = _token_registry.create(
-        context_id=conv_id,
-        tool_name="_cancel",
-        original_message="",
-        server_secret=config.http_secret,
-    )
-    base_url = f"{config.http_callback_base}/actions/cancel"
-
-    return [{
-        "text": "",
-        "actions": [
-            {
-                "id": "stop",
-                "name": "Stop",
-                "style": "danger",
-                "integration": {
-                    "url": f"{base_url}?token={token}",
-                    "context": {"conv_id": conv_id},
-                },
-            },
-        ],
-    }]
 
 
 _http_server = None  # uvicorn.Server instance, set by run_http_server
