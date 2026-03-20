@@ -31,12 +31,14 @@ A minimal AI agent for learning how agent frameworks work. Connects to Mattermos
 - `src/decafclaw/skills/` — Skills system: discovery, parsing, catalog, bundled skills
 - `src/decafclaw/skills/tabstack/` — Bundled Tabstack skill (SKILL.md + tools.py)
 - `src/decafclaw/http_server.py` — HTTP server (Starlette/uvicorn): interactive button callbacks, health check
+- `src/decafclaw/skills/health/` — Bundled `!health` command: agent diagnostic status
 - `src/decafclaw/skills/claude_code/` — Claude Code subagent skill (sessions, permissions, output logging)
 - `src/decafclaw/eval/` — Eval harness (YAML tests, failure reflection)
 - `src/decafclaw/mcp_client.py` — MCP client: config, registry, server connections, auto-restart
 - `src/decafclaw/heartbeat.py` — Heartbeat: periodic wake-up, section parsing, timer, cycle runner
 - `src/decafclaw/media.py` — Media handling: ToolResult, MediaHandler interface, workspace ref scanning
-- `src/decafclaw/tools/` — Tool registry: core, memory, todo, workspace, file_share, shell, conversation, skill activation, MCP status, delegation
+- `src/decafclaw/tools/` — Tool registry: core, memory, todo, workspace, file_share, shell, conversation, skill activation, MCP status, health, delegation
+- `src/decafclaw/tools/health.py` — Health/diagnostic status tool: uptime, MCP, heartbeat, tools, embeddings
 - `src/decafclaw/tools/delegate.py` — Sub-agent delegation: `delegate_task` forks a child agent for a single subtask (call multiple times for parallel work)
 - `src/decafclaw/tools/tool_registry.py` — Tool classification (always-loaded vs deferred), token estimation, deferred list formatting
 - `src/decafclaw/tools/search_tools.py` — `tool_search` tool: keyword and exact-name lookup for deferred tools
