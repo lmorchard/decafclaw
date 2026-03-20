@@ -111,3 +111,15 @@ async def test_health_embeddings_with_data(ctx):
     result = await tool_health_status(ctx)
     assert "Memory:" in result
     assert "Conversation:" in result
+
+
+@pytest.mark.asyncio
+async def test_health_full_report_all_sections(ctx):
+    """Full report includes all five section headers."""
+    result = await tool_health_status(ctx)
+    assert "## Agent Health" in result
+    assert "### Process" in result
+    assert "### MCP Servers" in result
+    assert "### Heartbeat" in result
+    assert "### Tools" in result
+    assert "### Embeddings" in result
