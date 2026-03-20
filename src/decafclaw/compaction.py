@@ -13,14 +13,17 @@ Summarize the following conversation, preserving:
 - Key facts and decisions made
 - User preferences and corrections
 - Important tool results and findings
+- Approaches that were tried but didn't work, and why — this prevents re-exploration
 - The current topic and any open questions
 
-Be concise but don't lose critical details. Format as a brief narrative."""
+Be concise but don't lose critical details. Err on the side of including information
+that would prevent duplicate work or repeated mistakes. Format as a brief narrative."""
 
 INCREMENTAL_COMPACTION_PROMPT = """\
 You have an existing conversation summary and new turns that need to be incorporated.
 Update the summary to include the new information while preserving all important details
-from the original summary. Do not lose any key facts, decisions, or user preferences.
+from the original summary. Do not lose any key facts, decisions, user preferences,
+or failed approaches (and why they failed).
 
 Be concise but don't lose critical details. Format as a brief narrative."""
 

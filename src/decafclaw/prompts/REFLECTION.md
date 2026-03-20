@@ -13,6 +13,15 @@ If the response is adequate, even if imperfect, pass it.
 Only fail responses that clearly miss the point, ignore the question,
 or contain significant errors relative to the tool results.
 
+Common failure modes to watch for:
+- The assistant deflected ("I don't have access to that") when tools were available
+- Tool results were fetched but the response doesn't use or synthesize them
+- A multi-part question was only partially answered
+- The response contradicts what the tools returned
+
+Do NOT fail a response just because it could be better. Fail only when
+the response meaningfully misses what the user asked for.
+
 ---
 
 User: {user_message}
