@@ -104,6 +104,21 @@ def _check_cancelled(ctx, history):
     return None
 
 
+def _should_reflect(ctx, config, content: str, reflection_retries: int) -> bool:
+    """Check whether reflection should run on this response."""
+    if not config.reflection.enabled:
+        return False
+    if reflection_retries >= config.reflection.max_retries:
+        return False
+    if ctx.is_child:
+        return False
+    if not content or not content.strip():
+        return False
+    if getattr(ctx, "cancelled", None) and ctx.cancelled.is_set():
+        return False
+    return True
+
+
 def _collect_all_tool_defs(ctx) -> list:
     """Gather all available tool definitions (core + skill + MCP + extra).
 
@@ -391,6 +406,9 @@ async def run_agent_turn(ctx, user_message: str, history: list) -> "ToolResult":
 
         prompt_tokens = 0
         empty_retries = 0
+        reflection_retries = 0
+        last_reflection = None  # last ReflectionResult, for archiving after final response
+        turn_start_index = len(history)  # index of user message we're about to add
 
         accumulated_text_parts = []  # text from iterations that also had tool calls
 
@@ -463,9 +481,83 @@ async def run_agent_turn(ctx, user_message: str, history: list) -> "ToolResult":
                     log.warning("LLM returned empty response, retrying")
                     continue
                 log.warning("LLM returned empty content with no tool calls (after retry)")
+
+            # Reflection check — evaluate before delivering
+            log.debug("Reflection check: enabled=%s, retries=%d/%d, is_child=%s, has_content=%s",
+                       config.reflection.enabled, reflection_retries,
+                       config.reflection.max_retries, ctx.is_child, bool(content))
+            if not _should_reflect(ctx, config, content, reflection_retries):
+                last_reflection = None  # clear stale result from prior retry
+            else:
+                from .reflection import build_tool_summary, evaluate_response
+
+                tool_summary = build_tool_summary(history, turn_start_index)
+                result = await evaluate_response(
+                    config, user_message, content, tool_summary)
+
+                last_reflection = result
+                log.info("Reflection result: passed=%s, critique=%s, error=%s",
+                         result.passed, result.critique[:200] if result.critique else "",
+                         result.error[:100] if result.error else "")
+
+                await ctx.publish("reflection_result",
+                    passed=result.passed,
+                    critique=result.critique,
+                    raw_response=result.raw_response,
+                    retry_number=reflection_retries + 1,
+                    error=result.error)
+
+                if not result.passed and not result.error:
+                    log.info("Reflection failed (retry %d/%d): %s",
+                             reflection_retries + 1,
+                             config.reflection.max_retries,
+                             result.critique[:200])
+                    # Add the failed response to history
+                    failed_msg = {"role": "assistant", "content": content}
+                    history.append(failed_msg)
+                    messages.append(failed_msg)
+                    _archive(ctx, failed_msg)
+
+                    # Add critique as user message for retry
+                    critique_msg = {
+                        "role": "user",
+                        "content": (
+                            "[reflection] Your previous response may not fully "
+                            "address the user's request.\n"
+                            f"Feedback: {result.critique}\n"
+                            "Please try again, addressing the feedback above."
+                        ),
+                    }
+                    history.append(critique_msg)
+                    messages.append(critique_msg)
+                    _archive(ctx, critique_msg)
+
+                    reflection_retries += 1
+                    continue  # back to LLM call
+
             final_msg = {"role": "assistant", "content": content}
             history.append(final_msg)
             _archive(ctx, final_msg)
+
+            # Archive reflection result after the final response (correct ordering)
+            # Only archive if reflection ran for this specific response
+            # (last_reflection is cleared when reflection is skipped)
+            if last_reflection is not None:
+                visibility = config.reflection.visibility
+                r = last_reflection
+                # Match visibility filtering: hidden=none, visible=failures, debug=all
+                should_archive = (
+                    visibility == "debug"
+                    or (visibility == "visible" and not r.passed)
+                )
+                if should_archive:
+                    detail = r.raw_response or r.critique or (
+                        "Response passed evaluation" if r.passed else "No details")
+                    label = ("reflection: PASS" if r.passed
+                             else f"reflection: retry {reflection_retries}")
+                    _archive(ctx, {"role": "reflection", "tool": label,
+                                   "content": detail})
+
             await _maybe_compact(ctx, config, history, prompt_tokens)
 
             # Scan for workspace image references and combine with tool media

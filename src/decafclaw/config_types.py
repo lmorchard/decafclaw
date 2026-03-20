@@ -105,6 +105,24 @@ class AgentConfig:
 
 
 @dataclass
+class ReflectionConfig:
+    enabled: bool = True
+    url: str = ""       # empty = resolve from llm
+    model: str = ""     # empty = resolve from llm
+    api_key: str = field(default="", metadata={"secret": True})
+    max_retries: int = 2
+    visibility: str = "hidden"  # hidden | visible | debug
+
+    def resolved(self, config) -> ReflectionConfig:
+        """Return copy with empty url/model/api_key filled from config.llm."""
+        return replace(self,
+            url=self.url or config.llm.url,
+            model=self.model or config.llm.model,
+            api_key=self.api_key or config.llm.api_key,
+        )
+
+
+@dataclass
 class TabstackConfig:
     api_key: str = field(
         default="", metadata={"secret": True, "env_alias": "TABSTACK_API_KEY"})

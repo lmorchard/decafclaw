@@ -25,6 +25,7 @@ from .config_types import (
     HttpConfig,
     LlmConfig,
     MattermostConfig,
+    ReflectionConfig,
     SkillsConfig,
     TabstackConfig,
 )
@@ -140,6 +141,7 @@ class Config:
     http: HttpConfig = field(default_factory=HttpConfig)
     agent: AgentConfig = field(default_factory=AgentConfig)
     skills: SkillsConfig = field(default_factory=SkillsConfig)
+    reflection: ReflectionConfig = field(default_factory=ReflectionConfig)
 
     # Custom environment variables from config.json "env" section
     env: dict[str, str] = field(default_factory=dict)
@@ -261,6 +263,9 @@ def load_config() -> Config:
         ClaudeCodeConfig, skills_data.get("claude_code", {}), "SKILLS_CLAUDE_CODE")
     skills = SkillsConfig(tabstack=tabstack, claude_code=claude_code)
 
+    reflection = _load_sub_config(
+        ReflectionConfig, file_data.get("reflection", {}), "REFLECTION")
+
     # Custom env vars from config file
     env_vars: dict[str, str] = {
         str(k): str(v) for k, v in file_data.get("env", {}).items()
@@ -278,6 +283,7 @@ def load_config() -> Config:
         http=http,
         agent=agent,
         skills=skills,
+        reflection=reflection,
         env=env_vars,
         system_prompt=system_prompt,
     )

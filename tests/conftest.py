@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from decafclaw.config import Config
-from decafclaw.config_types import AgentConfig
+from decafclaw.config_types import AgentConfig, ReflectionConfig
 from decafclaw.context import Context
 from decafclaw.events import EventBus
 
@@ -25,6 +25,7 @@ def config(tmp_data):
             id="test-agent",
             user_id="testuser",
         ),
+        reflection=ReflectionConfig(enabled=False),
     )
 
 
