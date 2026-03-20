@@ -78,3 +78,36 @@ async def test_health_tools_section(ctx):
     result = await tool_health_status(ctx)
     assert "### Tools" in result
     assert "Active:" in result
+
+
+@pytest.mark.asyncio
+async def test_health_embeddings_no_db(ctx):
+    """Embeddings section handles missing database."""
+    result = await tool_health_status(ctx)
+    assert "No embedding" in result or "Embeddings" in result
+
+
+@pytest.mark.asyncio
+async def test_health_embeddings_with_data(ctx):
+    """Embeddings section shows counts when DB exists."""
+    import sqlite3
+
+    db_path = ctx.config.workspace_path / "embeddings.db"
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("""CREATE TABLE memory_embeddings (
+        id INTEGER PRIMARY KEY, file_path TEXT, entry_hash TEXT UNIQUE,
+        entry_text TEXT, embedding BLOB, source_type TEXT DEFAULT 'memory',
+        created_at TEXT)""")
+    conn.execute(
+        "INSERT INTO memory_embeddings VALUES (1,'f','h1','t',X'00','memory','2024-01-01')"
+    )
+    conn.execute(
+        "INSERT INTO memory_embeddings VALUES (2,'f','h2','t',X'00','conversation','2024-01-01')"
+    )
+    conn.commit()
+    conn.close()
+
+    result = await tool_health_status(ctx)
+    assert "Memory:" in result
+    assert "Conversation:" in result

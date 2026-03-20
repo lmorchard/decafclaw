@@ -138,6 +138,38 @@ def _tools_section(ctx) -> list[str]:
     ]
 
 
+def _embeddings_section(config) -> list[str]:
+    """Gather embedding index stats."""
+    import sqlite3
+
+    db_path = config.workspace_path / "embeddings.db"
+    if not db_path.exists():
+        return ["### Embeddings", "No embedding database found."]
+
+    try:
+        conn = sqlite3.connect(str(db_path))
+        try:
+            total = conn.execute(
+                "SELECT COUNT(*) FROM memory_embeddings"
+            ).fetchone()[0]
+            memory = conn.execute(
+                "SELECT COUNT(*) FROM memory_embeddings WHERE source_type = 'memory'"
+            ).fetchone()[0]
+            conversation = conn.execute(
+                "SELECT COUNT(*) FROM memory_embeddings WHERE source_type = 'conversation'"
+            ).fetchone()[0]
+        finally:
+            conn.close()
+    except sqlite3.Error as e:
+        return ["### Embeddings", f"- [error reading database: {e}]"]
+
+    return [
+        "### Embeddings",
+        f"- **Total entries:** {total}",
+        f"- **Memory:** {memory} | **Conversation:** {conversation}",
+    ]
+
+
 async def tool_health_status(ctx) -> str:
     """Show agent health and diagnostic status."""
     log.info("[tool:health_status]")
@@ -173,5 +205,13 @@ async def tool_health_status(ctx) -> str:
         sections.extend(_tools_section(ctx))
     except Exception as e:
         sections.append(f"### Tools\n- [error: {e}]")
+
+    sections.append("")
+
+    # Embeddings
+    try:
+        sections.extend(_embeddings_section(ctx.config))
+    except Exception as e:
+        sections.append(f"### Embeddings\n- [error: {e}]")
 
     return "\n".join(sections)
