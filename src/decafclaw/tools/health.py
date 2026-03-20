@@ -215,3 +215,28 @@ async def tool_health_status(ctx) -> str:
         sections.append(f"### Embeddings\n- [error: {e}]")
 
     return "\n".join(sections)
+
+
+HEALTH_TOOLS = {
+    "health_status": tool_health_status,
+}
+
+HEALTH_TOOL_DEFINITIONS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "health_status",
+            "description": (
+                "Show agent health and diagnostic status. "
+                "Reports process uptime, memory usage, MCP server connections, "
+                "heartbeat timing, tool deferral stats, and embedding index size. "
+                "Use when asked about agent status, health, diagnostics, or uptime."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+            },
+        },
+    },
+]
