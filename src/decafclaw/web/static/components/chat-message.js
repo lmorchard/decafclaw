@@ -37,6 +37,10 @@ export class ChatMessage extends LitElement {
       return html`<div class="compaction-notice">${this.content}</div>`;
     }
 
+    if (this.role === 'reflection') {
+      return html`<tool-message .tool=${this.tool || 'reflection'} .content=${this.content} .icon=${'\u{1f441}'}></tool-message>`;
+    }
+
     if (this.role === 'tool_call') {
       return html`<tool-call-message variant="tool_call" .content=${this.content}></tool-call-message>`;
     }

@@ -5,6 +5,7 @@ export class ToolMessage extends LitElement {
   static properties = {
     tool: { type: String },
     content: { type: String },
+    icon: { type: String },
     _expanded: { type: Boolean, state: true },
   };
 
@@ -14,6 +15,7 @@ export class ToolMessage extends LitElement {
     super();
     this.tool = '';
     this.content = '';
+    this.icon = '\u{1f527}';
     this._expanded = false;
   }
 
@@ -32,7 +34,7 @@ export class ToolMessage extends LitElement {
     return html`
       <div class="message tool">
         <div class="tool-result-header" @click=${hasContent ? this.#toggleExpand : nothing}>
-          <span class="tool-icon">\u{1f527}</span>
+          <span class="tool-icon">${this.icon}</span>
           <span class="tool-name">${this.tool}</span>
           ${hasContent ? html`
             <span class="tool-preview">${this.#truncate(this.content)}</span>

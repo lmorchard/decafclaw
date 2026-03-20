@@ -73,8 +73,9 @@ async def _run_child_turn(parent_ctx, task):
     # Propagate command pre-approved tools to child
     child_ctx.preapproved_tools = parent_ctx.preapproved_tools
 
-    # No streaming for child agents
+    # No streaming or reflection for child agents
     child_ctx.on_stream_chunk = None
+    child_ctx.is_child = True
 
     timeout = config.agent.child_timeout_sec
 

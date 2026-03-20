@@ -394,6 +394,27 @@ async def _run_agent_turn(websocket, app_ctx, config, event_bus,
                     "tool_call_id": event.get("tool_call_id", ""),
                 })
 
+            elif event_type == "reflection_result":
+                visibility = config.reflection.visibility
+                passed = event.get("passed", True)
+                # hidden: suppress all; visible: only failures; debug: everything
+                if visibility == "hidden":
+                    pass
+                elif visibility == "visible" and passed:
+                    pass
+                else:
+                    await ws_send({
+                        "type": "reflection_result", "conv_id": conv_id,
+                        "passed": passed,
+                        "critique": event.get("critique", ""),
+                        "retry_number": event.get("retry_number", 0),
+                        "raw_response": (
+                            event.get("raw_response", "")
+                            if visibility == "debug" else ""
+                        ),
+                        "error": event.get("error", ""),
+                    })
+
             elif event_type == "compaction_end":
                 await ws_send({
                     "type": "compaction_done", "conv_id": conv_id,

@@ -106,6 +106,19 @@ Semantic search embedding settings. Empty `url`/`api_key` fall back to `llm` gro
 | `api_key` | str | (from llm) | `EMBEDDING_API_KEY` | yes |
 | `search_strategy` | str | `substring` | `MEMORY_SEARCH_STRATEGY` | |
 
+### `reflection`
+
+Self-reflection judge settings. Empty `url`/`model`/`api_key` fall back to the `llm` group values via `config.reflection.resolved(config)`. See [Self-Reflection](reflection.md) for full details.
+
+| Field | Type | Default | Env Var | Secret |
+|-------|------|---------|---------|--------|
+| `enabled` | bool | `true` | `REFLECTION_ENABLED` | |
+| `url` | str | (from llm) | `REFLECTION_URL` | |
+| `model` | str | (from llm) | `REFLECTION_MODEL` | |
+| `api_key` | str | (from llm) | `REFLECTION_API_KEY` | yes |
+| `max_retries` | int | `2` | `REFLECTION_MAX_RETRIES` | |
+| `visibility` | str | `hidden` | `REFLECTION_VISIBILITY` | |
+
 ### `heartbeat`
 
 Periodic wake-up settings.

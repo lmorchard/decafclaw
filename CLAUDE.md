@@ -40,6 +40,7 @@ A minimal AI agent for learning how agent frameworks work. Connects to Mattermos
 - `src/decafclaw/tools/delegate.py` — Sub-agent delegation: `delegate_task` forks a child agent for a single subtask (call multiple times for parallel work)
 - `src/decafclaw/tools/tool_registry.py` — Tool classification (always-loaded vs deferred), token estimation, deferred list formatting
 - `src/decafclaw/tools/search_tools.py` — `tool_search` tool: keyword and exact-name lookup for deferred tools
+- `src/decafclaw/reflection.py` — Self-reflection: judge call, prompt assembly, result parsing (Reflexion pattern)
 - `src/decafclaw/commands.py` — User-invokable commands: trigger parsing, argument substitution, execution (fork/inline)
 - `src/decafclaw/tools/confirmation.py` — Shared confirmation request helper (event-bus-based user approval)
 - `src/decafclaw/runner.py` — Top-level orchestrator: manages MCP, HTTP server, Mattermost, heartbeat as parallel tasks
@@ -124,6 +125,7 @@ Session docs live in `.claude/dev-sessions/YYYY-MM-DD-HHMM-slug/` with `spec.md`
 - **Skills must use absolute imports.** The skill loader uses `importlib.spec_from_file_location` without package context, so relative imports (`from .` or `from ...`) fail at runtime. Use `from decafclaw.skills.my_skill.module import ...` instead.
 - **MCP servers are globally available.** Configured in `data/{agent_id}/mcp_servers.json` (Claude Code compatible format). Connected eagerly on startup, tools namespaced as `mcp__<server>__<tool>`. Module-level global registry in `mcp_client.py`.
 - **MCP auto-restart.** Crashed stdio servers auto-reconnect on next tool call with exponential backoff (max 3 retries). Use `mcp_status(action="restart")` for manual control.
+- **Self-reflection is fail-open.** The reflection judge evaluates responses before delivery, but errors (network, parse, etc.) always pass through the response as-is. Retries consume `max_tool_iterations` budget. Skipped for child agents, cancelled turns, and empty responses.
 - **LOG_LEVEL env var.** Set `LOG_LEVEL=DEBUG` for verbose logging (default: INFO).
 
 ## Keeping docs current
