@@ -209,7 +209,7 @@ def _heartbeat_timestamp_path(config):
     return config.workspace_path / ".heartbeat_last_run"
 
 
-def _read_last_heartbeat(config) -> float:
+def read_last_heartbeat(config) -> float:
     """Read the last heartbeat timestamp from disk. Returns 0 if not found."""
     path = _heartbeat_timestamp_path(config)
     try:
@@ -251,7 +251,7 @@ async def run_heartbeat_timer(config, event_bus, shutdown_event,
         log.info("Heartbeat disabled (no interval configured)")
         return
 
-    last_run = _read_last_heartbeat(config)
+    last_run = read_last_heartbeat(config)
     if last_run > 0:
         elapsed = time.time() - last_run
         remaining = max(0, interval - elapsed)
@@ -275,7 +275,7 @@ async def run_heartbeat_timer(config, event_bus, shutdown_event,
             break
 
         # Check if enough time has passed since last heartbeat
-        last_run = _read_last_heartbeat(config)
+        last_run = read_last_heartbeat(config)
         if last_run > 0 and (time.time() - last_run) < interval:
             continue  # not yet due
 
