@@ -39,6 +39,7 @@ class Context:
         self.deferred_tool_pool: list = []  # tool defs available via tool_search
         self.preapproved_tools: set = set()  # tools pre-approved by command invocation
         self._current_iteration: int = 1
+        self.is_child: bool = False
 
     def fork(self, **overrides) -> "Context":
         """Create a child context with a new ID, sharing the event bus."""

@@ -382,6 +382,7 @@ class MattermostClient:
             channel_id=channel_id, root_id=root_id,
             streaming=app_ctx.config.llm.streaming,
             conv_display=conv_display,
+            reflection_visibility=app_ctx.config.reflection.visibility,
         )
 
         return req_ctx, conv_display, cancel_task, sub_id
@@ -657,7 +658,7 @@ class MattermostClient:
 
     def _subscribe_progress(self, event_bus, context_id,
                             channel_id=None, root_id=None, streaming=False,
-                            conv_display=None):
+                            conv_display=None, reflection_visibility="hidden"):
         """Subscribe to progress events and route to ConversationDisplay.
 
         Returns the subscription ID for later unsubscribe.
@@ -707,6 +708,28 @@ class MattermostClient:
                     event_bus, context_id,
                     tool_call_id=event.get("tool_call_id", ""),
                 )
+            elif event_type == "reflection_result" and conv_display:
+                visibility = reflection_visibility
+                if visibility != "hidden":
+                    passed = event.get("passed", True)
+                    critique = event.get("critique", "")
+                    retry_num = event.get("retry_number", 0)
+                    raw = event.get("raw_response", "")
+                    error = event.get("error", "")
+                    if visibility == "debug":
+                        text = (f"\U0001f50d **Reflection** (retry {retry_num}): "
+                                f"{'PASS' if passed else 'FAIL'}")
+                        if critique:
+                            text += f"\nCritique: {critique}"
+                        if error:
+                            text += f"\nError: {error}"
+                        if raw:
+                            text += f"\n\n<details><summary>Raw judge output</summary>\n\n{raw}\n</details>"
+                        await conv_display.on_tool_status("reflection", text)
+                    elif not passed:
+                        text = (f"\U0001f50d Reflection retry {retry_num}: "
+                                f"{critique}")
+                        await conv_display.on_tool_status("reflection", text)
             # Compaction stays as-is (separate message)
             elif event_type == "compaction_start" and channel_id:
                 import time as _time

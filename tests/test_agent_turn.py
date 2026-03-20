@@ -13,7 +13,9 @@ from decafclaw.agent import (
     _execute_tool_calls,
     run_agent_turn,
 )
+from decafclaw.config_types import ReflectionConfig
 from decafclaw.media import ToolResult
+from decafclaw.reflection import ReflectionResult
 
 # -- Helper tests --------------------------------------------------------------
 
@@ -451,3 +453,142 @@ async def test_run_agent_turn_archives_messages(ctx):
     assert len(archived) == 2
     assert archived[0]["role"] == "user"
     assert archived[1]["role"] == "assistant"
+
+
+# -- Reflection integration tests --------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_reflection_pass_delivers_normally(ctx):
+    """When the judge passes, the response is delivered as-is."""
+    ctx.config.llm.streaming = False
+    ctx.config.system_prompt = "test"
+    ctx.config.reflection = ReflectionConfig(enabled=True)
+
+    with patch("decafclaw.agent.call_llm", new_callable=AsyncMock) as mock_llm, \
+         patch("decafclaw.reflection.evaluate_response", new_callable=AsyncMock) as mock_eval:
+        mock_llm.return_value = _mock_llm_response("Good answer")
+        mock_eval.return_value = ReflectionResult(passed=True)
+
+        history = []
+        result = await run_agent_turn(ctx, "question", history)
+
+    assert result.text == "Good answer"
+    assert len(history) == 2  # user + assistant
+    mock_eval.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_reflection_fail_retries(ctx):
+    """When the judge fails, critique is injected and agent retries."""
+    ctx.config.llm.streaming = False
+    ctx.config.system_prompt = "test"
+    ctx.config.reflection = ReflectionConfig(enabled=True, max_retries=2)
+
+    call_count = 0
+
+    async def mock_llm_side_effect(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return _mock_llm_response("Bad answer")
+        return _mock_llm_response("Better answer")
+
+    eval_count = 0
+
+    async def mock_eval_side_effect(*args, **kwargs):
+        nonlocal eval_count
+        eval_count += 1
+        if eval_count == 1:
+            return ReflectionResult(passed=False, critique="You missed the point")
+        return ReflectionResult(passed=True)
+
+    with patch("decafclaw.agent.call_llm", new_callable=AsyncMock,
+               side_effect=mock_llm_side_effect), \
+         patch("decafclaw.reflection.evaluate_response", new_callable=AsyncMock,
+               side_effect=mock_eval_side_effect):
+        history = []
+        result = await run_agent_turn(ctx, "question", history)
+
+    assert result.text == "Better answer"
+    # History: user, failed assistant, critique (user), final assistant
+    assert len(history) == 4
+    assert history[1]["content"] == "Bad answer"
+    assert "[reflection]" in history[2]["content"]
+    assert history[3]["content"] == "Better answer"
+
+
+@pytest.mark.asyncio
+async def test_reflection_max_retries_delivers_last(ctx):
+    """After max retries, deliver the last response regardless."""
+    ctx.config.llm.streaming = False
+    ctx.config.system_prompt = "test"
+    ctx.config.reflection = ReflectionConfig(enabled=True, max_retries=1)
+
+    with patch("decafclaw.agent.call_llm", new_callable=AsyncMock) as mock_llm, \
+         patch("decafclaw.reflection.evaluate_response", new_callable=AsyncMock) as mock_eval:
+        mock_llm.return_value = _mock_llm_response("Mediocre answer")
+        # Always fails
+        mock_eval.return_value = ReflectionResult(
+            passed=False, critique="Still not great")
+
+        history = []
+        result = await run_agent_turn(ctx, "question", history)
+
+    # After 1 retry (max_retries=1), delivers whatever it has
+    assert result.text == "Mediocre answer"
+    # Judge called once (first attempt), then retry delivers without reflection
+    assert mock_eval.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_reflection_disabled_skips(ctx):
+    """Reflection disabled means no judge call."""
+    ctx.config.llm.streaming = False
+    ctx.config.system_prompt = "test"
+    ctx.config.reflection = ReflectionConfig(enabled=False)
+
+    with patch("decafclaw.agent.call_llm", new_callable=AsyncMock) as mock_llm, \
+         patch("decafclaw.reflection.evaluate_response", new_callable=AsyncMock) as mock_eval:
+        mock_llm.return_value = _mock_llm_response("response")
+        history = []
+        await run_agent_turn(ctx, "hi", history)
+
+    mock_eval.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_reflection_child_skips(ctx):
+    """Child agents skip reflection."""
+    ctx.config.llm.streaming = False
+    ctx.config.system_prompt = "test"
+    ctx.config.reflection = ReflectionConfig(enabled=True)
+    ctx.is_child = True
+
+    with patch("decafclaw.agent.call_llm", new_callable=AsyncMock) as mock_llm, \
+         patch("decafclaw.reflection.evaluate_response", new_callable=AsyncMock) as mock_eval:
+        mock_llm.return_value = _mock_llm_response("child response")
+        history = []
+        await run_agent_turn(ctx, "task", history)
+
+    mock_eval.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_reflection_error_delivers_response(ctx):
+    """If the judge errors, deliver the response as-is."""
+    ctx.config.llm.streaming = False
+    ctx.config.system_prompt = "test"
+    ctx.config.reflection = ReflectionConfig(enabled=True)
+
+    with patch("decafclaw.agent.call_llm", new_callable=AsyncMock) as mock_llm, \
+         patch("decafclaw.reflection.evaluate_response", new_callable=AsyncMock) as mock_eval:
+        mock_llm.return_value = _mock_llm_response("response")
+        mock_eval.return_value = ReflectionResult(
+            passed=True, error="connection timeout")
+
+        history = []
+        result = await run_agent_turn(ctx, "hi", history)
+
+    assert result.text == "response"
+    assert len(history) == 2  # no retry
