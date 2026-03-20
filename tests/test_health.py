@@ -1,5 +1,7 @@
 """Tests for the health_status diagnostic tool."""
 
+import dataclasses
+import time
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -40,3 +42,31 @@ async def test_health_mcp_section_with_servers(ctx):
         result = await tool_health_status(ctx)
     assert "test-server" in result
     assert "connected" in result
+
+
+@pytest.mark.asyncio
+async def test_health_heartbeat_disabled(ctx):
+    """Heartbeat section shows disabled when no interval."""
+    ctx.config = dataclasses.replace(
+        ctx.config,
+        heartbeat=dataclasses.replace(ctx.config.heartbeat, interval=""),
+    )
+    result = await tool_health_status(ctx)
+    assert "disabled" in result.lower()
+
+
+@pytest.mark.asyncio
+async def test_health_heartbeat_enabled(ctx):
+    """Heartbeat section shows timing info when enabled."""
+    ctx.config = dataclasses.replace(
+        ctx.config,
+        heartbeat=dataclasses.replace(ctx.config.heartbeat, interval="30m"),
+    )
+    # Write a fake last-run timestamp
+    ts_path = ctx.config.workspace_path / ".heartbeat_last_run"
+    ts_path.parent.mkdir(parents=True, exist_ok=True)
+    ts_path.write_text(str(time.time() - 300))  # 5 min ago
+
+    result = await tool_health_status(ctx)
+    assert "30m" in result
+    assert "ago" in result

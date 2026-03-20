@@ -63,6 +63,54 @@ def _mcp_section() -> list[str]:
     return lines
 
 
+def _format_relative_time(seconds: float) -> str:
+    """Format a time delta as relative text like '5m ago' or 'in 25m'."""
+    abs_secs = abs(seconds)
+    if abs_secs < 60:
+        label = f"{int(abs_secs)}s"
+    elif abs_secs < 3600:
+        label = f"{int(abs_secs // 60)}m"
+    else:
+        h = int(abs_secs // 3600)
+        m = int((abs_secs % 3600) // 60)
+        label = f"{h}h {m}m" if m else f"{h}h"
+
+    if seconds < 0:
+        return f"overdue by {label}"
+    return f"in {label}"
+
+
+def _heartbeat_section(config) -> list[str]:
+    """Gather heartbeat timing status."""
+    from ..heartbeat import parse_interval, read_last_heartbeat
+
+    interval = parse_interval(config.heartbeat.interval)
+    if interval is None:
+        return ["### Heartbeat", "- **Status:** disabled"]
+
+    lines = [
+        "### Heartbeat",
+        "- **Status:** enabled",
+        f"- **Interval:** {config.heartbeat.interval}",
+    ]
+
+    last_run = read_last_heartbeat(config)
+    if last_run > 0:
+        from datetime import datetime, timezone
+
+        dt = datetime.fromtimestamp(last_run, tz=timezone.utc).astimezone()
+        elapsed = time.time() - last_run
+        elapsed_str = _format_uptime(elapsed)
+        lines.append(f"- **Last run:** {dt.strftime('%Y-%m-%d %H:%M:%S')} ({elapsed_str} ago)")
+
+        remaining = interval - elapsed
+        lines.append(f"- **Next due:** {_format_relative_time(remaining)}")
+    else:
+        lines.append("- **Last run:** never")
+
+    return lines
+
+
 async def tool_health_status(ctx) -> str:
     """Show agent health and diagnostic status."""
     log.info("[tool:health_status]")
@@ -82,5 +130,13 @@ async def tool_health_status(ctx) -> str:
         sections.extend(_mcp_section())
     except Exception as e:
         sections.append(f"### MCP Servers\n- [error: {e}]")
+
+    sections.append("")
+
+    # Heartbeat
+    try:
+        sections.extend(_heartbeat_section(ctx.config))
+    except Exception as e:
+        sections.append(f"### Heartbeat\n- [error: {e}]")
 
     return "\n".join(sections)
