@@ -62,6 +62,8 @@ export class ConversationStore extends EventTarget {
   #contextUsage = 0;
   /** @type {number} effective context limit (compaction threshold) */
   #contextLimit = 0;
+  /** @type {string|null} message queued while creating a conversation */
+  #pendingMessage = null;
 
   /** @param {WebSocketClient} wsClient */
   constructor(wsClient) {
@@ -150,7 +152,13 @@ export class ConversationStore extends EventTarget {
 
   /** @param {string} text */
   sendMessage(text) {
-    if (!this.#currentConvId || !text.trim()) return;
+    if (!text.trim()) return;
+    if (!this.#currentConvId) {
+      // No conversation selected — create one and queue the message
+      this.#pendingMessage = text;
+      this.createConversation();
+      return;
+    }
     // Optimistically add user message
     this.#currentMessages.push({ role: 'user', content: text, timestamp: new Date().toISOString() });
     this.#busy = true;
@@ -209,6 +217,12 @@ export class ConversationStore extends EventTarget {
       case 'conv_created':
         this.#conversations.unshift(msg);
         this.selectConversation(msg.conv_id);
+        // Flush any message queued while the conversation was being created
+        if (this.#pendingMessage) {
+          const text = this.#pendingMessage;
+          this.#pendingMessage = null;
+          this.sendMessage(text);
+        }
         break;
 
       case 'conv_selected':
