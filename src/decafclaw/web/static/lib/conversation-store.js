@@ -341,6 +341,24 @@ export class ConversationStore extends EventTarget {
         }];
         break;
 
+      case 'reflection_result':
+        if (msg.conv_id === this.#currentConvId) {
+          const passed = msg.passed;
+          const critique = msg.critique || '';
+          const raw = msg.raw_response || '';
+          const retryNum = msg.retry_number || 0;
+          // Content shown when expanded (raw judge output or critique)
+          const detail = raw || critique || (passed ? 'Response passed evaluation' : 'No details');
+          this.#currentMessages.push({
+            role: 'reflection',
+            // tool-message uses .tool for the header label
+            tool: passed ? 'reflection: PASS' : `reflection: retry ${retryNum}`,
+            content: detail,
+            timestamp: new Date().toISOString(),
+          });
+        }
+        break;
+
       case 'compaction_done':
         if (msg.conv_id === this.#currentConvId) {
           this.#currentMessages.push({
