@@ -111,6 +111,33 @@ def _heartbeat_section(config) -> list[str]:
     return lines
 
 
+def _tools_section(ctx) -> list[str]:
+    """Gather tool deferral stats."""
+    from . import TOOL_DEFINITIONS
+    from .tool_registry import classify_tools, estimate_tool_tokens
+
+    # Collect all tool definitions the agent currently has
+    all_defs = TOOL_DEFINITIONS + ctx.extra_tool_definitions
+    # Add MCP tool definitions if available
+    from ..mcp_client import get_registry
+
+    registry = get_registry()
+    if registry:
+        for state in registry.servers.values():
+            all_defs = all_defs + state.tool_definitions
+
+    fetched = ctx.skill_data.get("fetched_tools", set())
+    active, deferred = classify_tools(all_defs, ctx.config, fetched)
+    total_tokens = estimate_tool_tokens(all_defs)
+    budget = ctx.config.tool_context_budget
+
+    return [
+        "### Tools",
+        f"- **Active:** {len(active)} | **Deferred:** {len(deferred)}",
+        f"- **Token usage:** ~{total_tokens:,} / {budget:,} budget",
+    ]
+
+
 async def tool_health_status(ctx) -> str:
     """Show agent health and diagnostic status."""
     log.info("[tool:health_status]")
@@ -138,5 +165,13 @@ async def tool_health_status(ctx) -> str:
         sections.extend(_heartbeat_section(ctx.config))
     except Exception as e:
         sections.append(f"### Heartbeat\n- [error: {e}]")
+
+    sections.append("")
+
+    # Tools
+    try:
+        sections.extend(_tools_section(ctx))
+    except Exception as e:
+        sections.append(f"### Tools\n- [error: {e}]")
 
     return "\n".join(sections)

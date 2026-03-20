@@ -70,3 +70,11 @@ async def test_health_heartbeat_enabled(ctx):
     result = await tool_health_status(ctx)
     assert "30m" in result
     assert "ago" in result
+
+
+@pytest.mark.asyncio
+async def test_health_tools_section(ctx):
+    """Tools section shows active/deferred counts."""
+    result = await tool_health_status(ctx)
+    assert "### Tools" in result
+    assert "Active:" in result
