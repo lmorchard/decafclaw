@@ -44,6 +44,25 @@ def _process_section() -> list[str]:
     ]
 
 
+def _mcp_section() -> list[str]:
+    """Gather MCP server connection status."""
+    from ..mcp_client import get_registry
+
+    registry = get_registry()
+    if not registry or not registry.servers:
+        return ["### MCP Servers", "No MCP servers configured."]
+
+    lines = [
+        "### MCP Servers",
+        "| Server | Status | Tools | Retries |",
+        "|--------|--------|-------|---------|",
+    ]
+    for name, state in registry.servers.items():
+        tool_count = len(state.tools)
+        lines.append(f"| {name} | {state.status} | {tool_count} | {state.retry_count} |")
+    return lines
+
+
 async def tool_health_status(ctx) -> str:
     """Show agent health and diagnostic status."""
     log.info("[tool:health_status]")
@@ -55,5 +74,13 @@ async def tool_health_status(ctx) -> str:
         sections.extend(_process_section())
     except Exception as e:
         sections.append(f"### Process\n- [error: {e}]")
+
+    sections.append("")
+
+    # MCP Servers
+    try:
+        sections.extend(_mcp_section())
+    except Exception as e:
+        sections.append(f"### MCP Servers\n- [error: {e}]")
 
     return "\n".join(sections)
