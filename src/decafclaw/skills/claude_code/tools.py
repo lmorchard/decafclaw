@@ -2,6 +2,7 @@
 
 import logging
 import time
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from claude_code_sdk import (
@@ -19,27 +20,42 @@ from decafclaw.skills.claude_code.sessions import SessionManager
 
 log = logging.getLogger(__name__)
 
+
+@dataclass
+class SkillConfig:
+    model: str = field(
+        default="", metadata={"env_alias": "CLAUDE_CODE_MODEL"})
+    budget_default: float = field(
+        default=2.0, metadata={"env_alias": "CLAUDE_CODE_BUDGET_DEFAULT"})
+    budget_max: float = field(
+        default=10.0, metadata={"env_alias": "CLAUDE_CODE_BUDGET_MAX"})
+    session_timeout: str = field(
+        default="30m", metadata={"env_alias": "CLAUDE_CODE_SESSION_TIMEOUT"})
+
+
 # Module state, populated by init()
 _config = None
+_skill_config: SkillConfig | None = None
 _session_manager: SessionManager | None = None
 
 
-def init(config):
+def init(config, skill_config: SkillConfig):
     """Initialize the Claude Code skill. Called by the skill loader on activation."""
-    global _config, _session_manager
+    global _config, _skill_config, _session_manager
     _config = config
+    _skill_config = skill_config
 
     # Parse timeout
     from decafclaw.heartbeat import parse_interval
-    timeout_sec = parse_interval(config.claude_code_session_timeout) or 1800
+    timeout_sec = parse_interval(skill_config.session_timeout) or 1800
 
     _session_manager = SessionManager(
         timeout_sec=timeout_sec,
-        budget_default=config.claude_code_budget_default,
-        budget_max=config.claude_code_budget_max,
+        budget_default=skill_config.budget_default,
+        budget_max=skill_config.budget_max,
     )
     log.info(f"Claude Code skill initialized (timeout={timeout_sec}s, "
-             f"budget={config.claude_code_budget_default}/{config.claude_code_budget_max})")
+             f"budget={skill_config.budget_default}/{skill_config.budget_max})")
 
 
 def _get_manager() -> SessionManager:
@@ -80,7 +96,7 @@ async def tool_claude_code_start(ctx, cwd: str, description: str = "",
         f"- **Session ID:** `{session.session_id}`\n"
         f"- **Working directory:** {session.cwd}\n"
         f"- **Budget:** ${session.budget_usd:.2f}\n"
-        f"- **Model:** {session.model or (_config and _config.claude_code_model) or '(SDK default)'}\n"
+        f"- **Model:** {session.model or (_skill_config and _skill_config.model) or '(SDK default)'}\n"
         f"\nUse `claude_code_send` with this session ID to send tasks."
     )
 
@@ -132,7 +148,7 @@ async def tool_claude_code_send(ctx, session_id: str, prompt: str) -> str:
         )
 
     # Build options
-    model = session.model or (_config.claude_code_model if _config else None) or None
+    model = session.model or (_skill_config.model if _skill_config else None) or None
     log_dir = _config.workspace_path / "claude-code-logs" if _config else Path("claude-code-logs")
     log_dir.mkdir(parents=True, exist_ok=True)
     stderr_path = log_dir / f"{session.session_id}.stderr.log"
