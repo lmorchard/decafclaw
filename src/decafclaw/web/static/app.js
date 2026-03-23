@@ -49,7 +49,6 @@ if (chatView) chatView.store = store;
 let wasBusy = false;
 store.addEventListener('change', () => {
   if (chatInput) {
-    chatInput.disabled = store.isBusy;
     chatInput.busy = store.isBusy;
     // Focus when agent finishes or conversation changes
     if ((wasBusy && !store.isBusy) || store.currentConvId) {

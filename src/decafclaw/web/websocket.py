@@ -167,11 +167,40 @@ async def _handle_send(ws_send, index, username, msg, state):
         from ..commands import substitute_arguments
 
         text = substitute_arguments(command_skill.body, cmd_args)
-        state["_command_skill"] = command_skill
+    else:
+        command_skill = None
+
+    # Check if a turn is already running for this conversation
+    busy_convs = state.setdefault("busy_convs", set())
+    pending_queue = state.setdefault("pending_msgs", {})
+
+    if conv_id in busy_convs:
+        mode = state["config"].agent.turn_on_new_message
+        if mode == "cancel":
+            cancel_ev = state["cancel_events"].get(conv_id)
+            if cancel_ev and not cancel_ev.is_set():
+                log.info(f"WS: cancelling current turn for {conv_id} (new message)")
+                cancel_ev.set()
+        else:
+            log.info(f"WS: queuing message for busy conversation {conv_id}")
+        pending_queue.setdefault(conv_id, []).append(
+            {"text": text, "command_skill": command_skill})
+        return
+
+    _start_agent_turn(state, index, conv_id, username, text, ws_send,
+                      command_skill=command_skill)
+
+
+def _start_agent_turn(state, index, conv_id, username, text, ws_send,
+                      command_skill=None):
+    """Launch an agent turn task with queue drain on completion."""
+    busy_convs = state.setdefault("busy_convs", set())
+    pending_queue = state.setdefault("pending_msgs", {})
 
     cancel_event = asyncio.Event()
     state["cancel_events"][conv_id] = cancel_event
-    command_skill = state.pop("_command_skill", None)
+    busy_convs.add(conv_id)
+
     task = asyncio.create_task(
         _run_agent_turn(
             state["websocket"], state["app_ctx"], state["config"], state["event_bus"],
@@ -184,6 +213,25 @@ async def _handle_send(ws_send, index, username, msg, state):
     def _on_task_done(t, cid=conv_id):
         state["agent_tasks"].discard(t)
         state["cancel_events"].pop(cid, None)
+        busy_convs.discard(cid)
+
+        # Don't drain queue if the connection is closing
+        if state.get("closing"):
+            pending_queue.pop(cid, None)
+            return
+
+        # Drain pending messages for this conversation
+        queued = pending_queue.pop(cid, [])
+        if queued:
+            # Queued items are dicts with text and optional command_skill
+            texts = [q["text"] for q in queued]
+            # Use command_skill from the last queued message (most recent intent)
+            last_skill = queued[-1].get("command_skill")
+            combined = "\n".join(texts)
+            log.info(f"WS: draining {len(queued)} queued message(s) for {cid}")
+            _start_agent_turn(state, index, cid, username, combined, ws_send,
+                              command_skill=last_skill)
+
     task.add_done_callback(_on_task_done)
 
 
@@ -276,10 +324,12 @@ async def websocket_chat(websocket: WebSocket, config, event_bus, app_ctx):
     except Exception as e:
         log.error(f"WebSocket error for {username}: {e}", exc_info=True)
     finally:
-        agent_tasks = state["agent_tasks"]
-        if agent_tasks:
-            log.info(f"Waiting for {len(agent_tasks)} in-flight web agent turn(s)")
-            await asyncio.gather(*agent_tasks, return_exceptions=True)
+        state["closing"] = True
+        # Wait for all in-flight tasks, including any spawned by queue drain
+        while state["agent_tasks"]:
+            tasks = list(state["agent_tasks"])
+            log.info(f"Waiting for {len(tasks)} in-flight web agent turn(s)")
+            await asyncio.gather(*tasks, return_exceptions=True)
 
 
 async def _run_agent_turn(websocket, app_ctx, config, event_bus,
