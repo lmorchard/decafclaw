@@ -9,7 +9,7 @@ Resolution order (first non-empty wins):
 import json
 import logging
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from dataclasses import fields as dc_fields
 from pathlib import Path
 from typing import Any, get_origin
@@ -138,6 +138,7 @@ class Config:
     http: HttpConfig = field(default_factory=HttpConfig)
     agent: AgentConfig = field(default_factory=AgentConfig)
     skills: dict[str, dict[str, Any]] = field(default_factory=dict)
+    models: dict[str, dict[str, str]] = field(default_factory=dict)
     reflection: ReflectionConfig = field(default_factory=ReflectionConfig)
 
     # Custom environment variables from config.json "env" section
@@ -182,6 +183,33 @@ class Config:
     def compaction_context_budget(self) -> int:
         return self.compaction.llm_max_tokens or self.compaction.max_tokens
 
+
+
+# ---------------------------------------------------------------------------
+# Effort level resolution
+# ---------------------------------------------------------------------------
+
+EFFORT_LEVELS = {"fast", "default", "strong"}
+
+
+def resolve_effort(config: Config, level: str) -> LlmConfig:
+    """Resolve an effort level to a concrete LLM config.
+
+    Merges config.models[level] over config.llm defaults.
+    Unknown levels, absent models section, or invalid entries fall back to config.llm.
+    """
+    entry = config.models.get(level, {})
+    if not entry or not isinstance(entry, dict):
+        if entry and not isinstance(entry, dict):
+            log.warning("Invalid models entry for '%s': expected dict, got %s",
+                        level, type(entry).__name__)
+        return config.llm
+    return replace(
+        config.llm,
+        model=entry.get("model") or config.llm.model,
+        url=entry.get("url") or config.llm.url,
+        api_key=entry.get("api_key") or config.llm.api_key,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -264,6 +292,18 @@ def load_config() -> Config:
     else:
         skills = raw_skills
 
+    # Models — effort level to LLM config mapping, raw dict
+    raw_models = file_data.get("models", {})
+    if not isinstance(raw_models, dict):
+        log.warning(
+            "Invalid 'models' section in config.json: expected an object, "
+            "got %s; defaulting to empty dict.",
+            type(raw_models).__name__,
+        )
+        models: dict[str, dict[str, str]] = {}
+    else:
+        models = raw_models
+
     reflection = load_sub_config(
         ReflectionConfig, file_data.get("reflection", {}), "REFLECTION")
 
@@ -284,6 +324,7 @@ def load_config() -> Config:
         http=http,
         agent=agent,
         skills=skills,
+        models=models,
         reflection=reflection,
         env=env_vars,
         system_prompt=system_prompt,

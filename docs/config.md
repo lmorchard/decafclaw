@@ -161,27 +161,45 @@ Agent identity, loop limits, tool loading, and delegation.
 
 `data_home` and `id` are resolved from env vars only (not from the config file) since they determine where the config file lives.
 
+### `models`
+
+Maps effort levels to LLM configs for multi-model routing. See [Effort Levels](effort-levels.md) for full details.
+
+```json
+{
+  "models": {
+    "fast": { "model": "gemini-2.5-flash" },
+    "default": { "model": "gemini-2.5-flash" },
+    "strong": { "model": "gemini-2.5-pro" }
+  }
+}
+```
+
+Each entry can include `model`, `url`, and `api_key`. Omitted fields fall back to the `llm` section. If the entire `models` section is absent, all effort levels use `config.llm`.
+
+No env var overrides per level — use the config file for this.
+
 ### `skills`
 
-Per-skill configuration. Each skill gets a sub-key.
+Per-skill configuration. Each skill owns its own config schema via a `SkillConfig` dataclass in its `tools.py`. The `skills` section in config.json is a freeform dict — each key is a skill name, and its value is passed to the skill's config resolver at activation time.
 
-#### `skills.tabstack`
+```json
+{
+  "skills": {
+    "tabstack": {
+      "api_key": "..."
+    },
+    "claude_code": {
+      "model": "claude-opus-4",
+      "budget_default": 5.0
+    }
+  }
+}
+```
 
-| Field | Type | Default | Env Var | Alias | Secret |
-|-------|------|---------|---------|-------|--------|
-| `api_key` | str | `""` | `SKILLS_TABSTACK_API_KEY` | `TABSTACK_API_KEY` | yes |
-| `api_url` | str | `""` | `SKILLS_TABSTACK_API_URL` | `TABSTACK_API_URL` | |
+Skill config fields support env var overrides via the skill's `SkillConfig` metadata. For example, `TABSTACK_API_KEY` overrides `skills.tabstack.api_key`. See each skill's `tools.py` for available fields.
 
-#### `skills.claude_code`
-
-| Field | Type | Default | Env Var | Alias |
-|-------|------|---------|---------|-------|
-| `model` | str | `""` | `SKILLS_CLAUDE_CODE_MODEL` | `CLAUDE_CODE_MODEL` |
-| `budget_default` | float | `2.0` | `SKILLS_CLAUDE_CODE_BUDGET_DEFAULT` | `CLAUDE_CODE_BUDGET_DEFAULT` |
-| `budget_max` | float | `10.0` | `SKILLS_CLAUDE_CODE_BUDGET_MAX` | `CLAUDE_CODE_BUDGET_MAX` |
-| `session_timeout` | str | `30m` | `SKILLS_CLAUDE_CODE_SESSION_TIMEOUT` | `CLAUDE_CODE_SESSION_TIMEOUT` |
-
-Alias env vars are checked after the systematic name, for backward compatibility.
+Config CLI shows skill values as raw JSON (`config show skills`). Use `--reveal` to unmask values.
 
 ### `env`
 
