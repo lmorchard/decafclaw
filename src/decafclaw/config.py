@@ -18,7 +18,6 @@ from dotenv import load_dotenv
 
 from .config_types import (
     AgentConfig,
-    ClaudeCodeConfig,
     CompactionConfig,
     EmbeddingConfig,
     HeartbeatConfig,
@@ -26,8 +25,6 @@ from .config_types import (
     LlmConfig,
     MattermostConfig,
     ReflectionConfig,
-    SkillsConfig,
-    TabstackConfig,
 )
 
 log = logging.getLogger(__name__)
@@ -140,7 +137,7 @@ class Config:
     heartbeat: HeartbeatConfig = field(default_factory=HeartbeatConfig)
     http: HttpConfig = field(default_factory=HttpConfig)
     agent: AgentConfig = field(default_factory=AgentConfig)
-    skills: SkillsConfig = field(default_factory=SkillsConfig)
+    skills: dict[str, dict[str, Any]] = field(default_factory=dict)
     reflection: ReflectionConfig = field(default_factory=ReflectionConfig)
 
     # Custom environment variables from config.json "env" section
@@ -255,13 +252,8 @@ def load_config() -> Config:
     agent.data_home = data_home
     agent.id = agent_id
 
-    # Skills sub-configs
-    skills_data = file_data.get("skills", {})
-    tabstack = load_sub_config(
-        TabstackConfig, skills_data.get("tabstack", {}), "SKILLS_TABSTACK")
-    claude_code = load_sub_config(
-        ClaudeCodeConfig, skills_data.get("claude_code", {}), "SKILLS_CLAUDE_CODE")
-    skills = SkillsConfig(tabstack=tabstack, claude_code=claude_code)
+    # Skills — raw dict, resolved per-skill at activation time
+    skills = file_data.get("skills", {})
 
     reflection = load_sub_config(
         ReflectionConfig, file_data.get("reflection", {}), "REFLECTION")
