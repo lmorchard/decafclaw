@@ -423,11 +423,12 @@ class MattermostClient:
 
         # One agent turn at a time per conversation
         if conv.busy:
-            if conv.cancel and not conv.cancel.is_set():
+            if (app_ctx.config.agent.turn_on_new_message == "cancel"
+                    and conv.cancel and not conv.cancel.is_set()):
                 log.info(f"Conversation {conv_id[:8]} busy, cancelling current turn for new message")
                 conv.cancel.set()
             else:
-                log.info(f"Conversation {conv_id[:8]} busy, re-queuing {len(msgs)} message(s)")
+                log.info(f"Conversation {conv_id[:8]} busy, queuing {len(msgs)} message(s)")
             conv.pending_msgs = msgs + conv.pending_msgs
             conv.debounce_timer = asyncio.create_task(
                 self._debounce_fire(conv_id, channel_id, conversations, app_ctx)

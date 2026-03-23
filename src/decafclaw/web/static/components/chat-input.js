@@ -67,9 +67,8 @@ export class ChatInput extends LitElement {
         ></textarea>
         ${this.busy ? html`
           <button class="stop-btn" @click=${this.#handleStop}>&#9632; Stop</button>
-        ` : html`
-          <button @click=${this.#handleSend} ?disabled=${this.disabled}>Send</button>
-        `}
+        ` : ''}
+        <button @click=${this.#handleSend} ?disabled=${this.disabled}>Send</button>
       </div>
     `;
   }
