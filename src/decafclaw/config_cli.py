@@ -132,7 +132,7 @@ def cmd_get(args) -> None:
             print(json.dumps(skill_data, indent=2))
         elif len(parts) == 3:
             skill_data = config.skills.get(parts[1], {})
-            if parts[2] in skill_data:
+            if isinstance(skill_data, dict) and parts[2] in skill_data:
                 print(skill_data[parts[2]])
             else:
                 print(f"Unknown config path: {args.path}", file=sys.stderr)
