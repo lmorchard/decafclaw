@@ -29,6 +29,7 @@ export class ChatView extends LitElement {
     this._convId = null;
     this._scrollOnLoad = false;
     this._hasMore = false;
+    this._loadingMore = false;
     this._savedScrollHeight = 0;
   }
 
@@ -50,12 +51,14 @@ export class ChatView extends LitElement {
         this._scrollOnLoad = true;
         this._showScrollBtn = false;
         this._savedScrollHeight = 0;
+        this._loadingMore = false;
       }
 
       // Older messages were prepended (load more) — anchor scroll position
       if (this._savedScrollHeight > 0 && this._messages.length > prevMsgCount) {
         const saved = this._savedScrollHeight;
         this._savedScrollHeight = 0;
+        this._loadingMore = false;
         requestAnimationFrame(() => {
           this.scrollTop = this.scrollHeight - saved;
         });
@@ -72,9 +75,12 @@ export class ChatView extends LitElement {
       }
     };
     this.store?.addEventListener('change', this._onStoreChange);
-    // Track scroll position
+    // Track scroll position + auto-load older messages
     this.addEventListener('scroll', () => {
       this._showScrollBtn = !this.#isNearBottom();
+      if (this._hasMore && !this._loadingMore && this.scrollTop < 100) {
+        this.#handleLoadMore();
+      }
     });
   }
 
@@ -103,6 +109,8 @@ export class ChatView extends LitElement {
   }
 
   #handleLoadMore() {
+    if (this._loadingMore) return;
+    this._loadingMore = true;
     this._savedScrollHeight = this.scrollHeight;
     this.store?.loadMoreHistory();
   }
@@ -113,10 +121,8 @@ export class ChatView extends LitElement {
     }
 
     return html`
-      ${this._hasMore ? html`
-        <div class="load-more">
-          <button class="outline" @click=${this.#handleLoadMore}>Load older messages</button>
-        </div>
+      ${this._loadingMore ? html`
+        <div class="load-more"><small>Loading...</small></div>
       ` : nothing}
 
       ${this._messages.map(m => html`
