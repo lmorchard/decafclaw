@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from dataclasses import replace
 
 from .archive import append_message
 from .compaction import compact_history
@@ -191,8 +192,17 @@ def _build_tool_list(ctx) -> tuple[list, str | None]:
     return active, deferred_text
 
 
-async def _call_llm_with_events(ctx, config, messages, tools) -> dict:
+async def _call_llm_with_events(ctx, config, messages, tools,
+                                llm_url=None, llm_model=None, llm_api_key=None) -> dict:
     """Call the LLM with event publishing for progress tracking."""
+    llm_kwargs: dict = {}
+    if llm_url:
+        llm_kwargs["llm_url"] = llm_url
+    if llm_model:
+        llm_kwargs["llm_model"] = llm_model
+    if llm_api_key:
+        llm_kwargs["llm_api_key"] = llm_api_key
+
     iteration = ctx._current_iteration
     await ctx.publish("llm_start", iteration=iteration)
     if config.llm.streaming:
@@ -200,12 +210,14 @@ async def _call_llm_with_events(ctx, config, messages, tools) -> dict:
         on_chunk = ctx.on_stream_chunk
         cancel_event = ctx.cancelled
         response = await call_llm_streaming(
-            config, messages, tools=tools, on_chunk=on_chunk, cancel_event=cancel_event
+            config, messages, tools=tools, on_chunk=on_chunk,
+            cancel_event=cancel_event, **llm_kwargs
         )
     else:
         cancel_event = ctx.cancelled
         if cancel_event:
-            llm_task = asyncio.create_task(call_llm(config, messages, tools=tools))
+            llm_task = asyncio.create_task(
+                call_llm(config, messages, tools=tools, **llm_kwargs))
             cancel_task = asyncio.create_task(cancel_event.wait())
             done, _ = await asyncio.wait(
                 [llm_task, cancel_task], return_when=asyncio.FIRST_COMPLETED
@@ -221,7 +233,7 @@ async def _call_llm_with_events(ctx, config, messages, tools) -> dict:
             else:
                 response = llm_task.result()
         else:
-            response = await call_llm(config, messages, tools=tools)
+            response = await call_llm(config, messages, tools=tools, **llm_kwargs)
     await ctx.publish("llm_end", iteration=iteration,
                       content=response.get("content"),
                       has_tool_calls=bool(response.get("tool_calls")))
@@ -379,6 +391,27 @@ async def run_agent_turn(ctx, user_message: str, history: list) -> "ToolResult":
         ctx.skill_data = {**persisted_data, **existing_data}
     await restore_skills(ctx)
 
+    # Restore effort level from archive (scan for last effort event)
+    if ctx.effort == "default" and conv_id:
+        from .archive import read_archive
+        for msg in reversed(read_archive(config, conv_id)):
+            if msg.get("role") == "effort":
+                ctx.effort = msg.get("content", "default")
+                break
+
+    # Resolve effort level to LLM overrides (without mutating config.llm,
+    # so compaction/reflection/embedding still fall back to the base model)
+    from .config import resolve_effort
+    effort_llm = resolve_effort(config, ctx.effort)
+    effort_overrides: dict[str, str] = {}
+    if effort_llm != config.llm:
+        effort_overrides = {
+            "llm_url": effort_llm.url,
+            "llm_model": effort_llm.model,
+            "llm_api_key": effort_llm.api_key,
+        }
+    log.info(f"Agent turn: effort={ctx.effort}, model={effort_llm.model}")
+
     pending_media = []
 
     try:
@@ -398,7 +431,10 @@ async def run_agent_turn(ctx, user_message: str, history: list) -> "ToolResult":
         _archive(ctx, user_msg)
 
         # Build the messages array: system prompt + history
-        messages = [{"role": "system", "content": config.system_prompt}] + history
+        # Filter out metadata roles (effort, reflection) that aren't valid LLM messages
+        from .archive import LLM_ROLES
+        llm_history = [m for m in history if m.get("role") in LLM_ROLES]
+        messages = [{"role": "system", "content": config.system_prompt}] + llm_history
         ctx.messages = messages
 
         # Slot for deferred tools system message (replaced each iteration)
@@ -407,6 +443,7 @@ async def run_agent_turn(ctx, user_message: str, history: list) -> "ToolResult":
         prompt_tokens = 0
         empty_retries = 0
         reflection_retries = 0
+        reflection_exhausted = False
         last_reflection = None  # last ReflectionResult, for archiving after final response
         turn_start_index = len(history)  # index of user message we're about to add
 
@@ -437,7 +474,8 @@ async def run_agent_turn(ctx, user_message: str, history: list) -> "ToolResult":
                 messages.remove(deferred_msg)
                 deferred_msg = None
 
-            response = await _call_llm_with_events(ctx, config, messages, all_tools)
+            response = await _call_llm_with_events(ctx, config, messages, all_tools,
+                                                     **effort_overrides)
 
             # Track token usage
             usage = response.get("usage")
@@ -487,6 +525,11 @@ async def run_agent_turn(ctx, user_message: str, history: list) -> "ToolResult":
                        config.reflection.enabled, reflection_retries,
                        config.reflection.max_retries, ctx.is_child, bool(content))
             if not _should_reflect(ctx, config, content, reflection_retries):
+                reflection_exhausted = (
+                    reflection_retries >= config.reflection.max_retries
+                    and last_reflection is not None
+                    and not last_reflection.passed
+                )
                 last_reflection = None  # clear stale result from prior retry
             else:
                 from .reflection import build_tool_summary, evaluate_response
@@ -534,6 +577,13 @@ async def run_agent_turn(ctx, user_message: str, history: list) -> "ToolResult":
 
                     reflection_retries += 1
                     continue  # back to LLM call
+
+            # Suggest model escalation if reflection retries exhausted
+            if reflection_exhausted and ctx.effort != "strong":
+                content += (
+                    "\n\n---\n*I'm not confident in this answer. "
+                    "Try `!think-harder` to retry with a more capable model.*"
+                )
 
             final_msg = {"role": "assistant", "content": content}
             history.append(final_msg)

@@ -31,6 +31,7 @@ Each call spawns an independent child agent that:
 | Field | Required | Description |
 |-------|----------|-------------|
 | `task` | Yes | Task description — becomes the child agent's user message |
+| `effort` | No | Effort level (`fast`/`default`/`strong`). Omit to inherit parent's level. See [Effort Levels](effort-levels.md). |
 
 ## Results
 
@@ -49,6 +50,5 @@ Each call spawns an independent child agent that:
 ## Limitations
 
 - No nested delegation — children cannot call `delegate_task`
-- Children use the same LLM model as the parent
 - No streaming of child LLM text to the UI (tool progress and confirmations are visible)
 - No persistent child conversations — results are ephemeral

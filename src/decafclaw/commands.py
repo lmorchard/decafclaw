@@ -92,7 +92,7 @@ async def execute_command(ctx, skill: SkillInfo, arguments: str) -> tuple[str, s
 
     if skill.context == "fork":
         from .tools.delegate import _run_child_turn
-        response = await _run_child_turn(ctx, body)
+        response = await _run_child_turn(ctx, body, effort=skill.effort or "")
         return "fork", response
 
     # Inline mode: return the substituted body as the user message

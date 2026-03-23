@@ -22,6 +22,7 @@
 - [User Commands](commands.md) — User-invokable commands (!command / /command) with argument substitution
 - [Tool Search / Deferred Loading](tool-search.md) — Defer tool definitions behind search when context budget exceeded
 - [Self-Reflection](reflection.md) — Binary judge + critique + retry before delivering responses (Reflexion pattern)
+- [Effort Levels](effort-levels.md) — Multi-model routing: fast/default/strong effort levels, per-conversation model switching
 
 ## Architecture
 

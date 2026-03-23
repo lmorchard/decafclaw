@@ -9,7 +9,7 @@ log = logging.getLogger(__name__)
 DEFAULT_ALWAYS_LOADED = {
     "think", "memory_save", "memory_search", "memory_recent",
     "activate_skill", "shell", "workspace_read", "workspace_write",
-    "web_fetch", "current_time", "delegate_task",
+    "web_fetch", "current_time", "delegate_task", "set_effort",
 }
 
 
