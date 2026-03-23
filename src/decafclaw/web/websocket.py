@@ -169,9 +169,37 @@ async def _handle_send(ws_send, index, username, msg, state):
         text = substitute_arguments(command_skill.body, cmd_args)
         state["_command_skill"] = command_skill
 
+    # Check if a turn is already running for this conversation
+    busy_convs = state.setdefault("busy_convs", set())
+    pending_queue = state.setdefault("pending_msgs", {})
+
+    if conv_id in busy_convs:
+        mode = state["config"].agent.turn_on_new_message
+        if mode == "cancel":
+            cancel_ev = state["cancel_events"].get(conv_id)
+            if cancel_ev and not cancel_ev.is_set():
+                log.info(f"WS: cancelling current turn for {conv_id} (new message)")
+                cancel_ev.set()
+        else:
+            log.info(f"WS: queuing message for busy conversation {conv_id}")
+        pending_queue.setdefault(conv_id, []).append(text)
+        return
+
+    command_skill = state.pop("_command_skill", None)
+    _start_agent_turn(state, index, conv_id, username, text, ws_send,
+                      command_skill=command_skill)
+
+
+def _start_agent_turn(state, index, conv_id, username, text, ws_send,
+                      command_skill=None):
+    """Launch an agent turn task with queue drain on completion."""
+    busy_convs = state.setdefault("busy_convs", set())
+    pending_queue = state.setdefault("pending_msgs", {})
+
     cancel_event = asyncio.Event()
     state["cancel_events"][conv_id] = cancel_event
-    command_skill = state.pop("_command_skill", None)
+    busy_convs.add(conv_id)
+
     task = asyncio.create_task(
         _run_agent_turn(
             state["websocket"], state["app_ctx"], state["config"], state["event_bus"],
@@ -184,6 +212,15 @@ async def _handle_send(ws_send, index, username, msg, state):
     def _on_task_done(t, cid=conv_id):
         state["agent_tasks"].discard(t)
         state["cancel_events"].pop(cid, None)
+        busy_convs.discard(cid)
+
+        # Drain pending messages for this conversation
+        queued = pending_queue.pop(cid, [])
+        if queued:
+            combined = "\n".join(queued)
+            log.info(f"WS: draining {len(queued)} queued message(s) for {cid}")
+            _start_agent_turn(state, index, cid, username, combined, ws_send)
+
     task.add_done_callback(_on_task_done)
 
 
