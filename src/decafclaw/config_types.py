@@ -122,31 +122,6 @@ class ReflectionConfig:
         )
 
 
-@dataclass
-class TabstackConfig:
-    api_key: str = field(
-        default="", metadata={"secret": True, "env_alias": "TABSTACK_API_KEY"})
-    api_url: str = field(
-        default="", metadata={"env_alias": "TABSTACK_API_URL"})
-
-
-@dataclass
-class ClaudeCodeConfig:
-    model: str = field(
-        default="", metadata={"env_alias": "CLAUDE_CODE_MODEL"})
-    budget_default: float = field(
-        default=2.0, metadata={"env_alias": "CLAUDE_CODE_BUDGET_DEFAULT"})
-    budget_max: float = field(
-        default=10.0, metadata={"env_alias": "CLAUDE_CODE_BUDGET_MAX"})
-    session_timeout: str = field(
-        default="30m", metadata={"env_alias": "CLAUDE_CODE_SESSION_TIMEOUT"})
-
-
-@dataclass
-class SkillsConfig:
-    tabstack: TabstackConfig = field(default_factory=TabstackConfig)
-    claude_code: ClaudeCodeConfig = field(default_factory=ClaudeCodeConfig)
-
 
 def is_secret(dc_class: type, field_name: str) -> bool:
     """Check if a dataclass field is marked as secret."""
