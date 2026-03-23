@@ -74,6 +74,21 @@ def _split_into_turns(messages: list[dict]) -> list[list[dict]]:
     return turns
 
 
+# Tool names whose results should be preserved verbatim during compaction.
+# Skill activation injects SKILL.md content as a tool result — summarizing
+# it away loses the skill's instructions for the rest of the conversation.
+PROTECTED_TOOL_NAMES = {"activate_skill"}
+
+
+def _turn_has_protected_tool(turn: list[dict]) -> bool:
+    """Check if a turn contains a tool call whose result should not be summarized."""
+    for msg in turn:
+        for tc in msg.get("tool_calls", []):
+            if tc.get("function", {}).get("name") in PROTECTED_TOOL_NAMES:
+                return True
+    return False
+
+
 def flatten_messages(messages: list[dict]) -> str:
     """Flatten messages into a readable text format for the compaction LLM."""
     lines = []
@@ -193,10 +208,24 @@ async def compact_history(ctx, history: list) -> bool:
         log.info(f"Compaction skipped: only {len(turns)} turns, need >{preserve} to compact")
         return False
 
-    # Split: old turns to summarize, recent turns to keep
-    old_turns = turns[:-preserve]
+    # Split: old turns to summarize, recent turns to keep.
+    # Turns containing protected tool calls (e.g. activate_skill) are moved
+    # from old to preserved so their content survives compaction.
+    old_turns = []
+    protected_turns = []
+    for turn in turns[:-preserve]:
+        if _turn_has_protected_tool(turn):
+            protected_turns.append(turn)
+        else:
+            old_turns.append(turn)
     recent_turns = turns[-preserve:]
+    if protected_turns:
+        log.info(f"Protecting {len(protected_turns)} skill activation turn(s) from compaction")
+    if not old_turns:
+        log.info("Compaction skipped: all old turns are protected")
+        return False
     old_messages = [msg for turn in old_turns for msg in turn]
+    protected_messages = [msg for turn in protected_turns for msg in turn]
     recent_messages = [msg for turn in recent_turns for msg in turn]
 
     # Check for incremental compaction
@@ -287,7 +316,7 @@ async def compact_history(ctx, history: list) -> bool:
             log.warning("Compaction LLM returned empty summary, skipping")
             return False
 
-        # Rebuild history: summary + recent messages
+        # Rebuild history: summary + protected turns + recent messages
         summary_msg = {
             "role": "user",
             "content": f"{SUMMARY_PREFIX}{summary}",
@@ -295,13 +324,15 @@ async def compact_history(ctx, history: list) -> bool:
 
         history.clear()
         history.append(summary_msg)
+        history.extend(protected_messages)
         history.extend(recent_messages)
 
         # Persist compacted working history so future turns don't re-expand from archive
         write_compacted_history(config, conv_id, list(history))
 
         log.info(f"Compaction complete: {len(old_messages)} messages -> "
-                 f"1 summary + {len(recent_messages)} recent = {len(history)} total")
+                 f"1 summary + {len(protected_messages)} protected + "
+                 f"{len(recent_messages)} recent = {len(history)} total")
         return True
 
     except Exception as e:
