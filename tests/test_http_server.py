@@ -54,7 +54,22 @@ def clean_token_registry():
 async def test_health(client):
     resp = await client.get("/health")
     assert resp.status_code == 200
-    assert resp.json() == {"status": "ok"}
+    data = resp.json()
+    assert data["status"] == "ok"
+    # Process section
+    assert isinstance(data["process"], dict)
+    assert data["process"]["uptime_seconds"] >= 0
+    assert data["process"]["memory_rss_mb"] >= 0
+    # MCP section
+    assert isinstance(data["mcp_servers"], dict)
+    assert "connected" in data["mcp_servers"]
+    assert "failed" in data["mcp_servers"]
+    # Heartbeat section
+    assert isinstance(data["heartbeat"], dict)
+    assert "enabled" in data["heartbeat"]
+    # Embeddings section
+    assert isinstance(data["embeddings"], dict)
+    assert "total" in data["embeddings"]
 
 
 # -- Token registry tests -----------------------------------------------------
