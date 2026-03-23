@@ -2,6 +2,7 @@
 
 import dataclasses
 from dataclasses import dataclass, field
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -62,9 +63,7 @@ async def test_call_init_without_skill_config(ctx):
     def mock_init(config):
         received["config"] = config
 
-    module = MagicMock()
-    module.init = mock_init
-    del module.SkillConfig
+    module = SimpleNamespace(init=mock_init)
 
     await _call_init(module, ctx.config, "mock")
     assert "config" in received
@@ -73,7 +72,6 @@ async def test_call_init_without_skill_config(ctx):
 @pytest.mark.asyncio
 async def test_call_init_no_init_function(ctx):
     """No-op when module has no init()."""
-    module = MagicMock()
-    del module.init
+    module = SimpleNamespace()
 
     await _call_init(module, ctx.config, "mock")  # should not raise

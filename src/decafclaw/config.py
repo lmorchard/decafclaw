@@ -253,7 +253,16 @@ def load_config() -> Config:
     agent.id = agent_id
 
     # Skills — raw dict, resolved per-skill at activation time
-    skills = file_data.get("skills", {})
+    raw_skills = file_data.get("skills", {})
+    if not isinstance(raw_skills, dict):
+        log.warning(
+            "Invalid 'skills' section in config.json: expected an object, "
+            "got %s; defaulting to empty dict.",
+            type(raw_skills).__name__,
+        )
+        skills: dict[str, dict[str, Any]] = {}
+    else:
+        skills = raw_skills
 
     reflection = load_sub_config(
         ReflectionConfig, file_data.get("reflection", {}), "REFLECTION")
