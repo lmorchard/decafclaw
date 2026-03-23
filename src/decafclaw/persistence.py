@@ -49,3 +49,5 @@ def read_skill_data(config, conv_id: str) -> dict:
         return json.loads(path.read_text())
     except (json.JSONDecodeError, OSError):
         return {}
+
+

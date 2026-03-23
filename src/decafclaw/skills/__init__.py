@@ -27,6 +27,7 @@ class SkillInfo:
     allowed_tools: list[str] = field(default_factory=list)
     context: str = "inline"  # "inline" or "fork"
     argument_hint: str = ""
+    effort: str = ""  # empty = inherit conversation effort
 
 
 def parse_skill_md(path: Path) -> SkillInfo | None:
@@ -82,6 +83,7 @@ def parse_skill_md(path: Path) -> SkillInfo | None:
         allowed_tools=allowed_tools,
         context=meta.get("context", "inline"),
         argument_hint=meta.get("argument-hint", ""),
+        effort=meta.get("effort", ""),
     )
 
 
