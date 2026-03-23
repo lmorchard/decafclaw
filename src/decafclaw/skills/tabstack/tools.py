@@ -2,24 +2,33 @@
 
 import json
 import logging
+from dataclasses import dataclass, field
 
 from tabstack import AsyncTabstack
 
 log = logging.getLogger(__name__)
 
-# Initialized once via init(config) on skill activation
+
+@dataclass
+class SkillConfig:
+    api_key: str = field(
+        default="", metadata={"secret": True, "env_alias": "TABSTACK_API_KEY"})
+    api_url: str = field(
+        default="", metadata={"env_alias": "TABSTACK_API_URL"})
+
+
+# Initialized once via init(config, skill_config) on skill activation
 _client: AsyncTabstack | None = None
 
 
-def init(config):
+def init(config, skill_config: SkillConfig):
     """Initialize the Tabstack client. Called by the skill loader on activation."""
     global _client
-    api_key = config.tabstack_api_key
-    api_url = config.tabstack_api_url or None
-    kwargs = {"api_key": api_key}
+    api_url = skill_config.api_url or None
     if api_url:
-        kwargs["base_url"] = api_url
-    _client = AsyncTabstack(**kwargs)
+        _client = AsyncTabstack(api_key=skill_config.api_key, base_url=api_url)
+    else:
+        _client = AsyncTabstack(api_key=skill_config.api_key)
     log.info(f"Tabstack client initialized (url={api_url or 'default'})")
 
 

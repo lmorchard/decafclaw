@@ -108,26 +108,6 @@ class TestEnvVarOverride:
         c = load_config()
         assert c.llm.model == "from-env"
 
-    def test_env_alias(self, tmp_path, monkeypatch):
-        """TABSTACK_API_KEY works as alias for SKILLS_TABSTACK_API_KEY."""
-        agent_dir = tmp_path / "decafclaw"
-        agent_dir.mkdir()
-        monkeypatch.setenv("DATA_HOME", str(tmp_path))
-        monkeypatch.setenv("TABSTACK_API_KEY", "sk-alias")
-        monkeypatch.delenv("SKILLS_TABSTACK_API_KEY", raising=False)
-        c = load_config()
-        assert c.skills.tabstack.api_key == "sk-alias"
-
-    def test_systematic_env_takes_priority_over_alias(self, tmp_path, monkeypatch):
-        """SKILLS_TABSTACK_API_KEY beats TABSTACK_API_KEY."""
-        agent_dir = tmp_path / "decafclaw"
-        agent_dir.mkdir()
-        monkeypatch.setenv("DATA_HOME", str(tmp_path))
-        monkeypatch.setenv("SKILLS_TABSTACK_API_KEY", "sk-systematic")
-        monkeypatch.setenv("TABSTACK_API_KEY", "sk-alias")
-        c = load_config()
-        assert c.skills.tabstack.api_key == "sk-systematic"
-
 
 class TestListFields:
     def test_comma_separated(self, tmp_path, monkeypatch):

@@ -79,7 +79,7 @@ def cmd_show(args) -> None:
 
     valid_groups = set()
     for group_field in fields(config):
-        if group_field.name in ("system_prompt", "discovered_skills"):
+        if group_field.name in ("system_prompt", "discovered_skills", "skills", "env"):
             continue
         group = getattr(config, group_field.name)
         if hasattr(group, "__dataclass_fields__"):
@@ -87,6 +87,18 @@ def cmd_show(args) -> None:
             if args.group and group_field.name != args.group:
                 continue
             _print_group(group_field.name, group, args.reveal)
+
+    # Show skills section (raw dict, schema unknown — mask all values)
+    valid_groups.add("skills")
+    if not args.group or args.group == "skills":
+        for skill_name in sorted(config.skills):
+            skill_data = config.skills[skill_name]
+            if isinstance(skill_data, dict):
+                for key in sorted(skill_data):
+                    display = str(skill_data[key]) if args.reveal else "****"
+                    print(f"skills.{skill_name}.{key} = {display}")
+            else:
+                print(f"skills.{skill_name} = {skill_data}")
 
     # Show env section (treated as secrets by default)
     valid_groups.add("env")
@@ -112,6 +124,20 @@ def cmd_get(args) -> None:
             print(f"Unknown config path: {args.path}", file=sys.stderr)
             sys.exit(1)
         return
+    # Handle skills.* paths (raw dict)
+    if args.path.startswith("skills."):
+        parts = args.path.split(".", 2)
+        if len(parts) == 2:
+            skill_data = config.skills.get(parts[1], {})
+            print(json.dumps(skill_data, indent=2))
+        elif len(parts) == 3:
+            skill_data = config.skills.get(parts[1], {})
+            if isinstance(skill_data, dict) and parts[2] in skill_data:
+                print(skill_data[parts[2]])
+            else:
+                print(f"Unknown config path: {args.path}", file=sys.stderr)
+                sys.exit(1)
+        return
     resolved = _resolve_field(config, args.path)
     if resolved is None:
         print(f"Unknown config path: {args.path}", file=sys.stderr)
@@ -130,9 +156,9 @@ def cmd_set(args) -> None:
     config = load_config()
     config_path = config.agent_path / "config.json"
 
-    # env.* paths are freeform — always strings, no validation needed
-    is_env = args.path.startswith("env.")
-    if not is_env:
+    # env.* and skills.* paths are freeform — always strings, no validation
+    is_freeform = args.path.startswith("env.") or args.path.startswith("skills.")
+    if not is_freeform:
         resolved = _resolve_field(config, args.path)
         if resolved is None:
             print(f"Unknown config path: {args.path}", file=sys.stderr)
@@ -217,13 +243,6 @@ _ENV_TO_PATH: dict[str, str] = {
     "ALWAYS_LOADED_TOOLS": "agent.always_loaded_tools",
     "CHILD_MAX_TOOL_ITERATIONS": "agent.child_max_tool_iterations",
     "CHILD_TIMEOUT_SEC": "agent.child_timeout_sec",
-    # skills
-    "TABSTACK_API_KEY": "skills.tabstack.api_key",
-    "TABSTACK_API_URL": "skills.tabstack.api_url",
-    "CLAUDE_CODE_MODEL": "skills.claude_code.model",
-    "CLAUDE_CODE_BUDGET_DEFAULT": "skills.claude_code.budget_default",
-    "CLAUDE_CODE_BUDGET_MAX": "skills.claude_code.budget_max",
-    "CLAUDE_CODE_SESSION_TIMEOUT": "skills.claude_code.session_timeout",
 }
 
 
