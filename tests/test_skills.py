@@ -137,6 +137,21 @@ def test_parse_command_frontmatter_defaults(tmp_path):
     assert info.allowed_tools == []
     assert info.context == "inline"
     assert info.argument_hint == ""
+    assert info.requires_skills == []
+
+
+def test_parse_required_skills(tmp_path):
+    """Parse required-skills list from frontmatter."""
+    skill_dir = tmp_path / "migrate"
+    _write_skill(
+        skill_dir,
+        'name: migrate\ndescription: "Migrate"\n'
+        'context: fork\n'
+        'required-skills:\n  - markdown_vault\n  - tabstack',
+    )
+    info = parse_skill_md(skill_dir / "SKILL.md")
+    assert info is not None
+    assert info.requires_skills == ["markdown_vault", "tabstack"]
 
 
 # -- find_command / list_commands tests --
