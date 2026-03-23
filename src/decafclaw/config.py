@@ -77,7 +77,7 @@ def _coerce(value: str, field_type) -> object:
 # Generic sub-config loader
 # ---------------------------------------------------------------------------
 
-def _load_sub_config(
+def load_sub_config(
     dc_class: type,
     json_data: dict,
     env_prefix: str,
@@ -209,14 +209,14 @@ def load_config() -> Config:
             log.warning("Failed to load %s: %s", config_path, exc)
 
     # Build each sub-config
-    llm = _load_sub_config(
+    llm = load_sub_config(
         LlmConfig, file_data.get("llm", {}), "LLM")
 
-    mattermost = _load_sub_config(
+    mattermost = load_sub_config(
         MattermostConfig, file_data.get("mattermost", {}), "MATTERMOST",
         env_aliases={"stream_throttle_ms": "LLM_STREAM_THROTTLE_MS"})
 
-    compaction = _load_sub_config(
+    compaction = load_sub_config(
         CompactionConfig, file_data.get("compaction", {}), "COMPACTION",
         env_aliases={
             "url": "COMPACTION_LLM_URL",
@@ -225,17 +225,17 @@ def load_config() -> Config:
             "llm_max_tokens": "COMPACTION_LLM_MAX_TOKENS",
         })
 
-    embedding = _load_sub_config(
+    embedding = load_sub_config(
         EmbeddingConfig, file_data.get("embedding", {}), "EMBEDDING",
         env_aliases={"search_strategy": "MEMORY_SEARCH_STRATEGY"})
 
-    heartbeat = _load_sub_config(
+    heartbeat = load_sub_config(
         HeartbeatConfig, file_data.get("heartbeat", {}), "HEARTBEAT")
 
-    http = _load_sub_config(
+    http = load_sub_config(
         HttpConfig, file_data.get("http", {}), "HTTP")
 
-    agent = _load_sub_config(
+    agent = load_sub_config(
         AgentConfig, file_data.get("agent", {}), "",
         env_aliases={
             "data_home": "DATA_HOME",
@@ -257,13 +257,13 @@ def load_config() -> Config:
 
     # Skills sub-configs
     skills_data = file_data.get("skills", {})
-    tabstack = _load_sub_config(
+    tabstack = load_sub_config(
         TabstackConfig, skills_data.get("tabstack", {}), "SKILLS_TABSTACK")
-    claude_code = _load_sub_config(
+    claude_code = load_sub_config(
         ClaudeCodeConfig, skills_data.get("claude_code", {}), "SKILLS_CLAUDE_CODE")
     skills = SkillsConfig(tabstack=tabstack, claude_code=claude_code)
 
-    reflection = _load_sub_config(
+    reflection = load_sub_config(
         ReflectionConfig, file_data.get("reflection", {}), "REFLECTION")
 
     # Custom env vars from config file
