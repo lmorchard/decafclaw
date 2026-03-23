@@ -28,6 +28,7 @@ class SkillInfo:
     context: str = "inline"  # "inline" or "fork"
     argument_hint: str = ""
     effort: str = ""  # empty = inherit conversation effort
+    requires_skills: list[str] = field(default_factory=list)
 
 
 def parse_skill_md(path: Path) -> SkillInfo | None:
@@ -84,7 +85,17 @@ def parse_skill_md(path: Path) -> SkillInfo | None:
         context=meta.get("context", "inline"),
         argument_hint=meta.get("argument-hint", ""),
         effort=meta.get("effort", ""),
+        requires_skills=_coerce_str_list(meta.get("required-skills", [])),
     )
+
+
+def _coerce_str_list(value) -> list[str]:
+    """Coerce a YAML value to a list of strings (handles scalar or None)."""
+    if not value:
+        return []
+    if isinstance(value, list):
+        return [str(v) for v in value]
+    return [str(value)]
 
 
 def _split_frontmatter(text: str) -> tuple[dict | None, str]:

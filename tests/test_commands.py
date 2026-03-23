@@ -191,3 +191,48 @@ class TestExecuteCommand:
         # Should not error even though activation logic isn't called
         mode, result = await execute_command(ctx, skill, "")
         assert mode == "inline"
+
+    @pytest.mark.asyncio
+    async def test_fork_required_skills_activated(self, ctx):
+        """Fork commands pre-activate required-skills before spawning child."""
+        dep_skill = SkillInfo(
+            name="markdown_vault", description="Vault", location=Path("."),
+            has_native_tools=True,
+        )
+        ctx.config.discovered_skills = [dep_skill]
+
+        skill = SkillInfo(
+            name="test-cmd", description="Test", location=Path("."),
+            body="Do stuff", context="fork",
+            requires_skills=["markdown_vault"],
+        )
+        with patch("decafclaw.tools.skill_tools.activate_skill_internal",
+                    new_callable=AsyncMock, return_value="activated") as mock_activate, \
+             patch("decafclaw.tools.delegate._run_child_turn",
+                    new_callable=AsyncMock, return_value="child result"):
+            mode, result = await execute_command(ctx, skill, "")
+
+        assert mode == "fork"
+        mock_activate.assert_called_once_with(ctx, dep_skill)
+
+    @pytest.mark.asyncio
+    async def test_fork_required_skills_already_active(self, ctx):
+        """Already-activated skills are not re-activated."""
+        dep_skill = SkillInfo(
+            name="markdown_vault", description="Vault", location=Path("."),
+        )
+        ctx.config.discovered_skills = [dep_skill]
+        ctx.activated_skills.add("markdown_vault")
+
+        skill = SkillInfo(
+            name="test-cmd", description="Test", location=Path("."),
+            body="Do stuff", context="fork",
+            requires_skills=["markdown_vault"],
+        )
+        with patch("decafclaw.tools.skill_tools.activate_skill_internal",
+                    new_callable=AsyncMock) as mock_activate, \
+             patch("decafclaw.tools.delegate._run_child_turn",
+                    new_callable=AsyncMock, return_value="done"):
+            await execute_command(ctx, skill, "")
+
+        mock_activate.assert_not_called()
