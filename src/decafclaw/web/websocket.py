@@ -167,7 +167,8 @@ async def _handle_send(ws_send, index, username, msg, state):
         from ..commands import substitute_arguments
 
         text = substitute_arguments(command_skill.body, cmd_args)
-        state["_command_skill"] = command_skill
+    else:
+        command_skill = None
 
     # Check if a turn is already running for this conversation
     busy_convs = state.setdefault("busy_convs", set())
@@ -182,10 +183,10 @@ async def _handle_send(ws_send, index, username, msg, state):
                 cancel_ev.set()
         else:
             log.info(f"WS: queuing message for busy conversation {conv_id}")
-        pending_queue.setdefault(conv_id, []).append(text)
+        pending_queue.setdefault(conv_id, []).append(
+            {"text": text, "command_skill": command_skill})
         return
 
-    command_skill = state.pop("_command_skill", None)
     _start_agent_turn(state, index, conv_id, username, text, ws_send,
                       command_skill=command_skill)
 
@@ -214,12 +215,22 @@ def _start_agent_turn(state, index, conv_id, username, text, ws_send,
         state["cancel_events"].pop(cid, None)
         busy_convs.discard(cid)
 
+        # Don't drain queue if the connection is closing
+        if state.get("closing"):
+            pending_queue.pop(cid, None)
+            return
+
         # Drain pending messages for this conversation
         queued = pending_queue.pop(cid, [])
         if queued:
-            combined = "\n".join(queued)
+            # Queued items are dicts with text and optional command_skill
+            texts = [q["text"] for q in queued]
+            # Use command_skill from the last queued message (most recent intent)
+            last_skill = queued[-1].get("command_skill")
+            combined = "\n".join(texts)
             log.info(f"WS: draining {len(queued)} queued message(s) for {cid}")
-            _start_agent_turn(state, index, cid, username, combined, ws_send)
+            _start_agent_turn(state, index, cid, username, combined, ws_send,
+                              command_skill=last_skill)
 
     task.add_done_callback(_on_task_done)
 
@@ -313,10 +324,12 @@ async def websocket_chat(websocket: WebSocket, config, event_bus, app_ctx):
     except Exception as e:
         log.error(f"WebSocket error for {username}: {e}", exc_info=True)
     finally:
-        agent_tasks = state["agent_tasks"]
-        if agent_tasks:
-            log.info(f"Waiting for {len(agent_tasks)} in-flight web agent turn(s)")
-            await asyncio.gather(*agent_tasks, return_exceptions=True)
+        state["closing"] = True
+        # Wait for all in-flight tasks, including any spawned by queue drain
+        while state["agent_tasks"]:
+            tasks = list(state["agent_tasks"])
+            log.info(f"Waiting for {len(tasks)} in-flight web agent turn(s)")
+            await asyncio.gather(*tasks, return_exceptions=True)
 
 
 async def _run_agent_turn(websocket, app_ctx, config, event_bus,
