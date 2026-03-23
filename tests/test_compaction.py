@@ -287,6 +287,14 @@ class TestTurnHasProtectedTool:
         ]
         assert _turn_has_protected_tool(turn) is False
 
+    def test_handles_none_tool_calls(self):
+        """tool_calls: None is a valid LLM response shape — should not crash."""
+        turn = [
+            {"role": "user", "content": "hello"},
+            {"role": "assistant", "content": "hi", "tool_calls": None},
+        ]
+        assert _turn_has_protected_tool(turn) is False
+
     def test_handles_no_tool_calls(self):
         turn = [
             {"role": "user", "content": "hello"},

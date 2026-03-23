@@ -83,7 +83,7 @@ PROTECTED_TOOL_NAMES = {"activate_skill"}
 def _turn_has_protected_tool(turn: list[dict]) -> bool:
     """Check if a turn contains a tool call whose result should not be summarized."""
     for msg in turn:
-        for tc in msg.get("tool_calls", []):
+        for tc in (msg.get("tool_calls") or []):
             if tc.get("function", {}).get("name") in PROTECTED_TOOL_NAMES:
                 return True
     return False
@@ -255,8 +255,20 @@ async def compact_history(ctx, history: list) -> bool:
         # archive at that time. We can count: the compacted sidecar had
         # (total_compacted - 1) recent messages covering archive positions
         # [prev_archive_len - (total_compacted - 1) : prev_archive_len].
+        # Note: the sidecar may also contain protected turns (e.g. skill
+        # activations) between the summary and recent messages — subtract
+        # those so we count only actual recent messages.
         compacted = read_compacted_history(config, conv_id)
-        prev_recent_count = len(compacted) - 1 if compacted else 0
+        if compacted:
+            non_summary = compacted[1:]
+            compacted_turns = _split_into_turns(non_summary)
+            protected_msg_count = sum(
+                len(turn) for turn in compacted_turns
+                if _turn_has_protected_tool(turn)
+            )
+            prev_recent_count = len(compacted) - 1 - protected_msg_count
+        else:
+            prev_recent_count = 0
         prev_old_msg_count = prev_archive_len - prev_recent_count
 
         # Walk old_turns to find those with messages past the previous boundary
