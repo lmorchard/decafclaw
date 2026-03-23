@@ -48,6 +48,7 @@ async def run_all(app_ctx):
     http_task = None
     mattermost_task = None
     heartbeat_task = None
+    schedule_task = None
 
     try:
         # Start HTTP server (button callbacks + web gateway)
@@ -93,6 +94,13 @@ async def run_all(app_ctx):
         else:
             log.info("Heartbeat disabled (interval not set)")
 
+        # Start schedule timer
+        from .schedules import run_schedule_timer
+        schedule_task = asyncio.create_task(
+            run_schedule_timer(config, app_ctx.event_bus, shutdown_event)
+        )
+        log.info("Schedule timer started")
+
         # Wait for shutdown
         await shutdown_event.wait()
 
@@ -100,6 +108,7 @@ async def run_all(app_ctx):
         log.info("Shutting down...")
 
         # Stop subsystems in reverse order
+        await _cancel_task(schedule_task, "schedule timer")
         await _cancel_task(heartbeat_task, "heartbeat")
 
         # Graceful HTTP server shutdown (avoids uvicorn CancelledError tracebacks)

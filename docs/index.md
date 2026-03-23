@@ -15,6 +15,7 @@
 - [Semantic Search](semantic-search.md) — Embedding-based search over memories and conversations
 - [Eval Loop](eval-loop.md) — Test prompts and tools with real LLM calls
 - [Heartbeat](heartbeat.md) — Periodic agent wake-up for monitoring and recurring tasks
+- [Scheduled Tasks](schedules.md) — Cron-style per-task scheduling with effort, tool, and skill configuration
 - [File Attachments](file-attachments.md) — Upload files, MCP media, workspace image refs, rich cards
 - [Streaming](streaming.md) — Stream LLM tokens as they arrive, configurable throttle
 - [HTTP Server & Interactive Buttons](http-server.md) — Button-based confirmations, HTTP callback server

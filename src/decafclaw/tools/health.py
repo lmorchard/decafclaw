@@ -153,6 +153,54 @@ def get_embeddings_data(config) -> dict:
     return {"total": total, "memory": memory, "conversation": conversation}
 
 
+def get_schedule_data(config) -> dict:
+    """Return scheduled task stats as a dict."""
+    from ..schedules import discover_schedules, read_last_run
+
+    tasks = discover_schedules(config)
+    admin = sum(1 for t in tasks if t.source == "admin")
+    workspace = sum(1 for t in tasks if t.source == "workspace")
+    enabled = sum(1 for t in tasks if t.enabled)
+
+    from datetime import datetime, timezone
+
+    from croniter import croniter
+
+    task_list = []
+    for t in tasks:
+        last_run = read_last_run(config, t.name)
+        entry: dict = {
+            "name": t.name,
+            "schedule": t.schedule,
+            "source": t.source,
+            "enabled": t.enabled,
+        }
+        if last_run > 0:
+            entry["last_run"] = datetime.fromtimestamp(
+                last_run, tz=timezone.utc).isoformat()
+        else:
+            entry["last_run"] = None
+
+        # Next run: based on last_run or now if never run
+        try:
+            base = datetime.fromtimestamp(last_run if last_run > 0 else time.time())
+            cron = croniter(t.schedule, base)
+            next_fire = cron.get_next(datetime)
+            entry["next_run"] = next_fire.astimezone(timezone.utc).isoformat()
+        except Exception:
+            entry["next_run"] = None
+
+        task_list.append(entry)
+
+    return {
+        "total": len(tasks),
+        "admin": admin,
+        "workspace": workspace,
+        "enabled": enabled,
+        "tasks": task_list,
+    }
+
+
 def get_health_data(config) -> dict:
     """Gather all health data as a JSON-serializable dict.
 
@@ -189,6 +237,13 @@ def get_health_data(config) -> dict:
         log.exception("Failed to gather embeddings health data")
         data["embeddings"] = None
         errors.append(f"embeddings: {exc}")
+
+    try:
+        data["schedules"] = get_schedule_data(config)
+    except Exception as exc:
+        log.exception("Failed to gather schedule health data")
+        data["schedules"] = None
+        errors.append(f"schedules: {exc}")
 
     if errors:
         data["status"] = "degraded"
@@ -305,6 +360,25 @@ def _embeddings_section(config) -> list[str]:
     ]
 
 
+def _schedule_section(config) -> list[str]:
+    """Gather scheduled task stats."""
+    data = get_schedule_data(config)
+    if data["total"] == 0:
+        return ["### Scheduled Tasks", "No scheduled tasks found."]
+
+    lines = [
+        "### Scheduled Tasks",
+        f"- **Total:** {data['total']} ({data['enabled']} enabled)",
+        f"- **Admin:** {data['admin']} | **Workspace:** {data['workspace']}",
+    ]
+    for t in data["tasks"]:
+        status = "enabled" if t["enabled"] else "disabled"
+        last = t["last_run"] or "never"
+        next_run = t.get("next_run") or "unknown"
+        lines.append(f"- `{t['name']}` ({t['schedule']}) — {status}, last: {last}, next: {next_run}")
+    return lines
+
+
 async def tool_health_status(ctx) -> str:
     """Show agent health and diagnostic status."""
     log.info("[tool:health_status]")
@@ -353,6 +427,14 @@ async def tool_health_status(ctx) -> str:
         sections.extend(_embeddings_section(ctx.config))
     except Exception as e:
         sections.append(f"### Embeddings\n- [error: {e}]")
+
+    sections.append("")
+
+    # Schedules
+    try:
+        sections.extend(_schedule_section(ctx.config))
+    except Exception as e:
+        sections.append(f"### Scheduled Tasks\n- [error: {e}]")
 
     return "\n".join(sections)
 
