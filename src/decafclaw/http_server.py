@@ -18,7 +18,8 @@ def create_app(config, event_bus, app_ctx=None) -> Starlette:
     """Create the Starlette ASGI app with routes."""
 
     async def health(request: Request) -> JSONResponse:
-        return JSONResponse({"status": "ok"})
+        from .tools.health import get_health_data
+        return JSONResponse(get_health_data(config))
 
     async def handle_confirm(request: Request) -> JSONResponse:
         """Handle Mattermost interactive button callbacks for tool confirmation."""

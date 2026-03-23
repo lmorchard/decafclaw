@@ -1,4 +1,8 @@
-"""Health/diagnostic status tool — reports agent operational state."""
+"""Health/diagnostic status tool — reports agent operational state.
+
+Provides both structured data (dicts for JSON API) and markdown formatting
+(for the agent tool). The HTTP health endpoint uses the data functions directly.
+"""
 
 import logging
 import resource
@@ -25,22 +29,185 @@ def _format_uptime(seconds: float) -> str:
     return " ".join(parts)
 
 
-def _process_section() -> list[str]:
-    """Gather process uptime and memory usage."""
-    uptime = time.monotonic() - _start_time
-    uptime_str = _format_uptime(uptime)
+def _format_relative_time(seconds: float) -> str:
+    """Format a time delta as 'in 25m' (future) or 'overdue by 5m' (past)."""
+    abs_secs = abs(seconds)
+    if abs_secs < 60:
+        label = f"{int(abs_secs)}s"
+    elif abs_secs < 3600:
+        label = f"{int(abs_secs // 60)}m"
+    else:
+        h = int(abs_secs // 3600)
+        m = int((abs_secs % 3600) // 60)
+        label = f"{h}h {m}m" if m else f"{h}h"
 
-    # RSS memory — macOS reports bytes, Linux reports KB
+    if seconds < 0:
+        return f"overdue by {label}"
+    return f"in {label}"
+
+
+# -- Structured data gatherers (for JSON API) ---------------------------------
+
+
+def get_process_data() -> dict:
+    """Return process health data as a dict."""
+    uptime = time.monotonic() - _start_time
+
     ru = resource.getrusage(resource.RUSAGE_SELF)
     if sys.platform == "darwin":
         rss_mb = ru.ru_maxrss / (1024 * 1024)
     else:
         rss_mb = ru.ru_maxrss / 1024
 
+    return {
+        "uptime_seconds": round(uptime, 1),
+        "memory_rss_mb": round(rss_mb, 1),
+    }
+
+
+def get_mcp_data() -> dict:
+    """Return MCP server status as a dict."""
+    from ..mcp_client import get_registry
+
+    registry = get_registry()
+    if not registry or not registry.servers:
+        return {"connected": 0, "failed": 0, "servers": {}}
+
+    connected = 0
+    failed = 0
+    servers = {}
+    for name, state in registry.servers.items():
+        status = state.status
+        if status == "connected":
+            connected += 1
+        elif status in ("failed", "error"):
+            failed += 1
+        servers[name] = {
+            "status": status,
+            "tools": len(state.tools),
+            "retries": state.retry_count,
+        }
+
+    return {"connected": connected, "failed": failed, "servers": servers}
+
+
+def get_heartbeat_data(config) -> dict:
+    """Return heartbeat timing data as a dict."""
+    from ..heartbeat import parse_interval, read_last_heartbeat
+
+    interval = parse_interval(config.heartbeat.interval)
+    if interval is None:
+        return {"enabled": False}
+
+    data: dict = {
+        "enabled": True,
+        "interval": config.heartbeat.interval,
+    }
+
+    last_run = read_last_heartbeat(config)
+    if last_run > 0:
+        from datetime import datetime, timezone
+
+        dt = datetime.fromtimestamp(last_run, tz=timezone.utc)
+        data["last_run"] = dt.isoformat()
+        elapsed = time.time() - last_run
+        remaining = interval - elapsed
+        next_due = datetime.fromtimestamp(time.time() + remaining, tz=timezone.utc)
+        data["next_run"] = next_due.isoformat()
+    else:
+        data["last_run"] = None
+        data["next_run"] = None
+
+    return data
+
+
+def get_embeddings_data(config) -> dict:
+    """Return embedding index stats as a dict."""
+    import sqlite3
+
+    db_path = config.workspace_path / "embeddings.db"
+    if not db_path.exists():
+        return {"total": 0, "memory": 0, "conversation": 0}
+
+    try:
+        conn = sqlite3.connect(str(db_path))
+        try:
+            row = conn.execute(
+                """
+                SELECT
+                    COUNT(*) AS total,
+                    SUM(CASE WHEN source_type = 'memory' THEN 1 ELSE 0 END),
+                    SUM(CASE WHEN source_type = 'conversation' THEN 1 ELSE 0 END)
+                FROM memory_embeddings
+                """
+            ).fetchone()
+            total, memory, conversation = row
+            memory = memory or 0
+            conversation = conversation or 0
+        finally:
+            conn.close()
+    except sqlite3.Error as exc:
+        log.exception("Failed to read embeddings database at %s", db_path)
+        return {"total": 0, "memory": 0, "conversation": 0, "error": str(exc)}
+
+    return {"total": total, "memory": memory, "conversation": conversation}
+
+
+def get_health_data(config) -> dict:
+    """Gather all health data as a JSON-serializable dict.
+
+    Used by the HTTP /health endpoint. Does not require a per-conversation
+    context, so tool stats are omitted.
+    """
+    data: dict = {"status": "ok"}
+    errors: list[str] = []
+
+    try:
+        data["process"] = get_process_data()
+    except Exception as exc:
+        log.exception("Failed to gather process health data")
+        data["process"] = None
+        errors.append(f"process: {exc}")
+
+    try:
+        data["mcp_servers"] = get_mcp_data()
+    except Exception as exc:
+        log.exception("Failed to gather MCP health data")
+        data["mcp_servers"] = None
+        errors.append(f"mcp_servers: {exc}")
+
+    try:
+        data["heartbeat"] = get_heartbeat_data(config)
+    except Exception as exc:
+        log.exception("Failed to gather heartbeat health data")
+        data["heartbeat"] = None
+        errors.append(f"heartbeat: {exc}")
+
+    try:
+        data["embeddings"] = get_embeddings_data(config)
+    except Exception as exc:
+        log.exception("Failed to gather embeddings health data")
+        data["embeddings"] = None
+        errors.append(f"embeddings: {exc}")
+
+    if errors:
+        data["status"] = "degraded"
+        data["errors"] = errors
+
+    return data
+
+
+# -- Markdown formatters (for agent tool) --------------------------------------
+
+
+def _process_section() -> list[str]:
+    """Gather process uptime and memory usage."""
+    data = get_process_data()
+    uptime_str = _format_uptime(data["uptime_seconds"])
     return [
         "### Process",
         f"- **Uptime:** {uptime_str}",
-        f"- **Memory (RSS):** {rss_mb:.1f} MB",
+        f"- **Memory (RSS):** {data['memory_rss_mb']:.1f} MB",
     ]
 
 
@@ -61,23 +228,6 @@ def _mcp_section() -> list[str]:
         tool_count = len(state.tools)
         lines.append(f"| {name} | {state.status} | {tool_count} | {state.retry_count} |")
     return lines
-
-
-def _format_relative_time(seconds: float) -> str:
-    """Format a time delta as relative text like '5m ago' or 'in 25m'."""
-    abs_secs = abs(seconds)
-    if abs_secs < 60:
-        label = f"{int(abs_secs)}s"
-    elif abs_secs < 3600:
-        label = f"{int(abs_secs // 60)}m"
-    else:
-        h = int(abs_secs // 3600)
-        m = int((abs_secs % 3600) // 60)
-        label = f"{h}h {m}m" if m else f"{h}h"
-
-    if seconds < 0:
-        return f"overdue by {label}"
-    return f"in {label}"
 
 
 def _heartbeat_section(config) -> list[str]:
@@ -140,33 +290,18 @@ def _tools_section(ctx) -> list[str]:
 
 def _embeddings_section(config) -> list[str]:
     """Gather embedding index stats."""
-    import sqlite3
-
-    db_path = config.workspace_path / "embeddings.db"
-    if not db_path.exists():
-        return ["### Embeddings", "No embedding database found."]
-
-    try:
-        conn = sqlite3.connect(str(db_path))
-        try:
-            total = conn.execute(
-                "SELECT COUNT(*) FROM memory_embeddings"
-            ).fetchone()[0]
-            memory = conn.execute(
-                "SELECT COUNT(*) FROM memory_embeddings WHERE source_type = 'memory'"
-            ).fetchone()[0]
-            conversation = conn.execute(
-                "SELECT COUNT(*) FROM memory_embeddings WHERE source_type = 'conversation'"
-            ).fetchone()[0]
-        finally:
-            conn.close()
-    except sqlite3.Error as e:
-        return ["### Embeddings", f"- [error reading database: {e}]"]
+    data = get_embeddings_data(config)
+    if "error" in data:
+        return ["### Embeddings", f"- [error reading database: {data['error']}]"]
+    if data["total"] == 0:
+        db_path = config.workspace_path / "embeddings.db"
+        if not db_path.exists():
+            return ["### Embeddings", "No embedding database found."]
 
     return [
         "### Embeddings",
-        f"- **Total entries:** {total}",
-        f"- **Memory:** {memory} | **Conversation:** {conversation}",
+        f"- **Total entries:** {data['total']}",
+        f"- **Memory:** {data['memory']} | **Conversation:** {data['conversation']}",
     ]
 
 
