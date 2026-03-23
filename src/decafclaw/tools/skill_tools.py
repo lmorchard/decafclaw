@@ -54,15 +54,33 @@ def _load_native_tools(skill_info) -> tuple[dict, list, object]:
     return tools, tool_defs, module
 
 
-async def _call_init(module, config) -> None:
-    """Call module.init(config) if it exists, handling sync or async."""
+async def _call_init(module, config, skill_name: str = "") -> None:
+    """Call module.init() with config and optional skill config.
+
+    If the module exports a SkillConfig dataclass, resolve it from
+    config.skills[skill_name] + env vars, then call init(config, skill_config).
+    Otherwise call init(config) for backward compat.
+    """
     init_fn = getattr(module, "init", None)
     if init_fn is None:
         return
-    if asyncio.iscoroutinefunction(init_fn):
-        await init_fn(config)
+
+    skill_config_cls = getattr(module, "SkillConfig", None)
+    if skill_config_cls is not None and skill_name:
+        from ..config import load_sub_config
+
+        raw = config.skills.get(skill_name, {})
+        prefix = f"SKILLS_{skill_name.upper().replace('-', '_')}"
+        skill_config = load_sub_config(skill_config_cls, raw, prefix)
+        if asyncio.iscoroutinefunction(init_fn):
+            await init_fn(config, skill_config)
+        else:
+            await asyncio.to_thread(init_fn, config, skill_config)
     else:
-        await asyncio.to_thread(init_fn, config)
+        if asyncio.iscoroutinefunction(init_fn):
+            await init_fn(config)
+        else:
+            await asyncio.to_thread(init_fn, config)
 
 
 async def restore_skills(ctx) -> None:
@@ -87,7 +105,7 @@ async def restore_skills(ctx) -> None:
             if all(t in existing_tools for t in tools):
                 log.debug(f"Skill '{name}' tools already loaded, skipping restore")
                 continue
-            await _call_init(module, ctx.config)
+            await _call_init(module, ctx.config, name)
             if not hasattr(ctx, "extra_tools"):
                 ctx.extra_tools = {}
             ctx.extra_tools.update(tools)
@@ -150,7 +168,7 @@ async def activate_skill_internal(ctx, skill_info) -> str | ToolResult:
     if skill_info.has_native_tools:
         try:
             tools, tool_defs, module = _load_native_tools(skill_info)
-            await _call_init(module, ctx.config)
+            await _call_init(module, ctx.config, skill_info.name)
 
             ctx.extra_tools.update(tools)
             ctx.extra_tool_definitions.extend(tool_defs)
