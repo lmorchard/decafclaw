@@ -91,6 +91,26 @@ async def execute_command(ctx, skill: SkillInfo, arguments: str) -> tuple[str, s
     ctx.preapproved_tools = set(skill.allowed_tools)
 
     if skill.context == "fork":
+        # Pre-activate required skills so the child inherits their tools
+        if skill.requires_skills:
+            discovered = getattr(ctx.config, "discovered_skills", [])
+            skill_map = {s.name: s for s in discovered}
+            for req_name in skill.requires_skills:
+                if req_name in ctx.activated_skills:
+                    continue
+                req_info = skill_map.get(req_name)
+                if req_info:
+                    try:
+                        result = await activate_skill_internal(ctx, req_info)
+                        if isinstance(result, _ToolResult):
+                            log.error(f"Failed to activate required skill "
+                                      f"'{req_name}' for command '{skill.name}': "
+                                      f"{result.text}")
+                            return "error", result.text
+                    except Exception as e:
+                        log.error(f"Failed to activate required skill "
+                                  f"'{req_name}' for command '{skill.name}': {e}")
+
         from .tools.delegate import _run_child_turn
         response = await _run_child_turn(ctx, body, effort=skill.effort or "")
         return "fork", response
