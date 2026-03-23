@@ -39,6 +39,7 @@ A minimal AI agent for learning how agent frameworks work. Connects to Mattermos
 - `src/decafclaw/media.py` — Media handling: ToolResult, MediaHandler interface, workspace ref scanning
 - `src/decafclaw/tools/` — Tool registry: core, memory, todo, workspace, file_share, shell, conversation, skill activation, MCP status, health, delegation
 - `src/decafclaw/tools/health.py` — Health/diagnostic status tool: uptime, MCP, heartbeat, tools, embeddings
+- `src/decafclaw/tools/effort_tools.py` — Effort level tool: `set_effort` for conversation model switching
 - `src/decafclaw/tools/delegate.py` — Sub-agent delegation: `delegate_task` forks a child agent for a single subtask (call multiple times for parallel work)
 - `src/decafclaw/tools/tool_registry.py` — Tool classification (always-loaded vs deferred), token estimation, deferred list formatting
 - `src/decafclaw/tools/search_tools.py` — `tool_search` tool: keyword and exact-name lookup for deferred tools
@@ -126,6 +127,7 @@ Session docs live in `.claude/dev-sessions/YYYY-MM-DD-HHMM-slug/` with `spec.md`
 - **Bundled skills in `src/decafclaw/skills/`.** Each skill has SKILL.md (required) + tools.py (optional for native Python tools). Skill scan order: workspace > agent-level > bundled.
 - **Skills must use absolute imports.** The skill loader uses `importlib.spec_from_file_location` without package context, so relative imports (`from .` or `from ...`) fail at runtime. Use `from decafclaw.skills.my_skill.module import ...` instead.
 - **Skill config via `SkillConfig` dataclass in `tools.py`.** Skills own their config schema by exporting a `SkillConfig` dataclass. The loader resolves it at activation time via `load_sub_config` (env vars + `config.skills[name]` dict + defaults). `init(config, skill_config)` receives both the global config and the typed skill config. Skills without `SkillConfig` get the old `init(config)` signature.
+- **Effort levels for model routing.** Three levels: `fast` (cheap/compliant), `default` (normal), `strong` (complex reasoning). Configured in `config.json` `models` section mapping levels to partial LLM configs. Set per-conversation via `set_effort` tool or `!think-harder`/`!think-faster`/`!think-normal` commands. Skills declare `effort` in SKILL.md frontmatter (forked contexts only). `delegate_task` accepts optional `effort` parameter. Resolved at turn start by forking config with the resolved LLM settings. Persisted in conversation sidecar.
 - **MCP servers are globally available.** Configured in `data/{agent_id}/mcp_servers.json` (Claude Code compatible format). Connected eagerly on startup, tools namespaced as `mcp__<server>__<tool>`. Module-level global registry in `mcp_client.py`.
 - **MCP auto-restart.** Crashed stdio servers auto-reconnect on next tool call with exponential backoff (max 3 retries). Use `mcp_status(action="restart")` for manual control.
 - **Self-reflection is fail-open.** The reflection judge evaluates responses before delivery, but errors (network, parse, etc.) always pass through the response as-is. Retries consume `max_tool_iterations` budget. Skipped for child agents, cancelled turns, and empty responses.
