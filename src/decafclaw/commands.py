@@ -2,6 +2,7 @@
 
 import logging
 import re
+from dataclasses import dataclass, field
 
 from .skills import SkillInfo, find_command, list_commands
 
@@ -79,15 +80,111 @@ def format_help(discovered_skills: list[SkillInfo], prefix: str = "!") -> str:
     return "\n".join(lines)
 
 
+# -- Centralized command dispatch ----------------------------------------------
+
+
+@dataclass
+class CommandResult:
+    """Result of dispatching a command.
+
+    mode values:
+    - "not_command": text is not a command, pass through as normal message
+    - "help": help text response, display directly
+    - "unknown": unknown command, display error directly
+    - "fork": command ran in forked context, display response directly
+    - "inline": command body substituted, run as agent turn with ctx setup done
+    - "error": command failed, display error directly
+    """
+    mode: str
+    text: str = ""
+    skill: SkillInfo | None = None
+
+
+async def dispatch_command(ctx, text: str, prefixes: list[str] | None = None,
+                           ) -> CommandResult:
+    """Detect, validate, and execute a command from user text.
+
+    This is the single entry point for all command handling. Both Mattermost
+    and web UI call this function. It handles:
+    - Command detection (tries each prefix)
+    - Help command
+    - Unknown command error
+    - Fork mode execution (runs the child turn, returns result)
+    - Inline mode preparation (substitutes body, pre-activates skills on ctx)
+
+    Args:
+        ctx: Runtime context (will be modified for inline commands:
+             preapproved_tools, activated_skills, extra_tools set)
+        text: Raw user message text
+        prefixes: Command prefixes to try (default: ["!", "/"])
+
+    Returns:
+        CommandResult with mode and text. Callers should:
+        - "not_command": run text as a normal agent turn
+        - "help", "unknown", "fork", "error": display result.text directly
+        - "inline": run result.text as agent turn (ctx already set up)
+    """
+    if prefixes is None:
+        prefixes = ["!", "/"]
+
+    # Try each prefix
+    trigger = None
+    matched_prefix = "!"
+    for prefix in prefixes:
+        trigger = parse_command_trigger(text, prefix=prefix)
+        if trigger:
+            matched_prefix = prefix
+            break
+
+    if not trigger:
+        return CommandResult(mode="not_command", text=text)
+
+    cmd_name, cmd_args = trigger
+
+    # Help is special
+    if cmd_name == "help":
+        discovered = getattr(ctx.config, "discovered_skills", [])
+        help_text = format_help(discovered, prefix=matched_prefix)
+        return CommandResult(mode="help", text=help_text)
+
+    # Look up the command
+    discovered = getattr(ctx.config, "discovered_skills", [])
+    skill = find_command(cmd_name, discovered)
+    if skill is None:
+        return CommandResult(
+            mode="unknown",
+            text=f"Unknown command: `{cmd_name}`. Type `{matched_prefix}help` for available commands.",
+        )
+
+    # Execute the command
+    result = await execute_command(ctx, skill, cmd_args)
+    mode, result_text = result
+
+    if mode == "error":
+        return CommandResult(mode="error", text=result_text)
+    if mode == "fork":
+        return CommandResult(mode="fork", text=result_text, skill=skill)
+
+    # Inline mode: ctx is already set up (preapproved_tools, activated skills)
+    return CommandResult(mode="inline", text=result_text, skill=skill)
+
+
 async def execute_command(ctx, skill: SkillInfo, arguments: str) -> tuple[str, str]:
     """Execute a user-invoked command.
+
+    Sets up the context (preapproved tools, required skills) and either
+    runs a fork or returns the substituted body for inline execution.
 
     Returns (mode, result) where:
     - mode="fork": result is the child agent's response text
     - mode="inline": result is the substituted body to use as the user message
+    - mode="error": result is the error message
     """
     from .media import ToolResult as _ToolResult
     from .tools.skill_tools import activate_skill_internal
+
+    # Set pre-approved tools
+    ctx.preapproved_tools = set(skill.allowed_tools)
 
     # Auto-activate the skill ONLY if it has native tools to register.
     # Shell-based skills don't need activation — the command body IS the prompt.
@@ -98,13 +195,7 @@ async def execute_command(ctx, skill: SkillInfo, arguments: str) -> tuple[str, s
         if isinstance(result, _ToolResult):
             return "error", result.text
 
-    # Substitute arguments and skill directory into the body
-    body = substitute_body(skill.body, arguments, skill_dir=str(skill.location))
-
-    # Set pre-approved tools
-    ctx.preapproved_tools = set(skill.allowed_tools)
-
-    # Pre-activate required skills (user invoked the command, so skip permission checks)
+    # Pre-activate required skills (user invoked the command = implicit approval)
     if skill.requires_skills:
         discovered = getattr(ctx.config, "discovered_skills", [])
         skill_map = {s.name: s for s in discovered}
@@ -124,6 +215,9 @@ async def execute_command(ctx, skill: SkillInfo, arguments: str) -> tuple[str, s
                     log.error(f"Failed to activate required skill "
                               f"'{req_name}' for command '{skill.name}': {e}")
 
+    # Substitute arguments and skill directory into the body
+    body = substitute_body(skill.body, arguments, skill_dir=str(skill.location))
+
     if skill.context == "fork":
         from .tools.delegate import _run_child_turn
         # User-invoked commands use the full iteration limit, not the child limit
@@ -134,39 +228,3 @@ async def execute_command(ctx, skill: SkillInfo, arguments: str) -> tuple[str, s
 
     # Inline mode: return the substituted body as the user message
     return "inline", body
-
-
-async def prepare_command_context(ctx, skill: SkillInfo) -> None:
-    """Set up a context for running an inline command as an agent turn.
-
-    Handles all command-level concerns:
-    - Pre-approved tools from allowed-tools frontmatter
-    - Native tool activation (if the command skill has tools.py)
-    - Required skills pre-activation (without permission checks)
-
-    Called by both Mattermost and web UI before running agent turns
-    for inline commands. This keeps command logic in one place.
-    """
-    from .media import ToolResult as _ToolResult
-    from .tools.skill_tools import activate_skill_internal
-
-    ctx.preapproved_tools = set(skill.allowed_tools)
-
-    # Activate the command skill itself if it has native tools
-    if skill.has_native_tools and skill.name not in ctx.activated_skills:
-        await activate_skill_internal(ctx, skill)
-
-    # Pre-activate required skills (user invoked = implicit approval)
-    if skill.requires_skills:
-        discovered = getattr(ctx.config, "discovered_skills", [])
-        skill_map = {s.name: s for s in discovered}
-        for req_name in skill.requires_skills:
-            if req_name in ctx.activated_skills:
-                continue
-            req_info = skill_map.get(req_name)
-            if req_info:
-                try:
-                    await activate_skill_internal(ctx, req_info)
-                except Exception as e:
-                    log.error(f"Failed to activate required skill "
-                              f"'{req_name}' for command '{skill.name}': {e}")

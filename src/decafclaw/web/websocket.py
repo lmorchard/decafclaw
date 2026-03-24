@@ -119,63 +119,42 @@ async def _handle_send(ws_send, index, username, msg, state):
         await ws_send({"type": "error", "message": "Conversation not found"})
         return
 
-    # -- Command detection --
-    from ..commands import format_help, parse_command_trigger
-    from ..skills import find_command
+    # -- Command dispatch (centralized in commands.py) --
+    from ..commands import dispatch_command
+    from ..context import Context
 
-    trigger = parse_command_trigger(text, prefix="/") or parse_command_trigger(text, prefix="!")
-    log.debug(f"Command trigger check: text={text!r} trigger={trigger}")
-    if trigger:
-        cmd_name, cmd_args = trigger
-        if cmd_name == "help":
-            discovered = getattr(state["config"], "discovered_skills", [])
-            help_text = format_help(discovered, prefix="/")
-            await ws_send({
-                "type": "message_complete", "conv_id": conv_id,
-                "role": "assistant", "text": help_text, "final": True,
-            })
-            return
-        discovered = getattr(state["config"], "discovered_skills", [])
-        command_skill = find_command(cmd_name, discovered)
-        if command_skill is None:
-            await ws_send({
-                "type": "message_complete", "conv_id": conv_id,
-                "role": "assistant", "final": True,
-                "text": f"Unknown command: `{cmd_name}`. Type `/help` for available commands.",
-            })
-            return
+    cmd_ctx = Context(config=state["config"], event_bus=state["event_bus"])
+    cmd_ctx.user_id = username
+    cmd_ctx.conv_id = conv_id
+    cmd_result = await dispatch_command(cmd_ctx, text)
 
-        # Fork mode: execute and return response without agent turn
-        if command_skill.context == "fork":
-            from ..commands import execute_command
-            from ..context import Context
+    if cmd_result.mode in ("help", "unknown", "error"):
+        await ws_send({
+            "type": "message_complete", "conv_id": conv_id,
+            "role": "assistant", "text": cmd_result.text, "final": True,
+        })
+        return
 
-            ctx = Context(config=state["config"], event_bus=state["event_bus"])
-            ctx.user_id = username
-            ctx.conv_id = conv_id
-            try:
-                mode, result = await execute_command(ctx, command_skill, cmd_args)
-            except Exception as e:
-                result = f"[error: command failed: {e}]"
-            await ws_send({
-                "type": "message_complete", "conv_id": conv_id,
-                "role": "assistant", "text": result, "final": True,
-            })
-            return
+    if cmd_result.mode == "fork":
+        await ws_send({
+            "type": "message_complete", "conv_id": conv_id,
+            "role": "assistant", "text": cmd_result.text, "final": True,
+        })
+        return
 
-        # Inline mode: substitute body, pass skill info to _run_agent_turn
-        # for pre-activation of native tools and required skills
-        from ..commands import substitute_body
-
-        text = substitute_body(command_skill.body, cmd_args,
-                               skill_dir=str(command_skill.location))
-        state["_command_skill"] = command_skill
+    if cmd_result.mode == "inline":
+        text = cmd_result.text
+        # cmd_ctx has preapproved_tools, activated_skills, extra_tools set
+        state["_command_ctx"] = cmd_ctx
     else:
-        command_skill = None
+        pass  # not a command, text unchanged
 
     # Check if a turn is already running for this conversation
     busy_convs = state.setdefault("busy_convs", set())
     pending_queue = state.setdefault("pending_msgs", {})
+
+    # Pop pre-configured command context (set by dispatch_command for inline mode)
+    command_ctx = state.pop("_command_ctx", None)
 
     if conv_id in busy_convs:
         mode = state["config"].agent.turn_on_new_message
@@ -187,15 +166,15 @@ async def _handle_send(ws_send, index, username, msg, state):
         else:
             log.info(f"WS: queuing message for busy conversation {conv_id}")
         pending_queue.setdefault(conv_id, []).append(
-            {"text": text, "command_skill": command_skill})
+            {"text": text, "command_ctx": command_ctx})
         return
 
     _start_agent_turn(state, index, conv_id, username, text, ws_send,
-                      command_skill=command_skill)
+                      command_ctx=command_ctx)
 
 
 def _start_agent_turn(state, index, conv_id, username, text, ws_send,
-                      command_skill=None):
+                      command_ctx=None):
     """Launch an agent turn task with queue drain on completion."""
     busy_convs = state.setdefault("busy_convs", set())
     pending_queue = state.setdefault("pending_msgs", {})
@@ -208,7 +187,7 @@ def _start_agent_turn(state, index, conv_id, username, text, ws_send,
         _run_agent_turn(
             state["websocket"], state["app_ctx"], state["config"], state["event_bus"],
             index, conv_id, username, text, cancel_event,
-            command_skill=command_skill,
+            command_ctx=command_ctx,
         )
     )
     state["agent_tasks"].add(task)
@@ -226,14 +205,12 @@ def _start_agent_turn(state, index, conv_id, username, text, ws_send,
         # Drain pending messages for this conversation
         queued = pending_queue.pop(cid, [])
         if queued:
-            # Queued items are dicts with text and optional command_skill
             texts = [q["text"] for q in queued]
-            # Use command_skill from the last queued message (most recent intent)
-            last_skill = queued[-1].get("command_skill")
+            last_ctx = queued[-1].get("command_ctx")
             combined = "\n".join(texts)
             log.info(f"WS: draining {len(queued)} queued message(s) for {cid}")
             _start_agent_turn(state, index, cid, username, combined, ws_send,
-                              command_skill=last_skill)
+                              command_ctx=last_ctx)
 
     task.add_done_callback(_on_task_done)
 
@@ -337,7 +314,7 @@ async def websocket_chat(websocket: WebSocket, config, event_bus, app_ctx):
 
 async def _run_agent_turn(websocket, app_ctx, config, event_bus,
                           index, conv_id, username, text, cancel_event=None,
-                          command_skill=None):
+                          command_ctx=None):
     """Run an agent turn for a web conversation, streaming events to WebSocket."""
     from ..agent import run_agent_turn  # deferred: circular dep
     from ..archive import read_archive
@@ -357,10 +334,12 @@ async def _run_agent_turn(websocket, app_ctx, config, event_bus,
     ctx.channel_name = "web"
     ctx.thread_id = ""
     ctx.conv_id = conv_id
-    # Apply command skill state (inline mode)
-    if command_skill:
-        from ..commands import prepare_command_context
-        await prepare_command_context(ctx, command_skill)
+    # Apply pre-configured command state (set by dispatch_command)
+    if command_ctx:
+        ctx.preapproved_tools = command_ctx.preapproved_tools
+        ctx.activated_skills = command_ctx.activated_skills
+        ctx.extra_tools = command_ctx.extra_tools
+        ctx.extra_tool_definitions = command_ctx.extra_tool_definitions
     if cancel_event:
         ctx.cancelled = cancel_event
 
