@@ -14,6 +14,7 @@ import asyncio
 import json
 import logging
 from dataclasses import replace
+from pathlib import Path
 
 from .archive import append_message
 from .compaction import compact_history
@@ -390,6 +391,22 @@ async def run_agent_turn(ctx, user_message: str, history: list) -> "ToolResult":
         existing_data = ctx.skill_data
         ctx.skill_data = {**persisted_data, **existing_data}
     await restore_skills(ctx)
+
+    # Auto-activate always-loaded skills (bundled only — trust boundary)
+    from .skills import _BUNDLED_SKILLS_DIR
+    bundled_dir = _BUNDLED_SKILLS_DIR.resolve()
+    discovered = getattr(config, "discovered_skills", [])
+    for skill_info in discovered:
+        if not skill_info.always_loaded or skill_info.name in ctx.activated_skills:
+            continue
+        if not Path(skill_info.location).resolve().is_relative_to(bundled_dir):
+            continue  # only bundled skills can be always-loaded
+        from .tools.skill_tools import activate_skill_internal
+        try:
+            await activate_skill_internal(ctx, skill_info)
+            log.debug(f"Auto-activated always-loaded skill '{skill_info.name}'")
+        except Exception as e:
+            log.error(f"Failed to auto-activate skill '{skill_info.name}': {e}")
 
     # Restore effort level from archive (scan for last effort event)
     if ctx.effort == "default" and conv_id:

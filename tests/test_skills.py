@@ -154,6 +154,26 @@ def test_parse_required_skills(tmp_path):
     assert info.requires_skills == ["markdown_vault", "tabstack"]
 
 
+def test_parse_always_loaded(tmp_path):
+    """Parse always-loaded field from frontmatter."""
+    skill_dir = tmp_path / "wiki"
+    _write_skill(
+        skill_dir,
+        'name: wiki\ndescription: "Knowledge base"\nalways-loaded: true',
+    )
+    info = parse_skill_md(skill_dir / "SKILL.md")
+    assert info is not None
+    assert info.always_loaded is True
+
+
+def test_parse_always_loaded_default(tmp_path):
+    """always-loaded defaults to False."""
+    skill_dir = tmp_path / "basic"
+    _write_skill(skill_dir, 'name: basic\ndescription: "Basic"')
+    info = parse_skill_md(skill_dir / "SKILL.md")
+    assert info.always_loaded is False
+
+
 # -- find_command / list_commands tests --
 
 

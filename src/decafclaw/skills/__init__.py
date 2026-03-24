@@ -29,6 +29,7 @@ class SkillInfo:
     argument_hint: str = ""
     effort: str = ""  # empty = inherit conversation effort
     requires_skills: list[str] = field(default_factory=list)
+    always_loaded: bool = False
 
 
 def parse_skill_md(path: Path) -> SkillInfo | None:
@@ -86,6 +87,7 @@ def parse_skill_md(path: Path) -> SkillInfo | None:
         argument_hint=meta.get("argument-hint", ""),
         effort=meta.get("effort", ""),
         requires_skills=_coerce_str_list(meta.get("required-skills", [])),
+        always_loaded=bool(meta.get("always-loaded", False)),
     )
 
 
@@ -186,15 +188,38 @@ def build_catalog_text(skills: list[SkillInfo]) -> str:
     if not skills:
         return ""
 
-    lines = [
-        "## Available Skills",
-        "",
-        "The following skills can be activated. Their tools are NOT available until you "
-        "call activate_skill first. You MUST activate a skill before using any of its tools.",
-        "",
+    # Separate always-loaded (bundled only) from on-demand skills
+    bundled_dir = _BUNDLED_SKILLS_DIR.resolve()
+    always_loaded = [
+        s for s in skills
+        if s.always_loaded and Path(s.location).resolve().is_relative_to(bundled_dir)
     ]
-    for skill in skills:
-        lines.append(f"- **{skill.name}**: {skill.description}")
+    always_loaded_names = {s.name for s in always_loaded}
+    on_demand = [s for s in skills if s.name not in always_loaded_names]
+
+    lines = []
+
+    if always_loaded:
+        lines.extend([
+            "## Active Skills",
+            "",
+            "The following skills are always active — their tools are available now.",
+            "",
+        ])
+        for skill in always_loaded:
+            lines.append(f"- **{skill.name}**: {skill.description}")
+        lines.append("")
+
+    if on_demand:
+        lines.extend([
+            "## Available Skills",
+            "",
+            "The following skills can be activated. Their tools are NOT available until you "
+            "call activate_skill first. You MUST activate a skill before using any of its tools.",
+            "",
+        ])
+        for skill in on_demand:
+            lines.append(f"- **{skill.name}**: {skill.description}")
 
     return "\n".join(lines)
 
