@@ -232,7 +232,9 @@ async def run_schedule_task(config, event_bus, task: ScheduleTask) -> dict:
         "Prefer workspace tools (workspace_read, workspace_write, "
         "workspace_list) over shell commands.\n\n"
     )
-    prompt = preamble + task.body
+    from .commands import substitute_body
+    body = substitute_body(task.body, skill_dir=str(task.path.parent))
+    prompt = preamble + body
 
     try:
         result = await run_agent_turn(ctx, prompt, history=[])
