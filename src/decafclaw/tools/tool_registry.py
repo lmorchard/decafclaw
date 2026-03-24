@@ -19,8 +19,17 @@ def estimate_tool_tokens(tool_defs: list[dict]) -> int:
 
 
 def get_always_loaded_names(config) -> set[str]:
-    """Return the set of tool names that should always be loaded."""
+    """Return the set of tool names that should always be loaded.
+
+    Includes tools from always-loaded skills (e.g. wiki).
+    """
     extra = set(config.agent.always_loaded_tools)
+    # Include tool names from always-loaded skills
+    for skill in getattr(config, "discovered_skills", []):
+        if skill.always_loaded and skill.has_native_tools:
+            # Tool names aren't known until loaded, but we store them on config
+            # after first activation. Check the cached set.
+            extra |= set(getattr(config, "_always_loaded_skill_tools", []))
     return DEFAULT_ALWAYS_LOADED | extra
 
 

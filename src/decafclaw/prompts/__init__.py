@@ -63,4 +63,17 @@ def load_system_prompt(config):
     if catalog:
         sections.append(catalog)
 
+    # Append always-loaded skill bodies to system prompt (bundled only — trust boundary)
+    from ..skills import _BUNDLED_SKILLS_DIR
+    bundled_dir = _BUNDLED_SKILLS_DIR.resolve()
+    for skill in skills:
+        if not skill.always_loaded or not skill.body:
+            continue
+        if not Path(skill.location).resolve().is_relative_to(bundled_dir):
+            log.warning(f"Ignoring always-loaded on non-bundled skill '{skill.name}' "
+                        f"at {skill.location}")
+            continue
+        sections.append(skill.body)
+        log.info(f"Always-loaded skill '{skill.name}' body appended to system prompt")
+
     return "\n\n".join(sections), skills
