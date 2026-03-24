@@ -705,12 +705,71 @@ def tool_md_show(ctx, file: str, section: str | None = None) -> ToolResult:
         return ToolResult(text=f"[error: {e}]")
 
 
+def _find_first_list_item(lines: list[str], start: int, end: int) -> int | None:
+    """Find the index of the first checklist/list item in a line range."""
+    for i in range(start, end):
+        stripped = lines[i].lstrip()
+        if stripped.startswith("- [") or stripped.startswith("- "):
+            return i
+    return None
+
+
+def _insert_into_doc(
+    doc: Document, lines_to_insert: list[str],
+    to_section: str | None, position: str,
+) -> str | None:
+    """Insert lines into a Document at the specified location.
+
+    Returns an error string on failure, or None on success.
+    """
+    new_lines = _ensure_newlines("".join(lines_to_insert))
+
+    if to_section:
+        sec = doc.find_section(to_section)
+        if not sec:
+            return f"section not found: {to_section}"
+        if position == "prepend":
+            # Insert before first list item in section, or at content start
+            target = _find_first_list_item(doc.lines, sec.content_start, sec.content_end)
+            if target is not None:
+                doc._insert_lines(target, new_lines)
+            else:
+                doc.prepend(sec, "".join(ln.rstrip("\n") for ln in lines_to_insert))
+        else:
+            for line in lines_to_insert:
+                sec = doc.find_section(to_section)
+                if not sec:
+                    break
+                doc.append(sec, line.rstrip("\n"))
+    else:
+        # No section specified — operate on the whole file
+        if position == "prepend":
+            # Insert before first list item in file
+            target = _find_first_list_item(doc.lines, 0, len(doc.lines))
+            if target is not None:
+                doc._insert_lines(target, new_lines)
+            else:
+                # No list items — append to end of file
+                doc._insert_lines(len(doc.lines), new_lines)
+        else:
+            # Append to end of file, before trailing blank lines
+            insert_at = len(doc.lines)
+            while insert_at > 0 and not doc.lines[insert_at - 1].strip():
+                insert_at -= 1
+            doc._insert_lines(insert_at, new_lines)
+    return None
+
+
 def tool_md_move_lines(
-    ctx, from_file: str, to_file: str, to_section: str, lines: str,
+    ctx, from_file: str, to_file: str, lines: str,
+    to_section: str | None = None, position: str = "append",
 ) -> ToolResult:
-    """Move specific lines (by number) from one file to another section."""
-    log.info(f"[tool:md_move_lines] {from_file!r} -> {to_file!r}/{to_section!r} lines={lines!r}")
+    """Move specific lines (by number) from one file to another location."""
+    log.info(f"[tool:md_move_lines] {from_file!r} -> {to_file!r}/{to_section!r} lines={lines!r} position={position!r}")
     try:
+        if position not in ("append", "prepend"):
+            return ToolResult(text=f"[error: position must be 'append' or 'prepend', got '{position}']")
+
         # Parse line numbers (1-based from user, convert to 0-based), deduplicate
         parsed = [int(n.strip()) - 1 for n in lines.split(",") if n.strip()]
         line_nums = sorted(set(parsed), reverse=True)
@@ -736,52 +795,34 @@ def tool_md_move_lines(
                 )
 
         # Collect lines to move (in original order, not reversed)
-        moving = []
-        for ln in sorted(line_nums):
-            moving.append(source_lines[ln])
+        moving = [source_lines[ln] for ln in sorted(line_nums)]
 
         same_file = from_path == to_path
 
         if same_file:
-            # Same-file move: operate on a single Document to avoid corruption
             doc = Document(from_path.read_text())
-            to_sec = doc.find_section(to_section)
-            if not to_sec:
-                return ToolResult(text=f"[error: section not found in {to_file}: {to_section}]")
-            # Delete lines (reverse order), then append to target
+            # Delete lines (reverse order), then insert at target
             for ln in line_nums:  # already sorted reverse
                 doc._delete_lines(ln, 1)
-            for line in moving:
-                to_sec = doc.find_section(to_section)
-                if not to_sec:
-                    break
-                doc.append(to_sec, line.rstrip("\n"))
+            err = _insert_into_doc(doc, moving, to_section, position)
+            if err:
+                return ToolResult(text=f"[error: {err} in {to_file}]")
             doc.save(from_path)
         else:
-            # Cross-file move
             # Remove from source (reverse order preserves indices)
             for ln in line_nums:  # already sorted reverse
                 del source_lines[ln]
 
-            # Parse target and find section
             to_doc = Document(to_path.read_text())
-            to_sec = to_doc.find_section(to_section)
-            if not to_sec:
-                return ToolResult(text=f"[error: section not found in {to_file}: {to_section}]")
+            err = _insert_into_doc(to_doc, moving, to_section, position)
+            if err:
+                return ToolResult(text=f"[error: {err} in {to_file}]")
 
-            # Append moving lines to target section
-            for line in moving:
-                raw = line.rstrip("\n")
-                to_doc.append(to_sec, raw)
-                to_sec = to_doc.find_section(to_section)
-                if not to_sec:
-                    break
-
-            # Save both files
             from_path.write_text("".join(source_lines))
             to_doc.save(to_path)
 
-        return ToolResult(text=f"Moved {len(moving)} line(s) from {from_file} to {to_file}/{to_section}")
+        dest = f"{to_file}/{to_section}" if to_section else to_file
+        return ToolResult(text=f"Moved {len(moving)} line(s) from {from_file} to {dest}")
     except Exception as e:
         return ToolResult(text=f"[error: {e}]")
 
@@ -930,7 +971,7 @@ TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "md_move_lines",
-            "description": "Move specific lines (by line number) from one markdown file to a section in another file. Use md_show first to see line numbers. Good for migrating to-do items between daily notes.",
+            "description": "Move specific lines (by line number) from one markdown file to another file. Use md_show first to see line numbers. Good for migrating to-do items between daily notes. When to_section is omitted, targets the whole file (works with sectionless files).",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -944,14 +985,19 @@ TOOL_DEFINITIONS = [
                     },
                     "to_section": {
                         "type": "string",
-                        "description": "Target section path (lines appended to end of section)",
+                        "description": "Target section path. Omit to target the whole file (for sectionless files).",
                     },
                     "lines": {
                         "type": "string",
                         "description": "Comma-separated line numbers to move (e.g. '6,7,11')",
                     },
+                    "position": {
+                        "type": "string",
+                        "enum": ["append", "prepend"],
+                        "description": "Where to insert: 'append' (default, end of section/file) or 'prepend' (before first list item in section/file).",
+                    },
                 },
-                "required": ["from_file", "to_file", "to_section", "lines"],
+                "required": ["from_file", "to_file", "lines"],
             },
         },
     },
