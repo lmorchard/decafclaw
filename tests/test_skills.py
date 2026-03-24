@@ -296,8 +296,10 @@ def test_build_catalog_text_formats_correctly(tmp_path):
     from decafclaw.skills import SkillInfo
 
     skills = [
-        SkillInfo(name="alpha", description="Does A.", location=tmp_path / "a"),
-        SkillInfo(name="beta", description="Does B.", location=tmp_path / "b"),
+        SkillInfo(name="alpha", description="Does A.", location=tmp_path / "a",
+                  has_native_tools=True),
+        SkillInfo(name="beta", description="Does B.", location=tmp_path / "b",
+                  has_native_tools=True),
     ]
     text = build_catalog_text(skills)
     assert "## Available Skills" in text
