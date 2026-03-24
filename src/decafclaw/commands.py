@@ -134,3 +134,39 @@ async def execute_command(ctx, skill: SkillInfo, arguments: str) -> tuple[str, s
 
     # Inline mode: return the substituted body as the user message
     return "inline", body
+
+
+async def prepare_command_context(ctx, skill: SkillInfo) -> None:
+    """Set up a context for running an inline command as an agent turn.
+
+    Handles all command-level concerns:
+    - Pre-approved tools from allowed-tools frontmatter
+    - Native tool activation (if the command skill has tools.py)
+    - Required skills pre-activation (without permission checks)
+
+    Called by both Mattermost and web UI before running agent turns
+    for inline commands. This keeps command logic in one place.
+    """
+    from .media import ToolResult as _ToolResult
+    from .tools.skill_tools import activate_skill_internal
+
+    ctx.preapproved_tools = set(skill.allowed_tools)
+
+    # Activate the command skill itself if it has native tools
+    if skill.has_native_tools and skill.name not in ctx.activated_skills:
+        await activate_skill_internal(ctx, skill)
+
+    # Pre-activate required skills (user invoked = implicit approval)
+    if skill.requires_skills:
+        discovered = getattr(ctx.config, "discovered_skills", [])
+        skill_map = {s.name: s for s in discovered}
+        for req_name in skill.requires_skills:
+            if req_name in ctx.activated_skills:
+                continue
+            req_info = skill_map.get(req_name)
+            if req_info:
+                try:
+                    await activate_skill_internal(ctx, req_info)
+                except Exception as e:
+                    log.error(f"Failed to activate required skill "
+                              f"'{req_name}' for command '{skill.name}': {e}")

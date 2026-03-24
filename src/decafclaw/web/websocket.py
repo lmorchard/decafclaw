@@ -164,10 +164,12 @@ async def _handle_send(ws_send, index, username, msg, state):
             return
 
         # Inline mode: substitute body, pass skill info to _run_agent_turn
+        # for pre-activation of native tools and required skills
         from ..commands import substitute_body
 
         text = substitute_body(command_skill.body, cmd_args,
                                skill_dir=str(command_skill.location))
+        state["_command_skill"] = command_skill
     else:
         command_skill = None
 
@@ -355,12 +357,10 @@ async def _run_agent_turn(websocket, app_ctx, config, event_bus,
     ctx.channel_name = "web"
     ctx.thread_id = ""
     ctx.conv_id = conv_id
-    # Apply command skill state (inline mode) — activate on the real ctx
+    # Apply command skill state (inline mode)
     if command_skill:
-        ctx.preapproved_tools = set(command_skill.allowed_tools)
-        if command_skill.has_native_tools and command_skill.name not in ctx.activated_skills:
-            from ..tools.skill_tools import activate_skill_internal
-            await activate_skill_internal(ctx, command_skill)
+        from ..commands import prepare_command_context
+        await prepare_command_context(ctx, command_skill)
     if cancel_event:
         ctx.cancelled = cancel_event
 
