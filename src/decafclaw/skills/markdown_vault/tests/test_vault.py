@@ -1136,7 +1136,7 @@ class TestMdMoveLines:
         dst.write_text("# today\n- [ ] existing\n\n# tonight\n")
         ctx = _FakeCtx(tmp_path)
 
-        result = tool_md_move_lines(ctx, "yesterday.md", "today.md", "today", "2,3")
+        result = tool_md_move_lines(ctx, "yesterday.md", "today.md", "2,3", to_section="today")
         assert "Moved 2" in result.text
 
         # Source should have lost lines 2,3
@@ -1156,7 +1156,7 @@ class TestMdMoveLines:
         p.write_text("# today\n- [ ] task A\n- [ ] task B\n\n# tomorrow\n")
         ctx = _FakeCtx(tmp_path)
 
-        result = tool_md_move_lines(ctx, "notes.md", "notes.md", "tomorrow", "2,3")
+        result = tool_md_move_lines(ctx, "notes.md", "notes.md", "2,3", to_section="tomorrow")
         assert "Moved 2" in result.text
 
         text = p.read_text()
@@ -1170,8 +1170,72 @@ class TestMdMoveLines:
         dst = tmp_path / "other.md"
         dst.write_text("# today\n")
         ctx = _FakeCtx(tmp_path)
-        result = tool_md_move_lines(ctx, "test.md", "other.md", "today", "999")
+        result = tool_md_move_lines(ctx, "test.md", "other.md", "999", to_section="today")
         assert "error" in result.text
+
+    def test_move_to_sectionless_file_append(self, tmp_path):
+        """Move lines to a file with no sections — appends by default."""
+        src = tmp_path / "daily.md"
+        src.write_text("# someday\n- [ ] task A\n- [ ] task B\n")
+        dst = tmp_path / "someday.md"
+        dst.write_text("A flat list of things\n\n- [x] old done\n- [ ] old todo\n")
+        ctx = _FakeCtx(tmp_path)
+
+        result = tool_md_move_lines(ctx, "daily.md", "someday.md", "2,3")
+        assert "Moved 2" in result.text
+
+        dst_text = dst.read_text()
+        assert "task A" in dst_text
+        assert "task B" in dst_text
+        # Appended after existing items
+        assert dst_text.index("old todo") < dst_text.index("task A")
+
+    def test_move_to_sectionless_file_prepend(self, tmp_path):
+        """Move lines to a sectionless file with position=prepend — before first list item."""
+        src = tmp_path / "daily.md"
+        src.write_text("# someday\n- [ ] new task X\n- [ ] new task Y\n")
+        dst = tmp_path / "someday.md"
+        dst.write_text("A flat list of things\n\n- [x] old done\n- [ ] old todo\n")
+        ctx = _FakeCtx(tmp_path)
+
+        result = tool_md_move_lines(ctx, "daily.md", "someday.md", "2,3", position="prepend")
+        assert "Moved 2" in result.text
+
+        dst_text = dst.read_text()
+        assert "new task X" in dst_text
+        assert "new task Y" in dst_text
+        # Prepended before existing list items
+        assert dst_text.index("new task X") < dst_text.index("old done")
+        # Preamble text still comes first
+        assert dst_text.index("A flat list") < dst_text.index("new task X")
+
+    def test_move_to_section_prepend(self, tmp_path):
+        """Move lines with position=prepend into a section — before first item."""
+        src = tmp_path / "src.md"
+        src.write_text("# from\n- [ ] incoming\n")
+        dst = tmp_path / "dst.md"
+        dst.write_text("# target\n- [ ] existing first\n- [ ] existing second\n")
+        ctx = _FakeCtx(tmp_path)
+
+        result = tool_md_move_lines(ctx, "src.md", "dst.md", "2", to_section="target", position="prepend")
+        assert "Moved 1" in result.text
+
+        dst_text = dst.read_text()
+        assert dst_text.index("incoming") < dst_text.index("existing first")
+
+    def test_move_no_section_removes_from_source(self, tmp_path):
+        """Lines are removed from source even when to_section is omitted."""
+        src = tmp_path / "src.md"
+        src.write_text("# stuff\n- [ ] move me\n- [ ] keep me\n")
+        dst = tmp_path / "dst.md"
+        dst.write_text("Just a flat file\n")
+        ctx = _FakeCtx(tmp_path)
+
+        result = tool_md_move_lines(ctx, "src.md", "dst.md", "2")
+        assert "Moved 1" in result.text
+        assert "move me" not in src.read_text()
+        assert "keep me" in src.read_text()
+        assert "move me" in dst.read_text()
 
 
 class TestMdSection:
