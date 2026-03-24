@@ -206,7 +206,7 @@ async def run_schedule_task(config, event_bus, task: ScheduleTask) -> dict:
     ctx.channel_name = task.channel or f"schedule:{task.name}"
     ctx.conv_id = f"schedule-{task.name}-{timestamp}"
     ctx.effort = task.effort
-    ctx.is_child = True  # skip reflection for background tasks
+    ctx.skip_reflection = True
 
     if task.allowed_tools:
         ctx.allowed_tools = set(task.allowed_tools)

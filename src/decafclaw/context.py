@@ -40,6 +40,7 @@ class Context:
         self.preapproved_tools: set = set()  # tools pre-approved by command invocation
         self._current_iteration: int = 1
         self.is_child: bool = False
+        self.skip_reflection: bool = False
         self.effort: str = "default"
 
     def fork(self, **overrides) -> "Context":
