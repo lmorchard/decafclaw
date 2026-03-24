@@ -166,6 +166,26 @@ def test_parse_always_loaded(tmp_path):
     assert info.always_loaded is True
 
 
+def test_parse_schedule_field(tmp_path):
+    """Parse schedule cron expression from skill frontmatter."""
+    skill_dir = tmp_path / "dream"
+    _write_skill(
+        skill_dir,
+        'name: dream\ndescription: "Dream"\nschedule: "0 * * * *"',
+    )
+    info = parse_skill_md(skill_dir / "SKILL.md")
+    assert info is not None
+    assert info.schedule == "0 * * * *"
+
+
+def test_parse_schedule_default(tmp_path):
+    """Schedule defaults to empty string."""
+    skill_dir = tmp_path / "basic"
+    _write_skill(skill_dir, 'name: basic\ndescription: "Basic"')
+    info = parse_skill_md(skill_dir / "SKILL.md")
+    assert info.schedule == ""
+
+
 def test_parse_always_loaded_default(tmp_path):
     """always-loaded defaults to False."""
     skill_dir = tmp_path / "basic"

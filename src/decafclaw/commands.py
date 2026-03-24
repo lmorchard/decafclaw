@@ -72,6 +72,7 @@ async def execute_command(ctx, skill: SkillInfo, arguments: str) -> tuple[str, s
     - mode="fork": result is the child agent's response text
     - mode="inline": result is the substituted body to use as the user message
     """
+    from .media import ToolResult as _ToolResult
     from .tools.skill_tools import activate_skill_internal
 
     # Auto-activate the skill ONLY if it has native tools to register.
@@ -79,7 +80,6 @@ async def execute_command(ctx, skill: SkillInfo, arguments: str) -> tuple[str, s
     # Activating them would add the SKILL.md body as a tool result, duplicating
     # the command body and confusing the model.
     if skill.has_native_tools and skill.name not in ctx.activated_skills:
-        from .media import ToolResult as _ToolResult
         result = await activate_skill_internal(ctx, skill)
         if isinstance(result, _ToolResult):
             return "error", result.text
@@ -112,7 +112,10 @@ async def execute_command(ctx, skill: SkillInfo, arguments: str) -> tuple[str, s
                                   f"'{req_name}' for command '{skill.name}': {e}")
 
         from .tools.delegate import _run_child_turn
-        response = await _run_child_turn(ctx, body, effort=skill.effort or "")
+        # User-invoked commands use the full iteration limit, not the child limit
+        response = await _run_child_turn(
+            ctx, body, effort=skill.effort or "",
+            max_iterations=ctx.config.agent.max_tool_iterations)
         return "fork", response
 
     # Inline mode: return the substituted body as the user message

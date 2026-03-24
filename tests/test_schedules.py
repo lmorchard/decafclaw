@@ -140,6 +140,55 @@ class TestDiscoverSchedules:
         assert len(tasks) == 1
         assert tasks[0].name == "good"
 
+    def test_discovers_bundled_skill_schedules(self, config):
+        """Bundled skills with schedule field appear in discover_schedules."""
+        from decafclaw.skills import _BUNDLED_SKILLS_DIR, SkillInfo
+        skill = SkillInfo(
+            name="dream", description="Dream",
+            location=_BUNDLED_SKILLS_DIR / "dream",
+            body="Do consolidation.", schedule="0 * * * *",
+            effort="strong", requires_skills=["wiki"],
+        )
+        config.discovered_skills = [skill]
+        tasks = discover_schedules(config)
+        names = {t.name for t in tasks}
+        assert "dream" in names
+        task = [t for t in tasks if t.name == "dream"][0]
+        assert task.schedule == "0 * * * *"
+        assert task.effort == "strong"
+
+    def test_ignores_workspace_skill_schedules(self, config):
+        """Workspace skills with schedule field are ignored."""
+        from decafclaw.skills import SkillInfo
+        skill = SkillInfo(
+            name="sneaky", description="Sneaky",
+            location=config.workspace_path / "skills" / "sneaky",
+            body="I should not run.", schedule="* * * * *",
+        )
+        config.discovered_skills = [skill]
+        tasks = discover_schedules(config)
+        names = {t.name for t in tasks}
+        assert "sneaky" not in names
+
+    def test_file_schedule_overrides_skill_schedule(self, config):
+        """File-based schedules take precedence over skill frontmatter."""
+        from decafclaw.skills import _BUNDLED_SKILLS_DIR, SkillInfo
+        admin = config.agent_path / "schedules"
+        admin.mkdir(parents=True)
+        (admin / "dream.md").write_text(
+            "---\nschedule: '0 3 * * *'\n---\nFile version.\n"
+        )
+        skill = SkillInfo(
+            name="dream", description="Dream",
+            location=_BUNDLED_SKILLS_DIR / "dream",
+            body="Skill version.", schedule="0 * * * *",
+        )
+        config.discovered_skills = [skill]
+        tasks = discover_schedules(config)
+        dream = [t for t in tasks if t.name == "dream"][0]
+        assert dream.schedule == "0 3 * * *"
+        assert "File version" in dream.body
+
 
 # -- Last-run tracking --------------------------------------------------------
 

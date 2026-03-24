@@ -123,7 +123,7 @@ async def _handle_send(ws_send, index, username, msg, state):
     from ..commands import format_help, parse_command_trigger
     from ..skills import find_command
 
-    trigger = parse_command_trigger(text, prefix="/")
+    trigger = parse_command_trigger(text, prefix="/") or parse_command_trigger(text, prefix="!")
     log.debug(f"Command trigger check: text={text!r} trigger={trigger}")
     if trigger:
         cmd_name, cmd_args = trigger
