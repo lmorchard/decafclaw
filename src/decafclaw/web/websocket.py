@@ -146,6 +146,7 @@ async def _handle_send(ws_send, index, username, msg, state):
         text = cmd_result.text
         # cmd_ctx has preapproved_tools, activated_skills, extra_tools set
         state["_command_ctx"] = cmd_ctx
+        state["_command_display"] = cmd_result.display_text
     else:
         pass  # not a command, text unchanged
 
@@ -153,8 +154,9 @@ async def _handle_send(ws_send, index, username, msg, state):
     busy_convs = state.setdefault("busy_convs", set())
     pending_queue = state.setdefault("pending_msgs", {})
 
-    # Pop pre-configured command context (set by dispatch_command for inline mode)
+    # Pop pre-configured command state (set by dispatch_command for inline mode)
     command_ctx = state.pop("_command_ctx", None)
+    command_display = state.pop("_command_display", "")
 
     if conv_id in busy_convs:
         mode = state["config"].agent.turn_on_new_message
@@ -166,15 +168,16 @@ async def _handle_send(ws_send, index, username, msg, state):
         else:
             log.info(f"WS: queuing message for busy conversation {conv_id}")
         pending_queue.setdefault(conv_id, []).append(
-            {"text": text, "command_ctx": command_ctx})
+            {"text": text, "command_ctx": command_ctx,
+             "command_display": command_display})
         return
 
     _start_agent_turn(state, index, conv_id, username, text, ws_send,
-                      command_ctx=command_ctx)
+                      command_ctx=command_ctx, archive_text=command_display)
 
 
 def _start_agent_turn(state, index, conv_id, username, text, ws_send,
-                      command_ctx=None):
+                      command_ctx=None, archive_text=""):
     """Launch an agent turn task with queue drain on completion."""
     busy_convs = state.setdefault("busy_convs", set())
     pending_queue = state.setdefault("pending_msgs", {})
@@ -187,7 +190,7 @@ def _start_agent_turn(state, index, conv_id, username, text, ws_send,
         _run_agent_turn(
             state["websocket"], state["app_ctx"], state["config"], state["event_bus"],
             index, conv_id, username, text, cancel_event,
-            command_ctx=command_ctx,
+            command_ctx=command_ctx, archive_text=archive_text,
         )
     )
     state["agent_tasks"].add(task)
@@ -207,10 +210,11 @@ def _start_agent_turn(state, index, conv_id, username, text, ws_send,
         if queued:
             texts = [q["text"] for q in queued]
             last_ctx = queued[-1].get("command_ctx")
+            last_display = queued[-1].get("command_display", "")
             combined = "\n".join(texts)
             log.info(f"WS: draining {len(queued)} queued message(s) for {cid}")
             _start_agent_turn(state, index, cid, username, combined, ws_send,
-                              command_ctx=last_ctx)
+                              command_ctx=last_ctx, archive_text=last_display)
 
     task.add_done_callback(_on_task_done)
 
@@ -314,7 +318,7 @@ async def websocket_chat(websocket: WebSocket, config, event_bus, app_ctx):
 
 async def _run_agent_turn(websocket, app_ctx, config, event_bus,
                           index, conv_id, username, text, cancel_event=None,
-                          command_ctx=None):
+                          command_ctx=None, archive_text=""):
     """Run an agent turn for a web conversation, streaming events to WebSocket."""
     from ..agent import run_agent_turn  # deferred: circular dep
     from ..archive import read_archive
@@ -477,7 +481,7 @@ async def _run_agent_turn(websocket, app_ctx, config, event_bus,
         })
 
         # Run the agent turn
-        result = await run_agent_turn(ctx, text, history)
+        result = await run_agent_turn(ctx, text, history, archive_text=archive_text)
 
         # Notify browser of completion — clear streaming and send final text
         response_text = result.text if hasattr(result, "text") else str(result)

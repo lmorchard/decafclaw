@@ -488,8 +488,10 @@ class MattermostClient:
         )
 
         # Apply command state to the request context (inline mode)
+        archive_text = ""
         if cmd_result.mode == "inline":
             combined_text = cmd_result.text
+            archive_text = cmd_result.display_text
             req_ctx.preapproved_tools = cmd_ctx.preapproved_tools
             req_ctx.activated_skills = cmd_ctx.activated_skills
             req_ctx.extra_tools.update(cmd_ctx.extra_tools)
@@ -497,7 +499,8 @@ class MattermostClient:
 
         conv.busy = True
         try:
-            response = await run_agent_turn(req_ctx, combined_text, history)
+            response = await run_agent_turn(
+                req_ctx, combined_text, history, archive_text=archive_text)
         except BaseException as e:
             log.error(f"Agent turn failed: {e}")
             from .media import ToolResult
