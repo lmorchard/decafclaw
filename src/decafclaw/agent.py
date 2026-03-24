@@ -112,7 +112,7 @@ def _should_reflect(ctx, config, content: str, reflection_retries: int) -> bool:
         return False
     if reflection_retries >= config.reflection.max_retries:
         return False
-    if ctx.is_child:
+    if ctx.skip_reflection:
         return False
     if not content or not content.strip():
         return False
@@ -544,9 +544,9 @@ async def run_agent_turn(ctx, user_message: str, history: list,
                 log.warning("LLM returned empty content with no tool calls (after retry)")
 
             # Reflection check — evaluate before delivering
-            log.debug("Reflection check: enabled=%s, retries=%d/%d, is_child=%s, has_content=%s",
+            log.debug("Reflection check: enabled=%s, retries=%d/%d, skip=%s, has_content=%s",
                        config.reflection.enabled, reflection_retries,
-                       config.reflection.max_retries, ctx.is_child, bool(content))
+                       config.reflection.max_retries, ctx.skip_reflection, bool(content))
             if not _should_reflect(ctx, config, content, reflection_retries):
                 reflection_exhausted = (
                     reflection_retries >= config.reflection.max_retries

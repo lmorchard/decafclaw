@@ -560,11 +560,11 @@ async def test_reflection_disabled_skips(ctx):
 
 @pytest.mark.asyncio
 async def test_reflection_child_skips(ctx):
-    """Child agents skip reflection."""
+    """Child agents skip reflection (via skip_reflection flag)."""
     ctx.config.llm.streaming = False
     ctx.config.system_prompt = "test"
     ctx.config.reflection = ReflectionConfig(enabled=True)
-    ctx.is_child = True
+    ctx.skip_reflection = True
 
     with patch("decafclaw.agent.call_llm", new_callable=AsyncMock) as mock_llm, \
          patch("decafclaw.reflection.evaluate_response", new_callable=AsyncMock) as mock_eval:
