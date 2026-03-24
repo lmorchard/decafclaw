@@ -216,7 +216,8 @@ async def execute_command(ctx, skill: SkillInfo, arguments: str) -> tuple[str, s
                               f"'{req_name}' for command '{skill.name}': {e}")
 
     # Substitute arguments and skill directory into the body
-    body = substitute_body(skill.body, arguments, skill_dir=str(skill.location))
+    body = substitute_body(skill.body, arguments,
+                           skill_dir=str(skill.location.resolve()))
 
     if skill.context == "fork":
         from .tools.delegate import _run_child_turn
