@@ -97,6 +97,7 @@ class CommandResult:
     """
     mode: str
     text: str = ""
+    display_text: str = ""  # short version for archive/display (inline commands)
     skill: SkillInfo | None = None
 
 
@@ -166,7 +167,12 @@ async def dispatch_command(ctx, text: str, prefixes: list[str] | None = None,
         return CommandResult(mode="fork", text=result_text, skill=skill)
 
     # Inline mode: ctx is already set up (preapproved_tools, activated skills)
-    return CommandResult(mode="inline", text=result_text, skill=skill)
+    # display_text is the short version for archive (not the full prompt body)
+    display = f"{matched_prefix}{cmd_name}"
+    if cmd_args:
+        display += f" {cmd_args}"
+    return CommandResult(mode="inline", text=result_text,
+                         display_text=display, skill=skill)
 
 
 async def execute_command(ctx, skill: SkillInfo, arguments: str) -> tuple[str, str]:

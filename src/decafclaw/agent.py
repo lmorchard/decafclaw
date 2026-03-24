@@ -362,12 +362,16 @@ async def _execute_tool_calls(ctx, tool_calls, history, messages, pending_media)
 # -- Main agent turn -----------------------------------------------------------
 
 
-async def run_agent_turn(ctx, user_message: str, history: list) -> "ToolResult":
+async def run_agent_turn(ctx, user_message: str, history: list,
+                         archive_text: str = "") -> "ToolResult":
     """Process a single user message through the agent loop.
 
     Args:
         ctx: Runtime context (carries config, event bus, etc.)
         user_message: The user's message text
+        archive_text: If set, archive this instead of user_message (for inline
+                      commands where the full body is the LLM prompt but the
+                      archive should show the short command)
         history: Conversation history (list of message dicts, mutated in place)
 
     Returns:
@@ -445,7 +449,9 @@ async def run_agent_turn(ctx, user_message: str, history: list) -> "ToolResult":
 
         user_msg = {"role": "user", "content": user_message}
         history.append(user_msg)
-        _archive(ctx, user_msg)
+        # Archive the display version for inline commands (short), full text for normal messages
+        archive_msg = {"role": "user", "content": archive_text} if archive_text else user_msg
+        _archive(ctx, archive_msg)
 
         # Build the messages array: system prompt + history
         # Filter out metadata roles (effort, reflection) that aren't valid LLM messages
