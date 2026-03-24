@@ -222,8 +222,12 @@ def tool_refresh_skills(ctx) -> str | ToolResult:
     config = ctx.config
     config.system_prompt, config.discovered_skills = load_system_prompt(config)
     invalidate_skill_cache(config)
-    skill_names = [s.name for s in config.discovered_skills]
-    return f"Skills refreshed. Available skills: {', '.join(skill_names) or '(none)'}"
+    # Only list skills that appear in the catalog (not command-only or scheduled-only)
+    activatable = [
+        s.name for s in config.discovered_skills
+        if s.has_native_tools or (not s.user_invocable and not s.schedule)
+    ]
+    return f"Skills refreshed. Available skills: {', '.join(activatable) or '(none)'}"
 
 
 SKILL_TOOLS = {
