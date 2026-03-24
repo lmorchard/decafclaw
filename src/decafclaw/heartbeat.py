@@ -158,6 +158,7 @@ async def run_section_turn(
         ctx.channel_name = "heartbeat"
         ctx.thread_id = ""
         ctx.conv_id = f"heartbeat-{timestamp}-{index}"
+        ctx.is_child = True  # skip reflection for background tasks
 
         prompt = build_section_prompt(section)
         result = await run_agent_turn(ctx, prompt, history=[])

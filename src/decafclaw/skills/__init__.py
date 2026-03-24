@@ -30,6 +30,7 @@ class SkillInfo:
     effort: str = ""  # empty = inherit conversation effort
     requires_skills: list[str] = field(default_factory=list)
     always_loaded: bool = False
+    schedule: str = ""  # cron expression, empty = not scheduled
 
 
 def parse_skill_md(path: Path) -> SkillInfo | None:
@@ -88,6 +89,7 @@ def parse_skill_md(path: Path) -> SkillInfo | None:
         effort=meta.get("effort", ""),
         requires_skills=_coerce_str_list(meta.get("required-skills", [])),
         always_loaded=bool(meta.get("always-loaded", False)),
+        schedule=str(meta.get("schedule") or ""),
     )
 
 

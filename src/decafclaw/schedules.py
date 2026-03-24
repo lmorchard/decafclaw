@@ -103,6 +103,37 @@ def discover_schedules(config) -> list[ScheduleTask]:
             if task.name not in tasks_by_name or source == "admin":
                 tasks_by_name[task.name] = task
 
+    # Also discover scheduled skills (bundled + admin only, not workspace)
+    from .skills import _BUNDLED_SKILLS_DIR
+    bundled_dir = _BUNDLED_SKILLS_DIR.resolve()
+    admin_skills_dir = (config.agent_path / "skills").resolve()
+
+    for skill in getattr(config, "discovered_skills", []):
+        if not skill.schedule:
+            continue
+        # Trust boundary: only bundled and admin-level skills
+        skill_path = Path(skill.location).resolve()
+        is_bundled = skill_path.is_relative_to(bundled_dir)
+        is_admin = admin_skills_dir.is_dir() and skill_path.is_relative_to(admin_skills_dir)
+        if not (is_bundled or is_admin):
+            log.debug(f"Ignoring schedule on untrusted skill '{skill.name}'")
+            continue
+        if not croniter.is_valid(skill.schedule):
+            log.warning(f"Invalid cron in skill '{skill.name}': {skill.schedule!r}")
+            continue
+        # File-based schedules take precedence
+        if skill.name in tasks_by_name:
+            continue
+        tasks_by_name[skill.name] = ScheduleTask(
+            name=skill.name,
+            schedule=skill.schedule,
+            body=skill.body,
+            source="bundled" if is_bundled else "admin",
+            path=skill.location / "SKILL.md",
+            effort=skill.effort or "default",
+            required_skills=skill.requires_skills,
+        )
+
     return list(tasks_by_name.values())
 
 
@@ -175,6 +206,7 @@ async def run_schedule_task(config, event_bus, task: ScheduleTask) -> dict:
     ctx.channel_name = task.channel or f"schedule:{task.name}"
     ctx.conv_id = f"schedule-{task.name}-{timestamp}"
     ctx.effort = task.effort
+    ctx.is_child = True  # skip reflection for background tasks
 
     if task.allowed_tools:
         ctx.allowed_tools = set(task.allowed_tools)
