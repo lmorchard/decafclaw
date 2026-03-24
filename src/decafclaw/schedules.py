@@ -233,7 +233,7 @@ async def run_schedule_task(config, event_bus, task: ScheduleTask) -> dict:
         "workspace_list) over shell commands.\n\n"
     )
     from .commands import substitute_body
-    body = substitute_body(task.body, skill_dir=str(task.path.parent))
+    body = substitute_body(task.body, skill_dir=str(task.path.parent.resolve()))
     prompt = preamble + body
 
     try:
