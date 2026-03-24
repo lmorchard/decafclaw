@@ -183,6 +183,13 @@ async def activate_skill_internal(ctx, skill_info) -> str | ToolResult:
                     ctx._skill_shutdown_hooks = {}
                 ctx._skill_shutdown_hooks[name] = shutdown_fn
             log.info(f"Activated native skill '{name}' with tools: {tool_names}")
+
+            # Cache tool names for always-loaded skills so tool_registry
+            # can exempt them from deferral
+            if getattr(skill_info, "always_loaded", False):
+                cached = getattr(ctx.config, "_always_loaded_skill_tools", set())
+                ctx.config._always_loaded_skill_tools = cached | set(tool_names)
+
         except Exception as e:
             log.error(f"Failed to load skill '{name}' tools: {e}")
             return ToolResult(text=f"[error: failed to load skill '{name}': {e}]")

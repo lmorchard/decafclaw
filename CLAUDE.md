@@ -32,6 +32,7 @@ A minimal AI agent for learning how agent frameworks work. Connects to Mattermos
 - `src/decafclaw/skills/tabstack/` — Bundled Tabstack skill (SKILL.md + tools.py)
 - `src/decafclaw/http_server.py` — HTTP server (Starlette/uvicorn): interactive button callbacks, health check
 - `src/decafclaw/skills/health/` — Bundled `!health` command: agent diagnostic status
+- `src/decafclaw/skills/wiki/` — Bundled wiki skill: Obsidian-compatible knowledge base, always-loaded
 - `src/decafclaw/skills/claude_code/` — Claude Code subagent skill (sessions, permissions, output logging)
 - `src/decafclaw/eval/` — Eval harness (YAML tests, failure reflection)
 - `src/decafclaw/mcp_client.py` — MCP client: config, registry, server connections, auto-restart
@@ -122,7 +123,8 @@ Session docs live in `.claude/dev-sessions/YYYY-MM-DD-HHMM-slug/` with `spec.md`
 - **Memory lives in `data/{agent_id}/workspace/memories/`.** Daily markdown files, append-only. Tools read context from ctx, not config.
 - **Agent data at `data/{agent_id}/`.** Admin files (SOUL.md, AGENT.md, USER.md, COMPACTION.md, config.yaml) live at the root — read-only to the agent. Agent read/write files live in `workspace/` subdirectory.
 - **System prompt from files.** SOUL.md + AGENT.md bundled in code, overridable at `data/{agent_id}/`. USER.md is workspace-only.
-- **Skills are lazy-loaded.** Skill catalog (name + description) is in the system prompt. Full content and tools only load when the agent calls `activate_skill`. Per-conversation activation via `ctx.extra_tools`.
+- **Skills are lazy-loaded (unless always-loaded).** Skill catalog (name + description) is in the system prompt. Full content and tools only load when the agent calls `activate_skill`. Per-conversation activation via `ctx.extra_tools`. Exception: skills with `always-loaded: true` in SKILL.md are auto-activated at startup — body in system prompt, tools always available, exempt from deferral.
+- **Wiki is curated knowledge, memory is episodic.** Memory is append-only daily entries ("Les said X on March 13"). Wiki pages (`workspace/wiki/`) are living documents revised over time ("Les's drink preferences: Boulevardier, Old Fashioned"). The agent uses wiki for distilled facts, memory for timestamped observations. Wiki pages are Obsidian-compatible — filenames are page titles, `[[wiki-links]]` work.
 - **User-invokable commands.** Skills with `user-invocable: true` can be triggered by `!name` (Mattermost) or `/name` (web UI). Supports `$ARGUMENTS`/`$0`/`$1` substitution, `context: fork` for isolated execution, and `allowed-tools` for tool pre-approval. `!help`/`/help` lists available commands.
 - **Skill permissions at agent level.** `data/{agent_id}/skill_permissions.json` — outside the workspace, so the agent can't grant itself permission. User confirms activation with yes/no/always.
 - **Bundled skills in `src/decafclaw/skills/`.** Each skill has SKILL.md (required) + tools.py (optional for native Python tools). Skill scan order: workspace > agent-level > bundled.

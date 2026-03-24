@@ -142,6 +142,40 @@ def index_entry_sync(config, file_path: str, entry_text: str, embedding: list[fl
         conn.commit()
 
 
+def delete_entries(config, file_path: str, source_type: str | None = None) -> int:
+    """Delete embeddings entries by file_path (and optionally source_type).
+
+    Returns the number of rows deleted.
+    """
+    with _open_db(config) as conn:
+        if source_type:
+            cursor = conn.execute(
+                "DELETE FROM memory_embeddings WHERE file_path = ? AND source_type = ?",
+                (file_path, source_type),
+            )
+        else:
+            cursor = conn.execute(
+                "DELETE FROM memory_embeddings WHERE file_path = ?",
+                (file_path,),
+            )
+        conn.commit()
+        return cursor.rowcount
+
+
+def delete_by_source_type(config, source_type: str) -> int:
+    """Delete all embeddings entries for a given source type.
+
+    Returns the number of rows deleted.
+    """
+    with _open_db(config) as conn:
+        cursor = conn.execute(
+            "DELETE FROM memory_embeddings WHERE source_type = ?",
+            (source_type,),
+        )
+        conn.commit()
+        return cursor.rowcount
+
+
 def search_similar_sync(config, query_embedding: list[float], top_k: int = 5,
                         source_type: str | None = None) -> list[dict]:
     """Find the top K most similar entries by cosine similarity (sync).
@@ -152,12 +186,12 @@ def search_similar_sync(config, query_embedding: list[float], top_k: int = 5,
         _check_model(config, conn)
         if source_type:
             rows = conn.execute(
-                "SELECT entry_text, file_path, embedding FROM memory_embeddings WHERE source_type = ?",
+                "SELECT entry_text, file_path, embedding, source_type FROM memory_embeddings WHERE source_type = ?",
                 (source_type,),
             ).fetchall()
         else:
             rows = conn.execute(
-                "SELECT entry_text, file_path, embedding FROM memory_embeddings"
+                "SELECT entry_text, file_path, embedding, source_type FROM memory_embeddings"
             ).fetchall()
 
     if not rows:
@@ -168,17 +202,23 @@ def search_similar_sync(config, query_embedding: list[float], top_k: int = 5,
     if query_norm == 0:
         return []
 
+    # Score boost for curated wiki content
+    WIKI_BOOST = 1.2
+
     results = []
-    for entry_text, file_path, embedding_blob in rows:
+    for entry_text, file_path, embedding_blob, row_source_type in rows:
         entry_vec = _deserialize_embedding(embedding_blob)
         entry_norm = np.linalg.norm(entry_vec)
         if entry_norm == 0:
             continue
         similarity = float(np.dot(query_vec, entry_vec) / (query_norm * entry_norm))
+        if row_source_type == "wiki":
+            similarity *= WIKI_BOOST
         results.append({
             "entry_text": entry_text,
             "file_path": file_path,
             "similarity": similarity,
+            "source_type": row_source_type,
         })
 
     results.sort(key=lambda x: x["similarity"], reverse=True)
@@ -276,12 +316,47 @@ async def reindex_conversations(config):
     return count
 
 
+async def reindex_wiki(config):
+    """Rebuild wiki page embeddings."""
+    wiki_dir = config.workspace_path / "wiki"
+    if not wiki_dir.is_dir():
+        log.info("No wiki directory found, nothing to index")
+        return 0
+
+    # Clear existing wiki entries to avoid stale rows
+    deleted = delete_by_source_type(config, "wiki")
+    if deleted:
+        log.info(f"Cleared {deleted} existing wiki embedding(s)")
+
+    md_files = sorted(wiki_dir.rglob("*.md"))
+    count = 0
+    for fi, filepath in enumerate(md_files):
+        text = filepath.read_text().strip()
+        if not text:
+            continue
+        rel_path = str(filepath.relative_to(config.workspace_path))
+        await index_entry(config, rel_path, text, source_type="wiki")
+        count += 1
+        if count % 10 == 0:
+            print(f"  wiki: {count} pages ({fi + 1}/{len(md_files)} files)...", flush=True)
+
+    log.info(f"Reindexed {count} wiki pages from {len(md_files)} files")
+    return count
+
+
 def reindex_cli():
-    """CLI entry point: rebuild the embedding index from all sources."""
+    """CLI entry point: rebuild the embedding index from all sources (or a specific source)."""
+    import argparse
     import asyncio
     import logging
 
     from .config import load_config
+
+    parser = argparse.ArgumentParser(description="Rebuild DecafClaw embedding index")
+    parser.add_argument("--wiki", action="store_true", help="Reindex only wiki pages")
+    parser.add_argument("--memory", action="store_true", help="Reindex only memories")
+    parser.add_argument("--conversations", action="store_true", help="Reindex only conversations")
+    args = parser.parse_args()
 
     logging.basicConfig(
         level=logging.INFO,
@@ -290,21 +365,29 @@ def reindex_cli():
 
     config = load_config()
     db_path = _db_path(config)
+    subset = args.wiki or args.memory or args.conversations
 
-    # Delete existing DB to force full rebuild
-    if db_path.exists():
-        db_path.unlink()
-        print(f"Deleted existing index: {db_path}")
+    # Full rebuild: delete existing DB
+    if not subset:
+        if db_path.exists():
+            db_path.unlink()
+            print(f"Deleted existing index: {db_path}")
 
     print(f"Embedding model: {config.embedding.model}")
 
-    async def _reindex_all():
-        mem_count = await reindex_all(config)
-        conv_count = await reindex_conversations(config)
-        return mem_count, conv_count
+    async def _run():
+        counts = {}
+        if args.wiki or not subset:
+            counts["wiki"] = await reindex_wiki(config)
+        if args.memory or not subset:
+            counts["memory"] = await reindex_all(config)
+        if args.conversations or not subset:
+            counts["conversations"] = await reindex_conversations(config)
+        return counts
 
-    mem_count, conv_count = asyncio.run(_reindex_all())
-    print(f"Done: {mem_count} memory entries + {conv_count} conversation messages → {db_path}")
+    counts = asyncio.run(_run())
+    parts = [f"{v} {k}" for k, v in counts.items()]
+    print(f"Done: {' + '.join(parts)} → {db_path}")
 
 
 def search_cli():
