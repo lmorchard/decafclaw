@@ -33,7 +33,7 @@ A minimal AI agent for learning how agent frameworks work. Connects to Mattermos
 - `src/decafclaw/http_server.py` — HTTP server (Starlette/uvicorn): interactive button callbacks, health check
 - `src/decafclaw/skills/health/` — Bundled `!health` command: agent diagnostic status
 - `src/decafclaw/skills/wiki/` — Bundled wiki skill: Obsidian-compatible knowledge base, always-loaded
-- `src/decafclaw/skills/dream/` — Dream consolidation: periodic memory review → wiki updates (hourly scheduled)
+- `src/decafclaw/skills/dream/` — Dream consolidation: periodic memory review → wiki updates (every 3 hours)
 - `src/decafclaw/skills/garden/` — Wiki gardening: structural maintenance sweep (weekly scheduled)
 - `src/decafclaw/skills/claude_code/` — Claude Code subagent skill (sessions, permissions, output logging)
 - `src/decafclaw/eval/` — Eval harness (YAML tests, failure reflection)

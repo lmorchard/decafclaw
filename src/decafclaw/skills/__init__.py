@@ -31,6 +31,7 @@ class SkillInfo:
     requires_skills: list[str] = field(default_factory=list)
     always_loaded: bool = False
     schedule: str = ""  # cron expression, empty = not scheduled
+    enabled: bool = True  # can be disabled via frontmatter
 
 
 def parse_skill_md(path: Path) -> SkillInfo | None:
@@ -90,6 +91,7 @@ def parse_skill_md(path: Path) -> SkillInfo | None:
         requires_skills=_coerce_str_list(meta.get("required-skills", [])),
         always_loaded=bool(meta.get("always-loaded", False)),
         schedule=str(meta.get("schedule") or ""),
+        enabled=_coerce_bool(meta.get("enabled", True)),
     )
 
 
@@ -100,6 +102,13 @@ def _coerce_str_list(value) -> list[str]:
     if isinstance(value, list):
         return [str(v) for v in value]
     return [str(value)]
+
+
+def _coerce_bool(value) -> bool:
+    """Coerce a YAML value to bool (handles string 'false', etc.)."""
+    if isinstance(value, bool):
+        return value
+    return str(value).lower() not in ("false", "0", "no", "off")
 
 
 def _split_frontmatter(text: str) -> tuple[dict | None, str]:

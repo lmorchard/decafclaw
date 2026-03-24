@@ -185,10 +185,11 @@ def get_schedule_data(config) -> dict:
 
         # Next run: based on last_run or now if never run
         try:
-            base = datetime.fromtimestamp(last_run if last_run > 0 else time.time())
+            base = datetime.fromtimestamp(
+                last_run if last_run > 0 else time.time(), tz=timezone.utc)
             cron = croniter(t.schedule, base)
             next_fire = cron.get_next(datetime)
-            entry["next_run"] = next_fire.astimezone(timezone.utc).isoformat()
+            entry["next_run"] = next_fire.isoformat()
         except Exception:
             entry["next_run"] = None
 

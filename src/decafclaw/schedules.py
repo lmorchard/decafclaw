@@ -4,7 +4,7 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from croniter import croniter
@@ -103,36 +103,42 @@ def discover_schedules(config) -> list[ScheduleTask]:
             if task.name not in tasks_by_name or source == "admin":
                 tasks_by_name[task.name] = task
 
-    # Also discover scheduled skills (bundled + admin only, not workspace)
-    from .skills import _BUNDLED_SKILLS_DIR
+    # Also discover scheduled skills from disk (bundled + admin only, not workspace).
+    # Re-reads SKILL.md files each poll so edits (e.g. enabled: false) take
+    # effect without restart.
+    from .skills import _BUNDLED_SKILLS_DIR, parse_skill_md
     bundled_dir = _BUNDLED_SKILLS_DIR.resolve()
     admin_skills_dir = (config.agent_path / "skills").resolve()
 
-    for skill in getattr(config, "discovered_skills", []):
-        if not skill.schedule:
+    for source_label, base_dir in [
+        ("bundled", bundled_dir),
+        ("admin", admin_skills_dir),
+    ]:
+        if not base_dir.is_dir():
             continue
-        # Trust boundary: only bundled and admin-level skills
-        skill_path = Path(skill.location).resolve()
-        is_bundled = skill_path.is_relative_to(bundled_dir)
-        is_admin = admin_skills_dir.is_dir() and skill_path.is_relative_to(admin_skills_dir)
-        if not (is_bundled or is_admin):
-            log.debug(f"Ignoring schedule on untrusted skill '{skill.name}'")
-            continue
-        if not croniter.is_valid(skill.schedule):
-            log.warning(f"Invalid cron in skill '{skill.name}': {skill.schedule!r}")
-            continue
-        # File-based schedules take precedence
-        if skill.name in tasks_by_name:
-            continue
-        tasks_by_name[skill.name] = ScheduleTask(
-            name=skill.name,
-            schedule=skill.schedule,
-            body=skill.body,
-            source="bundled" if is_bundled else "admin",
-            path=skill.location / "SKILL.md",
-            effort=skill.effort or "default",
-            required_skills=skill.requires_skills,
-        )
+        for skill_dir in sorted(base_dir.iterdir()):
+            skill_md = skill_dir / "SKILL.md"
+            if not skill_md.exists():
+                continue
+            skill = parse_skill_md(skill_md)
+            if skill is None or not skill.schedule:
+                continue
+            if not croniter.is_valid(skill.schedule):
+                log.warning(f"Invalid cron in skill '{skill.name}': {skill.schedule!r}")
+                continue
+            # File-based schedules take precedence
+            if skill.name in tasks_by_name:
+                continue
+            tasks_by_name[skill.name] = ScheduleTask(
+                name=skill.name,
+                schedule=skill.schedule,
+                body=skill.body,
+                source=source_label,
+                path=skill_md,
+                enabled=skill.enabled,
+                effort=skill.effort or "default",
+                required_skills=skill.requires_skills,
+            )
 
     return list(tasks_by_name.values())
 
@@ -183,7 +189,7 @@ def is_due(config, task: ScheduleTask) -> bool:
     if last_run == 0:
         return True  # never run before
 
-    cron = croniter(task.schedule, datetime.fromtimestamp(last_run))
+    cron = croniter(task.schedule, datetime.fromtimestamp(last_run, tz=timezone.utc))
     next_fire = cron.get_next(float)
     return time.time() >= next_fire
 
@@ -210,6 +216,7 @@ async def run_schedule_task(config, event_bus, task: ScheduleTask) -> dict:
 
     if task.allowed_tools:
         ctx.allowed_tools = set(task.allowed_tools)
+        ctx.preapproved_tools = set(task.allowed_tools)
 
     # Pre-activate required skills
     if task.required_skills:

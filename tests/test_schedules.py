@@ -126,8 +126,12 @@ class TestDiscoverSchedules:
         assert len(matching) == 1
         assert matching[0].source == "admin"
 
-    def test_empty_dirs(self, config):
-        assert discover_schedules(config) == []
+    def test_empty_dirs_still_finds_bundled(self, config):
+        """With no file-based schedules, bundled skills with schedules still appear."""
+        tasks = discover_schedules(config)
+        sources = {t.source for t in tasks}
+        # Only bundled skills should appear (no admin/workspace file-based)
+        assert sources <= {"bundled"}
 
     def test_skips_invalid_files(self, config):
         admin = config.agent_path / "schedules"
@@ -137,57 +141,69 @@ class TestDiscoverSchedules:
         )
         (admin / "bad.md").write_text("No frontmatter here.\n")
         tasks = discover_schedules(config)
-        assert len(tasks) == 1
-        assert tasks[0].name == "good"
+        names = {t.name for t in tasks}
+        assert "good" in names
+        assert "bad" not in names
 
     def test_discovers_bundled_skill_schedules(self, config):
         """Bundled skills with schedule field appear in discover_schedules."""
-        from decafclaw.skills import _BUNDLED_SKILLS_DIR, SkillInfo
-        skill = SkillInfo(
-            name="dream", description="Dream",
-            location=_BUNDLED_SKILLS_DIR / "dream",
-            body="Do consolidation.", schedule="0 * * * *",
-            effort="strong", requires_skills=["wiki"],
-        )
-        config.discovered_skills = [skill]
         tasks = discover_schedules(config)
         names = {t.name for t in tasks}
+        # The real bundled dream skill has a schedule in its SKILL.md
         assert "dream" in names
         task = [t for t in tasks if t.name == "dream"][0]
-        assert task.schedule == "0 * * * *"
-        assert task.effort == "strong"
+        assert task.source == "bundled"
 
     def test_ignores_workspace_skill_schedules(self, config):
-        """Workspace skills with schedule field are ignored."""
-        from decafclaw.skills import SkillInfo
-        skill = SkillInfo(
-            name="sneaky", description="Sneaky",
-            location=config.workspace_path / "skills" / "sneaky",
-            body="I should not run.", schedule="* * * * *",
+        """Workspace skills with schedule field are ignored (trust boundary)."""
+        skill_dir = config.workspace_path / "skills" / "sneaky"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text(
+            "---\nname: sneaky\ndescription: Sneaky\n"
+            "schedule: '* * * * *'\n---\nI should not run.\n"
         )
-        config.discovered_skills = [skill]
         tasks = discover_schedules(config)
         names = {t.name for t in tasks}
         assert "sneaky" not in names
 
     def test_file_schedule_overrides_skill_schedule(self, config):
         """File-based schedules take precedence over skill frontmatter."""
-        from decafclaw.skills import _BUNDLED_SKILLS_DIR, SkillInfo
         admin = config.agent_path / "schedules"
         admin.mkdir(parents=True)
         (admin / "dream.md").write_text(
             "---\nschedule: '0 3 * * *'\n---\nFile version.\n"
         )
-        skill = SkillInfo(
-            name="dream", description="Dream",
-            location=_BUNDLED_SKILLS_DIR / "dream",
-            body="Skill version.", schedule="0 * * * *",
-        )
-        config.discovered_skills = [skill]
         tasks = discover_schedules(config)
         dream = [t for t in tasks if t.name == "dream"][0]
         assert dream.schedule == "0 3 * * *"
         assert "File version" in dream.body
+
+    def test_admin_skill_schedules_discovered(self, config):
+        """Admin-level skills with schedule are discovered from disk."""
+        skill_dir = config.agent_path / "skills" / "admin-job"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text(
+            "---\nname: admin-job\ndescription: Admin scheduled job\n"
+            "schedule: '0 6 * * *'\neffort: fast\n---\nDo admin things.\n"
+        )
+        tasks = discover_schedules(config)
+        names = {t.name for t in tasks}
+        assert "admin-job" in names
+        task = [t for t in tasks if t.name == "admin-job"][0]
+        assert task.source == "admin"
+        assert task.effort == "fast"
+
+    def test_disabled_skill_schedule(self, config):
+        """Skills with enabled: false are discovered but marked disabled."""
+        skill_dir = config.agent_path / "skills" / "paused-job"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text(
+            "---\nname: paused-job\ndescription: Paused\n"
+            "schedule: '0 * * * *'\nenabled: false\n---\nPaused.\n"
+        )
+        tasks = discover_schedules(config)
+        task = [t for t in tasks if t.name == "paused-job"][0]
+        assert task.enabled is False
 
 
 # -- Last-run tracking --------------------------------------------------------
@@ -233,6 +249,51 @@ class TestIsDue:
         # Ran 2 minutes ago, every-minute cron → due
         write_last_run(config, "test", time.time() - 120)
         assert is_due(config, task) is True
+
+    def test_not_due_in_non_utc_timezone(self, config):
+        """is_due must work correctly regardless of local timezone.
+
+        Regression: croniter.get_next(float) uses calendar.timegm which
+        treats naive datetimes as UTC. If the base datetime comes from
+        datetime.fromtimestamp() (naive local time), the epoch conversion
+        is wrong by the timezone offset, causing tasks to appear due
+        immediately after running on non-UTC servers.
+        """
+        import os
+        from unittest.mock import patch as _patch
+
+        task = ScheduleTask(
+            name="tz-test", schedule="0 */3 * * *", body="test",
+            source="admin", path=Path("/fake"),
+        )
+
+        # Simulate: task just ran at 21:49 UTC on a US/Eastern server
+        # The every-3-hours cron (0,3,6,9,12,15,18,21) means next fire
+        # after 21:49 is 0:00 next day — so at 21:50 it should NOT be due.
+        from datetime import datetime, timezone
+        ran_at = datetime(2026, 3, 24, 21, 49, 25, tzinfo=timezone.utc)
+        ran_epoch = ran_at.timestamp()
+        check_at = datetime(2026, 3, 24, 21, 50, 0, tzinfo=timezone.utc)
+        check_epoch = check_at.timestamp()
+
+        write_last_run(config, "tz-test", ran_epoch)
+
+        old_tz = os.environ.get("TZ")
+        try:
+            os.environ["TZ"] = "US/Eastern"
+            time.tzset()
+            with _patch("decafclaw.schedules.time") as mock_time:
+                mock_time.time.return_value = check_epoch
+                assert is_due(config, task) is False, (
+                    "Task should not be due 1 minute after running — "
+                    "timezone offset caused get_next(float) to return wrong epoch"
+                )
+        finally:
+            if old_tz is None:
+                os.environ.pop("TZ", None)
+            else:
+                os.environ["TZ"] = old_tz
+            time.tzset()
 
 
 # -- Task execution -----------------------------------------------------------
