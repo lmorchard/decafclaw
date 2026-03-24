@@ -18,11 +18,13 @@ DEFAULT_CHILD_SYSTEM_PROMPT = (
 )
 
 
-async def _run_child_turn(parent_ctx, task, effort: str = ""):
+async def _run_child_turn(parent_ctx, task, effort: str = "",
+                          max_iterations: int = 0):
     """Run a single child agent turn, inheriting parent's tools and skills.
 
     Args:
         effort: Override effort level for the child. Empty = inherit parent's.
+        max_iterations: Override max tool iterations. 0 = use child_max_tool_iterations.
 
     Returns the child's text response, or an error string on failure.
     """
@@ -44,7 +46,8 @@ async def _run_child_turn(parent_ctx, task, effort: str = ""):
     parent_conv = getattr(parent_ctx, "conv_id", "") or getattr(parent_ctx, "channel_id", "")
     child_config = replace(
         config,
-        agent=replace(config.agent, max_tool_iterations=config.agent.child_max_tool_iterations),
+        agent=replace(config.agent, max_tool_iterations=(
+            max_iterations or config.agent.child_max_tool_iterations)),
         system_prompt="\n".join(prompt_parts),
     )
     # Children don't discover or activate skills — they inherit parent's

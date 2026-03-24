@@ -33,6 +33,8 @@ A minimal AI agent for learning how agent frameworks work. Connects to Mattermos
 - `src/decafclaw/http_server.py` — HTTP server (Starlette/uvicorn): interactive button callbacks, health check
 - `src/decafclaw/skills/health/` — Bundled `!health` command: agent diagnostic status
 - `src/decafclaw/skills/wiki/` — Bundled wiki skill: Obsidian-compatible knowledge base, always-loaded
+- `src/decafclaw/skills/dream/` — Dream consolidation: periodic memory review → wiki updates (hourly scheduled)
+- `src/decafclaw/skills/garden/` — Wiki gardening: structural maintenance sweep (weekly scheduled)
 - `src/decafclaw/skills/claude_code/` — Claude Code subagent skill (sessions, permissions, output logging)
 - `src/decafclaw/eval/` — Eval harness (YAML tests, failure reflection)
 - `src/decafclaw/mcp_client.py` — MCP client: config, registry, server connections, auto-restart
@@ -134,6 +136,7 @@ Session docs live in `.claude/dev-sessions/YYYY-MM-DD-HHMM-slug/` with `spec.md`
 - **MCP servers are globally available.** Configured in `data/{agent_id}/mcp_servers.json` (Claude Code compatible format). Connected eagerly on startup, tools namespaced as `mcp__<server>__<tool>`. Module-level global registry in `mcp_client.py`.
 - **MCP auto-restart.** Crashed stdio servers auto-reconnect on next tool call with exponential backoff (max 3 retries). Use `mcp_status(action="restart")` for manual control.
 - **Scheduled tasks via cron-style files.** Markdown files with YAML frontmatter in `data/{agent_id}/schedules/` (admin) and `workspace/schedules/` (agent-writable). Frontmatter fields: `schedule` (5-field cron), `channel` (Mattermost channel **ID** — `#name` resolution not yet implemented), `enabled`, `effort`, `allowed-tools`, `required-skills`. Independent timer loop (60s poll), per-task last-run tracking in `workspace/.schedule_last_run/`. Uses `croniter` for cron evaluation. Mattermost channel reporting not yet wired — results currently go to agent log.
+- **Skill schedule frontmatter.** Skills can declare `schedule: "cron expression"` in SKILL.md to run as scheduled tasks. Only bundled and admin-level skills are honored (workspace skills cannot self-schedule). File-based schedules override skill schedules on name collision. Skills with both `schedule` and `user-invocable: true` serve as both scheduled tasks and on-demand commands.
 - **Self-reflection is fail-open.** The reflection judge evaluates responses before delivery, but errors (network, parse, etc.) always pass through the response as-is. Retries consume `max_tool_iterations` budget. Skipped for child agents, cancelled turns, and empty responses.
 - **LOG_LEVEL env var.** Set `LOG_LEVEL=DEBUG` for verbose logging (default: INFO).
 

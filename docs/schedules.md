@@ -64,6 +64,28 @@ Schedule files are discovered from two directories:
 - Admin tasks take precedence when names collide
 - Both directories are scanned on every poll tick (changes take effect within 60 seconds)
 
+### Skill schedule frontmatter
+
+Skills can also declare schedules in their SKILL.md frontmatter:
+
+```yaml
+---
+name: dream
+schedule: "0 * * * *"
+effort: strong
+required-skills:
+  - wiki
+user-invocable: true
+context: fork
+---
+```
+
+This makes a skill both a user command (`!dream`) and a scheduled task — no separate schedule file needed.
+
+**Trust boundary:** only bundled skills (`src/decafclaw/skills/`) and admin-level skills (`data/{agent_id}/skills/`) can declare schedules. Workspace skills are ignored.
+
+File-based schedules take precedence over skill schedules when names collide.
+
 ## How it works
 
 1. A timer loop polls every 60 seconds (independent of heartbeat)
