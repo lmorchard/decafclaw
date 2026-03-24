@@ -1,7 +1,7 @@
 ---
 name: dream
 description: Review recent memories and conversations, distill insights into the wiki
-schedule: "0 * * * *"
+schedule: "0 */3 * * *"
 effort: strong
 required-skills:
   - wiki
