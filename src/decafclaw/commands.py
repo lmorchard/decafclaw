@@ -26,8 +26,14 @@ def parse_command_trigger(text: str, prefix: str = "!") -> tuple[str, str] | Non
     return command_name, arguments
 
 
-def substitute_arguments(body: str, arguments: str) -> str:
-    """Substitute $ARGUMENTS and $0/$1/... placeholders in command body."""
+def substitute_body(body: str, arguments: str = "", skill_dir: str = "") -> str:
+    """Substitute placeholders in a skill/schedule body.
+
+    Supported placeholders:
+    - $ARGUMENTS — full argument string
+    - $0, $1, ... — positional arguments
+    - $SKILL_DIR — path to the skill's directory
+    """
     # Always replace placeholders, even with empty arguments
     positional = arguments.split() if arguments else []
     has_placeholders = "$ARGUMENTS" in body or re.search(r"\$\d+", body)
@@ -44,11 +50,19 @@ def substitute_arguments(body: str, arguments: str) -> str:
     # Replace $ARGUMENTS with the full string
     result = result.replace("$ARGUMENTS", arguments)
 
+    # Replace $SKILL_DIR with the skill directory path
+    if skill_dir:
+        result = result.replace("$SKILL_DIR", skill_dir)
+
     # If no placeholders existed at all and there are arguments, append them
     if not has_placeholders and arguments:
         result = result.rstrip() + f"\n\nARGUMENTS: {arguments}"
 
     return result
+
+
+# Backward compat alias
+substitute_arguments = substitute_body
 
 
 def format_help(discovered_skills: list[SkillInfo], prefix: str = "!") -> str:
@@ -84,8 +98,8 @@ async def execute_command(ctx, skill: SkillInfo, arguments: str) -> tuple[str, s
         if isinstance(result, _ToolResult):
             return "error", result.text
 
-    # Substitute arguments into the body
-    body = substitute_arguments(skill.body, arguments)
+    # Substitute arguments and skill directory into the body
+    body = substitute_body(skill.body, arguments, skill_dir=str(skill.location))
 
     # Set pre-approved tools
     ctx.preapproved_tools = set(skill.allowed_tools)

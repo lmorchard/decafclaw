@@ -164,9 +164,10 @@ async def _handle_send(ws_send, index, username, msg, state):
             return
 
         # Inline mode: substitute body, pass skill info to _run_agent_turn
-        from ..commands import substitute_arguments
+        from ..commands import substitute_body
 
-        text = substitute_arguments(command_skill.body, cmd_args)
+        text = substitute_body(command_skill.body, cmd_args,
+                               skill_dir=str(command_skill.location))
     else:
         command_skill = None
 
