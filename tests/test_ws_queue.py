@@ -57,7 +57,7 @@ class TestQueueMode:
         queued = ws_state["pending_msgs"].get(conv_id, [])
         assert len(queued) == 1
         assert queued[0]["text"] == "queued msg"
-        assert queued[0]["command_skill"] is None
+        assert queued[0]["command_ctx"] is None
 
     @pytest.mark.asyncio
     async def test_does_not_cancel_in_queue_mode(self, ws_state, conv_id, index):
@@ -115,7 +115,7 @@ class TestQueueDrain:
 
             # Queue a message
             ws_state["pending_msgs"][conv_id] = [
-                {"text": "second msg", "command_skill": None}
+                {"text": "second msg", "command_ctx": None}
             ]
 
             # Let the done callback fire
@@ -142,7 +142,7 @@ class TestQueueDrain:
 
             # Queue a message and mark closing
             ws_state["pending_msgs"][conv_id] = [
-                {"text": "should not run", "command_skill": None}
+                {"text": "should not run", "command_ctx": None}
             ]
             ws_state["closing"] = True
 
