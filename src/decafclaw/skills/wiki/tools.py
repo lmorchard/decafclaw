@@ -64,6 +64,8 @@ async def tool_wiki_write(ctx, page: str, content: str) -> str | ToolResult:
     if path is None:
         return ToolResult(
             text=f"[error: invalid page name '{page}' — must be within wiki directory]")
+    if not content or not content.strip():
+        return ToolResult(text=f"[error: refusing to write empty wiki page '{page}']")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content)
 
