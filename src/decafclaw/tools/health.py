@@ -160,7 +160,7 @@ def get_schedule_data(config) -> dict:
     from ..schedules import discover_schedules, read_last_run
 
     tasks = discover_schedules(config)
-    admin = sum(1 for t in tasks if t.source == "admin")
+    admin = sum(1 for t in tasks if t.source in ("admin", "bundled"))
     workspace = sum(1 for t in tasks if t.source == "workspace")
     enabled = sum(1 for t in tasks if t.enabled)
 

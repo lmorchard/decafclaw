@@ -28,6 +28,8 @@ The wiki is Obsidian-compatible — the user may also edit pages directly.
 
 **Update over duplicate.** If new information contradicts existing wiki content, edit the existing page. The wiki should reflect current understanding, not a history of changes.
 
+**tl;dr summaries.** Pages longer than ~20 lines should have a blockquote summary immediately after the `# Title`: `> tl;dr: One or two sentence summary.` Keep these concise. Update them when the page content changes significantly. Short pages don't need them.
+
 ## Boundaries
 
 - Wiki tools only modify files in `workspace/wiki/`. Never use wiki tools to edit memory files.
