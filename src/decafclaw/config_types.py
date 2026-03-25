@@ -63,6 +63,7 @@ class EmbeddingConfig:
     url: str = ""       # empty = resolve from llm via resolved()
     api_key: str = field(default="", metadata={"secret": True})
     search_strategy: str = "substring"
+    dimensions: int = 768
 
     def resolved(self, config) -> EmbeddingConfig:
         """Return copy with empty fields filled from config.llm."""
