@@ -124,6 +124,15 @@ class ReflectionConfig:
 
 
 
+@dataclass
+class MemoryContextConfig:
+    enabled: bool = True
+    similarity_threshold: float = 0.3
+    max_results: int = 5
+    max_tokens: int = 500
+    show_in_ui: bool = True
+
+
 def is_secret(dc_class: type, field_name: str) -> bool:
     """Check if a dataclass field is marked as secret."""
     for f in dc_fields(dc_class):

@@ -159,6 +159,7 @@ async def run_section_turn(
         ctx.thread_id = ""
         ctx.conv_id = f"heartbeat-{timestamp}-{index}"
         ctx.skip_reflection = True
+        ctx.skip_memory_context = True
 
         prompt = build_section_prompt(section)
         result = await run_agent_turn(ctx, prompt, history=[])

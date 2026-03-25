@@ -213,6 +213,7 @@ async def run_schedule_task(config, event_bus, task: ScheduleTask) -> dict:
     ctx.conv_id = f"schedule-{task.name}-{timestamp}"
     ctx.effort = task.effort
     ctx.skip_reflection = True
+    ctx.skip_memory_context = True
 
     if task.allowed_tools:
         ctx.allowed_tools = set(task.allowed_tools)
