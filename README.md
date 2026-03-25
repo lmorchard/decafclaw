@@ -1,6 +1,6 @@
 # DecafClaw
 
-A minimal AI agent in Python. Built to understand how agent frameworks work by stripping away all the complexity.
+An AI agent testbed in Python. Built to explore agent development patterns — tool calling, memory, reflection, skills, multi-model routing, and more.
 
 ## What it does
 
