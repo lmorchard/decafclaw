@@ -11,7 +11,6 @@ dependencies = [
     "claude-code-sdk>=0.0.25",
     "httpx>=0.28.1",
     "mcp>=1.0.0",
-    "numpy>=2.4.3",
     "python-dotenv>=1.2.2",
     "pyyaml>=6.0",
     "starlette>=0.52.1",
@@ -19,6 +18,7 @@ dependencies = [
     "uvicorn>=0.41.0",
     "croniter>=6.0.0",
     "websockets>=16.0",
+    "sqlite-vec>=0.1.7",
 ]
 
 [project.optional-dependencies]
