@@ -84,6 +84,7 @@ async def _run_child_turn(parent_ctx, task, effort: str = "",
     child_ctx.on_stream_chunk = None
     child_ctx.is_child = True
     child_ctx.skip_reflection = True
+    child_ctx.skip_memory_context = True
 
     # Set effort level: explicit override > parent's level > default
     child_ctx.effort = effort if effort else getattr(parent_ctx, "effort", "default")

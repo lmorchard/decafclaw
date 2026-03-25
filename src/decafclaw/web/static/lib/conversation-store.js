@@ -13,6 +13,7 @@
  * @property {string} [timestamp]
  * @property {string} [tool]
  * @property {string} [tool_call_id]
+ * @property {string} [display_short_text]
  * @property {object[]} [tool_calls]
  * @property {boolean} [_merged]
  * @property {{prompt_tokens: number, completion_tokens: number, total_tokens: number}|null} [usage]
@@ -319,11 +320,30 @@ export class ConversationStore extends EventTarget {
 
       case 'tool_status':
         this.#toolStatus = `${msg.tool}: ${msg.message}`;
-        // Update the last tool_call message if it exists
         if (msg.conv_id === this.#currentConvId) {
-          const last = this.#currentMessages[this.#currentMessages.length - 1];
-          if (last?.role === 'tool_call') {
-            last.content = `${msg.tool}: ${msg.message}`;
+          // memory_context arrives without a preceding tool_start — insert before user message
+          if (msg.tool === 'memory_context') {
+            const mcMsg = {
+              role: 'memory_context',
+              content: msg.message,
+              timestamp: new Date().toISOString(),
+            };
+            // Insert before the last user message (memory context precedes the user's turn)
+            let lastUserIdx = -1;
+            for (let i = this.#currentMessages.length - 1; i >= 0; i--) {
+              if (this.#currentMessages[i].role === 'user') { lastUserIdx = i; break; }
+            }
+            if (lastUserIdx >= 0) {
+              this.#currentMessages.splice(lastUserIdx, 0, mcMsg);
+            } else {
+              this.#currentMessages.push(mcMsg);
+            }
+          } else {
+            // Update the last tool_call message if it exists
+            const last = this.#currentMessages[this.#currentMessages.length - 1];
+            if (last?.role === 'tool_call') {
+              last.content = `${msg.tool}: ${msg.message}`;
+            }
           }
         }
         break;
@@ -338,6 +358,7 @@ export class ConversationStore extends EventTarget {
               role: 'tool',
               content: msg.result_text || '',
               tool: msg.tool,
+              display_short_text: msg.display_short_text || '',
               timestamp: new Date().toISOString(),
             };
           }
@@ -420,9 +441,11 @@ export class ConversationStore extends EventTarget {
           const tcId = tc.id;
           // Look ahead for matching tool result
           let resultContent = '';
+          let resultShortText = '';
           for (let j = i + 1; j < messages.length; j++) {
             if (messages[j].role === 'tool' && messages[j].tool_call_id === tcId) {
               resultContent = messages[j].content || '';
+              resultShortText = messages[j].display_short_text || '';
               messages[j]._merged = true; // mark as consumed
               break;
             }
@@ -431,6 +454,7 @@ export class ConversationStore extends EventTarget {
             role: 'tool',
             tool: toolName,
             content: resultContent,
+            display_short_text: resultShortText,
             timestamp: msg.timestamp,
           });
         }

@@ -54,7 +54,7 @@ async def tool_wiki_read(ctx, page: str) -> str | ToolResult:
     path = _resolve_page(ctx.config, page)
     if path is None:
         return ToolResult(text=f"[error: wiki page '{page}' not found]")
-    return path.read_text()
+    return ToolResult(text=path.read_text(), display_short_text=page)
 
 
 async def tool_wiki_write(ctx, page: str, content: str) -> str | ToolResult:
@@ -81,12 +81,13 @@ async def tool_wiki_write(ctx, page: str, content: str) -> str | ToolResult:
     return f"Wiki page '{page}' saved."
 
 
-async def tool_wiki_search(ctx, query: str) -> str:
+async def tool_wiki_search(ctx, query: str) -> str | ToolResult:
     """Search wiki pages by title and content (substring match)."""
     log.info(f"[tool:wiki_search] query={query}")
     wiki = _wiki_dir(ctx.config)
     if not wiki.is_dir():
-        return "No wiki pages found."
+        return ToolResult(text="No wiki pages found.",
+                          display_short_text=f"'{query}' — no pages")
 
     query_lower = query.lower()
     results = []
@@ -108,9 +109,12 @@ async def tool_wiki_search(ctx, query: str) -> str:
             results.append(f"- **{name}**" + (f": {excerpt}" if excerpt else ""))
 
     if not results:
-        return f"No wiki pages matching '{query}'."
+        return ToolResult(text=f"No wiki pages matching '{query}'.",
+                          display_short_text=f"'{query}' — no matches")
 
-    return f"Found {len(results)} page(s):\n\n" + "\n".join(results)
+    text = f"Found {len(results)} page(s):\n\n" + "\n".join(results)
+    return ToolResult(text=text,
+                      display_short_text=f"'{query}' — {len(results)} match(es)")
 
 
 async def tool_wiki_list(ctx, pattern: str = "") -> str:

@@ -10,6 +10,7 @@ export class ChatMessage extends LitElement {
     content: { type: String },
     streaming: { type: Boolean },
     tool: { type: String },
+    display_short_text: { type: String, attribute: false },
     toolCalls: { type: Array, attribute: false },
     toolCallId: { type: String, attribute: false },
     usage: { type: Object, attribute: false },
@@ -24,6 +25,7 @@ export class ChatMessage extends LitElement {
     this.content = '';
     this.streaming = false;
     this.tool = '';
+    this.display_short_text = '';
     /** @type {Array|null} */
     this.toolCalls = null;
     this.toolCallId = '';
@@ -41,12 +43,16 @@ export class ChatMessage extends LitElement {
       return html`<tool-message .tool=${this.tool || 'reflection'} .content=${this.content} .icon=${'\u{1f441}'}></tool-message>`;
     }
 
+    if (this.role === 'memory_context') {
+      return html`<tool-message .tool=${'memory_context'} .content=${this.content} .icon=${'\u{1f9e0}'}></tool-message>`;
+    }
+
     if (this.role === 'tool_call') {
       return html`<tool-call-message variant="tool_call" .content=${this.content}></tool-call-message>`;
     }
 
     if (this.role === 'tool') {
-      return html`<tool-message .tool=${this.tool} .content=${this.content} .timestamp=${this.timestamp}></tool-message>`;
+      return html`<tool-message .tool=${this.tool} .content=${this.content} .display_short_text=${this.display_short_text || ''} .timestamp=${this.timestamp}></tool-message>`;
     }
 
     if (this.role === 'assistant' && this.toolCalls?.length) {

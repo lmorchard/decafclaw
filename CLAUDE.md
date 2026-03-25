@@ -23,6 +23,7 @@ A minimal AI agent for learning how agent frameworks work. Connects to Mattermos
 - `src/decafclaw/context.py` — Forkable runtime context
 - `src/decafclaw/events.py` — In-process pub/sub event bus
 - `src/decafclaw/memory.py` — Memory file read/write operations
+- `src/decafclaw/memory_context.py` — Proactive memory retrieval: auto-inject relevant context per turn
 - `src/decafclaw/archive.py` — Conversation archive (JSONL per conversation)
 - `src/decafclaw/compaction.py` — History compaction via summarization
 - `src/decafclaw/embeddings.py` — Semantic search index (SQLite + cosine similarity)
@@ -138,6 +139,7 @@ Session docs live in `.claude/dev-sessions/YYYY-MM-DD-HHMM-slug/` with `spec.md`
 - **Scheduled tasks via cron-style files.** Markdown files with YAML frontmatter in `data/{agent_id}/schedules/` (admin) and `workspace/schedules/` (agent-writable). Frontmatter fields: `schedule` (5-field cron), `channel` (Mattermost channel **ID** — `#name` resolution not yet implemented), `enabled`, `effort`, `allowed-tools`, `required-skills`. Independent timer loop (60s poll), per-task last-run tracking in `workspace/.schedule_last_run/`. Uses `croniter` for cron evaluation. Mattermost channel reporting not yet wired — results currently go to agent log.
 - **Skill schedule frontmatter.** Skills can declare `schedule: "cron expression"` in SKILL.md to run as scheduled tasks. Only bundled and admin-level skills are honored (workspace skills cannot self-schedule). File-based schedules override skill schedules on name collision. Skills with both `schedule` and `user-invocable: true` serve as both scheduled tasks and on-demand commands.
 - **Self-reflection is fail-open.** The reflection judge evaluates responses before delivery, but errors (network, parse, etc.) always pass through the response as-is. Retries consume `max_tool_iterations` budget. Skipped for child agents, cancelled turns, and empty responses.
+- **Proactive memory context is fail-open.** Before each interactive turn, relevant memories/wiki are auto-injected as context. Errors silently return empty results. Skipped for heartbeat, scheduled tasks, and child agents (`skip_memory_context` flag on ctx). Requires an embedding model to be configured — silently disabled otherwise.
 - **LOG_LEVEL env var.** Set `LOG_LEVEL=DEBUG` for verbose logging (default: INFO).
 
 ## Keeping docs current
