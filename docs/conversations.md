@@ -36,14 +36,31 @@ When the conversation grows too large (exceeding the token budget), the agent au
 
 ### Configuration
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `COMPACTION_MAX_TOKENS` | `100000` | Trigger compaction when prompt exceeds this |
-| `COMPACTION_PRESERVE_TURNS` | `5` | Keep this many recent turns intact |
-| `COMPACTION_LLM_URL` | Falls back to `LLM_URL` | LLM endpoint for compaction |
-| `COMPACTION_LLM_MODEL` | Falls back to `LLM_MODEL` | Model for compaction |
-| `COMPACTION_LLM_API_KEY` | Falls back to `LLM_API_KEY` | API key for compaction |
-| `COMPACTION_LLM_MAX_TOKENS` | `0` (use `COMPACTION_MAX_TOKENS`) | Compaction LLM's context budget |
+Compaction is configured via the `compaction` section in `config.json` or environment variables:
+
+```json
+{
+  "compaction": {
+    "max_tokens": 100000,
+    "preserve_turns": 5,
+    "model": "",
+    "url": "",
+    "api_key": "",
+    "llm_max_tokens": 0
+  }
+}
+```
+
+| config.json key | Env variable | Default | Description |
+|----------------|----------|---------|-------------|
+| `max_tokens` | `COMPACTION_MAX_TOKENS` | `100000` | Trigger compaction when prompt exceeds this |
+| `preserve_turns` | `COMPACTION_PRESERVE_TURNS` | `5` | Keep this many recent turns intact |
+| `url` | `COMPACTION_LLM_URL` | Falls back to `LLM_URL` | LLM endpoint for compaction |
+| `model` | `COMPACTION_LLM_MODEL` | Falls back to `LLM_MODEL` | Model for compaction |
+| `api_key` | `COMPACTION_LLM_API_KEY` | Falls back to `LLM_API_KEY` | API key for compaction |
+| `llm_max_tokens` | `COMPACTION_LLM_MAX_TOKENS` | `0` (use `max_tokens`) | Compaction LLM's context budget |
+
+Empty `url`, `model`, and `api_key` fields fall back to the main LLM config. Env vars take precedence over config.json.
 
 ### Custom compaction prompt
 
