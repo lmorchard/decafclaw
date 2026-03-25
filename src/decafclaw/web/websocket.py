@@ -42,7 +42,17 @@ async def _handle_create_conv(ws_send, index, username, msg, state):
     title = msg.get("title", "")
     conv = index.create(username, title=title)
 
-    await ws_send({"type": "conv_created", **conv.to_dict()})
+    # Record initial effort level if specified
+    effort = msg.get("effort", "")
+    if effort:
+        from ..config import EFFORT_LEVELS
+        if effort in EFFORT_LEVELS and effort != "default":
+            from ..archive import append_message
+            append_message(state["config"], conv.conv_id,
+                           {"role": "effort", "content": effort})
+
+    await ws_send({"type": "conv_created", **conv.to_dict(),
+                   **({"effort": effort} if effort else {})})
 
 
 async def _handle_select_conv(ws_send, index, username, msg, state):
@@ -64,15 +74,33 @@ async def _handle_load_history(ws_send, index, username, msg, state):
         return
     limit = msg.get("limit", 50)
     before = msg.get("before", "")
+    # Metadata roles that should not be rendered as chat messages
+    _HIDDEN_ROLES = {"effort"}
+
     messages, has_more = index.load_history(conv_id, limit=limit, before=before)
+    messages = [m for m in messages if m.get("role") not in _HIDDEN_ROLES]
+
     estimated_tokens = None
+    current_effort = None
+    resolved_model = None
     if not before:
         from ..archive import read_archive as _read_archive
         from ..archive import read_compacted_history
         from ..compaction import estimate_tokens, flatten_messages
+        from ..config import resolve_effort
         working = read_compacted_history(config, conv_id) or _read_archive(config, conv_id)
         if working:
             estimated_tokens = estimate_tokens(flatten_messages(working))
+
+        # Extract current effort level (scan reverse for last effort message)
+        all_msgs = _read_archive(config, conv_id)
+        current_effort = "default"
+        for m in reversed(all_msgs):
+            if m.get("role") == "effort":
+                current_effort = m.get("content", "default")
+                break
+        resolved_model = resolve_effort(config, current_effort).model
+
     response = {
         "type": "conv_history", "conv_id": conv_id,
         "messages": messages, "has_more": has_more,
@@ -80,6 +108,9 @@ async def _handle_load_history(ws_send, index, username, msg, state):
     }
     if estimated_tokens is not None:
         response["estimated_tokens"] = estimated_tokens
+    if current_effort is not None:
+        response["current_effort"] = current_effort
+        response["effort_model"] = resolved_model
     await ws_send(response)
 
 
@@ -227,6 +258,30 @@ async def _handle_cancel_turn(ws_send, index, username, msg, state):
         event.set()
 
 
+async def _handle_set_effort(ws_send, index, username, msg, state):
+    conv_id = msg.get("conv_id", "")
+    level = msg.get("level", "")
+    conv = index.get(conv_id)
+    if not conv or conv.user_id != username:
+        await ws_send({"type": "error", "message": "Conversation not found"})
+        return
+
+    from ..config import EFFORT_LEVELS, resolve_effort
+    if level not in EFFORT_LEVELS:
+        await ws_send({"type": "error", "message": f"Unknown effort level: {level}"})
+        return
+
+    # Record effort change in archive
+    from ..archive import append_message
+    append_message(state["config"], conv_id, {"role": "effort", "content": level})
+
+    resolved_model = resolve_effort(state["config"], level).model
+    await ws_send({
+        "type": "effort_changed", "conv_id": conv_id,
+        "level": level, "model": resolved_model,
+    })
+
+
 async def _handle_confirm_response(ws_send, index, username, msg, state):
     tool_call_id = msg.get("tool_call_id", "")
     await state["event_bus"].publish({
@@ -251,6 +306,7 @@ _HANDLERS = {
     "archive_conv": _handle_archive_conv,
     "send": _handle_send,
     "cancel_turn": _handle_cancel_turn,
+    "set_effort": _handle_set_effort,
     "confirm_response": _handle_confirm_response,
 }
 

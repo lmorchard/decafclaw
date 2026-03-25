@@ -10,6 +10,8 @@ export class ConversationSidebar extends LitElement {
     _showArchived: { type: Boolean, state: true },
     _contextUsage: { type: Number, state: true },
     _contextLimit: { type: Number, state: true },
+    _currentEffort: { type: String, state: true },
+    _effortModel: { type: String, state: true },
     _collapsed: { type: Boolean, state: true },
     _mobileOpen: { type: Boolean, state: true },
   };
@@ -26,6 +28,8 @@ export class ConversationSidebar extends LitElement {
     this._showArchived = false;
     this._contextUsage = 0;
     this._contextLimit = 0;
+    this._currentEffort = 'default';
+    this._effortModel = '';
     this._collapsed = localStorage.getItem('sidebar-collapsed') === 'true';
     this._mobileOpen = false;
   }
@@ -46,6 +50,8 @@ export class ConversationSidebar extends LitElement {
       this._activeId = this.store?.currentConvId;
       this._contextUsage = this.store?.contextUsage || 0;
       this._contextLimit = this.store?.contextLimit || 0;
+      this._currentEffort = this.store?.currentEffort || 'default';
+      this._effortModel = this.store?.effortModel || '';
     };
     this.store?.addEventListener('change', this._onStoreChange);
   }
@@ -99,6 +105,17 @@ export class ConversationSidebar extends LitElement {
   /** @param {string} convId */
   #handleUnarchive(convId) {
     this.store?.unarchiveConversation(convId);
+  }
+
+  /** @param {string} level */
+  #handleEffortClick(level) {
+    if (this._activeId) {
+      // Active conversation — send to server
+      this.store?.setEffort(level);
+    } else {
+      // No conversation yet — update local state for next creation
+      this._currentEffort = level;
+    }
   }
 
   #toggleArchived() {
@@ -172,6 +189,17 @@ export class ConversationSidebar extends LitElement {
             `)
           }
         ` : nothing}
+      </div>
+      <div class="effort-picker" title="${this._effortModel ? `Model: ${this._effortModel}` : ''}">
+        <div class="effort-picker-label">Effort</div>
+        <div class="effort-picker-buttons">
+          ${['fast', 'default', 'strong'].map(level => html`
+            <button
+              class="effort-btn ${this._currentEffort === level ? 'active' : ''}"
+              @click=${() => this.#handleEffortClick(level)}
+            >${level}</button>
+          `)}
+        </div>
       </div>
       ${this._contextLimit > 0 ? html`
         ${(() => {

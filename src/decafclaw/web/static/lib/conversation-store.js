@@ -63,6 +63,10 @@ export class ConversationStore extends EventTarget {
   #contextUsage = 0;
   /** @type {number} effective context limit (compaction threshold) */
   #contextLimit = 0;
+  /** @type {string} current effort level for the active conversation */
+  #currentEffort = 'default';
+  /** @type {string} resolved model name for the current effort level */
+  #effortModel = '';
   /** @type {string|null} message queued while creating a conversation */
   #pendingMessage = null;
 
@@ -98,6 +102,10 @@ export class ConversationStore extends EventTarget {
   get contextUsage() { return this.#contextUsage; }
   /** @returns {number} */
   get contextLimit() { return this.#contextLimit; }
+  /** @returns {string} */
+  get currentEffort() { return this.#currentEffort; }
+  /** @returns {string} */
+  get effortModel() { return this.#effortModel; }
 
   // -- Actions (called by components) -----------------------------------------
 
@@ -105,9 +113,11 @@ export class ConversationStore extends EventTarget {
     this.#ws.send({ type: 'list_convs' });
   }
 
-  /** @param {string} [title] */
-  createConversation(title = '') {
-    this.#ws.send({ type: 'create_conv', title });
+  /** @param {string} [title] @param {string} [effort] */
+  createConversation(title = '', effort = '') {
+    const msg = { type: 'create_conv', title };
+    if (effort) msg.effort = effort;
+    this.#ws.send(msg);
   }
 
   /** @param {string} convId */
@@ -120,6 +130,8 @@ export class ConversationStore extends EventTarget {
     this.#toolStatus = null;
     this.#contextUsage = 0;
     this.#contextLimit = 0;
+    this.#currentEffort = 'default';
+    this.#effortModel = '';
     this.#ws.send({ type: 'select_conv', conv_id: convId });
     this.#ws.send({ type: 'load_history', conv_id: convId, limit: 50 });
     this.#emitChange();
@@ -157,7 +169,8 @@ export class ConversationStore extends EventTarget {
     if (!this.#currentConvId) {
       // No conversation selected — create one and queue the message
       this.#pendingMessage = text;
-      this.createConversation();
+      const effort = this.#currentEffort !== 'default' ? this.#currentEffort : '';
+      this.createConversation('', effort);
       return;
     }
     // Optimistically add user message
@@ -167,6 +180,12 @@ export class ConversationStore extends EventTarget {
     this.#toolStatus = null;
     this.#ws.send({ type: 'send', conv_id: this.#currentConvId, text });
     this.#emitChange();
+  }
+
+  /** @param {string} level */
+  setEffort(level) {
+    if (!this.#currentConvId) return;
+    this.#ws.send({ type: 'set_effort', conv_id: this.#currentConvId, level });
   }
 
   cancelTurn() {
@@ -217,6 +236,7 @@ export class ConversationStore extends EventTarget {
 
       case 'conv_created':
         this.#conversations.unshift(msg);
+        if (msg.effort) this.#currentEffort = msg.effort;
         this.selectConversation(msg.conv_id);
         // Flush any message queued while the conversation was being created
         if (this.#pendingMessage) {
@@ -263,6 +283,8 @@ export class ConversationStore extends EventTarget {
           this.#hasMore = msg.has_more;
           if (msg.context_limit) this.#contextLimit = msg.context_limit;
           if (msg.estimated_tokens) this.#contextUsage = msg.estimated_tokens;
+          if (msg.current_effort) this.#currentEffort = msg.current_effort;
+          if (msg.effort_model) this.#effortModel = msg.effort_model;
         }
         break;
 
@@ -391,6 +413,13 @@ export class ConversationStore extends EventTarget {
             content: detail,
             timestamp: new Date().toISOString(),
           });
+        }
+        break;
+
+      case 'effort_changed':
+        if (msg.conv_id === this.#currentConvId) {
+          this.#currentEffort = msg.level || 'default';
+          this.#effortModel = msg.model || '';
         }
         break;
 
