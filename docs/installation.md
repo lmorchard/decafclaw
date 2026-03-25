@@ -62,7 +62,10 @@ Edit `.env` with your settings:
 | `EMBEDDING_MODEL` | `text-embedding-004` | Embedding model name |
 | `EMBEDDING_URL` | Falls back to `LLM_URL` | Embedding API endpoint |
 | `EMBEDDING_API_KEY` | Falls back to `LLM_API_KEY` | Embedding API key |
+| `EMBEDDING_DIMENSIONS` | `768` | Vector dimensions (must match model) |
 | `MEMORY_SEARCH_STRATEGY` | `substring` | `substring` or `semantic` |
+
+Semantic search uses [sqlite-vec](https://github.com/asg017/sqlite-vec), which requires a Python/SQLite build with extension loading enabled. Homebrew Python and python.org installers work fine. If you see errors from `enable_load_extension` or `sqlite_vec.load()`, either use a compatible Python build or leave `MEMORY_SEARCH_STRATEGY` as `substring` (the default).
 
 ### Other settings
 

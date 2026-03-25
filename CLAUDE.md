@@ -26,7 +26,7 @@ A minimal AI agent for learning how agent frameworks work. Connects to Mattermos
 - `src/decafclaw/memory_context.py` — Proactive memory retrieval: auto-inject relevant context per turn
 - `src/decafclaw/archive.py` — Conversation archive (JSONL per conversation)
 - `src/decafclaw/compaction.py` — History compaction via summarization
-- `src/decafclaw/embeddings.py` — Semantic search index (SQLite + cosine similarity)
+- `src/decafclaw/embeddings.py` — Semantic search index (sqlite-vec cosine similarity)
 - `src/decafclaw/todos.py` — Per-conversation to-do lists (markdown checkboxes)
 - `src/decafclaw/prompts/` — System prompt assembly (SOUL.md + AGENT.md + skill catalog + loader)
 - `src/decafclaw/skills/` — Skills system: discovery, parsing, catalog, bundled skills

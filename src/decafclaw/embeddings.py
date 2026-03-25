@@ -1,21 +1,17 @@
-"""Embedding index — SQLite storage and cosine similarity search."""
+"""Embedding index — SQLite storage and sqlite-vec cosine similarity search."""
 
 import hashlib
-import json
 import logging
 import sqlite3
-import struct
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 
 import httpx
-import numpy as np
+import sqlite_vec
 
 log = logging.getLogger(__name__)
 
-# Embedding dimension for text-embedding-004
-EMBEDDING_DIM = 768
 
 
 def _db_path(config) -> Path:
@@ -23,18 +19,29 @@ def _db_path(config) -> Path:
     return config.workspace_path / "embeddings.db"
 
 
+def _has_embedding_column(conn) -> bool:
+    """Check if memory_embeddings has the legacy embedding BLOB column."""
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(memory_embeddings)").fetchall()]
+    return "embedding" in cols
+
+
 def _get_db(config) -> sqlite3.Connection:
     """Get or create the embeddings database."""
     path = _db_path(config)
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(path))
+    conn.enable_load_extension(True)
+    sqlite_vec.load(conn)
+    conn.enable_load_extension(False)
+    # Fresh DBs get clean schema (no embedding BLOB column).
+    # Old DBs already have the table — IF NOT EXISTS skips this,
+    # preserving their embedding column for migration.
     conn.execute("""
         CREATE TABLE IF NOT EXISTS memory_embeddings (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             file_path TEXT NOT NULL,
             entry_hash TEXT NOT NULL UNIQUE,
             entry_text TEXT NOT NULL,
-            embedding BLOB NOT NULL,
             source_type TEXT NOT NULL DEFAULT 'memory',
             created_at TEXT NOT NULL
         )
@@ -45,11 +52,34 @@ def _get_db(config) -> sqlite3.Connection:
             value TEXT NOT NULL
         )
     """)
-    # Migration: add source_type column to existing DBs
+    # Migration: add source_type column to very old DBs
     try:
         conn.execute("ALTER TABLE memory_embeddings ADD COLUMN source_type TEXT NOT NULL DEFAULT 'memory'")
     except sqlite3.OperationalError:
         pass  # column already exists
+    dim = config.embedding.dimensions
+    conn.execute(f"""
+        CREATE VIRTUAL TABLE IF NOT EXISTS embeddings_vec USING vec0(
+            embedding float[{dim}] distance_metric=cosine
+        )
+    """)
+    # Migration: copy legacy embedding BLOBs into vec0 table.
+    # Uses NOT EXISTS so it's idempotent — safe to retry after partial migration.
+    if _has_embedding_column(conn):
+        legacy_count = conn.execute("""
+            SELECT COUNT(*) FROM memory_embeddings m
+            WHERE length(m.embedding) > 0
+              AND NOT EXISTS (SELECT 1 FROM embeddings_vec v WHERE v.rowid = m.id)
+        """).fetchone()[0]
+        if legacy_count > 0:
+            log.info(f"Migrating {legacy_count} embeddings to vec0 table...")
+            conn.execute("""
+                INSERT INTO embeddings_vec(rowid, embedding)
+                SELECT m.id, m.embedding FROM memory_embeddings m
+                WHERE length(m.embedding) > 0
+                  AND NOT EXISTS (SELECT 1 FROM embeddings_vec v WHERE v.rowid = m.id)
+            """)
+            log.info("Vec0 migration complete")
     conn.commit()
     return conn
 
@@ -63,16 +93,6 @@ def _open_db(config):
     finally:
         conn.close()
 
-
-def _serialize_embedding(vec: list[float]) -> bytes:
-    """Serialize a float list to bytes for SQLite BLOB storage."""
-    return struct.pack(f'{len(vec)}f', *vec)
-
-
-def _deserialize_embedding(blob: bytes) -> np.ndarray:
-    """Deserialize bytes back to a numpy array."""
-    n = len(blob) // 4  # 4 bytes per float32
-    return np.array(struct.unpack(f'{n}f', blob), dtype=np.float32)
 
 
 def _entry_hash(text: str) -> str:
@@ -105,19 +125,28 @@ async def embed_text(config, text: str) -> list[float] | None:
 
 
 def _check_model(config, conn):
-    """Verify the DB was built with the same embedding model. Warns on mismatch."""
+    """Verify the DB was built with the same embedding model/dimensions. Warns on mismatch."""
     row = conn.execute("SELECT value FROM metadata WHERE key='embedding_model'").fetchone()
     if row and row[0] != config.embedding.model:
         log.warning(f"Embedding model mismatch: DB was built with '{row[0]}', "
                     f"config uses '{config.embedding.model}'. "
                     f"Run 'decafclaw-reindex' to rebuild.")
+    row = conn.execute("SELECT value FROM metadata WHERE key='embedding_dimensions'").fetchone()
+    if row and int(row[0]) != config.embedding.dimensions:
+        log.warning(f"Embedding dimensions mismatch: DB was built with {row[0]}, "
+                    f"config uses {config.embedding.dimensions}. "
+                    f"Run 'decafclaw-reindex' to rebuild.")
 
 
 def _set_model(config, conn):
-    """Record which embedding model was used."""
+    """Record which embedding model and dimensions were used."""
     conn.execute(
         "INSERT OR REPLACE INTO metadata (key, value) VALUES ('embedding_model', ?)",
         (config.embedding.model,),
+    )
+    conn.execute(
+        "INSERT OR REPLACE INTO metadata (key, value) VALUES ('embedding_dimensions', ?)",
+        (str(config.embedding.dimensions),),
     )
 
 
@@ -126,19 +155,29 @@ def index_entry_sync(config, file_path: str, entry_text: str, embedding: list[fl
     """Store an entry and its embedding in the index (sync)."""
     with _open_db(config) as conn:
         _set_model(config, conn)
-        conn.execute(
-            """INSERT OR IGNORE INTO memory_embeddings
-               (file_path, entry_hash, entry_text, embedding, source_type, created_at)
-               VALUES (?, ?, ?, ?, ?, ?)""",
-            (
-                file_path,
-                _entry_hash(entry_text),
-                entry_text,
-                _serialize_embedding(embedding),
-                source_type,
-                datetime.now().isoformat(),
-            ),
-        )
+        entry_hash = _entry_hash(entry_text)
+        now = datetime.now().isoformat()
+        if _has_embedding_column(conn):
+            # Legacy schema: pass empty blob for NOT NULL embedding column
+            cursor = conn.execute(
+                """INSERT OR IGNORE INTO memory_embeddings
+                   (file_path, entry_hash, entry_text, embedding, source_type, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (file_path, entry_hash, entry_text, b'', source_type, now),
+            )
+        else:
+            # Clean schema: no embedding column
+            cursor = conn.execute(
+                """INSERT OR IGNORE INTO memory_embeddings
+                   (file_path, entry_hash, entry_text, source_type, created_at)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (file_path, entry_hash, entry_text, source_type, now),
+            )
+        if cursor.lastrowid:
+            conn.execute(
+                "INSERT INTO embeddings_vec(rowid, embedding) VALUES (?, ?)",
+                (cursor.lastrowid, sqlite_vec.serialize_float32(embedding)),
+            )
         conn.commit()
 
 
@@ -149,17 +188,26 @@ def delete_entries(config, file_path: str, source_type: str | None = None) -> in
     """
     with _open_db(config) as conn:
         if source_type:
-            cursor = conn.execute(
+            ids = [r[0] for r in conn.execute(
+                "SELECT id FROM memory_embeddings WHERE file_path = ? AND source_type = ?",
+                (file_path, source_type),
+            ).fetchall()]
+            conn.execute(
                 "DELETE FROM memory_embeddings WHERE file_path = ? AND source_type = ?",
                 (file_path, source_type),
             )
         else:
-            cursor = conn.execute(
+            ids = [r[0] for r in conn.execute(
+                "SELECT id FROM memory_embeddings WHERE file_path = ?",
+                (file_path,),
+            ).fetchall()]
+            conn.execute(
                 "DELETE FROM memory_embeddings WHERE file_path = ?",
                 (file_path,),
             )
+        conn.executemany("DELETE FROM embeddings_vec WHERE rowid = ?", [(i,) for i in ids])
         conn.commit()
-        return cursor.rowcount
+        return len(ids)
 
 
 def delete_by_source_type(config, source_type: str) -> int:
@@ -168,12 +216,17 @@ def delete_by_source_type(config, source_type: str) -> int:
     Returns the number of rows deleted.
     """
     with _open_db(config) as conn:
-        cursor = conn.execute(
+        ids = [r[0] for r in conn.execute(
+            "SELECT id FROM memory_embeddings WHERE source_type = ?",
+            (source_type,),
+        ).fetchall()]
+        conn.execute(
             "DELETE FROM memory_embeddings WHERE source_type = ?",
             (source_type,),
         )
+        conn.executemany("DELETE FROM embeddings_vec WHERE rowid = ?", [(i,) for i in ids])
         conn.commit()
-        return cursor.rowcount
+        return len(ids)
 
 
 def search_similar_sync(config, query_embedding: list[float], top_k: int = 5,
@@ -181,37 +234,39 @@ def search_similar_sync(config, query_embedding: list[float], top_k: int = 5,
     """Find the top K most similar entries by cosine similarity (sync).
 
     If source_type is specified, only search that type. Otherwise search all.
+    Uses sqlite-vec's vec0 virtual table for SIMD-accelerated cosine distance.
     """
     with _open_db(config) as conn:
         _check_model(config, conn)
-        if source_type:
-            rows = conn.execute(
-                "SELECT entry_text, file_path, embedding, source_type FROM memory_embeddings WHERE source_type = ?",
-                (source_type,),
-            ).fetchall()
-        else:
-            rows = conn.execute(
-                "SELECT entry_text, file_path, embedding, source_type FROM memory_embeddings"
-            ).fetchall()
+
+        query_vec = sqlite_vec.serialize_float32(query_embedding)
+
+        # Over-fetch to allow for source_type filtering and wiki boost reranking
+        fetch_k = top_k * 3
+
+        rows = conn.execute("""
+            SELECT m.entry_text, m.file_path, m.source_type, v.distance
+            FROM (
+                SELECT rowid, distance
+                FROM embeddings_vec
+                WHERE embedding MATCH ?
+                ORDER BY distance
+                LIMIT ?
+            ) v
+            JOIN memory_embeddings m ON m.id = v.rowid
+        """, (query_vec, fetch_k)).fetchall()
 
     if not rows:
-        return []
-
-    query_vec = np.array(query_embedding, dtype=np.float32)
-    query_norm = np.linalg.norm(query_vec)
-    if query_norm == 0:
         return []
 
     # Score boost for curated wiki content
     WIKI_BOOST = 1.2
 
     results = []
-    for entry_text, file_path, embedding_blob, row_source_type in rows:
-        entry_vec = _deserialize_embedding(embedding_blob)
-        entry_norm = np.linalg.norm(entry_vec)
-        if entry_norm == 0:
+    for entry_text, file_path, row_source_type, distance in rows:
+        if source_type and row_source_type != source_type:
             continue
-        similarity = float(np.dot(query_vec, entry_vec) / (query_norm * entry_norm))
+        similarity = 1.0 - distance
         if row_source_type == "wiki":
             similarity *= WIKI_BOOST
         results.append({
