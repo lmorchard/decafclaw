@@ -24,6 +24,8 @@ the response meaningfully misses what the user asked for.
 
 ---
 
+{retrieved_context}
+
 User: {user_message}
 
 {tool_results_summary}

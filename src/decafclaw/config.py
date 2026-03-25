@@ -24,6 +24,7 @@ from .config_types import (
     HttpConfig,
     LlmConfig,
     MattermostConfig,
+    MemoryContextConfig,
     ReflectionConfig,
 )
 
@@ -140,6 +141,7 @@ class Config:
     skills: dict[str, dict[str, Any]] = field(default_factory=dict)
     models: dict[str, dict[str, str]] = field(default_factory=dict)
     reflection: ReflectionConfig = field(default_factory=ReflectionConfig)
+    memory_context: MemoryContextConfig = field(default_factory=MemoryContextConfig)
 
     # Custom environment variables from config.json "env" section
     env: dict[str, str] = field(default_factory=dict)
@@ -308,6 +310,9 @@ def load_config() -> Config:
     reflection = load_sub_config(
         ReflectionConfig, file_data.get("reflection", {}), "REFLECTION")
 
+    memory_context = load_sub_config(
+        MemoryContextConfig, file_data.get("memory_context", {}), "MEMORY_CONTEXT")
+
     # Custom env vars from config file
     env_vars: dict[str, str] = {
         str(k): str(v) for k, v in file_data.get("env", {}).items()
@@ -327,6 +332,7 @@ def load_config() -> Config:
         skills=skills,
         models=models,
         reflection=reflection,
+        memory_context=memory_context,
         env=env_vars,
         system_prompt=system_prompt,
     )

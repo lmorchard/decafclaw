@@ -6,6 +6,7 @@ export class ToolMessage extends LitElement {
     tool: { type: String },
     content: { type: String },
     icon: { type: String },
+    display_short_text: { type: String },
     _expanded: { type: Boolean, state: true },
   };
 
@@ -16,6 +17,7 @@ export class ToolMessage extends LitElement {
     this.tool = '';
     this.content = '';
     this.icon = '\u{1f527}';
+    this.display_short_text = '';
     this._expanded = false;
   }
 
@@ -37,7 +39,7 @@ export class ToolMessage extends LitElement {
           <span class="tool-icon">${this.icon}</span>
           <span class="tool-name">${this.tool}</span>
           ${hasContent ? html`
-            <span class="tool-preview">${this.#truncate(this.content)}</span>
+            <span class="tool-preview">${this.display_short_text || this.#truncate(this.content)}</span>
             <span class="expand-toggle">${this._expanded ? '\u25b2' : '\u25bc'}</span>
           ` : nothing}
         </div>

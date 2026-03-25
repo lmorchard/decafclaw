@@ -149,6 +149,7 @@ async def evaluate_response(
     user_message: str,
     agent_response: str,
     tool_summary: str,
+    retrieved_context: str = "",
 ) -> ReflectionResult:
     """Run the judge LLM to evaluate the agent's response.
 
@@ -156,10 +157,18 @@ async def evaluate_response(
     """
     try:
         prompt_template = load_reflection_prompt(config)
+        if retrieved_context:
+            context_block = (
+                "Retrieved context (automatically injected before the user's message):\n"
+                + retrieved_context
+            )
+        else:
+            context_block = ""
         prompt = prompt_template.format(
             user_message=user_message,
             tool_results_summary=tool_summary or "(no tools used)",
             agent_response=agent_response,
+            retrieved_context=context_block,
         )
 
         rc = config.reflection.resolved(config)

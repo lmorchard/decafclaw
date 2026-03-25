@@ -674,6 +674,7 @@ class MattermostClient:
                     event.get("display_text"),
                     event.get("media", []),
                     tool_call_id=event.get("tool_call_id", ""),
+                    display_short_text=event.get("display_short_text"),
                 )
             elif event_type == "tool_confirm_request" and conv_display:
                 await conv_display.on_confirm_request(
@@ -705,6 +706,21 @@ class MattermostClient:
                         text = (f"\U0001f50d Reflection retry {retry_num}: "
                                 f"{critique}")
                         await conv_display.on_tool_status("reflection", text)
+            elif event_type == "memory_context" and conv_display:
+                results = event.get("results") or []
+                if results:
+                    source_counts: dict[str, int] = {}
+                    for item in results:
+                        st = item.get("source_type", "unknown")
+                        source_counts[st] = source_counts.get(st, 0) + 1
+                    parts = []
+                    for st in ("wiki", "memory", "conversation"):
+                        if source_counts.get(st):
+                            parts.append(f"{source_counts[st]} {st}")
+                    summary = ", ".join(parts) or "context"
+                    await conv_display.on_tool_status(
+                        "memory_context",
+                        f"\U0001f9e0 Retrieved {summary}")
             # Compaction stays as-is (separate message)
             elif event_type == "compaction_start" and channel_id:
                 import time as _time
@@ -996,7 +1012,11 @@ class ConversationDisplay:
         self._current_type = "tool"
 
     async def on_tool_status(self, tool_name, message, tool_call_id=""):
-        """Tool status update — edit the tool call's progress message."""
+        """Tool status update — edit the tool call's progress message.
+
+        If no existing tool post is found (e.g., memory_context or reflection
+        events that arrive without a preceding tool_start), create a standalone post.
+        """
         post_id = self._tool_posts.get(tool_call_id)
         if not post_id and self._tool_posts:
             # Fallback: use most recent post if tool_call_id not found
@@ -1009,12 +1029,22 @@ class ConversationDisplay:
                 )
             except Exception:
                 pass
+        else:
+            # Standalone status (no preceding tool_start) — create a new post
+            try:
+                await self.client.send(
+                    self._channel_id, message, root_id=self._root_id,
+                )
+            except Exception:
+                pass
 
     async def on_tool_end(self, tool_name, result_text, display_text, media,
-                          tool_call_id=""):
+                          tool_call_id="", display_short_text=None):
         """Tool finished — edit tool call message with result, handle media."""
         if display_text:
             msg = display_text
+        elif display_short_text:
+            msg = f"\U0001f527 {tool_name}: {display_short_text} \u2714\ufe0f"
         else:
             msg = f"\U0001f527 {tool_name} \u2714\ufe0f"
 

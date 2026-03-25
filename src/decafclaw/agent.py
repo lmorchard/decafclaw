@@ -273,6 +273,7 @@ async def _execute_single_tool(call_ctx, tc, semaphore):
             await call_ctx.publish("tool_end", tool=fn_name,
                                    result_text=result.text,
                                    display_text=getattr(result, "display_text", None),
+                                   display_short_text=getattr(result, "display_short_text", None),
                                    media=result.media or [],
                                    tool_call_id=tool_call_id)
 
@@ -281,6 +282,8 @@ async def _execute_single_tool(call_ctx, tc, semaphore):
         "tool_call_id": tool_call_id,
         "content": result.text,
     }
+    if result.display_short_text:
+        tool_msg["display_short_text"] = result.display_short_text
     _archive(call_ctx, tool_msg)
     return tool_msg, result.media or []
 
@@ -448,6 +451,22 @@ async def run_agent_turn(ctx, user_message: str, history: list,
             log.warning(f"User message truncated: {original_len:,} -> {max_len:,} chars")
 
         user_msg = {"role": "user", "content": user_message}
+
+        # Proactive memory context — inject before user message
+        retrieved_context_text = ""
+        if not ctx.skip_memory_context:
+            from .memory_context import format_memory_context, retrieve_memory_context
+            mc_results = await retrieve_memory_context(config, user_message)
+            if mc_results:
+                retrieved_context_text = format_memory_context(mc_results)
+                mc_msg = {"role": "memory_context", "content": retrieved_context_text}
+                history.append(mc_msg)
+                _archive(ctx, mc_msg)
+                if config.memory_context.show_in_ui:
+                    await ctx.publish("memory_context",
+                                      text=retrieved_context_text,
+                                      results=mc_results)
+
         history.append(user_msg)
         # Archive the display version for inline commands (short), full text for normal messages
         archive_msg = {"role": "user", "content": archive_text} if archive_text else user_msg
@@ -455,8 +474,16 @@ async def run_agent_turn(ctx, user_message: str, history: list,
 
         # Build the messages array: system prompt + history
         # Filter out metadata roles (effort, reflection) that aren't valid LLM messages
+        # Remap non-standard roles that should appear in LLM context
+        ROLE_REMAP = {"memory_context": "user"}
         from .archive import LLM_ROLES
-        llm_history = [m for m in history if m.get("role") in LLM_ROLES]
+        llm_history = []
+        for m in history:
+            role = m.get("role")
+            if role in LLM_ROLES:
+                llm_history.append(m)
+            elif role in ROLE_REMAP:
+                llm_history.append({**m, "role": ROLE_REMAP[role]})
         messages = [{"role": "system", "content": config.system_prompt}] + llm_history
         ctx.messages = messages
 
@@ -559,7 +586,8 @@ async def run_agent_turn(ctx, user_message: str, history: list,
 
                 tool_summary = build_tool_summary(history, turn_start_index)
                 result = await evaluate_response(
-                    config, user_message, content, tool_summary)
+                    config, user_message, content, tool_summary,
+                    retrieved_context=retrieved_context_text)
 
                 last_reflection = result
                 log.info("Reflection result: passed=%s, critique=%s, error=%s",
