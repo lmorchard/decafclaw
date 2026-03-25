@@ -2,7 +2,7 @@
 
 ## What is this?
 
-A minimal AI agent for learning how agent frameworks work. Connects to Mattermost as a chat bot, with an interactive terminal mode as fallback. Uses an OpenAI-compatible LLM endpoint (via LiteLLM) and Tabstack for web tools.
+An AI agent testbed for exploring agent development patterns. Connects to Mattermost as a chat bot, with a web UI and interactive terminal mode as alternatives. Uses an OpenAI-compatible LLM endpoint (via LiteLLM) and Tabstack for web tools.
 
 ## Architecture
 
@@ -100,7 +100,7 @@ Session docs live in `.claude/dev-sessions/YYYY-MM-DD-HHMM-slug/` with `spec.md`
 
 ## Conventions
 
-- **Keep it simple.** This is a learning project. Prefer clarity over abstraction.
+- **Prefer clarity over abstraction.** This is an exploration project — we try to keep things simple but aren't afraid to explore complexity when a feature calls for it. Readability matters more than cleverness.
 - **Files on disk, human-readable.** All agent state uses files you can read, edit, and inspect: markdown for memories and to-dos, JSONL for conversation archives, SQLite for embeddings. No opaque databases. Crash-recoverable by design.
 - **Tool error returns use `ToolResult`.** Error returns should use `ToolResult(text="[error: ...]")` rather than bare strings, for consistency across all tool modules.
 - **Use `asyncio.Lock` for concurrency guards.** Prefer `asyncio.Lock` over boolean flags — locks auto-release on exception, preventing stuck state.
