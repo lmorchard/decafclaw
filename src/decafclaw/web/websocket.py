@@ -409,12 +409,26 @@ async def _run_agent_turn(websocket, app_ctx, config, event_bus,
                 })
 
             elif event_type == "tool_end":
-                await ws_send({
+                payload = {
                     "type": "tool_end", "conv_id": conv_id,
                     "tool": event.get("tool", ""),
                     "result_text": event.get("result_text", ""),
                     "tool_call_id": event.get("tool_call_id", ""),
-                })
+                }
+                short = event.get("display_short_text")
+                if short:
+                    payload["display_short_text"] = short
+                await ws_send(payload)
+
+            elif event_type == "memory_context":
+                text = event.get("text", "")
+                if text:
+                    await ws_send({
+                        "type": "tool_status", "conv_id": conv_id,
+                        "tool": "memory_context",
+                        "message": text,
+                        "tool_call_id": "",
+                    })
 
             elif event_type == "tool_confirm_request":
                 log.info(f"Forwarding confirm request to web UI: {event.get('tool')}")

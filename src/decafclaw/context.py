@@ -41,6 +41,7 @@ class Context:
         self._current_iteration: int = 1
         self.is_child: bool = False
         self.skip_reflection: bool = False
+        self.skip_memory_context: bool = False
         self.effort: str = "default"
 
     def fork(self, **overrides) -> "Context":
