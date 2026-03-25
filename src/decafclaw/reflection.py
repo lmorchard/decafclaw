@@ -23,8 +23,6 @@ log = logging.getLogger(__name__)
 
 _BUNDLED_PROMPT = Path(__file__).parent / "prompts" / "REFLECTION.md"
 
-MAX_TOOL_RESULT_LEN = 500
-
 
 @dataclass
 class ReflectionResult:
@@ -51,45 +49,89 @@ def load_reflection_prompt(config) -> str:
     return _BUNDLED_PROMPT.read_text()
 
 
-def build_tool_summary(history: list, turn_start_index: int) -> str:
+def _format_tool_args(fn: dict) -> str:
+    """Format a tool_call function dict into a concise arg string."""
+    name = fn.get("name", "unknown")
+    args_str = fn.get("arguments", "")
+    try:
+        args = json.loads(args_str) if isinstance(args_str, str) else args_str
+        if isinstance(args, dict):
+            parts = []
+            for k, v in list(args.items())[:3]:
+                if isinstance(v, str) and len(v) > 100:
+                    v = v[:100] + "..."
+                parts.append(f'{k}="{v}"' if isinstance(v, str) else f"{k}={v}")
+            key_args = ", ".join(parts)
+        else:
+            key_args = str(args)[:100]
+    except (json.JSONDecodeError, TypeError):
+        key_args = str(args_str)[:100]
+    return f"Tool: {name}({key_args})"
+
+
+def _extract_tool_lines(messages: list, max_result_len: int) -> list[str]:
+    """Extract tool call/result lines from a slice of history messages."""
+    tool_lines: list[str] = []
+    for msg in messages:
+        if msg.get("role") == "assistant" and msg.get("tool_calls"):
+            for tc in msg["tool_calls"]:
+                tool_lines.append(_format_tool_args(tc.get("function", {})))
+        if msg.get("role") == "tool":
+            content = msg.get("content", "")
+            if len(content) > max_result_len:
+                content = content[:max_result_len] + "..."
+            tool_lines.append(f"Result: {content}")
+    return tool_lines
+
+
+def build_tool_summary(history: list, turn_start_index: int, max_result_len: int = 2000) -> str:
     """Extract tool call/result pairs from this turn's history.
 
     Scans history from turn_start_index onward for assistant messages with
     tool_calls and their corresponding tool-role result messages.
     """
-    tool_lines: list[str] = []
-
-    for msg in history[turn_start_index:]:
-        # Assistant messages with tool_calls
-        if msg.get("role") == "assistant" and msg.get("tool_calls"):
-            for tc in msg["tool_calls"]:
-                fn = tc.get("function", {})
-                name = fn.get("name", "unknown")
-                args_str = fn.get("arguments", "")
-                # Summarize args
-                try:
-                    args = json.loads(args_str) if isinstance(args_str, str) else args_str
-                    if isinstance(args, dict):
-                        key_args = ", ".join(
-                            f'{k}="{v}"' if isinstance(v, str) else f"{k}={v}"
-                            for k, v in list(args.items())[:3]
-                        )
-                    else:
-                        key_args = str(args)[:100]
-                except (json.JSONDecodeError, TypeError):
-                    key_args = str(args_str)[:100]
-                tool_lines.append(f"Tool: {name}({key_args})")
-
-        # Tool result messages
-        if msg.get("role") == "tool":
-            content = msg.get("content", "")
-            if len(content) > MAX_TOOL_RESULT_LEN:
-                content = content[:MAX_TOOL_RESULT_LEN] + "..."
-            tool_lines.append(f"Result: {content}")
-
+    tool_lines = _extract_tool_lines(history[turn_start_index:], max_result_len)
     if not tool_lines:
         return ""
     return "Tools used this turn:\n" + "\n".join(tool_lines)
+
+
+def build_prior_turn_summary(
+    history: list, turn_start_index: int,
+    max_turns: int = 3, max_result_len: int = 200,
+) -> str:
+    """Extract tool call/result pairs from prior turns.
+
+    Scans history before turn_start_index, finds the last max_turns turns
+    (bounded by user-role messages), and summarizes their tool usage.
+    Returns empty string if no prior tools or on first turn.
+    """
+    if turn_start_index <= 0:
+        return ""
+
+    prior = history[:turn_start_index]
+
+    # Find turn boundaries (indices of real user messages, not reflection critiques)
+    turn_starts = [
+        i for i, msg in enumerate(prior)
+        if msg.get("role") == "user"
+        and not str(msg.get("content", "")).startswith("[reflection]")
+    ]
+    if not turn_starts:
+        return ""
+
+    # Take the last max_turns turns
+    turn_starts = turn_starts[-max_turns:]
+
+    # Extract tool lines from each turn's slice
+    tool_lines: list[str] = []
+    for idx, start in enumerate(turn_starts):
+        end = turn_starts[idx + 1] if idx + 1 < len(turn_starts) else len(prior)
+        tool_lines.extend(_extract_tool_lines(prior[start:end], max_result_len))
+
+    if not tool_lines:
+        return ""
+    return "Tools used in prior turns:\n" + "\n".join(tool_lines)
 
 
 def _coerce_bool(value) -> bool | None:
@@ -149,6 +191,7 @@ async def evaluate_response(
     user_message: str,
     agent_response: str,
     tool_summary: str,
+    prior_turn_summary: str = "",
     retrieved_context: str = "",
 ) -> ReflectionResult:
     """Run the judge LLM to evaluate the agent's response.
@@ -169,6 +212,7 @@ async def evaluate_response(
             tool_results_summary=tool_summary or "(no tools used)",
             agent_response=agent_response,
             retrieved_context=context_block,
+            prior_turn_tools=prior_turn_summary,
         )
 
         rc = config.reflection.resolved(config)

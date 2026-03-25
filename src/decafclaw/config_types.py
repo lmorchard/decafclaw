@@ -113,6 +113,7 @@ class ReflectionConfig:
     api_key: str = field(default="", metadata={"secret": True})
     max_retries: int = 2
     visibility: str = "hidden"  # hidden | visible | debug
+    max_tool_result_len: int = 2000  # max chars per tool result shown to judge
 
     def resolved(self, config) -> ReflectionConfig:
         """Return copy with empty url/model/api_key filled from config.llm."""
