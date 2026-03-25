@@ -582,12 +582,28 @@ async def run_agent_turn(ctx, user_message: str, history: list,
                 )
                 last_reflection = None  # clear stale result from prior retry
             else:
-                from .reflection import build_tool_summary, evaluate_response
+                from .reflection import (
+                    build_prior_turn_summary,
+                    build_tool_summary,
+                    evaluate_response,
+                )
 
-                tool_summary = build_tool_summary(history, turn_start_index)
+                tool_summary = build_tool_summary(
+                    history, turn_start_index,
+                    max_result_len=config.reflection.max_tool_result_len,
+                )
+                # turn_start_index points past the current user message;
+                # use turn_start_index - 1 to exclude it from prior turns
+                prior_turn_summary = build_prior_turn_summary(
+                    history, turn_start_index - 1,
+                    max_turns=3,
+                    max_result_len=200,
+                )
                 result = await evaluate_response(
                     config, user_message, content, tool_summary,
-                    retrieved_context=retrieved_context_text)
+                    prior_turn_summary=prior_turn_summary,
+                    retrieved_context=retrieved_context_text,
+                )
 
                 last_reflection = result
                 log.info("Reflection result: passed=%s, critique=%s, error=%s",
