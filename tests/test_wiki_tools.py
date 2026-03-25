@@ -26,7 +26,7 @@ class TestWikiRead:
     async def test_read_existing_page(self, ctx, wiki_dir):
         (wiki_dir / "Test Page.md").write_text("# Test Page\n\nContent here.")
         result = await tool_wiki_read(ctx, "Test Page")
-        assert "Content here." in result
+        assert "Content here." in result.text
 
     @pytest.mark.asyncio
     async def test_read_nonexistent(self, ctx, wiki_dir):
@@ -53,7 +53,7 @@ class TestWikiRead:
         sub.mkdir()
         (sub / "Alice.md").write_text("# Alice\n\nA person.")
         result = await tool_wiki_read(ctx, "Alice")
-        assert "A person." in result
+        assert "A person." in result.text
 
 
 class TestWikiWrite:
@@ -95,24 +95,24 @@ class TestWikiSearch:
         (wiki_dir / "Drinks.md").write_text("# Drinks\n\nBoulevardier, Old Fashioned")
         (wiki_dir / "Food.md").write_text("# Food\n\nPizza, Tacos")
         result = await tool_wiki_search(ctx, "Boulevardier")
-        assert "Drinks" in result
-        assert "Food" not in result
+        assert "Drinks" in result.text
+        assert "Food" not in result.text
 
     @pytest.mark.asyncio
     async def test_search_by_title(self, ctx, wiki_dir):
         (wiki_dir / "DecafClaw.md").write_text("# DecafClaw\n\nAn agent.")
         result = await tool_wiki_search(ctx, "DecafClaw")
-        assert "DecafClaw" in result
+        assert "DecafClaw" in result.text
 
     @pytest.mark.asyncio
     async def test_search_no_results(self, ctx, wiki_dir):
         result = await tool_wiki_search(ctx, "nonexistent")
-        assert "no" in result.lower()
+        assert "no" in result.text.lower()
 
     @pytest.mark.asyncio
     async def test_search_empty_wiki(self, ctx, config):
         result = await tool_wiki_search(ctx, "anything")
-        assert "no" in result.lower()
+        assert "no" in result.text.lower()
 
 
 class TestWikiList:
