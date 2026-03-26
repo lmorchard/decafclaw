@@ -67,6 +67,10 @@ export class ConversationStore extends EventTarget {
   #currentEffort = 'default';
   /** @type {string} resolved model name for the current effort level */
   #effortModel = '';
+  /** @type {object[]} system conversations (schedule, heartbeat, etc.) */
+  #systemConversations = [];
+  /** @type {boolean} whether the current conversation is read-only */
+  #readOnly = false;
   /** @type {string|null} message queued while creating a conversation */
   #pendingMessage = null;
 
@@ -106,6 +110,10 @@ export class ConversationStore extends EventTarget {
   get currentEffort() { return this.#currentEffort; }
   /** @returns {string} */
   get effortModel() { return this.#effortModel; }
+  /** @returns {object[]} */
+  get systemConversations() { return this.#systemConversations; }
+  /** @returns {boolean} */
+  get isReadOnly() { return this.#readOnly; }
 
   // -- Actions (called by components) -----------------------------------------
 
@@ -132,6 +140,7 @@ export class ConversationStore extends EventTarget {
     this.#contextLimit = 0;
     this.#currentEffort = 'default';
     this.#effortModel = '';
+    this.#readOnly = false;
     this.#ws.send({ type: 'select_conv', conv_id: convId });
     this.#ws.send({ type: 'load_history', conv_id: convId, limit: 50 });
     this.#emitChange();
@@ -144,6 +153,10 @@ export class ConversationStore extends EventTarget {
 
   listArchivedConversations() {
     this.#ws.send({ type: 'list_archived' });
+  }
+
+  listSystemConversations() {
+    this.#ws.send({ type: 'list_system_convs' });
   }
 
   /** @param {string} convId */
@@ -247,7 +260,11 @@ export class ConversationStore extends EventTarget {
         break;
 
       case 'conv_selected':
-        // Acknowledged — no state change needed
+        if (msg.read_only) this.#readOnly = true;
+        break;
+
+      case 'system_conv_list':
+        this.#systemConversations = msg.conversations || [];
         break;
 
       case 'conv_archived':
@@ -285,6 +302,7 @@ export class ConversationStore extends EventTarget {
           if (msg.estimated_tokens) this.#contextUsage = msg.estimated_tokens;
           if (msg.current_effort) this.#currentEffort = msg.current_effort;
           if (msg.effort_model) this.#effortModel = msg.effort_model;
+          if (msg.read_only) this.#readOnly = true;
         }
         break;
 
@@ -437,6 +455,11 @@ export class ConversationStore extends EventTarget {
         console.error('Server error:', msg.message);
         this.#busy = false;
         this.#toolStatus = null;
+        // If we selected a conversation but never loaded any messages,
+        // the selection was invalid — clear it to avoid a broken state
+        if (this.#currentConvId && this.#currentMessages.length === 0) {
+          this.#currentConvId = null;
+        }
         break;
 
       default:
