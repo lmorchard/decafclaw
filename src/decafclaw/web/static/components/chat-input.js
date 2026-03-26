@@ -4,6 +4,7 @@ export class ChatInput extends LitElement {
   static properties = {
     disabled: { type: Boolean },
     busy: { type: Boolean },
+    placeholder: { type: String },
   };
 
   createRenderRoot() { return this; }
@@ -12,6 +13,7 @@ export class ChatInput extends LitElement {
     super();
     this.disabled = false;
     this.busy = false;
+    this.placeholder = 'Type a message...';
   }
 
   /** Focus the textarea. */
@@ -59,7 +61,7 @@ export class ChatInput extends LitElement {
     return html`
       <div class="input-row">
         <textarea
-          placeholder="Type a message..."
+          placeholder=${this.placeholder}
           rows="1"
           ?disabled=${this.disabled}
           @keydown=${this.#handleKeydown}

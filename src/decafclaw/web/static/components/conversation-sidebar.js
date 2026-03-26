@@ -12,6 +12,8 @@ export class ConversationSidebar extends LitElement {
     _contextLimit: { type: Number, state: true },
     _currentEffort: { type: String, state: true },
     _effortModel: { type: String, state: true },
+    _systemConversations: { type: Array, state: true },
+    _showSystem: { type: Boolean, state: true },
     _collapsed: { type: Boolean, state: true },
     _mobileOpen: { type: Boolean, state: true },
   };
@@ -30,6 +32,8 @@ export class ConversationSidebar extends LitElement {
     this._contextLimit = 0;
     this._currentEffort = 'default';
     this._effortModel = '';
+    this._systemConversations = [];
+    this._showSystem = false;
     this._collapsed = localStorage.getItem('sidebar-collapsed') === 'true';
     this._mobileOpen = false;
   }
@@ -52,6 +56,7 @@ export class ConversationSidebar extends LitElement {
       this._contextLimit = this.store?.contextLimit || 0;
       this._currentEffort = this.store?.currentEffort || 'default';
       this._effortModel = this.store?.effortModel || '';
+      this._systemConversations = this.store?.systemConversations || [];
     };
     this.store?.addEventListener('change', this._onStoreChange);
   }
@@ -125,6 +130,13 @@ export class ConversationSidebar extends LitElement {
     }
   }
 
+  #toggleSystem() {
+    this._showSystem = !this._showSystem;
+    if (this._showSystem) {
+      this.store?.listSystemConversations();
+    }
+  }
+
   render() {
     if (this._collapsed) {
       return html`
@@ -185,6 +197,29 @@ export class ConversationSidebar extends LitElement {
                   @click=${(/** @type {Event} */ e) => { e.stopPropagation(); this.#handleUnarchive(c.conv_id); }}
                   title="Unarchive conversation"
                 >\u21a9</button>
+              </div>
+            `)
+          }
+        ` : nothing}
+
+        <div
+          class="archived-toggle"
+          @click=${this.#toggleSystem}
+        >
+          <span>${this._showSystem ? '\u25bc' : '\u25b6'} System</span>
+        </div>
+
+        ${this._showSystem ? html`
+          ${this._systemConversations.length === 0
+            ? html`<p style="padding: 0.25rem 0.75rem; color: var(--pico-muted-color); font-size: 0.85rem;">No system conversations</p>`
+            : this._systemConversations.map(c => html`
+              <div
+                class="conv-item system ${c.conv_id === this._activeId ? 'active' : ''}"
+                @click=${() => this.#handleSelect(c.conv_id)}
+                title="${c.title} (${c.conv_type})"
+              >
+                <span class="conv-title">${c.title}</span>
+                <span class="conv-type-badge">${c.conv_type}</span>
               </div>
             `)
           }
