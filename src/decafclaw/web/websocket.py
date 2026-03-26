@@ -3,10 +3,19 @@
 import asyncio
 import json
 import logging
+import re
 
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
 log = logging.getLogger(__name__)
+
+# conv_id must be safe for use as a filename — alphanumeric, hyphens, dots, underscores only
+_SAFE_CONV_ID = re.compile(r"^[a-zA-Z0-9._-]+$")
+
+
+def _is_safe_conv_id(conv_id: str) -> bool:
+    """Reject conv_ids that could escape the conversations directory."""
+    return bool(conv_id and _SAFE_CONV_ID.match(conv_id))
 
 
 # -- WebSocket message handlers ------------------------------------------------
@@ -38,6 +47,17 @@ async def _handle_unarchive_conv(ws_send, index, username, msg, state):
         await ws_send({"type": "error", "message": "Conversation not found"})
 
 
+async def _handle_list_system_convs(ws_send, index, username, msg, state):
+    from .conversations import list_system_conversations
+    try:
+        limit = min(max(1, int(msg.get("limit", 100))), 500)
+    except (TypeError, ValueError):
+        limit = 100
+    convs = list_system_conversations(state["config"], username=username,
+                                      limit=limit)
+    await ws_send({"type": "system_conv_list", "conversations": convs})
+
+
 async def _handle_create_conv(ws_send, index, username, msg, state):
     title = msg.get("title", "")
     conv = index.create(username, title=title)
@@ -57,21 +77,46 @@ async def _handle_create_conv(ws_send, index, username, msg, state):
 
 async def _handle_select_conv(ws_send, index, username, msg, state):
     conv_id = msg.get("conv_id", "")
+    if not _is_safe_conv_id(conv_id):
+        await ws_send({"type": "error", "message": "Invalid conversation ID"})
+        return
     conv = index.get(conv_id)
     if conv and conv.user_id == username:
-
         await ws_send({"type": "conv_selected", "conv_id": conv_id})
     else:
-        await ws_send({"type": "error", "message": f"Conversation not found: {conv_id}"})
+        # Check if it's a system conversation (archive exists on disk)
+        # Reject other users' web conversations
+        if conv_id.startswith("web-") and "--child-" not in conv_id:
+            await ws_send({"type": "error",
+                           "message": f"Conversation not found: {conv_id}"})
+            return
+        from ..archive import archive_path
+        if archive_path(state["config"], conv_id).exists():
+            await ws_send({"type": "conv_selected", "conv_id": conv_id,
+                           "read_only": True})
+        else:
+            await ws_send({"type": "error",
+                           "message": f"Conversation not found: {conv_id}"})
 
 
 async def _handle_load_history(ws_send, index, username, msg, state):
     config = state["config"]
     conv_id = msg.get("conv_id", "")
-    conv = index.get(conv_id)
-    if not conv or conv.user_id != username:
-        await ws_send({"type": "error", "message": "Conversation not found"})
+    if not _is_safe_conv_id(conv_id):
+        await ws_send({"type": "error", "message": "Invalid conversation ID"})
         return
+    conv = index.get(conv_id)
+    is_owner = conv and conv.user_id == username
+    if not is_owner:
+        # Reject other users' web conversations
+        if conv_id.startswith("web-") and "--child-" not in conv_id:
+            await ws_send({"type": "error", "message": "Conversation not found"})
+            return
+        # Allow read-only access if archive exists on disk (system conversations)
+        from ..archive import archive_path
+        if not archive_path(config, conv_id).exists():
+            await ws_send({"type": "error", "message": "Conversation not found"})
+            return
     limit = msg.get("limit", 50)
     before = msg.get("before", "")
     # Metadata roles that should not be rendered as chat messages
@@ -106,6 +151,8 @@ async def _handle_load_history(ws_send, index, username, msg, state):
         "messages": messages, "has_more": has_more,
         "context_limit": config.compaction.max_tokens,
     }
+    if not is_owner:
+        response["read_only"] = True
     if estimated_tokens is not None:
         response["estimated_tokens"] = estimated_tokens
     if current_effort is not None:
@@ -298,6 +345,7 @@ async def _handle_confirm_response(ws_send, index, username, msg, state):
 _HANDLERS = {
     "list_convs": _handle_list_convs,
     "list_archived": _handle_list_archived,
+    "list_system_convs": _handle_list_system_convs,
     "unarchive_conv": _handle_unarchive_conv,
     "create_conv": _handle_create_conv,
     "select_conv": _handle_select_conv,

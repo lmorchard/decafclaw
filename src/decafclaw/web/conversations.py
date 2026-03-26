@@ -2,12 +2,99 @@
 
 import json
 import logging
+import re
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
 
 log = logging.getLogger(__name__)
+
+
+# -- System conversation discovery ---------------------------------------------
+
+# Patterns for inferring conversation type and title from conv_id
+_SYSTEM_PATTERNS: list[tuple[re.Pattern, str, str]] = [
+    # schedule-{name}-{YYYYMMDD-HHMMSS}
+    (re.compile(r"^schedule-(.+)-(\d{8}-\d{6})$"), "schedule",
+     "Schedule: {name} [{ts}]"),
+    # heartbeat-{YYYYMMDD-HHMMSS}-{index}
+    (re.compile(r"^heartbeat-(\d{8}-\d{6})-(\d+)$"), "heartbeat",
+     "Heartbeat [{ts}] #{idx}"),
+    # web-{user}--child-{hex} (delegated subtask)
+    (re.compile(r"^(.+)--child-([0-9a-f]+)$"), "delegated",
+     "Subtask {child_id}"),
+]
+
+
+def _format_ts(ts_raw: str) -> str:
+    """Format YYYYMMDD-HHMMSS as YYYY-MM-DD HH:MM."""
+    d, t = ts_raw[:8], ts_raw[9:]  # "20260324", "125204"
+    return f"{d[:4]}-{d[4:6]}-{d[6:8]} {t[:2]}:{t[2:4]}"
+
+
+def _classify_conv_id(conv_id: str) -> tuple[str, str]:
+    """Classify a conv_id and generate a display title.
+
+    Returns (conv_type, title). Returns ("unknown", conv_id) for
+    unrecognized patterns.
+    """
+    for pattern, conv_type, title_fmt in _SYSTEM_PATTERNS:
+        m = pattern.match(conv_id)
+        if not m:
+            continue
+        groups = m.groups()
+        if conv_type == "schedule":
+            name, ts_raw = groups
+            ts = _format_ts(ts_raw)
+            return conv_type, title_fmt.format(name=name, ts=ts)
+        if conv_type == "heartbeat":
+            ts_raw, idx = groups
+            ts = _format_ts(ts_raw)
+            return conv_type, title_fmt.format(ts=ts, idx=idx)
+        if conv_type == "delegated":
+            _, child_id = groups
+            return conv_type, title_fmt.format(child_id=child_id[:8])
+    return "unknown", conv_id
+
+
+def list_system_conversations(config, username: str = "",
+                              limit: int = 100) -> list[dict]:
+    """Discover system conversations from the archive directory.
+
+    Returns dicts with conv_id, title, conv_type, updated_at, sorted
+    newest-first by file mtime. Excludes web-originated conversations
+    (those are managed by ConversationIndex). Delegated children are
+    filtered to only show those belonging to the given username.
+    """
+    conv_dir = config.workspace_path / "conversations"
+    if not conv_dir.exists():
+        return []
+
+    results = []
+    for path in conv_dir.glob("*.jsonl"):
+        # Skip compacted sidecars
+        if path.name.endswith(".compacted.jsonl"):
+            continue
+        conv_id = path.stem
+        # Skip web-originated conversations (managed by ConversationIndex)
+        if conv_id.startswith("web-") and "--child-" not in conv_id:
+            continue
+        # Filter delegated children to current user only
+        if "--child-" in conv_id and username:
+            if not conv_id.startswith(f"web-{username}-"):
+                continue
+        conv_type, title = _classify_conv_id(conv_id)
+        mtime = path.stat().st_mtime
+        results.append({
+            "conv_id": conv_id,
+            "title": title,
+            "conv_type": conv_type,
+            "updated_at": datetime.fromtimestamp(mtime).isoformat(),
+        })
+
+    results.sort(key=lambda c: c["updated_at"], reverse=True)
+    return results[:limit]
 
 
 @dataclass
