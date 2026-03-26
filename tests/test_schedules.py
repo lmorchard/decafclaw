@@ -193,6 +193,20 @@ class TestDiscoverSchedules:
         assert task.source == "admin"
         assert task.effort == "fast"
 
+    def test_skill_allowed_tools_propagated(self, config):
+        """Skill allowed-tools are propagated to the ScheduleTask."""
+        skill_dir = config.agent_path / "skills" / "ingest-job"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text(
+            "---\nname: ingest-job\ndescription: Ingest job\n"
+            "schedule: '0 */4 * * *'\n"
+            "allowed-tools: shell, wiki_read, wiki_write\n"
+            "---\nRun the ingest.\n"
+        )
+        tasks = discover_schedules(config)
+        task = [t for t in tasks if t.name == "ingest-job"][0]
+        assert task.allowed_tools == ["shell", "wiki_read", "wiki_write"]
+
     def test_disabled_skill_schedule(self, config):
         """Skills with enabled: false are discovered but marked disabled."""
         skill_dir = config.agent_path / "skills" / "paused-job"
