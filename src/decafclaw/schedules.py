@@ -137,6 +137,7 @@ def discover_schedules(config) -> list[ScheduleTask]:
                 path=skill_md,
                 enabled=skill.enabled,
                 effort=skill.effort or "default",
+                allowed_tools=skill.allowed_tools,
                 required_skills=skill.requires_skills,
             )
 
