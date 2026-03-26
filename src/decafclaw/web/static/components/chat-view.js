@@ -35,6 +35,13 @@ export class ChatView extends LitElement {
 
   connectedCallback() {
     super.connectedCallback();
+    // Re-scroll when images load (they change height after initial render).
+    // Only skip if the user has deliberately scrolled up (scroll button visible).
+    this.addEventListener('load', (e) => {
+      if (/** @type {Element} */ (e.target).tagName === 'IMG' && !this._showScrollBtn) {
+        this.#scrollToBottom();
+      }
+    }, true);  // capture phase to catch img loads inside child components
     this._onStoreChange = () => {
       const prevConvId = this._convId;
       const prevMsgCount = this._messages.length;
@@ -135,6 +142,7 @@ export class ChatView extends LitElement {
           .toolCallId=${m.tool_call_id || ''}
           .usage=${m.usage || null}
           .timestamp=${m.timestamp || ''}
+          .attachments=${m.attachments || null}
         ></chat-message>
       `)}
 

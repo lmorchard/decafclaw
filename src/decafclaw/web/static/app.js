@@ -51,6 +51,7 @@ store.addEventListener('change', () => {
   if (chatInput) {
     chatInput.busy = store.isBusy;
     chatInput.disabled = store.isReadOnly;
+    chatInput.convId = store.currentConvId || '';
     chatInput.placeholder = store.isReadOnly ? 'Read-only conversation' : 'Type a message...';
     // Focus when agent finishes or conversation changes
     if (!store.isReadOnly && ((wasBusy && !store.isBusy) || store.currentConvId)) {
@@ -62,12 +63,29 @@ store.addEventListener('change', () => {
 
 // Handle send events from chat-input
 document.addEventListener('send', (e) => {
-  const text = /** @type {CustomEvent} */ (e).detail?.text;
-  if (text) store.sendMessage(text);
+  const detail = /** @type {CustomEvent} */ (e).detail;
+  if (detail?.text || detail?.attachments?.length) {
+    store.sendMessage(detail.text || '', detail.attachments || []);
+  }
 });
 
 // Handle stop events from chat-input
 document.addEventListener('stop', () => store.cancelTurn());
+
+// Drop files anywhere in the chat area → forward to chat-input
+const chatMain = document.getElementById('chat-main');
+if (chatMain) {
+  chatMain.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+  });
+  chatMain.addEventListener('drop', (e) => {
+    e.preventDefault();
+    if (e.dataTransfer?.files?.length && chatInput) {
+      chatInput.addFiles(e.dataTransfer.files);
+    }
+  });
+}
 
 // Keyboard shortcuts
 document.addEventListener('keydown', (e) => {
