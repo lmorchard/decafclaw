@@ -50,8 +50,10 @@ let wasBusy = false;
 store.addEventListener('change', () => {
   if (chatInput) {
     chatInput.busy = store.isBusy;
+    chatInput.disabled = store.isReadOnly;
+    chatInput.placeholder = store.isReadOnly ? 'Read-only conversation' : 'Type a message...';
     // Focus when agent finishes or conversation changes
-    if ((wasBusy && !store.isBusy) || store.currentConvId) {
+    if (!store.isReadOnly && ((wasBusy && !store.isBusy) || store.currentConvId)) {
       requestAnimationFrame(() => chatInput.focus());
     }
     wasBusy = store.isBusy;
@@ -163,9 +165,8 @@ async function init() {
         // Wait for conv_list to arrive, then select
         const onFirstChange = () => {
           store.removeEventListener('change', onFirstChange);
-          if (store.conversations.some(c => c.conv_id === savedConvId)) {
-            store.selectConversation(savedConvId);
-          }
+          // Try web conversations first, then select directly (works for system convs too)
+          store.selectConversation(savedConvId);
         };
         store.addEventListener('change', onFirstChange);
         ws.removeEventListener('open', onOpen);
