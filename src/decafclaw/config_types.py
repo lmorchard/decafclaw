@@ -89,6 +89,7 @@ class HttpConfig:
     port: int = 18880
     secret: str = field(default="", metadata={"secret": True})
     base_url: str = ""
+    max_upload_bytes: int = 100 * 1024 * 1024  # 100 MB
 
 
 @dataclass

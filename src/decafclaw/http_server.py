@@ -209,7 +209,55 @@ def create_app(config, event_bus, app_ctx=None) -> Starlette:
         if not resolved.is_file():
             return JSONResponse({"error": "not found"}, status_code=404)
         content_type = mimetypes.guess_type(str(resolved))[0] or "application/octet-stream"
-        return FileResponse(str(resolved), media_type=content_type)
+        # Only allow inline display for safe image types; force download for
+        # everything else (including SVG) to prevent XSS.
+        safe_inline = content_type.startswith("image/") and content_type != "image/svg+xml"
+        headers = {"X-Content-Type-Options": "nosniff"}
+        if not safe_inline:
+            headers["Content-Disposition"] = f'attachment; filename="{resolved.name}"'
+        return FileResponse(str(resolved), media_type=content_type, headers=headers)
+
+    # -- Upload route -------------------------------------------------------------
+
+    async def handle_upload(request: Request) -> JSONResponse:
+        """Handle file upload for a conversation."""
+        username = _require_auth(request)
+        if not username:
+            return JSONResponse({"error": "not authenticated"}, status_code=401)
+        conv_id = request.path_params["conv_id"]
+        # Verify conversation belongs to user
+        from .web.conversations import ConversationIndex
+        index = ConversationIndex(config)
+        conv = index.get(conv_id)
+        if not conv or conv.user_id != username:
+            return JSONResponse({"error": "not found"}, status_code=404)
+        # Early size check via Content-Length header
+        content_length = request.headers.get("content-length")
+        if content_length:
+            try:
+                if int(content_length) > config.http.max_upload_bytes:
+                    return JSONResponse({"error": "file too large"}, status_code=413)
+            except ValueError:
+                return JSONResponse({"error": "invalid content-length"}, status_code=400)
+        # Parse multipart form
+        try:
+            form = await request.form()
+        except RuntimeError:
+            # python-multipart not installed or request is not multipart
+            return JSONResponse({"error": "multipart form parsing unavailable"}, status_code=400)
+        except ValueError:
+            return JSONResponse({"error": "invalid form data"}, status_code=400)
+        upload = form.get("file")
+        if upload is None or isinstance(upload, str):
+            return JSONResponse({"error": "no file in request"}, status_code=400)
+        data = await upload.read()
+        if len(data) > config.http.max_upload_bytes:
+            return JSONResponse({"error": "file too large"}, status_code=413)
+        content_type = upload.content_type or "application/octet-stream"
+        filename = upload.filename or "upload"
+        from .attachments import save_attachment
+        result = save_attachment(config, conv_id, filename, data, content_type)
+        return JSONResponse(result, status_code=201)
 
     async def archive_conversation(request: Request) -> JSONResponse:
         """Archive a conversation (hide from list, keep data)."""
@@ -268,6 +316,7 @@ def create_app(config, event_bus, app_ctx=None) -> Starlette:
         Route("/api/conversations/{id}", rename_conversation, methods=["PATCH"]),
         Route("/api/conversations/{id}/history", get_conversation_history, methods=["GET"]),
         Route("/api/conversations/{id}/archive", archive_conversation, methods=["POST"]),
+        Route("/api/upload/{conv_id}", handle_upload, methods=["POST"]),
         Route("/api/workspace/{path:path}", serve_workspace_file, methods=["GET"]),
         WebSocketRoute("/ws/chat", ws_chat),
     ]

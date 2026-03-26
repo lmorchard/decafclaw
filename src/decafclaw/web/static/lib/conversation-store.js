@@ -29,6 +29,7 @@
  * @property {string} message
  */
 
+import { uploadFile } from './upload-client.js';
 import { WebSocketClient } from './websocket-client.js';
 
 /**
@@ -73,6 +74,8 @@ export class ConversationStore extends EventTarget {
   #readOnly = false;
   /** @type {string|null} message queued while creating a conversation */
   #pendingMessage = null;
+  /** @type {object[]} attachments queued with pending message */
+  #pendingAttachments = [];
 
   /** @param {WebSocketClient} wsClient */
   constructor(wsClient) {
@@ -176,23 +179,55 @@ export class ConversationStore extends EventTarget {
     }
   }
 
-  /** @param {string} text */
-  sendMessage(text) {
-    if (!text.trim()) return;
+  /**
+   * @param {string} text
+   * @param {{filename: string, path: string, mime_type: string}[]} [attachments]
+   */
+  sendMessage(text, attachments = []) {
+    if (!text.trim() && !attachments.length) return;
     if (!this.#currentConvId) {
       // No conversation selected — create one and queue the message
       this.#pendingMessage = text;
+      this.#pendingAttachments = attachments;
       const effort = this.#currentEffort !== 'default' ? this.#currentEffort : '';
       this.createConversation('', effort);
       return;
     }
     // Optimistically add user message
-    this.#currentMessages.push({ role: 'user', content: text, timestamp: new Date().toISOString() });
+    const userMsg = { role: 'user', content: text, timestamp: new Date().toISOString() };
+    if (attachments.length) userMsg.attachments = attachments;
+    this.#currentMessages.push(userMsg);
     this.#busy = true;
     this.#streamingText = '';
     this.#toolStatus = null;
-    this.#ws.send({ type: 'send', conv_id: this.#currentConvId, text });
+    const wsMsg = { type: 'send', conv_id: this.#currentConvId, text };
+    if (attachments.length) wsMsg.attachments = attachments;
+    this.#ws.send(wsMsg);
     this.#emitChange();
+  }
+
+  /**
+   * Upload any pending File objects, then send the message.
+   * Used when a conversation was just created and files need uploading.
+   * @param {string} convId
+   * @param {string} text
+   * @param {object[]} attachments
+   */
+  async #uploadAndSend(convId, text, attachments) {
+    const uploaded = [];
+    for (const att of attachments) {
+      if (att.file) {
+        try {
+          const result = await uploadFile(convId, att.file);
+          uploaded.push(result);
+        } catch (err) {
+          console.warn('Upload failed:', err.message);
+        }
+      } else {
+        uploaded.push(att);
+      }
+    }
+    this.sendMessage(text, uploaded);
   }
 
   /** @param {string} level */
@@ -254,8 +289,10 @@ export class ConversationStore extends EventTarget {
         // Flush any message queued while the conversation was being created
         if (this.#pendingMessage) {
           const text = this.#pendingMessage;
+          const atts = this.#pendingAttachments;
           this.#pendingMessage = null;
-          this.sendMessage(text);
+          this.#pendingAttachments = [];
+          this.#uploadAndSend(msg.conv_id, text, atts);
         }
         break;
 

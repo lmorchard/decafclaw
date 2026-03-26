@@ -117,28 +117,39 @@ async def _handle_load_history(ws_send, index, username, msg, state):
         if not archive_path(config, conv_id).exists():
             await ws_send({"type": "error", "message": "Conversation not found"})
             return
-    limit = msg.get("limit", 50)
+    try:
+        limit = min(max(1, int(msg.get("limit", 50))), 500)
+    except (TypeError, ValueError):
+        limit = 50
     before = msg.get("before", "")
     # Metadata roles that should not be rendered as chat messages
     _HIDDEN_ROLES = {"effort"}
 
-    messages, has_more = index.load_history(conv_id, limit=limit, before=before)
+    # Read archive once and reuse for history, token estimation, and effort scan
+    from ..archive import read_archive as _read_archive
+    from ..archive import read_compacted_history
+
+    all_msgs = _read_archive(config, conv_id)
+
+    # Paginate: filter by timestamp, take last N
+    filtered = all_msgs
+    if before:
+        filtered = [m for m in all_msgs if m.get("timestamp", "") < before]
+    has_more = len(filtered) > limit
+    messages = filtered[-limit:] if has_more else filtered
     messages = [m for m in messages if m.get("role") not in _HIDDEN_ROLES]
 
     estimated_tokens = None
     current_effort = None
     resolved_model = None
     if not before:
-        from ..archive import read_archive as _read_archive
-        from ..archive import read_compacted_history
         from ..compaction import estimate_tokens, flatten_messages
         from ..config import resolve_effort
-        working = read_compacted_history(config, conv_id) or _read_archive(config, conv_id)
+        working = read_compacted_history(config, conv_id) or all_msgs
         if working:
             estimated_tokens = estimate_tokens(flatten_messages(working))
 
         # Extract current effort level (scan reverse for last effort message)
-        all_msgs = _read_archive(config, conv_id)
         current_effort = "default"
         for m in reversed(all_msgs):
             if m.get("role") == "effort":
@@ -189,8 +200,9 @@ async def _handle_archive_conv(ws_send, index, username, msg, state):
 async def _handle_send(ws_send, index, username, msg, state):
     conv_id = msg.get("conv_id", "")
     text = msg.get("text", "").strip()
-    if not conv_id or not text:
-        await ws_send({"type": "error", "message": "conv_id and text required"})
+    attachments = msg.get("attachments") or None
+    if not conv_id or (not text and not attachments):
+        await ws_send({"type": "error", "message": "conv_id and text (or attachments) required"})
         return
     conv = index.get(conv_id)
     if not conv or conv.user_id != username:
@@ -247,15 +259,16 @@ async def _handle_send(ws_send, index, username, msg, state):
             log.info(f"WS: queuing message for busy conversation {conv_id}")
         pending_queue.setdefault(conv_id, []).append(
             {"text": text, "command_ctx": command_ctx,
-             "command_display": command_display})
+             "command_display": command_display, "attachments": attachments})
         return
 
     _start_agent_turn(state, index, conv_id, username, text, ws_send,
-                      command_ctx=command_ctx, archive_text=command_display)
+                      command_ctx=command_ctx, archive_text=command_display,
+                      attachments=attachments)
 
 
 def _start_agent_turn(state, index, conv_id, username, text, ws_send,
-                      command_ctx=None, archive_text=""):
+                      command_ctx=None, archive_text="", attachments=None):
     """Launch an agent turn task with queue drain on completion."""
     busy_convs = state.setdefault("busy_convs", set())
     pending_queue = state.setdefault("pending_msgs", {})
@@ -269,6 +282,7 @@ def _start_agent_turn(state, index, conv_id, username, text, ws_send,
             state["websocket"], state["app_ctx"], state["config"], state["event_bus"],
             index, conv_id, username, text, cancel_event,
             command_ctx=command_ctx, archive_text=archive_text,
+            attachments=attachments,
         )
     )
     state["agent_tasks"].add(task)
@@ -289,10 +303,16 @@ def _start_agent_turn(state, index, conv_id, username, text, ws_send,
             texts = [q["text"] for q in queued]
             last_ctx = queued[-1].get("command_ctx")
             last_display = queued[-1].get("command_display", "")
+            # Merge attachments from all queued messages
+            all_attachments = []
+            for q in queued:
+                if q.get("attachments"):
+                    all_attachments.extend(q["attachments"])
             combined = "\n".join(texts)
             log.info(f"WS: draining {len(queued)} queued message(s) for {cid}")
             _start_agent_turn(state, index, cid, username, combined, ws_send,
-                              command_ctx=last_ctx, archive_text=last_display)
+                              command_ctx=last_ctx, archive_text=last_display,
+                              attachments=all_attachments or None)
 
     task.add_done_callback(_on_task_done)
 
@@ -422,7 +442,7 @@ async def websocket_chat(websocket: WebSocket, config, event_bus, app_ctx):
 
 async def _run_agent_turn(websocket, app_ctx, config, event_bus,
                           index, conv_id, username, text, cancel_event=None,
-                          command_ctx=None, archive_text=""):
+                          command_ctx=None, archive_text="", attachments=None):
     """Run an agent turn for a web conversation, streaming events to WebSocket."""
     from ..agent import run_agent_turn  # deferred: circular dep
     from ..archive import read_archive
@@ -599,7 +619,8 @@ async def _run_agent_turn(websocket, app_ctx, config, event_bus,
         })
 
         # Run the agent turn
-        result = await run_agent_turn(ctx, text, history, archive_text=archive_text)
+        result = await run_agent_turn(ctx, text, history, archive_text=archive_text,
+                                      attachments=attachments)
 
         # Notify browser of completion — clear streaming and send final text
         response_text = result.text if hasattr(result, "text") else str(result)
