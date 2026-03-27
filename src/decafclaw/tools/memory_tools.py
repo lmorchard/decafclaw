@@ -41,15 +41,18 @@ async def tool_memory_save(ctx, tags: list[str], content: str) -> str:
     return result
 
 
-async def tool_memory_search(ctx, query: str) -> str:
+async def tool_memory_search(ctx, query: str, include_conversations: bool = False) -> str:
     """Search memories."""
-    log.info(f"[tool:memory_search] query={query} strategy={ctx.config.embedding.search_strategy}")
+    log.info(f"[tool:memory_search] query={query} include_conversations={include_conversations} strategy={ctx.config.embedding.search_strategy}")
 
     if ctx.config.embedding.search_strategy == "semantic":
         try:
             from .. import embeddings
             # Ensure index exists (reindex on first search if needed)
             results = await embeddings.search_similar(ctx.config, query, top_k=5)
+            # Exclude conversation entries by default — they add noise (see #133)
+            if not include_conversations:
+                results = [r for r in results if r["source_type"] != "conversation"]
             if results:
                 lines = [f"Found {len(results)} matching memories (ranked by relevance):\n"]
                 for i, r in enumerate(results):
@@ -143,6 +146,14 @@ MEMORY_TOOL_DEFINITIONS = [
                     "query": {
                         "type": "string",
                         "description": "Text to search for (case-insensitive substring match)",
+                    },
+                    "include_conversations": {
+                        "type": "boolean",
+                        "description": (
+                            "Include past conversation entries in results. Default false — "
+                            "set true only when explicitly looking for something said in a "
+                            "prior conversation."
+                        ),
                     },
                 },
                 "required": ["query"],
