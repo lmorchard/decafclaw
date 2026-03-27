@@ -1,5 +1,6 @@
-"""Tests for media handling — ToolResult, workspace image scanning."""
+"""Tests for media handling — ToolResult, workspace image scanning, save_media."""
 
+from dataclasses import dataclass
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
@@ -7,10 +8,12 @@ import pytest
 
 from decafclaw.media import (
     MattermostMediaHandler,
+    MediaHandler,
+    MediaSaveResult,
     TerminalMediaHandler,
     ToolResult,
+    WebMediaHandler,
     extract_workspace_media,
-    process_media_for_terminal,
     upload_and_collect,
 )
 
@@ -99,38 +102,100 @@ def test_extract_workspace_media_no_refs(tmp_path):
     assert media == []
 
 
-# -- TerminalMediaHandler tests --
+# -- MediaSaveResult tests --
+
+
+def test_media_save_result_defaults():
+    r = MediaSaveResult()
+    assert r.workspace_ref is None
+    assert r.file_id is None
+    assert r.saved_filename is None
+
+
+def test_media_save_result_workspace():
+    r = MediaSaveResult(workspace_ref="workspace://path/file.png",
+                        saved_filename="file-20260327.png")
+    assert r.workspace_ref == "workspace://path/file.png"
+    assert r.saved_filename == "file-20260327.png"
+
+
+def test_media_save_result_file_id():
+    r = MediaSaveResult(file_id="abc123")
+    assert r.file_id == "abc123"
+
+
+# -- Base MediaHandler tests --
 
 
 @pytest.mark.asyncio
-async def test_terminal_handler_upload(tmp_path):
-    handler = TerminalMediaHandler(tmp_path)
-    path = await handler.upload_file("ch", "test.png", b"data", "image/png")
-    assert (tmp_path / "media" / "test.png").exists()
-    assert path == "media/test.png"
+async def test_base_handler_save_media_raises():
+    handler = MediaHandler()
+    with pytest.raises(NotImplementedError):
+        await handler.save_media("conv1", "file.png", b"data", "image/png")
 
 
-def test_process_media_for_terminal(tmp_path):
-    result = ToolResult(text="Here's the image", media=[
-        {"type": "file", "filename": "pic.png", "data": b"png-data", "content_type": "image/png"},
-    ])
-    output = process_media_for_terminal(result, tmp_path)
-    assert "[file saved: media/pic.png]" in output
-    assert (tmp_path / "media" / "pic.png").exists()
+def test_base_handler_strips_workspace_refs_default():
+    handler = MediaHandler()
+    assert handler.strips_workspace_refs is True
 
 
-def test_process_media_for_terminal_url():
-    result = ToolResult(text="Check this", media=[
-        {"type": "url", "url": "https://example.com/img.png", "alt": "image"},
-    ])
-    output = process_media_for_terminal(result, Path("/tmp"))
-    assert "[image: https://example.com/img.png]" in output
+# -- Helper: fake config for save_attachment --
 
 
-def test_process_media_for_terminal_no_media():
-    result = ToolResult(text="plain text")
-    output = process_media_for_terminal(result, Path("/tmp"))
-    assert output == "plain text"
+@dataclass
+class _FakeConfig:
+    workspace_path: Path
+
+
+# -- TerminalMediaHandler tests --
+
+
+def test_terminal_handler_strips_workspace_refs():
+    assert TerminalMediaHandler.strips_workspace_refs is False
+
+
+@pytest.mark.asyncio
+async def test_terminal_handler_save_media(tmp_path):
+    config = _FakeConfig(workspace_path=tmp_path)
+    handler = TerminalMediaHandler(config)
+    result = await handler.save_media("conv1", "test.png", b"png-data", "image/png")
+    assert result.workspace_ref is not None
+    assert result.workspace_ref.startswith("workspace://conversations/conv1/uploads/")
+    assert result.saved_filename is not None
+    assert "test" in result.saved_filename
+    # Verify file was actually saved
+    saved_path = tmp_path / result.workspace_ref.replace("workspace://", "")
+    assert saved_path.exists()
+    assert saved_path.read_bytes() == b"png-data"
+
+
+@pytest.mark.asyncio
+async def test_terminal_handler_upload_legacy_raises(tmp_path):
+    config = _FakeConfig(workspace_path=tmp_path)
+    handler = TerminalMediaHandler(config)
+    with pytest.raises(NotImplementedError):
+        await handler.upload_file("ch", "test.png", b"data", "image/png")
+
+
+# -- WebMediaHandler tests --
+
+
+def test_web_handler_strips_workspace_refs():
+    assert WebMediaHandler.strips_workspace_refs is False
+
+
+@pytest.mark.asyncio
+async def test_web_handler_save_media(tmp_path):
+    config = _FakeConfig(workspace_path=tmp_path)
+    handler = WebMediaHandler(config)
+    result = await handler.save_media("conv-abc", "doc.pdf", b"pdf-data", "application/pdf")
+    assert result.workspace_ref is not None
+    assert result.workspace_ref.startswith("workspace://conversations/conv-abc/uploads/")
+    assert result.saved_filename is not None
+    # Verify file was actually saved
+    saved_path = tmp_path / result.workspace_ref.replace("workspace://", "")
+    assert saved_path.exists()
+    assert saved_path.read_bytes() == b"pdf-data"
 
 
 # -- MattermostMediaHandler tests --
@@ -149,10 +214,23 @@ def _make_mock_http():
     return http
 
 
+def test_mattermost_handler_strips_workspace_refs():
+    assert MattermostMediaHandler.strips_workspace_refs is True
+
+
+@pytest.mark.asyncio
+async def test_mattermost_save_media():
+    http = _make_mock_http()
+    handler = MattermostMediaHandler(http, channel_id="ch1")
+    result = await handler.save_media("conv1", "test.png", b"data", "image/png")
+    assert result.file_id == "file-id-123"
+    assert result.workspace_ref is None
+
+
 @pytest.mark.asyncio
 async def test_mattermost_upload_file():
     http = _make_mock_http()
-    handler = MattermostMediaHandler(http)
+    handler = MattermostMediaHandler(http, channel_id="ch1")
     file_id = await handler.upload_file("ch1", "test.png", b"data", "image/png")
     assert file_id == "file-id-123"
     # Verify the upload was called with correct params
@@ -168,7 +246,7 @@ async def test_mattermost_send_with_media_single_batch():
     post_resp.raise_for_status = MagicMock()
     http.post.return_value = post_resp
 
-    handler = MattermostMediaHandler(http)
+    handler = MattermostMediaHandler(http, channel_id="ch1")
     post_id = await handler.send_with_media("ch1", "Hello", ["f1", "f2"])
     assert post_id == "post-123"
     # Should be a single post call
@@ -186,7 +264,7 @@ async def test_mattermost_send_with_media_overflow():
     post_resp.raise_for_status = MagicMock()
     http.post.return_value = post_resp
 
-    handler = MattermostMediaHandler(http)
+    handler = MattermostMediaHandler(http, channel_id="ch1")
     file_ids = [f"f{i}" for i in range(15)]  # 15 files, needs 2 posts
     await handler.send_with_media("ch1", "Many files", file_ids)
     assert http.post.call_count == 2  # first 10 + remaining 5
@@ -208,7 +286,7 @@ async def test_upload_and_collect():
 
 
 def test_mattermost_format_attachment_card():
-    handler = MattermostMediaHandler(None)
+    handler = MattermostMediaHandler(None, channel_id="")
     card = handler.format_attachment_card("Title", "Body", image_url="https://img.png")
     assert card["title"] == "Title"
     assert card["text"] == "Body"

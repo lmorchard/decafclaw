@@ -41,7 +41,7 @@ An AI agent testbed for exploring agent development patterns. Connects to Matter
 - `src/decafclaw/mcp_client.py` — MCP client: config, registry, server connections, auto-restart
 - `src/decafclaw/heartbeat.py` — Heartbeat: periodic wake-up, section parsing, timer, cycle runner
 - `src/decafclaw/schedules.py` — Scheduled tasks: cron-style task files, discovery, execution, timer loop
-- `src/decafclaw/media.py` — Media handling: ToolResult, MediaHandler interface, workspace ref scanning
+- `src/decafclaw/media.py` — Media handling: ToolResult, MediaSaveResult, MediaHandler interface (Web/Terminal/Mattermost), workspace ref scanning
 - `src/decafclaw/tools/` — Tool registry: core, memory, todo, workspace, file_share, shell, conversation, skill activation, MCP status, health, delegation
 - `src/decafclaw/tools/health.py` — Health/diagnostic status tool: uptime, MCP, heartbeat, tools, embeddings
 - `src/decafclaw/tools/effort_tools.py` — Effort level tool: `set_effort` for conversation model switching
