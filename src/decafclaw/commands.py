@@ -358,8 +358,12 @@ async def execute_command(ctx, skill: SkillInfo, arguments: str) -> tuple[str, s
     from .media import ToolResult as _ToolResult
     from .tools.skill_tools import activate_skill_internal
 
-    # Set pre-approved tools
+    # Set pre-approved tools and scoped shell patterns
     ctx.preapproved_tools = set(skill.allowed_tools)
+    skill_dir = str(skill.location)
+    ctx.preapproved_shell_patterns = [
+        p.replace("$SKILL_DIR", skill_dir) for p in skill.shell_patterns
+    ]
 
     # Auto-activate the skill ONLY if it has native tools to register.
     # Shell-based skills don't need activation — the command body IS the prompt.
