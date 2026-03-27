@@ -5,7 +5,7 @@ schedule: "30 */4 * * *"
 effort: default
 required-skills:
   - wiki
-allowed-tools: shell, wiki_read, wiki_write, wiki_search, wiki_list, wiki_backlinks, memory_recent, memory_search, current_time
+allowed-tools: shell($SKILL_DIR/fetch.sh), wiki_read, wiki_write, wiki_search, wiki_list, wiki_backlinks, memory_recent, memory_search, current_time
 user-invocable: true
 ---
 

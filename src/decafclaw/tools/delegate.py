@@ -77,8 +77,9 @@ async def _run_child_turn(parent_ctx, task, effort: str = "",
 
     # Clear skill state so children can't activate new skills
     child_ctx.activated_skills = set()
-    # Propagate command pre-approved tools to child
+    # Propagate command pre-approved tools and scoped shell patterns to child
     child_ctx.preapproved_tools = parent_ctx.preapproved_tools
+    child_ctx.preapproved_shell_patterns = parent_ctx.preapproved_shell_patterns
 
     # No streaming or reflection for child agents
     child_ctx.on_stream_chunk = None
