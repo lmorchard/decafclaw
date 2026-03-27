@@ -9,7 +9,7 @@ from pathlib import Path
 
 from croniter import croniter
 
-from .skills import _split_frontmatter
+from .skills import _parse_allowed_tools, _split_frontmatter
 
 log = logging.getLogger(__name__)
 
@@ -26,6 +26,7 @@ class ScheduleTask:
     enabled: bool = True
     effort: str = "default"
     allowed_tools: list[str] = field(default_factory=list)
+    shell_patterns: list[str] = field(default_factory=list)
     required_skills: list[str] = field(default_factory=list)
 
 
@@ -56,9 +57,12 @@ def parse_schedule_file(path: Path) -> ScheduleTask | None:
     if not isinstance(enabled, bool):
         enabled = str(enabled).lower() not in ("false", "0", "no", "off")
 
-    allowed_tools = meta.get("allowed-tools", [])
-    if not isinstance(allowed_tools, list):
-        allowed_tools = [str(allowed_tools)] if allowed_tools else []
+    allowed_tools_raw = meta.get("allowed-tools", "")
+    if allowed_tools_raw is None:
+        allowed_tools_raw = ""
+    elif isinstance(allowed_tools_raw, list):
+        allowed_tools_raw = ", ".join(str(t) for t in allowed_tools_raw)
+    allowed_tools, shell_patterns = _parse_allowed_tools(str(allowed_tools_raw))
 
     required_skills = meta.get("required-skills", [])
     if not isinstance(required_skills, list):
@@ -73,7 +77,8 @@ def parse_schedule_file(path: Path) -> ScheduleTask | None:
         channel=str(meta.get("channel", "")),
         enabled=enabled,
         effort=str(meta.get("effort", "default")),
-        allowed_tools=[str(t) for t in allowed_tools],
+        allowed_tools=allowed_tools,
+        shell_patterns=shell_patterns,
         required_skills=[str(s) for s in required_skills],
     )
 
@@ -138,6 +143,7 @@ def discover_schedules(config) -> list[ScheduleTask]:
                 enabled=skill.enabled,
                 effort=skill.effort or "default",
                 allowed_tools=skill.allowed_tools,
+                shell_patterns=skill.shell_patterns,
                 required_skills=skill.requires_skills,
             )
 
@@ -216,9 +222,17 @@ async def run_schedule_task(config, event_bus, task: ScheduleTask) -> dict:
     ctx.skip_reflection = True
     ctx.skip_memory_context = True
 
-    if task.allowed_tools:
-        ctx.allowed_tools = set(task.allowed_tools)
+    if task.allowed_tools or task.shell_patterns:
+        tools_set = set(task.allowed_tools)
+        if task.shell_patterns:
+            tools_set.add("shell")  # ensure shell tool is visible
+        ctx.allowed_tools = tools_set
         ctx.preapproved_tools = set(task.allowed_tools)
+    skill_dir = str(task.path.parent.resolve())
+    if task.shell_patterns:
+        ctx.preapproved_shell_patterns = [
+            p.replace("$SKILL_DIR", skill_dir) for p in task.shell_patterns
+        ]
 
     # Pre-activate required skills
     if task.required_skills:

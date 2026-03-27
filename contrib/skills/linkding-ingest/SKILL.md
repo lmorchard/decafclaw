@@ -6,7 +6,7 @@ effort: default
 required-skills:
   - wiki
   - tabstack
-allowed-tools: shell, wiki_read, wiki_write, wiki_search, wiki_list, wiki_backlinks, tabstack_extract_markdown, memory_recent, memory_search, current_time, delegate_task
+allowed-tools: shell($SKILL_DIR/fetch.sh), wiki_read, wiki_write, wiki_search, wiki_list, wiki_backlinks, tabstack_extract_markdown, memory_recent, memory_search, current_time, delegate_task
 user-invocable: true
 ---
 

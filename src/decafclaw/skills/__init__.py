@@ -2,6 +2,7 @@
 
 import logging
 import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -25,6 +26,7 @@ class SkillInfo:
     requires_env: list[str] = field(default_factory=list)
     user_invocable: bool = True
     allowed_tools: list[str] = field(default_factory=list)
+    shell_patterns: list[str] = field(default_factory=list)
     context: str = "inline"  # "inline" or "fork"
     argument_hint: str = ""
     effort: str = ""  # empty = inherit conversation effort
@@ -71,10 +73,9 @@ def parse_skill_md(path: Path) -> SkillInfo | None:
     requires_env = requires.get("env", []) if isinstance(requires, dict) else []
 
     # Parse allowed-tools: comma-separated string → list
+    # Entries like "shell(pattern)" are scoped shell approvals
     allowed_tools_raw = meta.get("allowed-tools", "")
-    allowed_tools = [
-        t.strip() for t in allowed_tools_raw.split(",") if t.strip()
-    ] if allowed_tools_raw else []
+    allowed_tools, shell_patterns = _parse_allowed_tools(allowed_tools_raw)
 
     return SkillInfo(
         name=name,
@@ -85,6 +86,7 @@ def parse_skill_md(path: Path) -> SkillInfo | None:
         requires_env=requires_env,
         user_invocable=meta.get("user-invocable", meta.get("user_invocable", True)),
         allowed_tools=allowed_tools,
+        shell_patterns=shell_patterns,
         context=meta.get("context", "inline"),
         argument_hint=meta.get("argument-hint", ""),
         effort=meta.get("effort", ""),
@@ -93,6 +95,34 @@ def parse_skill_md(path: Path) -> SkillInfo | None:
         schedule=str(meta.get("schedule") or ""),
         enabled=_coerce_bool(meta.get("enabled", True)),
     )
+
+
+_SCOPED_SHELL_RE = re.compile(r"^shell\((.+)\)$")
+
+
+def _parse_allowed_tools(raw: str) -> tuple[list[str], list[str]]:
+    """Parse allowed-tools string into (tool_names, shell_patterns).
+
+    Entries like "shell(pattern)" are extracted as scoped shell patterns.
+    Bare "shell" and other tool names go into the tool_names list.
+    """
+    if not raw:
+        return [], []
+
+    tools: list[str] = []
+    patterns: list[str] = []
+
+    for entry in raw.split(","):
+        entry = entry.strip()
+        if not entry:
+            continue
+        m = _SCOPED_SHELL_RE.match(entry)
+        if m:
+            patterns.append(m.group(1).strip())
+        else:
+            tools.append(entry)
+
+    return tools, patterns
 
 
 def _coerce_str_list(value) -> list[str]:
