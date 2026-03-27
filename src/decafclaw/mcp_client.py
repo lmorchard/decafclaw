@@ -213,7 +213,7 @@ def _convert_mcp_response(result):
                 "data": data,
                 "content_type": mime_type,
             })
-            parts.append("Image attached.")
+            parts.append(f"[file attached: mcp-image-{img_count}{ext} ({mime_type}) — will appear as an attachment on your reply]")
 
         elif item_type == "audio":
             data_str = item.get("data", "") if isinstance(item, dict) else getattr(item, "data", "")
@@ -233,7 +233,7 @@ def _convert_mcp_response(result):
                 "data": data,
                 "content_type": mime_type,
             })
-            parts.append("Audio attached.")
+            parts.append(f"[file attached: mcp-audio-{audio_count}{ext} ({mime_type}) — will appear as an attachment on your reply]")
 
         else:
             parts.append(f"[{item_type}: unsupported content type]")
@@ -243,6 +243,100 @@ def _convert_mcp_response(result):
     if is_error:
         return ToolResult(text=f"[error: {text}]", media=media)
     return ToolResult(text=text, media=media)
+
+
+def _convert_resource_response(result):
+    """Convert an MCP resources/read response to a ToolResult.
+
+    Handles TextResourceContents and BlobResourceContents.
+    Returns a ToolResult with text and optional media attachments.
+    """
+    import base64
+    import mimetypes as _mimetypes
+
+    from .media import ToolResult
+
+    # Handle dict or SDK result object
+    if isinstance(result, dict):
+        contents = result.get("contents", [])
+    else:
+        contents = getattr(result, "contents", [])
+
+    parts = []
+    media = []
+    blob_count = 0
+
+    for item in contents:
+        if isinstance(item, dict):
+            item_text = item.get("text")
+            item_blob = item.get("blob")
+            item_uri = item.get("uri", "")
+            item_mime = item.get("mimeType", "")
+        else:
+            item_text = getattr(item, "text", None)
+            item_blob = getattr(item, "blob", None)
+            item_uri = str(getattr(item, "uri", ""))
+            item_mime = getattr(item, "mimeType", "") or ""
+
+        if item_text is not None:
+            parts.append(item_text)
+        elif item_blob is not None:
+            mime_type = item_mime or "application/octet-stream"
+            ext = _mimetypes.guess_extension(mime_type) or ".bin"
+            try:
+                data = base64.b64decode(item_blob)
+            except Exception:
+                data = item_blob.encode() if isinstance(item_blob, str) else item_blob
+
+            blob_count += 1
+            media.append({
+                "type": "file",
+                "filename": f"mcp-resource-{blob_count}{ext}",
+                "data": data,
+                "content_type": mime_type,
+            })
+            parts.append(f"[file attached: mcp-resource-{blob_count}{ext} ({mime_type}) — will appear as an attachment on your reply]")
+        else:
+            parts.append(f"[unsupported resource content from {item_uri}]")
+
+    text = "\n".join(parts) if parts else "(no content)"
+    return ToolResult(text=text, media=media)
+
+
+def _convert_prompt_response(result):
+    """Convert an MCP prompts/get response to a text string.
+
+    The result contains .messages — a list of PromptMessage objects
+    with .role and .content. Converts to a readable text block.
+    """
+    if isinstance(result, dict):
+        messages = result.get("messages", [])
+    else:
+        messages = getattr(result, "messages", [])
+
+    parts = []
+    for msg in messages:
+        if isinstance(msg, dict):
+            role = msg.get("role", "unknown")
+            content = msg.get("content", {})
+        else:
+            role = getattr(msg, "role", "unknown")
+            content = getattr(msg, "content", {})
+
+        # Content can be TextContent, ImageContent, EmbeddedResource, or a dict
+        if isinstance(content, dict):
+            text = content.get("text", str(content))
+        elif hasattr(content, "text"):
+            text = content.text
+        elif isinstance(content, str):
+            text = content
+        else:
+            content_type = getattr(content, "type", type(content).__name__)
+            text = f"({content_type} content)"
+
+        parts.append(f"[{role}]: {text}")
+
+    return "\n".join(parts) if parts else "(no messages)"
 
 
 # -- MCP Registry --------------------------------------------------------------
@@ -255,8 +349,12 @@ class MCPServerState:
     config: MCPServerConfig
     status: str = "disconnected"  # connected, disconnected, failed
     session: Any = None  # ClientSession when connected
+    capabilities: Any = None  # ServerCapabilities from initialize()
     tools: dict = field(default_factory=dict)  # namespaced_name -> callable
     tool_definitions: list = field(default_factory=list)  # OpenAI-style defs
+    resources: list = field(default_factory=list)  # from list_resources()
+    resource_templates: list = field(default_factory=list)  # from list_resource_templates()
+    prompts: list = field(default_factory=list)  # from list_prompts()
     retry_count: int = 0
     last_retry_time: float = 0.0
     _exit_stack: Any = None  # AsyncExitStack for managing context lifetimes
@@ -284,6 +382,125 @@ class MCPRegistry:
                 defs.extend(state.tool_definitions)
         return defs
 
+    def get_resources(self) -> list[tuple[str, Any]]:
+        """Return all MCP resources as (server_name, resource) tuples."""
+        results = []
+        for name, state in self.servers.items():
+            if state.status == "connected":
+                for res in state.resources:
+                    results.append((name, res))
+        return results
+
+    def get_resource_templates(self) -> list[tuple[str, Any]]:
+        """Return all MCP resource templates as (server_name, template) tuples."""
+        results = []
+        for name, state in self.servers.items():
+            if state.status == "connected":
+                for tmpl in state.resource_templates:
+                    results.append((name, tmpl))
+        return results
+
+    def get_prompts(self) -> list[tuple[str, Any]]:
+        """Return all MCP prompts as (server_name, prompt) tuples."""
+        results = []
+        for name, state in self.servers.items():
+            if state.status == "connected":
+                for prompt in state.prompts:
+                    results.append((name, prompt))
+        return results
+
+    async def refresh_tools(self, server_name: str):
+        """Re-discover tools for a connected server."""
+        state = self.servers.get(server_name)
+        if not state or state.status != "connected" or not state.session:
+            return
+
+        try:
+            tools_result = await state.session.list_tools()
+            tools_list = tools_result.tools if hasattr(tools_result, "tools") else tools_result
+
+            new_tools = {}
+            new_defs = []
+            for mcp_tool in tools_list:
+                tool_def = _convert_tool_definition(server_name, mcp_tool)
+                namespaced = tool_def["function"]["name"]
+                tool_name = mcp_tool.name if hasattr(mcp_tool, "name") else mcp_tool["name"]
+                new_tools[namespaced] = self._make_tool_caller(
+                    server_name, tool_name, state.config.timeout)
+                new_defs.append(tool_def)
+
+            # Atomic swap
+            state.tools = new_tools
+            state.tool_definitions = new_defs
+            log.info(f"MCP server {server_name!r} tools refreshed: {len(new_tools)} tool(s)")
+        except Exception as e:
+            log.warning(f"MCP server {server_name!r}: failed to refresh tools: {e}")
+
+    async def refresh_resources(self, server_name: str):
+        """Re-discover resources for a connected server."""
+        state = self.servers.get(server_name)
+        if not state or state.status != "connected" or not state.session:
+            return
+        if not state.capabilities or not getattr(state.capabilities, "resources", None):
+            return
+
+        try:
+            res_result = await state.session.list_resources()
+            state.resources = (res_result.resources if hasattr(res_result, "resources")
+                               else res_result if isinstance(res_result, list) else [])
+            tmpl_result = await state.session.list_resource_templates()
+            state.resource_templates = (tmpl_result.resourceTemplates
+                                        if hasattr(tmpl_result, "resourceTemplates")
+                                        else tmpl_result if isinstance(tmpl_result, list) else [])
+            log.info(f"MCP server {server_name!r} resources refreshed: "
+                     f"{len(state.resources)} resource(s), {len(state.resource_templates)} template(s)")
+        except Exception as e:
+            log.warning(f"MCP server {server_name!r}: failed to refresh resources: {e}")
+
+    async def refresh_prompts(self, server_name: str):
+        """Re-discover prompts for a connected server."""
+        state = self.servers.get(server_name)
+        if not state or state.status != "connected" or not state.session:
+            return
+        if not state.capabilities or not getattr(state.capabilities, "prompts", None):
+            return
+
+        try:
+            prompts_result = await state.session.list_prompts()
+            state.prompts = (prompts_result.prompts if hasattr(prompts_result, "prompts")
+                             else prompts_result if isinstance(prompts_result, list) else [])
+            log.info(f"MCP server {server_name!r} prompts refreshed: {len(state.prompts)} prompt(s)")
+        except Exception as e:
+            log.warning(f"MCP server {server_name!r}: failed to refresh prompts: {e}")
+
+    def _make_notification_handler(self, server_name: str):
+        """Create a message_handler callback for a ClientSession.
+
+        Handles ToolListChanged, ResourceListChanged, and PromptListChanged
+        notifications by re-discovering the corresponding primitives.
+        """
+        async def handler(message):
+            from mcp import types as _mcp_types
+
+            # Only handle ServerNotification, ignore requests and exceptions
+            if not isinstance(message, _mcp_types.ServerNotification):
+                return
+
+            try:
+                notification = message.root
+                if isinstance(notification, _mcp_types.ToolListChangedNotification):
+                    await self.refresh_tools(server_name)
+                elif isinstance(notification, _mcp_types.ResourceListChangedNotification):
+                    await self.refresh_resources(server_name)
+                elif isinstance(notification, _mcp_types.PromptListChangedNotification):
+                    await self.refresh_prompts(server_name)
+                else:
+                    log.debug(f"MCP server {server_name!r}: unhandled notification {type(notification).__name__}")
+            except Exception as e:
+                log.warning(f"MCP server {server_name!r}: notification handler error: {e}")
+
+        return handler
+
     async def connect_server(self, server_config: MCPServerConfig):
         """Connect to a single MCP server and discover its tools."""
         name = server_config.name
@@ -295,16 +512,21 @@ class MCPRegistry:
             state._exit_stack = exit_stack
             await exit_stack.__aenter__()
 
+            message_handler = self._make_notification_handler(name)
+
             if server_config.type == "stdio":
-                session = await self._connect_stdio(exit_stack, server_config)
+                session = await self._connect_stdio(exit_stack, server_config, message_handler)
             elif server_config.type == "http":
-                session = await self._connect_http(exit_stack, server_config)
+                session = await self._connect_http(exit_stack, server_config, message_handler)
             else:
                 log.warning(f"MCP server {name!r}: unknown type {server_config.type!r}")
                 state.status = "failed"
                 return
 
             state.session = session
+
+            # Store server capabilities for capability-aware discovery
+            state.capabilities = session.get_server_capabilities()
 
             # Discover tools
             tools_result = await session.list_tools()
@@ -319,9 +541,33 @@ class MCPRegistry:
                 state.tools[namespaced] = self._make_tool_caller(name, tool_name, server_config.timeout)
                 state.tool_definitions.append(tool_def)
 
+            # Discover resources if server supports them
+            if state.capabilities and getattr(state.capabilities, "resources", None):
+                try:
+                    res_result = await session.list_resources()
+                    state.resources = (res_result.resources if hasattr(res_result, "resources")
+                                       else res_result if isinstance(res_result, list) else [])
+                    tmpl_result = await session.list_resource_templates()
+                    state.resource_templates = (tmpl_result.resourceTemplates
+                                                if hasattr(tmpl_result, "resourceTemplates")
+                                                else tmpl_result if isinstance(tmpl_result, list)
+                                                else [])
+                except Exception as e:
+                    log.warning(f"MCP server {name!r}: failed to discover resources: {e}")
+
+            # Discover prompts if server supports them
+            if state.capabilities and getattr(state.capabilities, "prompts", None):
+                try:
+                    prompts_result = await session.list_prompts()
+                    state.prompts = (prompts_result.prompts if hasattr(prompts_result, "prompts")
+                                     else prompts_result if isinstance(prompts_result, list) else [])
+                except Exception as e:
+                    log.warning(f"MCP server {name!r}: failed to discover prompts: {e}")
+
             state.status = "connected"
             state.retry_count = 0
-            log.info(f"MCP server {name!r} connected: {len(state.tools)} tool(s)")
+            log.info(f"MCP server {name!r} connected: {len(state.tools)} tool(s), "
+                     f"{len(state.resources)} resource(s), {len(state.prompts)} prompt(s)")
 
         except BaseException as e:
             log.warning(f"MCP server {name!r} failed to connect: {e}")
@@ -334,7 +580,7 @@ class MCPRegistry:
                     pass
                 state._exit_stack = None
 
-    async def _connect_stdio(self, exit_stack, server_config):
+    async def _connect_stdio(self, exit_stack, server_config, message_handler=None):
         """Connect to a stdio MCP server. Override in tests."""
         from mcp import ClientSession, StdioServerParameters
         from mcp.client.stdio import stdio_client
@@ -347,26 +593,32 @@ class MCPRegistry:
         read_stream, write_stream = await exit_stack.enter_async_context(
             stdio_client(params)
         )
+        kwargs = {}
+        if message_handler:
+            kwargs["message_handler"] = message_handler
         session = await exit_stack.enter_async_context(
-            ClientSession(read_stream, write_stream)
+            ClientSession(read_stream, write_stream, **kwargs)
         )
         await session.initialize()
         return session
 
-    async def _connect_http(self, exit_stack, server_config):
+    async def _connect_http(self, exit_stack, server_config, message_handler=None):
         """Connect to an HTTP MCP server. Override in tests."""
         from mcp import ClientSession
         from mcp.client.streamable_http import streamable_http_client
 
-        kwargs = {"url": server_config.url}
+        http_kwargs = {"url": server_config.url}
         if server_config.headers:
-            kwargs["headers"] = server_config.headers
+            http_kwargs["headers"] = server_config.headers
 
         read_stream, write_stream, _ = await exit_stack.enter_async_context(
-            streamable_http_client(**kwargs)
+            streamable_http_client(**http_kwargs)
         )
+        session_kwargs = {}
+        if message_handler:
+            session_kwargs["message_handler"] = message_handler
         session = await exit_stack.enter_async_context(
-            ClientSession(read_stream, write_stream)
+            ClientSession(read_stream, write_stream, **session_kwargs)
         )
         await session.initialize()
         return session
@@ -474,8 +726,12 @@ class MCPRegistry:
             state._exit_stack = None
 
         state.session = None
+        state.capabilities = None
         state.tools.clear()
         state.tool_definitions.clear()
+        state.resources.clear()
+        state.resource_templates.clear()
+        state.prompts.clear()
         state.status = "disconnected"
         log.info(f"MCP server {name!r} disconnected")
 
