@@ -38,6 +38,7 @@ class Context:
         self.event_context_id: str = ""  # publish events under this ID instead of context_id
         self.deferred_tool_pool: list = []  # tool defs available via tool_search
         self.preapproved_tools: set = set()  # tools pre-approved by command invocation
+        self.preapproved_shell_patterns: list[str] = []  # scoped shell approval globs
         self._current_iteration: int = 1
         self.is_child: bool = False
         self.skip_reflection: bool = False

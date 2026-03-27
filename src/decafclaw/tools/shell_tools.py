@@ -51,6 +51,15 @@ def _command_matches_pattern(command: str, patterns: list[str]) -> bool:
     return False
 
 
+# Shell metacharacters that could chain additional commands
+_SHELL_CHAIN_TOKENS = (";", "&&", "||", "|", "`", "$(", "\n")
+
+
+def _has_shell_metacharacters(command: str) -> bool:
+    """Check if a command contains shell chaining/injection tokens."""
+    return any(tok in command for tok in _SHELL_CHAIN_TOKENS)
+
+
 def _suggest_pattern(command: str) -> str:
     """Generate a suggested allow pattern from a command.
 
@@ -94,9 +103,17 @@ async def tool_shell(ctx, command: str) -> str | ToolResult:
         log.info(f"[tool:shell] auto-approved for heartbeat: {command}")
         return _execute_command(ctx, command)
 
-    # Command pre-approved tools bypass confirmation
+    # Command pre-approved tools bypass confirmation (blanket shell approval)
     if "shell" in ctx.preapproved_tools:
         log.info(f"[tool:shell] pre-approved by command: {command}")
+        return _execute_command(ctx, command)
+
+    # Scoped shell patterns from skill frontmatter (e.g. shell($SKILL_DIR/fetch.sh))
+    # Reject commands with shell chaining/metacharacters to prevent bypass
+    if ctx.preapproved_shell_patterns and not _has_shell_metacharacters(
+        command
+    ) and _command_matches_pattern(command, ctx.preapproved_shell_patterns):
+        log.info(f"[tool:shell] pre-approved by scoped pattern: {command}")
         return _execute_command(ctx, command)
 
     # Check allow patterns
