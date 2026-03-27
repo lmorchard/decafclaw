@@ -10,6 +10,8 @@ from decafclaw.mcp_client import (
     MCPServerConfig,
     MCPServerState,
     _convert_mcp_response,
+    _convert_prompt_response,
+    _convert_resource_response,
     _convert_tool_definition,
     _expand_env,
     _namespace_tool,
@@ -245,7 +247,8 @@ def test_convert_mcp_response_image_media():
         "isError": False,
     }
     tr = _convert_mcp_response(result)
-    assert "Image attached" in tr.text
+    assert "file attached" in tr.text
+    assert "image/png" in tr.text
     assert len(tr.media) == 1
     assert tr.media[0]["type"] == "file"
     assert tr.media[0]["data"] == b"fake-png-data"
@@ -260,7 +263,8 @@ def test_convert_mcp_response_audio_media():
         "isError": False,
     }
     tr = _convert_mcp_response(result)
-    assert "Audio attached" in tr.text
+    assert "file attached" in tr.text
+    assert "audio/wav" in tr.text
     assert len(tr.media) == 1
     assert tr.media[0]["content_type"] == "audio/wav"
 
@@ -277,7 +281,7 @@ def test_convert_mcp_response_mixed_text_and_image():
     }
     tr = _convert_mcp_response(result)
     assert "Here's your image:" in tr.text
-    assert "Image attached" in tr.text
+    assert "file attached" in tr.text
     assert len(tr.media) == 1
 
 
@@ -300,13 +304,63 @@ def _make_fake_tool(name, description="A test tool"):
     return tool
 
 
-def _make_mock_session(tools=None):
-    """Create a mock ClientSession that returns given tools."""
+def _make_fake_resource(uri, name, description="", mime_type="text/plain"):
+    """Create a fake MCP resource object."""
+    res = MagicMock()
+    res.uri = uri
+    res.name = name
+    res.description = description
+    res.mimeType = mime_type
+    return res
+
+
+def _make_fake_resource_template(uri_template, name, description=""):
+    """Create a fake MCP resource template object."""
+    tmpl = MagicMock()
+    tmpl.uriTemplate = uri_template
+    tmpl.name = name
+    tmpl.description = description
+    return tmpl
+
+
+def _make_fake_prompt(name, description="", arguments=None):
+    """Create a fake MCP prompt object."""
+    prompt = MagicMock()
+    prompt.name = name
+    prompt.description = description
+    prompt.arguments = arguments or []
+    return prompt
+
+
+def _make_mock_session(tools=None, capabilities=None, resources=None,
+                       resource_templates=None, prompts=None):
+    """Create a mock ClientSession that returns given tools/resources/prompts."""
     session = AsyncMock()
     tools_result = MagicMock()
     tools_result.tools = tools or []
     session.list_tools = AsyncMock(return_value=tools_result)
     session.initialize = AsyncMock()
+
+    # Capabilities
+    if capabilities is None:
+        capabilities = MagicMock()
+        capabilities.resources = None
+        capabilities.prompts = None
+    session.get_server_capabilities = MagicMock(return_value=capabilities)
+
+    # Resources
+    res_result = MagicMock()
+    res_result.resources = resources or []
+    session.list_resources = AsyncMock(return_value=res_result)
+    tmpl_result = MagicMock()
+    tmpl_result.resourceTemplates = resource_templates or []
+    session.list_resource_templates = AsyncMock(return_value=tmpl_result)
+
+    # Prompts
+    prompts_result = MagicMock()
+    prompts_result.prompts = prompts or []
+    session.list_prompts = AsyncMock(return_value=prompts_result)
+
     return session
 
 
@@ -319,7 +373,7 @@ async def test_connect_server_success():
     registry = MCPRegistry()
 
     # Patch _connect_stdio to return our mock session
-    async def fake_connect_stdio(exit_stack, server_config):
+    async def fake_connect_stdio(exit_stack, server_config, message_handler=None):
         return mock_session
 
     registry._connect_stdio = fake_connect_stdio
@@ -338,7 +392,7 @@ async def test_connect_server_failure():
     """Failed connection sets status to 'failed' without raising."""
     registry = MCPRegistry()
 
-    async def failing_connect(exit_stack, server_config):
+    async def failing_connect(exit_stack, server_config, message_handler=None):
         raise ConnectionError("boom")
 
     registry._connect_stdio = failing_connect
@@ -465,7 +519,7 @@ async def test_maybe_reconnect_increments_retry():
     """Failed reconnection increments retry count."""
     registry = MCPRegistry()
 
-    async def failing_connect(exit_stack, server_config):
+    async def failing_connect(exit_stack, server_config, message_handler=None):
         raise ConnectionError("still broken")
 
     registry._connect_stdio = failing_connect
@@ -510,5 +564,667 @@ async def test_mcp_status_shows_servers(ctx, monkeypatch):
     result = await tool_mcp_status(ctx)
     assert "test-server" in result
     assert "connected" in result
-    assert "tool1" in result
-    assert "tool2" in result
+    assert "2 tool(s)" in result
+
+
+# -- capability-aware discovery tests --
+
+
+@pytest.mark.asyncio
+async def test_connect_discovers_resources_when_capable():
+    """Server with resource capabilities gets resources discovered."""
+    fake_tool = _make_fake_tool("t1")
+    fake_res = _make_fake_resource("file:///a.txt", "a.txt")
+    fake_tmpl = _make_fake_resource_template("file:///{path}", "files")
+    caps = MagicMock()
+    caps.resources = MagicMock()  # truthy = has resources
+    caps.prompts = None
+    mock_session = _make_mock_session(
+        tools=[fake_tool], capabilities=caps,
+        resources=[fake_res], resource_templates=[fake_tmpl],
+    )
+
+    registry = MCPRegistry()
+    registry._connect_stdio = AsyncMock(return_value=mock_session)
+
+    cfg = MCPServerConfig(name="res-server", type="stdio", command="echo")
+    await registry.connect_server(cfg)
+
+    state = registry.servers["res-server"]
+    assert state.status == "connected"
+    assert len(state.resources) == 1
+    assert len(state.resource_templates) == 1
+    assert state.resources[0].uri == "file:///a.txt"
+
+
+@pytest.mark.asyncio
+async def test_connect_skips_resources_when_not_capable():
+    """Server without resource capabilities gets empty resources."""
+    fake_tool = _make_fake_tool("t1")
+    caps = MagicMock()
+    caps.resources = None
+    caps.prompts = None
+    mock_session = _make_mock_session(tools=[fake_tool], capabilities=caps)
+
+    registry = MCPRegistry()
+    registry._connect_stdio = AsyncMock(return_value=mock_session)
+
+    cfg = MCPServerConfig(name="no-res", type="stdio", command="echo")
+    await registry.connect_server(cfg)
+
+    state = registry.servers["no-res"]
+    assert state.status == "connected"
+    assert state.resources == []
+    assert state.resource_templates == []
+    # list_resources should not have been called
+    mock_session.list_resources.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_connect_discovers_prompts_when_capable():
+    """Server with prompt capabilities gets prompts discovered."""
+    fake_tool = _make_fake_tool("t1")
+    fake_prompt = _make_fake_prompt("summarize", "Summarize text")
+    caps = MagicMock()
+    caps.resources = None
+    caps.prompts = MagicMock()  # truthy = has prompts
+    mock_session = _make_mock_session(
+        tools=[fake_tool], capabilities=caps, prompts=[fake_prompt],
+    )
+
+    registry = MCPRegistry()
+    registry._connect_stdio = AsyncMock(return_value=mock_session)
+
+    cfg = MCPServerConfig(name="prompt-server", type="stdio", command="echo")
+    await registry.connect_server(cfg)
+
+    state = registry.servers["prompt-server"]
+    assert state.status == "connected"
+    assert len(state.prompts) == 1
+    assert state.prompts[0].name == "summarize"
+
+
+@pytest.mark.asyncio
+async def test_connect_skips_prompts_when_not_capable():
+    """Server without prompt capabilities gets empty prompts."""
+    fake_tool = _make_fake_tool("t1")
+    caps = MagicMock()
+    caps.resources = None
+    caps.prompts = None
+    mock_session = _make_mock_session(tools=[fake_tool], capabilities=caps)
+
+    registry = MCPRegistry()
+    registry._connect_stdio = AsyncMock(return_value=mock_session)
+
+    cfg = MCPServerConfig(name="no-prompts", type="stdio", command="echo")
+    await registry.connect_server(cfg)
+
+    state = registry.servers["no-prompts"]
+    assert state.prompts == []
+    mock_session.list_prompts.assert_not_called()
+
+
+# -- registry accessor tests --
+
+
+@pytest.mark.asyncio
+async def test_get_resources_only_connected():
+    """get_resources returns resources only from connected servers."""
+    registry = MCPRegistry()
+    res1 = _make_fake_resource("file:///a.txt", "a")
+    res2 = _make_fake_resource("file:///b.txt", "b")
+
+    registry.servers["good"] = MCPServerState(
+        config=MCPServerConfig(name="good", type="stdio"),
+        status="connected", resources=[res1],
+    )
+    registry.servers["bad"] = MCPServerState(
+        config=MCPServerConfig(name="bad", type="stdio"),
+        status="failed", resources=[res2],
+    )
+
+    results = registry.get_resources()
+    assert len(results) == 1
+    assert results[0] == ("good", res1)
+
+
+@pytest.mark.asyncio
+async def test_get_prompts_only_connected():
+    """get_prompts returns prompts only from connected servers."""
+    registry = MCPRegistry()
+    p1 = _make_fake_prompt("summarize")
+    p2 = _make_fake_prompt("translate")
+
+    registry.servers["good"] = MCPServerState(
+        config=MCPServerConfig(name="good", type="stdio"),
+        status="connected", prompts=[p1],
+    )
+    registry.servers["bad"] = MCPServerState(
+        config=MCPServerConfig(name="bad", type="stdio"),
+        status="failed", prompts=[p2],
+    )
+
+    results = registry.get_prompts()
+    assert len(results) == 1
+    assert results[0] == ("good", p1)
+
+
+# -- refresh methods tests --
+
+
+@pytest.mark.asyncio
+async def test_refresh_tools():
+    """refresh_tools updates tool list from server."""
+    old_tool = _make_fake_tool("old_tool")
+    new_tool = _make_fake_tool("new_tool")
+    mock_session = _make_mock_session(tools=[old_tool])
+
+    registry = MCPRegistry()
+    registry._connect_stdio = AsyncMock(return_value=mock_session)
+
+    cfg = MCPServerConfig(name="srv", type="stdio", command="echo")
+    await registry.connect_server(cfg)
+    assert "mcp__srv__old_tool" in registry.servers["srv"].tools
+
+    # Change what list_tools returns and refresh
+    new_result = MagicMock()
+    new_result.tools = [new_tool]
+    mock_session.list_tools = AsyncMock(return_value=new_result)
+
+    await registry.refresh_tools("srv")
+    assert "mcp__srv__new_tool" in registry.servers["srv"].tools
+    assert "mcp__srv__old_tool" not in registry.servers["srv"].tools
+
+
+@pytest.mark.asyncio
+async def test_refresh_resources():
+    """refresh_resources updates resource list from server."""
+    fake_tool = _make_fake_tool("t1")
+    res1 = _make_fake_resource("file:///a.txt", "a")
+    res2 = _make_fake_resource("file:///b.txt", "b")
+    caps = MagicMock()
+    caps.resources = MagicMock()
+    caps.prompts = None
+    mock_session = _make_mock_session(
+        tools=[fake_tool], capabilities=caps, resources=[res1],
+    )
+
+    registry = MCPRegistry()
+    registry._connect_stdio = AsyncMock(return_value=mock_session)
+
+    cfg = MCPServerConfig(name="srv", type="stdio", command="echo")
+    await registry.connect_server(cfg)
+    assert len(registry.servers["srv"].resources) == 1
+
+    # Change what list_resources returns and refresh
+    new_res_result = MagicMock()
+    new_res_result.resources = [res1, res2]
+    mock_session.list_resources = AsyncMock(return_value=new_res_result)
+    new_tmpl_result = MagicMock()
+    new_tmpl_result.resourceTemplates = []
+    mock_session.list_resource_templates = AsyncMock(return_value=new_tmpl_result)
+
+    await registry.refresh_resources("srv")
+    assert len(registry.servers["srv"].resources) == 2
+
+
+@pytest.mark.asyncio
+async def test_refresh_prompts():
+    """refresh_prompts updates prompt list from server."""
+    fake_tool = _make_fake_tool("t1")
+    p1 = _make_fake_prompt("p1")
+    p2 = _make_fake_prompt("p2")
+    caps = MagicMock()
+    caps.resources = None
+    caps.prompts = MagicMock()
+    mock_session = _make_mock_session(
+        tools=[fake_tool], capabilities=caps, prompts=[p1],
+    )
+
+    registry = MCPRegistry()
+    registry._connect_stdio = AsyncMock(return_value=mock_session)
+
+    cfg = MCPServerConfig(name="srv", type="stdio", command="echo")
+    await registry.connect_server(cfg)
+    assert len(registry.servers["srv"].prompts) == 1
+
+    # Change what list_prompts returns and refresh
+    new_prompts_result = MagicMock()
+    new_prompts_result.prompts = [p1, p2]
+    mock_session.list_prompts = AsyncMock(return_value=new_prompts_result)
+
+    await registry.refresh_prompts("srv")
+    assert len(registry.servers["srv"].prompts) == 2
+
+
+# -- notification handler tests --
+
+
+@pytest.mark.asyncio
+async def test_notification_handler_tools_changed():
+    """ToolListChangedNotification triggers refresh_tools."""
+    from mcp import types as mcp_types
+
+    registry = MCPRegistry()
+    registry.refresh_tools = AsyncMock()
+
+    handler = registry._make_notification_handler("test-srv")
+
+    # Simulate a ToolListChangedNotification
+    notification = MagicMock(spec=mcp_types.ServerNotification)
+    notification.root = mcp_types.ToolListChangedNotification()
+    await handler(notification)
+
+    registry.refresh_tools.assert_awaited_once_with("test-srv")
+
+
+@pytest.mark.asyncio
+async def test_notification_handler_resources_changed():
+    """ResourceListChangedNotification triggers refresh_resources."""
+    from mcp import types as mcp_types
+
+    registry = MCPRegistry()
+    registry.refresh_resources = AsyncMock()
+
+    handler = registry._make_notification_handler("test-srv")
+
+    notification = MagicMock(spec=mcp_types.ServerNotification)
+    notification.root = mcp_types.ResourceListChangedNotification()
+    await handler(notification)
+
+    registry.refresh_resources.assert_awaited_once_with("test-srv")
+
+
+@pytest.mark.asyncio
+async def test_notification_handler_prompts_changed():
+    """PromptListChangedNotification triggers refresh_prompts."""
+    from mcp import types as mcp_types
+
+    registry = MCPRegistry()
+    registry.refresh_prompts = AsyncMock()
+
+    handler = registry._make_notification_handler("test-srv")
+
+    notification = MagicMock(spec=mcp_types.ServerNotification)
+    notification.root = mcp_types.PromptListChangedNotification()
+    await handler(notification)
+
+    registry.refresh_prompts.assert_awaited_once_with("test-srv")
+
+
+@pytest.mark.asyncio
+async def test_notification_handler_ignores_non_notifications():
+    """Handler ignores non-ServerNotification messages."""
+    registry = MCPRegistry()
+    registry.refresh_tools = AsyncMock()
+
+    handler = registry._make_notification_handler("test-srv")
+
+    # Pass a non-notification (e.g., an exception)
+    await handler(RuntimeError("test"))
+    registry.refresh_tools.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_notification_handler_error_is_logged_not_raised():
+    """Errors in notification handler are caught, not raised."""
+    from mcp import types as mcp_types
+
+    registry = MCPRegistry()
+    registry.refresh_tools = AsyncMock(side_effect=RuntimeError("boom"))
+
+    handler = registry._make_notification_handler("test-srv")
+
+    notification = MagicMock(spec=mcp_types.ServerNotification)
+    notification.root = mcp_types.ToolListChangedNotification()
+    # Should not raise
+    await handler(notification)
+
+
+# -- resource response conversion tests --
+
+
+def test_convert_resource_response_text():
+    """Text resource content is returned as text."""
+    result = MagicMock()
+    item = MagicMock()
+    item.text = "Hello from resource"
+    item.blob = None
+    item.uri = "file:///test.txt"
+    item.mimeType = "text/plain"
+    result.contents = [item]
+
+    tr = _convert_resource_response(result)
+    assert "Hello from resource" in tr.text
+    assert tr.media == []
+
+
+def test_convert_resource_response_blob():
+    """Blob resource content is returned as media attachment."""
+    import base64
+    result = MagicMock()
+    item = MagicMock()
+    item.text = None
+    item.blob = base64.b64encode(b"fake-png").decode()
+    item.uri = "file:///image.png"
+    item.mimeType = "image/png"
+    result.contents = [item]
+
+    tr = _convert_resource_response(result)
+    assert "file attached" in tr.text
+    assert "image/png" in tr.text
+    assert len(tr.media) == 1
+    assert tr.media[0]["data"] == b"fake-png"
+    assert tr.media[0]["content_type"] == "image/png"
+
+
+def test_convert_resource_response_empty():
+    """Empty resource returns no-content message."""
+    result = MagicMock()
+    result.contents = []
+    tr = _convert_resource_response(result)
+    assert tr.text == "(no content)"
+
+
+# -- prompt response conversion tests --
+
+
+def test_convert_prompt_response_text_messages():
+    """Prompt messages are converted to role-prefixed text."""
+    result = MagicMock()
+    msg1 = MagicMock()
+    msg1.role = "user"
+    msg1.content = MagicMock()
+    msg1.content.text = "Summarize this"
+    msg2 = MagicMock()
+    msg2.role = "assistant"
+    msg2.content = MagicMock()
+    msg2.content.text = "Here is the summary"
+    result.messages = [msg1, msg2]
+
+    text = _convert_prompt_response(result)
+    assert "[user]: Summarize this" in text
+    assert "[assistant]: Here is the summary" in text
+
+
+def test_convert_prompt_response_empty():
+    """Empty prompt returns no-messages message."""
+    result = MagicMock()
+    result.messages = []
+    text = _convert_prompt_response(result)
+    assert text == "(no messages)"
+
+
+# -- resource tool tests --
+
+
+@pytest.mark.asyncio
+async def test_mcp_list_resources_shows_resources(ctx, monkeypatch):
+    """mcp_list_resources returns formatted resource list."""
+    from decafclaw import mcp_client
+    from decafclaw.tools.mcp_tools import tool_mcp_list_resources
+
+    registry = MCPRegistry()
+    res = _make_fake_resource("file:///data.csv", "data.csv", "A CSV file", "text/csv")
+    cfg = MCPServerConfig(name="data-srv", type="stdio")
+    registry.servers["data-srv"] = MCPServerState(
+        config=cfg, status="connected", resources=[res],
+    )
+    monkeypatch.setattr(mcp_client, "_registry", registry)
+
+    result = await tool_mcp_list_resources(ctx)
+    assert "data-srv" in result
+    assert "file:///data.csv" in result
+    assert "text/csv" in result
+
+
+@pytest.mark.asyncio
+async def test_mcp_list_resources_empty(ctx, monkeypatch):
+    """mcp_list_resources with no resources returns appropriate message."""
+    from decafclaw import mcp_client
+    from decafclaw.tools.mcp_tools import tool_mcp_list_resources
+
+    registry = MCPRegistry()
+    cfg = MCPServerConfig(name="empty-srv", type="stdio")
+    registry.servers["empty-srv"] = MCPServerState(
+        config=cfg, status="connected",
+    )
+    monkeypatch.setattr(mcp_client, "_registry", registry)
+
+    result = await tool_mcp_list_resources(ctx)
+    assert "No MCP resources" in result
+
+
+@pytest.mark.asyncio
+async def test_mcp_read_resource_success(ctx, monkeypatch):
+    """mcp_read_resource reads and converts resource content."""
+    from decafclaw import mcp_client
+    from decafclaw.tools.mcp_tools import tool_mcp_read_resource
+
+    mock_session = AsyncMock()
+    read_result = MagicMock()
+    item = MagicMock()
+    item.text = "file contents here"
+    item.blob = None
+    item.uri = "file:///test.txt"
+    item.mimeType = "text/plain"
+    read_result.contents = [item]
+    mock_session.read_resource = AsyncMock(return_value=read_result)
+
+    registry = MCPRegistry()
+    cfg = MCPServerConfig(name="test-srv", type="stdio")
+    registry.servers["test-srv"] = MCPServerState(
+        config=cfg, status="connected", session=mock_session,
+    )
+    monkeypatch.setattr(mcp_client, "_registry", registry)
+
+    result = await tool_mcp_read_resource(ctx, server="test-srv", uri="file:///test.txt")
+    assert "file contents here" in result.text
+
+
+@pytest.mark.asyncio
+async def test_mcp_read_resource_missing_params(ctx, monkeypatch):
+    """mcp_read_resource returns error when params missing."""
+    from decafclaw.tools.mcp_tools import tool_mcp_read_resource
+
+    result = await tool_mcp_read_resource(ctx, server="", uri="")
+    assert "[error:" in result.text
+
+
+# -- prompt tool tests --
+
+
+@pytest.mark.asyncio
+async def test_mcp_list_prompts_shows_prompts(ctx, monkeypatch):
+    """mcp_list_prompts returns formatted prompt list."""
+    from decafclaw import mcp_client
+    from decafclaw.tools.mcp_tools import tool_mcp_list_prompts
+
+    arg = MagicMock()
+    arg.name = "text"
+    arg.description = "Text to summarize"
+    arg.required = True
+
+    registry = MCPRegistry()
+    prompt = _make_fake_prompt("summarize", "Summarize text", [arg])
+    cfg = MCPServerConfig(name="ai-srv", type="stdio")
+    registry.servers["ai-srv"] = MCPServerState(
+        config=cfg, status="connected", prompts=[prompt],
+    )
+    monkeypatch.setattr(mcp_client, "_registry", registry)
+
+    result = await tool_mcp_list_prompts(ctx)
+    assert "ai-srv" in result
+    assert "summarize" in result
+    assert "text" in result
+    assert "required" in result
+
+
+@pytest.mark.asyncio
+async def test_mcp_get_prompt_success(ctx, monkeypatch):
+    """mcp_get_prompt gets and converts prompt messages."""
+    from decafclaw import mcp_client
+    from decafclaw.tools.mcp_tools import tool_mcp_get_prompt
+
+    mock_session = AsyncMock()
+    prompt_result = MagicMock()
+    msg = MagicMock()
+    msg.role = "user"
+    msg.content = MagicMock()
+    msg.content.text = "Please summarize the following"
+    prompt_result.messages = [msg]
+    mock_session.get_prompt = AsyncMock(return_value=prompt_result)
+
+    registry = MCPRegistry()
+    cfg = MCPServerConfig(name="ai-srv", type="stdio")
+    registry.servers["ai-srv"] = MCPServerState(
+        config=cfg, status="connected", session=mock_session,
+    )
+    monkeypatch.setattr(mcp_client, "_registry", registry)
+
+    result = await tool_mcp_get_prompt(ctx, server="ai-srv", name="summarize")
+    assert "Please summarize the following" in result.text
+
+
+@pytest.mark.asyncio
+async def test_mcp_get_prompt_missing_params(ctx, monkeypatch):
+    """mcp_get_prompt returns error when params missing."""
+    from decafclaw.tools.mcp_tools import tool_mcp_get_prompt
+
+    result = await tool_mcp_get_prompt(ctx, server="", name="")
+    assert "[error:" in result.text
+
+
+# -- MCP prompt command tests --
+
+
+@pytest.mark.asyncio
+async def test_dispatch_mcp_prompt_command_success(ctx, monkeypatch):
+    """MCP prompt command dispatches and returns inline result."""
+    from decafclaw import mcp_client
+    from decafclaw.commands import dispatch_command
+
+    mock_session = AsyncMock()
+    prompt_result = MagicMock()
+    msg = MagicMock()
+    msg.role = "user"
+    msg.content = MagicMock()
+    msg.content.text = "Summarize this text"
+    prompt_result.messages = [msg]
+    mock_session.get_prompt = AsyncMock(return_value=prompt_result)
+
+    arg = MagicMock()
+    arg.name = "text"
+    arg.required = False
+    arg.description = ""
+    prompt = _make_fake_prompt("summarize", "Summarize", [arg])
+
+    registry = MCPRegistry()
+    cfg = MCPServerConfig(name="ai-srv", type="stdio")
+    registry.servers["ai-srv"] = MCPServerState(
+        config=cfg, status="connected", session=mock_session,
+        prompts=[prompt],
+    )
+    monkeypatch.setattr(mcp_client, "_registry", registry)
+
+    result = await dispatch_command(ctx, "!mcp__ai-srv__summarize hello world")
+    assert result.mode == "inline"
+    assert "Summarize this text" in result.text
+    assert "invoked MCP prompt" in result.text
+
+
+@pytest.mark.asyncio
+async def test_dispatch_mcp_prompt_command_missing_required_arg(ctx, monkeypatch):
+    """MCP prompt command returns error when required args missing."""
+    from decafclaw import mcp_client
+    from decafclaw.commands import dispatch_command
+
+    arg = MagicMock()
+    arg.name = "text"
+    arg.required = True
+    arg.description = "Text to summarize"
+    prompt = _make_fake_prompt("summarize", "Summarize", [arg])
+
+    registry = MCPRegistry()
+    cfg = MCPServerConfig(name="ai-srv", type="stdio")
+    registry.servers["ai-srv"] = MCPServerState(
+        config=cfg, status="connected", session=AsyncMock(),
+        prompts=[prompt],
+    )
+    monkeypatch.setattr(mcp_client, "_registry", registry)
+
+    result = await dispatch_command(ctx, "!mcp__ai-srv__summarize")
+    assert result.mode == "error"
+    assert "Missing required" in result.text
+    assert "text" in result.text
+
+
+@pytest.mark.asyncio
+async def test_dispatch_mcp_prompt_command_unknown_server(ctx, monkeypatch):
+    """MCP prompt command returns error for unknown server."""
+    from decafclaw import mcp_client
+    from decafclaw.commands import dispatch_command
+
+    registry = MCPRegistry()
+    monkeypatch.setattr(mcp_client, "_registry", registry)
+
+    result = await dispatch_command(ctx, "!mcp__nonexistent__prompt")
+    assert result.mode == "error"
+    assert "not connected" in result.text
+
+
+@pytest.mark.asyncio
+async def test_dispatch_mcp_prompt_command_unknown_prompt(ctx, monkeypatch):
+    """MCP prompt command returns error for unknown prompt name."""
+    from decafclaw import mcp_client
+    from decafclaw.commands import dispatch_command
+
+    registry = MCPRegistry()
+    cfg = MCPServerConfig(name="ai-srv", type="stdio")
+    registry.servers["ai-srv"] = MCPServerState(
+        config=cfg, status="connected", session=AsyncMock(),
+        prompts=[],
+    )
+    monkeypatch.setattr(mcp_client, "_registry", registry)
+
+    result = await dispatch_command(ctx, "!mcp__ai-srv__nonexistent")
+    assert result.mode == "error"
+    assert "not found" in result.text
+
+
+def test_format_help_includes_mcp_prompts(monkeypatch):
+    """format_help includes MCP prompt commands."""
+    from decafclaw import mcp_client
+    from decafclaw.commands import format_help
+
+    arg = MagicMock()
+    arg.name = "text"
+    arg.required = True
+    arg.description = ""
+    prompt = _make_fake_prompt("summarize", "Summarize text", [arg])
+
+    registry = MCPRegistry()
+    cfg = MCPServerConfig(name="ai-srv", type="stdio")
+    registry.servers["ai-srv"] = MCPServerState(
+        config=cfg, status="connected", prompts=[prompt],
+    )
+    monkeypatch.setattr(mcp_client, "_registry", registry)
+
+    text = format_help([], prefix="!")
+    assert "mcp__ai-srv__summarize" in text
+    assert "<text>" in text
+
+
+def test_parse_positional_args_quoted():
+    """Quoted strings are parsed as single arguments."""
+    from decafclaw.commands import _parse_positional_args
+
+    result = _parse_positional_args('hello "world foo" bar')
+    assert result == ["hello", "world foo", "bar"]
+
+
+def test_parse_positional_args_empty():
+    """Empty string returns empty list."""
+    from decafclaw.commands import _parse_positional_args
+
+    assert _parse_positional_args("") == []
