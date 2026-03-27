@@ -15,6 +15,7 @@ export class ChatMessage extends LitElement {
     toolCallId: { type: String, attribute: false },
     usage: { type: Object, attribute: false },
     timestamp: { type: String },
+    attachments: { type: Array, attribute: false },
   };
 
   createRenderRoot() { return this; }
@@ -32,6 +33,8 @@ export class ChatMessage extends LitElement {
     /** @type {object|null} */
     this.usage = null;
     this.timestamp = '';
+    /** @type {Array|null} */
+    this.attachments = null;
   }
 
   render() {
@@ -72,7 +75,7 @@ export class ChatMessage extends LitElement {
       ></assistant-message>`;
     }
 
-    return html`<user-message .content=${this.content} .timestamp=${this.timestamp}></user-message>`;
+    return html`<user-message .content=${this.content} .timestamp=${this.timestamp} .attachments=${this.attachments}></user-message>`;
   }
 }
 
