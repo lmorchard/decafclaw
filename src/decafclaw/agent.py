@@ -49,6 +49,54 @@ def _conv_id(ctx) -> str:
     return ctx.conv_id or ctx.channel_id or "unknown"
 
 
+def _resolve_attachments(config, message: dict) -> dict:
+    """Transform a message with attachments into multimodal content for the LLM.
+
+    Messages without attachments pass through unchanged. The archive stores
+    plain text + attachment metadata; this builds the ephemeral content array.
+    """
+    atts = message.get("attachments")
+    if not atts:
+        return message
+
+    from .attachments import read_attachment_base64
+
+    content_parts: list[dict] = []
+    text = message.get("content", "")
+    if text:
+        content_parts.append({"type": "text", "text": text})
+
+    for att in atts:
+        b64_data = read_attachment_base64(config, att)
+        if b64_data is None:
+            content_parts.append({
+                "type": "text",
+                "text": f"[attachment missing: {att.get('filename', '?')}]",
+            })
+            continue
+
+        mime = att.get("mime_type", "application/octet-stream")
+        # TODO(#137): MIME type is client-supplied — validate with magic bytes
+        # server-side to prevent non-images from being base64-embedded
+        if mime.startswith("image/"):
+            content_parts.append({
+                "type": "image_url",
+                "image_url": {"url": f"data:{mime};base64,{b64_data}"},
+            })
+        else:
+            # Non-image: represent as a textual placeholder only
+            # (binary data is not sent to the LLM)
+            content_parts.append({
+                "type": "text",
+                "text": f"[file: {att.get('filename', '?')} ({mime})]",
+            })
+
+    # Return message with multimodal content, stripping attachments key
+    result = {k: v for k, v in message.items() if k != "attachments"}
+    result["content"] = content_parts
+    return result
+
+
 def _archive(ctx, msg) -> None:
     """Archive a message, logging errors but never raising."""
     try:
@@ -366,7 +414,8 @@ async def _execute_tool_calls(ctx, tool_calls, history, messages, pending_media)
 
 
 async def run_agent_turn(ctx, user_message: str, history: list,
-                         archive_text: str = "") -> "ToolResult":
+                         archive_text: str = "",
+                         attachments: list[dict] | None = None) -> "ToolResult":
     """Process a single user message through the agent loop.
 
     Args:
@@ -450,7 +499,9 @@ async def run_agent_turn(ctx, user_message: str, history: list,
             )
             log.warning(f"User message truncated: {original_len:,} -> {max_len:,} chars")
 
-        user_msg = {"role": "user", "content": user_message}
+        user_msg: dict = {"role": "user", "content": user_message}
+        if attachments:
+            user_msg["attachments"] = attachments
 
         # Proactive memory context — inject before user message
         retrieved_context_text = ""
@@ -469,7 +520,12 @@ async def run_agent_turn(ctx, user_message: str, history: list,
 
         history.append(user_msg)
         # Archive the display version for inline commands (short), full text for normal messages
-        archive_msg = {"role": "user", "content": archive_text} if archive_text else user_msg
+        if archive_text:
+            archive_msg: dict = {"role": "user", "content": archive_text}
+            if attachments:
+                archive_msg["attachments"] = attachments
+        else:
+            archive_msg = user_msg
         _archive(ctx, archive_msg)
 
         # Build the messages array: system prompt + history
@@ -484,6 +540,8 @@ async def run_agent_turn(ctx, user_message: str, history: list,
                 llm_history.append(m)
             elif role in ROLE_REMAP:
                 llm_history.append({**m, "role": ROLE_REMAP[role]})
+        # Resolve attachments into multimodal content arrays for the LLM
+        llm_history = [_resolve_attachments(config, m) for m in llm_history]
         messages = [{"role": "system", "content": config.system_prompt}] + llm_history
         ctx.messages = messages
 
@@ -599,8 +657,17 @@ async def run_agent_turn(ctx, user_message: str, history: list,
                     max_turns=3,
                     max_result_len=200,
                 )
+                # Annotate user message with attachment info for the judge —
+                # it can't see the actual files but needs to know they exist
+                judge_user_message = user_message
+                if attachments:
+                    att_desc = ", ".join(
+                        f"{a.get('filename', '?')} ({a.get('mime_type', '?')})"
+                        for a in attachments
+                    )
+                    judge_user_message += f"\n\n[User attached files: {att_desc}]"
                 result = await evaluate_response(
-                    config, user_message, content, tool_summary,
+                    config, judge_user_message, content, tool_summary,
                     prior_turn_summary=prior_turn_summary,
                     retrieved_context=retrieved_context_text,
                 )
