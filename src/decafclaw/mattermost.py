@@ -329,7 +329,7 @@ class MattermostClient:
             thread_id=root_id or "",
             conv_id=conv_id,
         )
-        req_ctx.media_handler = MattermostMediaHandler(self._http)
+        req_ctx.media_handler = MattermostMediaHandler(self._http, channel_id=channel_id)
 
         # Restore per-conversation skill state from previous turns
         if conv.skill_state:
@@ -399,7 +399,7 @@ class MattermostClient:
 
         if response_media:
             from .media import MattermostMediaHandler, upload_and_collect
-            handler = MattermostMediaHandler(self._http)
+            handler = MattermostMediaHandler(self._http, channel_id=channel_id)
             file_ids = await upload_and_collect(
                 handler, channel_id, response_media
             )
@@ -675,6 +675,11 @@ class MattermostClient:
                     event.get("media", []),
                     tool_call_id=event.get("tool_call_id", ""),
                     display_short_text=event.get("display_short_text"),
+                )
+            elif event_type == "tool_media_uploaded" and conv_display:
+                await conv_display.on_tool_media_uploaded(
+                    event.get("file_ids", []),
+                    tool_call_id=event.get("tool_call_id", ""),
                 )
             elif event_type == "tool_confirm_request" and conv_display:
                 await conv_display.on_confirm_request(
@@ -1059,26 +1064,23 @@ class ConversationDisplay:
             except Exception:
                 pass
 
-            # Attach media to the tool call message
-            if media:
-                try:
-                    from .media import MattermostMediaHandler, upload_and_collect
-                    handler = MattermostMediaHandler(self.client._http)
-                    file_ids = await upload_and_collect(
-                        handler, self._channel_id, media,
-                    )
-                    if file_ids:
-                        await handler.send_with_media(
-                            self._channel_id, "", file_ids,
-                            root_id=self._root_id,
-                        )
-                except Exception as e:
-                    log.debug(f"Failed to attach tool media: {e}")
-
         # Reset tool state when all concurrent tools are done
         if not self._tool_posts:
             self._current_type = None
             self._tools_text_finalized = False
+
+    async def on_tool_media_uploaded(self, file_ids, tool_call_id=""):
+        """Tool media was uploaded — post files as a thread reply."""
+        if not file_ids:
+            return
+        try:
+            from .media import MattermostMediaHandler
+            handler = MattermostMediaHandler(self.client._http, channel_id=self._channel_id)
+            await handler.send_with_media(
+                self._channel_id, "", file_ids, root_id=self._root_id,
+            )
+        except Exception as e:
+            log.debug(f"Failed to post tool media: {e}")
 
     # -- Confirmation ----------------------------------------------------------
 

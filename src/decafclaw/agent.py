@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re as _re
 from dataclasses import replace
 from pathlib import Path
 
@@ -289,11 +290,76 @@ async def _call_llm_with_events(ctx, config, messages, tools,
     return response
 
 
+# Matches placeholder text: [file attached: filename (mime) — ...]
+_MEDIA_PLACEHOLDER_RE_CACHE: dict[str, _re.Pattern] = {}
+
+
+def _media_placeholder_pattern(filename: str) -> _re.Pattern:
+    """Build (and cache) a regex to find the placeholder for a given filename."""
+    if filename not in _MEDIA_PLACEHOLDER_RE_CACHE:
+        _MEDIA_PLACEHOLDER_RE_CACHE[filename] = _re.compile(
+            r"\[file attached: " + _re.escape(filename) + r"[^\]]*\]"
+        )
+    return _MEDIA_PLACEHOLDER_RE_CACHE[filename]
+
+
+async def _process_tool_media(ctx, result: ToolResult) -> list[str]:
+    """Process media items on a tool result — save/upload and replace placeholders.
+
+    For handlers returning workspace_ref: replaces placeholder text with markdown refs.
+    For handlers returning file_id: collects file_ids for caller to attach.
+
+    Returns list of file_ids (for Mattermost attachment), empty for other channels.
+    Clears result.media after processing.
+    """
+    if not result.media:
+        return []
+
+    handler = ctx.media_handler
+    if handler is None:
+        log.warning(f"No media handler — {len(result.media)} media item(s) not delivered")
+        result.media.clear()
+        return []
+
+    conv_id = ctx.conv_id or ctx.channel_id or "unknown"
+    file_ids = []
+
+    for item in result.media:
+        filename = item.get("filename", "unknown")
+        content_type = item.get("content_type", "application/octet-stream")
+        data = item.get("data", b"")
+
+        try:
+            save_result = await handler.save_media(conv_id, filename, data, content_type)
+        except Exception as e:
+            log.warning(f"Failed to save media {filename}: {e}")
+            continue
+
+        if save_result.workspace_ref:
+            pattern = _media_placeholder_pattern(filename)
+            if content_type.startswith("image/"):
+                replacement = f"![{filename}]({save_result.workspace_ref})"
+            else:
+                replacement = f"[{filename}]({save_result.workspace_ref})"
+            new_text, count = pattern.subn(replacement, result.text, count=1)
+            if count > 0:
+                result.text = new_text
+            else:
+                # No placeholder — append ref so the media is discoverable
+                result.text = result.text.rstrip() + "\n" + replacement
+        if save_result.file_id:
+            file_ids.append(save_result.file_id)
+
+    result.media.clear()
+    return file_ids
+
+
 async def _execute_single_tool(call_ctx, tc, semaphore):
-    """Execute one tool call. Returns (tool_msg, media_list).
+    """Execute one tool call. Returns tool_msg dict.
 
     Designed to run concurrently — uses its own forked ctx so
     current_tool_call_id doesn't race with other calls.
+    Media is processed per-tool-call via _process_tool_media().
     """
     tool_call_id = tc["id"]
     fn_name = tc["function"]["name"]
@@ -312,6 +378,14 @@ async def _execute_single_tool(call_ctx, tc, semaphore):
                                    tool_call_id=tool_call_id)
             result = await execute_tool(call_ctx, fn_name, fn_args)
             log.debug(f"Tool result [{fn_name}]: {result.text[:200]}...")
+
+            # Process media per-tool-call (save/upload, replace placeholders)
+            file_ids = await _process_tool_media(call_ctx, result)
+            if file_ids:
+                await call_ctx.publish("tool_media_uploaded",
+                                       tool=fn_name,
+                                       file_ids=file_ids,
+                                       tool_call_id=tool_call_id)
         except asyncio.CancelledError:
             result = ToolResult(text=f"[cancelled: {fn_name}]")
         except Exception as e:
@@ -333,10 +407,10 @@ async def _execute_single_tool(call_ctx, tc, semaphore):
     if result.display_short_text:
         tool_msg["display_short_text"] = result.display_short_text
     _archive(call_ctx, tool_msg)
-    return tool_msg, result.media or []
+    return tool_msg
 
 
-async def _execute_tool_calls(ctx, tool_calls, history, messages, pending_media):
+async def _execute_tool_calls(ctx, tool_calls, history, messages):
     """Execute tool calls concurrently, add results to history.
 
     Returns ToolResult if cancelled, None otherwise.
@@ -401,11 +475,9 @@ async def _execute_tool_calls(ctx, tool_calls, history, messages, pending_media)
             messages.append(tool_msg)
             _archive(ctx, tool_msg)
         else:
-            tool_msg, media = result  # type: ignore[misc]
+            tool_msg = result
             history.append(tool_msg)
             messages.append(tool_msg)
-            if media:
-                pending_media.extend(media)
 
     return None
 
@@ -484,8 +556,6 @@ async def run_agent_turn(ctx, user_message: str, history: list,
             "llm_api_key": effort_llm.api_key,
         }
     log.info(f"Agent turn: effort={ctx.effort}, model={effort_llm.model}")
-
-    pending_media = []
 
     try:
         # Add user message to history
@@ -611,7 +681,7 @@ async def run_agent_turn(ctx, user_message: str, history: list,
                     await ctx.publish("text_before_tools", text=iter_content)
 
                 cancelled = await _execute_tool_calls(
-                    ctx, tool_calls, history, messages, pending_media
+                    ctx, tool_calls, history, messages
                 )
                 if cancelled:
                     return cancelled
@@ -744,14 +814,16 @@ async def run_agent_turn(ctx, user_message: str, history: list,
 
             await _maybe_compact(ctx, config, history, prompt_tokens)
 
-            # Scan for workspace image references and combine with tool media
-            cleaned_text, workspace_media = extract_workspace_media(
-                content or "", config.workspace_path
-            )
-            all_media = pending_media + workspace_media
-
-            if all_media:
-                return ToolResult(text=cleaned_text, media=all_media)
+            # Extract workspace:// refs only for channels that need it
+            # (Mattermost strips refs and uploads files; web/terminal render them in-place)
+            handler = ctx.media_handler
+            should_extract = (handler is None or handler.strips_workspace_refs)
+            if should_extract:
+                cleaned_text, workspace_media = extract_workspace_media(
+                    content or "", config.workspace_path
+                )
+                if workspace_media:
+                    return ToolResult(text=cleaned_text, media=workspace_media)
             return ToolResult(text=content or "")
 
         # Hit max iterations — preserve accumulated text from tool-call iterations
@@ -789,7 +861,7 @@ def _setup_interactive_context(ctx) -> None:
     ctx.channel_name = ctx.channel_name or "interactive"
     ctx.thread_id = ctx.thread_id or ""
     ctx.conv_id = "interactive"
-    ctx.media_handler = TerminalMediaHandler(config.workspace_path)
+    ctx.media_handler = TerminalMediaHandler(config)
 
     if config.llm.streaming:
         async def _terminal_stream_chunk(chunk_type, data):
@@ -922,21 +994,11 @@ async def run_interactive(ctx):
                 break
 
             result = await run_agent_turn(ctx, user_input, history)
-            from .media import process_media_for_terminal
 
             if config.llm.streaming:
-                # Text was already printed token-by-token; handle media only
-                if result.media:
-                    output = process_media_for_terminal(result, config.workspace_path)
-                    # Print just the media lines (text was already streamed)
-                    media_lines = [line for line in output.split("\n")
-                                   if line.startswith("[file saved:") or line.startswith("[image:")]
-                    if media_lines:
-                        print("\n" + "\n".join(media_lines))
                 print()  # final newline after streamed text
             else:
-                output = process_media_for_terminal(result, config.workspace_path)
-                print(f"\nagent> {output}\n")
+                print(f"\nagent> {result.text}\n")
     finally:
         shutdown_event.set()
         heartbeat_task.cancel()
