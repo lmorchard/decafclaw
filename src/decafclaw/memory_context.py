@@ -37,6 +37,9 @@ async def retrieve_memory_context(config, user_message: str) -> list[dict]:
             config, query_embedding, top_k=mc.max_results * 2
         )
 
+        # Exclude conversation entries — they add noise (see #133)
+        results = [r for r in results if r["source_type"] != "conversation"]
+
         # Filter by similarity threshold
         results = [r for r in results if r["similarity"] >= mc.similarity_threshold]
 
