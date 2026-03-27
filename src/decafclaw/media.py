@@ -27,11 +27,35 @@ class ToolResult:
         return cls(text=text)
 
 
+@dataclass
+class MediaSaveResult:
+    """Result from saving a media item via a MediaHandler."""
+
+    workspace_ref: str | None = None   # workspace:// path for text injection
+    file_id: str | None = None         # platform file ID (Mattermost)
+    saved_filename: str | None = None  # actual filename after dedup
+
+
 class MediaHandler:
     """Interface for channel-specific media operations.
 
-    Subclass for each channel type (Mattermost, terminal, etc.).
+    Subclass for each channel type (Mattermost, terminal, web, etc.).
     """
+
+    # Whether extract_workspace_media() should strip workspace:// refs from
+    # the agent's final text. Mattermost sets True (needs extraction + upload).
+    # Web and Terminal set False (refs render in-place).
+    strips_workspace_refs: bool = True
+
+    async def save_media(self, conv_id: str, filename: str,
+                         data: bytes, content_type: str) -> MediaSaveResult:
+        """Save media and return a result describing where it went.
+
+        Subclasses implement channel-specific behavior:
+        - Web/Terminal: save to conversation uploads, return workspace_ref
+        - Mattermost: upload to API, return file_id
+        """
+        raise NotImplementedError
 
     async def upload_file(self, channel_id: str, filename: str,
                           data: bytes, content_type: str) -> str:
@@ -104,47 +128,61 @@ def extract_workspace_media(text: str, workspace_path: Path) -> tuple[str, list[
 
 
 class TerminalMediaHandler(MediaHandler):
-    """Media handler for interactive terminal mode — saves files to workspace."""
+    """Media handler for interactive terminal mode — saves to conversation uploads."""
 
-    def __init__(self, workspace_path: Path):
-        self.workspace_path = workspace_path
+    strips_workspace_refs = False
+
+    def __init__(self, config):
+        self.config = config
+
+    async def save_media(self, conv_id, filename, data, content_type):
+        """Save media to conversation uploads, return workspace ref."""
+        import asyncio
+
+        from .attachments import save_attachment
+        result = await asyncio.to_thread(
+            save_attachment, self.config, conv_id, filename, data, content_type)
+        return MediaSaveResult(
+            workspace_ref="workspace://" + result["path"],
+            saved_filename=result["filename"],
+        )
 
     async def upload_file(self, channel_id, filename, data, content_type):
-        """Save file to workspace/media/ directory, return the path."""
-        media_dir = self.workspace_path / "media"
-        media_dir.mkdir(parents=True, exist_ok=True)
-        path = media_dir / filename
-        path.write_bytes(data)
-        return str(path.relative_to(self.workspace_path))
+        """Legacy — not used with per-tool-call processing."""
+        raise NotImplementedError
 
     async def send_with_media(self, channel_id, message, media_refs, root_id=None):
         """Not applicable in terminal mode."""
         return ""
 
 
-def process_media_for_terminal(result: ToolResult, workspace_path: Path) -> str:
-    """Process a ToolResult for terminal display.
+class WebMediaHandler(MediaHandler):
+    """Media handler for web UI — saves to conversation uploads."""
 
-    Saves file media to workspace/media/, appends paths to text.
-    URL media items get appended as text references.
-    """
-    if not result.media:
-        return result.text
+    strips_workspace_refs = False
 
-    lines = [result.text] if result.text else []
-    media_dir = workspace_path / "media"
-    media_dir.mkdir(parents=True, exist_ok=True)
+    def __init__(self, config):
+        self.config = config
 
-    for item in result.media:
-        if item.get("type") == "file":
-            filename = item["filename"]
-            path = media_dir / filename
-            path.write_bytes(item["data"])
-            lines.append(f"[file saved: media/{filename}]")
-        elif item.get("type") == "url":
-            lines.append(f"[image: {item['url']}]")
+    async def save_media(self, conv_id, filename, data, content_type):
+        """Save media to conversation uploads, return workspace ref."""
+        import asyncio
 
-    return "\n".join(lines)
+        from .attachments import save_attachment
+        result = await asyncio.to_thread(
+            save_attachment, self.config, conv_id, filename, data, content_type)
+        return MediaSaveResult(
+            workspace_ref="workspace://" + result["path"],
+            saved_filename=result["filename"],
+        )
+
+    async def upload_file(self, channel_id, filename, data, content_type):
+        """Legacy — not used with per-tool-call processing."""
+        raise NotImplementedError
+
+    async def send_with_media(self, channel_id, message, media_refs, root_id=None):
+        """Not applicable in web mode."""
+        return ""
 
 
 # -- Mattermost media handler -------------------------------------------------
@@ -155,8 +193,17 @@ MAX_FILES_PER_POST = 10
 class MattermostMediaHandler(MediaHandler):
     """Media handler for Mattermost — uploads files via API, attaches to posts."""
 
-    def __init__(self, http_client):
+    strips_workspace_refs = True
+
+    def __init__(self, http_client, channel_id: str = ""):
         self._http = http_client
+        self._channel_id = channel_id
+
+    async def save_media(self, conv_id, filename, data, content_type):
+        """Upload media to Mattermost, return file_id."""
+        file_id = await self.upload_file(
+            self._channel_id, filename, data, content_type)
+        return MediaSaveResult(file_id=file_id)
 
     async def upload_file(self, channel_id, filename, data, content_type):
         """Upload a file to Mattermost, return the file_id."""

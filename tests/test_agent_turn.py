@@ -106,9 +106,7 @@ async def test_execute_tool_calls_runs_tools(ctx):
     ]
     history = []
     messages = []
-    pending_media = []
-
-    result = await _execute_tool_calls(ctx, tool_calls, history, messages, pending_media)
+    result = await _execute_tool_calls(ctx, tool_calls, history, messages)
     assert result is None  # not cancelled
     assert len(history) == 1
     assert history[0]["role"] == "tool"
@@ -128,10 +126,9 @@ async def test_execute_tool_calls_handles_malformed_json(ctx):
     ]
     history = []
     messages = []
-    pending_media = []
 
     # Should not raise — handles JSONDecodeError gracefully
-    result = await _execute_tool_calls(ctx, tool_calls, history, messages, pending_media)
+    result = await _execute_tool_calls(ctx, tool_calls, history, messages)
     assert result is None
     assert len(history) == 1
 
@@ -149,9 +146,7 @@ async def test_execute_tool_calls_cancellation(ctx):
     ]
     history = []
     messages = []
-    pending_media = []
-
-    result = await _execute_tool_calls(ctx, tool_calls, history, messages, pending_media)
+    result = await _execute_tool_calls(ctx, tool_calls, history, messages)
     assert result is not None
     assert "cancelled" in result.text
 
@@ -182,10 +177,10 @@ async def test_execute_tool_calls_concurrent(ctx):
     ]
     history = []
     messages = []
-    pending_media = []
+
 
     with patch("decafclaw.agent.execute_tool", side_effect=_concurrent_tool):
-        result = await _execute_tool_calls(ctx, tool_calls, history, messages, pending_media)
+        result = await _execute_tool_calls(ctx, tool_calls, history, messages)
 
     assert result is None
     assert len(history) == 3
@@ -214,10 +209,10 @@ async def test_execute_tool_calls_semaphore_limits(ctx):
     ]
     history = []
     messages = []
-    pending_media = []
+
 
     with patch("decafclaw.agent.execute_tool", side_effect=_tracked_tool):
-        await _execute_tool_calls(ctx, tool_calls, history, messages, pending_media)
+        await _execute_tool_calls(ctx, tool_calls, history, messages)
 
     # With semaphore=1, max concurrency should be exactly 1
     assert concurrency_high_water == 1
@@ -239,10 +234,10 @@ async def test_execute_tool_calls_one_fails_others_succeed(ctx):
     ]
     history = []
     messages = []
-    pending_media = []
+
 
     with patch("decafclaw.agent.execute_tool", side_effect=_maybe_fail):
-        result = await _execute_tool_calls(ctx, tool_calls, history, messages, pending_media)
+        result = await _execute_tool_calls(ctx, tool_calls, history, messages)
 
     assert result is None
     assert len(history) == 3
@@ -264,10 +259,10 @@ async def test_execute_tool_calls_preserves_order(ctx):
     ]
     history = []
     messages = []
-    pending_media = []
+
 
     with patch("decafclaw.agent.execute_tool", side_effect=_variable_speed):
-        await _execute_tool_calls(ctx, tool_calls, history, messages, pending_media)
+        await _execute_tool_calls(ctx, tool_calls, history, messages)
 
     assert history[0]["tool_call_id"] == "tc0"
     assert history[1]["tool_call_id"] == "tc1"

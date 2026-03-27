@@ -64,12 +64,55 @@ def main():
                 "id": msg_id,
                 "result": {
                     "protocolVersion": "2024-11-05",
-                    "capabilities": {"tools": {}},
+                    "capabilities": {"tools": {}, "resources": {}},
                     "serverInfo": {"name": "test-image-mcp", "version": "0.1.0"},
                 },
             })
         elif method == "notifications/initialized":
             pass  # no response needed
+        elif method == "resources/list":
+            send({
+                "jsonrpc": "2.0",
+                "id": msg_id,
+                "result": {
+                    "resources": [
+                        {
+                            "uri": "test://gradient.png",
+                            "name": "Test gradient image",
+                            "description": "A 200x200 red-blue gradient PNG for testing",
+                            "mimeType": "image/png",
+                        },
+                    ],
+                },
+            })
+        elif method == "resources/templates/list":
+            send({
+                "jsonrpc": "2.0",
+                "id": msg_id,
+                "result": {"resourceTemplates": []},
+            })
+        elif method == "resources/read":
+            uri = msg.get("params", {}).get("uri", "")
+            if uri == "test://gradient.png":
+                send({
+                    "jsonrpc": "2.0",
+                    "id": msg_id,
+                    "result": {
+                        "contents": [
+                            {
+                                "uri": "test://gradient.png",
+                                "mimeType": "image/png",
+                                "blob": TEST_PNG,
+                            },
+                        ],
+                    },
+                })
+            else:
+                send({
+                    "jsonrpc": "2.0",
+                    "id": msg_id,
+                    "error": {"code": -32602, "message": f"Unknown resource: {uri}"},
+                })
         elif method == "tools/list":
             send({
                 "jsonrpc": "2.0",
