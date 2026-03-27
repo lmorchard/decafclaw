@@ -24,12 +24,21 @@ async def tool_mcp_status(ctx, action: str = "status", server: str = "") -> str 
 
     lines = ["MCP Server Status:\n"]
     for name, state in registry.servers.items():
-        tool_names = [t.split("__")[-1] for t in state.tools.keys()]
-        if tool_names:
-            tools_str = ", ".join(tool_names)
-        else:
-            tools_str = "(no tools)"
-        lines.append(f"- **{name}** ({state.config.type}, {state.status}): {tools_str}")
+        tool_count = len(state.tools)
+        resource_count = len(state.resources)
+        template_count = len(state.resource_templates)
+        prompt_count = len(state.prompts)
+
+        parts = [f"{tool_count} tool(s)"]
+        if resource_count or template_count:
+            parts.append(f"{resource_count} resource(s)")
+            if template_count:
+                parts.append(f"{template_count} template(s)")
+        if prompt_count:
+            parts.append(f"{prompt_count} prompt(s)")
+        counts_str = ", ".join(parts)
+
+        lines.append(f"- **{name}** ({state.config.type}, {state.status}): {counts_str}")
 
     return "\n".join(lines)
 
@@ -82,10 +91,167 @@ async def _restart(ctx, registry, server_name) -> str | ToolResult:
         return ToolResult(text=f"[error: MCP restart failed: {e}]")
 
 
+async def tool_mcp_list_resources(ctx) -> str | ToolResult:
+    """List all MCP resources and resource templates."""
+    from ..mcp_client import get_registry
+
+    registry = get_registry()
+    if not registry:
+        return "No MCP servers configured."
+
+    resources = registry.get_resources()
+    templates = registry.get_resource_templates()
+
+    if not resources and not templates:
+        return "No MCP resources available."
+
+    lines = ["**MCP Resources:**\n"]
+
+    if resources:
+        for server_name, res in resources:
+            uri = str(getattr(res, "uri", ""))
+            name = getattr(res, "name", uri)
+            desc = getattr(res, "description", "")
+            mime = getattr(res, "mimeType", "")
+            parts = [f"- **{server_name}** / `{uri}`"]
+            if name and name != uri:
+                parts.append(f" — {name}")
+            if desc:
+                parts.append(f": {desc}")
+            if mime:
+                parts.append(f" [{mime}]")
+            lines.append("".join(parts))
+
+    if templates:
+        lines.append("\n**Resource Templates:**\n")
+        for server_name, tmpl in templates:
+            uri_tmpl = str(getattr(tmpl, "uriTemplate", ""))
+            name = getattr(tmpl, "name", uri_tmpl)
+            desc = getattr(tmpl, "description", "")
+            parts = [f"- **{server_name}** / `{uri_tmpl}` (template)"]
+            if name and name != uri_tmpl:
+                parts.append(f" — {name}")
+            if desc:
+                parts.append(f": {desc}")
+            lines.append("".join(parts))
+
+    return "\n".join(lines)
+
+
+async def tool_mcp_read_resource(ctx, server: str = "", uri: str = "") -> str | ToolResult:
+    """Read a resource from an MCP server by URI."""
+    import asyncio
+
+    from ..mcp_client import _convert_resource_response, get_registry
+
+    if not server or not uri:
+        return ToolResult(text="[error: both 'server' and 'uri' parameters are required]")
+
+    registry = get_registry()
+    if not registry:
+        return ToolResult(text="[error: no MCP servers configured]")
+
+    state = registry.servers.get(server)
+    if not state:
+        return ToolResult(text=f"[error: MCP server '{server}' not found]")
+    if state.status != "connected" or not state.session:
+        return ToolResult(text=f"[error: MCP server '{server}' is not connected]")
+
+    try:
+        from pydantic import AnyUrl
+        timeout_s = state.config.timeout / 1000
+        result = await asyncio.wait_for(
+            state.session.read_resource(AnyUrl(uri)),
+            timeout=timeout_s,
+        )
+        return _convert_resource_response(result)
+    except asyncio.TimeoutError:
+        return ToolResult(text=f"[error: reading resource timed out after {timeout_s}s]")
+    except Exception as e:
+        return ToolResult(text=f"[error: failed to read resource: {e}]")
+
+
+async def tool_mcp_list_prompts(ctx) -> str | ToolResult:
+    """List all MCP prompts from connected servers."""
+    from ..mcp_client import get_registry
+
+    registry = get_registry()
+    if not registry:
+        return "No MCP servers configured."
+
+    prompts = registry.get_prompts()
+    if not prompts:
+        return "No MCP prompts available."
+
+    lines = ["**MCP Prompts:**\n"]
+    for server_name, prompt in prompts:
+        name = getattr(prompt, "name", "")
+        desc = getattr(prompt, "description", "")
+        args = getattr(prompt, "arguments", []) or []
+
+        line = f"- **{server_name}** / `{name}`"
+        if desc:
+            line += f" — {desc}"
+        lines.append(line)
+
+        for arg in args:
+            arg_name = getattr(arg, "name", "") if not isinstance(arg, dict) else arg.get("name", "")
+            arg_desc = getattr(arg, "description", "") if not isinstance(arg, dict) else arg.get("description", "")
+            arg_req = getattr(arg, "required", False) if not isinstance(arg, dict) else arg.get("required", False)
+            req_str = "required" if arg_req else "optional"
+            line = f"  - `{arg_name}` ({req_str})"
+            if arg_desc:
+                line += f": {arg_desc}"
+            lines.append(line)
+
+    return "\n".join(lines)
+
+
+async def tool_mcp_get_prompt(ctx, server: str = "", name: str = "",
+                               arguments: str = "{}") -> str | ToolResult:
+    """Get a prompt from an MCP server and return its messages."""
+    import asyncio
+    import json as _json
+
+    from ..mcp_client import _convert_prompt_response, get_registry
+
+    if not server or not name:
+        return ToolResult(text="[error: both 'server' and 'name' parameters are required]")
+
+    registry = get_registry()
+    if not registry:
+        return ToolResult(text="[error: no MCP servers configured]")
+
+    state = registry.servers.get(server)
+    if not state:
+        return ToolResult(text=f"[error: MCP server '{server}' not found]")
+    if state.status != "connected" or not state.session:
+        return ToolResult(text=f"[error: MCP server '{server}' is not connected]")
+
+    try:
+        args_dict = _json.loads(arguments) if arguments else {}
+    except _json.JSONDecodeError as e:
+        return ToolResult(text=f"[error: invalid JSON arguments: {e}]")
+
+    try:
+        timeout_s = state.config.timeout / 1000
+        result = await asyncio.wait_for(
+            state.session.get_prompt(name, args_dict or None),
+            timeout=timeout_s,
+        )
+        text = _convert_prompt_response(result)
+        return ToolResult(text=text)
+    except asyncio.TimeoutError:
+        return ToolResult(text=f"[error: getting prompt timed out after {timeout_s}s]")
+    except Exception as e:
+        return ToolResult(text=f"[error: failed to get prompt: {e}]")
+
+
 MCP_TOOLS = {
     "mcp_status": tool_mcp_status,
 }
 
+# Always-loaded tool definitions (mcp_status)
 MCP_TOOL_DEFINITIONS = [
     {
         "type": "function",
@@ -93,7 +259,7 @@ MCP_TOOL_DEFINITIONS = [
             "name": "mcp_status",
             "description": (
                 "Show status of MCP servers or restart them. "
-                "Use 'status' (default) to see connected servers and their tools. "
+                "Use 'status' (default) to see connected servers and their tools, resources, and prompts. "
                 "Use 'restart' to reconnect a specific server or reload all config. "
                 "Restart also re-reads the MCP config file to pick up changes."
             ),
@@ -111,6 +277,92 @@ MCP_TOOL_DEFINITIONS = [
                     },
                 },
                 "required": [],
+            },
+        },
+    },
+]
+
+# Deferred tool implementations (loaded via tool_search)
+MCP_DEFERRED_TOOLS = {
+    "mcp_list_resources": tool_mcp_list_resources,
+    "mcp_list_prompts": tool_mcp_list_prompts,
+    "mcp_read_resource": tool_mcp_read_resource,
+    "mcp_get_prompt": tool_mcp_get_prompt,
+}
+
+# Deferred tool definitions
+MCP_DEFERRED_TOOL_DEFINITIONS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "mcp_list_resources",
+            "description": (
+                "List all resources and resource templates from connected MCP servers. "
+                "Shows URI, name, description, and MIME type for each resource."
+            ),
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "mcp_read_resource",
+            "description": (
+                "Read a resource from an MCP server by URI. "
+                "Returns text content or binary attachments."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "server": {
+                        "type": "string",
+                        "description": "MCP server name",
+                    },
+                    "uri": {
+                        "type": "string",
+                        "description": "Resource URI to read",
+                    },
+                },
+                "required": ["server", "uri"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "mcp_list_prompts",
+            "description": (
+                "List all prompts from connected MCP servers. "
+                "Shows name, description, and arguments for each prompt."
+            ),
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "mcp_get_prompt",
+            "description": (
+                "Get a prompt from an MCP server and return its messages. "
+                "The prompt may include templated content based on the arguments."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "server": {
+                        "type": "string",
+                        "description": "MCP server name",
+                    },
+                    "name": {
+                        "type": "string",
+                        "description": "Prompt name",
+                    },
+                    "arguments": {
+                        "type": "string",
+                        "description": "JSON object of prompt arguments (default: '{}')",
+                    },
+                },
+                "required": ["server", "name"],
             },
         },
     },
