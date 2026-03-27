@@ -241,7 +241,8 @@ class MattermostClient:
 
         channel_type = data.get("channel_type", "")
         message = post.get("message", "").strip()
-        if not message:
+        post_file_ids = post.get("file_ids") or []
+        if not message and not post_file_ids:
             return
 
         # Strip bot @mention and track whether it was present
@@ -260,6 +261,12 @@ class MattermostClient:
         if self.require_mention and not is_dm and not mentioned and not in_thread:
             return
 
+        # Extract file metadata from post for attachment processing
+        file_metadata = {}
+        for finfo in (post.get("metadata") or {}).get("files") or []:
+            if isinstance(finfo, dict) and finfo.get("id"):
+                file_metadata[finfo["id"]] = finfo
+
         on_message({
             "text": message,
             "channel_id": channel_id,
@@ -269,6 +276,8 @@ class MattermostClient:
             "sender_name": data.get("sender_name", ""),
             "channel_type": channel_type,
             "mentioned": mentioned,
+            "file_ids": post_file_ids,
+            "file_metadata": file_metadata,
         })
 
     # -- Conversation processing -----------------------------------------------
@@ -408,6 +417,45 @@ class MattermostClient:
                     channel_id, "", file_ids, root_id=root_id
                 )
 
+    async def _download_attachments(self, msgs, conv_id, config):
+        """Download user-uploaded files from Mattermost and save as conversation attachments.
+
+        Returns a list of attachment metadata dicts (same format as web UI uploads).
+        """
+        from .attachments import save_attachment
+
+        max_bytes = getattr(getattr(config, "http", None), "max_upload_bytes", None)
+
+        attachments = []
+        for msg in msgs:
+            file_ids = msg.get("file_ids") or []
+            file_metadata = msg.get("file_metadata") or {}
+            for fid in file_ids:
+                try:
+                    # Download file content
+                    resp = await self._http.get(f"/files/{fid}")
+                    resp.raise_for_status()
+                    data = resp.content
+
+                    # Enforce size limit (same as web UI uploads)
+                    if max_bytes and len(data) > max_bytes:
+                        log.warning(f"Mattermost file {fid} too large: "
+                                    f"{len(data)} bytes > {max_bytes} limit, skipping")
+                        continue
+
+                    # Get filename and MIME type from metadata or file info
+                    fmeta = file_metadata.get(fid, {})
+                    filename = fmeta.get("name", f"file-{fid}")
+                    mime_type = fmeta.get("mime_type", "application/octet-stream")
+
+                    # Save to conversation uploads
+                    att = save_attachment(config, conv_id, filename, data, mime_type)
+                    attachments.append(att)
+                    log.info(f"Saved Mattermost attachment: {att['filename']} ({mime_type})")
+                except Exception as e:
+                    log.warning(f"Failed to download Mattermost file {fid}: {e}")
+        return attachments
+
     async def _process_conversation(self, conv_id, channel_id, msgs,
                                     app_ctx, conversations):
         """Process accumulated messages for a conversation."""
@@ -497,10 +545,15 @@ class MattermostClient:
             req_ctx.extra_tools.update(cmd_ctx.extra_tools)
             req_ctx.extra_tool_definitions.extend(cmd_ctx.extra_tool_definitions)
 
+        # Download user-uploaded files and store as conversation attachments
+        attachments = await self._download_attachments(
+            msgs, conv_id, app_ctx.config)
+
         conv.busy = True
         try:
             response = await run_agent_turn(
-                req_ctx, combined_text, history, archive_text=archive_text)
+                req_ctx, combined_text, history, archive_text=archive_text,
+                attachments=attachments or None)
         except BaseException as e:
             log.error(f"Agent turn failed: {e}")
             from .media import ToolResult
