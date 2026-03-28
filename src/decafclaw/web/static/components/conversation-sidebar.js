@@ -89,6 +89,19 @@ export class ConversationSidebar extends LitElement {
     if (tab === 'wiki') {
       this.#fetchWikiPages();
     }
+    this.dispatchEvent(new CustomEvent('sidebar-tab-change', {
+      detail: { tab },
+      bubbles: true,
+      composed: true,
+    }));
+  }
+
+  /** Public: switch to wiki tab (called from app.js when a wiki link is clicked). */
+  switchToWiki() {
+    if (this._sidebarTab !== 'wiki') {
+      this._sidebarTab = 'wiki';
+      this.#fetchWikiPages();
+    }
   }
 
   async #fetchWikiPages() {
