@@ -401,10 +401,10 @@ async def execute_command(ctx, skill: SkillInfo, arguments: str) -> tuple[str, s
     if skill.context == "fork":
         from .tools.delegate import _run_child_turn
         # User-invoked commands use the full iteration limit, not the child limit
-        response = await _run_child_turn(
+        result = await _run_child_turn(
             ctx, body, effort=skill.effort or "",
             max_iterations=ctx.config.agent.max_tool_iterations)
-        return "fork", response
+        return "fork", result.text if hasattr(result, "text") else str(result)
 
     # Inline mode: return the substituted body as the user message
     return "inline", body

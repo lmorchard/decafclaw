@@ -33,7 +33,8 @@ async def retrieve_memory_context(config, user_message: str) -> list[dict]:
         if not query_embedding:
             return []
 
-        # Search all source types, fetch extra to allow for threshold filtering
+        # Search all source types, fetch extra to allow for threshold filtering.
+        # Over-fetch to allow for deduplication and token budget filtering.
         results = search_similar_sync(
             config, query_embedding, top_k=mc.max_results * 2
         )
