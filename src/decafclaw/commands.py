@@ -404,7 +404,8 @@ async def execute_command(ctx, skill: SkillInfo, arguments: str) -> tuple[str, s
         result = await _run_child_turn(
             ctx, body, effort=skill.effort or "",
             max_iterations=ctx.config.agent.max_tool_iterations)
-        return "fork", result.text if hasattr(result, "text") else str(result)
+        from .media import ToolResult as _TR
+        return "fork", result.text if isinstance(result, _TR) else str(result)
 
     # Inline mode: return the substituted body as the user message
     return "inline", body
