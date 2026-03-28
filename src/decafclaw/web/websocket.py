@@ -466,10 +466,10 @@ async def _run_agent_turn(websocket, app_ctx, config, event_bus,
     ctx.media_handler = LocalFileMediaHandler(config)
     # Apply pre-configured command state (set by dispatch_command)
     if command_ctx:
-        ctx.preapproved_tools = command_ctx.preapproved_tools
-        ctx.activated_skills = command_ctx.activated_skills
-        ctx.extra_tools = command_ctx.extra_tools
-        ctx.extra_tool_definitions = command_ctx.extra_tool_definitions
+        ctx.tools.preapproved = command_ctx.tools.preapproved
+        ctx.skills.activated = command_ctx.skills.activated
+        ctx.tools.extra = command_ctx.tools.extra
+        ctx.tools.extra_definitions = command_ctx.tools.extra_definitions
     if cancel_event:
         ctx.cancelled = cancel_event
 
@@ -634,9 +634,9 @@ async def _run_agent_turn(websocket, app_ctx, config, event_bus,
             "text": response_text,
             "final": True,
             "usage": {
-                "prompt_tokens": ctx.last_prompt_tokens,
-                "completion_tokens": ctx.total_completion_tokens,
-                "total_tokens": ctx.total_prompt_tokens + ctx.total_completion_tokens,
+                "prompt_tokens": ctx.tokens.last_prompt,
+                "completion_tokens": ctx.tokens.total_completion,
+                "total_tokens": ctx.tokens.total_prompt + ctx.tokens.total_completion,
             },
             "context_limit": config.compaction.max_tokens,
         })

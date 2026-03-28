@@ -122,7 +122,7 @@ async def run_test(config: Config, test_case: dict) -> dict:
     # Set allowed tools if specified (disallowed tools return an error)
     allowed_tools = test_case.get("allowed_tools")
     if allowed_tools:
-        ctx.allowed_tools = set(allowed_tools)
+        ctx.tools.allowed = set(allowed_tools)
 
     # Setup fixtures
     await _setup_workspace(config, test_case)
@@ -141,8 +141,8 @@ async def run_test(config: Config, test_case: dict) -> dict:
 
     for turn_idx, turn in enumerate(turns):
         # Reset per-turn token counters
-        ctx.total_prompt_tokens = 0
-        ctx.total_completion_tokens = 0
+        ctx.tokens.total_prompt = 0
+        ctx.tokens.total_completion = 0
 
         start = time.monotonic()
         result = await run_agent_turn(ctx, turn["input"], history)
@@ -169,8 +169,8 @@ async def run_test(config: Config, test_case: dict) -> dict:
                 break
 
     # Gather cumulative metrics
-    prompt_tokens = ctx.total_prompt_tokens
-    completion_tokens = ctx.total_completion_tokens
+    prompt_tokens = ctx.tokens.total_prompt
+    completion_tokens = ctx.tokens.total_completion
     total_tool_calls = _count_tool_calls(history)
 
     # For single-turn, keep flat response; for multi-turn, show last response

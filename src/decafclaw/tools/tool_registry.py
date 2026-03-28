@@ -148,8 +148,8 @@ def build_deferred_list_text(
 
 
 def get_fetched_tools(ctx) -> set[str]:
-    """Read the fetched tools set from ctx.skill_data."""
-    skill_data = ctx.skill_data
+    """Read the fetched tools set from ctx.skills.data."""
+    skill_data = ctx.skills.data
     raw = skill_data.get("fetched_tools", [])
     if isinstance(raw, set):
         return raw
@@ -157,8 +157,6 @@ def get_fetched_tools(ctx) -> set[str]:
 
 
 def add_fetched_tools(ctx, names: set[str]) -> None:
-    """Add tool names to the fetched set in ctx.skill_data."""
-    if not hasattr(ctx, "skill_data"):
-        ctx.skill_data = {}
+    """Add tool names to the fetched set in ctx.skills.data."""
     existing = get_fetched_tools(ctx)
-    ctx.skill_data["fetched_tools"] = sorted(existing | names)
+    ctx.skills.data["fetched_tools"] = sorted(existing | names)

@@ -81,11 +81,11 @@ async def execute_tool(ctx, name: str, arguments: dict) -> ToolResult:
     """Execute a tool by name and return the result.
 
     Returns a ToolResult with text (for LLM history) and optional media
-    (for file attachments). Checks ctx.extra_tools (from activated skills)
+    (for file attachments). Checks ctx.tools.extra (from activated skills)
     first, then the global registry.
     """
     # Check allowed tools list (used by eval runner)
-    allowed = ctx.allowed_tools
+    allowed = ctx.tools.allowed
     if allowed is not None and name not in allowed:
         return ToolResult(text=f"[error: tool '{name}' is not available in this context]")
 
@@ -110,11 +110,11 @@ async def execute_tool(ctx, name: str, arguments: dict) -> ToolResult:
     # Check skill-provided tools first, then global registry, then search tools
     from .search_tools import SEARCH_TOOLS
 
-    extra_tools = ctx.extra_tools
+    extra_tools = ctx.tools.extra
     fn = extra_tools.get(name) or TOOLS.get(name) or SEARCH_TOOLS.get(name)
     if fn is None:
         # Check if tool is in the deferred pool — auto-fetch if so
-        deferred_pool = ctx.deferred_tool_pool
+        deferred_pool = ctx.tools.deferred_pool
         deferred_names = {td.get("function", {}).get("name") for td in deferred_pool}
         if name in deferred_names:
             log.debug(f"Auto-fetching deferred tool: {name}")

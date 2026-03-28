@@ -286,7 +286,7 @@ def _collect_all_tool_defs(ctx) -> list:
     Does NOT apply allowed_tools filter — returns the full unfiltered set
     so classification can see everything before deciding what to defer.
     """
-    all_tools = list(TOOL_DEFINITIONS) + ctx.extra_tool_definitions
+    all_tools = list(TOOL_DEFINITIONS) + ctx.tools.extra_definitions
 
     # Pre-load tool definitions from discovered skills (stable tool list).
     # Cached by config id to avoid re-executing tools.py every iteration.
@@ -331,7 +331,7 @@ def _build_tool_list(ctx) -> tuple[list, str | None]:
     active, deferred = classify_tools(all_defs, ctx.config, fetched)
 
     # Apply allowed_tools filter to the active set only
-    allowed = ctx.allowed_tools
+    allowed = ctx.tools.allowed
     if allowed is not None:
         active = [
             t for t in active
@@ -342,7 +342,7 @@ def _build_tool_list(ctx) -> tuple[list, str | None]:
         return active, None
 
     # Deferred mode: set the pool on ctx and add tool_search
-    ctx.deferred_tool_pool = deferred
+    ctx.tools.deferred_pool = deferred
     active = active + SEARCH_TOOL_DEFINITIONS
 
     # Build deferred list text for system prompt
@@ -608,13 +608,13 @@ async def _setup_turn_state(ctx, config, history) -> dict[str, str]:
     conv_id = ctx.conv_id or ctx.channel_id
     if conv_id:
         persisted = read_skills_state(config, conv_id)
-        existing = set(ctx.activated_skills)
+        existing = set(ctx.skills.activated)
         if persisted - existing:
-            ctx.activated_skills = existing | persisted
+            ctx.skills.activated = existing | persisted
         # Restore skill_data (e.g. vault base path) from sidecar
         persisted_data = read_skill_data(config, conv_id)
-        existing_data = ctx.skill_data
-        ctx.skill_data = {**persisted_data, **existing_data}
+        existing_data = ctx.skills.data
+        ctx.skills.data = {**persisted_data, **existing_data}
     await restore_skills(ctx)
 
     # Auto-activate always-loaded skills (bundled only — trust boundary)
@@ -622,7 +622,7 @@ async def _setup_turn_state(ctx, config, history) -> dict[str, str]:
     bundled_dir = _BUNDLED_SKILLS_DIR.resolve()
     discovered = getattr(config, "discovered_skills", [])
     for skill_info in discovered:
-        if not skill_info.always_loaded or skill_info.name in ctx.activated_skills:
+        if not skill_info.always_loaded or skill_info.name in ctx.skills.activated:
             continue
         if not Path(skill_info.location).resolve().is_relative_to(bundled_dir):
             continue  # only bundled skills can be always-loaded
@@ -807,9 +807,9 @@ async def run_agent_turn(ctx, user_message: str, history: list,
             usage = response.get("usage")
             if usage:
                 prompt_tokens = usage.get("prompt_tokens", 0)
-                ctx.total_prompt_tokens += prompt_tokens
-                ctx.total_completion_tokens += usage.get("completion_tokens", 0)
-                ctx.last_prompt_tokens = prompt_tokens
+                ctx.tokens.total_prompt += prompt_tokens
+                ctx.tokens.total_completion += usage.get("completion_tokens", 0)
+                ctx.tokens.last_prompt = prompt_tokens
 
             tool_calls = response.get("tool_calls")
             if tool_calls:
@@ -911,10 +911,10 @@ async def run_agent_turn(ctx, user_message: str, history: list,
     finally:
         # Persist activated skills and skill_data after every turn
         if conv_id:
-            activated = ctx.activated_skills
+            activated = ctx.skills.activated
             if activated:
                 write_skills_state(config, conv_id, activated)
-            skill_data = ctx.skill_data
+            skill_data = ctx.skills.data
             if skill_data:
                 write_skill_data(config, conv_id, skill_data)
 

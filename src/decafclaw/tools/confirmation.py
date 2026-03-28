@@ -22,20 +22,20 @@ async def request_confirmation(
     response.
 
     Matches responses by context_id + tool_name. When tool_call_id is
-    available (via ctx.current_tool_call_id), it's included in the request
+    available (via ctx.tools.current_call_id), it's included in the request
     and used for stricter matching — required for concurrent tool calls
     to the same tool.
 
     Times out after `timeout` seconds, returning {"approved": False}.
     """
     # Check command pre-approval before prompting
-    if tool_name in ctx.preapproved_tools:
+    if tool_name in ctx.tools.preapproved:
         log.info(f"Confirmation pre-approved for {tool_name}")
         return {"approved": True}
 
     confirm_event = asyncio.Event()
     result = {"approved": False}
-    tool_call_id = ctx.current_tool_call_id
+    tool_call_id = ctx.tools.current_call_id
     # Match against the context_id used for publishing (event_context_id if set,
     # otherwise context_id). Child agents publish under the parent's event_context_id.
     match_context_id = ctx.event_context_id or ctx.context_id

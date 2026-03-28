@@ -149,7 +149,7 @@ async def test_subscriber_cleaned_up_after_timeout(ctx):
 @pytest.mark.asyncio
 async def test_tool_call_id_both_match(ctx):
     """When both request and response have tool_call_id, matching succeeds."""
-    ctx.current_tool_call_id = "call_abc"
+    ctx.tools.current_call_id = "call_abc"
 
     async def approve():
         await asyncio.sleep(0.05)
@@ -171,7 +171,7 @@ async def test_tool_call_id_both_match(ctx):
 @pytest.mark.asyncio
 async def test_tool_call_id_both_mismatch(ctx):
     """When both have tool_call_id but they differ, response is ignored."""
-    ctx.current_tool_call_id = "call_abc"
+    ctx.tools.current_call_id = "call_abc"
 
     async def approve_wrong_id():
         await asyncio.sleep(0.05)
@@ -194,7 +194,7 @@ async def test_tool_call_id_both_mismatch(ctx):
 @pytest.mark.asyncio
 async def test_tool_call_id_response_omits(ctx):
     """When request has tool_call_id but response omits it, still accepted (backward compat)."""
-    ctx.current_tool_call_id = "call_abc"
+    ctx.tools.current_call_id = "call_abc"
 
     async def approve_no_id():
         await asyncio.sleep(0.05)
@@ -216,7 +216,7 @@ async def test_tool_call_id_response_omits(ctx):
 @pytest.mark.asyncio
 async def test_tool_call_id_request_omits(ctx):
     """When request has no tool_call_id, any response matches (original behavior)."""
-    ctx.current_tool_call_id = ""
+    ctx.tools.current_call_id = ""
 
     async def approve_with_id():
         await asyncio.sleep(0.05)

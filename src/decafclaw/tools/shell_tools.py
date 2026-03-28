@@ -104,15 +104,15 @@ async def tool_shell(ctx, command: str) -> str | ToolResult:
         return _execute_command(ctx, command)
 
     # Command pre-approved tools bypass confirmation (blanket shell approval)
-    if "shell" in ctx.preapproved_tools:
+    if "shell" in ctx.tools.preapproved:
         log.info(f"[tool:shell] pre-approved by command: {command}")
         return _execute_command(ctx, command)
 
     # Scoped shell patterns from skill frontmatter (e.g. shell($SKILL_DIR/fetch.sh))
     # Reject commands with shell chaining/metacharacters to prevent bypass
-    if ctx.preapproved_shell_patterns and not _has_shell_metacharacters(
+    if ctx.tools.preapproved_shell_patterns and not _has_shell_metacharacters(
         command
-    ) and _command_matches_pattern(command, ctx.preapproved_shell_patterns):
+    ) and _command_matches_pattern(command, ctx.tools.preapproved_shell_patterns):
         log.info(f"[tool:shell] pre-approved by scoped pattern: {command}")
         return _execute_command(ctx, command)
 

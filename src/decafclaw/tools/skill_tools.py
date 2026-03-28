@@ -84,17 +84,17 @@ async def _call_init(module, config, skill_name: str = "") -> None:
 
 
 async def restore_skills(ctx) -> None:
-    """Re-activate skills recorded in ctx.activated_skills, without permission checks.
+    """Re-activate skills recorded in ctx.skills.activated, without permission checks.
 
     Called at the start of each web gateway turn to restore skills that were
     active in a previous turn or server session.
     """
-    skill_names = set(ctx.activated_skills)
+    skill_names = set(ctx.skills.activated)
     if not skill_names:
         return
     discovered = getattr(ctx.config, "discovered_skills", [])
     skill_map = {s.name: s for s in discovered}
-    existing_tools = set(ctx.extra_tools.keys())
+    existing_tools = set(ctx.tools.extra.keys())
     for name in skill_names:
         skill_info = skill_map.get(name)
         if not skill_info or not skill_info.has_native_tools:
@@ -106,12 +106,8 @@ async def restore_skills(ctx) -> None:
                 log.debug(f"Skill '{name}' tools already loaded, skipping restore")
                 continue
             await _call_init(module, ctx.config, name)
-            if not hasattr(ctx, "extra_tools"):
-                ctx.extra_tools = {}
-            ctx.extra_tools.update(tools)
-            if not hasattr(ctx, "extra_tool_definitions"):
-                ctx.extra_tool_definitions = []
-            ctx.extra_tool_definitions.extend(tool_defs)
+            ctx.tools.extra.update(tools)
+            ctx.tools.extra_definitions.extend(tool_defs)
             log.info(f"Restored skill '{name}' with tools: {list(tools.keys())}")
         except Exception as e:
             log.error(f"Failed to restore skill '{name}': {e}")
@@ -133,7 +129,7 @@ async def tool_activate_skill(ctx, name: str) -> str | ToolResult:
         return ToolResult(text=f"[error: skill '{name}' not found. Check Available Skills in your instructions.]")
 
     # Check if already activated
-    activated = ctx.activated_skills
+    activated = ctx.skills.activated
     if name in activated:
         return f"Skill '{name}' is already active."
 
@@ -170,8 +166,8 @@ async def activate_skill_internal(ctx, skill_info) -> str | ToolResult:
             tools, tool_defs, module = _load_native_tools(skill_info)
             await _call_init(module, ctx.config, skill_info.name)
 
-            ctx.extra_tools.update(tools)
-            ctx.extra_tool_definitions.extend(tool_defs)
+            ctx.tools.extra.update(tools)
+            ctx.tools.extra_definitions.extend(tool_defs)
 
             tool_names = list(tools.keys())
             result_parts.append(
@@ -196,7 +192,7 @@ async def activate_skill_internal(ctx, skill_info) -> str | ToolResult:
     else:
         log.info(f"Activated shell-based skill '{name}'")
 
-    ctx.activated_skills.add(name)
+    ctx.skills.activated.add(name)
     return "\n".join(result_parts)
 
 
