@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+  <title>Wiki — DecafClaw</title>
+  <link rel="stylesheet" href="/static/vendor/bundle/pico.min.css">
+  <link rel="stylesheet" href="/static/style.css">
+  <script type="importmap">
+  {
+    "imports": {
+      "lit": "/static/vendor/bundle/lit.js",
+      "lit/directives/unsafe-html.js": "/static/vendor/bundle/lit-unsafe-html.js",
+      "marked": "/static/vendor/bundle/marked.js",
+      "dompurify": "/static/vendor/bundle/dompurify.js"
+    }
+  }
+  </script>
+  <style>
+    body { margin: 0; padding: 0; }
+    .wiki-standalone {
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 2rem 1rem;
+    }
+    .wiki-standalone-nav {
+      margin-bottom: 1rem;
+      font-size: 0.9rem;
+    }
+    .wiki-standalone-nav a {
+      text-decoration: none;
+    }
+  </style>
+</head>
+<body>
+  <div class="wiki-standalone">
+    <nav class="wiki-standalone-nav">
+      <a href="/">&larr; Back to chat</a>
+    </nav>
+    <wiki-page standalone></wiki-page>
+  </div>
+  <script type="module">
+    import './static/components/wiki-page.js';
+
+    // Extract page name from URL: /wiki/Page%20Name
+    const path = decodeURIComponent(window.location.pathname.replace(/^\/wiki\//, ''));
+    const wikiPage = document.querySelector('wiki-page');
+    if (wikiPage && path) {
+      wikiPage.page = path;
+      // Update title when content loads
+      const origTitle = document.title;
+      const observer = new MutationObserver(() => {
+        const title = wikiPage.querySelector('.wiki-page-title');
+        if (title?.textContent) {
+          document.title = title.textContent + ' — DecafClaw Wiki';
+          observer.disconnect();
+        }
+      });
+      observer.observe(wikiPage, { childList: true, subtree: true });
+    }
+
+    // Auth check — redirect to login if not authenticated
+    fetch('/api/auth/me').then(r => {
+      if (!r.ok) window.location.href = '/';
+    });
+  </script>
+</body>
+</html>
