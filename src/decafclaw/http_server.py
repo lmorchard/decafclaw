@@ -217,6 +217,78 @@ def create_app(config, event_bus, app_ctx=None) -> Starlette:
             headers["Content-Disposition"] = f'attachment; filename="{resolved.name}"'
         return FileResponse(str(resolved), media_type=content_type, headers=headers)
 
+    # -- Wiki routes --------------------------------------------------------------
+
+    def _wiki_dir():
+        return config.workspace_path / "wiki"
+
+    def _resolve_wiki_page(page_name: str):
+        """Resolve a wiki page name to a file path (reuses wiki tool logic)."""
+        if ".." in page_name or page_name.startswith("/"):
+            return None
+        wiki_root = _wiki_dir().resolve()
+        if not wiki_root.is_dir():
+            return None
+        # Direct path first
+        direct = (wiki_root / f"{page_name}.md").resolve()
+        if direct.is_relative_to(wiki_root) and direct.exists():
+            return direct
+        # Search subdirectories by stem
+        for path in wiki_root.rglob("*.md"):
+            if path.stem == page_name and path.resolve().is_relative_to(wiki_root):
+                return path
+        return None
+
+    async def wiki_list(request: Request) -> JSONResponse:
+        """List all wiki pages with titles and modified dates."""
+        username = _require_auth(request)
+        if not username:
+            return JSONResponse({"error": "not authenticated"}, status_code=401)
+        wiki_root = _wiki_dir()
+        if not wiki_root.is_dir():
+            return JSONResponse([])
+        pages = []
+        for path in sorted(wiki_root.rglob("*.md")):
+            if not path.resolve().is_relative_to(wiki_root.resolve()):
+                continue
+            stat = path.stat()
+            pages.append({
+                "title": path.stem,
+                "modified": stat.st_mtime,
+            })
+        pages.sort(key=lambda p: p["title"].lower())
+        return JSONResponse(pages)
+
+    async def wiki_read(request: Request) -> JSONResponse:
+        """Read a single wiki page as JSON."""
+        username = _require_auth(request)
+        if not username:
+            return JSONResponse({"error": "not authenticated"}, status_code=401)
+        page_name = request.path_params.get("page", "")
+        if not page_name:
+            return JSONResponse({"error": "page name required"}, status_code=400)
+        resolved = _resolve_wiki_page(page_name)
+        if not resolved:
+            return JSONResponse({"error": "not found"}, status_code=404)
+        content = resolved.read_text(encoding="utf-8")
+        stat = resolved.stat()
+        return JSONResponse({
+            "title": resolved.stem,
+            "content": content,
+            "modified": stat.st_mtime,
+        })
+
+    async def serve_wiki_page(request: Request):
+        """Serve the standalone wiki page HTML shell."""
+        username = _require_auth(request)
+        if not username:
+            # Redirect to login
+            return JSONResponse({"error": "not authenticated"}, status_code=401)
+        wiki_html = Path(__file__).parent / "web" / "static" / "wiki.html"
+        if not wiki_html.exists():
+            return JSONResponse({"error": "wiki page not found"}, status_code=404)
+        return FileResponse(str(wiki_html))
+
     # -- Upload route -------------------------------------------------------------
 
     async def handle_upload(request: Request) -> JSONResponse:
@@ -318,6 +390,9 @@ def create_app(config, event_bus, app_ctx=None) -> Starlette:
         Route("/api/conversations/{id}/archive", archive_conversation, methods=["POST"]),
         Route("/api/upload/{conv_id}", handle_upload, methods=["POST"]),
         Route("/api/workspace/{path:path}", serve_workspace_file, methods=["GET"]),
+        Route("/api/wiki", wiki_list, methods=["GET"]),
+        Route("/api/wiki/{page:path}", wiki_read, methods=["GET"]),
+        Route("/wiki/{page:path}", serve_wiki_page, methods=["GET"]),
         WebSocketRoute("/ws/chat", ws_chat),
     ]
 

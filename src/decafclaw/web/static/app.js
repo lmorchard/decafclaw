@@ -15,6 +15,7 @@ import './components/chat-view.js';
 import './components/chat-message.js';
 import './components/chat-input.js';
 import './components/theme-toggle.js';
+import './components/wiki-panel.js';
 
 // -- Services -----------------------------------------------------------------
 
@@ -98,6 +99,38 @@ document.addEventListener('keydown', (e) => {
     chatInput?.focus();
   }
 });
+
+// -- Wiki panel ---------------------------------------------------------------
+
+const wikiPanel = /** @type {any} */ (document.querySelector('wiki-panel'));
+const wikiPanelBackdrop = document.getElementById('wiki-panel-backdrop');
+
+// Intercept clicks on .wiki-link elements anywhere in the document
+document.addEventListener('click', (e) => {
+  const link = /** @type {HTMLElement} */ (e.target).closest('a.wiki-link');
+  if (!link) return;
+  // If the click is inside the wiki panel, let wiki-page handle it
+  if (link.closest('wiki-panel')) return;
+  e.preventDefault();
+  const page = link.getAttribute('data-wiki-page');
+  if (page && wikiPanel) {
+    wikiPanel.openPage(page);
+  }
+});
+
+// Close wiki panel via backdrop click
+wikiPanelBackdrop?.addEventListener('click', () => {
+  if (wikiPanel) wikiPanel.close();
+});
+
+// Sync backdrop visibility with panel state
+if (wikiPanel) {
+  const observer = new MutationObserver(() => {
+    const isOpen = wikiPanel.hasAttribute('open');
+    wikiPanelBackdrop?.classList.toggle('visible', isOpen);
+  });
+  observer.observe(wikiPanel, { attributes: true, attributeFilter: ['open'] });
+}
 
 // -- Toast notifications ------------------------------------------------------
 
