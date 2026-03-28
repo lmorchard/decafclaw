@@ -15,7 +15,7 @@ import './components/chat-view.js';
 import './components/chat-message.js';
 import './components/chat-input.js';
 import './components/theme-toggle.js';
-import './components/wiki-panel.js';
+import './components/wiki-page.js';
 
 // -- Services -----------------------------------------------------------------
 
@@ -100,45 +100,55 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
-// -- Wiki panel ---------------------------------------------------------------
+// -- Wiki view ----------------------------------------------------------------
 
-const wikiPanel = /** @type {any} */ (document.querySelector('wiki-panel'));
-const wikiPanelBackdrop = document.getElementById('wiki-panel-backdrop');
+const chatMainEl = document.getElementById('chat-main');
+const wikiMainEl = document.getElementById('wiki-main');
+const wikiPageEl = /** @type {any} */ (document.querySelector('#wiki-main wiki-page'));
+
+/** Switch the main content area to show a wiki page. */
+function showWikiPage(page) {
+  if (wikiPageEl) wikiPageEl.page = page;
+  chatMainEl?.classList.add('hidden');
+  wikiMainEl?.classList.remove('hidden');
+  // Switch sidebar to wiki tab
+  if (sidebar) sidebar.switchToWiki();
+}
+
+/** Switch back to chat view. */
+function showChatView() {
+  wikiMainEl?.classList.add('hidden');
+  chatMainEl?.classList.remove('hidden');
+}
 
 // Intercept clicks on .wiki-link elements anywhere in the document
 document.addEventListener('click', (e) => {
   const link = /** @type {HTMLElement} */ (e.target).closest('a.wiki-link');
   if (!link) return;
-  // If the click is inside the wiki panel, let wiki-page handle it
-  if (link.closest('wiki-panel')) return;
+  // In #wiki-main, let wiki-page handle navigation
+  if (link.closest('#wiki-main')) return;
   e.preventDefault();
   const page = link.getAttribute('data-wiki-page');
-  if (page && wikiPanel) {
-    wikiPanel.openPage(page);
-  }
+  if (page) showWikiPage(page);
 });
 
 // Open wiki page from sidebar wiki tab
 document.addEventListener('wiki-open', (e) => {
   const page = /** @type {CustomEvent} */ (e).detail?.page;
-  if (page && wikiPanel) {
-    wikiPanel.openPage(page);
-  }
+  if (page) showWikiPage(page);
 });
 
-// Close wiki panel via backdrop click
-wikiPanelBackdrop?.addEventListener('click', () => {
-  if (wikiPanel) wikiPanel.close();
+// Navigate within wiki-main (wiki-page dispatches wiki-navigate)
+wikiMainEl?.addEventListener('wiki-navigate', (e) => {
+  const page = /** @type {CustomEvent} */ (e).detail?.page;
+  if (page) showWikiPage(page);
 });
 
-// Sync backdrop visibility with panel state
-if (wikiPanel) {
-  const observer = new MutationObserver(() => {
-    const isOpen = wikiPanel.hasAttribute('open');
-    wikiPanelBackdrop?.classList.toggle('visible', isOpen);
-  });
-  observer.observe(wikiPanel, { attributes: true, attributeFilter: ['open'] });
-}
+// Switch back to chat when sidebar switches to Chats tab
+document.addEventListener('sidebar-tab-change', (e) => {
+  const tab = /** @type {CustomEvent} */ (e).detail?.tab;
+  if (tab === 'conversations') showChatView();
+});
 
 // -- Toast notifications ------------------------------------------------------
 
