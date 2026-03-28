@@ -253,7 +253,7 @@ def search_similar_sync(config, query_embedding: list[float], top_k: int = 5,
 
         query_vec = sqlite_vec.serialize_float32(query_embedding)
 
-        # Over-fetch to allow for source_type filtering and wiki boost reranking
+        # Over-fetch to allow for threshold filtering and wiki boost reranking
         fetch_k = top_k * 3
 
         rows = conn.execute("""
@@ -271,7 +271,8 @@ def search_similar_sync(config, query_embedding: list[float], top_k: int = 5,
     if not rows:
         return []
 
-    # Score boost for curated wiki content
+    # Wiki pages are curated knowledge, so they get a slight relevance boost
+    # over raw memory/conversation entries.
     WIKI_BOOST = 1.2
 
     results = []

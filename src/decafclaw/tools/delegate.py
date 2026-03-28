@@ -99,9 +99,9 @@ async def _run_child_turn(parent_ctx, task, effort: str = "",
         )
         return result.text if hasattr(result, "text") else str(result)
     except asyncio.TimeoutError:
-        return f"[subtask timed out after {timeout}s]"
+        return ToolResult(text=f"[error: subtask timed out after {timeout}s]")
     except Exception as e:
-        return f"[subtask failed: {e}]"
+        return ToolResult(text=f"[error: subtask failed: {e}]")
 
 
 async def tool_delegate_task(ctx, task: str, effort: str = "") -> str | ToolResult:

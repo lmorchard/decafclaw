@@ -1,0 +1,153 @@
+/**
+ * @typedef {import('./conversation-store.js').ChatMessage} ChatMessage
+ */
+
+/**
+ * Sub-store managing message state: history, streaming text, pagination.
+ */
+export class MessageStore {
+  /** @type {ChatMessage[]} */
+  #currentMessages = [];
+  /** @type {string} */
+  #streamingText = '';
+  /** @type {boolean} */
+  #hasMore = false;
+  /** @type {() => void} */
+  #onChange;
+
+  /** @param {() => void} onChange */
+  constructor(onChange) {
+    this.#onChange = onChange;
+  }
+
+  // -- Getters ----------------------------------------------------------------
+
+  /** @returns {ChatMessage[]} */
+  get currentMessages() { return this.#currentMessages; }
+  /** @returns {string} */
+  get streamingText() { return this.#streamingText; }
+  /** @returns {boolean} */
+  get hasMore() { return this.#hasMore; }
+
+  // -- Mutations --------------------------------------------------------------
+
+  /** Reset state when switching conversations. */
+  clear() {
+    this.#currentMessages = [];
+    this.#streamingText = '';
+    this.#hasMore = false;
+  }
+
+  /** @param {ChatMessage} msg */
+  pushMessage(msg) {
+    this.#currentMessages.push(msg);
+  }
+
+  clearStreamingText() {
+    this.#streamingText = '';
+  }
+
+  /**
+   * Handle a WebSocket message if it's message-related.
+   * @param {object} msg
+   * @param {string|null} currentConvId
+   * @returns {boolean} true if handled
+   */
+  handleMessage(msg, currentConvId) {
+    switch (msg.type) {
+      case 'conv_history':
+        if (msg.conv_id === currentConvId) {
+          const existing = new Set(this.#currentMessages.map(m => m.timestamp));
+          const newMsgs = (msg.messages || []).filter(
+            /** @param {ChatMessage} m */ (m) => !existing.has(m.timestamp)
+          );
+          this.#currentMessages = [...this.#mergeToolMessages(newMsgs), ...this.#currentMessages];
+          this.#hasMore = msg.has_more;
+        }
+        return true;
+
+      case 'chunk':
+        if (msg.conv_id === currentConvId) {
+          this.#streamingText += msg.text;
+        }
+        return true;
+
+      case 'message_complete':
+        if (msg.conv_id === currentConvId) {
+          this.#currentMessages.push({
+            role: msg.role || 'assistant',
+            content: msg.text,
+            timestamp: new Date().toISOString(),
+            usage: msg.usage || null,
+          });
+          this.#streamingText = '';
+        }
+        return true;
+
+      case 'compaction_done':
+        if (msg.conv_id === currentConvId) {
+          this.#currentMessages.push({
+            role: 'compaction',
+            content: `Conversation compacted: ${msg.before_messages} → ${msg.after_messages} messages`,
+            timestamp: new Date().toISOString(),
+          });
+        }
+        return true;
+
+      default:
+        return false;
+    }
+  }
+
+  /**
+   * Merge adjacent assistant+tool_calls and tool-result messages from history
+   * into combined tool messages, so they render as single rows.
+   * @param {ChatMessage[]} messages
+   * @returns {ChatMessage[]}
+   */
+  #mergeToolMessages(messages) {
+    /** @type {ChatMessage[]} */
+    const merged = [];
+    for (let i = 0; i < messages.length; i++) {
+      const msg = messages[i];
+
+      // Assistant message with tool_calls — look ahead for matching tool results
+      if (msg.role === 'assistant' && msg.tool_calls?.length) {
+        // If there's text content, emit it as a plain assistant message
+        if (msg.content) {
+          merged.push({ ...msg, tool_calls: undefined });
+        }
+        // For each tool call, try to find its result in the following messages
+        for (const tc of msg.tool_calls) {
+          const toolName = tc.function?.name || 'tool';
+          const tcId = tc.id;
+          // Look ahead for matching tool result
+          let resultContent = '';
+          let resultShortText = '';
+          for (let j = i + 1; j < messages.length; j++) {
+            if (messages[j].role === 'tool' && messages[j].tool_call_id === tcId) {
+              resultContent = messages[j].content || '';
+              resultShortText = messages[j].display_short_text || '';
+              messages[j]._merged = true; // mark as consumed
+              break;
+            }
+          }
+          merged.push({
+            role: 'tool',
+            tool: toolName,
+            content: resultContent,
+            display_short_text: resultShortText,
+            timestamp: msg.timestamp,
+          });
+        }
+        continue;
+      }
+
+      // Skip tool results that were already merged
+      if (msg._merged) continue;
+
+      merged.push(msg);
+    }
+    return merged;
+  }
+}
