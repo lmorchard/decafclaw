@@ -181,35 +181,18 @@ async def _chunked_summarize(ctx, config, turns: list[list[dict]],
     return combined
 
 
-async def compact_history(ctx, history: list) -> bool:
-    """Compact conversation history using the archive as source.
+def _partition_turns(
+    turns: list[list[dict]], config
+) -> tuple[list[list[dict]], list[list[dict]], list[list[dict]]]:
+    """Partition turns into old, protected, and recent groups.
 
-    If a previous compaction exists, performs incremental compaction:
-    folds only newly-old turns into the existing summary. Otherwise
-    falls back to full compaction from scratch.
+    Old turns will be summarized. Protected turns contain tool calls
+    (e.g. activate_skill) whose results must survive compaction verbatim.
+    Recent turns are the most recent N turns preserved as-is.
 
-    Returns True if compaction was performed, False if skipped.
+    Returns (old_turns, protected_turns, recent_turns).
     """
-    config = ctx.config
-    conv_id = ctx.conv_id or ctx.channel_id or "unknown"
-
-    # Read the full archive
-    archive = read_archive(config, conv_id)
-    if not archive:
-        log.debug("No archive found, skipping compaction")
-        return False
-
-    # Split into turns
-    turns = _split_into_turns(archive)
     preserve = config.compaction.preserve_turns
-
-    if len(turns) <= preserve:
-        log.info(f"Compaction skipped: only {len(turns)} turns, need >{preserve} to compact")
-        return False
-
-    # Split: old turns to summarize, recent turns to keep.
-    # Turns containing protected tool calls (e.g. activate_skill) are moved
-    # from old to preserved so their content survives compaction.
     old_turns = []
     protected_turns = []
     for turn in turns[:-preserve]:
@@ -219,17 +202,48 @@ async def compact_history(ctx, history: list) -> bool:
             old_turns.append(turn)
     recent_turns = turns[-preserve:]
     if protected_turns:
-        log.info(f"Protecting {len(protected_turns)} skill activation turn(s) from compaction")
-    if not old_turns:
-        log.info("Compaction skipped: all old turns are protected")
-        return False
-    old_messages = [msg for turn in old_turns for msg in turn]
-    protected_messages = [msg for turn in protected_turns for msg in turn]
-    recent_messages = [msg for turn in recent_turns for msg in turn]
+        log.info(
+            f"Protecting {len(protected_turns)} skill activation turn(s) "
+            f"from compaction"
+        )
+    return old_turns, protected_turns, recent_turns
 
-    # Check for incremental compaction
+
+class _CompactionMode:
+    """Result of determining whether compaction is incremental or full."""
+
+    __slots__ = ("incremental", "prev_summary", "newly_old_turns",
+                 "old_messages", "old_turns")
+
+    def __init__(
+        self,
+        incremental: bool,
+        prev_summary: str | None,
+        newly_old_turns: list[list[dict]],
+        old_messages: list[dict],
+        old_turns: list[list[dict]],
+    ):
+        self.incremental = incremental
+        self.prev_summary = prev_summary
+        self.newly_old_turns = newly_old_turns
+        self.old_messages = old_messages
+        self.old_turns = old_turns
+
+
+def _determine_compaction_mode(
+    archive: list[dict],
+    old_turns: list[list[dict]],
+    config,
+    conv_id: str,
+) -> _CompactionMode | None:
+    """Determine whether to do incremental or full compaction.
+
+    Returns a _CompactionMode describing the approach, or None if
+    compaction should be skipped (no newly-old turns in incremental case).
+    """
+    old_messages = [msg for turn in old_turns for msg in turn]
+
     prev_summary, prev_last_ts = _extract_previous_summary(config, conv_id)
-    incremental = False
     newly_old_turns: list[list[dict]] = []
 
     if prev_summary and prev_last_ts:
@@ -280,13 +294,103 @@ async def compact_history(ctx, history: list) -> bool:
 
         if not newly_old_turns:
             log.info("No newly-old turns since last compaction, skipping")
-            return False
-        incremental = True
+            return None
 
-    log.info(f"Compacting {len(old_messages)} messages ({len(old_turns)} turns) "
-             f"into summary, preserving {len(recent_messages)} messages "
-             f"({len(recent_turns)} turns)"
-             f"{f', incremental ({len(newly_old_turns)} new turns)' if incremental else ''}")
+        return _CompactionMode(
+            incremental=True,
+            prev_summary=prev_summary,
+            newly_old_turns=newly_old_turns,
+            old_messages=old_messages,
+            old_turns=old_turns,
+        )
+
+    # Full compaction — no previous summary available
+    return _CompactionMode(
+        incremental=False,
+        prev_summary=None,
+        newly_old_turns=[],
+        old_messages=old_messages,
+        old_turns=old_turns,
+    )
+
+
+def _rebuild_history(
+    history: list,
+    summary: str,
+    protected_messages: list[dict],
+    recent_messages: list[dict],
+    config,
+    conv_id: str,
+) -> None:
+    """Clear history and replace with summary + protected + recent messages.
+
+    Also persists the compacted history to the sidecar file.
+    """
+    summary_msg = {
+        "role": "user",
+        "content": f"{SUMMARY_PREFIX}{summary}",
+    }
+
+    history.clear()
+    history.append(summary_msg)
+    history.extend(protected_messages)
+    history.extend(recent_messages)
+
+    # Persist compacted working history so future turns don't re-expand from archive
+    write_compacted_history(config, conv_id, list(history))
+
+    log.info(
+        f"Compaction complete: "
+        f"1 summary + {len(protected_messages)} protected + "
+        f"{len(recent_messages)} recent = {len(history)} total"
+    )
+
+
+async def compact_history(ctx, history: list) -> bool:
+    """Compact conversation history using the archive as source.
+
+    If a previous compaction exists, performs incremental compaction:
+    folds only newly-old turns into the existing summary. Otherwise
+    falls back to full compaction from scratch.
+
+    Returns True if compaction was performed, False if skipped.
+    """
+    config = ctx.config
+    conv_id = ctx.conv_id or ctx.channel_id or "unknown"
+
+    # Load and validate archive
+    archive = read_archive(config, conv_id)
+    if not archive:
+        log.debug("No archive found, skipping compaction")
+        return False
+
+    # Split into turns
+    turns = _split_into_turns(archive)
+    preserve = config.compaction.preserve_turns
+
+    if len(turns) <= preserve:
+        log.info(f"Compaction skipped: only {len(turns)} turns, need >{preserve} to compact")
+        return False
+
+    # Partition turns into old/protected/recent
+    old_turns, protected_turns, recent_turns = _partition_turns(turns, config)
+    if not old_turns:
+        log.info("Compaction skipped: all old turns are protected")
+        return False
+    protected_messages = [msg for turn in protected_turns for msg in turn]
+    recent_messages = [msg for turn in recent_turns for msg in turn]
+
+    # Determine compaction mode (incremental vs full)
+    mode = _determine_compaction_mode(archive, old_turns, config, conv_id)
+    if mode is None:
+        return False
+
+    log.info(
+        f"Compacting {len(mode.old_messages)} messages ({len(mode.old_turns)} turns) "
+        f"into summary, preserving {len(recent_messages)} messages "
+        f"({len(recent_turns)} turns)"
+        f"{f', incremental ({len(mode.newly_old_turns)} new turns)' if mode.incremental else ''}"
+    )
 
     budget = config.compaction_context_budget
     estimated = 0
@@ -298,12 +402,12 @@ async def compact_history(ctx, history: list) -> bool:
     try:
         await ctx.publish("compaction_start")
 
-        if incremental:
-            # Fold newly-old turns into existing summary
+        # Summarize
+        if mode.incremental:
             newly_old_flat = flatten_messages(
-                [msg for turn in newly_old_turns for msg in turn])
+                [msg for turn in mode.newly_old_turns for msg in turn])
             combined_input = (
-                f"Existing summary:\n{prev_summary}\n\n"
+                f"Existing summary:\n{mode.prev_summary}\n\n"
                 f"New conversation turns to incorporate:\n{newly_old_flat}"
             )
             estimated = estimate_tokens(combined_input)
@@ -311,15 +415,14 @@ async def compact_history(ctx, history: list) -> bool:
             summary = await _single_summarize(
                 ctx, config, combined_input, INCREMENTAL_COMPACTION_PROMPT)
         else:
-            # Full compaction from scratch
             prompt = _load_compaction_prompt(config)
-            flattened = flatten_messages(old_messages)
+            flattened = flatten_messages(mode.old_messages)
             estimated = estimate_tokens(flattened)
             if estimated > budget:
                 log.info(f"Flattened text ({estimated} est. tokens) exceeds "
                          f"budget ({budget}), using chunked compaction")
                 summary = await _chunked_summarize(
-                    ctx, config, old_turns, prompt, budget)
+                    ctx, config, mode.old_turns, prompt, budget)
             else:
                 summary = await _single_summarize(ctx, config, flattened, prompt)
 
@@ -327,23 +430,9 @@ async def compact_history(ctx, history: list) -> bool:
             log.warning("Compaction LLM returned empty summary, skipping")
             return False
 
-        # Rebuild history: summary + protected turns + recent messages
-        summary_msg = {
-            "role": "user",
-            "content": f"{SUMMARY_PREFIX}{summary}",
-        }
-
-        history.clear()
-        history.append(summary_msg)
-        history.extend(protected_messages)
-        history.extend(recent_messages)
-
-        # Persist compacted working history so future turns don't re-expand from archive
-        write_compacted_history(config, conv_id, list(history))
-
-        log.info(f"Compaction complete: {len(old_messages)} messages -> "
-                 f"1 summary + {len(protected_messages)} protected + "
-                 f"{len(recent_messages)} recent = {len(history)} total")
+        # Rebuild history with summary + protected + recent
+        _rebuild_history(history, summary, protected_messages, recent_messages,
+                         config, conv_id)
         return True
 
     except Exception as e:
