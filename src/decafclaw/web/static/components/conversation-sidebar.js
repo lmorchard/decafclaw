@@ -16,6 +16,9 @@ export class ConversationSidebar extends LitElement {
     _showSystem: { type: Boolean, state: true },
     _collapsed: { type: Boolean, state: true },
     _mobileOpen: { type: Boolean, state: true },
+    _sidebarTab: { type: String, state: true },
+    _wikiPages: { type: Array, state: true },
+    _wikiLoading: { type: Boolean, state: true },
   };
 
   createRenderRoot() { return this; }
@@ -36,6 +39,10 @@ export class ConversationSidebar extends LitElement {
     this._showSystem = false;
     this._collapsed = localStorage.getItem('sidebar-collapsed') === 'true';
     this._mobileOpen = false;
+    this._sidebarTab = 'conversations';
+    /** @type {Array<{title: string, modified: number}>} */
+    this._wikiPages = [];
+    this._wikiLoading = false;
   }
 
   openMobile() {
@@ -74,6 +81,38 @@ export class ConversationSidebar extends LitElement {
     }
     this.toggleAttribute('collapsed', this._collapsed);
     this.toggleAttribute('mobile-open', this._mobileOpen);
+  }
+
+  /** @param {string} tab */
+  #switchTab(tab) {
+    this._sidebarTab = tab;
+    if (tab === 'wiki') {
+      this.#fetchWikiPages();
+    }
+  }
+
+  async #fetchWikiPages() {
+    this._wikiLoading = true;
+    try {
+      const res = await fetch('/api/wiki');
+      if (res.ok) {
+        this._wikiPages = await res.json();
+      }
+    } catch (e) {
+      // Silently fail
+    } finally {
+      this._wikiLoading = false;
+    }
+  }
+
+  /** @param {string} page */
+  #handleWikiSelect(page) {
+    this.dispatchEvent(new CustomEvent('wiki-open', {
+      detail: { page },
+      bubbles: true,
+      composed: true,
+    }));
+    this.closeMobile();
   }
 
   #toggleCollapse() {
@@ -137,6 +176,24 @@ export class ConversationSidebar extends LitElement {
     }
   }
 
+  #renderWikiTab() {
+    if (this._wikiLoading) {
+      return html`<div class="conv-list"><p style="padding: 1rem; color: var(--pico-muted-color);">Loading wiki pages...</p></div>`;
+    }
+    if (!this._wikiPages.length) {
+      return html`<div class="conv-list"><p style="padding: 1rem; color: var(--pico-muted-color);">No wiki pages found.</p></div>`;
+    }
+    return html`
+      <div class="conv-list">
+        ${this._wikiPages.map(p => html`
+          <div class="conv-item wiki-item" @click=${() => this.#handleWikiSelect(p.title)} title=${p.title}>
+            <span class="conv-title">${p.title}</span>
+          </div>
+        `)}
+      </div>
+    `;
+  }
+
   render() {
     if (this._collapsed) {
       return html`
@@ -148,11 +205,17 @@ export class ConversationSidebar extends LitElement {
 
     return html`
       <div class="sidebar-header">
-        <h3>Conversations</h3>
+        <div class="sidebar-tabs">
+          <button class="sidebar-tab ${this._sidebarTab === 'conversations' ? 'active' : ''}"
+            @click=${() => this.#switchTab('conversations')}>Chats</button>
+          <button class="sidebar-tab ${this._sidebarTab === 'wiki' ? 'active' : ''}"
+            @click=${() => this.#switchTab('wiki')}>Wiki</button>
+        </div>
         <button class="mobile-close-btn" @click=${() => this.closeMobile()} title="Close sidebar">&#10005;</button>
         <button class="collapse-btn" @click=${this.#toggleCollapse} title="Collapse sidebar">‹</button>
       </div>
-      <div class="conv-list">
+      ${this._sidebarTab === 'wiki' ? this.#renderWikiTab() : nothing}
+      <div class="conv-list" style="${this._sidebarTab !== 'conversations' ? 'display:none' : ''}">
         <button class="new-conv-btn outline" @click=${this.#handleNew} title="New conversation (⌘K)">+ New conversation</button>
         ${this._conversations.length === 0
           ? nothing

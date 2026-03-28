@@ -118,6 +118,14 @@ document.addEventListener('click', (e) => {
   }
 });
 
+// Open wiki page from sidebar wiki tab
+document.addEventListener('wiki-open', (e) => {
+  const page = /** @type {CustomEvent} */ (e).detail?.page;
+  if (page && wikiPanel) {
+    wikiPanel.openPage(page);
+  }
+});
+
 // Close wiki panel via backdrop click
 wikiPanelBackdrop?.addEventListener('click', () => {
   if (wikiPanel) wikiPanel.close();

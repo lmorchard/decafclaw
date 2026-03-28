@@ -868,6 +868,38 @@ conversation-sidebar .mobile-close-btn:hover {
   display: none;
 }
 
+/* ── Sidebar tabs ───────────────────────────────────────────────────────── */
+
+.sidebar-tabs {
+  display: flex;
+  gap: 0;
+  flex: 1;
+}
+
+.sidebar-tab {
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  padding: 0.25rem 0.5rem;
+  font-size: 0.9rem;
+  cursor: pointer;
+  color: var(--pico-muted-color);
+  margin: 0;
+}
+
+.sidebar-tab.active {
+  color: var(--pico-color);
+  border-bottom-color: var(--pico-primary);
+}
+
+.sidebar-tab:hover {
+  color: var(--pico-color);
+}
+
+.wiki-item {
+  cursor: pointer;
+}
+
 /* ── Wiki links ─────────────────────────────────────────────────────────── */
 
 a.wiki-link {
