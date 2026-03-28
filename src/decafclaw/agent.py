@@ -11,6 +11,7 @@ This is where the interesting stuff happens. The loop:
 from __future__ import annotations
 
 import asyncio
+import functools
 import json
 import logging
 import re as _re
@@ -290,17 +291,12 @@ async def _call_llm_with_events(ctx, config, messages, tools,
     return response
 
 
-# Matches placeholder text: [file attached: filename (mime) — ...]
-_MEDIA_PLACEHOLDER_RE_CACHE: dict[str, _re.Pattern] = {}
-
-
+@functools.lru_cache(maxsize=128)
 def _media_placeholder_pattern(filename: str) -> _re.Pattern:
-    """Build (and cache) a regex to find the placeholder for a given filename."""
-    if filename not in _MEDIA_PLACEHOLDER_RE_CACHE:
-        _MEDIA_PLACEHOLDER_RE_CACHE[filename] = _re.compile(
-            r"\[file attached: " + _re.escape(filename) + r"[^\]]*\]"
-        )
-    return _MEDIA_PLACEHOLDER_RE_CACHE[filename]
+    """Build a regex to find the placeholder for a given filename."""
+    return _re.compile(
+        r"\[file attached: " + _re.escape(filename) + r"[^\]]*\]"
+    )
 
 
 async def _process_tool_media(ctx, result: ToolResult) -> list[str]:
@@ -853,7 +849,7 @@ async def run_agent_turn(ctx, user_message: str, history: list,
 
 def _setup_interactive_context(ctx) -> None:
     """Populate context defaults and media handler for interactive mode."""
-    from .media import TerminalMediaHandler
+    from .media import LocalFileMediaHandler
     config = ctx.config
 
     ctx.user_id = ctx.user_id or config.agent_user_id
@@ -861,7 +857,7 @@ def _setup_interactive_context(ctx) -> None:
     ctx.channel_name = ctx.channel_name or "interactive"
     ctx.thread_id = ctx.thread_id or ""
     ctx.conv_id = "interactive"
-    ctx.media_handler = TerminalMediaHandler(config)
+    ctx.media_handler = LocalFileMediaHandler(config)
 
     if config.llm.streaming:
         async def _terminal_stream_chunk(chunk_type, data):

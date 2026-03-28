@@ -1,16 +1,7 @@
 import { LitElement, html, nothing } from 'lit';
 import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 import { renderMarkdown } from '../../lib/markdown.js';
-
-/**
- * @param {string} ts
- * @returns {string}
- */
-function formatTime(ts) {
-  if (!ts) return '';
-  const d = new Date(ts);
-  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-}
+import { formatTime } from '../../lib/utils.js';
 
 /** Assistant message — markdown-rendered, with optional streaming indicator and usage info. */
 export class AssistantMessage extends LitElement {

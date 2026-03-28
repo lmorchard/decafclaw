@@ -4,7 +4,7 @@ import json
 import logging
 import re
 from dataclasses import asdict, dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
@@ -155,7 +155,7 @@ class ConversationIndex:
 
     def create(self, user_id: str, title: str = "") -> ConversationMeta:
         """Create a new conversation. Returns the metadata."""
-        now = datetime.now().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
         conv = ConversationMeta(
             conv_id=f"web-{user_id}-{uuid4().hex[:8]}",
             user_id=user_id,
@@ -183,7 +183,7 @@ class ConversationIndex:
         for d in data:
             if d.get("conv_id") == conv_id:
                 d["title"] = title
-                d["updated_at"] = datetime.now().isoformat()
+                d["updated_at"] = datetime.now(timezone.utc).isoformat()
                 self._save(data)
                 return ConversationMeta(**d)
         return None
@@ -194,7 +194,7 @@ class ConversationIndex:
         for d in data:
             if d.get("conv_id") == conv_id:
                 d["archived"] = True
-                d["updated_at"] = datetime.now().isoformat()
+                d["updated_at"] = datetime.now(timezone.utc).isoformat()
                 self._save(data)
                 log.info(f"Archived web conversation {conv_id}")
                 return True
@@ -206,7 +206,7 @@ class ConversationIndex:
         for d in data:
             if d.get("conv_id") == conv_id:
                 d["archived"] = False
-                d["updated_at"] = datetime.now().isoformat()
+                d["updated_at"] = datetime.now(timezone.utc).isoformat()
                 self._save(data)
                 log.info(f"Unarchived web conversation {conv_id}")
                 return True
@@ -217,7 +217,7 @@ class ConversationIndex:
         data = self._load()
         for d in data:
             if d.get("conv_id") == conv_id:
-                d["updated_at"] = datetime.now().isoformat()
+                d["updated_at"] = datetime.now(timezone.utc).isoformat()
                 self._save(data)
                 return
 

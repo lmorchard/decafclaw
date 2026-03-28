@@ -7,6 +7,7 @@ from pathlib import Path
 import httpx
 
 from ..media import ToolResult
+from ..util import estimate_tokens
 
 log = logging.getLogger(__name__)
 
@@ -132,14 +133,10 @@ def tool_context_stats(ctx) -> str | ToolResult:
     messages = ctx.messages or []
     config = ctx.config
 
-    def _estimate_tokens(text):
-        """Rough token estimate: ~4 chars per token for English."""
-        return len(text) // 4 if text else 0
-
     # System prompt
     system_msg = next((m for m in messages if m.get("role") == "system"), None)
     system_chars = len(system_msg.get("content", "")) if system_msg else 0
-    system_tokens = _estimate_tokens(system_msg.get("content", "") if system_msg else "")
+    system_tokens = estimate_tokens(system_msg.get("content", "") if system_msg else "")
 
     # Tool definitions
     from . import TOOL_DEFINITIONS
@@ -149,7 +146,7 @@ def tool_context_stats(ctx) -> str | ToolResult:
     mcp_tool_defs = mcp_registry.get_tool_definitions() if mcp_registry else []
     all_tool_defs = TOOL_DEFINITIONS + extra_tool_defs + mcp_tool_defs
     tools_json = json.dumps(all_tool_defs)
-    tools_tokens = _estimate_tokens(tools_json)
+    tools_tokens = estimate_tokens(tools_json)
 
     # Messages by role
     role_counts = {}
@@ -165,7 +162,7 @@ def tool_context_stats(ctx) -> str | ToolResult:
 
     # History (everything except system prompt)
     history_chars = sum(role_chars.get(r, 0) for r in role_chars if r != "system")
-    history_tokens = _estimate_tokens("x" * history_chars)
+    history_tokens = estimate_tokens("x" * history_chars)
 
     # Totals
     total_estimated = system_tokens + tools_tokens + history_tokens

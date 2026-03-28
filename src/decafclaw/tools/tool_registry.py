@@ -3,6 +3,8 @@
 import json
 import logging
 
+from ..util import estimate_tokens
+
 log = logging.getLogger(__name__)
 
 # Tools that are always sent to the LLM, even in deferred mode.
@@ -14,8 +16,8 @@ DEFAULT_ALWAYS_LOADED = {
 
 
 def estimate_tool_tokens(tool_defs: list[dict]) -> int:
-    """Estimate token cost of tool definitions. Uses JSON length / 4."""
-    return sum(len(json.dumps(td)) // 4 for td in tool_defs)
+    """Estimate token cost of tool definitions."""
+    return sum(estimate_tokens(json.dumps(td)) for td in tool_defs)
 
 
 def get_always_loaded_names(config) -> set[str]:
