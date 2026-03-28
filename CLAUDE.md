@@ -22,7 +22,7 @@ An AI agent testbed for exploring agent development patterns. Connects to Matter
 - `src/decafclaw/config.py` — Dataclass config from env vars / .env
 - `src/decafclaw/config_types.py` — Config sub-dataclasses (LlmConfig, MattermostConfig, etc.)
 - `src/decafclaw/config_cli.py` — CLI tool for config show/get/set
-- `src/decafclaw/context.py` — Forkable runtime context
+- `src/decafclaw/context.py` — Forkable runtime context with sub-objects: TokenUsage, ToolState, SkillState
 - `src/decafclaw/events.py` — In-process pub/sub event bus
 - `src/decafclaw/memory.py` — Memory file read/write operations
 - `src/decafclaw/memory_context.py` — Proactive memory retrieval: auto-inject relevant context per turn

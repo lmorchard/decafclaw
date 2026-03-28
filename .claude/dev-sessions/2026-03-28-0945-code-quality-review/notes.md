@@ -45,18 +45,27 @@
 - Added explanatory comments to magic numbers
 - Extracted checkbox constants in `todos.py`
 
-## Skipped — Next Session
+## Wave 2: Context Redesign
 
-### 5.1 Context object redesign (sub-objects)
-**Why skipped:** 126+ attribute references across 20+ source files and tests. Every `ctx.conv_id` → `ctx.conversation.conv_id`, `ctx.total_prompt_tokens` → `ctx.tokens.total_prompt`, etc. High risk of subtle breakage for moderate organizational benefit. Needs a dedicated session with thorough test coverage.
+Tackled the Context sub-objects redesign (originally skipped from Phase 4).
 
-**What to do:** Group Context's 31 flat attributes into sub-dataclasses: `TokenUsage`, `ToolState`, `SkillState`, `ConversationInfo`. Update `fork()` and `fork_for_tool_call()`. Mechanical find-and-replace across entire codebase + tests.
+- Chose **Option B**: group internal machinery (tokens, tools, skills) into sub-dataclasses, keep conversation identity fields flat
+- Defined `TokenUsage`, `ToolState`, `SkillState` dataclasses in context.py
+- Updated `fork_for_tool_call()` with explicit copy semantics: shared tools+skills, fresh tokens
+- 26 files updated, 0 old-style references remaining
 
-### 4.3 Circular import resolution in tools/
-**Why skipped:** Only 4 deferred imports remain, all inside function bodies (idiomatic Python pattern). The cycles are `agent → tools → agent` and `tools/__init__ → tool_registry → tools/__init__`. Breaking them would require moving `run_agent_turn` or `TOOL_DEFINITIONS` to a separate module — big structural change for minimal gain.
+## Wave 2 additions
+- Extracted `interactive_terminal.py` from agent.py (170 lines)
+- Extracted `mattermost_display.py` from mattermost.py (383 lines)
+- Updated CLAUDE.md key files list
 
-### 4.7 Standardize JS private method naming
-**Why skipped:** 135 occurrences of `this._prop` across 6 component files. Many are Lit reactive properties (declared in `static properties`) which MUST keep underscore prefix. Converting the rest to `#` requires per-property analysis of whether each is accessed in templates. High risk of silent template breakage.
+## Not doing (by design)
+
+### Circular import resolution in tools/ (4.3)
+Only 4 deferred imports remain, all inside function bodies (idiomatic Python pattern). The cycles are `agent → tools → agent` and `tools/__init__ → tool_registry → tools/__init__`. Breaking them would require moving `run_agent_turn` or `TOOL_DEFINITIONS` to a separate module — big structural change for minimal gain.
+
+### JS private method naming (4.7)
+135 occurrences of `this._prop` across 6 component files. Many are Lit reactive properties (declared in `static properties`) which MUST keep underscore prefix. Converting the rest to `#` requires per-property analysis of whether each is accessed in templates. High risk of silent template breakage.
 
 ## Stats
 
