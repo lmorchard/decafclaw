@@ -45,6 +45,44 @@ class Context:
         self.skip_memory_context: bool = False
         self.effort: str = "default"
 
+    @classmethod
+    def for_task(
+        cls,
+        config,
+        event_bus,
+        *,
+        user_id: str,
+        conv_id: str,
+        channel_id: str = "",
+        channel_name: str = "",
+        effort: str = "default",
+        skip_reflection: bool = True,
+        skip_memory_context: bool = True,
+        allowed_tools: set | None = None,
+        preapproved_tools: set | None = None,
+        preapproved_shell_patterns: list[str] | None = None,
+    ) -> "Context":
+        """Create a context for a background task (heartbeat, scheduled task, etc.).
+
+        Provides sensible defaults for non-interactive work: reflection and
+        memory context are skipped by default.
+        """
+        ctx = cls(config=config, event_bus=event_bus)
+        ctx.user_id = user_id
+        ctx.conv_id = conv_id
+        ctx.channel_id = channel_id
+        ctx.channel_name = channel_name
+        ctx.effort = effort
+        ctx.skip_reflection = skip_reflection
+        ctx.skip_memory_context = skip_memory_context
+        if allowed_tools is not None:
+            ctx.allowed_tools = allowed_tools
+        if preapproved_tools is not None:
+            ctx.preapproved_tools = preapproved_tools
+        if preapproved_shell_patterns is not None:
+            ctx.preapproved_shell_patterns = preapproved_shell_patterns
+        return ctx
+
     def fork(self, **overrides) -> "Context":
         """Create a child context with a new ID, sharing the event bus."""
         config = overrides.pop("config", self.config)

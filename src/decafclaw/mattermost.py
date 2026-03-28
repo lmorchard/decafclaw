@@ -288,27 +288,14 @@ class MattermostClient:
             conversations[conv_id] = ConversationState()
         return conversations[conv_id]
 
-    @staticmethod
-    def _restore_from_archive(config, conv_id):
-        """Load history from compacted sidecar + newer archive entries, or full archive."""
-        from .archive import read_archive, read_compacted_history
-
-        compacted = read_compacted_history(config, conv_id)
-        if compacted:
-            full = read_archive(config, conv_id)
-            last_ts = compacted[-1].get("timestamp", "")
-            newer = [m for m in full if m.get("timestamp", "") > last_ts]
-            return compacted + newer
-
-        archived = read_archive(config, conv_id)
-        return archived if archived else None
-
     def _prepare_history(self, conv, conv_id, root_id, channel_id, conversations, config):
         """Get or create conversation history, resuming from archive if available."""
+        from .archive import restore_history
+
         if root_id:
             hist_id = root_id
             if not conv.history:
-                restored = self._restore_from_archive(config, hist_id)
+                restored = restore_history(config, hist_id)
                 if restored:
                     conv.history = restored
                     log.info(f"Resumed thread {hist_id[:8]} from archive ({len(restored)} messages)")
@@ -319,7 +306,7 @@ class MattermostClient:
                     log.debug(f"Forked thread history {hist_id[:8]} from channel {channel_id[:8]} ({len(channel_history)} msgs)")
         else:
             if not conv.history:
-                restored = self._restore_from_archive(config, channel_id)
+                restored = restore_history(config, channel_id)
                 if restored:
                     conv.history = restored
                     log.info(f"Resumed channel {channel_id[:8]} from archive ({len(restored)} messages)")
@@ -456,6 +443,65 @@ class MattermostClient:
                     log.warning(f"Failed to download Mattermost file {fid}: {e}")
         return attachments
 
+    async def _prepare_conversation(self, conv, conv_id, channel_id, msgs,
+                                    app_ctx, conversations):
+        """Prepare a conversation turn: combine messages, check commands, set up context.
+
+        Returns (req_ctx, conv_display, cancel_task, sub_id, combined_text, archive_text, cmd_ctx)
+        if the agent turn should proceed, or None if a command was fully handled.
+        """
+        from .commands import dispatch_command
+        from .context import Context
+
+        # Combine accumulated messages into one
+        combined_text = "\n".join(m["text"] for m in msgs)
+        last_msg = msgs[-1]
+
+        # Thread routing
+        is_dm = last_msg.get("channel_type") == "D"
+        already_in_thread = bool(last_msg["root_id"])
+        mentioned = any(m.get("mentioned") for m in msgs)
+        if is_dm and not mentioned and not already_in_thread:
+            root_id = None
+        else:
+            root_id = last_msg["root_id"] or last_msg["post_id"]
+
+        senders = set(m["sender_name"] for m in msgs)
+        log.info(f"Processing {len(msgs)} message(s) from {', '.join(senders)} in {conv_id[:8]}")
+
+        # -- Command dispatch (centralized in commands.py) --
+        cmd_ctx = Context(config=app_ctx.config, event_bus=app_ctx.event_bus)
+        cmd_ctx.user_id = app_ctx.config.agent.user_id
+        cmd_result = await dispatch_command(cmd_ctx, combined_text, prefixes=["!"])
+
+        if cmd_result.mode in ("help", "unknown", "error", "fork"):
+            await self.send(channel_id, cmd_result.text, root_id=root_id)
+            return None
+
+        # Send placeholder immediately
+        placeholder_id = await self.send_placeholder(channel_id, root_id=root_id)
+        await self.send_typing(channel_id)
+
+        # Prepare history and request context
+        self._prepare_history(
+            conv, conv_id, root_id, channel_id, conversations, app_ctx.config
+        )
+        req_ctx, conv_display, cancel_task, sub_id = await self._build_request_context(
+            app_ctx, conv, conv_id, channel_id, root_id, placeholder_id
+        )
+
+        # Apply command state to the request context (inline mode)
+        archive_text = ""
+        if cmd_result.mode == "inline":
+            combined_text = cmd_result.text
+            archive_text = cmd_result.display_text
+            req_ctx.preapproved_tools = cmd_ctx.preapproved_tools
+            req_ctx.activated_skills = cmd_ctx.activated_skills
+            req_ctx.extra_tools.update(cmd_ctx.extra_tools)
+            req_ctx.extra_tool_definitions.extend(cmd_ctx.extra_tool_definitions)
+
+        return req_ctx, conv_display, cancel_task, sub_id, combined_text, archive_text
+
     async def _process_conversation(self, conv_id, channel_id, msgs,
                                     app_ctx, conversations):
         """Process accumulated messages for a conversation."""
@@ -490,60 +536,14 @@ class MattermostClient:
             log.info(f"Cooldown: waiting {wait:.1f}s before responding in {conv_id[:8]}")
             await asyncio.sleep(wait)
 
-        # Combine accumulated messages into one
-        combined_text = "\n".join(m["text"] for m in msgs)
-        last_msg = msgs[-1]
-
-        # Thread routing
-        is_dm = last_msg.get("channel_type") == "D"
-        already_in_thread = bool(last_msg["root_id"])
-        mentioned = any(m.get("mentioned") for m in msgs)
-        if is_dm and not mentioned and not already_in_thread:
-            root_id = None
-        else:
-            root_id = last_msg["root_id"] or last_msg["post_id"]
-
-        senders = set(m["sender_name"] for m in msgs)
-        log.info(f"Processing {len(msgs)} message(s) from {', '.join(senders)} in {conv_id[:8]}")
-
-        # -- Command dispatch (centralized in commands.py) --
-        from .commands import dispatch_command
-        from .context import Context
-
-        # Use a temporary context for command dispatch (pre-activation etc.)
-        cmd_ctx = Context(config=app_ctx.config, event_bus=app_ctx.event_bus)
-        cmd_ctx.user_id = app_ctx.config.agent.user_id
-        cmd_result = await dispatch_command(cmd_ctx, combined_text, prefixes=["!"])
-
-        if cmd_result.mode in ("help", "unknown", "error"):
-            await self.send(channel_id, cmd_result.text, root_id=root_id)
-            return
-
-        if cmd_result.mode == "fork":
-            await self.send(channel_id, cmd_result.text, root_id=root_id)
-            return
-
-        # Send placeholder immediately
-        placeholder_id = await self.send_placeholder(channel_id, root_id=root_id)
-        await self.send_typing(channel_id)
-
-        # Prepare history and request context
-        history = self._prepare_history(
-            conv, conv_id, root_id, channel_id, conversations, app_ctx.config
+        # Prepare conversation: combine messages, dispatch commands, build context
+        prepared = await self._prepare_conversation(
+            conv, conv_id, channel_id, msgs, app_ctx, conversations
         )
-        req_ctx, conv_display, cancel_task, sub_id = await self._build_request_context(
-            app_ctx, conv, conv_id, channel_id, root_id, placeholder_id
-        )
+        if prepared is None:
+            return  # Command was fully handled
 
-        # Apply command state to the request context (inline mode)
-        archive_text = ""
-        if cmd_result.mode == "inline":
-            combined_text = cmd_result.text
-            archive_text = cmd_result.display_text
-            req_ctx.preapproved_tools = cmd_ctx.preapproved_tools
-            req_ctx.activated_skills = cmd_ctx.activated_skills
-            req_ctx.extra_tools.update(cmd_ctx.extra_tools)
-            req_ctx.extra_tool_definitions.extend(cmd_ctx.extra_tool_definitions)
+        req_ctx, conv_display, cancel_task, sub_id, combined_text, archive_text = prepared
 
         # Download user-uploaded files and store as conversation attachments
         attachments = await self._download_attachments(
@@ -552,7 +552,7 @@ class MattermostClient:
         conv.busy = True
         try:
             response = await run_agent_turn(
-                req_ctx, combined_text, history, archive_text=archive_text,
+                req_ctx, combined_text, conv.history, archive_text=archive_text,
                 attachments=attachments or None)
         except BaseException as e:
             log.error(f"Agent turn failed: {e}")
@@ -589,7 +589,8 @@ class MattermostClient:
         await conv_display.finalize()
 
         await self._post_response(
-            response, channel_id, root_id, conv_display
+            response, channel_id, root_id=req_ctx.thread_id or None,
+            conv_display=conv_display,
         )
 
     async def _debounce_fire(self, conv_id, channel_id, conversations, app_ctx):
@@ -694,120 +695,171 @@ class MattermostClient:
         client = self
         compaction_post_id = None
 
-        async def on_progress(event):
-            nonlocal compaction_post_id
-            if event.get("context_id") != context_id:
-                return
-            event_type = event.get("type")
+        # -- Handlers for each event type --
+        # Note: handlers that reference `cd` are only added to the dispatch
+        # dict when conv_display is not None (see dispatch table below).
+        cd = conv_display  # narrowed alias for closures
 
-            if event_type == "llm_start" and conv_display:
-                await conv_display.on_llm_start(event.get("iteration", 1))
-            elif event_type == "llm_end" and conv_display and not streaming:
-                # Non-streaming: show text content via ConversationDisplay
+        async def handle_llm_start(event):
+            assert cd is not None
+            await cd.on_llm_start(event.get("iteration", 1))
+
+        async def handle_llm_end(event):
+            assert cd is not None
+            if not streaming:
                 content = event.get("content")
                 if content:
-                    await conv_display.on_text_complete(content)
-            elif event_type == "text_before_tools" and conv_display:
-                # Flush any streamed text before tool calls start
-                content = event.get("text", "")
-                if content and not streaming:
-                    await conv_display.on_text_complete(content)
-            elif event_type == "tool_start" and conv_display:
-                await conv_display.on_tool_start(
-                    event.get("tool", "tool"), event.get("args", {}),
-                    tool_call_id=event.get("tool_call_id", ""))
-            elif event_type == "tool_status" and conv_display:
-                await conv_display.on_tool_status(
-                    event.get("tool", "tool"), event.get("message", ""),
-                    tool_call_id=event.get("tool_call_id", ""))
-            elif event_type == "tool_end" and conv_display:
-                await conv_display.on_tool_end(
-                    event.get("tool", "tool"),
-                    event.get("result_text", ""),
-                    event.get("display_text"),
-                    event.get("media", []),
-                    tool_call_id=event.get("tool_call_id", ""),
-                    display_short_text=event.get("display_short_text"),
-                )
-            elif event_type == "tool_media_uploaded" and conv_display:
-                await conv_display.on_tool_media_uploaded(
-                    event.get("file_ids", []),
-                    tool_call_id=event.get("tool_call_id", ""),
-                )
-            elif event_type == "tool_confirm_request" and conv_display:
-                await conv_display.on_confirm_request(
-                    event.get("tool", "tool"),
-                    event.get("command", ""),
-                    event.get("suggested_pattern", ""),
-                    event_bus, context_id,
-                    tool_call_id=event.get("tool_call_id", ""),
-                )
-            elif event_type == "reflection_result" and conv_display:
-                visibility = reflection_visibility
-                if visibility != "hidden":
-                    passed = event.get("passed", True)
-                    critique = event.get("critique", "")
-                    retry_num = event.get("retry_number", 0)
-                    raw = event.get("raw_response", "")
-                    error = event.get("error", "")
-                    if visibility == "debug":
-                        text = (f"\U0001f50d **Reflection** (retry {retry_num}): "
-                                f"{'PASS' if passed else 'FAIL'}")
-                        if critique:
-                            text += f"\nCritique: {critique}"
-                        if error:
-                            text += f"\nError: {error}"
-                        if raw:
-                            text += f"\n\n<details><summary>Raw judge output</summary>\n\n{raw}\n</details>"
-                        await conv_display.on_tool_status("reflection", text)
-                    elif not passed:
-                        text = (f"\U0001f50d Reflection retry {retry_num}: "
-                                f"{critique}")
-                        await conv_display.on_tool_status("reflection", text)
-            elif event_type == "memory_context" and conv_display:
-                results = event.get("results") or []
-                if results:
-                    source_counts: dict[str, int] = {}
-                    for item in results:
-                        st = item.get("source_type", "unknown")
-                        source_counts[st] = source_counts.get(st, 0) + 1
-                    parts = []
-                    for st in ("wiki", "memory", "conversation"):
-                        if source_counts.get(st):
-                            parts.append(f"{source_counts[st]} {st}")
-                    summary = ", ".join(parts) or "context"
-                    await conv_display.on_tool_status(
-                        "memory_context",
-                        f"\U0001f9e0 Retrieved {summary}")
-            # Compaction stays as-is (separate message)
-            elif event_type == "compaction_start" and channel_id:
-                import time as _time
+                    await cd.on_text_complete(content)
+
+        async def handle_text_before_tools(event):
+            assert cd is not None
+            content = event.get("text", "")
+            if content and not streaming:
+                await cd.on_text_complete(content)
+
+        async def handle_tool_start(event):
+            assert cd is not None
+            await cd.on_tool_start(
+                event.get("tool", "tool"), event.get("args", {}),
+                tool_call_id=event.get("tool_call_id", ""))
+
+        async def handle_tool_status(event):
+            assert cd is not None
+            await cd.on_tool_status(
+                event.get("tool", "tool"), event.get("message", ""),
+                tool_call_id=event.get("tool_call_id", ""))
+
+        async def handle_tool_end(event):
+            assert cd is not None
+            await cd.on_tool_end(
+                event.get("tool", "tool"),
+                event.get("result_text", ""),
+                event.get("display_text"),
+                event.get("media", []),
+                tool_call_id=event.get("tool_call_id", ""),
+                display_short_text=event.get("display_short_text"),
+            )
+
+        async def handle_tool_media_uploaded(event):
+            assert cd is not None
+            await cd.on_tool_media_uploaded(
+                event.get("file_ids", []),
+                tool_call_id=event.get("tool_call_id", ""),
+            )
+
+        async def handle_tool_confirm_request(event):
+            assert cd is not None
+            await cd.on_confirm_request(
+                event.get("tool", "tool"),
+                event.get("command", ""),
+                event.get("suggested_pattern", ""),
+                event_bus, context_id,
+                tool_call_id=event.get("tool_call_id", ""),
+            )
+
+        async def handle_reflection_result(event):
+            assert cd is not None
+            visibility = reflection_visibility
+            if visibility == "hidden":
+                return
+            passed = event.get("passed", True)
+            critique = event.get("critique", "")
+            retry_num = event.get("retry_number", 0)
+            raw = event.get("raw_response", "")
+            error = event.get("error", "")
+            if visibility == "debug":
+                text = (f"\U0001f50d **Reflection** (retry {retry_num}): "
+                        f"{'PASS' if passed else 'FAIL'}")
+                if critique:
+                    text += f"\nCritique: {critique}"
+                if error:
+                    text += f"\nError: {error}"
+                if raw:
+                    text += f"\n\n<details><summary>Raw judge output</summary>\n\n{raw}\n</details>"
+                await cd.on_tool_status("reflection", text)
+            elif not passed:
+                text = (f"\U0001f50d Reflection retry {retry_num}: "
+                        f"{critique}")
+                await cd.on_tool_status("reflection", text)
+
+        async def handle_memory_context(event):
+            assert cd is not None
+            results = event.get("results") or []
+            if results:
+                source_counts: dict[str, int] = {}
+                for item in results:
+                    st = item.get("source_type", "unknown")
+                    source_counts[st] = source_counts.get(st, 0) + 1
+                parts = []
+                for st in ("wiki", "memory", "conversation"):
+                    if source_counts.get(st):
+                        parts.append(f"{source_counts[st]} {st}")
+                summary = ", ".join(parts) or "context"
+                await cd.on_tool_status(
+                    "memory_context",
+                    f"\U0001f9e0 Retrieved {summary}")
+
+        async def handle_compaction_start(event):
+            nonlocal compaction_post_id
+            if channel_id:
                 compaction_post_id = await client.send(
                     channel_id, "\U0001f4e6 Compacting conversation...",
                     root_id=root_id,
                 )
-            elif event_type == "compaction_end" and compaction_post_id:
-                try:
-                    elapsed = event.get("elapsed_sec", 0)
-                    before = event.get("before_messages", 0)
-                    after = event.get("after_messages", 0)
-                    est_tokens = event.get("estimated_tokens_before", 0)
-                    if elapsed < 60:
-                        duration = f"{elapsed:.0f}s"
-                    else:
-                        duration = f"{elapsed/60:.1f}m"
-                    details = f"{duration}"
-                    if before and after:
-                        details += f", {before} → {after} messages"
-                    if est_tokens:
-                        details += f", ~{est_tokens:,} tokens compacted"
-                    await client.edit_message(
-                        compaction_post_id,
-                        f"\U0001f4e6 Conversation compacted ({details})",
-                    )
-                except Exception:
-                    pass  # best effort
-                compaction_post_id = None
+
+        async def handle_compaction_end(event):
+            nonlocal compaction_post_id
+            if not compaction_post_id:
+                return
+            try:
+                elapsed = event.get("elapsed_sec", 0)
+                before = event.get("before_messages", 0)
+                after = event.get("after_messages", 0)
+                est_tokens = event.get("estimated_tokens_before", 0)
+                if elapsed < 60:
+                    duration = f"{elapsed:.0f}s"
+                else:
+                    duration = f"{elapsed/60:.1f}m"
+                details = f"{duration}"
+                if before and after:
+                    details += f", {before} → {after} messages"
+                if est_tokens:
+                    details += f", ~{est_tokens:,} tokens compacted"
+                await client.edit_message(
+                    compaction_post_id,
+                    f"\U0001f4e6 Conversation compacted ({details})",
+                )
+            except Exception:
+                pass  # best effort
+            compaction_post_id = None
+
+        # -- Dispatch table --
+        # conv_display-dependent handlers require conv_display to be set;
+        # compaction handlers work independently.
+        from typing import Any, Callable
+        dispatch: dict[str, Callable[..., Any]] = {}
+        if conv_display:
+            dispatch.update({
+                "llm_start": handle_llm_start,
+                "llm_end": handle_llm_end,
+                "text_before_tools": handle_text_before_tools,
+                "tool_start": handle_tool_start,
+                "tool_status": handle_tool_status,
+                "tool_end": handle_tool_end,
+                "tool_media_uploaded": handle_tool_media_uploaded,
+                "tool_confirm_request": handle_tool_confirm_request,
+                "reflection_result": handle_reflection_result,
+                "memory_context": handle_memory_context,
+            })
+        dispatch["compaction_start"] = handle_compaction_start
+        dispatch["compaction_end"] = handle_compaction_end
+
+        async def on_progress(event):
+            if event.get("context_id") != context_id:
+                return
+            handler = dispatch.get(event.get("type"))
+            if handler:
+                await handler(event)
 
         return event_bus.subscribe(on_progress)
 

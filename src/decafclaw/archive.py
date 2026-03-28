@@ -74,3 +74,19 @@ def read_archive(config, conv_id: str) -> list[dict]:
     if not path.exists():
         return []
     return _read_jsonl(path)
+
+
+def restore_history(config, conv_id: str) -> list[dict] | None:
+    """Load history from compacted sidecar + newer archive entries, or full archive.
+
+    Returns the restored message list, or None if no archive exists.
+    """
+    compacted = read_compacted_history(config, conv_id)
+    if compacted:
+        full = read_archive(config, conv_id)
+        last_ts = compacted[-1].get("timestamp", "")
+        newer = [m for m in full if m.get("timestamp", "") > last_ts]
+        return compacted + newer
+
+    archived = read_archive(config, conv_id)
+    return archived if archived else None

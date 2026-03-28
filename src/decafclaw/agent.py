@@ -171,6 +171,111 @@ def _should_reflect(ctx, config, content: str, reflection_retries: int) -> bool:
     return True
 
 
+async def _handle_reflection(
+    ctx, config, messages, history, final_text,
+    user_message, attachments, retrieved_context_text,
+    turn_start_index, reflection_retries, last_reflection,
+) -> tuple[str | None, bool, int, object]:
+    """Run the reflection phase on a candidate final response.
+
+    Returns (text, should_retry, reflection_retries, last_reflection):
+    - Reflection skipped or passed: (final_text, False, retries, result)
+    - Reflection failed with retries left: (None, True, retries+1, result)
+      — critique has been injected into messages/history before returning
+    - Reflection failed, no retries left: (text_with_escalation, False, retries, result)
+    """
+    if not _should_reflect(ctx, config, final_text, reflection_retries):
+        reflection_exhausted = (
+            reflection_retries >= config.reflection.max_retries
+            and last_reflection is not None
+            and not last_reflection.passed
+        )
+        last_reflection = None  # clear stale result from prior retry
+
+        # Suggest model escalation if reflection retries exhausted
+        if reflection_exhausted and ctx.effort != "strong":
+            final_text += (
+                "\n\n---\n*I'm not confident in this answer. "
+                "Try `!think-harder` to retry with a more capable model.*"
+            )
+        return final_text, False, reflection_retries, last_reflection
+
+    from .reflection import (
+        build_prior_turn_summary,
+        build_tool_summary,
+        evaluate_response,
+    )
+
+    tool_summary = build_tool_summary(
+        history, turn_start_index,
+        max_result_len=config.reflection.max_tool_result_len,
+    )
+    # turn_start_index points past the current user message;
+    # use turn_start_index - 1 to exclude it from prior turns
+    prior_turn_summary = build_prior_turn_summary(
+        history, turn_start_index - 1,
+        max_turns=3,
+        max_result_len=200,
+    )
+    # Annotate user message with attachment info for the judge —
+    # it can't see the actual files but needs to know they exist
+    judge_user_message = user_message
+    if attachments:
+        att_desc = ", ".join(
+            f"{a.get('filename', '?')} ({a.get('mime_type', '?')})"
+            for a in attachments
+        )
+        judge_user_message += f"\n\n[User attached files: {att_desc}]"
+    result = await evaluate_response(
+        config, judge_user_message, final_text, tool_summary,
+        prior_turn_summary=prior_turn_summary,
+        retrieved_context=retrieved_context_text,
+    )
+
+    last_reflection = result
+    log.info("Reflection result: passed=%s, critique=%s, error=%s",
+             result.passed, result.critique[:200] if result.critique else "",
+             result.error[:100] if result.error else "")
+
+    await ctx.publish("reflection_result",
+        passed=result.passed,
+        critique=result.critique,
+        raw_response=result.raw_response,
+        retry_number=reflection_retries + 1,
+        error=result.error)
+
+    if not result.passed and not result.error:
+        log.info("Reflection failed (retry %d/%d): %s",
+                 reflection_retries + 1,
+                 config.reflection.max_retries,
+                 result.critique[:200])
+        # Add the failed response to history
+        failed_msg = {"role": "assistant", "content": final_text}
+        history.append(failed_msg)
+        messages.append(failed_msg)
+        _archive(ctx, failed_msg)
+
+        # Add critique as user message for retry
+        critique_msg = {
+            "role": "user",
+            "content": (
+                "[reflection] Your previous response may not fully "
+                "address the user's request.\n"
+                f"Feedback: {result.critique}\n"
+                "Please try again, addressing the feedback above."
+            ),
+        }
+        history.append(critique_msg)
+        messages.append(critique_msg)
+        _archive(ctx, critique_msg)
+
+        reflection_retries += 1
+        return None, True, reflection_retries, last_reflection
+
+    # Reflection passed (or errored out — fail-open)
+    return final_text, False, reflection_retries, last_reflection
+
+
 def _collect_all_tool_defs(ctx) -> list:
     """Gather all available tool definitions (core + skill + MCP + extra).
 
@@ -478,29 +583,21 @@ async def _execute_tool_calls(ctx, tool_calls, history, messages):
     return None
 
 
-# -- Main agent turn -----------------------------------------------------------
+# -- Turn setup helpers ---------------------------------------------------------
 
 
-async def run_agent_turn(ctx, user_message: str, history: list,
-                         archive_text: str = "",
-                         attachments: list[dict] | None = None) -> "ToolResult":
-    """Process a single user message through the agent loop.
+async def _setup_turn_state(ctx, config, history) -> dict[str, str]:
+    """Restore persisted skill/effort state and resolve effort overrides.
 
-    Args:
-        ctx: Runtime context (carries config, event bus, etc.)
-        user_message: The user's message text
-        archive_text: If set, archive this instead of user_message (for inline
-                      commands where the full body is the LLM prompt but the
-                      archive should show the short command)
-        history: Conversation history (list of message dicts, mutated in place)
+    Handles:
+    - Skill restoration from sidecar (persisted activated skills + skill_data)
+    - Auto-activation of always-loaded bundled skills
+    - Effort level restoration from archive
+    - Effort resolution to LLM config overrides
 
-    Returns:
-        ToolResult with the agent's text response and any accumulated media.
+    Returns effort_overrides dict (may be empty if no override needed).
     """
     from .tools.skill_tools import restore_skills  # deferred: circular dep
-
-    config = ctx.config
-    ctx.history = history
 
     # Restore previously-activated skills from the sidecar (survives restarts).
     # Merge with any skills already on ctx (e.g. set by Mattermost in-session state).
@@ -553,62 +650,114 @@ async def run_agent_turn(ctx, user_message: str, history: list,
         }
     log.info(f"Agent turn: effort={ctx.effort}, model={effort_llm.model}")
 
-    try:
-        # Add user message to history
-        # Truncate oversized user messages
-        max_len = config.agent.max_message_length
-        if max_len and len(user_message) > max_len:
-            original_len = len(user_message)
-            user_message = (
-                user_message[:max_len]
-                + f"\n\n[truncated at {max_len:,} chars, original was {original_len:,}]"
-            )
-            log.warning(f"User message truncated: {original_len:,} -> {max_len:,} chars")
+    return effort_overrides
 
-        user_msg: dict = {"role": "user", "content": user_message}
+
+async def _prepare_messages(
+    ctx, config, user_message: str, history: list,
+    archive_text: str = "",
+    attachments: list[dict] | None = None,
+) -> tuple[list, str]:
+    """Build the LLM messages array from history and user input.
+
+    Handles:
+    - Truncating oversized user messages
+    - Injecting proactive memory context before the user message
+    - Archiving the user message (using archive_text for inline commands)
+    - Building the messages array (system prompt + filtered/remapped history)
+    - Resolving attachments into multipart content
+
+    Returns (messages, retrieved_context_text).
+    """
+    # Truncate oversized user messages
+    max_len = config.agent.max_message_length
+    if max_len and len(user_message) > max_len:
+        original_len = len(user_message)
+        user_message = (
+            user_message[:max_len]
+            + f"\n\n[truncated at {max_len:,} chars, original was {original_len:,}]"
+        )
+        log.warning(f"User message truncated: {original_len:,} -> {max_len:,} chars")
+
+    user_msg: dict = {"role": "user", "content": user_message}
+    if attachments:
+        user_msg["attachments"] = attachments
+
+    # Proactive memory context — inject before user message
+    retrieved_context_text = ""
+    if not ctx.skip_memory_context:
+        from .memory_context import format_memory_context, retrieve_memory_context
+        mc_results = await retrieve_memory_context(config, user_message)
+        if mc_results:
+            retrieved_context_text = format_memory_context(mc_results)
+            mc_msg = {"role": "memory_context", "content": retrieved_context_text}
+            history.append(mc_msg)
+            _archive(ctx, mc_msg)
+            if config.memory_context.show_in_ui:
+                await ctx.publish("memory_context",
+                                  text=retrieved_context_text,
+                                  results=mc_results)
+
+    history.append(user_msg)
+    # Archive the display version for inline commands (short), full text for normal messages
+    if archive_text:
+        archive_msg: dict = {"role": "user", "content": archive_text}
         if attachments:
-            user_msg["attachments"] = attachments
+            archive_msg["attachments"] = attachments
+    else:
+        archive_msg = user_msg
+    _archive(ctx, archive_msg)
 
-        # Proactive memory context — inject before user message
-        retrieved_context_text = ""
-        if not ctx.skip_memory_context:
-            from .memory_context import format_memory_context, retrieve_memory_context
-            mc_results = await retrieve_memory_context(config, user_message)
-            if mc_results:
-                retrieved_context_text = format_memory_context(mc_results)
-                mc_msg = {"role": "memory_context", "content": retrieved_context_text}
-                history.append(mc_msg)
-                _archive(ctx, mc_msg)
-                if config.memory_context.show_in_ui:
-                    await ctx.publish("memory_context",
-                                      text=retrieved_context_text,
-                                      results=mc_results)
+    # Build the messages array: system prompt + history
+    # Filter out metadata roles (effort, reflection) that aren't valid LLM messages
+    # Remap non-standard roles that should appear in LLM context
+    ROLE_REMAP = {"memory_context": "user"}
+    from .archive import LLM_ROLES
+    llm_history = []
+    for m in history:
+        role = m.get("role")
+        if role in LLM_ROLES:
+            llm_history.append(m)
+        elif role in ROLE_REMAP:
+            llm_history.append({**m, "role": ROLE_REMAP[role]})
+    # Resolve attachments into multimodal content arrays for the LLM
+    llm_history = [_resolve_attachments(config, m) for m in llm_history]
+    messages = [{"role": "system", "content": config.system_prompt}] + llm_history
 
-        history.append(user_msg)
-        # Archive the display version for inline commands (short), full text for normal messages
-        if archive_text:
-            archive_msg: dict = {"role": "user", "content": archive_text}
-            if attachments:
-                archive_msg["attachments"] = attachments
-        else:
-            archive_msg = user_msg
-        _archive(ctx, archive_msg)
+    return messages, retrieved_context_text
 
-        # Build the messages array: system prompt + history
-        # Filter out metadata roles (effort, reflection) that aren't valid LLM messages
-        # Remap non-standard roles that should appear in LLM context
-        ROLE_REMAP = {"memory_context": "user"}
-        from .archive import LLM_ROLES
-        llm_history = []
-        for m in history:
-            role = m.get("role")
-            if role in LLM_ROLES:
-                llm_history.append(m)
-            elif role in ROLE_REMAP:
-                llm_history.append({**m, "role": ROLE_REMAP[role]})
-        # Resolve attachments into multimodal content arrays for the LLM
-        llm_history = [_resolve_attachments(config, m) for m in llm_history]
-        messages = [{"role": "system", "content": config.system_prompt}] + llm_history
+
+# -- Main agent turn -----------------------------------------------------------
+
+
+async def run_agent_turn(ctx, user_message: str, history: list,
+                         archive_text: str = "",
+                         attachments: list[dict] | None = None) -> "ToolResult":
+    """Process a single user message through the agent loop.
+
+    Args:
+        ctx: Runtime context (carries config, event bus, etc.)
+        user_message: The user's message text
+        archive_text: If set, archive this instead of user_message (for inline
+                      commands where the full body is the LLM prompt but the
+                      archive should show the short command)
+        history: Conversation history (list of message dicts, mutated in place)
+
+    Returns:
+        ToolResult with the agent's text response and any accumulated media.
+    """
+    config = ctx.config
+    ctx.history = history
+
+    effort_overrides = await _setup_turn_state(ctx, config, history)
+
+    conv_id = ctx.conv_id or ctx.channel_id
+
+    try:
+        messages, retrieved_context_text = await _prepare_messages(
+            ctx, config, user_message, history,
+            archive_text=archive_text, attachments=attachments,
+        )
         ctx.messages = messages
 
         # Slot for deferred tools system message (replaced each iteration)
@@ -617,7 +766,6 @@ async def run_agent_turn(ctx, user_message: str, history: list,
         prompt_tokens = 0
         empty_retries = 0
         reflection_retries = 0
-        reflection_exhausted = False
         last_reflection = None  # last ReflectionResult, for archiving after final response
         turn_start_index = len(history)  # index of user message we're about to add
 
@@ -698,92 +846,15 @@ async def run_agent_turn(ctx, user_message: str, history: list,
             log.debug("Reflection check: enabled=%s, retries=%d/%d, skip=%s, has_content=%s",
                        config.reflection.enabled, reflection_retries,
                        config.reflection.max_retries, ctx.skip_reflection, bool(content))
-            if not _should_reflect(ctx, config, content, reflection_retries):
-                reflection_exhausted = (
-                    reflection_retries >= config.reflection.max_retries
-                    and last_reflection is not None
-                    and not last_reflection.passed
+            content, should_retry, reflection_retries, last_reflection = (
+                await _handle_reflection(
+                    ctx, config, messages, history, content,
+                    user_message, attachments, retrieved_context_text,
+                    turn_start_index, reflection_retries, last_reflection,
                 )
-                last_reflection = None  # clear stale result from prior retry
-            else:
-                from .reflection import (
-                    build_prior_turn_summary,
-                    build_tool_summary,
-                    evaluate_response,
-                )
-
-                tool_summary = build_tool_summary(
-                    history, turn_start_index,
-                    max_result_len=config.reflection.max_tool_result_len,
-                )
-                # turn_start_index points past the current user message;
-                # use turn_start_index - 1 to exclude it from prior turns
-                prior_turn_summary = build_prior_turn_summary(
-                    history, turn_start_index - 1,
-                    max_turns=3,
-                    max_result_len=200,
-                )
-                # Annotate user message with attachment info for the judge —
-                # it can't see the actual files but needs to know they exist
-                judge_user_message = user_message
-                if attachments:
-                    att_desc = ", ".join(
-                        f"{a.get('filename', '?')} ({a.get('mime_type', '?')})"
-                        for a in attachments
-                    )
-                    judge_user_message += f"\n\n[User attached files: {att_desc}]"
-                result = await evaluate_response(
-                    config, judge_user_message, content, tool_summary,
-                    prior_turn_summary=prior_turn_summary,
-                    retrieved_context=retrieved_context_text,
-                )
-
-                last_reflection = result
-                log.info("Reflection result: passed=%s, critique=%s, error=%s",
-                         result.passed, result.critique[:200] if result.critique else "",
-                         result.error[:100] if result.error else "")
-
-                await ctx.publish("reflection_result",
-                    passed=result.passed,
-                    critique=result.critique,
-                    raw_response=result.raw_response,
-                    retry_number=reflection_retries + 1,
-                    error=result.error)
-
-                if not result.passed and not result.error:
-                    log.info("Reflection failed (retry %d/%d): %s",
-                             reflection_retries + 1,
-                             config.reflection.max_retries,
-                             result.critique[:200])
-                    # Add the failed response to history
-                    failed_msg = {"role": "assistant", "content": content}
-                    history.append(failed_msg)
-                    messages.append(failed_msg)
-                    _archive(ctx, failed_msg)
-
-                    # Add critique as user message for retry
-                    critique_msg = {
-                        "role": "user",
-                        "content": (
-                            "[reflection] Your previous response may not fully "
-                            "address the user's request.\n"
-                            f"Feedback: {result.critique}\n"
-                            "Please try again, addressing the feedback above."
-                        ),
-                    }
-                    history.append(critique_msg)
-                    messages.append(critique_msg)
-                    _archive(ctx, critique_msg)
-
-                    reflection_retries += 1
-                    continue  # back to LLM call
-
-            # Suggest model escalation if reflection retries exhausted
-            if reflection_exhausted and ctx.effort != "strong":
-                content += (
-                    "\n\n---\n*I'm not confident in this answer. "
-                    "Try `!think-harder` to retry with a more capable model.*"
-                )
+            )
+            if should_retry:
+                continue
 
             final_msg = {"role": "assistant", "content": content}
             history.append(final_msg)
