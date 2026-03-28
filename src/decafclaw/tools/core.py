@@ -59,7 +59,7 @@ def tool_debug_context(ctx) -> str | ToolResult:
 
     # Build the full LLM context: messages + tool definitions
     from . import TOOL_DEFINITIONS
-    extra_tool_defs = ctx.extra_tool_definitions
+    extra_tool_defs = ctx.tools.extra_definitions
     all_tool_defs = TOOL_DEFINITIONS + extra_tool_defs
 
     tool_names = [t["function"]["name"] for t in all_tool_defs]
@@ -140,7 +140,7 @@ def tool_context_stats(ctx) -> str | ToolResult:
 
     # Tool definitions
     from . import TOOL_DEFINITIONS
-    extra_tool_defs = ctx.extra_tool_definitions
+    extra_tool_defs = ctx.tools.extra_definitions
     from ..mcp_client import get_registry
     mcp_registry = get_registry()
     mcp_tool_defs = mcp_registry.get_tool_definitions() if mcp_registry else []
@@ -166,8 +166,8 @@ def tool_context_stats(ctx) -> str | ToolResult:
 
     # Totals
     total_estimated = system_tokens + tools_tokens + history_tokens
-    prompt_tokens_actual = ctx.total_prompt_tokens
-    completion_tokens_actual = ctx.total_completion_tokens
+    prompt_tokens_actual = ctx.tokens.total_prompt
+    completion_tokens_actual = ctx.tokens.total_completion
     compaction_max = config.compaction.max_tokens
 
     # Archive size
@@ -204,7 +204,7 @@ def tool_context_stats(ctx) -> str | ToolResult:
     lines.append(f"- **Archive file size:** {archive_size:,} bytes")
 
     # Activated skills
-    activated = ctx.activated_skills
+    activated = ctx.skills.activated
     if activated:
         lines.append(f"\n### Active skills: {', '.join(activated)}")
 

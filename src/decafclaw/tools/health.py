@@ -325,7 +325,7 @@ def _tools_section(ctx) -> list[str]:
     from .tool_registry import classify_tools, estimate_tool_tokens
 
     # Collect all tool definitions the agent currently has
-    all_defs = TOOL_DEFINITIONS + ctx.extra_tool_definitions
+    all_defs = TOOL_DEFINITIONS + ctx.tools.extra_definitions
     # Add MCP tool definitions if available
     from ..mcp_client import get_registry
 
@@ -334,7 +334,7 @@ def _tools_section(ctx) -> list[str]:
         for state in registry.servers.values():
             all_defs = all_defs + state.tool_definitions
 
-    fetched = ctx.skill_data.get("fetched_tools", set())
+    fetched = ctx.skills.data.get("fetched_tools", set())
     active, deferred = classify_tools(all_defs, ctx.config, fetched)
     total_tokens = estimate_tool_tokens(all_defs)
     budget = ctx.config.tool_context_budget

@@ -182,11 +182,11 @@ class TestFetchedToolsHelpers:
     def test_stored_as_sorted_list(self, ctx):
         """Stored as sorted list for JSON serialization compatibility."""
         add_fetched_tools(ctx, {"c", "a", "b"})
-        raw = ctx.skill_data["fetched_tools"]
+        raw = ctx.skills.data["fetched_tools"]
         assert isinstance(raw, list)
         assert raw == ["a", "b", "c"]
 
     def test_handles_existing_list(self, ctx):
         """get_fetched_tools handles list from JSON deserialization."""
-        ctx.skill_data = {"fetched_tools": ["tool_a", "tool_b"]}
+        ctx.skills.data = {"fetched_tools": ["tool_a", "tool_b"]}
         assert get_fetched_tools(ctx) == {"tool_a", "tool_b"}

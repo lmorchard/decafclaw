@@ -327,9 +327,9 @@ class MattermostClient:
 
         # Restore per-conversation skill state from previous turns
         if conv.skill_state:
-            req_ctx.extra_tools = conv.skill_state.get("extra_tools", {})
-            req_ctx.extra_tool_definitions = conv.skill_state.get("extra_tool_definitions", [])
-            req_ctx.activated_skills = conv.skill_state.get("activated_skills", set())
+            req_ctx.tools.extra = conv.skill_state.get("extra_tools", {})
+            req_ctx.tools.extra_definitions = conv.skill_state.get("extra_tool_definitions", [])
+            req_ctx.skills.activated = conv.skill_state.get("activated_skills", set())
 
         # Create conversation display for this turn
         conv_display = ConversationDisplay(
@@ -493,10 +493,10 @@ class MattermostClient:
         if cmd_result.mode == "inline":
             combined_text = cmd_result.text
             archive_text = cmd_result.display_text
-            req_ctx.preapproved_tools = cmd_ctx.preapproved_tools
-            req_ctx.activated_skills = cmd_ctx.activated_skills
-            req_ctx.extra_tools.update(cmd_ctx.extra_tools)
-            req_ctx.extra_tool_definitions.extend(cmd_ctx.extra_tool_definitions)
+            req_ctx.tools.preapproved = cmd_ctx.tools.preapproved
+            req_ctx.skills.activated = cmd_ctx.skills.activated
+            req_ctx.tools.extra.update(cmd_ctx.tools.extra)
+            req_ctx.tools.extra_definitions.extend(cmd_ctx.tools.extra_definitions)
 
         return req_ctx, conv_display, cancel_task, sub_id, combined_text, archive_text
 
@@ -577,11 +577,11 @@ class MattermostClient:
             self.circuit_breaker.record_turn(conv)
 
             # Persist per-conversation skill state for next turn
-            if getattr(req_ctx, "activated_skills", None):
+            if req_ctx.skills.activated:
                 conv.skill_state = {
-                    "extra_tools": getattr(req_ctx, "extra_tools", {}),
-                    "extra_tool_definitions": getattr(req_ctx, "extra_tool_definitions", []),
-                    "activated_skills": getattr(req_ctx, "activated_skills", set()),
+                    "extra_tools": req_ctx.tools.extra,
+                    "extra_tool_definitions": req_ctx.tools.extra_definitions,
+                    "activated_skills": req_ctx.skills.activated,
                 }
 
         await conv_display.finalize()

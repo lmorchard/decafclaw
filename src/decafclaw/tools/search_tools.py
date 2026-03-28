@@ -11,7 +11,7 @@ log = logging.getLogger(__name__)
 
 def tool_search(ctx, query: str, max_results: int = 10) -> ToolResult:
     """Search for and load tool definitions from the deferred pool."""
-    pool = ctx.deferred_tool_pool
+    pool = ctx.tools.deferred_pool
     if not pool:
         return ToolResult(text="No deferred tools available.")
 

@@ -84,7 +84,7 @@ def test_build_tool_list_with_extra_tools(ctx):
         "type": "function",
         "function": {"name": "custom_tool", "parameters": {}},
     }
-    ctx.extra_tool_definitions = [extra_def]
+    ctx.tools.extra_definitions = [extra_def]
     tools, _ = _build_tool_list(ctx)
     names = [t["function"]["name"] for t in tools]
     assert "custom_tool" in names
@@ -161,7 +161,7 @@ async def test_execute_tool_calls_concurrent(ctx):
     all_started = []
 
     async def _concurrent_tool(ctx_arg, name, args):
-        all_started.append(ctx_arg.current_tool_call_id)
+        all_started.append(ctx_arg.tools.current_call_id)
         if len(all_started) >= 3:
             barrier_reached.set()
         # Wait for all to start — proves they're running concurrently
@@ -224,9 +224,9 @@ async def test_execute_tool_calls_one_fails_others_succeed(ctx):
 
     async def _maybe_fail(ctx_arg, name, args):
         # Fail based on tool_call_id, not execution order
-        if ctx_arg.current_tool_call_id == "tc1":
+        if ctx_arg.tools.current_call_id == "tc1":
             raise RuntimeError("boom")
-        return ToolResult(text=f"ok-{ctx_arg.current_tool_call_id}")
+        return ToolResult(text=f"ok-{ctx_arg.tools.current_call_id}")
 
     tool_calls = [
         {"id": f"tc{i}", "function": {"name": "tool", "arguments": "{}"}}
@@ -251,7 +251,7 @@ async def test_execute_tool_calls_one_fails_others_succeed(ctx):
 async def test_execute_tool_calls_preserves_order(ctx):
     """Results are returned in call order, not completion order."""
     async def _variable_speed(ctx_arg, name, args):
-        return ToolResult(text=f"result-{ctx_arg.current_tool_call_id}")
+        return ToolResult(text=f"result-{ctx_arg.tools.current_call_id}")
 
     tool_calls = [
         {"id": f"tc{i}", "function": {"name": "tool", "arguments": "{}"}}
@@ -427,8 +427,8 @@ async def test_run_agent_turn_tracks_token_usage(ctx):
         history = []
         await run_agent_turn(ctx, "hi", history)
 
-    assert ctx.total_prompt_tokens == 200
-    assert ctx.total_completion_tokens == 50
+    assert ctx.tokens.total_prompt == 200
+    assert ctx.tokens.total_completion == 50
 
 
 @pytest.mark.asyncio
