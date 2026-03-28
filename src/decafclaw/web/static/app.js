@@ -106,19 +106,17 @@ const chatMainEl = document.getElementById('chat-main');
 const wikiMainEl = document.getElementById('wiki-main');
 const wikiPageEl = /** @type {any} */ (document.querySelector('#wiki-main wiki-page'));
 
-/** Switch the main content area to show a wiki page. */
+/** Show a wiki page alongside chat. */
 function showWikiPage(page) {
   if (wikiPageEl) wikiPageEl.page = page;
-  chatMainEl?.classList.add('hidden');
   wikiMainEl?.classList.remove('hidden');
   // Switch sidebar to wiki tab
   if (sidebar) sidebar.switchToWiki();
 }
 
-/** Switch back to chat view. */
-function showChatView() {
+/** Hide the wiki view. */
+function hideWikiView() {
   wikiMainEl?.classList.add('hidden');
-  chatMainEl?.classList.remove('hidden');
 }
 
 // Intercept clicks on .wiki-link elements anywhere in the document
@@ -147,7 +145,7 @@ wikiMainEl?.addEventListener('wiki-navigate', (e) => {
 // Switch back to chat when sidebar switches to Chats tab
 document.addEventListener('sidebar-tab-change', (e) => {
   const tab = /** @type {CustomEvent} */ (e).detail?.tab;
-  if (tab === 'conversations') showChatView();
+  if (tab === 'conversations') hideWikiView();
 });
 
 // -- Toast notifications ------------------------------------------------------
