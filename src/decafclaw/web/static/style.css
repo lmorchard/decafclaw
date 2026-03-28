@@ -868,6 +868,180 @@ conversation-sidebar .mobile-close-btn:hover {
   display: none;
 }
 
+/* ── Wiki links ─────────────────────────────────────────────────────────── */
+
+a.wiki-link {
+  text-decoration: none;
+  border-bottom: 1px dotted var(--pico-primary);
+  padding: 0 0.15em;
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+a.wiki-link:hover {
+  background: var(--pico-primary-focus);
+}
+
+/* ── Wiki panel ─────────────────────────────────────────────────────────── */
+
+wiki-panel {
+  display: none;
+}
+
+wiki-panel[open] {
+  display: flex;
+  flex-direction: column;
+  width: var(--wiki-panel-width, 400px);
+  min-width: 300px;
+  max-width: 50vw;
+  border-left: 1px solid var(--pico-muted-border-color);
+  background: var(--pico-background-color);
+  overflow: hidden;
+}
+
+.wiki-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.wiki-panel-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--pico-muted-border-color);
+  flex-shrink: 0;
+}
+
+.wiki-panel-title {
+  flex: 1;
+  margin: 0;
+  font-size: 0.95rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wiki-panel-close,
+.wiki-panel-list-btn {
+  background: none;
+  border: none;
+  font-size: 1.2rem;
+  cursor: pointer;
+  padding: 0.1rem 0.3rem;
+  color: var(--pico-muted-color);
+  line-height: 1;
+  margin: 0;
+}
+
+.wiki-panel-close:hover,
+.wiki-panel-list-btn:hover {
+  color: var(--pico-color);
+}
+
+.wiki-panel-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0.75rem;
+}
+
+/* Wiki panel backdrop (mobile) */
+#wiki-panel-backdrop {
+  display: none;
+}
+
+/* ── Wiki page component ────────────────────────────────────────────────── */
+
+.wiki-page-header {
+  margin-bottom: 1rem;
+}
+
+.wiki-page-title {
+  margin: 0 0 0.25rem 0;
+  font-size: 1.3rem;
+}
+
+.wiki-page-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.8rem;
+  color: var(--pico-muted-color);
+}
+
+.wiki-open-tab {
+  text-decoration: none;
+  font-size: 1rem;
+}
+
+.wiki-page-body {
+  line-height: 1.6;
+}
+
+.wiki-page-body h1 { font-size: 1.2rem; }
+.wiki-page-body h2 { font-size: 1.1rem; }
+.wiki-page-body h3 { font-size: 1rem; }
+
+.wiki-page-loading,
+.wiki-page-error {
+  padding: 2rem 1rem;
+  text-align: center;
+  color: var(--pico-muted-color);
+}
+
+.wiki-page-error {
+  color: var(--pico-del-color);
+}
+
+/* ── Wiki page list ─────────────────────────────────────────────────────── */
+
+.wiki-page-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.wiki-page-list-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.5rem 0.75rem;
+  background: none;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+  font-size: 0.9rem;
+  color: var(--pico-color);
+}
+
+.wiki-page-list-item:hover {
+  background: var(--pico-primary-focus);
+}
+
+.wiki-page-list-title {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wiki-page-list-date {
+  font-size: 0.75rem;
+  color: var(--pico-muted-color);
+  flex-shrink: 0;
+  margin-left: 0.5rem;
+}
+
+.wiki-list-loading,
+.wiki-list-empty {
+  padding: 2rem 1rem;
+  text-align: center;
+  color: var(--pico-muted-color);
+}
+
 /* ── Mobile (< 640px) ───────────────────────────────────────────────────── */
 @media (max-width: 639px) {
   /* Wider message bubbles */
@@ -954,5 +1128,25 @@ conversation-sidebar .mobile-close-btn:hover {
   /* Mobile close button inside sidebar */
   .mobile-close-btn {
     display: block !important;
+  }
+
+  /* Wiki panel slides over chat on mobile */
+  wiki-panel[open] {
+    position: fixed;
+    top: 0;
+    right: 0;
+    width: 100%;
+    max-width: 100vw;
+    height: 100%;
+    z-index: 200;
+    box-shadow: -2px 0 12px rgba(0, 0, 0, 0.2);
+  }
+
+  #wiki-panel-backdrop.visible {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.4);
+    z-index: 199;
   }
 }
