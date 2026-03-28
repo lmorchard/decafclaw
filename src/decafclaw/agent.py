@@ -17,6 +17,10 @@ import logging
 import re as _re
 from dataclasses import replace
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .reflection import ReflectionResult
 
 from .archive import append_message
 from .compaction import compact_history
@@ -175,7 +179,7 @@ async def _handle_reflection(
     ctx, config, messages, history, final_text,
     user_message, attachments, retrieved_context_text,
     turn_start_index, reflection_retries, last_reflection,
-) -> tuple[str | None, bool, int, object]:
+) -> tuple[str | None, bool, int, "ReflectionResult | None"]:
     """Run the reflection phase on a candidate final response.
 
     Returns (text, should_retry, reflection_retries, last_reflection):
