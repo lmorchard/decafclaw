@@ -868,13 +868,14 @@ conversation-sidebar .mobile-close-btn:hover {
   display: none;
 }
 
-/* ── Wiki main view ─────────────────────────────────────────────────────── */
+/* ── Wiki main view (sits between sidebar and chat) ─────────────────────── */
 
 #wiki-main {
   flex: 1;
   overflow-y: auto;
   padding: 1.5rem 2rem;
-  max-width: 800px;
+  border-right: 1px solid var(--pico-muted-border-color);
+  min-width: 0;
 }
 
 #wiki-main.hidden {
@@ -1108,4 +1109,13 @@ a.wiki-link:hover {
     display: block !important;
   }
 
+  /* On mobile, wiki takes over — hide chat when wiki is visible */
+  #wiki-main:not(.hidden) ~ #chat-main {
+    display: none;
+  }
+
+  #wiki-main {
+    border-right: none;
+    padding: 1rem;
+  }
 }
