@@ -104,12 +104,14 @@ document.addEventListener('keydown', (e) => {
 
 const chatMainEl = document.getElementById('chat-main');
 const wikiMainEl = document.getElementById('wiki-main');
+const wikiResizeHandle = document.getElementById('wiki-resize-handle');
 const wikiPageEl = /** @type {any} */ (document.querySelector('#wiki-main wiki-page'));
 
 /** Show a wiki page alongside chat. */
 function showWikiPage(page) {
   if (wikiPageEl) wikiPageEl.page = page;
   wikiMainEl?.classList.remove('hidden');
+  wikiResizeHandle?.classList.remove('hidden');
   // Switch sidebar to wiki tab
   if (sidebar) sidebar.switchToWiki();
 }
@@ -117,6 +119,7 @@ function showWikiPage(page) {
 /** Hide the wiki view. */
 function hideWikiView() {
   wikiMainEl?.classList.add('hidden');
+  wikiResizeHandle?.classList.add('hidden');
 }
 
 // Intercept clicks on .wiki-link elements anywhere in the document
@@ -265,6 +268,43 @@ if (sidebar) {
     sidebarBackdrop?.classList.toggle('visible', isOpen);
   });
   observer.observe(sidebar, { attributes: true, attributeFilter: ['mobile-open'] });
+}
+
+// Wiki drag resize
+const WIKI_MIN_WIDTH = 250;
+const WIKI_MAX_WIDTH_PCT = 0.7; // max 70% of layout
+
+const savedWikiWidth = localStorage.getItem('wiki-width');
+if (savedWikiWidth) document.documentElement.style.setProperty('--wiki-width', savedWikiWidth + 'px');
+
+if (wikiResizeHandle) {
+  let wikiDragging = false;
+  wikiResizeHandle.addEventListener('mousedown', (e) => {
+    wikiDragging = true;
+    wikiResizeHandle.classList.add('dragging');
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    e.preventDefault();
+  });
+  document.addEventListener('mousemove', (e) => {
+    if (!wikiDragging) return;
+    if (!wikiMainEl || !chatLayout) return;
+    const layoutRect = chatLayout.getBoundingClientRect();
+    const sidebarWidth = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--sidebar-width')) || 280;
+    const wikiLeft = layoutRect.left + sidebarWidth + 4; // 4px for sidebar handle
+    const maxWidth = (layoutRect.width - sidebarWidth) * WIKI_MAX_WIDTH_PCT;
+    const newWidth = Math.min(maxWidth, Math.max(WIKI_MIN_WIDTH, e.clientX - wikiLeft));
+    document.documentElement.style.setProperty('--wiki-width', newWidth + 'px');
+  });
+  document.addEventListener('mouseup', () => {
+    if (!wikiDragging) return;
+    wikiDragging = false;
+    wikiResizeHandle.classList.remove('dragging');
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+    const w = getComputedStyle(document.documentElement).getPropertyValue('--wiki-width').trim();
+    localStorage.setItem('wiki-width', String(parseInt(w)));
+  });
 }
 
 // Sidebar drag resize
