@@ -175,6 +175,48 @@ export class ConversationSidebar extends LitElement {
     }
   }
 
+  /**
+   * Render a single conversation item.
+   * @param {object} conv
+   * @param {object} [opts]
+   * @param {boolean}  [opts.isActive]    - Whether this item is currently selected
+   * @param {string}   [opts.extraClass]  - Additional CSS class (e.g. 'archived', 'system')
+   * @param {string}   [opts.actionLabel] - Button label/symbol (e.g. '×', '↩')
+   * @param {string}   [opts.actionTitle] - Button title text
+   * @param {function} [opts.onAction]    - Click handler for the action button
+   * @param {function} [opts.onDblClick]  - Double-click handler on the title span
+   * @param {string}   [opts.badge]       - Optional badge text shown after title
+   * @param {string}   [opts.titleSuffix] - Extra text appended to the title attr
+   */
+  #renderConversationItem(conv, opts = {}) {
+    const classes = ['conv-item'];
+    if (opts.extraClass) classes.push(opts.extraClass);
+    if (opts.isActive) classes.push('active');
+
+    const titleAttr = opts.titleSuffix ? `${conv.title} (${opts.titleSuffix})` : conv.title;
+
+    return html`
+      <div
+        class=${classes.join(' ')}
+        @click=${() => this.#handleSelect(conv.conv_id)}
+        title=${titleAttr}
+      >
+        <span
+          class="conv-title"
+          @dblclick=${opts.onDblClick || nothing}
+        >${conv.title}</span>
+        ${opts.badge ? html`<span class="conv-type-badge">${opts.badge}</span>` : nothing}
+        ${opts.onAction ? html`
+          <button
+            class="conv-archive"
+            @click=${(/** @type {Event} */ e) => { e.stopPropagation(); opts.onAction(conv.conv_id); }}
+            title=${opts.actionTitle || ''}
+          >${opts.actionLabel}</button>
+        ` : nothing}
+      </div>
+    `;
+  }
+
   #toggleArchived() {
     this._showArchived = !this._showArchived;
     if (this._showArchived) {
@@ -232,23 +274,13 @@ export class ConversationSidebar extends LitElement {
         <button class="new-conv-btn outline" @click=${this.#handleNew} title="New conversation (⌘K)">+ New conversation</button>
         ${this._conversations.length === 0
           ? nothing
-          : this._conversations.map(c => html`
-            <div
-              class="conv-item ${c.conv_id === this._activeId ? 'active' : ''}"
-              @click=${() => this.#handleSelect(c.conv_id)}
-              title=${c.title}
-            >
-              <span
-                class="conv-title"
-                @dblclick=${(/** @type {Event} */ e) => { e.stopPropagation(); this.#handleRename(c.conv_id, c.title); }}
-              >${c.title}</span>
-              <button
-                class="conv-archive"
-                @click=${(/** @type {Event} */ e) => { e.stopPropagation(); this.#handleArchive(c.conv_id); }}
-                title="Archive conversation"
-              >&times;</button>
-            </div>
-          `)
+          : this._conversations.map(c => this.#renderConversationItem(c, {
+              isActive: c.conv_id === this._activeId,
+              actionLabel: '\u00d7',
+              actionTitle: 'Archive conversation',
+              onAction: (id) => this.#handleArchive(id),
+              onDblClick: (/** @type {Event} */ e) => { e.stopPropagation(); this.#handleRename(c.conv_id, c.title); },
+            }))
         }
 
         <div
@@ -261,20 +293,12 @@ export class ConversationSidebar extends LitElement {
         ${this._showArchived ? html`
           ${this._archived.length === 0
             ? html`<p style="padding: 0.25rem 0.75rem; color: var(--pico-muted-color); font-size: 0.85rem;">No archived conversations</p>`
-            : this._archived.map(c => html`
-              <div
-                class="conv-item archived"
-                @click=${() => this.#handleSelect(c.conv_id)}
-                title=${c.title}
-              >
-                <span class="conv-title">${c.title}</span>
-                <button
-                  class="conv-archive"
-                  @click=${(/** @type {Event} */ e) => { e.stopPropagation(); this.#handleUnarchive(c.conv_id); }}
-                  title="Unarchive conversation"
-                >\u21a9</button>
-              </div>
-            `)
+            : this._archived.map(c => this.#renderConversationItem(c, {
+                extraClass: 'archived',
+                actionLabel: '\u21a9',
+                actionTitle: 'Unarchive conversation',
+                onAction: (id) => this.#handleUnarchive(id),
+              }))
           }
         ` : nothing}
 
@@ -288,16 +312,12 @@ export class ConversationSidebar extends LitElement {
         ${this._showSystem ? html`
           ${this._systemConversations.length === 0
             ? html`<p style="padding: 0.25rem 0.75rem; color: var(--pico-muted-color); font-size: 0.85rem;">No system conversations</p>`
-            : this._systemConversations.map(c => html`
-              <div
-                class="conv-item system ${c.conv_id === this._activeId ? 'active' : ''}"
-                @click=${() => this.#handleSelect(c.conv_id)}
-                title="${c.title} (${c.conv_type})"
-              >
-                <span class="conv-title">${c.title}</span>
-                <span class="conv-type-badge">${c.conv_type}</span>
-              </div>
-            `)
+            : this._systemConversations.map(c => this.#renderConversationItem(c, {
+                isActive: c.conv_id === this._activeId,
+                extraClass: 'system',
+                badge: c.conv_type,
+                titleSuffix: c.conv_type,
+              }))
           }
         ` : nothing}
       </div>
