@@ -456,14 +456,14 @@ async def _run_agent_turn(websocket, app_ctx, config, event_bus,
             pass
 
     # Fork a request context for this turn
-    from ..media import WebMediaHandler
+    from ..media import LocalFileMediaHandler
     ctx = Context(config=config, event_bus=event_bus)
     ctx.user_id = username
     ctx.channel_id = conv_id
     ctx.channel_name = "web"
     ctx.thread_id = ""
     ctx.conv_id = conv_id
-    ctx.media_handler = WebMediaHandler(config)
+    ctx.media_handler = LocalFileMediaHandler(config)
     # Apply pre-configured command state (set by dispatch_command)
     if command_ctx:
         ctx.preapproved_tools = command_ctx.preapproved_tools

@@ -44,17 +44,27 @@ def write_compacted_history(config, conv_id: str, messages: list[dict]):
             f.write(json.dumps(msg) + "\n")
 
 
+def _read_jsonl(path: Path) -> list[dict]:
+    """Read a JSONL file, skipping corrupt lines."""
+    messages = []
+    with open(path) as f:
+        for lineno, line in enumerate(f, 1):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                messages.append(json.loads(line))
+            except json.JSONDecodeError:
+                log.warning("Skipping corrupt JSONL line %d in %s", lineno, path)
+    return messages
+
+
 def read_compacted_history(config, conv_id: str) -> list[dict] | None:
     """Read compacted working history if available, else return None."""
     path = _compacted_path(config, conv_id)
     if not path.exists():
         return None
-    messages = []
-    with open(path) as f:
-        for line in f:
-            line = line.strip()
-            if line:
-                messages.append(json.loads(line))
+    messages = _read_jsonl(path)
     return messages or None
 
 
@@ -63,10 +73,4 @@ def read_archive(config, conv_id: str) -> list[dict]:
     path = archive_path(config, conv_id)
     if not path.exists():
         return []
-    messages = []
-    with open(path) as f:
-        for line in f:
-            line = line.strip()
-            if line:
-                messages.append(json.loads(line))
-    return messages
+    return _read_jsonl(path)

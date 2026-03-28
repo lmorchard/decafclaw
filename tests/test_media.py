@@ -7,12 +7,11 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from decafclaw.media import (
+    LocalFileMediaHandler,
     MattermostMediaHandler,
     MediaHandler,
     MediaSaveResult,
-    TerminalMediaHandler,
     ToolResult,
-    WebMediaHandler,
     extract_workspace_media,
     upload_and_collect,
 )
@@ -147,17 +146,25 @@ class _FakeConfig:
     workspace_path: Path
 
 
-# -- TerminalMediaHandler tests --
+# -- LocalFileMediaHandler tests --
 
 
-def test_terminal_handler_strips_workspace_refs():
-    assert TerminalMediaHandler.strips_workspace_refs is False
+def test_local_handler_strips_workspace_refs_default():
+    config = _FakeConfig(workspace_path=Path("/tmp"))
+    handler = LocalFileMediaHandler(config)
+    assert handler.strips_workspace_refs is False
+
+
+def test_local_handler_strips_workspace_refs_enabled():
+    config = _FakeConfig(workspace_path=Path("/tmp"))
+    handler = LocalFileMediaHandler(config, strips_workspace_refs=True)
+    assert handler.strips_workspace_refs is True
 
 
 @pytest.mark.asyncio
-async def test_terminal_handler_save_media(tmp_path):
+async def test_local_handler_save_media(tmp_path):
     config = _FakeConfig(workspace_path=tmp_path)
-    handler = TerminalMediaHandler(config)
+    handler = LocalFileMediaHandler(config)
     result = await handler.save_media("conv1", "test.png", b"png-data", "image/png")
     assert result.workspace_ref is not None
     assert result.workspace_ref.startswith("workspace://conversations/conv1/uploads/")
@@ -170,32 +177,11 @@ async def test_terminal_handler_save_media(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_terminal_handler_upload_legacy_raises(tmp_path):
+async def test_local_handler_upload_legacy_raises(tmp_path):
     config = _FakeConfig(workspace_path=tmp_path)
-    handler = TerminalMediaHandler(config)
+    handler = LocalFileMediaHandler(config)
     with pytest.raises(NotImplementedError):
         await handler.upload_file("ch", "test.png", b"data", "image/png")
-
-
-# -- WebMediaHandler tests --
-
-
-def test_web_handler_strips_workspace_refs():
-    assert WebMediaHandler.strips_workspace_refs is False
-
-
-@pytest.mark.asyncio
-async def test_web_handler_save_media(tmp_path):
-    config = _FakeConfig(workspace_path=tmp_path)
-    handler = WebMediaHandler(config)
-    result = await handler.save_media("conv-abc", "doc.pdf", b"pdf-data", "application/pdf")
-    assert result.workspace_ref is not None
-    assert result.workspace_ref.startswith("workspace://conversations/conv-abc/uploads/")
-    assert result.saved_filename is not None
-    # Verify file was actually saved
-    saved_path = tmp_path / result.workspace_ref.replace("workspace://", "")
-    assert saved_path.exists()
-    assert saved_path.read_bytes() == b"pdf-data"
 
 
 # -- MattermostMediaHandler tests --

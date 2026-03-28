@@ -3,6 +3,7 @@
 import logging
 
 from .embeddings import embed_text, search_similar_sync
+from .util import estimate_tokens
 
 log = logging.getLogger(__name__)
 
@@ -61,7 +62,7 @@ def _trim_to_token_budget(results: list[dict], max_tokens: int) -> list[dict]:
     trimmed = []
     total_tokens = 0
     for r in results:
-        entry_tokens = len(r["entry_text"]) // 4
+        entry_tokens = estimate_tokens(r["entry_text"])
         if total_tokens + entry_tokens > max_tokens and trimmed:
             break
         trimmed.append(r)

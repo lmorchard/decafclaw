@@ -5,6 +5,7 @@ from pathlib import Path
 
 from .archive import read_archive, read_compacted_history, write_compacted_history
 from .llm import call_llm
+from .util import estimate_tokens
 
 log = logging.getLogger(__name__)
 
@@ -118,11 +119,6 @@ def flatten_messages(messages: list[dict]) -> str:
         else:
             lines.append(f"{role}: {content}")
     return "\n".join(lines)
-
-
-def estimate_tokens(text: str) -> int:
-    """Rough token estimate: ~4 characters per token."""
-    return len(text) // 4
 
 
 async def _single_summarize(ctx, config, flattened_text: str, prompt: str) -> str:
