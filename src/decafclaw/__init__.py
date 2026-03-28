@@ -46,5 +46,5 @@ def main():
             log.error(f"Bot crashed: {e}", exc_info=True)
             sys.exit(1)  # non-zero exit → systemd Restart=on-failure kicks in
     else:
-        from .agent import run_interactive
+        from .interactive_terminal import run_interactive
         asyncio.run(run_interactive(app_ctx))
