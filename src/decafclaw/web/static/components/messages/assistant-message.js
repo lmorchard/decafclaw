@@ -1,51 +1,6 @@
 import { LitElement, html, nothing } from 'lit';
 import { unsafeHTML } from 'lit/directives/unsafe-html.js';
-import { marked } from 'marked';
-import DOMPurify from 'dompurify';
-
-// Custom marked renderer to rewrite workspace:// paths to /api/workspace/ URLs
-const renderer = new marked.Renderer();
-
-const originalImage = renderer.image.bind(renderer);
-/** @type {(token: {href: string, title: string|null, text: string}) => string} */
-renderer.image = function(token) {
-  let href = token.href || '';
-  if (href.startsWith('workspace://')) {
-    href = '/api/workspace/' + href.slice('workspace://'.length);
-    token = { ...token, href };
-  }
-  return originalImage(token);
-};
-
-const originalLink = renderer.link.bind(renderer);
-/** @type {(token: {href: string, title?: string|null, tokens: object[]}) => string} */
-renderer.link = function(token) {
-  let href = token.href || '';
-  if (href.startsWith('workspace://')) {
-    href = '/api/workspace/' + href.slice('workspace://'.length);
-    token = { ...token, href };
-  }
-  return originalLink(token);
-};
-
-/**
- * Render markdown to sanitized HTML.
- * @param {string} text
- * @returns {string}
- */
-function renderMarkdown(text) {
-  if (!text) return '';
-  const raw = /** @type {string} */ (marked.parse(text, {
-    breaks: true,
-    async: false,
-    renderer,
-  }));
-  return DOMPurify.sanitize(raw, {
-    ADD_ATTR: ['target'],
-    ADD_TAGS: ['img'],
-    ADD_DATA_URI_TAGS: ['img'],
-  });
-}
+import { renderMarkdown } from '../../lib/markdown.js';
 
 /**
  * @param {string} ts
