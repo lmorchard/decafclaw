@@ -7,6 +7,7 @@
 import { AuthClient } from './lib/auth-client.js';
 import { WebSocketClient } from './lib/websocket-client.js';
 import { ConversationStore } from './lib/conversation-store.js';
+import { setupResizeHandle } from './lib/utils.js';
 
 // Import components (registers custom elements)
 import './components/login-view.js';
@@ -308,33 +309,14 @@ if (wikiResizeHandle) {
 }
 
 // Sidebar drag resize
-const resizeHandle = document.getElementById('sidebar-resize-handle');
-const MIN_WIDTH = 160;
-const MAX_WIDTH = 480;
-
-const savedWidth = localStorage.getItem('sidebar-width');
-if (savedWidth) document.documentElement.style.setProperty('--sidebar-width', savedWidth + 'px');
-
-if (resizeHandle) {
-  let dragging = false;
-  resizeHandle.addEventListener('mousedown', (e) => {
-    dragging = true;
-    document.body.style.cursor = 'col-resize';
-    document.body.style.userSelect = 'none';
-    e.preventDefault();
-  });
-  document.addEventListener('mousemove', (e) => {
-    if (!dragging) return;
-    const layoutRect = chatLayout.getBoundingClientRect();
-    const newWidth = Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, e.clientX - layoutRect.left));
-    document.documentElement.style.setProperty('--sidebar-width', newWidth + 'px');
-  });
-  document.addEventListener('mouseup', () => {
-    if (!dragging) return;
-    dragging = false;
-    document.body.style.cursor = '';
-    document.body.style.userSelect = '';
-    const w = getComputedStyle(document.documentElement).getPropertyValue('--sidebar-width').trim();
-    localStorage.setItem('sidebar-width', String(parseInt(w)));
+const sidebarResizeHandle = document.getElementById('sidebar-resize-handle');
+if (sidebarResizeHandle) {
+  setupResizeHandle({
+    handle: sidebarResizeHandle,
+    container: chatLayout,
+    minWidth: 160,
+    maxWidth: 480,
+    storageKey: 'sidebar-width',
+    cssVar: '--sidebar-width',
   });
 }

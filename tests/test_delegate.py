@@ -56,15 +56,15 @@ class TestRunChildTurn:
             await _run_child_turn(ctx, "task")
 
         child_ctx = mock_run.call_args[0][0]
-        assert "delegate_task" not in child_ctx.allowed_tools
-        assert "activate_skill" not in child_ctx.allowed_tools
+        assert "delegate_task" not in child_ctx.tools.allowed
+        assert "activate_skill" not in child_ctx.tools.allowed
         # Core tools should be inherited
-        assert "memory_search" in child_ctx.allowed_tools
+        assert "memory_search" in child_ctx.tools.allowed
 
     @pytest.mark.asyncio
     async def test_inherits_parent_skill_data(self, ctx):
         """Child inherits parent's skill_data."""
-        ctx.skill_data = {"vault_base_path": "obsidian/main"}
+        ctx.skills.data = {"vault_base_path": "obsidian/main"}
 
         with patch("decafclaw.agent.run_agent_turn", new_callable=AsyncMock) as mock_run:
             from decafclaw.media import ToolResult
@@ -73,12 +73,12 @@ class TestRunChildTurn:
             await _run_child_turn(ctx, "task")
 
         child_ctx = mock_run.call_args[0][0]
-        assert child_ctx.skill_data == {"vault_base_path": "obsidian/main"}
+        assert child_ctx.skills.data == {"vault_base_path": "obsidian/main"}
 
     @pytest.mark.asyncio
     async def test_inherits_parent_extra_tools(self, ctx):
         """Child inherits parent's extra_tools from activated skills."""
-        ctx.extra_tools = {"vault_read": lambda ctx, **kw: "data"}
+        ctx.tools.extra = {"vault_read": lambda ctx, **kw: "data"}
 
         with patch("decafclaw.agent.run_agent_turn", new_callable=AsyncMock) as mock_run:
             from decafclaw.media import ToolResult
@@ -87,8 +87,8 @@ class TestRunChildTurn:
             await _run_child_turn(ctx, "task")
 
         child_ctx = mock_run.call_args[0][0]
-        assert "vault_read" in child_ctx.extra_tools
-        assert "vault_read" in child_ctx.allowed_tools
+        assert "vault_read" in child_ctx.tools.extra
+        assert "vault_read" in child_ctx.tools.allowed
 
     @pytest.mark.asyncio
     async def test_timeout(self, ctx):

@@ -9,11 +9,9 @@ from dataclasses import dataclass, field
 import httpx
 import websockets
 
-log = logging.getLogger(__name__)
+from .mattermost_display import THINKING_INDICATOR, ConversationDisplay  # noqa: F401
 
-# Status indicators shown in placeholder messages
-THINKING_INDICATOR = "\U0001f4ad Thinking..."
-THINKING_SUFFIX = "\n\U0001f4ad Thinking..."
+log = logging.getLogger(__name__)
 
 
 # -- Per-conversation state ----------------------------------------------------
@@ -288,27 +286,14 @@ class MattermostClient:
             conversations[conv_id] = ConversationState()
         return conversations[conv_id]
 
-    @staticmethod
-    def _restore_from_archive(config, conv_id):
-        """Load history from compacted sidecar + newer archive entries, or full archive."""
-        from .archive import read_archive, read_compacted_history
-
-        compacted = read_compacted_history(config, conv_id)
-        if compacted:
-            full = read_archive(config, conv_id)
-            last_ts = compacted[-1].get("timestamp", "")
-            newer = [m for m in full if m.get("timestamp", "") > last_ts]
-            return compacted + newer
-
-        archived = read_archive(config, conv_id)
-        return archived if archived else None
-
     def _prepare_history(self, conv, conv_id, root_id, channel_id, conversations, config):
         """Get or create conversation history, resuming from archive if available."""
+        from .archive import restore_history
+
         if root_id:
             hist_id = root_id
             if not conv.history:
-                restored = self._restore_from_archive(config, hist_id)
+                restored = restore_history(config, hist_id)
                 if restored:
                     conv.history = restored
                     log.info(f"Resumed thread {hist_id[:8]} from archive ({len(restored)} messages)")
@@ -319,7 +304,7 @@ class MattermostClient:
                     log.debug(f"Forked thread history {hist_id[:8]} from channel {channel_id[:8]} ({len(channel_history)} msgs)")
         else:
             if not conv.history:
-                restored = self._restore_from_archive(config, channel_id)
+                restored = restore_history(config, channel_id)
                 if restored:
                     conv.history = restored
                     log.info(f"Resumed channel {channel_id[:8]} from archive ({len(restored)} messages)")
@@ -342,9 +327,9 @@ class MattermostClient:
 
         # Restore per-conversation skill state from previous turns
         if conv.skill_state:
-            req_ctx.extra_tools = conv.skill_state.get("extra_tools", {})
-            req_ctx.extra_tool_definitions = conv.skill_state.get("extra_tool_definitions", [])
-            req_ctx.activated_skills = conv.skill_state.get("activated_skills", set())
+            req_ctx.tools.extra = conv.skill_state.get("extra_tools", {})
+            req_ctx.tools.extra_definitions = conv.skill_state.get("extra_tool_definitions", [])
+            req_ctx.skills.activated = conv.skill_state.get("activated_skills", set())
 
         # Create conversation display for this turn
         conv_display = ConversationDisplay(
@@ -456,6 +441,65 @@ class MattermostClient:
                     log.warning(f"Failed to download Mattermost file {fid}: {e}")
         return attachments
 
+    async def _prepare_conversation(self, conv, conv_id, channel_id, msgs,
+                                    app_ctx, conversations):
+        """Prepare a conversation turn: combine messages, check commands, set up context.
+
+        Returns (req_ctx, conv_display, cancel_task, sub_id, combined_text, archive_text, cmd_ctx)
+        if the agent turn should proceed, or None if a command was fully handled.
+        """
+        from .commands import dispatch_command
+        from .context import Context
+
+        # Combine accumulated messages into one
+        combined_text = "\n".join(m["text"] for m in msgs)
+        last_msg = msgs[-1]
+
+        # Thread routing
+        is_dm = last_msg.get("channel_type") == "D"
+        already_in_thread = bool(last_msg["root_id"])
+        mentioned = any(m.get("mentioned") for m in msgs)
+        if is_dm and not mentioned and not already_in_thread:
+            root_id = None
+        else:
+            root_id = last_msg["root_id"] or last_msg["post_id"]
+
+        senders = set(m["sender_name"] for m in msgs)
+        log.info(f"Processing {len(msgs)} message(s) from {', '.join(senders)} in {conv_id[:8]}")
+
+        # -- Command dispatch (centralized in commands.py) --
+        cmd_ctx = Context(config=app_ctx.config, event_bus=app_ctx.event_bus)
+        cmd_ctx.user_id = app_ctx.config.agent.user_id
+        cmd_result = await dispatch_command(cmd_ctx, combined_text, prefixes=["!"])
+
+        if cmd_result.mode in ("help", "unknown", "error", "fork"):
+            await self.send(channel_id, cmd_result.text, root_id=root_id)
+            return None
+
+        # Send placeholder immediately
+        placeholder_id = await self.send_placeholder(channel_id, root_id=root_id)
+        await self.send_typing(channel_id)
+
+        # Prepare history and request context
+        self._prepare_history(
+            conv, conv_id, root_id, channel_id, conversations, app_ctx.config
+        )
+        req_ctx, conv_display, cancel_task, sub_id = await self._build_request_context(
+            app_ctx, conv, conv_id, channel_id, root_id, placeholder_id
+        )
+
+        # Apply command state to the request context (inline mode)
+        archive_text = ""
+        if cmd_result.mode == "inline":
+            combined_text = cmd_result.text
+            archive_text = cmd_result.display_text
+            req_ctx.tools.preapproved = cmd_ctx.tools.preapproved
+            req_ctx.skills.activated = cmd_ctx.skills.activated
+            req_ctx.tools.extra.update(cmd_ctx.tools.extra)
+            req_ctx.tools.extra_definitions.extend(cmd_ctx.tools.extra_definitions)
+
+        return req_ctx, conv_display, cancel_task, sub_id, combined_text, archive_text
+
     async def _process_conversation(self, conv_id, channel_id, msgs,
                                     app_ctx, conversations):
         """Process accumulated messages for a conversation."""
@@ -490,60 +534,14 @@ class MattermostClient:
             log.info(f"Cooldown: waiting {wait:.1f}s before responding in {conv_id[:8]}")
             await asyncio.sleep(wait)
 
-        # Combine accumulated messages into one
-        combined_text = "\n".join(m["text"] for m in msgs)
-        last_msg = msgs[-1]
-
-        # Thread routing
-        is_dm = last_msg.get("channel_type") == "D"
-        already_in_thread = bool(last_msg["root_id"])
-        mentioned = any(m.get("mentioned") for m in msgs)
-        if is_dm and not mentioned and not already_in_thread:
-            root_id = None
-        else:
-            root_id = last_msg["root_id"] or last_msg["post_id"]
-
-        senders = set(m["sender_name"] for m in msgs)
-        log.info(f"Processing {len(msgs)} message(s) from {', '.join(senders)} in {conv_id[:8]}")
-
-        # -- Command dispatch (centralized in commands.py) --
-        from .commands import dispatch_command
-        from .context import Context
-
-        # Use a temporary context for command dispatch (pre-activation etc.)
-        cmd_ctx = Context(config=app_ctx.config, event_bus=app_ctx.event_bus)
-        cmd_ctx.user_id = app_ctx.config.agent.user_id
-        cmd_result = await dispatch_command(cmd_ctx, combined_text, prefixes=["!"])
-
-        if cmd_result.mode in ("help", "unknown", "error"):
-            await self.send(channel_id, cmd_result.text, root_id=root_id)
-            return
-
-        if cmd_result.mode == "fork":
-            await self.send(channel_id, cmd_result.text, root_id=root_id)
-            return
-
-        # Send placeholder immediately
-        placeholder_id = await self.send_placeholder(channel_id, root_id=root_id)
-        await self.send_typing(channel_id)
-
-        # Prepare history and request context
-        history = self._prepare_history(
-            conv, conv_id, root_id, channel_id, conversations, app_ctx.config
+        # Prepare conversation: combine messages, dispatch commands, build context
+        prepared = await self._prepare_conversation(
+            conv, conv_id, channel_id, msgs, app_ctx, conversations
         )
-        req_ctx, conv_display, cancel_task, sub_id = await self._build_request_context(
-            app_ctx, conv, conv_id, channel_id, root_id, placeholder_id
-        )
+        if prepared is None:
+            return  # Command was fully handled
 
-        # Apply command state to the request context (inline mode)
-        archive_text = ""
-        if cmd_result.mode == "inline":
-            combined_text = cmd_result.text
-            archive_text = cmd_result.display_text
-            req_ctx.preapproved_tools = cmd_ctx.preapproved_tools
-            req_ctx.activated_skills = cmd_ctx.activated_skills
-            req_ctx.extra_tools.update(cmd_ctx.extra_tools)
-            req_ctx.extra_tool_definitions.extend(cmd_ctx.extra_tool_definitions)
+        req_ctx, conv_display, cancel_task, sub_id, combined_text, archive_text = prepared
 
         # Download user-uploaded files and store as conversation attachments
         attachments = await self._download_attachments(
@@ -552,7 +550,7 @@ class MattermostClient:
         conv.busy = True
         try:
             response = await run_agent_turn(
-                req_ctx, combined_text, history, archive_text=archive_text,
+                req_ctx, combined_text, conv.history, archive_text=archive_text,
                 attachments=attachments or None)
         except BaseException as e:
             log.error(f"Agent turn failed: {e}")
@@ -579,17 +577,18 @@ class MattermostClient:
             self.circuit_breaker.record_turn(conv)
 
             # Persist per-conversation skill state for next turn
-            if getattr(req_ctx, "activated_skills", None):
+            if req_ctx.skills.activated:
                 conv.skill_state = {
-                    "extra_tools": getattr(req_ctx, "extra_tools", {}),
-                    "extra_tool_definitions": getattr(req_ctx, "extra_tool_definitions", []),
-                    "activated_skills": getattr(req_ctx, "activated_skills", set()),
+                    "extra_tools": req_ctx.tools.extra,
+                    "extra_tool_definitions": req_ctx.tools.extra_definitions,
+                    "activated_skills": req_ctx.skills.activated,
                 }
 
         await conv_display.finalize()
 
         await self._post_response(
-            response, channel_id, root_id, conv_display
+            response, channel_id, root_id=req_ctx.thread_id or None,
+            conv_display=conv_display,
         )
 
     async def _debounce_fire(self, conv_id, channel_id, conversations, app_ctx):
@@ -694,120 +693,171 @@ class MattermostClient:
         client = self
         compaction_post_id = None
 
-        async def on_progress(event):
-            nonlocal compaction_post_id
-            if event.get("context_id") != context_id:
-                return
-            event_type = event.get("type")
+        # -- Handlers for each event type --
+        # Note: handlers that reference `cd` are only added to the dispatch
+        # dict when conv_display is not None (see dispatch table below).
+        cd = conv_display  # narrowed alias for closures
 
-            if event_type == "llm_start" and conv_display:
-                await conv_display.on_llm_start(event.get("iteration", 1))
-            elif event_type == "llm_end" and conv_display and not streaming:
-                # Non-streaming: show text content via ConversationDisplay
+        async def handle_llm_start(event):
+            assert cd is not None
+            await cd.on_llm_start(event.get("iteration", 1))
+
+        async def handle_llm_end(event):
+            assert cd is not None
+            if not streaming:
                 content = event.get("content")
                 if content:
-                    await conv_display.on_text_complete(content)
-            elif event_type == "text_before_tools" and conv_display:
-                # Flush any streamed text before tool calls start
-                content = event.get("text", "")
-                if content and not streaming:
-                    await conv_display.on_text_complete(content)
-            elif event_type == "tool_start" and conv_display:
-                await conv_display.on_tool_start(
-                    event.get("tool", "tool"), event.get("args", {}),
-                    tool_call_id=event.get("tool_call_id", ""))
-            elif event_type == "tool_status" and conv_display:
-                await conv_display.on_tool_status(
-                    event.get("tool", "tool"), event.get("message", ""),
-                    tool_call_id=event.get("tool_call_id", ""))
-            elif event_type == "tool_end" and conv_display:
-                await conv_display.on_tool_end(
-                    event.get("tool", "tool"),
-                    event.get("result_text", ""),
-                    event.get("display_text"),
-                    event.get("media", []),
-                    tool_call_id=event.get("tool_call_id", ""),
-                    display_short_text=event.get("display_short_text"),
-                )
-            elif event_type == "tool_media_uploaded" and conv_display:
-                await conv_display.on_tool_media_uploaded(
-                    event.get("file_ids", []),
-                    tool_call_id=event.get("tool_call_id", ""),
-                )
-            elif event_type == "tool_confirm_request" and conv_display:
-                await conv_display.on_confirm_request(
-                    event.get("tool", "tool"),
-                    event.get("command", ""),
-                    event.get("suggested_pattern", ""),
-                    event_bus, context_id,
-                    tool_call_id=event.get("tool_call_id", ""),
-                )
-            elif event_type == "reflection_result" and conv_display:
-                visibility = reflection_visibility
-                if visibility != "hidden":
-                    passed = event.get("passed", True)
-                    critique = event.get("critique", "")
-                    retry_num = event.get("retry_number", 0)
-                    raw = event.get("raw_response", "")
-                    error = event.get("error", "")
-                    if visibility == "debug":
-                        text = (f"\U0001f50d **Reflection** (retry {retry_num}): "
-                                f"{'PASS' if passed else 'FAIL'}")
-                        if critique:
-                            text += f"\nCritique: {critique}"
-                        if error:
-                            text += f"\nError: {error}"
-                        if raw:
-                            text += f"\n\n<details><summary>Raw judge output</summary>\n\n{raw}\n</details>"
-                        await conv_display.on_tool_status("reflection", text)
-                    elif not passed:
-                        text = (f"\U0001f50d Reflection retry {retry_num}: "
-                                f"{critique}")
-                        await conv_display.on_tool_status("reflection", text)
-            elif event_type == "memory_context" and conv_display:
-                results = event.get("results") or []
-                if results:
-                    source_counts: dict[str, int] = {}
-                    for item in results:
-                        st = item.get("source_type", "unknown")
-                        source_counts[st] = source_counts.get(st, 0) + 1
-                    parts = []
-                    for st in ("wiki", "memory", "conversation"):
-                        if source_counts.get(st):
-                            parts.append(f"{source_counts[st]} {st}")
-                    summary = ", ".join(parts) or "context"
-                    await conv_display.on_tool_status(
-                        "memory_context",
-                        f"\U0001f9e0 Retrieved {summary}")
-            # Compaction stays as-is (separate message)
-            elif event_type == "compaction_start" and channel_id:
-                import time as _time
+                    await cd.on_text_complete(content)
+
+        async def handle_text_before_tools(event):
+            assert cd is not None
+            content = event.get("text", "")
+            if content and not streaming:
+                await cd.on_text_complete(content)
+
+        async def handle_tool_start(event):
+            assert cd is not None
+            await cd.on_tool_start(
+                event.get("tool", "tool"), event.get("args", {}),
+                tool_call_id=event.get("tool_call_id", ""))
+
+        async def handle_tool_status(event):
+            assert cd is not None
+            await cd.on_tool_status(
+                event.get("tool", "tool"), event.get("message", ""),
+                tool_call_id=event.get("tool_call_id", ""))
+
+        async def handle_tool_end(event):
+            assert cd is not None
+            await cd.on_tool_end(
+                event.get("tool", "tool"),
+                event.get("result_text", ""),
+                event.get("display_text"),
+                event.get("media", []),
+                tool_call_id=event.get("tool_call_id", ""),
+                display_short_text=event.get("display_short_text"),
+            )
+
+        async def handle_tool_media_uploaded(event):
+            assert cd is not None
+            await cd.on_tool_media_uploaded(
+                event.get("file_ids", []),
+                tool_call_id=event.get("tool_call_id", ""),
+            )
+
+        async def handle_tool_confirm_request(event):
+            assert cd is not None
+            await cd.on_confirm_request(
+                event.get("tool", "tool"),
+                event.get("command", ""),
+                event.get("suggested_pattern", ""),
+                event_bus, context_id,
+                tool_call_id=event.get("tool_call_id", ""),
+            )
+
+        async def handle_reflection_result(event):
+            assert cd is not None
+            visibility = reflection_visibility
+            if visibility == "hidden":
+                return
+            passed = event.get("passed", True)
+            critique = event.get("critique", "")
+            retry_num = event.get("retry_number", 0)
+            raw = event.get("raw_response", "")
+            error = event.get("error", "")
+            if visibility == "debug":
+                text = (f"\U0001f50d **Reflection** (retry {retry_num}): "
+                        f"{'PASS' if passed else 'FAIL'}")
+                if critique:
+                    text += f"\nCritique: {critique}"
+                if error:
+                    text += f"\nError: {error}"
+                if raw:
+                    text += f"\n\n<details><summary>Raw judge output</summary>\n\n{raw}\n</details>"
+                await cd.on_tool_status("reflection", text)
+            elif not passed:
+                text = (f"\U0001f50d Reflection retry {retry_num}: "
+                        f"{critique}")
+                await cd.on_tool_status("reflection", text)
+
+        async def handle_memory_context(event):
+            assert cd is not None
+            results = event.get("results") or []
+            if results:
+                source_counts: dict[str, int] = {}
+                for item in results:
+                    st = item.get("source_type", "unknown")
+                    source_counts[st] = source_counts.get(st, 0) + 1
+                parts = []
+                for st in ("wiki", "memory", "conversation"):
+                    if source_counts.get(st):
+                        parts.append(f"{source_counts[st]} {st}")
+                summary = ", ".join(parts) or "context"
+                await cd.on_tool_status(
+                    "memory_context",
+                    f"\U0001f9e0 Retrieved {summary}")
+
+        async def handle_compaction_start(event):
+            nonlocal compaction_post_id
+            if channel_id:
                 compaction_post_id = await client.send(
                     channel_id, "\U0001f4e6 Compacting conversation...",
                     root_id=root_id,
                 )
-            elif event_type == "compaction_end" and compaction_post_id:
-                try:
-                    elapsed = event.get("elapsed_sec", 0)
-                    before = event.get("before_messages", 0)
-                    after = event.get("after_messages", 0)
-                    est_tokens = event.get("estimated_tokens_before", 0)
-                    if elapsed < 60:
-                        duration = f"{elapsed:.0f}s"
-                    else:
-                        duration = f"{elapsed/60:.1f}m"
-                    details = f"{duration}"
-                    if before and after:
-                        details += f", {before} → {after} messages"
-                    if est_tokens:
-                        details += f", ~{est_tokens:,} tokens compacted"
-                    await client.edit_message(
-                        compaction_post_id,
-                        f"\U0001f4e6 Conversation compacted ({details})",
-                    )
-                except Exception:
-                    pass  # best effort
-                compaction_post_id = None
+
+        async def handle_compaction_end(event):
+            nonlocal compaction_post_id
+            if not compaction_post_id:
+                return
+            try:
+                elapsed = event.get("elapsed_sec", 0)
+                before = event.get("before_messages", 0)
+                after = event.get("after_messages", 0)
+                est_tokens = event.get("estimated_tokens_before", 0)
+                if elapsed < 60:
+                    duration = f"{elapsed:.0f}s"
+                else:
+                    duration = f"{elapsed/60:.1f}m"
+                details = f"{duration}"
+                if before and after:
+                    details += f", {before} → {after} messages"
+                if est_tokens:
+                    details += f", ~{est_tokens:,} tokens compacted"
+                await client.edit_message(
+                    compaction_post_id,
+                    f"\U0001f4e6 Conversation compacted ({details})",
+                )
+            except Exception:
+                pass  # best effort
+            compaction_post_id = None
+
+        # -- Dispatch table --
+        # conv_display-dependent handlers require conv_display to be set;
+        # compaction handlers work independently.
+        from typing import Any, Callable
+        dispatch: dict[str, Callable[..., Any]] = {}
+        if conv_display:
+            dispatch.update({
+                "llm_start": handle_llm_start,
+                "llm_end": handle_llm_end,
+                "text_before_tools": handle_text_before_tools,
+                "tool_start": handle_tool_start,
+                "tool_status": handle_tool_status,
+                "tool_end": handle_tool_end,
+                "tool_media_uploaded": handle_tool_media_uploaded,
+                "tool_confirm_request": handle_tool_confirm_request,
+                "reflection_result": handle_reflection_result,
+                "memory_context": handle_memory_context,
+            })
+        dispatch["compaction_start"] = handle_compaction_start
+        dispatch["compaction_end"] = handle_compaction_end
+
+        async def on_progress(event):
+            if event.get("context_id") != context_id:
+                return
+            handler = dispatch.get(event.get("type"))
+            if handler:
+                await handler(event)
 
         return event_bus.subscribe(on_progress)
 
@@ -921,371 +971,3 @@ class MattermostClient:
             await _guarded_heartbeat(config, event_bus)
 
         return on_cycle
-
-
-# -- Conversation display ------------------------------------------------------
-
-
-class ConversationDisplay:
-    """Manages a sequence of Mattermost messages for a single agent turn.
-
-    Instead of editing one placeholder, posts separate messages for text
-    segments and tool calls, creating a visible trail of agent activity.
-    Works for both streaming and non-streaming mode.
-    """
-
-    def __init__(self, client, channel_id, root_id, throttle_ms=200,
-                 initial_post_id=None, config=None, conv_id=None):
-        self.client = client
-        self._channel_id = channel_id
-        self._root_id = root_id
-        self._throttle_ms = throttle_ms
-        self._initial_post_id = initial_post_id
-        self._config = config
-        self._conv_id = conv_id
-
-        # Current message state
-        self._current_post_id = initial_post_id
-        self._current_type = "thinking" if initial_post_id else None
-        self._text_buffer = ""
-        self._text_has_content = False  # True if any real text was written
-
-        # Tool call state — maps tool_call_id → Mattermost post ID
-        self._tool_posts: dict[str, str] = {}
-        self._tools_text_finalized = False
-
-        # Throttling
-        self._last_edit_time = 0
-
-        # Turn state
-        self._finalized = False
-        self._stop_attachments: list[dict] | None = None
-        self._stop_on_post: str | None = None  # post ID that currently has the button
-        self._cancel_sub: str | None = None
-
-    # -- Text streaming --------------------------------------------------------
-
-    async def on_llm_start(self, iteration):
-        """New LLM generation starting."""
-        if iteration == 1:
-            # Initial thinking message already posted
-            self._current_post_id = self._initial_post_id
-            self._current_type = "thinking"
-        else:
-            # After tool calls — finalize previous text, start new thinking msg
-            await self._finalize_current_text()
-            self._text_buffer = ""
-            self._text_has_content = False
-            post_id = await self.client.send(
-                self._channel_id, THINKING_INDICATOR, root_id=self._root_id,
-                attachments=self._stop_attachments,
-            )
-            self._current_post_id = post_id
-            self._current_type = "thinking"
-            if self._stop_attachments:
-                self._stop_on_post = post_id
-
-    async def on_text_chunk(self, text):
-        """Streaming text chunk — buffer and throttle-edit."""
-        self._text_buffer += text
-        self._text_has_content = True
-        if self._current_type == "thinking":
-            self._current_type = "text"
-        await self._throttled_edit(
-            self._current_post_id, self._text_buffer + THINKING_SUFFIX
-        )
-
-    async def on_text_done(self):
-        """Streaming text segment complete — strip thinking suffix."""
-        if self._current_post_id and self._text_buffer:
-            await self._force_edit(self._current_post_id, self._text_buffer)
-        self._current_type = None
-
-    async def on_text_complete(self, text):
-        """Non-streaming: full text arrives at once."""
-        if not text:
-            return
-        self._text_buffer = text
-        self._text_has_content = True
-        if self._current_type == "thinking" and self._current_post_id:
-            await self._force_edit(self._current_post_id, text)
-        elif self._current_post_id:
-            await self._force_edit(self._current_post_id, text)
-        else:
-            post_id = await self.client.send(
-                self._channel_id, text, root_id=self._root_id,
-                attachments=self._stop_attachments,
-            )
-            self._current_post_id = post_id
-            if self._stop_attachments:
-                self._stop_on_post = post_id
-        self._current_type = None
-
-    async def on_stream_chunk(self, chunk_type, data):
-        """Adapter for call_llm_streaming's on_chunk callback."""
-        if chunk_type == "text":
-            await self.on_text_chunk(data)
-        elif chunk_type == "tool_call_start":
-            # LLM is switching to tool calls — finalize text if we have any.
-            # Don't touch thinking placeholder with no text — on_tool_start
-            # will reuse it.
-            if self._text_has_content:
-                await self._finalize_current_text()
-                self._current_type = None
-        elif chunk_type == "done":
-            # Only finalize text if we actually streamed text content.
-            # If the LLM went straight to tool calls, preserve the thinking
-            # placeholder for on_tool_start to reuse.
-            if self._text_has_content:
-                await self.on_text_done()
-
-    # -- Tool call lifecycle ---------------------------------------------------
-
-    async def on_tool_start(self, tool_name, args, tool_call_id=""):
-        """Tool execution starting — finalize text, post tool call message."""
-        msg = f"\U0001f527 {tool_name}..."
-
-        # First tool in a batch: finalize text / reuse thinking placeholder
-        if not self._tools_text_finalized:
-            self._tools_text_finalized = True
-            if self._current_type == "thinking" and self._current_post_id and not self._text_has_content:
-                await self._force_edit(self._current_post_id, msg)
-                post_id = self._current_post_id
-                self._current_post_id = None
-            else:
-                await self._finalize_current_text()
-                post_id = await self.client.send(
-                    self._channel_id, msg, root_id=self._root_id,
-                    attachments=self._stop_attachments,
-                )
-                if self._stop_attachments:
-                    self._stop_on_post = post_id
-        else:
-            # Subsequent concurrent tool — always a new post
-            post_id = await self.client.send(
-                self._channel_id, msg, root_id=self._root_id,
-            )
-
-        self._tool_posts[tool_call_id] = post_id
-        self._current_type = "tool"
-
-    async def on_tool_status(self, tool_name, message, tool_call_id=""):
-        """Tool status update — edit the tool call's progress message.
-
-        If no existing tool post is found (e.g., memory_context or reflection
-        events that arrive without a preceding tool_start), create a standalone post.
-        """
-        post_id = self._tool_posts.get(tool_call_id)
-        if not post_id and self._tool_posts:
-            # Fallback: use most recent post if tool_call_id not found
-            post_id = list(self._tool_posts.values())[-1]
-        if post_id:
-            try:
-                await self.client.edit_message(
-                    post_id,
-                    f"\U0001f527 {tool_name}: {message}",
-                )
-            except Exception:
-                pass
-        else:
-            # Standalone status (no preceding tool_start) — create a new post
-            try:
-                await self.client.send(
-                    self._channel_id, message, root_id=self._root_id,
-                )
-            except Exception:
-                pass
-
-    async def on_tool_end(self, tool_name, result_text, display_text, media,
-                          tool_call_id="", display_short_text=None):
-        """Tool finished — edit tool call message with result, handle media."""
-        if display_text:
-            msg = display_text
-        elif display_short_text:
-            msg = f"\U0001f527 {tool_name}: {display_short_text} \u2714\ufe0f"
-        else:
-            msg = f"\U0001f527 {tool_name} \u2714\ufe0f"
-
-        post_id = self._tool_posts.pop(tool_call_id, None)
-        if post_id:
-            try:
-                await self.client.edit_message(
-                    post_id, msg, props={"attachments": []},
-                )
-                if self._stop_on_post == post_id:
-                    self._stop_on_post = None
-            except Exception:
-                pass
-
-        # Reset tool state when all concurrent tools are done
-        if not self._tool_posts:
-            self._current_type = None
-            self._tools_text_finalized = False
-
-    async def on_tool_media_uploaded(self, file_ids, tool_call_id=""):
-        """Tool media was uploaded — post files as a thread reply."""
-        if not file_ids:
-            return
-        try:
-            from .media import MattermostMediaHandler
-            handler = MattermostMediaHandler(self.client._http, channel_id=self._channel_id)
-            await handler.send_with_media(
-                self._channel_id, "", file_ids, root_id=self._root_id,
-            )
-        except Exception as e:
-            log.debug(f"Failed to post tool media: {e}")
-
-    # -- Confirmation ----------------------------------------------------------
-
-    async def on_confirm_request(self, tool_name, command, suggested_pattern,
-                                  event_bus, context_id, tool_call_id=""):
-        """Tool needs confirmation — show prompt with buttons and/or emoji."""
-        from .mattermost_ui import build_confirm_buttons
-
-        config = self._config
-
-        # Build the confirmation message text
-        msg = f"\U0001f6a8 **Confirm {tool_name}:**\n```\n{command}\n```"
-
-        # Add emoji instructions (unless disabled)
-        # Show emoji instructions if enabled (default: on when HTTP off, off when HTTP on)
-        show_emoji = not config or config.mattermost.enable_emoji_confirms
-        if show_emoji:
-            if tool_name == "shell" and suggested_pattern:
-                msg += (
-                    f"\nReact: \U0001f44d approve | \U0001f44e deny"
-                    f" | \U0001f4d3 allow `{suggested_pattern}`"
-                )
-            else:
-                msg += "\nReact: \U0001f44d approve | \U0001f44e deny | \u2705 always"
-
-        # Build interactive button attachments
-        attachments = []
-        if config:
-            attachments = build_confirm_buttons(
-                config, tool_name, command, suggested_pattern,
-                context_id, msg, tool_call_id=tool_call_id,
-            )
-            if attachments:
-                import json as _json
-                log.debug(f"Confirm buttons: {_json.dumps(attachments, indent=2)}")
-
-        tool_post_id = self._tool_posts.get(tool_call_id)
-        if tool_post_id:
-            # Edit existing post — can't add attachments to edit, so send new
-            if attachments:
-                confirm_post_id = await self.client.send(
-                    self._channel_id, msg, root_id=self._root_id,
-                    attachments=attachments,
-                )
-            else:
-                try:
-                    await self.client.edit_message(tool_post_id, msg)
-                except Exception:
-                    pass
-                confirm_post_id = tool_post_id
-        else:
-            confirm_post_id = await self.client.send(
-                self._channel_id, msg, root_id=self._root_id,
-                attachments=attachments,
-            )
-            self._tool_posts[tool_call_id] = confirm_post_id
-
-        # Start emoji reaction polling if emoji confirms are enabled
-        if confirm_post_id and show_emoji:
-            asyncio.create_task(
-                self.client._poll_confirmation(
-                    confirm_post_id, event_bus, context_id, tool_name,
-                    tool_call_id=tool_call_id,
-                )
-            )
-
-    # -- Finalization ----------------------------------------------------------
-
-    async def finalize(self):
-        """Agent turn complete — strip thinking suffix, clean up."""
-        if self._finalized:
-            return
-        self._finalized = True
-
-        if self._current_type in ("text", "thinking") and self._current_post_id:
-            if self._text_has_content and self._text_buffer:
-                # Strip thinking suffix — show final text
-                await self._force_edit(self._current_post_id, self._text_buffer)
-            elif self._current_type == "thinking":
-                # Never got any text — delete the thinking placeholder
-                try:
-                    await self.client.delete_message(self._current_post_id)
-                except Exception:
-                    pass
-
-        # Strip stop button from whichever post currently has it
-        if self._stop_on_post:
-            await self._strip_stop_from(self._stop_on_post)
-        self._stop_attachments = None
-
-    # -- Helpers ---------------------------------------------------------------
-
-    async def _strip_stop_from(self, post_id):
-        """Explicitly strip stop button attachments from a post.
-
-        Fetches the post first to preserve its message text — a props-only
-        edit with no message causes Mattermost to show '(message deleted)'.
-        """
-        if not post_id:
-            return
-        try:
-            resp = await self.client._http.get(f"/posts/{post_id}")
-            resp.raise_for_status()
-            current_text = resp.json().get("message", "")
-            await self.client.edit_message(
-                post_id, current_text, props={"attachments": []},
-            )
-        except Exception:
-            pass
-        if self._stop_on_post == post_id:
-            self._stop_on_post = None
-
-    async def _finalize_current_text(self):
-        """Strip thinking suffix and stop button from current text message."""
-        if self._current_type in ("text", "thinking") and self._current_post_id:
-            if self._text_has_content and self._text_buffer:
-                # Final text edit + strip stop button in one call
-                try:
-                    await self.client.edit_message(
-                        self._current_post_id, self._text_buffer,
-                        props={"attachments": []},
-                    )
-                    if self._stop_on_post == self._current_post_id:
-                        self._stop_on_post = None
-                except Exception:
-                    pass
-            else:
-                await self._strip_stop_from(self._current_post_id)
-            self._current_type = None
-
-    async def _throttled_edit(self, post_id, text):
-        """Edit a post if enough time has passed since last edit."""
-        if not post_id or not text:
-            return
-        now = time.monotonic()
-        if (now - self._last_edit_time) * 1000 < self._throttle_ms:
-            return
-        await self._force_edit(post_id, text)
-
-    async def _force_edit(self, post_id, text):
-        """Edit a post immediately, updating the throttle timer.
-
-        Text-only edit — does not touch props/attachments.
-        """
-        if not post_id:
-            return
-        self._last_edit_time = time.monotonic()
-        try:
-            await self.client.send_typing(self._channel_id)
-        except Exception:
-            pass
-        try:
-            await self.client.edit_message(post_id, text)
-        except Exception:
-            pass

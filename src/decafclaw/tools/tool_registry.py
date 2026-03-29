@@ -3,6 +3,8 @@
 import json
 import logging
 
+from ..util import estimate_tokens
+
 log = logging.getLogger(__name__)
 
 # Tools that are always sent to the LLM, even in deferred mode.
@@ -14,8 +16,8 @@ DEFAULT_ALWAYS_LOADED = {
 
 
 def estimate_tool_tokens(tool_defs: list[dict]) -> int:
-    """Estimate token cost of tool definitions. Uses JSON length / 4."""
-    return sum(len(json.dumps(td)) // 4 for td in tool_defs)
+    """Estimate token cost of tool definitions."""
+    return sum(estimate_tokens(json.dumps(td)) for td in tool_defs)
 
 
 def get_always_loaded_names(config) -> set[str]:
@@ -146,8 +148,8 @@ def build_deferred_list_text(
 
 
 def get_fetched_tools(ctx) -> set[str]:
-    """Read the fetched tools set from ctx.skill_data."""
-    skill_data = ctx.skill_data
+    """Read the fetched tools set from ctx.skills.data."""
+    skill_data = ctx.skills.data
     raw = skill_data.get("fetched_tools", [])
     if isinstance(raw, set):
         return raw
@@ -155,8 +157,6 @@ def get_fetched_tools(ctx) -> set[str]:
 
 
 def add_fetched_tools(ctx, names: set[str]) -> None:
-    """Add tool names to the fetched set in ctx.skill_data."""
-    if not hasattr(ctx, "skill_data"):
-        ctx.skill_data = {}
+    """Add tool names to the fetched set in ctx.skills.data."""
     existing = get_fetched_tools(ctx)
-    ctx.skill_data["fetched_tools"] = sorted(existing | names)
+    ctx.skills.data["fetched_tools"] = sorted(existing | names)

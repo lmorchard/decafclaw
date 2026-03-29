@@ -3,6 +3,7 @@
 import logging
 
 from .. import todos
+from ..media import ToolResult
 
 log = logging.getLogger(__name__)
 
@@ -14,11 +15,14 @@ def tool_todo_add(ctx, item: str) -> str:
     return todos.todo_add(ctx.config, conv_id, item)
 
 
-def tool_todo_complete(ctx, index: int) -> str:
+def tool_todo_complete(ctx, index: int) -> str | ToolResult:
     """Mark a to-do item as complete."""
     log.info(f"[tool:todo_complete] #{index}")
     conv_id = (ctx.conv_id or "default")
-    return todos.todo_complete(ctx.config, conv_id, index)
+    result = todos.todo_complete(ctx.config, conv_id, index)
+    if result.startswith("[error:"):
+        return ToolResult(text=result)
+    return result
 
 
 def tool_todo_list(ctx) -> str:

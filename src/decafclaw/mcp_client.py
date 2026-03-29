@@ -13,6 +13,14 @@ from typing import Any
 
 log = logging.getLogger(__name__)
 
+
+def _ga(obj, key, default=None):
+    """Get attribute from dict or object uniformly."""
+    if isinstance(obj, dict):
+        return obj.get(key, default)
+    return getattr(obj, key, default)
+
+
 # Server name validation: lowercase alphanumeric + hyphens
 _VALID_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 
@@ -142,14 +150,9 @@ def _convert_tool_definition(server_name: str, mcp_tool) -> dict:
 
     mcp_tool can be a dict or an SDK Tool object (has .name, .description, .inputSchema).
     """
-    if isinstance(mcp_tool, dict):
-        name = mcp_tool.get("name", "")
-        description = mcp_tool.get("description", "")
-        input_schema = mcp_tool.get("inputSchema", {"type": "object", "properties": {}})
-    else:
-        name = getattr(mcp_tool, "name", "")
-        description = getattr(mcp_tool, "description", "")
-        input_schema = getattr(mcp_tool, "inputSchema", {"type": "object", "properties": {}})
+    name = _ga(mcp_tool, "name", "")
+    description = _ga(mcp_tool, "description", "")
+    input_schema = _ga(mcp_tool, "inputSchema", {"type": "object", "properties": {}})
 
     return {
         "type": "function",
@@ -161,24 +164,44 @@ def _convert_tool_definition(server_name: str, mcp_tool) -> dict:
     }
 
 
+def _decode_media(item, label: str, count: int, default_mime: str, default_ext: str):
+    """Decode a base64 media item into a media attachment dict and text placeholder.
+
+    Returns (media_dict, placeholder_text).
+    """
+    import base64
+    import mimetypes as _mimetypes
+
+    data_str = _ga(item, "data", "")
+    mime_type = _ga(item, "mimeType", "") or default_mime
+    ext = _mimetypes.guess_extension(mime_type) or default_ext
+
+    try:
+        data = base64.b64decode(data_str)
+    except Exception:
+        data = data_str.encode() if isinstance(data_str, str) else data_str
+
+    filename = f"mcp-{label}-{count}{ext}"
+    attachment = {
+        "type": "file",
+        "filename": filename,
+        "data": data,
+        "content_type": mime_type,
+    }
+    placeholder = f"[file attached: {filename} ({mime_type}) — will appear as an attachment on your reply]"
+    return attachment, placeholder
+
+
 def _convert_mcp_response(result):
     """Convert an MCP tools/call response to a ToolResult.
 
     Handles text, image/audio media, and errors.
     Returns a ToolResult with text and optional media attachments.
     """
-    import base64
-    import mimetypes as _mimetypes
-
     from .media import ToolResult
 
-    # Handle dict or SDK result object
-    if isinstance(result, dict):
-        is_error = result.get("isError", False)
-        content = result.get("content", [])
-    else:
-        is_error = getattr(result, "isError", False)
-        content = getattr(result, "content", [])
+    is_error = _ga(result, "isError", False)
+    content = _ga(result, "content", [])
 
     parts = []
     media = []
@@ -186,55 +209,21 @@ def _convert_mcp_response(result):
     audio_count = 0
 
     for item in content:
-        if isinstance(item, dict):
-            item_type = item.get("type", "")
-            text = item.get("text", "")
-        else:
-            item_type = getattr(item, "type", "")
-            text = getattr(item, "text", "")
+        item_type = _ga(item, "type", "")
+        text = _ga(item, "text", "")
 
         if item_type == "text":
             parts.append(text)
         elif item_type == "image":
-            data_str = item.get("data", "") if isinstance(item, dict) else getattr(item, "data", "")
-            mime_type = (item.get("mimeType", "") if isinstance(item, dict)
-                        else getattr(item, "mimeType", "")) or "image/png"
-            ext = _mimetypes.guess_extension(mime_type) or ".png"
-
-            try:
-                data = base64.b64decode(data_str)
-            except Exception:
-                data = data_str.encode() if isinstance(data_str, str) else data_str
-
             img_count += 1
-            media.append({
-                "type": "file",
-                "filename": f"mcp-image-{img_count}{ext}",
-                "data": data,
-                "content_type": mime_type,
-            })
-            parts.append(f"[file attached: mcp-image-{img_count}{ext} ({mime_type}) — will appear as an attachment on your reply]")
-
+            attachment, placeholder = _decode_media(item, "image", img_count, "image/png", ".png")
+            media.append(attachment)
+            parts.append(placeholder)
         elif item_type == "audio":
-            data_str = item.get("data", "") if isinstance(item, dict) else getattr(item, "data", "")
-            mime_type = (item.get("mimeType", "") if isinstance(item, dict)
-                        else getattr(item, "mimeType", "")) or "audio/wav"
-            ext = _mimetypes.guess_extension(mime_type) or ".wav"
-
-            try:
-                data = base64.b64decode(data_str)
-            except Exception:
-                data = data_str.encode() if isinstance(data_str, str) else data_str
-
             audio_count += 1
-            media.append({
-                "type": "file",
-                "filename": f"mcp-audio-{audio_count}{ext}",
-                "data": data,
-                "content_type": mime_type,
-            })
-            parts.append(f"[file attached: mcp-audio-{audio_count}{ext} ({mime_type}) — will appear as an attachment on your reply]")
-
+            attachment, placeholder = _decode_media(item, "audio", audio_count, "audio/wav", ".wav")
+            media.append(attachment)
+            parts.append(placeholder)
         else:
             parts.append(f"[{item_type}: unsupported content type]")
 
@@ -256,27 +245,19 @@ def _convert_resource_response(result):
 
     from .media import ToolResult
 
-    # Handle dict or SDK result object
-    if isinstance(result, dict):
-        contents = result.get("contents", [])
-    else:
-        contents = getattr(result, "contents", [])
+    contents = _ga(result, "contents", [])
 
     parts = []
     media = []
     blob_count = 0
 
     for item in contents:
-        if isinstance(item, dict):
-            item_text = item.get("text")
-            item_blob = item.get("blob")
-            item_uri = item.get("uri", "")
-            item_mime = item.get("mimeType", "")
-        else:
-            item_text = getattr(item, "text", None)
-            item_blob = getattr(item, "blob", None)
-            item_uri = str(getattr(item, "uri", ""))
-            item_mime = getattr(item, "mimeType", "") or ""
+        item_text = _ga(item, "text")
+        item_blob = _ga(item, "blob")
+        item_uri = _ga(item, "uri", "")
+        if not isinstance(item_uri, str):
+            item_uri = str(item_uri)
+        item_mime = _ga(item, "mimeType", "") or ""
 
         if item_text is not None:
             parts.append(item_text)
@@ -289,13 +270,14 @@ def _convert_resource_response(result):
                 data = item_blob.encode() if isinstance(item_blob, str) else item_blob
 
             blob_count += 1
+            filename = f"mcp-resource-{blob_count}{ext}"
             media.append({
                 "type": "file",
-                "filename": f"mcp-resource-{blob_count}{ext}",
+                "filename": filename,
                 "data": data,
                 "content_type": mime_type,
             })
-            parts.append(f"[file attached: mcp-resource-{blob_count}{ext} ({mime_type}) — will appear as an attachment on your reply]")
+            parts.append(f"[file attached: {filename} ({mime_type}) — will appear as an attachment on your reply]")
         else:
             parts.append(f"[unsupported resource content from {item_uri}]")
 
@@ -309,19 +291,12 @@ def _convert_prompt_response(result):
     The result contains .messages — a list of PromptMessage objects
     with .role and .content. Converts to a readable text block.
     """
-    if isinstance(result, dict):
-        messages = result.get("messages", [])
-    else:
-        messages = getattr(result, "messages", [])
+    messages = _ga(result, "messages", [])
 
     parts = []
     for msg in messages:
-        if isinstance(msg, dict):
-            role = msg.get("role", "unknown")
-            content = msg.get("content", {})
-        else:
-            role = getattr(msg, "role", "unknown")
-            content = getattr(msg, "content", {})
+        role = _ga(msg, "role", "unknown")
+        content = _ga(msg, "content", {})
 
         # Content can be TextContent, ImageContent, EmbeddedResource, or a dict
         if isinstance(content, dict):

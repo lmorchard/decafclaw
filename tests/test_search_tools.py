@@ -32,7 +32,7 @@ SAMPLE_POOL = [
 @pytest.fixture
 def search_ctx(ctx):
     """Ctx with a deferred pool set."""
-    ctx.deferred_tool_pool = list(SAMPLE_POOL)
+    ctx.tools.deferred_pool = list(SAMPLE_POOL)
     return ctx
 
 
@@ -101,6 +101,6 @@ class TestEmptyPool:
         assert "No deferred tools" in result.text
 
     def test_empty_pool(self, ctx):
-        ctx.deferred_tool_pool = []
+        ctx.tools.deferred_pool = []
         result = tool_search(ctx, "anything")
         assert "No deferred tools" in result.text

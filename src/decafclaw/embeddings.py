@@ -25,14 +25,8 @@ def _has_embedding_column(conn) -> bool:
     return "embedding" in cols
 
 
-def _get_db(config) -> sqlite3.Connection:
-    """Get or create the embeddings database."""
-    path = _db_path(config)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(path))
-    conn.enable_load_extension(True)
-    sqlite_vec.load(conn)
-    conn.enable_load_extension(False)
+def _init_schema(conn, config):
+    """Create tables and indexes for the embeddings database."""
     # Fresh DBs get clean schema (no embedding BLOB column).
     # Old DBs already have the table — IF NOT EXISTS skips this,
     # preserving their embedding column for migration.
@@ -63,23 +57,41 @@ def _get_db(config) -> sqlite3.Connection:
             embedding float[{dim}] distance_metric=cosine
         )
     """)
-    # Migration: copy legacy embedding BLOBs into vec0 table.
-    # Uses NOT EXISTS so it's idempotent — safe to retry after partial migration.
-    if _has_embedding_column(conn):
-        legacy_count = conn.execute("""
-            SELECT COUNT(*) FROM memory_embeddings m
+
+
+def _migrate_legacy(conn):
+    """Migrate legacy embedding BLOBs into vec0 table.
+
+    Uses NOT EXISTS so it's idempotent — safe to retry after partial migration.
+    """
+    if not _has_embedding_column(conn):
+        return
+    legacy_count = conn.execute("""
+        SELECT COUNT(*) FROM memory_embeddings m
+        WHERE length(m.embedding) > 0
+          AND NOT EXISTS (SELECT 1 FROM embeddings_vec v WHERE v.rowid = m.id)
+    """).fetchone()[0]
+    if legacy_count > 0:
+        log.info(f"Migrating {legacy_count} embeddings to vec0 table...")
+        conn.execute("""
+            INSERT INTO embeddings_vec(rowid, embedding)
+            SELECT m.id, m.embedding FROM memory_embeddings m
             WHERE length(m.embedding) > 0
               AND NOT EXISTS (SELECT 1 FROM embeddings_vec v WHERE v.rowid = m.id)
-        """).fetchone()[0]
-        if legacy_count > 0:
-            log.info(f"Migrating {legacy_count} embeddings to vec0 table...")
-            conn.execute("""
-                INSERT INTO embeddings_vec(rowid, embedding)
-                SELECT m.id, m.embedding FROM memory_embeddings m
-                WHERE length(m.embedding) > 0
-                  AND NOT EXISTS (SELECT 1 FROM embeddings_vec v WHERE v.rowid = m.id)
-            """)
-            log.info("Vec0 migration complete")
+        """)
+        log.info("Vec0 migration complete")
+
+
+def _get_db(config) -> sqlite3.Connection:
+    """Get or create the embeddings database."""
+    path = _db_path(config)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(path))
+    conn.enable_load_extension(True)
+    sqlite_vec.load(conn)
+    conn.enable_load_extension(False)
+    _init_schema(conn, config)
+    _migrate_legacy(conn)
     conn.commit()
     return conn
 
@@ -241,7 +253,7 @@ def search_similar_sync(config, query_embedding: list[float], top_k: int = 5,
 
         query_vec = sqlite_vec.serialize_float32(query_embedding)
 
-        # Over-fetch to allow for source_type filtering and wiki boost reranking
+        # Over-fetch to allow for threshold filtering and wiki boost reranking
         fetch_k = top_k * 3
 
         rows = conn.execute("""
@@ -259,7 +271,8 @@ def search_similar_sync(config, query_embedding: list[float], top_k: int = 5,
     if not rows:
         return []
 
-    # Score boost for curated wiki content
+    # Wiki pages are curated knowledge, so they get a slight relevance boost
+    # over raw memory/conversation entries.
     WIKI_BOOST = 1.2
 
     results = []
@@ -312,18 +325,28 @@ async def search_similar(config, query: str, top_k: int = 5,
     return search_similar_sync(config, query_embedding, top_k, source_type=source_type)
 
 
-async def reindex_all(config):
-    """Rebuild the entire index from markdown memory files."""
+async def _reindex_entries(entries, label, config):
+    """Reindex a sequence of (source_id, text, source_type, metadata) tuples."""
+    count = 0
+    for source_id, text, source_type, _meta in entries:
+        await index_entry(config, source_id, text, source_type)
+        count += 1
+        if count % 10 == 0:
+            print(f"  {label}: {count}...")
+    print(f"  {label}: {count} total")
+    return count
+
+
+def _iter_memory_entries(config):
+    """Yield (source_id, text, source_type, metadata) tuples from memory files."""
     from .memory import memory_dir
 
     base = memory_dir(config)
     if not base.exists():
-        log.info("No memory directory found, nothing to index")
-        return 0
+        return
 
     md_files = sorted(base.rglob("*.md"))
-    count = 0
-    for fi, filepath in enumerate(md_files):
+    for filepath in md_files:
         text = filepath.read_text()
         parts = text.split("\n## ")
         for part in parts:
@@ -331,26 +354,19 @@ async def reindex_all(config):
             if not part:
                 continue
             entry = "## " + part if not part.startswith("## ") else part
-            await index_entry(config, str(filepath.relative_to(base)), entry)
-            count += 1
-            if count % 10 == 0:
-                print(f"  memories: {count} entries ({fi + 1}/{len(md_files)} files)...", flush=True)
-
-    log.info(f"Reindexed {count} entries from {len(md_files)} files")
-    return count
+            yield str(filepath.relative_to(base)), entry, "memory", {}
 
 
-async def reindex_conversations(config):
-    """Rebuild conversation embeddings from JSONL archive files."""
+def _iter_conversation_entries(config):
+    """Yield (source_id, text, source_type, metadata) tuples from conversation archives."""
+    import json as _json
+
     conv_dir = config.workspace_path / "conversations"
     if not conv_dir.exists():
-        log.info("No conversations directory found, nothing to index")
-        return 0
+        return
 
-    import json as _json
     jsonl_files = sorted(conv_dir.glob("*.jsonl"))
-    count = 0
-    for fi, filepath in enumerate(jsonl_files):
+    for filepath in jsonl_files:
         conv_id = filepath.stem
         for line in filepath.read_text().splitlines():
             line = line.strip()
@@ -362,12 +378,47 @@ async def reindex_conversations(config):
                 if content and len(content) > 20:
                     role = msg.get("role", "unknown")
                     entry_text = f"{role}: {content}"
-                    await index_entry(config, conv_id, entry_text, source_type="conversation")
-                    count += 1
-                    if count % 10 == 0:
-                        print(f"  conversations: {count} messages ({fi + 1}/{len(jsonl_files)} files)...", flush=True)
+                    yield conv_id, entry_text, "conversation", {}
 
-    log.info(f"Reindexed {count} conversation messages from {len(jsonl_files)} files")
+
+def _iter_wiki_entries(config):
+    """Yield (source_id, text, source_type, metadata) tuples from wiki pages."""
+    wiki_dir = config.workspace_path / "wiki"
+    if not wiki_dir.is_dir():
+        return
+
+    md_files = sorted(wiki_dir.rglob("*.md"))
+    for filepath in md_files:
+        text = filepath.read_text().strip()
+        if not text:
+            continue
+        rel_path = str(filepath.relative_to(config.workspace_path))
+        yield rel_path, text, "wiki", {}
+
+
+async def reindex_all(config):
+    """Rebuild the entire index from markdown memory files."""
+    from .memory import memory_dir
+
+    base = memory_dir(config)
+    if not base.exists():
+        log.info("No memory directory found, nothing to index")
+        return 0
+
+    count = await _reindex_entries(_iter_memory_entries(config), "memories", config)
+    log.info(f"Reindexed {count} memory entries")
+    return count
+
+
+async def reindex_conversations(config):
+    """Rebuild conversation embeddings from JSONL archive files."""
+    conv_dir = config.workspace_path / "conversations"
+    if not conv_dir.exists():
+        log.info("No conversations directory found, nothing to index")
+        return 0
+
+    count = await _reindex_entries(_iter_conversation_entries(config), "conversations", config)
+    log.info(f"Reindexed {count} conversation messages")
     return count
 
 
@@ -383,19 +434,8 @@ async def reindex_wiki(config):
     if deleted:
         log.info(f"Cleared {deleted} existing wiki embedding(s)")
 
-    md_files = sorted(wiki_dir.rglob("*.md"))
-    count = 0
-    for fi, filepath in enumerate(md_files):
-        text = filepath.read_text().strip()
-        if not text:
-            continue
-        rel_path = str(filepath.relative_to(config.workspace_path))
-        await index_entry(config, rel_path, text, source_type="wiki")
-        count += 1
-        if count % 10 == 0:
-            print(f"  wiki: {count} pages ({fi + 1}/{len(md_files)} files)...", flush=True)
-
-    log.info(f"Reindexed {count} wiki pages from {len(md_files)} files")
+    count = await _reindex_entries(_iter_wiki_entries(config), "wiki", config)
+    log.info(f"Reindexed {count} wiki pages")
     return count
 
 

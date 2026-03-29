@@ -121,12 +121,9 @@ def is_heartbeat_ok(response: str | None) -> bool:
 
 def build_section_prompt(section: dict) -> str:
     """Build the prompt for a heartbeat section."""
-    preamble = (
-        "You are running a scheduled heartbeat check. "
-        "Execute the following task and report your findings.\n"
-        "If there is nothing to report, respond with HEARTBEAT_OK.\n"
-        "Prefer workspace tools (workspace_read, workspace_write, workspace_list) over shell commands.\n\n"
-    )
+    from .polling import build_task_preamble
+
+    preamble = build_task_preamble("scheduled heartbeat check")
 
     if section["title"] == "General":
         return preamble + section["body"]
@@ -152,14 +149,13 @@ async def run_section_turn(
 
     try:
         source = section.get("source", "workspace")
-        ctx = Context(config=config, event_bus=event_bus)
-        ctx.user_id = f"heartbeat-{source}"
-        ctx.channel_id = "heartbeat"
-        ctx.channel_name = "heartbeat"
-        ctx.thread_id = ""
-        ctx.conv_id = f"heartbeat-{timestamp}-{index}"
-        ctx.skip_reflection = True
-        ctx.skip_memory_context = True
+        ctx = Context.for_task(
+            config, event_bus,
+            user_id=f"heartbeat-{source}",
+            conv_id=f"heartbeat-{timestamp}-{index}",
+            channel_id="heartbeat",
+            channel_name="heartbeat",
+        )
 
         prompt = build_section_prompt(section)
         result = await run_agent_turn(ctx, prompt, history=[])
@@ -248,6 +244,8 @@ async def run_heartbeat_timer(config, event_bus, shutdown_event,
                   (running + reporting). If provided, on_results is ignored.
         on_results: optional async callback(results) called after the default cycle.
     """
+    from .polling import run_polling_loop
+
     interval = parse_interval(config.heartbeat.interval)
     if interval is None:
         log.info("Heartbeat disabled (no interval configured)")
@@ -263,47 +261,30 @@ async def run_heartbeat_timer(config, event_bus, shutdown_event,
         log.info(f"Heartbeat timer starting: interval={config.heartbeat.interval} ({interval}s), "
                  f"no previous run recorded")
 
-    cycle_running = False
-
-    while not shutdown_event.is_set():
-        # Poll every _POLL_INTERVAL seconds (or less if shutdown)
-        try:
-            await asyncio.wait_for(shutdown_event.wait(), timeout=_POLL_INTERVAL)
-            break  # shutdown signaled
-        except asyncio.TimeoutError:
-            pass  # normal — check if heartbeat is due
-
-        if shutdown_event.is_set():
-            break
-
+    async def _tick():
         # Check if enough time has passed since last heartbeat
-        last_run = read_last_heartbeat(config)
-        if last_run > 0 and (time.time() - last_run) < interval:
-            continue  # not yet due
+        last = read_last_heartbeat(config)
+        if last > 0 and (time.time() - last) < interval:
+            return  # not yet due
 
-        # Overlap protection
-        if cycle_running:
-            log.warning("Heartbeat cycle still running, skipping this tick")
-            continue
+        log.info("Heartbeat cycle starting")
+        _write_last_heartbeat(config)
 
-        cycle_running = True
-        try:
-            log.info("Heartbeat cycle starting")
-            _write_last_heartbeat(config)
+        if on_cycle:
+            await on_cycle()
+        else:
+            results = await run_heartbeat_cycle(config, event_bus)
+            if on_results and results:
+                try:
+                    await on_results(results)
+                except Exception as e:
+                    log.error(f"Heartbeat reporting failed: {e}")
 
-            if on_cycle:
-                await on_cycle()
-            else:
-                results = await run_heartbeat_cycle(config, event_bus)
-                if on_results and results:
-                    try:
-                        await on_results(results)
-                    except Exception as e:
-                        log.error(f"Heartbeat reporting failed: {e}")
-
-        except Exception as e:
-            log.error(f"Heartbeat cycle failed: {e}")
-        finally:
-            cycle_running = False
+    await run_polling_loop(
+        interval=_POLL_INTERVAL,
+        shutdown_event=shutdown_event,
+        on_tick=_tick,
+        label="Heartbeat",
+    )
 
     log.info("Heartbeat timer stopped")

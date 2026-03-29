@@ -78,7 +78,7 @@ async def test_confirm_round_trip_with_tool_call_id(ctx):
     """Full round-trip: request_confirmation + simulated browser response with tool_call_id."""
     from decafclaw.tools.confirmation import request_confirmation
 
-    ctx.current_tool_call_id = "call_abc"
+    ctx.tools.current_call_id = "call_abc"
 
     # Capture the confirm request event to verify it includes tool_call_id
     request_events = []
@@ -120,7 +120,7 @@ async def test_publish_includes_tool_call_id_from_ctx(ctx):
     published = []
     ctx.event_bus.subscribe(lambda e: published.append(e))
 
-    ctx.current_tool_call_id = "call_xyz"
+    ctx.tools.current_call_id = "call_xyz"
     await ctx.publish("tool_status", tool="shell", message="running...")
 
     assert published[0]["tool_call_id"] == "call_xyz"
@@ -132,7 +132,7 @@ async def test_publish_does_not_override_explicit_tool_call_id(ctx):
     published = []
     ctx.event_bus.subscribe(lambda e: published.append(e))
 
-    ctx.current_tool_call_id = "call_xyz"
+    ctx.tools.current_call_id = "call_xyz"
     await ctx.publish("tool_status", tool="shell", message="running...",
                       tool_call_id="call_override")
 
@@ -145,7 +145,7 @@ async def test_publish_no_tool_call_id_when_unset(ctx):
     published = []
     ctx.event_bus.subscribe(lambda e: published.append(e))
 
-    ctx.current_tool_call_id = ""
+    ctx.tools.current_call_id = ""
     await ctx.publish("tool_status", tool="shell", message="running...")
 
     assert "tool_call_id" not in published[0]

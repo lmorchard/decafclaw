@@ -367,7 +367,7 @@ async def test_activate_already_active(ctx, tmp_path):
     """Re-activating returns 'already active'."""
     skill = _make_skill_info(tmp_path)
     ctx.config.discovered_skills = [skill]
-    ctx.activated_skills = {skill.name}
+    ctx.skills.activated = {skill.name}
     _save_permission(ctx.config, skill.name, "always")
 
     result = await tool_activate_skill(ctx, name=skill.name)
@@ -383,7 +383,7 @@ async def test_activate_with_always_permission(ctx, tmp_path):
 
     result = await tool_activate_skill(ctx, name=skill.name)
     assert "Instructions here." in _text(result)
-    assert skill.name in getattr(ctx, "activated_skills", set())
+    assert skill.name in ctx.skills.activated
 
 
 @pytest.mark.asyncio
@@ -427,5 +427,5 @@ async def test_activate_native_skill(ctx, tmp_path):
     result = await tool_activate_skill(ctx, name="native-skill")
     assert "Native instructions." in _text(result)
     assert "native_test" in _text(result)
-    assert "native_test" in ctx.extra_tools
-    assert len(ctx.extra_tool_definitions) == 1
+    assert "native_test" in ctx.tools.extra
+    assert len(ctx.tools.extra_definitions) == 1

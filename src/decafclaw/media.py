@@ -127,13 +127,12 @@ def extract_workspace_media(text: str, workspace_path: Path) -> tuple[str, list[
 # -- Terminal media handler ----------------------------------------------------
 
 
-class TerminalMediaHandler(MediaHandler):
-    """Media handler for interactive terminal mode — saves to conversation uploads."""
+class LocalFileMediaHandler(MediaHandler):
+    """Media handler for terminal and web UI — saves to conversation uploads."""
 
-    strips_workspace_refs = False
-
-    def __init__(self, config):
+    def __init__(self, config, strips_workspace_refs: bool = False):
         self.config = config
+        self.strips_workspace_refs = strips_workspace_refs
 
     async def save_media(self, conv_id, filename, data, content_type):
         """Save media to conversation uploads, return workspace ref."""
@@ -152,36 +151,7 @@ class TerminalMediaHandler(MediaHandler):
         raise NotImplementedError
 
     async def send_with_media(self, channel_id, message, media_refs, root_id=None):
-        """Not applicable in terminal mode."""
-        return ""
-
-
-class WebMediaHandler(MediaHandler):
-    """Media handler for web UI — saves to conversation uploads."""
-
-    strips_workspace_refs = False
-
-    def __init__(self, config):
-        self.config = config
-
-    async def save_media(self, conv_id, filename, data, content_type):
-        """Save media to conversation uploads, return workspace ref."""
-        import asyncio
-
-        from .attachments import save_attachment
-        result = await asyncio.to_thread(
-            save_attachment, self.config, conv_id, filename, data, content_type)
-        return MediaSaveResult(
-            workspace_ref="workspace://" + result["path"],
-            saved_filename=result["filename"],
-        )
-
-    async def upload_file(self, channel_id, filename, data, content_type):
-        """Legacy — not used with per-tool-call processing."""
-        raise NotImplementedError
-
-    async def send_with_media(self, channel_id, message, media_refs, root_id=None):
-        """Not applicable in web mode."""
+        """Not applicable in local file mode."""
         return ""
 
 

@@ -111,8 +111,19 @@ class Document:
 
     def __init__(self, text: str):
         self.lines: list[str] = text.splitlines(keepends=True)
-        self.sections: list[Section] = []
+        self._sections: list[Section] = []
+        self._dirty: bool = False
         self._parse()
+        self._dirty = False
+
+    @property
+    def sections(self) -> list[Section]:
+        self._ensure_parsed()
+        return self._sections
+
+    @sections.setter
+    def sections(self, value: list[Section]) -> None:
+        self._sections = value
 
     @classmethod
     def from_file(cls, path: str | Path) -> "Document":
@@ -149,22 +160,30 @@ class Document:
                     sec.content_end = later.heading_line
                     break
 
-        self.sections = _build_tree(flat)
+        self._sections = _build_tree(flat)
+        self._dirty = False
+
+    def _ensure_parsed(self) -> None:
+        if self._dirty:
+            self._parse()
 
     # --- Section lookup ---
 
     def find_section(self, path: str) -> Section | None:
+        self._ensure_parsed()
         parts = [p.strip().lower() for p in path.split("/")]
-        return _walk_path(self.sections, parts)
+        return _walk_path(self._sections, parts)
 
     def list_sections(self, depth: int = 0) -> list[tuple[int, Section]]:
+        self._ensure_parsed()
         result: list[tuple[int, Section]] = []
-        _flatten_sections(self.sections, 0, result)
+        _flatten_sections(self._sections, 0, result)
         return result
 
     # --- Checklist operations ---
 
     def get_items(self, section: Section) -> list[ChecklistItem]:
+        self._ensure_parsed()
         items = []
         end = section.children[0].heading_line if section.children else section.content_end
         for i in range(section.content_start, end):
@@ -227,7 +246,7 @@ class Document:
             reparse_end = insert_at + len(new_lines)
             if reparse_end < len(self.lines):
                 self.lines.insert(reparse_end, "\n")
-                self._parse()
+                self._dirty = True
 
     def prepend(self, section: Section, text: str) -> None:
         insert_at = section.content_start
@@ -446,7 +465,7 @@ class Document:
         if not sec:
             return False
         self.lines[sec.heading_line] = f"{'#' * sec.level} {new_title}\n"
-        self._parse()
+        self._dirty = True
         return True
 
     def replace_section_content(self, path: str, new_content: str) -> bool:
@@ -459,7 +478,7 @@ class Document:
             new_lines.append("\n")
         del self.lines[sec.content_start : end]
         self.lines[sec.content_start : sec.content_start] = new_lines
-        self._parse()
+        self._dirty = True
         return True
 
     def remove_section(self, path: str) -> list[str] | None:
@@ -504,11 +523,13 @@ class Document:
 
     def _insert_lines(self, at: int, new_lines: list[str]) -> None:
         self.lines[at:at] = new_lines
-        self._parse()
+        self._dirty = True
+        self._collapse_blank_lines()
 
     def _delete_lines(self, at: int, count: int) -> None:
         del self.lines[at : at + count]
-        self._parse()
+        self._dirty = True
+        self._collapse_blank_lines()
 
     def _collapse_blank_lines(self) -> None:
         i = 0
@@ -520,7 +541,6 @@ class Document:
                 if j - i > 2:
                     del self.lines[i + 2 : j]
             i += 1
-        self._parse()
 
 
 # ---------------------------------------------------------------------------
@@ -630,7 +650,7 @@ def bulk_move_items(
     raw_lines = [from_doc.lines[item.line_index].rstrip("\n") for item in to_move]
     for item in reversed(to_move):
         from_doc._delete_lines(item.line_index, 1)
-        from_doc._parse()
+    from_doc._ensure_parsed()
     for raw in raw_lines:
         to_sec = to_doc.find_section(to_section_path)
         if not to_sec:

@@ -1,14 +1,5 @@
 import { LitElement, html, nothing } from 'lit';
-
-/**
- * @param {string} ts
- * @returns {string}
- */
-function formatTime(ts) {
-  if (!ts) return '';
-  const d = new Date(ts);
-  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-}
+import { formatTime } from '../../lib/utils.js';
 
 /** User message — plain text with optional attachments, right-aligned. */
 export class UserMessage extends LitElement {

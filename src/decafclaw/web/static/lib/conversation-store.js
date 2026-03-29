@@ -30,6 +30,8 @@
  */
 
 import { uploadFile } from './upload-client.js';
+import { MessageStore } from './message-store.js';
+import { ToolStatusStore } from './tool-status-store.js';
 import { WebSocketClient } from './websocket-client.js';
 
 /**
@@ -37,27 +39,23 @@ import { WebSocketClient } from './websocket-client.js';
  * Talks to the server via WebSocketClient, holds all UI state,
  * and emits 'change' events for components to re-render.
  *
+ * Message and tool-status state are delegated to sub-stores.
+ *
  * @fires ConversationStore#change
  */
 export class ConversationStore extends EventTarget {
   /** @type {WebSocketClient} */
   #ws;
+  /** @type {MessageStore} */
+  #messageStore;
+  /** @type {ToolStatusStore} */
+  #toolStatusStore;
   /** @type {ConversationMeta[]} */
   #conversations = [];
   /** @type {string|null} */
   #currentConvId = null;
-  /** @type {ChatMessage[]} */
-  #currentMessages = [];
-  /** @type {string} */
-  #streamingText = '';
   /** @type {boolean} */
   #busy = false;
-  /** @type {boolean} */
-  #hasMore = false;
-  /** @type {PendingConfirm[]} */
-  #pendingConfirms = [];
-  /** @type {string|null} */
-  #toolStatus = null;
   /** @type {ConversationMeta[]} */
   #archivedConversations = [];
   /** @type {number} prompt tokens used in the last completed turn */
@@ -81,6 +79,9 @@ export class ConversationStore extends EventTarget {
   constructor(wsClient) {
     super();
     this.#ws = wsClient;
+    const onChange = () => this.#emitChange();
+    this.#messageStore = new MessageStore(onChange);
+    this.#toolStatusStore = new ToolStatusStore(onChange, wsClient);
     this.#ws.addEventListener('message', (e) => this.#handleMessage(/** @type {CustomEvent} */(e).detail));
     this.#ws.addEventListener('open', () => this.listConversations());
   }
@@ -92,17 +93,17 @@ export class ConversationStore extends EventTarget {
   /** @returns {string|null} */
   get currentConvId() { return this.#currentConvId; }
   /** @returns {ChatMessage[]} */
-  get currentMessages() { return this.#currentMessages; }
+  get currentMessages() { return this.#messageStore.currentMessages; }
   /** @returns {string} */
-  get streamingText() { return this.#streamingText; }
+  get streamingText() { return this.#messageStore.streamingText; }
   /** @returns {boolean} */
   get isBusy() { return this.#busy; }
   /** @returns {boolean} */
-  get hasMore() { return this.#hasMore; }
+  get hasMore() { return this.#messageStore.hasMore; }
   /** @returns {PendingConfirm[]} */
-  get pendingConfirms() { return this.#pendingConfirms; }
+  get pendingConfirms() { return this.#toolStatusStore.pendingConfirms; }
   /** @returns {string|null} */
-  get toolStatus() { return this.#toolStatus; }
+  get toolStatus() { return this.#toolStatusStore.toolStatus; }
   /** @returns {ConversationMeta[]} */
   get archivedConversations() { return this.#archivedConversations; }
   /** @returns {number} */
@@ -134,11 +135,8 @@ export class ConversationStore extends EventTarget {
   /** @param {string} convId */
   selectConversation(convId) {
     this.#currentConvId = convId;
-    this.#currentMessages = [];
-    this.#streamingText = '';
-    this.#hasMore = false;
-    this.#pendingConfirms = [];
-    this.#toolStatus = null;
+    this.#messageStore.clear();
+    this.#toolStatusStore.clear();
     this.#contextUsage = 0;
     this.#contextLimit = 0;
     this.#currentEffort = 'default';
@@ -173,8 +171,7 @@ export class ConversationStore extends EventTarget {
     // If we're viewing the archived conversation, deselect it
     if (this.#currentConvId === convId) {
       this.#currentConvId = null;
-      this.#currentMessages = [];
-      this.#streamingText = '';
+      this.#messageStore.clear();
       this.#emitChange();
     }
   }
@@ -196,10 +193,10 @@ export class ConversationStore extends EventTarget {
     // Optimistically add user message
     const userMsg = { role: 'user', content: text, timestamp: new Date().toISOString() };
     if (attachments.length) userMsg.attachments = attachments;
-    this.#currentMessages.push(userMsg);
+    this.#messageStore.pushMessage(userMsg);
     this.#busy = true;
-    this.#streamingText = '';
-    this.#toolStatus = null;
+    this.#messageStore.clearStreamingText();
+    this.#toolStatusStore.clearToolStatus();
     const wsMsg = { type: 'send', conv_id: this.#currentConvId, text };
     if (attachments.length) wsMsg.attachments = attachments;
     this.#ws.send(wsMsg);
@@ -244,7 +241,7 @@ export class ConversationStore extends EventTarget {
   /** @param {string} [before] timestamp cursor */
   loadMoreHistory(before = '') {
     if (!this.#currentConvId) return;
-    const cursor = before || (this.#currentMessages[0]?.timestamp || '');
+    const cursor = before || (this.#messageStore.currentMessages[0]?.timestamp || '');
     this.#ws.send({ type: 'load_history', conv_id: this.#currentConvId, limit: 50, before: cursor });
   }
 
@@ -256,27 +253,42 @@ export class ConversationStore extends EventTarget {
    * @param {object} [extra]
    */
   respondToConfirm(contextId, tool, toolCallId = '', approved = false, extra = {}) {
-    this.#ws.send({
-      type: 'confirm_response',
-      context_id: contextId,
-      tool,
-      approved,
-      ...(toolCallId ? { tool_call_id: toolCallId } : {}),
-      ...extra,
-    });
-    // Remove only this specific confirm
-    if (toolCallId) {
-      this.#pendingConfirms = this.#pendingConfirms.filter(c => c.tool_call_id !== toolCallId);
-    } else {
-      this.#pendingConfirms = this.#pendingConfirms.filter(c => !(c.context_id === contextId && c.tool === tool));
-    }
-    this.#emitChange();
+    this.#toolStatusStore.respondToConfirm(contextId, tool, toolCallId, approved, extra);
   }
 
   // -- Message handling (from WebSocket) --------------------------------------
 
   /** @param {object} msg */
   #handleMessage(msg) {
+    // Delegate to sub-stores first
+    if (this.#messageStore.handleMessage(msg, this.#currentConvId)) {
+      // Handle side effects that live in ConversationStore
+      if (msg.type === 'conv_history' && msg.conv_id === this.#currentConvId) {
+        if (msg.context_limit) this.#contextLimit = msg.context_limit;
+        if (msg.estimated_tokens) this.#contextUsage = msg.estimated_tokens;
+        if (msg.current_effort) this.#currentEffort = msg.current_effort;
+        if (msg.effort_model) this.#effortModel = msg.effort_model;
+        if (msg.read_only) this.#readOnly = true;
+      }
+      if (msg.type === 'message_complete' && msg.conv_id === this.#currentConvId) {
+        this.#toolStatusStore.clearToolStatus();
+        if (msg.final) {
+          this.#busy = false;
+          if (msg.usage?.prompt_tokens) this.#contextUsage = msg.usage.prompt_tokens;
+          if (msg.context_limit) this.#contextLimit = msg.context_limit;
+          this.listConversations();
+        }
+      }
+      this.#emitChange();
+      return;
+    }
+
+    if (this.#toolStatusStore.handleMessage(msg, this.#currentConvId, this.#messageStore.currentMessages)) {
+      this.#emitChange();
+      return;
+    }
+
+    // Messages handled directly by ConversationStore
     switch (msg.type) {
       case 'conv_list':
         this.#conversations = msg.conversations || [];
@@ -308,9 +320,8 @@ export class ConversationStore extends EventTarget {
         this.#conversations = this.#conversations.filter(c => c.conv_id !== msg.conv_id);
         if (this.#currentConvId === msg.conv_id) {
           this.#currentConvId = null;
-          this.#currentMessages = [];
+          this.#messageStore.clear();
         }
-        // Add to archived list so it appears immediately if the section is open
         this.#archivedConversations = [
           { conv_id: msg.conv_id, title: msg.title,
             created_at: msg.created_at, updated_at: msg.updated_at },
@@ -328,21 +339,6 @@ export class ConversationStore extends EventTarget {
         );
         break;
 
-      case 'conv_history':
-        if (msg.conv_id === this.#currentConvId) {
-          // Prepend older messages
-          const existing = new Set(this.#currentMessages.map(m => m.timestamp));
-          const newMsgs = (msg.messages || []).filter(m => !existing.has(m.timestamp));
-          this.#currentMessages = [...this.#mergeToolMessages(newMsgs), ...this.#currentMessages];
-          this.#hasMore = msg.has_more;
-          if (msg.context_limit) this.#contextLimit = msg.context_limit;
-          if (msg.estimated_tokens) this.#contextUsage = msg.estimated_tokens;
-          if (msg.current_effort) this.#currentEffort = msg.current_effort;
-          if (msg.effort_model) this.#effortModel = msg.effort_model;
-          if (msg.read_only) this.#readOnly = true;
-        }
-        break;
-
       case 'conv_renamed':
         this.#conversations = this.#conversations.map(c =>
           c.conv_id === msg.conv_id ? { ...c, title: msg.title } : c
@@ -351,124 +347,8 @@ export class ConversationStore extends EventTarget {
 
       case 'turn_start':
         this.#busy = true;
-        this.#streamingText = '';
-        this.#toolStatus = null;
-        break;
-
-      case 'chunk':
-        if (msg.conv_id === this.#currentConvId) {
-          this.#streamingText += msg.text;
-        }
-        break;
-
-      case 'message_complete':
-        if (msg.conv_id === this.#currentConvId) {
-          this.#currentMessages.push({
-            role: msg.role || 'assistant',
-            content: msg.text,
-            timestamp: new Date().toISOString(),
-            usage: msg.usage || null,
-          });
-          this.#streamingText = '';
-          this.#toolStatus = null;
-          // Only mark not-busy on final message
-          if (msg.final) {
-            this.#busy = false;
-            if (msg.usage?.prompt_tokens) this.#contextUsage = msg.usage.prompt_tokens;
-            if (msg.context_limit) this.#contextLimit = msg.context_limit;
-            // Refresh conversation list (updated_at changed)
-            this.listConversations();
-          }
-        }
-        break;
-
-      case 'tool_start':
-        this.#toolStatus = `Running ${msg.tool}...`;
-        // Add a tool-call message to the conversation (matches history format)
-        if (msg.conv_id === this.#currentConvId) {
-          this.#currentMessages.push({
-            role: 'tool_call',
-            content: `Running ${msg.tool}...`,
-            tool: msg.tool,
-            timestamp: new Date().toISOString(),
-          });
-        }
-        break;
-
-      case 'tool_status':
-        this.#toolStatus = `${msg.tool}: ${msg.message}`;
-        if (msg.conv_id === this.#currentConvId) {
-          // memory_context arrives without a preceding tool_start — insert before user message
-          if (msg.tool === 'memory_context') {
-            const mcMsg = {
-              role: 'memory_context',
-              content: msg.message,
-              timestamp: new Date().toISOString(),
-            };
-            // Insert before the last user message (memory context precedes the user's turn)
-            let lastUserIdx = -1;
-            for (let i = this.#currentMessages.length - 1; i >= 0; i--) {
-              if (this.#currentMessages[i].role === 'user') { lastUserIdx = i; break; }
-            }
-            if (lastUserIdx >= 0) {
-              this.#currentMessages.splice(lastUserIdx, 0, mcMsg);
-            } else {
-              this.#currentMessages.push(mcMsg);
-            }
-          } else {
-            // Update the last tool_call message if it exists
-            const last = this.#currentMessages[this.#currentMessages.length - 1];
-            if (last?.role === 'tool_call') {
-              last.content = `${msg.tool}: ${msg.message}`;
-            }
-          }
-        }
-        break;
-
-      case 'tool_end':
-        this.#toolStatus = null;
-        // Replace the live tool_call message with a completed tool result
-        if (msg.conv_id === this.#currentConvId) {
-          const idx = this.#currentMessages.findLastIndex(m => m.role === 'tool_call');
-          if (idx >= 0) {
-            this.#currentMessages[idx] = {
-              role: 'tool',
-              content: msg.result_text || '',
-              tool: msg.tool,
-              display_short_text: msg.display_short_text || '',
-              timestamp: new Date().toISOString(),
-            };
-          }
-        }
-        break;
-
-      case 'confirm_request':
-        this.#pendingConfirms = [...this.#pendingConfirms, {
-          context_id: msg.context_id,
-          tool: msg.tool,
-          tool_call_id: msg.tool_call_id || '',
-          command: msg.command || '',
-          suggested_pattern: msg.suggested_pattern || '',
-          message: msg.message || '',
-        }];
-        break;
-
-      case 'reflection_result':
-        if (msg.conv_id === this.#currentConvId) {
-          const passed = msg.passed;
-          const critique = msg.critique || '';
-          const raw = msg.raw_response || '';
-          const retryNum = msg.retry_number || 0;
-          // Content shown when expanded (raw judge output or critique)
-          const detail = raw || critique || (passed ? 'Response passed evaluation' : 'No details');
-          this.#currentMessages.push({
-            role: 'reflection',
-            // tool-message uses .tool for the header label
-            tool: passed ? 'reflection: PASS' : `reflection: retry ${retryNum}`,
-            content: detail,
-            timestamp: new Date().toISOString(),
-          });
-        }
+        this.#messageStore.clearStreamingText();
+        this.#toolStatusStore.clearToolStatus();
         break;
 
       case 'effort_changed':
@@ -478,84 +358,19 @@ export class ConversationStore extends EventTarget {
         }
         break;
 
-      case 'compaction_done':
-        if (msg.conv_id === this.#currentConvId) {
-          this.#currentMessages.push({
-            role: 'compaction',
-            content: `Conversation compacted: ${msg.before_messages} → ${msg.after_messages} messages`,
-            timestamp: new Date().toISOString(),
-          });
-        }
-        break;
-
       case 'error':
         console.error('Server error:', msg.message);
         this.#busy = false;
-        this.#toolStatus = null;
-        // If we selected a conversation but never loaded any messages,
-        // the selection was invalid — clear it to avoid a broken state
-        if (this.#currentConvId && this.#currentMessages.length === 0) {
+        this.#toolStatusStore.clearToolStatus();
+        if (this.#currentConvId && this.#messageStore.currentMessages.length === 0) {
           this.#currentConvId = null;
         }
         break;
 
       default:
-        // Ignore unknown message types
         break;
     }
     this.#emitChange();
-  }
-
-  /**
-   * Merge adjacent assistant+tool_calls and tool-result messages from history
-   * into combined tool messages, so they render as single rows.
-   * @param {ChatMessage[]} messages
-   * @returns {ChatMessage[]}
-   */
-  #mergeToolMessages(messages) {
-    /** @type {ChatMessage[]} */
-    const merged = [];
-    for (let i = 0; i < messages.length; i++) {
-      const msg = messages[i];
-
-      // Assistant message with tool_calls — look ahead for matching tool results
-      if (msg.role === 'assistant' && msg.tool_calls?.length) {
-        // If there's text content, emit it as a plain assistant message
-        if (msg.content) {
-          merged.push({ ...msg, tool_calls: undefined });
-        }
-        // For each tool call, try to find its result in the following messages
-        for (const tc of msg.tool_calls) {
-          const toolName = tc.function?.name || 'tool';
-          const tcId = tc.id;
-          // Look ahead for matching tool result
-          let resultContent = '';
-          let resultShortText = '';
-          for (let j = i + 1; j < messages.length; j++) {
-            if (messages[j].role === 'tool' && messages[j].tool_call_id === tcId) {
-              resultContent = messages[j].content || '';
-              resultShortText = messages[j].display_short_text || '';
-              messages[j]._merged = true; // mark as consumed
-              break;
-            }
-          }
-          merged.push({
-            role: 'tool',
-            tool: toolName,
-            content: resultContent,
-            display_short_text: resultShortText,
-            timestamp: msg.timestamp,
-          });
-        }
-        continue;
-      }
-
-      // Skip tool results that were already merged
-      if (msg._merged) continue;
-
-      merged.push(msg);
-    }
-    return merged;
   }
 
   #emitChange() {
