@@ -69,7 +69,7 @@ def tool_workspace_read(ctx, path: str, start_line: int | None = None,
         return ToolResult(text=f"[error: path '{path}' is outside the workspace]")
     try:
         content = resolved.read_text()
-    except (FileNotFoundError, IsADirectoryError, PermissionError) as e:
+    except (FileNotFoundError, IsADirectoryError, PermissionError, UnicodeDecodeError) as e:
         return _file_error(e, path)
 
     all_lines = content.splitlines()
@@ -215,7 +215,7 @@ def tool_workspace_edit(ctx, path: str, old_text: str, new_text: str,
         return ToolResult(text=f"[error: path '{path}' is outside the workspace]")
     try:
         content = resolved.read_text()
-    except (FileNotFoundError, PermissionError) as e:
+    except (FileNotFoundError, PermissionError, UnicodeDecodeError) as e:
         return _file_error(e, path)
 
     count = content.count(old_text)
@@ -336,11 +336,11 @@ def tool_workspace_diff(ctx, path1: str, path2: str, context_lines: int = 3) -> 
         return ToolResult(text=f"[error: path '{path2}' is outside the workspace]")
     try:
         lines1 = resolved1.read_text().splitlines(keepends=True)
-    except (FileNotFoundError, PermissionError) as e:
+    except (FileNotFoundError, PermissionError, UnicodeDecodeError) as e:
         return _file_error(e, path1)
     try:
         lines2 = resolved2.read_text().splitlines(keepends=True)
-    except (FileNotFoundError, PermissionError) as e:
+    except (FileNotFoundError, PermissionError, UnicodeDecodeError) as e:
         return _file_error(e, path2)
 
     diff = list(difflib.unified_diff(

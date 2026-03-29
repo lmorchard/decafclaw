@@ -132,7 +132,7 @@ def create_app(config, event_bus, app_ctx=None) -> Starlette:
         async def wrapper(request):
             username = _require_auth(request)
             if not username:
-                return JSONResponse({"error": "unauthorized"}, status_code=401)
+                return JSONResponse({"error": "not authenticated"}, status_code=401)
             return await handler(request, username)
         return wrapper
 

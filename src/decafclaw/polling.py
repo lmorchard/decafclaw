@@ -15,11 +15,8 @@ async def run_polling_loop(
     """Run a polling loop that calls on_tick every `interval` seconds.
 
     - Waits for shutdown_event between ticks (clean cancel).
-    - Skips tick if previous is still running (overlap protection).
     - Logs and continues on tick failure.
     """
-    tick_running = False
-
     while not shutdown_event.is_set():
         try:
             await asyncio.wait_for(shutdown_event.wait(), timeout=interval)
@@ -30,17 +27,10 @@ async def run_polling_loop(
         if shutdown_event.is_set():
             break
 
-        if tick_running:
-            log.warning(f"{label}: previous tick still running, skipping")
-            continue
-
-        tick_running = True
         try:
             await on_tick()
         except Exception as e:
             log.error(f"{label}: tick failed: {e}", exc_info=True)
-        finally:
-            tick_running = False
 
 
 def build_task_preamble(task_type: str, task_name: str = "") -> str:

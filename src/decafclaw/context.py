@@ -122,7 +122,8 @@ class Context:
 
         Shallow-copies all flat fields from the parent. Sub-objects:
         - tokens: fresh instance (per-call counters, not accumulated)
-        - tools: shared reference (concurrent reads, no mutation)
+        - tools: new ToolState instance via dataclasses.replace, sharing
+          inner containers but with current_call_id overridden
         - skills: shared reference (concurrent reads, no mutation)
         """
         child = Context(
