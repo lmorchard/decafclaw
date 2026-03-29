@@ -771,7 +771,7 @@ async def run_agent_turn(ctx, user_message: str, history: list,
         empty_retries = 0
         reflection_retries = 0
         last_reflection = None  # last ReflectionResult, for archiving after final response
-        turn_start_index = len(history)  # index of user message we're about to add
+        turn_start_index = len(history)  # start of this turn's tool/assistant activity (after user message)
 
         accumulated_text_parts = []  # text from iterations that also had tool calls
 
