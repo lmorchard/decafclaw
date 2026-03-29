@@ -65,7 +65,6 @@ export class ConversationSidebar extends LitElement {
       this._effortModel = this.store?.effortModel || '';
       this._systemConversations = this.store?.systemConversations || [];
     };
-    this.store?.addEventListener('change', this._onStoreChange);
   }
 
   disconnectedCallback() {
@@ -75,9 +74,13 @@ export class ConversationSidebar extends LitElement {
 
   /** @param {Map} changedProps */
   updated(changedProps) {
-    if (changedProps.has('store') && this.store) {
-      this.store.addEventListener('change', this._onStoreChange);
-      this._onStoreChange();
+    if (changedProps.has('store')) {
+      const oldStore = changedProps.get('store');
+      if (oldStore) oldStore.removeEventListener('change', this._onStoreChange);
+      if (this.store) {
+        this.store.addEventListener('change', this._onStoreChange);
+        this._onStoreChange();
+      }
     }
     this.toggleAttribute('collapsed', this._collapsed);
     this.toggleAttribute('mobile-open', this._mobileOpen);

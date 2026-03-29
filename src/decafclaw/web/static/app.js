@@ -262,7 +262,6 @@ sidebarBackdrop?.addEventListener('click', () => {
 });
 
 // Keep backdrop in sync with sidebar mobile state
-store.addEventListener('change', () => {});  // ensure sidebar re-renders
 if (sidebar) {
   const observer = new MutationObserver(() => {
     const isOpen = sidebar.hasAttribute('mobile-open');
