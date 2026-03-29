@@ -5,14 +5,14 @@ from datetime import datetime
 from decafclaw.tools.core import tool_current_time, tool_think
 
 
-def test_tool_think_returns_input(ctx):
-    """tool_think returns 'OK' (content is logged but not echoed)."""
+def test_tool_think_returns_ok(ctx):
+    """tool_think returns the constant string 'OK' (content is logged but not echoed)."""
     result = tool_think(ctx, content="hello")
     assert result == "OK"
 
 
-def test_tool_current_time_returns_iso(ctx):
-    """tool_current_time returns a string containing a parseable date."""
+def test_tool_current_time_returns_parseable_datetime(ctx):
+    """tool_current_time returns a parseable datetime string."""
     result = tool_current_time(ctx)
     # Format is "YYYY-MM-DD HH:MM:SS (Weekday)" — extract the datetime part
     date_part = result.split("(")[0].strip()
@@ -20,8 +20,8 @@ def test_tool_current_time_returns_iso(ctx):
     assert parsed.year >= 2024
 
 
-def test_tool_current_time_includes_timezone(ctx):
-    """The output includes day-of-week info (the parenthetical weekday name)."""
+def test_tool_current_time_includes_weekday(ctx):
+    """The output includes a parenthetical weekday name."""
     result = tool_current_time(ctx)
     # The format includes a weekday name in parens, e.g. "(Saturday)"
     assert "(" in result and ")" in result

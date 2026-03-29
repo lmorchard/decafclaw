@@ -7,7 +7,7 @@ log = logging.getLogger(__name__)
 
 
 async def run_polling_loop(
-    interval: int,
+    interval: int | float,
     shutdown_event,
     on_tick,
     label: str = "poll",

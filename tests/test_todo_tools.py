@@ -36,8 +36,8 @@ def test_todo_list_shows_items(ctx):
     assert "0/2 complete" in listing
 
 
-def test_todo_remove_deletes_item(ctx):
-    """Clearing the list removes all items."""
+def test_todo_clear_removes_all(ctx):
+    """tool_todo_clear removes all items from the list."""
     tool_todo_add(ctx, item="Temporary task")
     result = tool_todo_clear(ctx)
     assert "cleared" in result.lower()
