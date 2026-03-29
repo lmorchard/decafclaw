@@ -19,11 +19,11 @@ class TokenUsage:
 @dataclass
 class ToolState:
     """Tool-related state for the current conversation."""
-    extra: dict = field(default_factory=dict)
-    extra_definitions: list = field(default_factory=list)
-    deferred_pool: list = field(default_factory=list)
-    allowed: set | None = None
-    preapproved: set = field(default_factory=set)
+    extra: dict[str, Any] = field(default_factory=dict)
+    extra_definitions: list[dict] = field(default_factory=list)
+    deferred_pool: list[dict] = field(default_factory=list)
+    allowed: set[str] | None = None
+    preapproved: set[str] = field(default_factory=set)
     preapproved_shell_patterns: list[str] = field(default_factory=list)
     current_call_id: str = ""
 
@@ -31,8 +31,8 @@ class ToolState:
 @dataclass
 class SkillState:
     """Skill activation state for the current conversation."""
-    activated: set = field(default_factory=set)
-    data: dict = field(default_factory=dict)
+    activated: set[str] = field(default_factory=set)
+    data: dict[str, Any] = field(default_factory=dict)
 
 
 class Context:
