@@ -81,7 +81,7 @@ export class ConversationStore extends EventTarget {
     this.#ws = wsClient;
     const onChange = () => this.#emitChange();
     this.#messageStore = new MessageStore(onChange);
-    this.#toolStatusStore = new ToolStatusStore(onChange, wsClient);
+    this.#toolStatusStore = new ToolStatusStore(onChange, wsClient, this.#messageStore);
     this.#ws.addEventListener('message', (e) => this.#handleMessage(/** @type {CustomEvent} */(e).detail));
     this.#ws.addEventListener('open', () => this.listConversations());
   }
@@ -283,7 +283,7 @@ export class ConversationStore extends EventTarget {
       return;
     }
 
-    if (this.#toolStatusStore.handleMessage(msg, this.#currentConvId, this.#messageStore.currentMessages)) {
+    if (this.#toolStatusStore.handleMessage(msg, this.#currentConvId)) {
       this.#emitChange();
       return;
     }

@@ -43,6 +43,35 @@ export class MessageStore {
     this.#currentMessages.push(msg);
   }
 
+  /** Update the content of the last tool_call message (for status updates). */
+  updateLastToolCall(/** @type {string} */ content) {
+    const last = this.#currentMessages[this.#currentMessages.length - 1];
+    if (last?.role === 'tool_call') {
+      last.content = content;
+    }
+  }
+
+  /** Replace the last tool_call message with a completed tool result. */
+  replaceLastToolCall(/** @type {ChatMessage} */ msg) {
+    const idx = this.#currentMessages.findLastIndex(m => m.role === 'tool_call');
+    if (idx >= 0) {
+      this.#currentMessages[idx] = msg;
+    }
+  }
+
+  /** Insert a message before the last user message (for memory context). */
+  insertBeforeLastUser(/** @type {ChatMessage} */ msg) {
+    let lastUserIdx = -1;
+    for (let i = this.#currentMessages.length - 1; i >= 0; i--) {
+      if (this.#currentMessages[i].role === 'user') { lastUserIdx = i; break; }
+    }
+    if (lastUserIdx >= 0) {
+      this.#currentMessages.splice(lastUserIdx, 0, msg);
+    } else {
+      this.#currentMessages.push(msg);
+    }
+  }
+
   clearStreamingText() {
     this.#streamingText = '';
   }

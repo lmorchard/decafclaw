@@ -81,7 +81,6 @@ export class ChatView extends LitElement {
         this._showScrollBtn = true;
       }
     };
-    this.store?.addEventListener('change', this._onStoreChange);
     // Track scroll position + auto-load older messages
     this.addEventListener('scroll', () => {
       this._showScrollBtn = !this.#isNearBottom();
@@ -97,9 +96,13 @@ export class ChatView extends LitElement {
   }
 
   updated(changedProps) {
-    if (changedProps.has('store') && this.store) {
-      this.store.addEventListener('change', this._onStoreChange);
-      this._onStoreChange();
+    if (changedProps.has('store')) {
+      const oldStore = changedProps.get('store');
+      if (oldStore) oldStore.removeEventListener('change', this._onStoreChange);
+      if (this.store) {
+        this.store.addEventListener('change', this._onStoreChange);
+        this._onStoreChange();
+      }
     }
   }
 
