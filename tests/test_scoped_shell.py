@@ -105,7 +105,7 @@ def test_skill_md_bare_shell_no_patterns(tmp_path):
 @pytest.mark.asyncio
 async def test_scoped_pattern_approves_matching_command(ctx):
     """Scoped shell pattern auto-approves matching commands."""
-    ctx.preapproved_shell_patterns = ["/skills/ingest/fetch.sh"]
+    ctx.tools.preapproved_shell_patterns = ["/skills/ingest/fetch.sh"]
 
     with patch(
         "decafclaw.tools.shell_tools._execute_command",
@@ -119,7 +119,7 @@ async def test_scoped_pattern_approves_matching_command(ctx):
 @pytest.mark.asyncio
 async def test_scoped_pattern_rejects_non_matching_command(ctx):
     """Scoped shell pattern does NOT approve non-matching commands."""
-    ctx.preapproved_shell_patterns = ["/skills/ingest/fetch.sh"]
+    ctx.tools.preapproved_shell_patterns = ["/skills/ingest/fetch.sh"]
 
     with patch(
         "decafclaw.tools.shell_tools.request_confirmation",
@@ -133,7 +133,7 @@ async def test_scoped_pattern_rejects_non_matching_command(ctx):
 @pytest.mark.asyncio
 async def test_scoped_pattern_rejects_different_script_same_dir(ctx):
     """A different script in the same directory is NOT approved."""
-    ctx.preapproved_shell_patterns = ["/skills/ingest/fetch.sh"]
+    ctx.tools.preapproved_shell_patterns = ["/skills/ingest/fetch.sh"]
 
     with patch(
         "decafclaw.tools.shell_tools.request_confirmation",
@@ -147,7 +147,7 @@ async def test_scoped_pattern_rejects_different_script_same_dir(ctx):
 @pytest.mark.asyncio
 async def test_scoped_pattern_rejects_path_traversal(ctx):
     """Path traversal past the allowed script is NOT approved."""
-    ctx.preapproved_shell_patterns = ["/skills/ingest/fetch.sh"]
+    ctx.tools.preapproved_shell_patterns = ["/skills/ingest/fetch.sh"]
 
     with patch(
         "decafclaw.tools.shell_tools.request_confirmation",
@@ -161,7 +161,7 @@ async def test_scoped_pattern_rejects_path_traversal(ctx):
 @pytest.mark.asyncio
 async def test_scoped_pattern_rejects_arbitrary_command(ctx):
     """Arbitrary commands are NOT approved even with scoped patterns set."""
-    ctx.preapproved_shell_patterns = ["/skills/ingest/fetch.sh"]
+    ctx.tools.preapproved_shell_patterns = ["/skills/ingest/fetch.sh"]
 
     with patch(
         "decafclaw.tools.shell_tools.request_confirmation",
@@ -175,7 +175,7 @@ async def test_scoped_pattern_rejects_arbitrary_command(ctx):
 @pytest.mark.asyncio
 async def test_scoped_glob_rejects_outside_dir(ctx):
     """Glob pattern *.sh only matches within the specified directory."""
-    ctx.preapproved_shell_patterns = ["/skills/ingest/*.sh"]
+    ctx.tools.preapproved_shell_patterns = ["/skills/ingest/*.sh"]
 
     with patch(
         "decafclaw.tools.shell_tools.request_confirmation",
@@ -189,7 +189,7 @@ async def test_scoped_glob_rejects_outside_dir(ctx):
 @pytest.mark.asyncio
 async def test_scoped_glob_pattern_matches(ctx):
     """Glob patterns in scoped shell work with fnmatch."""
-    ctx.preapproved_shell_patterns = ["/skills/ingest/*.sh"]
+    ctx.tools.preapproved_shell_patterns = ["/skills/ingest/*.sh"]
 
     with patch(
         "decafclaw.tools.shell_tools._execute_command",
@@ -203,7 +203,7 @@ async def test_scoped_glob_pattern_matches(ctx):
 @pytest.mark.asyncio
 async def test_scoped_pattern_with_args(ctx):
     """Scoped pattern with wildcard matches commands with arguments."""
-    ctx.preapproved_shell_patterns = ["/skills/ingest/fetch.sh *"]
+    ctx.tools.preapproved_shell_patterns = ["/skills/ingest/fetch.sh *"]
 
     with patch(
         "decafclaw.tools.shell_tools._execute_command",
@@ -217,7 +217,7 @@ async def test_scoped_pattern_with_args(ctx):
 @pytest.mark.asyncio
 async def test_blanket_shell_still_works(ctx):
     """Bare 'shell' in preapproved_tools still grants blanket approval."""
-    ctx.preapproved_tools = {"shell"}
+    ctx.tools.preapproved = {"shell"}
 
     with patch(
         "decafclaw.tools.shell_tools._execute_command",
@@ -247,16 +247,16 @@ def test_skill_dir_expansion_in_commands():
     from decafclaw.events import EventBus
 
     ctx = Context(config=None, event_bus=EventBus())
-    ctx.preapproved_tools = set()
+    ctx.tools.preapproved = set()
 
     # Simulate what execute_command does
-    ctx.preapproved_tools = set(skill.allowed_tools)
+    ctx.tools.preapproved = set(skill.allowed_tools)
     skill_dir = str(skill.location)
-    ctx.preapproved_shell_patterns = [
+    ctx.tools.preapproved_shell_patterns = [
         p.replace("$SKILL_DIR", skill_dir) for p in skill.shell_patterns
     ]
 
-    assert ctx.preapproved_shell_patterns == ["/opt/skills/ingest/fetch.sh"]
+    assert ctx.tools.preapproved_shell_patterns == ["/opt/skills/ingest/fetch.sh"]
 
 
 # -- shell metacharacter rejection tests --
@@ -265,7 +265,7 @@ def test_skill_dir_expansion_in_commands():
 @pytest.mark.asyncio
 async def test_scoped_pattern_rejects_semicolon_chaining(ctx):
     """Commands with ; chaining are NOT auto-approved by scoped patterns."""
-    ctx.preapproved_shell_patterns = ["/skills/ingest/fetch.sh *"]
+    ctx.tools.preapproved_shell_patterns = ["/skills/ingest/fetch.sh *"]
 
     with patch(
         "decafclaw.tools.shell_tools.request_confirmation",
@@ -279,7 +279,7 @@ async def test_scoped_pattern_rejects_semicolon_chaining(ctx):
 @pytest.mark.asyncio
 async def test_scoped_pattern_rejects_pipe_chaining(ctx):
     """Commands with | pipe are NOT auto-approved by scoped patterns."""
-    ctx.preapproved_shell_patterns = ["/skills/ingest/fetch.sh *"]
+    ctx.tools.preapproved_shell_patterns = ["/skills/ingest/fetch.sh *"]
 
     with patch(
         "decafclaw.tools.shell_tools.request_confirmation",
@@ -293,7 +293,7 @@ async def test_scoped_pattern_rejects_pipe_chaining(ctx):
 @pytest.mark.asyncio
 async def test_scoped_pattern_rejects_and_chaining(ctx):
     """Commands with && chaining are NOT auto-approved by scoped patterns."""
-    ctx.preapproved_shell_patterns = ["/skills/ingest/fetch.sh *"]
+    ctx.tools.preapproved_shell_patterns = ["/skills/ingest/fetch.sh *"]
 
     with patch(
         "decafclaw.tools.shell_tools.request_confirmation",
@@ -307,7 +307,7 @@ async def test_scoped_pattern_rejects_and_chaining(ctx):
 @pytest.mark.asyncio
 async def test_scoped_pattern_rejects_subshell(ctx):
     """Commands with $() subshell are NOT auto-approved by scoped patterns."""
-    ctx.preapproved_shell_patterns = ["/skills/ingest/fetch.sh *"]
+    ctx.tools.preapproved_shell_patterns = ["/skills/ingest/fetch.sh *"]
 
     with patch(
         "decafclaw.tools.shell_tools.request_confirmation",
@@ -321,7 +321,7 @@ async def test_scoped_pattern_rejects_subshell(ctx):
 @pytest.mark.asyncio
 async def test_scoped_pattern_rejects_backtick(ctx):
     """Commands with backtick subshell are NOT auto-approved by scoped patterns."""
-    ctx.preapproved_shell_patterns = ["/skills/ingest/fetch.sh *"]
+    ctx.tools.preapproved_shell_patterns = ["/skills/ingest/fetch.sh *"]
 
     with patch(
         "decafclaw.tools.shell_tools.request_confirmation",

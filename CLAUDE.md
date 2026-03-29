@@ -14,13 +14,15 @@ An AI agent testbed for exploring agent development patterns. Connects to Matter
 ## Key files
 
 - `src/decafclaw/__init__.py` — Entry point, config/context setup, mode dispatch
-- `src/decafclaw/agent.py` — Agent loop + interactive mode
+- `src/decafclaw/agent.py` — Agent loop: turn orchestration, tool execution, LLM calls
+- `src/decafclaw/interactive_terminal.py` — Interactive terminal mode (stdin/stdout REPL)
 - `src/decafclaw/mattermost.py` — Mattermost client, message handling, flood protection, progress subscriber
+- `src/decafclaw/mattermost_display.py` — ConversationDisplay: per-turn Mattermost message sequencing
 - `src/decafclaw/llm.py` — LLM client (OpenAI-compatible)
 - `src/decafclaw/config.py` — Dataclass config from env vars / .env
 - `src/decafclaw/config_types.py` — Config sub-dataclasses (LlmConfig, MattermostConfig, etc.)
 - `src/decafclaw/config_cli.py` — CLI tool for config show/get/set
-- `src/decafclaw/context.py` — Forkable runtime context
+- `src/decafclaw/context.py` — Forkable runtime context with sub-objects: TokenUsage, ToolState, SkillState
 - `src/decafclaw/events.py` — In-process pub/sub event bus
 - `src/decafclaw/memory.py` — Memory file read/write operations
 - `src/decafclaw/memory_context.py` — Proactive memory retrieval: auto-inject relevant context per turn
@@ -41,7 +43,9 @@ An AI agent testbed for exploring agent development patterns. Connects to Matter
 - `src/decafclaw/mcp_client.py` — MCP client: config, registry, server connections, auto-restart
 - `src/decafclaw/heartbeat.py` — Heartbeat: periodic wake-up, section parsing, timer, cycle runner
 - `src/decafclaw/schedules.py` — Scheduled tasks: cron-style task files, discovery, execution, timer loop
-- `src/decafclaw/media.py` — Media handling: ToolResult, MediaSaveResult, MediaHandler interface (Web/Terminal/Mattermost), workspace ref scanning
+- `src/decafclaw/media.py` — Media handling: ToolResult, MediaSaveResult, MediaHandler interface (LocalFile/Mattermost), workspace ref scanning
+- `src/decafclaw/util.py` — Shared utilities (estimate_tokens)
+- `src/decafclaw/polling.py` — Shared polling loop and task preamble builder (used by heartbeat + schedules)
 - `src/decafclaw/tools/` — Tool registry: core, memory, todo, workspace, file_share, shell, conversation, skill activation, MCP status, health, delegation
 - `src/decafclaw/tools/health.py` — Health/diagnostic status tool: uptime, MCP, heartbeat, tools, embeddings
 - `src/decafclaw/tools/effort_tools.py` — Effort level tool: `set_effort` for conversation model switching
@@ -53,7 +57,7 @@ An AI agent testbed for exploring agent development patterns. Connects to Matter
 - `src/decafclaw/tools/confirmation.py` — Shared confirmation request helper (event-bus-based user approval)
 - `src/decafclaw/runner.py` — Top-level orchestrator: manages MCP, HTTP server, Mattermost, heartbeat as parallel tasks
 - `src/decafclaw/web/` — Web gateway: auth, conversations, WebSocket chat handler
-- `src/decafclaw/web/static/` — Frontend: Lit web components, service layer (AuthClient, WebSocketClient, ConversationStore)
+- `src/decafclaw/web/static/` — Frontend: Lit web components, service layer (AuthClient, WebSocketClient, ConversationStore, MessageStore, ToolStatusStore, markdown, utils)
 
 ## Running
 

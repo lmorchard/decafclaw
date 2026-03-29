@@ -359,9 +359,9 @@ async def execute_command(ctx, skill: SkillInfo, arguments: str) -> tuple[str, s
     from .tools.skill_tools import activate_skill_internal
 
     # Set pre-approved tools and scoped shell patterns
-    ctx.preapproved_tools = set(skill.allowed_tools)
+    ctx.tools.preapproved = set(skill.allowed_tools)
     skill_dir = str(skill.location)
-    ctx.preapproved_shell_patterns = [
+    ctx.tools.preapproved_shell_patterns = [
         p.replace("$SKILL_DIR", skill_dir) for p in skill.shell_patterns
     ]
 
@@ -369,7 +369,7 @@ async def execute_command(ctx, skill: SkillInfo, arguments: str) -> tuple[str, s
     # Shell-based skills don't need activation — the command body IS the prompt.
     # Activating them would add the SKILL.md body as a tool result, duplicating
     # the command body and confusing the model.
-    if skill.has_native_tools and skill.name not in ctx.activated_skills:
+    if skill.has_native_tools and skill.name not in ctx.skills.activated:
         result = await activate_skill_internal(ctx, skill)
         if isinstance(result, _ToolResult):
             return "error", result.text
@@ -379,7 +379,7 @@ async def execute_command(ctx, skill: SkillInfo, arguments: str) -> tuple[str, s
         discovered = getattr(ctx.config, "discovered_skills", [])
         skill_map = {s.name: s for s in discovered}
         for req_name in skill.requires_skills:
-            if req_name in ctx.activated_skills:
+            if req_name in ctx.skills.activated:
                 continue
             req_info = skill_map.get(req_name)
             if req_info:
@@ -401,10 +401,11 @@ async def execute_command(ctx, skill: SkillInfo, arguments: str) -> tuple[str, s
     if skill.context == "fork":
         from .tools.delegate import _run_child_turn
         # User-invoked commands use the full iteration limit, not the child limit
-        response = await _run_child_turn(
+        result = await _run_child_turn(
             ctx, body, effort=skill.effort or "",
             max_iterations=ctx.config.agent.max_tool_iterations)
-        return "fork", response
+        from .media import ToolResult as _TR
+        return "fork", result.text if isinstance(result, _TR) else str(result)
 
     # Inline mode: return the substituted body as the user message
     return "inline", body

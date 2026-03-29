@@ -3,6 +3,7 @@
 import logging
 
 from .embeddings import embed_text, search_similar_sync
+from .util import estimate_tokens
 
 log = logging.getLogger(__name__)
 
@@ -32,7 +33,8 @@ async def retrieve_memory_context(config, user_message: str) -> list[dict]:
         if not query_embedding:
             return []
 
-        # Search all source types, fetch extra to allow for threshold filtering
+        # Search all source types, fetch extra to allow for threshold filtering.
+        # Over-fetch to allow for deduplication and token budget filtering.
         results = search_similar_sync(
             config, query_embedding, top_k=mc.max_results * 2
         )
@@ -61,7 +63,7 @@ def _trim_to_token_budget(results: list[dict], max_tokens: int) -> list[dict]:
     trimmed = []
     total_tokens = 0
     for r in results:
-        entry_tokens = len(r["entry_text"]) // 4
+        entry_tokens = estimate_tokens(r["entry_text"])
         if total_tokens + entry_tokens > max_tokens and trimmed:
             break
         trimmed.append(r)

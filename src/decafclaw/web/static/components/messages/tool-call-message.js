@@ -1,18 +1,6 @@
 import { LitElement, html, nothing } from 'lit';
 import { unsafeHTML } from 'lit/directives/unsafe-html.js';
-import { marked } from 'marked';
-import DOMPurify from 'dompurify';
-
-/**
- * Render markdown to sanitized HTML.
- * @param {string} text
- * @returns {string}
- */
-function renderMarkdown(text) {
-  if (!text) return '';
-  const raw = /** @type {string} */ (marked.parse(text, { breaks: true, async: false }));
-  return DOMPurify.sanitize(raw);
-}
+import { renderMarkdown } from '../../lib/markdown.js';
 
 /**
  * Tool call message — either a live in-progress indicator (role=tool_call)

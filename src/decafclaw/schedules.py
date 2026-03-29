@@ -213,26 +213,34 @@ async def run_schedule_task(config, event_bus, task: ScheduleTask) -> dict:
     from .context import Context
 
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    ctx = Context(config=config, event_bus=event_bus)
-    ctx.user_id = f"schedule-{task.source}"
-    ctx.channel_id = task.channel or f"schedule:{task.name}"
-    ctx.channel_name = task.channel or f"schedule:{task.name}"
-    ctx.conv_id = f"schedule-{task.name}-{timestamp}"
-    ctx.effort = task.effort
-    ctx.skip_reflection = True
-    ctx.skip_memory_context = True
+    channel = task.channel or f"schedule:{task.name}"
 
+    allowed_tools_set = None
+    preapproved = set()
     if task.allowed_tools or task.shell_patterns:
-        tools_set = set(task.allowed_tools)
+        allowed_tools_set = set(task.allowed_tools)
         if task.shell_patterns:
-            tools_set.add("shell")  # ensure shell tool is visible
-        ctx.allowed_tools = tools_set
-        ctx.preapproved_tools = set(task.allowed_tools)
+            allowed_tools_set.add("shell")  # ensure shell tool is visible
+        preapproved = set(task.allowed_tools)
+
     skill_dir = str(task.path.parent.resolve())
+    shell_patterns = None
     if task.shell_patterns:
-        ctx.preapproved_shell_patterns = [
+        shell_patterns = [
             p.replace("$SKILL_DIR", skill_dir) for p in task.shell_patterns
         ]
+
+    ctx = Context.for_task(
+        config, event_bus,
+        user_id=f"schedule-{task.source}",
+        conv_id=f"schedule-{task.name}-{timestamp}",
+        channel_id=channel,
+        channel_name=channel,
+        effort=task.effort,
+        allowed_tools=allowed_tools_set,
+        preapproved_tools=preapproved,
+        preapproved_shell_patterns=shell_patterns,
+    )
 
     # Pre-activate required skills
     if task.required_skills:
@@ -248,13 +256,9 @@ async def run_schedule_task(config, event_bus, task: ScheduleTask) -> dict:
                     log.error(f"Failed to activate skill '{skill_name}' "
                               f"for task '{task.name}': {e}")
 
-    preamble = (
-        f'You are running a scheduled task: "{task.name}".\n'
-        "Execute the following task and report your findings.\n"
-        "If there is nothing to report, respond with HEARTBEAT_OK.\n"
-        "Prefer workspace tools (workspace_read, workspace_write, "
-        "workspace_list) over shell commands.\n\n"
-    )
+    from .polling import build_task_preamble
+
+    preamble = build_task_preamble("scheduled task", task.name)
     from .commands import substitute_body
     body = substitute_body(task.body, skill_dir=str(task.path.parent.resolve()))
     prompt = preamble + body
@@ -294,61 +298,61 @@ async def run_schedule_timer(config, event_bus, shutdown_event,
 
     Discovers schedule files, checks if tasks are due, and runs them.
     """
+    from .polling import run_polling_loop
+
     interval = poll_interval or _SCHEDULE_POLL_INTERVAL
     running_tasks: set[str] = set()
     in_flight: set[asyncio.Task] = set()
 
     log.info("Schedule timer starting")
 
-    try:
-        while not shutdown_event.is_set():
-            try:
-                await asyncio.wait_for(shutdown_event.wait(), timeout=interval)
-                break
-            except asyncio.TimeoutError:
-                pass
+    async def _tick():
+        tasks = discover_schedules(config)
+        if not tasks:
+            return
 
-            if shutdown_event.is_set():
-                break
-
-            tasks = discover_schedules(config)
-            if not tasks:
+        for task in tasks:
+            if not task.enabled:
+                continue
+            if task.name in running_tasks:
+                log.debug(f"Schedule '{task.name}' still running, skipping")
+                continue
+            if not is_due(config, task):
                 continue
 
-            for task in tasks:
-                if not task.enabled:
-                    continue
-                if task.name in running_tasks:
-                    log.debug(f"Schedule '{task.name}' still running, skipping")
-                    continue
-                if not is_due(config, task):
-                    continue
+            log.info(f"Schedule '{task.name}' is due, executing")
+            running_tasks.add(task.name)
 
-                log.info(f"Schedule '{task.name}' is due, executing")
-                running_tasks.add(task.name)
+            async def _run(t=task):
+                try:
+                    write_last_run(config, t.name)
+                    result = await run_schedule_task(config, event_bus, t)
+                    if on_result:
+                        try:
+                            await on_result(result)
+                        except Exception as e:
+                            log.error(f"Schedule result callback failed: {e}")
+                    elif result["is_ok"]:
+                        log.info(f"Schedule '{t.name}': HEARTBEAT_OK")
+                    else:
+                        log.info(f"Schedule '{t.name}' response: "
+                                 f"{result['response'][:200]}")
+                except Exception as e:
+                    log.error(f"Schedule '{t.name}' execution failed: {e}")
+                finally:
+                    running_tasks.discard(t.name)
 
-                async def _run(t=task):
-                    try:
-                        write_last_run(config, t.name)
-                        result = await run_schedule_task(config, event_bus, t)
-                        if on_result:
-                            try:
-                                await on_result(result)
-                            except Exception as e:
-                                log.error(f"Schedule result callback failed: {e}")
-                        elif result["is_ok"]:
-                            log.info(f"Schedule '{t.name}': HEARTBEAT_OK")
-                        else:
-                            log.info(f"Schedule '{t.name}' response: "
-                                     f"{result['response'][:200]}")
-                    except Exception as e:
-                        log.error(f"Schedule '{t.name}' execution failed: {e}")
-                    finally:
-                        running_tasks.discard(t.name)
+            t = asyncio.create_task(_run())
+            in_flight.add(t)
+            t.add_done_callback(in_flight.discard)
 
-                t = asyncio.create_task(_run())
-                in_flight.add(t)
-                t.add_done_callback(in_flight.discard)
+    try:
+        await run_polling_loop(
+            interval=interval,
+            shutdown_event=shutdown_event,
+            on_tick=_tick,
+            label="Schedule",
+        )
     finally:
         # Await in-flight tasks on shutdown
         if in_flight:

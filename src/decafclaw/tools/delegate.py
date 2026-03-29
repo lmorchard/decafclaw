@@ -34,7 +34,7 @@ async def _run_child_turn(parent_ctx, task, effort: str = "",
     config = parent_ctx.config
 
     # Build child system prompt: base + activated skill bodies
-    activated = getattr(parent_ctx, "activated_skills", set())
+    activated = parent_ctx.skills.activated
     skill_map = {s.name: s for s in getattr(config, "discovered_skills", [])}
     prompt_parts = [DEFAULT_CHILD_SYSTEM_PROMPT]
     for name in sorted(activated):
@@ -64,22 +64,22 @@ async def _run_child_turn(parent_ctx, task, effort: str = "",
     # Child inherits parent's tools minus delegation/activation.
     # If parent has restricted allowed_tools, respect that restriction.
     excluded = {"delegate_task", "activate_skill", "refresh_skills", "tool_search"}
-    all_tools = set(TOOLS) | set(getattr(parent_ctx, "extra_tools", {}))
-    parent_allowed = getattr(parent_ctx, "allowed_tools", None)
+    all_tools = set(TOOLS) | set(parent_ctx.tools.extra)
+    parent_allowed = parent_ctx.tools.allowed
     if parent_allowed is not None:
         all_tools = all_tools & parent_allowed
-    child_ctx.allowed_tools = all_tools - excluded
+    child_ctx.tools.allowed = all_tools - excluded
 
     # Carry over parent's activated skill tools and data
-    child_ctx.extra_tools = getattr(parent_ctx, "extra_tools", {})
-    child_ctx.extra_tool_definitions = getattr(parent_ctx, "extra_tool_definitions", [])
-    child_ctx.skill_data = getattr(parent_ctx, "skill_data", {})
+    child_ctx.tools.extra = parent_ctx.tools.extra
+    child_ctx.tools.extra_definitions = parent_ctx.tools.extra_definitions
+    child_ctx.skills.data = parent_ctx.skills.data
 
     # Clear skill state so children can't activate new skills
-    child_ctx.activated_skills = set()
+    child_ctx.skills.activated = set()
     # Propagate command pre-approved tools and scoped shell patterns to child
-    child_ctx.preapproved_tools = parent_ctx.preapproved_tools
-    child_ctx.preapproved_shell_patterns = parent_ctx.preapproved_shell_patterns
+    child_ctx.tools.preapproved = parent_ctx.tools.preapproved
+    child_ctx.tools.preapproved_shell_patterns = parent_ctx.tools.preapproved_shell_patterns
 
     # No streaming or reflection for child agents
     child_ctx.on_stream_chunk = None
@@ -99,9 +99,9 @@ async def _run_child_turn(parent_ctx, task, effort: str = "",
         )
         return result.text if hasattr(result, "text") else str(result)
     except asyncio.TimeoutError:
-        return f"[subtask timed out after {timeout}s]"
+        return ToolResult(text=f"[error: subtask timed out after {timeout}s]")
     except Exception as e:
-        return f"[subtask failed: {e}]"
+        return ToolResult(text=f"[error: subtask failed: {e}]")
 
 
 async def tool_delegate_task(ctx, task: str, effort: str = "") -> str | ToolResult:

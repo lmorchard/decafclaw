@@ -11,11 +11,16 @@ This is where the interesting stuff happens. The loop:
 from __future__ import annotations
 
 import asyncio
+import functools
 import json
 import logging
 import re as _re
 from dataclasses import replace
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .reflection import ReflectionResult
 
 from .archive import append_message
 from .compaction import compact_history
@@ -170,13 +175,118 @@ def _should_reflect(ctx, config, content: str, reflection_retries: int) -> bool:
     return True
 
 
+async def _handle_reflection(
+    ctx, config, messages, history, final_text,
+    user_message, attachments, retrieved_context_text,
+    turn_start_index, reflection_retries, last_reflection,
+) -> tuple[str | None, bool, int, "ReflectionResult | None"]:
+    """Run the reflection phase on a candidate final response.
+
+    Returns (text, should_retry, reflection_retries, last_reflection):
+    - Reflection skipped or passed: (final_text, False, retries, result)
+    - Reflection failed with retries left: (None, True, retries+1, result)
+      — critique has been injected into messages/history before returning
+    - Reflection failed, no retries left: (text_with_escalation, False, retries, result)
+    """
+    if not _should_reflect(ctx, config, final_text, reflection_retries):
+        reflection_exhausted = (
+            reflection_retries >= config.reflection.max_retries
+            and last_reflection is not None
+            and not last_reflection.passed
+        )
+        last_reflection = None  # clear stale result from prior retry
+
+        # Suggest model escalation if reflection retries exhausted
+        if reflection_exhausted and ctx.effort != "strong":
+            final_text += (
+                "\n\n---\n*I'm not confident in this answer. "
+                "Try `!think-harder` to retry with a more capable model.*"
+            )
+        return final_text, False, reflection_retries, last_reflection
+
+    from .reflection import (
+        build_prior_turn_summary,
+        build_tool_summary,
+        evaluate_response,
+    )
+
+    tool_summary = build_tool_summary(
+        history, turn_start_index,
+        max_result_len=config.reflection.max_tool_result_len,
+    )
+    # turn_start_index points past the current user message;
+    # use turn_start_index - 1 to exclude it from prior turns
+    prior_turn_summary = build_prior_turn_summary(
+        history, turn_start_index - 1,
+        max_turns=3,
+        max_result_len=200,
+    )
+    # Annotate user message with attachment info for the judge —
+    # it can't see the actual files but needs to know they exist
+    judge_user_message = user_message
+    if attachments:
+        att_desc = ", ".join(
+            f"{a.get('filename', '?')} ({a.get('mime_type', '?')})"
+            for a in attachments
+        )
+        judge_user_message += f"\n\n[User attached files: {att_desc}]"
+    result = await evaluate_response(
+        config, judge_user_message, final_text, tool_summary,
+        prior_turn_summary=prior_turn_summary,
+        retrieved_context=retrieved_context_text,
+    )
+
+    last_reflection = result
+    log.info("Reflection result: passed=%s, critique=%s, error=%s",
+             result.passed, result.critique[:200] if result.critique else "",
+             result.error[:100] if result.error else "")
+
+    await ctx.publish("reflection_result",
+        passed=result.passed,
+        critique=result.critique,
+        raw_response=result.raw_response,
+        retry_number=reflection_retries + 1,
+        error=result.error)
+
+    if not result.passed and not result.error:
+        log.info("Reflection failed (retry %d/%d): %s",
+                 reflection_retries + 1,
+                 config.reflection.max_retries,
+                 result.critique[:200])
+        # Add the failed response to history
+        failed_msg = {"role": "assistant", "content": final_text}
+        history.append(failed_msg)
+        messages.append(failed_msg)
+        _archive(ctx, failed_msg)
+
+        # Add critique as user message for retry
+        critique_msg = {
+            "role": "user",
+            "content": (
+                "[reflection] Your previous response may not fully "
+                "address the user's request.\n"
+                f"Feedback: {result.critique}\n"
+                "Please try again, addressing the feedback above."
+            ),
+        }
+        history.append(critique_msg)
+        messages.append(critique_msg)
+        _archive(ctx, critique_msg)
+
+        reflection_retries += 1
+        return None, True, reflection_retries, last_reflection
+
+    # Reflection passed (or errored out — fail-open)
+    return final_text, False, reflection_retries, last_reflection
+
+
 def _collect_all_tool_defs(ctx) -> list:
     """Gather all available tool definitions (core + skill + MCP + extra).
 
     Does NOT apply allowed_tools filter — returns the full unfiltered set
     so classification can see everything before deciding what to defer.
     """
-    all_tools = list(TOOL_DEFINITIONS) + ctx.extra_tool_definitions
+    all_tools = list(TOOL_DEFINITIONS) + ctx.tools.extra_definitions
 
     # Pre-load tool definitions from discovered skills (stable tool list).
     # Cached by config id to avoid re-executing tools.py every iteration.
@@ -221,7 +331,7 @@ def _build_tool_list(ctx) -> tuple[list, str | None]:
     active, deferred = classify_tools(all_defs, ctx.config, fetched)
 
     # Apply allowed_tools filter to the active set only
-    allowed = ctx.allowed_tools
+    allowed = ctx.tools.allowed
     if allowed is not None:
         active = [
             t for t in active
@@ -232,7 +342,7 @@ def _build_tool_list(ctx) -> tuple[list, str | None]:
         return active, None
 
     # Deferred mode: set the pool on ctx and add tool_search
-    ctx.deferred_tool_pool = deferred
+    ctx.tools.deferred_pool = deferred
     active = active + SEARCH_TOOL_DEFINITIONS
 
     # Build deferred list text for system prompt
@@ -290,17 +400,12 @@ async def _call_llm_with_events(ctx, config, messages, tools,
     return response
 
 
-# Matches placeholder text: [file attached: filename (mime) — ...]
-_MEDIA_PLACEHOLDER_RE_CACHE: dict[str, _re.Pattern] = {}
-
-
+@functools.lru_cache(maxsize=128)
 def _media_placeholder_pattern(filename: str) -> _re.Pattern:
-    """Build (and cache) a regex to find the placeholder for a given filename."""
-    if filename not in _MEDIA_PLACEHOLDER_RE_CACHE:
-        _MEDIA_PLACEHOLDER_RE_CACHE[filename] = _re.compile(
-            r"\[file attached: " + _re.escape(filename) + r"[^\]]*\]"
-        )
-    return _MEDIA_PLACEHOLDER_RE_CACHE[filename]
+    """Build a regex to find the placeholder for a given filename."""
+    return _re.compile(
+        r"\[file attached: " + _re.escape(filename) + r"[^\]]*\]"
+    )
 
 
 async def _process_tool_media(ctx, result: ToolResult) -> list[str]:
@@ -482,42 +587,34 @@ async def _execute_tool_calls(ctx, tool_calls, history, messages):
     return None
 
 
-# -- Main agent turn -----------------------------------------------------------
+# -- Turn setup helpers ---------------------------------------------------------
 
 
-async def run_agent_turn(ctx, user_message: str, history: list,
-                         archive_text: str = "",
-                         attachments: list[dict] | None = None) -> "ToolResult":
-    """Process a single user message through the agent loop.
+async def _setup_turn_state(ctx, config, history) -> dict[str, str]:
+    """Restore persisted skill/effort state and resolve effort overrides.
 
-    Args:
-        ctx: Runtime context (carries config, event bus, etc.)
-        user_message: The user's message text
-        archive_text: If set, archive this instead of user_message (for inline
-                      commands where the full body is the LLM prompt but the
-                      archive should show the short command)
-        history: Conversation history (list of message dicts, mutated in place)
+    Handles:
+    - Skill restoration from sidecar (persisted activated skills + skill_data)
+    - Auto-activation of always-loaded bundled skills
+    - Effort level restoration from archive
+    - Effort resolution to LLM config overrides
 
-    Returns:
-        ToolResult with the agent's text response and any accumulated media.
+    Returns effort_overrides dict (may be empty if no override needed).
     """
     from .tools.skill_tools import restore_skills  # deferred: circular dep
-
-    config = ctx.config
-    ctx.history = history
 
     # Restore previously-activated skills from the sidecar (survives restarts).
     # Merge with any skills already on ctx (e.g. set by Mattermost in-session state).
     conv_id = ctx.conv_id or ctx.channel_id
     if conv_id:
         persisted = read_skills_state(config, conv_id)
-        existing = set(ctx.activated_skills)
+        existing = set(ctx.skills.activated)
         if persisted - existing:
-            ctx.activated_skills = existing | persisted
+            ctx.skills.activated = existing | persisted
         # Restore skill_data (e.g. vault base path) from sidecar
         persisted_data = read_skill_data(config, conv_id)
-        existing_data = ctx.skill_data
-        ctx.skill_data = {**persisted_data, **existing_data}
+        existing_data = ctx.skills.data
+        ctx.skills.data = {**persisted_data, **existing_data}
     await restore_skills(ctx)
 
     # Auto-activate always-loaded skills (bundled only — trust boundary)
@@ -525,7 +622,7 @@ async def run_agent_turn(ctx, user_message: str, history: list,
     bundled_dir = _BUNDLED_SKILLS_DIR.resolve()
     discovered = getattr(config, "discovered_skills", [])
     for skill_info in discovered:
-        if not skill_info.always_loaded or skill_info.name in ctx.activated_skills:
+        if not skill_info.always_loaded or skill_info.name in ctx.skills.activated:
             continue
         if not Path(skill_info.location).resolve().is_relative_to(bundled_dir):
             continue  # only bundled skills can be always-loaded
@@ -557,62 +654,114 @@ async def run_agent_turn(ctx, user_message: str, history: list,
         }
     log.info(f"Agent turn: effort={ctx.effort}, model={effort_llm.model}")
 
-    try:
-        # Add user message to history
-        # Truncate oversized user messages
-        max_len = config.agent.max_message_length
-        if max_len and len(user_message) > max_len:
-            original_len = len(user_message)
-            user_message = (
-                user_message[:max_len]
-                + f"\n\n[truncated at {max_len:,} chars, original was {original_len:,}]"
-            )
-            log.warning(f"User message truncated: {original_len:,} -> {max_len:,} chars")
+    return effort_overrides
 
-        user_msg: dict = {"role": "user", "content": user_message}
+
+async def _prepare_messages(
+    ctx, config, user_message: str, history: list,
+    archive_text: str = "",
+    attachments: list[dict] | None = None,
+) -> tuple[list, str]:
+    """Build the LLM messages array from history and user input.
+
+    Handles:
+    - Truncating oversized user messages
+    - Injecting proactive memory context before the user message
+    - Archiving the user message (using archive_text for inline commands)
+    - Building the messages array (system prompt + filtered/remapped history)
+    - Resolving attachments into multipart content
+
+    Returns (messages, retrieved_context_text).
+    """
+    # Truncate oversized user messages
+    max_len = config.agent.max_message_length
+    if max_len and len(user_message) > max_len:
+        original_len = len(user_message)
+        user_message = (
+            user_message[:max_len]
+            + f"\n\n[truncated at {max_len:,} chars, original was {original_len:,}]"
+        )
+        log.warning(f"User message truncated: {original_len:,} -> {max_len:,} chars")
+
+    user_msg: dict = {"role": "user", "content": user_message}
+    if attachments:
+        user_msg["attachments"] = attachments
+
+    # Proactive memory context — inject before user message
+    retrieved_context_text = ""
+    if not ctx.skip_memory_context:
+        from .memory_context import format_memory_context, retrieve_memory_context
+        mc_results = await retrieve_memory_context(config, user_message)
+        if mc_results:
+            retrieved_context_text = format_memory_context(mc_results)
+            mc_msg = {"role": "memory_context", "content": retrieved_context_text}
+            history.append(mc_msg)
+            _archive(ctx, mc_msg)
+            if config.memory_context.show_in_ui:
+                await ctx.publish("memory_context",
+                                  text=retrieved_context_text,
+                                  results=mc_results)
+
+    history.append(user_msg)
+    # Archive the display version for inline commands (short), full text for normal messages
+    if archive_text:
+        archive_msg: dict = {"role": "user", "content": archive_text}
         if attachments:
-            user_msg["attachments"] = attachments
+            archive_msg["attachments"] = attachments
+    else:
+        archive_msg = user_msg
+    _archive(ctx, archive_msg)
 
-        # Proactive memory context — inject before user message
-        retrieved_context_text = ""
-        if not ctx.skip_memory_context:
-            from .memory_context import format_memory_context, retrieve_memory_context
-            mc_results = await retrieve_memory_context(config, user_message)
-            if mc_results:
-                retrieved_context_text = format_memory_context(mc_results)
-                mc_msg = {"role": "memory_context", "content": retrieved_context_text}
-                history.append(mc_msg)
-                _archive(ctx, mc_msg)
-                if config.memory_context.show_in_ui:
-                    await ctx.publish("memory_context",
-                                      text=retrieved_context_text,
-                                      results=mc_results)
+    # Build the messages array: system prompt + history
+    # Filter out metadata roles (effort, reflection) that aren't valid LLM messages
+    # Remap non-standard roles that should appear in LLM context
+    ROLE_REMAP = {"memory_context": "user"}
+    from .archive import LLM_ROLES
+    llm_history = []
+    for m in history:
+        role = m.get("role")
+        if role in LLM_ROLES:
+            llm_history.append(m)
+        elif role in ROLE_REMAP:
+            llm_history.append({**m, "role": ROLE_REMAP[role]})
+    # Resolve attachments into multimodal content arrays for the LLM
+    llm_history = [_resolve_attachments(config, m) for m in llm_history]
+    messages = [{"role": "system", "content": config.system_prompt}] + llm_history
 
-        history.append(user_msg)
-        # Archive the display version for inline commands (short), full text for normal messages
-        if archive_text:
-            archive_msg: dict = {"role": "user", "content": archive_text}
-            if attachments:
-                archive_msg["attachments"] = attachments
-        else:
-            archive_msg = user_msg
-        _archive(ctx, archive_msg)
+    return messages, retrieved_context_text
 
-        # Build the messages array: system prompt + history
-        # Filter out metadata roles (effort, reflection) that aren't valid LLM messages
-        # Remap non-standard roles that should appear in LLM context
-        ROLE_REMAP = {"memory_context": "user"}
-        from .archive import LLM_ROLES
-        llm_history = []
-        for m in history:
-            role = m.get("role")
-            if role in LLM_ROLES:
-                llm_history.append(m)
-            elif role in ROLE_REMAP:
-                llm_history.append({**m, "role": ROLE_REMAP[role]})
-        # Resolve attachments into multimodal content arrays for the LLM
-        llm_history = [_resolve_attachments(config, m) for m in llm_history]
-        messages = [{"role": "system", "content": config.system_prompt}] + llm_history
+
+# -- Main agent turn -----------------------------------------------------------
+
+
+async def run_agent_turn(ctx, user_message: str, history: list,
+                         archive_text: str = "",
+                         attachments: list[dict] | None = None) -> "ToolResult":
+    """Process a single user message through the agent loop.
+
+    Args:
+        ctx: Runtime context (carries config, event bus, etc.)
+        user_message: The user's message text
+        archive_text: If set, archive this instead of user_message (for inline
+                      commands where the full body is the LLM prompt but the
+                      archive should show the short command)
+        history: Conversation history (list of message dicts, mutated in place)
+
+    Returns:
+        ToolResult with the agent's text response and any accumulated media.
+    """
+    config = ctx.config
+    ctx.history = history
+
+    effort_overrides = await _setup_turn_state(ctx, config, history)
+
+    conv_id = ctx.conv_id or ctx.channel_id
+
+    try:
+        messages, retrieved_context_text = await _prepare_messages(
+            ctx, config, user_message, history,
+            archive_text=archive_text, attachments=attachments,
+        )
         ctx.messages = messages
 
         # Slot for deferred tools system message (replaced each iteration)
@@ -621,9 +770,8 @@ async def run_agent_turn(ctx, user_message: str, history: list,
         prompt_tokens = 0
         empty_retries = 0
         reflection_retries = 0
-        reflection_exhausted = False
         last_reflection = None  # last ReflectionResult, for archiving after final response
-        turn_start_index = len(history)  # index of user message we're about to add
+        turn_start_index = len(history)  # start of this turn's tool/assistant activity (after user message)
 
         accumulated_text_parts = []  # text from iterations that also had tool calls
 
@@ -659,9 +807,9 @@ async def run_agent_turn(ctx, user_message: str, history: list,
             usage = response.get("usage")
             if usage:
                 prompt_tokens = usage.get("prompt_tokens", 0)
-                ctx.total_prompt_tokens += prompt_tokens
-                ctx.total_completion_tokens += usage.get("completion_tokens", 0)
-                ctx.last_prompt_tokens = prompt_tokens
+                ctx.tokens.total_prompt += prompt_tokens
+                ctx.tokens.total_completion += usage.get("completion_tokens", 0)
+                ctx.tokens.last_prompt = prompt_tokens
 
             tool_calls = response.get("tool_calls")
             if tool_calls:
@@ -702,92 +850,15 @@ async def run_agent_turn(ctx, user_message: str, history: list,
             log.debug("Reflection check: enabled=%s, retries=%d/%d, skip=%s, has_content=%s",
                        config.reflection.enabled, reflection_retries,
                        config.reflection.max_retries, ctx.skip_reflection, bool(content))
-            if not _should_reflect(ctx, config, content, reflection_retries):
-                reflection_exhausted = (
-                    reflection_retries >= config.reflection.max_retries
-                    and last_reflection is not None
-                    and not last_reflection.passed
+            content, should_retry, reflection_retries, last_reflection = (
+                await _handle_reflection(
+                    ctx, config, messages, history, content,
+                    user_message, attachments, retrieved_context_text,
+                    turn_start_index, reflection_retries, last_reflection,
                 )
-                last_reflection = None  # clear stale result from prior retry
-            else:
-                from .reflection import (
-                    build_prior_turn_summary,
-                    build_tool_summary,
-                    evaluate_response,
-                )
-
-                tool_summary = build_tool_summary(
-                    history, turn_start_index,
-                    max_result_len=config.reflection.max_tool_result_len,
-                )
-                # turn_start_index points past the current user message;
-                # use turn_start_index - 1 to exclude it from prior turns
-                prior_turn_summary = build_prior_turn_summary(
-                    history, turn_start_index - 1,
-                    max_turns=3,
-                    max_result_len=200,
-                )
-                # Annotate user message with attachment info for the judge —
-                # it can't see the actual files but needs to know they exist
-                judge_user_message = user_message
-                if attachments:
-                    att_desc = ", ".join(
-                        f"{a.get('filename', '?')} ({a.get('mime_type', '?')})"
-                        for a in attachments
-                    )
-                    judge_user_message += f"\n\n[User attached files: {att_desc}]"
-                result = await evaluate_response(
-                    config, judge_user_message, content, tool_summary,
-                    prior_turn_summary=prior_turn_summary,
-                    retrieved_context=retrieved_context_text,
-                )
-
-                last_reflection = result
-                log.info("Reflection result: passed=%s, critique=%s, error=%s",
-                         result.passed, result.critique[:200] if result.critique else "",
-                         result.error[:100] if result.error else "")
-
-                await ctx.publish("reflection_result",
-                    passed=result.passed,
-                    critique=result.critique,
-                    raw_response=result.raw_response,
-                    retry_number=reflection_retries + 1,
-                    error=result.error)
-
-                if not result.passed and not result.error:
-                    log.info("Reflection failed (retry %d/%d): %s",
-                             reflection_retries + 1,
-                             config.reflection.max_retries,
-                             result.critique[:200])
-                    # Add the failed response to history
-                    failed_msg = {"role": "assistant", "content": content}
-                    history.append(failed_msg)
-                    messages.append(failed_msg)
-                    _archive(ctx, failed_msg)
-
-                    # Add critique as user message for retry
-                    critique_msg = {
-                        "role": "user",
-                        "content": (
-                            "[reflection] Your previous response may not fully "
-                            "address the user's request.\n"
-                            f"Feedback: {result.critique}\n"
-                            "Please try again, addressing the feedback above."
-                        ),
-                    }
-                    history.append(critique_msg)
-                    messages.append(critique_msg)
-                    _archive(ctx, critique_msg)
-
-                    reflection_retries += 1
-                    continue  # back to LLM call
-
-            # Suggest model escalation if reflection retries exhausted
-            if reflection_exhausted and ctx.effort != "strong":
-                content += (
-                    "\n\n---\n*I'm not confident in this answer. "
-                    "Try `!think-harder` to retry with a more capable model.*"
-                )
+            )
+            if should_retry:
+                continue
 
             final_msg = {"role": "assistant", "content": content}
             history.append(final_msg)
@@ -840,171 +911,10 @@ async def run_agent_turn(ctx, user_message: str, history: list,
     finally:
         # Persist activated skills and skill_data after every turn
         if conv_id:
-            activated = ctx.activated_skills
+            activated = ctx.skills.activated
             if activated:
                 write_skills_state(config, conv_id, activated)
-            skill_data = ctx.skill_data
+            skill_data = ctx.skills.data
             if skill_data:
                 write_skill_data(config, conv_id, skill_data)
 
-
-# -- Interactive mode helpers --------------------------------------------------
-
-
-def _setup_interactive_context(ctx) -> None:
-    """Populate context defaults and media handler for interactive mode."""
-    from .media import TerminalMediaHandler
-    config = ctx.config
-
-    ctx.user_id = ctx.user_id or config.agent_user_id
-    ctx.channel_id = ctx.channel_id or "interactive"
-    ctx.channel_name = ctx.channel_name or "interactive"
-    ctx.thread_id = ctx.thread_id or ""
-    ctx.conv_id = "interactive"
-    ctx.media_handler = TerminalMediaHandler(config)
-
-    if config.llm.streaming:
-        async def _terminal_stream_chunk(chunk_type, data):
-            if chunk_type == "text":
-                print(data, end="", flush=True)
-            elif chunk_type == "tool_call_start":
-                print(f"\n  [calling {data['name']}...]", flush=True)
-
-        ctx.on_stream_chunk = _terminal_stream_chunk
-
-
-def _print_banner(config) -> None:
-    """Print startup banner showing model, tools, skills, and MCP info."""
-    from .mcp_client import get_registry
-
-    print("DecafClaw interactive mode. Type 'quit' to exit.")
-    print(f"Model: {config.llm.model}")
-    print(f"Tools: {', '.join(t['function']['name'] for t in TOOL_DEFINITIONS)}")
-    skills = getattr(config, "discovered_skills", [])
-    if skills:
-        print(f"Skills: {', '.join(s.name for s in skills)} (activate to use)")
-    mcp_registry = get_registry()
-    if mcp_registry and mcp_registry.servers:
-        parts = []
-        for name, state in mcp_registry.servers.items():
-            parts.append(f"{name} ({len(state.tools)} tools, {state.status})")
-        print(f"MCP: {', '.join(parts)}")
-    print()
-
-
-def _create_interactive_progress_subscriber(ctx):
-    """Create the on_progress callback for interactive mode."""
-    async def on_progress(event):
-        event_type = event.get("type")
-        if event_type == "tool_status":
-            print(f"  [{event.get('tool', 'tool')}] {event['message']}")
-        elif event_type == "tool_start":
-            print(f"  [running {event.get('tool', 'tool')}...]")
-        elif event_type == "llm_start" and event.get("iteration", 1) > 1:
-            print("  [thinking...]")
-        elif event_type == "compaction_start":
-            print("  [compacting conversation...]")
-        elif event_type == "compaction_end":
-            print("  [compaction complete]")
-        elif event_type == "tool_confirm_request":
-            command = event.get("command", "")
-            tool_name = event.get("tool", "tool")
-            suggested_pattern = event.get("suggested_pattern", "")
-            print(f"\n  \U0001f6a8 Confirm {tool_name}: {command}")
-            if suggested_pattern and tool_name == "shell":
-                prompt = f"  Approve? [y]es / [n]o / [a]lways / [p]attern ({suggested_pattern}): "
-            else:
-                prompt = "  Approve? [y]es / [n]o / [a]lways: "
-            answer = await asyncio.to_thread(input, prompt)
-            choice = answer.strip().lower()
-            approved = choice in ("y", "yes", "a", "always", "p", "pattern")
-            always = choice in ("a", "always")
-            add_pattern = choice in ("p", "pattern")
-            await ctx.event_bus.publish({
-                "type": "tool_confirm_response",
-                "context_id": event.get("context_id"),
-                "tool": tool_name,
-                "approved": approved,
-                "always": always,
-                **({"add_pattern": True} if add_pattern else {}),
-            })
-
-    return on_progress
-
-
-# -- Interactive mode ----------------------------------------------------------
-
-
-async def run_interactive(ctx):
-    """Run the agent in interactive terminal mode (stdin/stdout)."""
-    from .heartbeat import run_heartbeat_timer
-    from .mcp_client import init_mcp, shutdown_mcp
-
-    config = ctx.config
-
-    _setup_interactive_context(ctx)
-    await init_mcp(config)
-    _print_banner(config)
-
-    sub_id = ctx.event_bus.subscribe(_create_interactive_progress_subscriber(ctx))
-
-    # Resume from archive if available
-    from .archive import read_archive
-    history = read_archive(config, ctx.conv_id)
-    if history:
-        log.info(f"Resumed interactive session from archive ({len(history)} messages)")
-        print(f"  (resumed {len(history)} messages from previous session)")
-    else:
-        history = []
-
-    # Start heartbeat timer
-    shutdown_event = asyncio.Event()
-    suppress_ok = config.heartbeat_suppress_ok
-
-    async def interactive_heartbeat_reporter(results):
-        from datetime import datetime
-        has_alerts = any(not r["is_ok"] for r in results)
-        if not has_alerts and suppress_ok:
-            return
-        print(f"\n--- Heartbeat \u2014 {datetime.now().strftime('%Y-%m-%d %H:%M')} ---")
-        for result in results:
-            if result["is_ok"] and suppress_ok:
-                continue
-            print(f"[{result['title']}] {result['response']}")
-        print()
-
-    heartbeat_task = asyncio.create_task(
-        run_heartbeat_timer(
-            config, ctx.event_bus, shutdown_event,
-            on_results=interactive_heartbeat_reporter,
-        )
-    )
-
-    try:
-        while True:
-            try:
-                user_input = (await asyncio.to_thread(input, "you> ")).strip()
-            except (EOFError, KeyboardInterrupt):
-                print("\nBye!")
-                break
-
-            if not user_input:
-                continue
-            if user_input.lower() in ("quit", "exit"):
-                break
-
-            result = await run_agent_turn(ctx, user_input, history)
-
-            if config.llm.streaming:
-                print()  # final newline after streamed text
-            else:
-                print(f"\nagent> {result.text}\n")
-    finally:
-        shutdown_event.set()
-        heartbeat_task.cancel()
-        try:
-            await heartbeat_task
-        except asyncio.CancelledError:
-            pass
-        ctx.event_bus.unsubscribe(sub_id)
-        await shutdown_mcp()

@@ -12,6 +12,20 @@ from ..media import ToolResult
 
 log = logging.getLogger(__name__)
 
+
+def _file_error(e: Exception, path: str) -> ToolResult:
+    """Convert common file exceptions to a ToolResult error."""
+    if isinstance(e, FileNotFoundError):
+        return ToolResult(text=f"[error: file not found: {path}]")
+    if isinstance(e, IsADirectoryError):
+        return ToolResult(text=f"[error: path is a directory, not a file: {path}]")
+    if isinstance(e, PermissionError):
+        return ToolResult(text=f"[error: permission denied: {path}]")
+    if isinstance(e, UnicodeDecodeError):
+        return ToolResult(text=f"[error: file is not valid UTF-8 text: {path}]")
+    return ToolResult(text=f"[error: {e}: {path}]")
+
+
 # Max lines returned by workspace_read when no line range is specified
 MAX_READ_LINES = 200
 # Context lines shown in edit tool mini-diffs
@@ -55,12 +69,8 @@ def tool_workspace_read(ctx, path: str, start_line: int | None = None,
         return ToolResult(text=f"[error: path '{path}' is outside the workspace]")
     try:
         content = resolved.read_text()
-    except FileNotFoundError:
-        return ToolResult(text=f"[error: file not found: {path}]")
-    except IsADirectoryError:
-        return ToolResult(text=f"[error: '{path}' is a directory, not a file]")
-    except PermissionError:
-        return ToolResult(text=f"[error: permission denied: {path}]")
+    except (FileNotFoundError, IsADirectoryError, PermissionError, UnicodeDecodeError) as e:
+        return _file_error(e, path)
 
     all_lines = content.splitlines()
     total = len(all_lines)
@@ -100,8 +110,8 @@ def tool_workspace_write(ctx, path: str, content: str) -> str | ToolResult:
         resolved.parent.mkdir(parents=True, exist_ok=True)
         resolved.write_text(content)
         return f"Wrote {len(content)} characters to {path}"
-    except PermissionError:
-        return ToolResult(text=f"[error: permission denied: {path}]")
+    except PermissionError as e:
+        return _file_error(e, path)
 
 
 def tool_workspace_list(ctx, path: str = ".") -> str | ToolResult:
@@ -123,8 +133,8 @@ def tool_workspace_list(ctx, path: str = ".") -> str | ToolResult:
             size = f" ({entry.stat().st_size}B)" if entry.is_file() else ""
             lines.append(f"{rel}{suffix}{size}")
         return "\n".join(lines) if lines else "(empty directory)"
-    except PermissionError:
-        return ToolResult(text=f"[error: permission denied: {path}]")
+    except PermissionError as e:
+        return _file_error(e, path)
 
 
 def tool_file_share(ctx, path: str, message: str = "") -> "ToolResult":
@@ -154,8 +164,8 @@ def tool_file_share(ctx, path: str, message: str = "") -> "ToolResult":
                 "content_type": content_type,
             }],
         )
-    except PermissionError:
-        return ToolResult(text=f"[error: permission denied: {path}]")
+    except PermissionError as e:
+        return _file_error(e, path)
 
 
 def tool_workspace_move(ctx, path: str, destination: str) -> str | ToolResult:
@@ -175,8 +185,8 @@ def tool_workspace_move(ctx, path: str, destination: str) -> str | ToolResult:
         resolved_dst.parent.mkdir(parents=True, exist_ok=True)
         resolved_src.rename(resolved_dst)
         return f"Moved {path} -> {destination}"
-    except PermissionError:
-        return ToolResult(text="[error: permission denied]")
+    except PermissionError as e:
+        return _file_error(e, path)
 
 
 def tool_workspace_delete(ctx, path: str) -> str | ToolResult:
@@ -192,8 +202,8 @@ def tool_workspace_delete(ctx, path: str) -> str | ToolResult:
     try:
         resolved.unlink()
         return f"Deleted {path}"
-    except PermissionError:
-        return ToolResult(text=f"[error: permission denied: {path}]")
+    except PermissionError as e:
+        return _file_error(e, path)
 
 
 def tool_workspace_edit(ctx, path: str, old_text: str, new_text: str,
@@ -205,10 +215,8 @@ def tool_workspace_edit(ctx, path: str, old_text: str, new_text: str,
         return ToolResult(text=f"[error: path '{path}' is outside the workspace]")
     try:
         content = resolved.read_text()
-    except FileNotFoundError:
-        return ToolResult(text=f"[error: file not found: {path}]")
-    except PermissionError:
-        return ToolResult(text=f"[error: permission denied: {path}]")
+    except (FileNotFoundError, PermissionError, UnicodeDecodeError) as e:
+        return _file_error(e, path)
 
     count = content.count(old_text)
     if count == 0:
@@ -239,10 +247,8 @@ def tool_workspace_insert(ctx, path: str, line_number: int, content: str) -> str
         return ToolResult(text=f"[error: path '{path}' is outside the workspace]")
     try:
         existing = resolved.read_text()
-    except FileNotFoundError:
-        return ToolResult(text=f"[error: file not found: {path}]")
-    except PermissionError:
-        return ToolResult(text=f"[error: permission denied: {path}]")
+    except (FileNotFoundError, PermissionError) as e:
+        return _file_error(e, path)
 
     lines = existing.splitlines(keepends=True)
     if line_number < 1 or line_number > len(lines) + 1:
@@ -272,10 +278,8 @@ def tool_workspace_replace_lines(ctx, path: str, start_line: int, end_line: int,
         return ToolResult(text=f"[error: path '{path}' is outside the workspace]")
     try:
         existing = resolved.read_text()
-    except FileNotFoundError:
-        return ToolResult(text=f"[error: file not found: {path}]")
-    except PermissionError:
-        return ToolResult(text=f"[error: permission denied: {path}]")
+    except (FileNotFoundError, PermissionError) as e:
+        return _file_error(e, path)
 
     lines = existing.splitlines(keepends=True)
     if start_line < 1 or end_line < start_line or end_line > len(lines):
@@ -317,8 +321,8 @@ def tool_workspace_append(ctx, path: str, content: str) -> str | ToolResult:
         else:
             resolved.write_text(content)
         return f"Appended {len(content)} characters to {path}"
-    except PermissionError:
-        return ToolResult(text=f"[error: permission denied: {path}]")
+    except PermissionError as e:
+        return _file_error(e, path)
 
 
 def tool_workspace_diff(ctx, path1: str, path2: str, context_lines: int = 3) -> str | ToolResult:
@@ -332,16 +336,12 @@ def tool_workspace_diff(ctx, path1: str, path2: str, context_lines: int = 3) -> 
         return ToolResult(text=f"[error: path '{path2}' is outside the workspace]")
     try:
         lines1 = resolved1.read_text().splitlines(keepends=True)
-    except FileNotFoundError:
-        return ToolResult(text=f"[error: file not found: {path1}]")
-    except PermissionError:
-        return ToolResult(text=f"[error: permission denied: {path1}]")
+    except (FileNotFoundError, PermissionError, UnicodeDecodeError) as e:
+        return _file_error(e, path1)
     try:
         lines2 = resolved2.read_text().splitlines(keepends=True)
-    except FileNotFoundError:
-        return ToolResult(text=f"[error: file not found: {path2}]")
-    except PermissionError:
-        return ToolResult(text=f"[error: permission denied: {path2}]")
+    except (FileNotFoundError, PermissionError, UnicodeDecodeError) as e:
+        return _file_error(e, path2)
 
     diff = list(difflib.unified_diff(
         lines1, lines2,

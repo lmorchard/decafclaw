@@ -1,5 +1,6 @@
 """HTTP server — Starlette ASGI app for interactive callbacks and future web UI."""
 
+import functools
 import logging
 from pathlib import Path
 
@@ -125,32 +126,36 @@ def create_app(config, event_bus, app_ctx=None) -> Starlette:
         from .web.auth import get_current_user
         return get_current_user(request, config)
 
-    async def list_conversations(request: Request) -> JSONResponse:
+    def _authenticated(handler):
+        """Decorator that extracts username from auth, returns 401 if not authenticated."""
+        @functools.wraps(handler)
+        async def wrapper(request):
+            username = _require_auth(request)
+            if not username:
+                return JSONResponse({"error": "not authenticated"}, status_code=401)
+            return await handler(request, username)
+        return wrapper
+
+    @_authenticated
+    async def list_conversations(request: Request, username: str) -> JSONResponse:
         """List conversations for the authenticated user."""
-        username = _require_auth(request)
-        if not username:
-            return JSONResponse({"error": "not authenticated"}, status_code=401)
         from .web.conversations import ConversationIndex
         index = ConversationIndex(config)
         convs = index.list_for_user(username)
         return JSONResponse([c.to_dict() for c in convs])
 
-    async def create_conversation(request: Request) -> JSONResponse:
+    @_authenticated
+    async def create_conversation(request: Request, username: str) -> JSONResponse:
         """Create a new conversation."""
-        username = _require_auth(request)
-        if not username:
-            return JSONResponse({"error": "not authenticated"}, status_code=401)
         body = await request.json()
         from .web.conversations import ConversationIndex
         index = ConversationIndex(config)
         conv = index.create(username, title=body.get("title", ""))
         return JSONResponse(conv.to_dict(), status_code=201)
 
-    async def get_conversation(request: Request) -> JSONResponse:
+    @_authenticated
+    async def get_conversation(request: Request, username: str) -> JSONResponse:
         """Get conversation metadata."""
-        username = _require_auth(request)
-        if not username:
-            return JSONResponse({"error": "not authenticated"}, status_code=401)
         conv_id = request.path_params["id"]
         from .web.conversations import ConversationIndex
         index = ConversationIndex(config)
@@ -159,11 +164,9 @@ def create_app(config, event_bus, app_ctx=None) -> Starlette:
             return JSONResponse({"error": "not found"}, status_code=404)
         return JSONResponse(conv.to_dict())
 
-    async def rename_conversation(request: Request) -> JSONResponse:
+    @_authenticated
+    async def rename_conversation(request: Request, username: str) -> JSONResponse:
         """Rename a conversation."""
-        username = _require_auth(request)
-        if not username:
-            return JSONResponse({"error": "not authenticated"}, status_code=401)
         conv_id = request.path_params["id"]
         body = await request.json()
         from .web.conversations import ConversationIndex
@@ -176,11 +179,9 @@ def create_app(config, event_bus, app_ctx=None) -> Starlette:
             return JSONResponse({"error": "not found"}, status_code=404)
         return JSONResponse(updated.to_dict())
 
-    async def get_conversation_history(request: Request) -> JSONResponse:
+    @_authenticated
+    async def get_conversation_history(request: Request, username: str) -> JSONResponse:
         """Load paginated conversation history."""
-        username = _require_auth(request)
-        if not username:
-            return JSONResponse({"error": "not authenticated"}, status_code=401)
         conv_id = request.path_params["id"]
         from .web.conversations import ConversationIndex
         index = ConversationIndex(config)
@@ -192,11 +193,9 @@ def create_app(config, event_bus, app_ctx=None) -> Starlette:
         messages, has_more = index.load_history(conv_id, limit=limit, before=before)
         return JSONResponse({"messages": messages, "has_more": has_more})
 
-    async def serve_workspace_file(request: Request):
+    @_authenticated
+    async def serve_workspace_file(request: Request, username: str):
         """Serve a file from the agent workspace (authenticated, read-only)."""
-        username = _require_auth(request)
-        if not username:
-            return JSONResponse({"error": "not authenticated"}, status_code=401)
         file_path = request.path_params.get("path", "")
         if not file_path:
             return JSONResponse({"error": "path required"}, status_code=400)
@@ -291,11 +290,9 @@ def create_app(config, event_bus, app_ctx=None) -> Starlette:
 
     # -- Upload route -------------------------------------------------------------
 
-    async def handle_upload(request: Request) -> JSONResponse:
+    @_authenticated
+    async def handle_upload(request: Request, username: str) -> JSONResponse:
         """Handle file upload for a conversation."""
-        username = _require_auth(request)
-        if not username:
-            return JSONResponse({"error": "not authenticated"}, status_code=401)
         conv_id = request.path_params["conv_id"]
         # Verify conversation belongs to user
         from .web.conversations import ConversationIndex
@@ -331,11 +328,9 @@ def create_app(config, event_bus, app_ctx=None) -> Starlette:
         result = save_attachment(config, conv_id, filename, data, content_type)
         return JSONResponse(result, status_code=201)
 
-    async def archive_conversation(request: Request) -> JSONResponse:
+    @_authenticated
+    async def archive_conversation(request: Request, username: str) -> JSONResponse:
         """Archive a conversation (hide from list, keep data)."""
-        username = _require_auth(request)
-        if not username:
-            return JSONResponse({"error": "not authenticated"}, status_code=401)
         conv_id = request.path_params["id"]
         from .web.conversations import ConversationIndex
         index = ConversationIndex(config)

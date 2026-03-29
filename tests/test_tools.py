@@ -18,11 +18,11 @@ def test_think_with_empty_content(ctx):
 
 @pytest.mark.asyncio
 async def test_execute_tool_with_extra_tools(ctx):
-    """Skill-provided tools on ctx.extra_tools are callable via execute_tool."""
+    """Skill-provided tools on ctx.tools.extra are callable via execute_tool."""
     def mock_tool(ctx, query: str) -> str:
         return f"mock result: {query}"
 
-    ctx.extra_tools = {"mock_search": mock_tool}
+    ctx.tools.extra = {"mock_search": mock_tool}
     result = await execute_tool(ctx, "mock_search", {"query": "hello"})
     assert result.text == "mock result: hello"
 
@@ -100,8 +100,8 @@ def test_context_stats(ctx):
         {"role": "user", "content": "Hello"},
         {"role": "assistant", "content": "Hi there!"},
     ]
-    ctx.total_prompt_tokens = 100
-    ctx.total_completion_tokens = 20
+    ctx.tokens.total_prompt = 100
+    ctx.tokens.total_completion = 20
 
     result = tool_context_stats(ctx)
     assert "Context Stats" in result

@@ -5,6 +5,9 @@ from pathlib import Path
 
 log = logging.getLogger(__name__)
 
+_UNCHECKED = "- [ ] "
+_CHECKED = "- [x] "
+
 
 def _todo_path(config, conv_id: str) -> Path:
     """Path to the to-do file for a conversation."""
@@ -19,10 +22,10 @@ def _read_todos(config, conv_id: str) -> list[dict]:
     items = []
     for line in path.read_text().splitlines():
         line = line.strip()
-        if line.startswith("- [x] "):
-            items.append({"text": line[6:], "done": True})
-        elif line.startswith("- [ ] "):
-            items.append({"text": line[6:], "done": False})
+        if line.startswith(_CHECKED):
+            items.append({"text": line[len(_CHECKED):], "done": True})
+        elif line.startswith(_UNCHECKED):
+            items.append({"text": line[len(_UNCHECKED):], "done": False})
     return items
 
 
@@ -32,8 +35,8 @@ def _write_todos(config, conv_id: str, items: list[dict]):
     path.parent.mkdir(parents=True, exist_ok=True)
     lines = []
     for item in items:
-        marker = "x" if item["done"] else " "
-        lines.append(f"- [{marker}] {item['text']}")
+        prefix = _CHECKED if item["done"] else _UNCHECKED
+        lines.append(f"{prefix}{item['text']}")
     path.write_text("\n".join(lines) + "\n" if lines else "")
 
 
@@ -64,8 +67,8 @@ def todo_list(config, conv_id: str) -> str:
         return "No to-do items."
     lines = []
     for i, item in enumerate(items, 1):
-        marker = "x" if item["done"] else " "
-        lines.append(f"{i}. [{marker}] {item['text']}")
+        checkbox = "[x] " if item["done"] else "[ ] "
+        lines.append(f"{i}. {checkbox}{item['text']}")
     done = sum(1 for i in items if i["done"])
     lines.append(f"\n{done}/{len(items)} complete")
     return "\n".join(lines)

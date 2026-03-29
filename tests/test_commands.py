@@ -142,7 +142,7 @@ class TestExecuteCommand:
         mode, result = await execute_command(ctx, skill, "the thing")
         assert mode == "inline"
         assert "Do the thing" in result
-        assert ctx.preapproved_tools == {"vault_read"}
+        assert ctx.tools.preapproved == {"vault_read"}
 
     @pytest.mark.asyncio
     async def test_fork_mode(self, ctx):
@@ -157,7 +157,7 @@ class TestExecuteCommand:
 
         assert mode == "fork"
         assert result == "child result"
-        assert ctx.preapproved_tools == {"shell"}
+        assert ctx.tools.preapproved == {"shell"}
 
     @pytest.mark.asyncio
     async def test_shell_skill_not_activated(self, ctx):
@@ -167,7 +167,7 @@ class TestExecuteCommand:
             body="Do stuff", context="inline", has_native_tools=False,
         )
         await execute_command(ctx, skill, "")
-        assert "test-cmd" not in ctx.activated_skills
+        assert "test-cmd" not in ctx.skills.activated
 
     @pytest.mark.asyncio
     async def test_native_skill_auto_activated(self, ctx):
@@ -187,7 +187,7 @@ class TestExecuteCommand:
             name="test-cmd", description="Test", location=Path("."),
             body="Do stuff", context="inline",
         )
-        ctx.activated_skills.add("test-cmd")
+        ctx.skills.activated.add("test-cmd")
         # Should not error even though activation logic isn't called
         mode, result = await execute_command(ctx, skill, "")
         assert mode == "inline"
@@ -222,7 +222,7 @@ class TestExecuteCommand:
             name="markdown_vault", description="Vault", location=Path("."),
         )
         ctx.config.discovered_skills = [dep_skill]
-        ctx.activated_skills.add("markdown_vault")
+        ctx.skills.activated.add("markdown_vault")
 
         skill = SkillInfo(
             name="test-cmd", description="Test", location=Path("."),

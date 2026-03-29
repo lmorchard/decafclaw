@@ -116,17 +116,17 @@ def test_fork_for_tool_call_copies_all_fields(ctx):
     ctx.messages = [{"role": "system", "content": "sys"}]
     ctx.cancelled = asyncio.Event()
     ctx.media_handler = "fake-handler"
-    ctx.extra_tools = {"vault_read": lambda: None}
-    ctx.extra_tool_definitions = [{"function": {"name": "vault_read"}}]
-    ctx.activated_skills = {"markdown_vault"}
-    ctx.skill_data = {"vault_base_path": "obsidian/main"}
-    ctx.allowed_tools = {"shell", "memory_search"}
+    ctx.tools.extra = {"vault_read": lambda: None}
+    ctx.tools.extra_definitions = [{"function": {"name": "vault_read"}}]
+    ctx.skills.activated = {"markdown_vault"}
+    ctx.skills.data = {"vault_base_path": "obsidian/main"}
+    ctx.tools.allowed = {"shell", "memory_search"}
     ctx.event_context_id = "parent-event-ctx"
 
     forked = ctx.fork_for_tool_call("call_new")
 
     # Overridden fields
-    assert forked.current_tool_call_id == "call_new"
+    assert forked.tools.current_call_id == "call_new"
 
     # Preserved identity
     assert forked.context_id == ctx.context_id
@@ -137,8 +137,7 @@ def test_fork_for_tool_call_copies_all_fields(ctx):
     fields_to_check = [
         "user_id", "channel_id", "channel_name", "thread_id", "conv_id",
         "history", "messages", "cancelled", "media_handler",
-        "extra_tools", "extra_tool_definitions", "activated_skills",
-        "skill_data", "allowed_tools", "event_context_id",
+        "event_context_id",
     ]
     for field in fields_to_check:
         parent_val = getattr(ctx, field)
@@ -148,11 +147,17 @@ def test_fork_for_tool_call_copies_all_fields(ctx):
             f"parent={parent_val!r}, child={child_val!r}"
         )
 
+    # Sub-objects: tools is replaced (new current_call_id), skills is shared
+    assert forked.tools.extra == ctx.tools.extra
+    assert forked.tools.extra_definitions == ctx.tools.extra_definitions
+    assert forked.tools.allowed == ctx.tools.allowed
+    assert forked.skills is ctx.skills
+
 
 def test_fork_for_tool_call_fresh_token_counters(ctx):
     """Token counters should be fresh on forked ctx."""
-    ctx.total_prompt_tokens = 100
-    ctx.total_completion_tokens = 50
+    ctx.tokens.total_prompt = 100
+    ctx.tokens.total_completion = 50
     forked = ctx.fork_for_tool_call("call_1")
-    assert forked.total_prompt_tokens == 0
-    assert forked.total_completion_tokens == 0
+    assert forked.tokens.total_prompt == 0
+    assert forked.tokens.total_completion == 0

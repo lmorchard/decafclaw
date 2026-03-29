@@ -12,7 +12,8 @@ def test_import_context():
 
 
 def test_import_agent():
-    from decafclaw.agent import run_agent_turn, run_interactive
+    from decafclaw.agent import run_agent_turn
+    from decafclaw.interactive_terminal import run_interactive
     assert run_agent_turn is not None
     assert run_interactive is not None
 
