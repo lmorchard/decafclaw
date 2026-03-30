@@ -167,6 +167,13 @@ export class ConversationSidebar extends LitElement {
     this.store?.unarchiveConversation(convId);
   }
 
+  #openConfig() {
+    this.dispatchEvent(new CustomEvent('config-open', {
+      bubbles: true,
+      composed: true,
+    }));
+  }
+
   /** @param {string} level */
   #handleEffortClick(level) {
     if (this._activeId) {
@@ -234,20 +241,46 @@ export class ConversationSidebar extends LitElement {
     }
   }
 
+  async #createWikiPage() {
+    const name = prompt('New page name:');
+    if (!name || !name.trim()) return;
+    try {
+      const res = await fetch('/api/wiki', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: name.trim() }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        alert(data.error || `Failed to create page (${res.status})`);
+        return;
+      }
+      this.dispatchEvent(new CustomEvent('wiki-open', {
+        detail: { page: name.trim(), editing: true },
+        bubbles: true,
+        composed: true,
+      }));
+      this.#fetchWikiPages();
+    } catch (e) {
+      alert('Failed to create page.');
+    }
+  }
+
   #renderWikiTab() {
     if (this._wikiLoading) {
       return html`<div class="conv-list"><p style="padding: 1rem; color: var(--pico-muted-color);">Loading wiki pages...</p></div>`;
     }
-    if (!this._wikiPages.length) {
-      return html`<div class="conv-list"><p style="padding: 1rem; color: var(--pico-muted-color);">No wiki pages found.</p></div>`;
-    }
     return html`
       <div class="conv-list">
-        ${this._wikiPages.map(p => html`
-          <div class="conv-item wiki-item" @click=${() => this.#handleWikiSelect(p.title)} title=${p.title}>
-            <span class="conv-title">${p.title}</span>
-          </div>
-        `)}
+        <button class="wiki-new-page-btn outline" @click=${() => this.#createWikiPage()}>+ New Page</button>
+        ${this._wikiPages.length === 0
+          ? html`<p style="padding: 1rem; color: var(--pico-muted-color);">No wiki pages found.</p>`
+          : this._wikiPages.map(p => html`
+            <div class="conv-item wiki-item" @click=${() => this.#handleWikiSelect(p.title)} title=${p.title}>
+              <span class="conv-title">${p.title}</span>
+            </div>
+          `)
+        }
       </div>
     `;
   }
@@ -354,6 +387,7 @@ export class ConversationSidebar extends LitElement {
       ` : nothing}
       <div class="sidebar-footer">
         <theme-toggle></theme-toggle>
+        <button class="config-btn" title="Agent Config" @click=${() => this.#openConfig()}>&#9881;</button>
         <button class="logout-btn" @click=${() => this.authClient?.logout()} title="Sign out">Sign out</button>
       </div>
     `;

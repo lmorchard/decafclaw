@@ -12,7 +12,8 @@
       "lit": "/static/vendor/bundle/lit.js",
       "lit/directives/unsafe-html.js": "/static/vendor/bundle/lit-unsafe-html.js",
       "marked": "/static/vendor/bundle/marked.js",
-      "dompurify": "/static/vendor/bundle/dompurify.js"
+      "dompurify": "/static/vendor/bundle/dompurify.js",
+      "@milkdown/kit": "/static/vendor/bundle/milkdown.js"
     }
   }
   </script>
@@ -40,7 +41,7 @@
     <wiki-page standalone></wiki-page>
   </div>
   <script type="module">
-    import './static/components/wiki-page.js';
+    import '/static/components/wiki-page.js';
 
     // Extract page name from URL: /wiki/Page%20Name
     const path = decodeURIComponent(window.location.pathname.replace(/^\/wiki\//, ''));

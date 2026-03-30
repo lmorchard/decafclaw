@@ -1,14 +1,17 @@
 /**
- * Wiki page viewer — fetches and renders a wiki page as markdown.
+ * Wiki page viewer/editor — fetches a wiki page and shows it in either
+ * read-only (markdown) or edit (Milkdown WYSIWYG) mode.
  *
- * Used in both the side panel and standalone wiki page.
+ * Mode preference is persisted in localStorage. Defaults to edit mode.
  * Dispatches 'wiki-navigate' events when [[wiki-links]] are clicked (panel mode).
- * In standalone mode, wiki links are regular <a> tags to /wiki/{page}.
  */
 
 import { LitElement, html, nothing } from 'lit';
 import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 import { renderMarkdown } from '../lib/markdown.js';
+import './wiki-editor.js';
+
+const EDIT_MODE_KEY = 'wiki-edit-mode';
 
 /**
  * @param {number} ts — Unix timestamp (seconds)
@@ -29,6 +32,7 @@ export class WikiPage extends LitElement {
     _modified: { state: true },
     _loading: { state: true },
     _error: { state: true },
+    _editing: { state: true },
   };
 
   createRenderRoot() { return this; }
@@ -42,11 +46,19 @@ export class WikiPage extends LitElement {
     /** @type {number} */ this._modified = 0;
     this._loading = false;
     /** @type {string} */ this._error = '';
+    // Default to edit mode, persisted in localStorage
+    this._editing = localStorage.getItem(EDIT_MODE_KEY) !== 'false';
   }
 
   /** @param {Map<string, any>} changed */
   willUpdate(changed) {
     if (changed.has('page') && this.page) {
+      // If editing, flush save before switching pages
+      if (this._editing) {
+        /** @type {import('./wiki-editor.js').WikiEditor|null} */
+        const editor = this.querySelector('wiki-editor');
+        if (editor) editor.flushSave();
+      }
       this._fetchPage();
     }
   }
@@ -72,6 +84,31 @@ export class WikiPage extends LitElement {
     }
   }
 
+  async _toggleMode() {
+    if (this._editing) {
+      // Flush editor save before switching to view mode
+      /** @type {import('./wiki-editor.js').WikiEditor|null} */
+      const editor = this.querySelector('wiki-editor');
+      if (editor) await editor.flushSave();
+      this._editing = false;
+      await this._fetchPage();
+    } else {
+      this._editing = true;
+    }
+    localStorage.setItem(EDIT_MODE_KEY, String(this._editing));
+  }
+
+  /** Public method to force edit mode (called from app.js for new pages). */
+  startEditing() {
+    this._editing = true;
+    localStorage.setItem(EDIT_MODE_KEY, 'true');
+  }
+
+  /** @param {CustomEvent} e */
+  _onSaved(e) {
+    this._modified = e.detail.modified;
+  }
+
   /** @param {Event} e */
   _handleClick(e) {
     const link = /** @type {HTMLElement} */ (e.target).closest('a.wiki-link');
@@ -79,12 +116,8 @@ export class WikiPage extends LitElement {
     const page = link.getAttribute('data-wiki-page');
     if (!page) return;
 
-    if (this.standalone) {
-      // Standalone mode: navigate normally via <a> href
-      return;
-    }
+    if (this.standalone) return; // navigate normally via <a> href
 
-    // Panel mode: prevent default, dispatch navigate event
     e.preventDefault();
     this.dispatchEvent(new CustomEvent('wiki-navigate', {
       detail: { page },
@@ -105,17 +138,35 @@ export class WikiPage extends LitElement {
     }
 
     const newTabUrl = '/wiki/' + encodeURIComponent(this.page);
+    const modeIcon = this._editing ? '\u{1f441}' : '\u{270e}';
+    const modeTitle = this._editing ? 'Switch to view mode' : 'Switch to edit mode';
+    const rightButtons = html`
+      <button class="wiki-edit-btn" @click=${() => this._toggleMode()} title=${modeTitle}>${modeIcon}</button>
+      <a href=${newTabUrl} target="_blank" rel="noopener" class="wiki-open-tab" title="Open in new tab">&#8599;</a>
+    `;
+
+    if (this._editing) {
+      return html`
+        <div class="wiki-page">
+          <wiki-editor
+            page=${this.page}
+            .content=${this._content}
+            .modified=${this._modified}
+            .toolbarExtra=${rightButtons}
+            @saved=${this._onSaved}
+          ></wiki-editor>
+        </div>
+      `;
+    }
 
     return html`
-      <div class="wiki-page" @click=${this._handleClick}>
-        <div class="wiki-page-header">
-          <h2 class="wiki-page-title">${this._title}</h2>
-          <div class="wiki-page-meta">
-            ${this._modified ? html`<span class="wiki-page-date">${formatDate(this._modified)}</span>` : nothing}
-            <a href=${newTabUrl} target="_blank" rel="noopener" class="wiki-open-tab" title="Open in new tab">&#8599;</a>
-          </div>
+      <div class="wiki-page">
+        <div class="wiki-page-toolbar">
+          <span class="wiki-editor-spacer"></span>
+          ${this._modified ? html`<span class="wiki-page-date">${formatDate(this._modified)}</span>` : nothing}
+          ${rightButtons}
         </div>
-        <div class="wiki-page-body">
+        <div class="wiki-page-body" @click=${this._handleClick}>
           ${unsafeHTML(renderMarkdown(this._content))}
         </div>
       </div>

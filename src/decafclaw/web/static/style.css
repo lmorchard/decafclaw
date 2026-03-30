@@ -316,6 +316,24 @@ conversation-sidebar .logout-btn:hover {
   border-color: var(--pico-primary-background);
 }
 
+/* Config gear button */
+conversation-sidebar .config-btn {
+  background: none;
+  border: 1px solid var(--pico-muted-border-color);
+  border-radius: 4px;
+  padding: 0.25rem 0.5rem;
+  cursor: pointer;
+  font-size: 0.85rem;
+  margin: 0;
+  line-height: 1;
+  color: var(--pico-muted-color);
+}
+
+conversation-sidebar .config-btn:hover {
+  background: var(--pico-secondary-hover-background);
+  color: var(--pico-color);
+}
+
 /* Toast notifications */
 #toast-container {
   position: fixed;
@@ -875,7 +893,7 @@ conversation-sidebar .mobile-close-btn:hover {
   min-width: 250px;
   flex-shrink: 0;
   overflow-y: auto;
-  padding: 1.5rem 2rem;
+  padding: 1rem 1.5rem;
   min-height: 0;
 }
 
@@ -927,6 +945,14 @@ conversation-sidebar .mobile-close-btn:hover {
   color: var(--pico-color);
 }
 
+.wiki-new-page-btn {
+  display: block;
+  width: 100%;
+  text-align: left;
+  margin-bottom: 0.5rem;
+  font-size: 0.9rem;
+}
+
 .wiki-item {
   cursor: pointer;
 }
@@ -966,9 +992,20 @@ a.wiki-link:hover {
   color: var(--pico-muted-color);
 }
 
+.wiki-edit-btn,
 .wiki-open-tab {
   text-decoration: none;
   font-size: 1rem;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0.2rem 0.4rem;
+  margin-left: 0.25rem;
+  color: var(--pico-muted-color);
+}
+.wiki-edit-btn:hover,
+.wiki-open-tab:hover {
+  color: var(--pico-primary);
 }
 
 .wiki-page-body {
@@ -988,6 +1025,110 @@ a.wiki-link:hover {
 
 .wiki-page-error {
   color: var(--pico-del-color);
+}
+
+/* ── Config panel ───────────────────────────────────────────────────────── */
+
+.config-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.config-panel-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--pico-muted-border-color);
+}
+
+.config-panel-title {
+  font-weight: 600;
+  font-size: 1.1rem;
+  flex: 1;
+}
+
+.config-back-btn,
+.config-close-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 1rem;
+  color: var(--pico-muted-color);
+  padding: 0.25rem 0.5rem;
+  margin: 0;
+  line-height: 1;
+}
+
+.config-back-btn:hover,
+.config-close-btn:hover {
+  color: var(--pico-color);
+}
+
+.config-file-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0.5rem;
+}
+
+.config-file-item {
+  padding: 0.6rem 0.75rem;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: background 0.1s;
+}
+
+.config-file-item:hover {
+  background: var(--pico-primary-focus);
+}
+
+.config-file-info {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.config-file-name {
+  font-weight: 500;
+  font-size: 0.9rem;
+}
+
+.config-file-desc {
+  font-size: 0.8rem;
+  color: var(--pico-muted-color);
+  margin-top: 0.15rem;
+}
+
+.config-scope-badge {
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 0.1rem 0.35rem;
+  border-radius: 3px;
+  background: var(--pico-muted-border-color);
+  color: var(--pico-muted-color);
+}
+
+.config-scope-badge.admin {
+  background: var(--pico-primary-focus);
+  color: var(--pico-primary);
+}
+
+.config-scope-badge.workspace {
+  background: var(--pico-ins-color);
+  color: var(--pico-primary-inverse);
+}
+
+.config-default-badge {
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 0.1rem 0.35rem;
+  border-radius: 3px;
+  background: var(--pico-muted-border-color);
+  color: var(--pico-muted-color);
+  font-style: italic;
 }
 
 /* ── Wiki page list ─────────────────────────────────────────────────────── */
@@ -1136,4 +1277,172 @@ a.wiki-link:hover {
     border-right: none;
     padding: 1rem;
   }
+}
+
+/* -- Wiki Editor ----------------------------------------------------------- */
+
+.wiki-editor-container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.wiki-editor-spacer {
+  flex-grow: 1;
+}
+
+.wiki-editor-status {
+  font-size: 0.75rem;
+  color: var(--pico-muted-color);
+}
+.wiki-editor-status.saving { color: var(--pico-primary); }
+.wiki-editor-status.saved { color: var(--pico-ins-color, #2a7); }
+.wiki-editor-status.error,
+.wiki-editor-status.conflict { color: var(--pico-del-color, #c44); }
+
+.wiki-page-toolbar,
+.wiki-editor-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0.3rem 0;
+  border-bottom: 1px solid var(--pico-muted-border-color);
+  margin-bottom: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.wiki-editor-toolbar-btn {
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  padding: 0.15rem 0.35rem;
+  cursor: pointer;
+  font-size: 0.75rem;
+  font-family: monospace;
+  min-width: 1.6rem;
+  text-align: center;
+  color: var(--pico-color);
+  line-height: 1.2;
+}
+.wiki-editor-toolbar-btn:hover {
+  background: var(--pico-muted-border-color);
+}
+.wiki-editor-toolbar-btn:active {
+  background: var(--pico-primary-focus);
+}
+
+.wiki-editor-separator {
+  width: 1px;
+  height: 1.2rem;
+  background: var(--pico-muted-border-color);
+  margin: 0 0.3rem;
+}
+
+.wiki-editor-conflict {
+  background: var(--pico-mark-background-color, #ffeeba);
+  color: var(--pico-color);
+  padding: 0.5rem 0.75rem;
+  border-radius: 4px;
+  margin-bottom: 0.5rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+}
+.wiki-editor-conflict button {
+  padding: 0.2rem 0.5rem;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+/* ProseMirror editor area */
+.milkdown-root {
+  flex-grow: 1;
+  overflow-y: auto;
+  min-height: 200px;
+}
+
+.milkdown-root .ProseMirror {
+  outline: none;
+  min-height: 200px;
+  padding: 0.25rem 0;
+}
+
+.milkdown-root .ProseMirror:focus {
+  outline: none;
+}
+
+/* Match wiki-page-body typography */
+.milkdown-root h1 { font-size: 1.4rem; }
+.milkdown-root h2 { font-size: 1.2rem; }
+.milkdown-root h3 { font-size: 1.05rem; }
+.milkdown-root h4,
+.milkdown-root h5,
+.milkdown-root h6 { font-size: 0.95rem; }
+
+.milkdown-root pre {
+  background: var(--pico-code-background-color);
+  padding: 0.75rem 1rem;
+  border-radius: 4px;
+  overflow-x: auto;
+}
+
+.milkdown-root code {
+  background: var(--pico-code-background-color);
+  padding: 0.1rem 0.3rem;
+  border-radius: 3px;
+  font-size: 0.9em;
+}
+
+.milkdown-root blockquote {
+  border-left: 3px solid var(--pico-muted-border-color);
+  padding-left: 1rem;
+  color: var(--pico-muted-color);
+}
+
+.milkdown-root ul[data-type="taskList"] {
+  list-style: none;
+  padding-left: 0;
+}
+.milkdown-root ul[data-type="taskList"] li {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.4rem;
+}
+.milkdown-root ul[data-type="taskList"] input[type="checkbox"] {
+  margin-top: 0.25rem;
+}
+
+.milkdown-root a.wiki-link {
+  color: var(--pico-primary);
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  cursor: default;
+}
+
+.wiki-link-edit {
+  color: var(--pico-primary);
+  border-bottom: 1px solid var(--pico-primary);
+  outline: none;
+  min-width: 2ch;
+}
+
+.milkdown-root hr {
+  border: none;
+  border-top: 1px solid var(--pico-muted-border-color);
+  margin: 1rem 0;
+}
+
+.milkdown-root table {
+  border-collapse: collapse;
+  width: 100%;
+}
+.milkdown-root th,
+.milkdown-root td {
+  border: 1px solid var(--pico-muted-border-color);
+  padding: 0.4rem 0.6rem;
+  text-align: left;
+}
+.milkdown-root th {
+  background: var(--pico-code-background-color);
 }

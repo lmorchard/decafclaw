@@ -41,6 +41,12 @@ const bundles = [
     entry: 'dompurify',
     outfile: join(outdir, 'dompurify.js'),
   },
+  {
+    name: '@milkdown/kit',
+    entry: join(__dirname, 'milkdown-entry.js'),
+    outfile: join(outdir, 'milkdown.js'),
+    external: [],
+  },
 ];
 
 for (const bundle of bundles) {
