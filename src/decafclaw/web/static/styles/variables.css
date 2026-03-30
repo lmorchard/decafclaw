@@ -1,0 +1,17 @@
+/* DecafClaw Web Gateway — layout and component styles */
+
+:root {
+  --sidebar-width: 280px;
+  --header-height: 48px;
+  font-size: 97%;
+}
+
+body {
+  margin: 0;
+  height: 100vh;
+  overflow: hidden;
+}
+
+.hidden {
+  display: none !important;
+}
