@@ -49,7 +49,8 @@ a.wiki-link:hover {
 }
 
 .wiki-edit-btn,
-.wiki-open-tab {
+.wiki-open-tab,
+.wiki-close-btn {
   text-decoration: none;
   font-size: 1rem;
   background: none;
@@ -59,8 +60,13 @@ a.wiki-link:hover {
   margin-left: 0.25rem;
   color: var(--pico-muted-color);
 }
+.wiki-close-btn {
+  font-size: 1.2rem;
+  line-height: 1;
+}
 .wiki-edit-btn:hover,
-.wiki-open-tab:hover {
+.wiki-open-tab:hover,
+.wiki-close-btn:hover {
   color: var(--pico-primary);
 }
 

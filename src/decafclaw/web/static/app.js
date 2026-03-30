@@ -189,6 +189,9 @@ wikiMainEl?.addEventListener('wiki-navigate', (e) => {
   if (page) showWikiPage(page);
 });
 
+// Close wiki pane via X button
+wikiMainEl?.addEventListener('wiki-close', () => hideWikiView());
+
 // Handle browser back/forward for wiki navigation
 window.addEventListener('popstate', () => {
   const wiki = new URLSearchParams(location.search).get('wiki');
