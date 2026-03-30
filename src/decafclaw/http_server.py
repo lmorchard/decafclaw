@@ -14,6 +14,14 @@ from .mattermost_ui import get_token_registry
 
 log = logging.getLogger(__name__)
 
+_CONFIG_FILES = [
+    {"name": "SOUL.md", "path": "SOUL.md", "description": "Core identity prompt", "scope": "admin"},
+    {"name": "AGENT.md", "path": "AGENT.md", "description": "Behavioral instructions", "scope": "admin"},
+    {"name": "USER.md", "path": "USER.md", "description": "User-specific context", "scope": "admin"},
+    {"name": "HEARTBEAT.md", "path": "HEARTBEAT.md", "description": "Heartbeat check sections", "scope": "admin"},
+    {"name": "COMPACTION.md", "path": "COMPACTION.md", "description": "Compaction prompt override", "scope": "admin"},
+]
+
 
 def create_app(config, event_bus, app_ctx=None) -> Starlette:
     """Create the Starlette ASGI app with routes."""
@@ -238,11 +246,9 @@ def create_app(config, event_bus, app_ctx=None) -> Starlette:
                 return path
         return None
 
-    async def wiki_list(request: Request) -> JSONResponse:
+    @_authenticated
+    async def wiki_list(request: Request, username: str) -> JSONResponse:
         """List all wiki pages with titles and modified dates."""
-        username = _require_auth(request)
-        if not username:
-            return JSONResponse({"error": "not authenticated"}, status_code=401)
         wiki_root = _wiki_dir()
         if not wiki_root.is_dir():
             return JSONResponse([])
@@ -258,11 +264,9 @@ def create_app(config, event_bus, app_ctx=None) -> Starlette:
         pages.sort(key=lambda p: p["title"].lower())
         return JSONResponse(pages)
 
-    async def wiki_read(request: Request) -> JSONResponse:
+    @_authenticated
+    async def wiki_read(request: Request, username: str) -> JSONResponse:
         """Read a single wiki page as JSON."""
-        username = _require_auth(request)
-        if not username:
-            return JSONResponse({"error": "not authenticated"}, status_code=401)
         page_name = request.path_params.get("page", "")
         if not page_name:
             return JSONResponse({"error": "page name required"}, status_code=400)
@@ -276,6 +280,90 @@ def create_app(config, event_bus, app_ctx=None) -> Starlette:
             "content": content,
             "modified": stat.st_mtime,
         })
+
+    @_authenticated
+    async def wiki_write(request: Request, username: str) -> JSONResponse:
+        """Create or update a wiki page."""
+        page_name = request.path_params.get("page", "")
+        if not page_name:
+            return JSONResponse({"error": "page name required"}, status_code=400)
+        # Validate page path
+        if ".." in page_name or page_name.startswith("/"):
+            return JSONResponse({"error": "invalid page path"}, status_code=400)
+        wiki_root = _wiki_dir()
+        wiki_root.mkdir(parents=True, exist_ok=True)
+        target = (wiki_root / f"{page_name}.md").resolve()
+        if not target.is_relative_to(wiki_root.resolve()):
+            return JSONResponse({"error": "path outside wiki directory"}, status_code=403)
+        # Parse body
+        body = await request.json()
+        content = body.get("content")
+        if content is None or not isinstance(content, str):
+            return JSONResponse({"error": "content (string) required"}, status_code=400)
+        # Conflict detection: if modified timestamp provided and file exists,
+        # check that the file hasn't been modified since the client read it
+        modified = body.get("modified")
+        if modified is not None:
+            try:
+                modified = float(modified)
+            except (TypeError, ValueError):
+                return JSONResponse({"error": "modified must be a number"}, status_code=400)
+            if target.exists():
+                file_mtime = target.stat().st_mtime
+                if file_mtime > modified + 1.0:
+                    return JSONResponse(
+                        {"error": "conflict", "server_modified": file_mtime},
+                        status_code=409,
+                    )
+        # Write
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
+        # Update semantic search index
+        try:
+            from .embeddings import delete_entries, index_entry
+            rel_path = str(target.relative_to(config.workspace_path.resolve()))
+            delete_entries(config, rel_path, source_type="wiki")
+            await index_entry(config, rel_path, content, source_type="wiki")
+        except Exception as e:
+            log.warning(f"Failed to index wiki page '{page_name}': {e}")
+        new_mtime = target.stat().st_mtime
+        return JSONResponse({"ok": True, "modified": new_mtime})
+
+    @_authenticated
+    async def wiki_create(request: Request, username: str) -> JSONResponse:
+        """Create a new wiki page."""
+        body = await request.json()
+        name = body.get("name")
+        if not name or not isinstance(name, str):
+            return JSONResponse({"error": "name (string) required"}, status_code=400)
+        name = name.strip()
+        if not name:
+            return JSONResponse({"error": "name (string) required"}, status_code=400)
+        # Validate name: block path traversal and absolute paths
+        if ".." in name or name.startswith("/"):
+            return JSONResponse({"error": "invalid page name"}, status_code=400)
+        wiki_root = _wiki_dir()
+        wiki_root.mkdir(parents=True, exist_ok=True)
+        target = (wiki_root / f"{name}.md").resolve()
+        if not target.is_relative_to(wiki_root.resolve()):
+            return JSONResponse({"error": "path outside wiki directory"}, status_code=403)
+        if target.exists():
+            return JSONResponse({"error": "page already exists"}, status_code=409)
+        content = body.get("content")
+        if content is None or not isinstance(content, str):
+            content = f"# {name}\n"
+        # Create parent directories and write file
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
+        # Update semantic search index
+        try:
+            from .embeddings import delete_entries, index_entry
+            rel_path = str(target.relative_to(config.workspace_path.resolve()))
+            await index_entry(config, rel_path, content, source_type="wiki")
+        except Exception as e:
+            log.warning(f"Failed to index new wiki page '{name}': {e}")
+        new_mtime = target.stat().st_mtime
+        return JSONResponse({"ok": True, "page": name, "modified": new_mtime})
 
     async def serve_wiki_page(request: Request):
         """Serve the standalone wiki page HTML shell."""
@@ -340,6 +428,124 @@ def create_app(config, event_bus, app_ctx=None) -> Starlette:
         index.archive(conv_id)
         return JSONResponse({"ok": True})
 
+    # -- Config file routes ----------------------------------------------------
+
+    def _resolve_config_path(path_str: str) -> tuple:
+        """Resolve a config file path to (filesystem_path, scope).
+        Returns (None, None) if invalid."""
+        # Check static config files
+        for f in _CONFIG_FILES:
+            if f["path"] == path_str:
+                if path_str.startswith("workspace/"):
+                    return config.workspace_path / path_str.removeprefix("workspace/"), f["scope"]
+                return config.agent_path / path_str, f["scope"]
+        # Check schedules pattern
+        import re
+        if re.match(r"^schedules/[^/]+\.md$", path_str):
+            return config.agent_path / path_str, "admin"
+        if re.match(r"^workspace/schedules/[^/]+\.md$", path_str):
+            return config.workspace_path / path_str.removeprefix("workspace/"), "workspace"
+        return None, None
+
+    @_authenticated
+    async def config_list_files(request: Request, username: str) -> JSONResponse:
+        """List editable config files."""
+        result = []
+        for f in _CONFIG_FILES:
+            if f["path"].startswith("workspace/"):
+                fpath = config.workspace_path / f["path"].removeprefix("workspace/")
+            else:
+                fpath = config.agent_path / f["path"]
+            exists = fpath.exists()
+            modified = fpath.stat().st_mtime if exists else None
+            result.append({
+                "name": f["name"],
+                "path": f["path"],
+                "description": f["description"],
+                "scope": f["scope"],
+                "modified": modified,
+                "exists": exists,
+            })
+        # Discover schedule files
+        for scope, base, prefix in [
+            ("admin", config.agent_path, "schedules"),
+            ("workspace", config.workspace_path, "workspace/schedules"),
+        ]:
+            sched_dir = base / "schedules"
+            if sched_dir.is_dir():
+                for p in sorted(sched_dir.glob("*.md")):
+                    stat = p.stat()
+                    result.append({
+                        "name": p.name,
+                        "path": f"{prefix}/{p.name}",
+                        "description": "Scheduled task",
+                        "scope": scope,
+                        "modified": stat.st_mtime,
+                        "exists": True,
+                    })
+        return JSONResponse(result)
+
+    @_authenticated
+    async def config_read_file(request: Request, username: str) -> JSONResponse:
+        """Read a config file."""
+        path_str = request.path_params.get("path", "")
+        fpath, scope = _resolve_config_path(path_str)
+        if fpath is None:
+            return JSONResponse({"error": "invalid config path"}, status_code=400)
+        is_default = False
+        if fpath.exists():
+            content = fpath.read_text(encoding="utf-8")
+            modified = fpath.stat().st_mtime
+        else:
+            # Check for bundled default in prompts directory
+            prompts_dir = Path(__file__).parent / "prompts"
+            bundled = prompts_dir / Path(path_str).name
+            if bundled.exists():
+                content = bundled.read_text(encoding="utf-8")
+                modified = None
+                is_default = True
+            else:
+                # File doesn't exist yet — return empty so editor can create it
+                content = ""
+                modified = None
+                is_default = True
+        return JSONResponse({
+            "content": content,
+            "modified": modified,
+            "name": Path(path_str).name,
+            "default": is_default,
+        })
+
+    @_authenticated
+    async def config_write_file(request: Request, username: str) -> JSONResponse:
+        """Write a config file."""
+        path_str = request.path_params.get("path", "")
+        fpath, scope = _resolve_config_path(path_str)
+        if fpath is None:
+            return JSONResponse({"error": "invalid config path"}, status_code=400)
+        body = await request.json()
+        content = body.get("content")
+        if content is None or not isinstance(content, str):
+            return JSONResponse({"error": "content (string) required"}, status_code=400)
+        # Conflict detection
+        modified = body.get("modified")
+        if modified is not None:
+            try:
+                modified = float(modified)
+            except (TypeError, ValueError):
+                return JSONResponse({"error": "modified must be a number"}, status_code=400)
+            if fpath.exists():
+                file_mtime = fpath.stat().st_mtime
+                if file_mtime > modified + 1.0:
+                    return JSONResponse(
+                        {"error": "conflict", "server_modified": file_mtime},
+                        status_code=409,
+                    )
+        fpath.parent.mkdir(parents=True, exist_ok=True)
+        fpath.write_text(content, encoding="utf-8")
+        new_mtime = fpath.stat().st_mtime
+        return JSONResponse({"ok": True, "modified": new_mtime})
+
     # -- WebSocket route -------------------------------------------------------
 
     async def ws_chat(websocket):
@@ -385,7 +591,12 @@ def create_app(config, event_bus, app_ctx=None) -> Starlette:
         Route("/api/conversations/{id}/archive", archive_conversation, methods=["POST"]),
         Route("/api/upload/{conv_id}", handle_upload, methods=["POST"]),
         Route("/api/workspace/{path:path}", serve_workspace_file, methods=["GET"]),
+        Route("/api/config/files", config_list_files, methods=["GET"]),
+        Route("/api/config/files/{path:path}", config_read_file, methods=["GET"]),
+        Route("/api/config/files/{path:path}", config_write_file, methods=["PUT"]),
+        Route("/api/wiki", wiki_create, methods=["POST"]),
         Route("/api/wiki", wiki_list, methods=["GET"]),
+        Route("/api/wiki/{page:path}", wiki_write, methods=["PUT"]),
         Route("/api/wiki/{page:path}", wiki_read, methods=["GET"]),
         Route("/wiki/{page:path}", serve_wiki_page, methods=["GET"]),
         WebSocketRoute("/ws/chat", ws_chat),
