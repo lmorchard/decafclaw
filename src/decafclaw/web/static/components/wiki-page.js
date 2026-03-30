@@ -104,6 +104,13 @@ export class WikiPage extends LitElement {
     localStorage.setItem(EDIT_MODE_KEY, 'true');
   }
 
+  _close() {
+    this.dispatchEvent(new CustomEvent('wiki-close', {
+      bubbles: true,
+      composed: true,
+    }));
+  }
+
   /** @param {CustomEvent} e */
   _onSaved(e) {
     this._modified = e.detail.modified;
@@ -140,9 +147,13 @@ export class WikiPage extends LitElement {
     const newTabUrl = '/wiki/' + encodeURIComponent(this.page);
     const modeIcon = this._editing ? '\u{1f441}' : '\u{270e}';
     const modeTitle = this._editing ? 'Switch to view mode' : 'Switch to edit mode';
+    const closeBtn = this.standalone ? nothing : html`
+      <button class="wiki-close-btn" @click=${() => this._close()} title="Close wiki pane">&times;</button>
+    `;
     const rightButtons = html`
       <button class="wiki-edit-btn" @click=${() => this._toggleMode()} title=${modeTitle}>${modeIcon}</button>
       <a href=${newTabUrl} target="_blank" rel="noopener" class="wiki-open-tab" title="Open in new tab">&#8599;</a>
+      ${closeBtn}
     `;
 
     if (this._editing) {
