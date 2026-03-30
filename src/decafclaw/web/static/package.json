@@ -8,6 +8,7 @@
     "clean": "rm -rf vendor/bundle node_modules"
   },
   "dependencies": {
+    "@milkdown/kit": "^7.19.0",
     "@picocss/pico": "^2.0.0",
     "dompurify": "^3.3.0",
     "lit": "^3.3.0",
