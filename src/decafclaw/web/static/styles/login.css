@@ -1,0 +1,22 @@
+/* Login */
+login-view {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100vh;
+}
+
+login-view .login-card {
+  max-width: 400px;
+  width: 100%;
+  padding: 2rem;
+}
+
+login-view .login-card h2 {
+  margin-bottom: 1rem;
+}
+
+login-view .error {
+  color: var(--pico-del-color);
+  margin-top: 0.5rem;
+}

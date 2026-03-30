@@ -1,0 +1,127 @@
+/* Chat input */
+chat-input {
+  display: block;
+  border-top: 1px solid var(--pico-muted-border-color);
+  padding: 0.75rem 1rem;
+}
+
+chat-input .input-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: stretch;
+}
+
+chat-input textarea {
+  flex: 1;
+  resize: none;
+  min-height: 2.5rem;
+  max-height: 8rem;
+  margin: 0;
+}
+
+chat-input button {
+  margin: 0;
+  white-space: nowrap;
+}
+
+chat-input .stop-btn {
+  background: var(--pico-del-color);
+  border-color: var(--pico-del-color);
+  color: white;
+}
+
+chat-input .attach-btn {
+  cursor: pointer;
+  font-size: 1.2rem;
+  opacity: 0.7;
+}
+chat-input .attach-btn:hover {
+  opacity: 1;
+}
+
+chat-input .input-row.drag-over {
+  outline: 2px dashed var(--pico-primary);
+  outline-offset: -2px;
+  border-radius: 4px;
+}
+
+/* Attachment preview strip (pending uploads above input) */
+chat-input .attachment-preview-strip {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  padding: 0.5rem 0;
+}
+
+chat-input .attachment-preview {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  background: var(--pico-card-background-color);
+  border: 1px solid var(--pico-muted-border-color);
+  border-radius: 6px;
+  padding: 0.25rem;
+}
+
+chat-input .attachment-thumb {
+  width: 48px;
+  height: 48px;
+  object-fit: cover;
+  border-radius: 4px;
+}
+
+chat-input .attachment-file-icon {
+  padding: 0.25rem 0.5rem;
+  font-size: 0.8rem;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+chat-input .attachment-remove {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: none;
+  background: var(--pico-del-color);
+  color: white;
+  font-size: 12px;
+  line-height: 1;
+  padding: 0;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Attachment display in user messages */
+.attachment-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.attachment-image {
+  max-width: 300px;
+  max-height: 300px;
+  border-radius: 6px;
+  border: 1px solid var(--pico-muted-border-color);
+}
+
+.attachment-image-link {
+  display: inline-block;
+}
+
+.attachment-file-chip {
+  display: inline-block;
+  padding: 0.25rem 0.75rem;
+  background: var(--pico-card-background-color);
+  border: 1px solid var(--pico-muted-border-color);
+  border-radius: 4px;
+  font-size: 0.85rem;
+}

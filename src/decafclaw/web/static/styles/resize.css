@@ -1,0 +1,44 @@
+/* Resize handle */
+#sidebar-resize-handle {
+  width: 4px;
+  cursor: col-resize;
+  background: transparent;
+  flex-shrink: 0;
+  transition: background 0.15s;
+}
+
+#sidebar-resize-handle:hover,
+#sidebar-resize-handle.dragging {
+  background: var(--pico-primary);
+}
+
+/* Mobile header (hamburger + connection banner) */
+#mobile-header {
+  display: contents; /* desktop: transparent wrapper, children flow normally */
+}
+
+/* Sidebar backdrop */
+#sidebar-backdrop {
+  display: none;
+}
+
+/* Hamburger button — hidden on desktop */
+.hamburger-btn {
+  display: none;
+}
+
+#wiki-resize-handle {
+  width: 4px;
+  cursor: col-resize;
+  background: var(--pico-muted-border-color);
+  flex-shrink: 0;
+}
+
+#wiki-resize-handle:hover,
+#wiki-resize-handle.dragging {
+  background: var(--pico-primary);
+}
+
+#wiki-resize-handle.hidden {
+  display: none !important;
+}
