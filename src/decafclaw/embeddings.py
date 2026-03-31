@@ -112,8 +112,13 @@ def _entry_hash(text: str) -> str:
     return hashlib.sha256(text.encode()).hexdigest()[:16]
 
 
-async def embed_text(config, text: str) -> list[float] | None:
-    """Call the embedding API and return the vector."""
+async def embed_text(config, text: str, max_retries: int = 3) -> list[float] | None:
+    """Call the embedding API and return the vector.
+
+    Retries with exponential backoff on 429 (rate limit) responses.
+    """
+    import asyncio as _asyncio
+
     ec = config.embedding.resolved(config)
 
     body = {
@@ -125,15 +130,32 @@ async def embed_text(config, text: str) -> list[float] | None:
         "Authorization": f"Bearer {ec.api_key}",
     }
 
-    try:
-        async with httpx.AsyncClient() as client:
-            resp = await client.post(ec.url, json=body, headers=headers, timeout=30)
-        resp.raise_for_status()
-        data = resp.json()
-        return data["data"][0]["embedding"]
-    except Exception as e:
-        log.error(f"Embedding API call failed: {e}")
-        return None
+    for attempt in range(max_retries + 1):
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.post(ec.url, json=body, headers=headers, timeout=30)
+            if resp.status_code == 429 and attempt < max_retries:
+                delay = 2 ** attempt  # 1s, 2s, 4s
+                log.warning(f"Embedding API rate limited, retrying in {delay}s "
+                            f"(attempt {attempt + 1}/{max_retries})")
+                await _asyncio.sleep(delay)
+                continue
+            resp.raise_for_status()
+            data = resp.json()
+            return data["data"][0]["embedding"]
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 429 and attempt < max_retries:
+                delay = 2 ** attempt
+                log.warning(f"Embedding API rate limited, retrying in {delay}s "
+                            f"(attempt {attempt + 1}/{max_retries})")
+                await _asyncio.sleep(delay)
+                continue
+            log.error(f"Embedding API call failed: {e}")
+            return None
+        except Exception as e:
+            log.error(f"Embedding API call failed: {e}")
+            return None
+    return None
 
 
 def _check_model(config, conn):
@@ -185,7 +207,7 @@ def index_entry_sync(config, file_path: str, entry_text: str, embedding: list[fl
                    VALUES (?, ?, ?, ?, ?)""",
                 (file_path, entry_hash, entry_text, source_type, now),
             )
-        if cursor.lastrowid:
+        if cursor.rowcount > 0 and cursor.lastrowid:
             conn.execute(
                 "INSERT INTO embeddings_vec(rowid, embedding) VALUES (?, ?)",
                 (cursor.lastrowid, sqlite_vec.serialize_float32(embedding)),
@@ -271,17 +293,21 @@ def search_similar_sync(config, query_embedding: list[float], top_k: int = 5,
     if not rows:
         return []
 
-    # Wiki pages are curated knowledge, so they get a slight relevance boost
-    # over raw memory/conversation entries.
-    WIKI_BOOST = 1.2
+    # Source type boosts: curated pages > user pages > journal
+    SOURCE_BOOSTS = {
+        "page": 1.3,
+        "user": 1.2,
+        "wiki": 1.2,  # legacy compat
+        "journal": 1.0,
+        "memory": 1.0,  # legacy compat
+    }
 
     results = []
     for entry_text, file_path, row_source_type, distance in rows:
         if source_type and row_source_type != source_type:
             continue
         similarity = 1.0 - distance
-        if row_source_type == "wiki":
-            similarity *= WIKI_BOOST
+        similarity *= SOURCE_BOOSTS.get(row_source_type, 1.0)
         results.append({
             "entry_text": entry_text,
             "file_path": file_path,
@@ -308,16 +334,21 @@ async def search_similar(config, query: str, top_k: int = 5,
     If source_type is specified, only search that type.
     If the memory index is empty but memory files exist, reindex first.
     """
-    # Check if index needs building (only for memory type)
-    if source_type is None or source_type == "memory":
-        with _open_db(config) as conn:
+    # Check if index needs building — auto-reindex on empty DB
+    with _open_db(config) as conn:
+        if source_type:
             count = conn.execute(
-                "SELECT COUNT(*) FROM memory_embeddings WHERE source_type = 'memory'"
+                "SELECT COUNT(*) FROM memory_embeddings WHERE source_type = ?",
+                (source_type,),
             ).fetchone()[0]
-
-        if count == 0:
-            log.info("Embedding index is empty, reindexing memories...")
-            await reindex_all(config)
+        else:
+            count = conn.execute(
+                "SELECT COUNT(*) FROM memory_embeddings"
+            ).fetchone()[0]
+    if count == 0:
+        log.info("Embedding index is empty, reindexing vault...")
+        await reindex_vault(config)
+        await reindex_journal(config)
 
     query_embedding = await embed_text(config, query)
     if not query_embedding:
@@ -325,23 +356,44 @@ async def search_similar(config, query: str, top_k: int = 5,
     return search_similar_sync(config, query_embedding, top_k, source_type=source_type)
 
 
-async def _reindex_entries(entries, label, config):
-    """Reindex a sequence of (source_id, text, source_type, metadata) tuples."""
-    count = 0
-    for source_id, text, source_type, _meta in entries:
-        await index_entry(config, source_id, text, source_type)
-        count += 1
-        if count % 10 == 0:
-            print(f"  {label}: {count}...")
-    print(f"  {label}: {count} total")
-    return count
+async def _reindex_entries(entries, label, config, concurrency: int = 4):
+    """Reindex a sequence of (source_id, text, source_type, metadata) tuples.
+
+    Embeds up to `concurrency` entries in parallel for throughput.
+    """
+    import asyncio
+
+    # Collect all entries upfront to know total count
+    all_entries = list(entries)
+    total = len(all_entries)
+    if total == 0:
+        print(f"  {label}: 0 entries")
+        return 0
+
+    sem = asyncio.Semaphore(concurrency)
+    done = 0
+
+    async def _embed_one(source_id, text, source_type):
+        nonlocal done
+        async with sem:
+            await index_entry(config, source_id, text, source_type)
+        done += 1
+        if done % 10 == 0 or done == total:
+            print(f"  {label}: {done}/{total}")
+
+    tasks = [
+        asyncio.create_task(_embed_one(src_id, text, st))
+        for src_id, text, st, _meta in all_entries
+    ]
+    await asyncio.gather(*tasks)
+    if total % 10 != 0:
+        print(f"  {label}: {done}/{total}")
+    return total
 
 
-def _iter_memory_entries(config):
-    """Yield (source_id, text, source_type, metadata) tuples from memory files."""
-    from .memory import memory_dir
-
-    base = memory_dir(config)
+def _iter_journal_entries(config):
+    """Yield (source_id, text, source_type, metadata) tuples from journal files."""
+    base = config.vault_agent_journal_dir
     if not base.exists():
         return
 
@@ -354,88 +406,83 @@ def _iter_memory_entries(config):
             if not part:
                 continue
             entry = "## " + part if not part.startswith("## ") else part
-            yield str(filepath.relative_to(base)), entry, "memory", {}
+            rel_path = str(filepath.relative_to(config.vault_root))
+            yield rel_path, entry, "journal", {}
 
 
-def _iter_conversation_entries(config):
-    """Yield (source_id, text, source_type, metadata) tuples from conversation archives."""
-    import json as _json
 
-    conv_dir = config.workspace_path / "conversations"
-    if not conv_dir.exists():
+def _source_type_for_vault_path(config, filepath):
+    """Determine source type based on vault file location."""
+    resolved = filepath.resolve()
+    try:
+        if resolved.is_relative_to(config.vault_agent_journal_dir.resolve()):
+            return "journal"
+        if resolved.is_relative_to(config.vault_agent_dir.resolve()):
+            return "page"
+    except (ValueError, OSError):
+        pass
+    return "user"
+
+
+def _iter_vault_pages(config):
+    """Yield (source_id, text, source_type, metadata) tuples from vault pages.
+
+    Indexes all non-journal vault pages (agent pages + user pages).
+    Journal entries are indexed separately via _iter_journal_entries.
+    """
+    vault = config.vault_root
+    if not vault.is_dir():
         return
 
-    jsonl_files = sorted(conv_dir.glob("*.jsonl"))
-    for filepath in jsonl_files:
-        conv_id = filepath.stem
-        for line in filepath.read_text().splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            msg = _json.loads(line)
-            if msg.get("role") in ("user", "assistant"):
-                content = msg.get("content", "")
-                if content and len(content) > 20:
-                    role = msg.get("role", "unknown")
-                    entry_text = f"{role}: {content}"
-                    yield conv_id, entry_text, "conversation", {}
-
-
-def _iter_wiki_entries(config):
-    """Yield (source_id, text, source_type, metadata) tuples from wiki pages."""
-    wiki_dir = config.workspace_path / "wiki"
-    if not wiki_dir.is_dir():
-        return
-
-    md_files = sorted(wiki_dir.rglob("*.md"))
+    journal_dir = config.vault_agent_journal_dir
+    md_files = sorted(vault.rglob("*.md"))
     for filepath in md_files:
+        # Skip journal entries — they're indexed via _iter_journal_entries
+        try:
+            if filepath.resolve().is_relative_to(journal_dir.resolve()):
+                continue
+        except (ValueError, OSError):
+            pass
         text = filepath.read_text().strip()
         if not text:
             continue
-        rel_path = str(filepath.relative_to(config.workspace_path))
-        yield rel_path, text, "wiki", {}
+        rel_path = str(filepath.relative_to(vault))
+        source_type = _source_type_for_vault_path(config, filepath)
+        yield rel_path, text, source_type, {}
 
 
-async def reindex_all(config):
-    """Rebuild the entire index from markdown memory files."""
-    from .memory import memory_dir
-
-    base = memory_dir(config)
+async def reindex_journal(config, concurrency: int = 4):
+    """Rebuild journal entry embeddings."""
+    base = config.vault_agent_journal_dir
     if not base.exists():
-        log.info("No memory directory found, nothing to index")
+        log.info("No journal directory found, nothing to index")
         return 0
 
-    count = await _reindex_entries(_iter_memory_entries(config), "memories", config)
-    log.info(f"Reindexed {count} memory entries")
-    return count
-
-
-async def reindex_conversations(config):
-    """Rebuild conversation embeddings from JSONL archive files."""
-    conv_dir = config.workspace_path / "conversations"
-    if not conv_dir.exists():
-        log.info("No conversations directory found, nothing to index")
-        return 0
-
-    count = await _reindex_entries(_iter_conversation_entries(config), "conversations", config)
-    log.info(f"Reindexed {count} conversation messages")
-    return count
-
-
-async def reindex_wiki(config):
-    """Rebuild wiki page embeddings."""
-    wiki_dir = config.workspace_path / "wiki"
-    if not wiki_dir.is_dir():
-        log.info("No wiki directory found, nothing to index")
-        return 0
-
-    # Clear existing wiki entries to avoid stale rows
-    deleted = delete_by_source_type(config, "wiki")
+    # Clear existing journal entries
+    deleted = delete_by_source_type(config, "journal")
     if deleted:
-        log.info(f"Cleared {deleted} existing wiki embedding(s)")
+        log.info(f"Cleared {deleted} existing journal embedding(s)")
 
-    count = await _reindex_entries(_iter_wiki_entries(config), "wiki", config)
-    log.info(f"Reindexed {count} wiki pages")
+    count = await _reindex_entries(_iter_journal_entries(config), "journal", config, concurrency)
+    log.info(f"Reindexed {count} journal entries")
+    return count
+
+
+async def reindex_vault(config, concurrency: int = 4):
+    """Rebuild vault page embeddings (agent pages + user pages)."""
+    vault = config.vault_root
+    if not vault.is_dir():
+        log.info("No vault directory found, nothing to index")
+        return 0
+
+    # Clear existing page and user entries
+    for st in ("page", "user", "wiki"):
+        deleted = delete_by_source_type(config, st)
+        if deleted:
+            log.info(f"Cleared {deleted} existing {st} embedding(s)")
+
+    count = await _reindex_entries(_iter_vault_pages(config), "vault pages", config, concurrency)
+    log.info(f"Reindexed {count} vault pages")
     return count
 
 
@@ -448,9 +495,9 @@ def reindex_cli():
     from .config import load_config
 
     parser = argparse.ArgumentParser(description="Rebuild DecafClaw embedding index")
-    parser.add_argument("--wiki", action="store_true", help="Reindex only wiki pages")
-    parser.add_argument("--memory", action="store_true", help="Reindex only memories")
-    parser.add_argument("--conversations", action="store_true", help="Reindex only conversations")
+    parser.add_argument("--vault", action="store_true", help="Reindex only vault pages")
+    parser.add_argument("--journal", action="store_true", help="Reindex only journal entries")
+    parser.add_argument("--concurrency", type=int, default=4, help="Parallel embedding calls (default 4)")
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -460,7 +507,7 @@ def reindex_cli():
 
     config = load_config()
     db_path = _db_path(config)
-    subset = args.wiki or args.memory or args.conversations
+    subset = args.vault or args.journal
 
     # Full rebuild: delete existing DB
     if not subset:
@@ -471,13 +518,12 @@ def reindex_cli():
     print(f"Embedding model: {config.embedding.model}")
 
     async def _run():
+        c = args.concurrency
         counts = {}
-        if args.wiki or not subset:
-            counts["wiki"] = await reindex_wiki(config)
-        if args.memory or not subset:
-            counts["memory"] = await reindex_all(config)
-        if args.conversations or not subset:
-            counts["conversations"] = await reindex_conversations(config)
+        if args.vault or not subset:
+            counts["vault"] = await reindex_vault(config, concurrency=c)
+        if args.journal or not subset:
+            counts["journal"] = await reindex_journal(config, concurrency=c)
         return counts
 
     counts = asyncio.run(_run())

@@ -1,29 +1,53 @@
 """Conversation tools — search and compact conversations."""
 
+import json
 import logging
 
-from .. import embeddings
 from ..media import ToolResult
 
 log = logging.getLogger(__name__)
 
 
-async def tool_conversation_search(ctx, query: str) -> str:
-    """Search across conversation archives."""
+def tool_conversation_search(ctx, query: str) -> str:
+    """Search across conversation archives using substring matching."""
     log.info(f"[tool:conversation_search] query={query}")
 
-    results = await embeddings.search_similar(
-        ctx.config, query, top_k=5, source_type="conversation"
-    )
+    conv_dir = ctx.config.workspace_path / "conversations"
+    if not conv_dir.exists():
+        return f"No conversation history found matching '{query}'"
 
-    if results:
-        lines = [f"Found {len(results)} matching conversation entries:\n"]
-        for i, r in enumerate(results):
-            sim = f"{r['similarity']:.2f}"
-            lines.append(f"--- Result {i+1} (relevance: {sim}, conv: {r['file_path']}) ---\n{r['entry_text']}")
-        return "\n\n".join(lines)
+    query_lower = query.lower()
+    results: list[str] = []
+    max_results = 10
 
-    return f"No conversation history found matching '{query}'"
+    for filepath in sorted(conv_dir.glob("*.jsonl"), reverse=True):
+        conv_id = filepath.stem
+        with filepath.open("r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    msg = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if msg.get("role") not in ("user", "assistant"):
+                    continue
+                content = msg.get("content", "")
+                if not content or query_lower not in content.lower():
+                    continue
+                role = msg.get("role", "unknown")
+                excerpt = content[:500] + ("..." if len(content) > 500 else "")
+                results.append(f"--- [{conv_id}] {role} ---\n{excerpt}")
+                if len(results) >= max_results:
+                    break
+        if len(results) >= max_results:
+            break
+
+    if not results:
+        return f"No conversation history found matching '{query}'"
+
+    return f"Found {len(results)} matching conversation entries:\n\n" + "\n\n".join(results)
 
 
 async def tool_conversation_compact(ctx) -> str | ToolResult:
@@ -51,9 +75,9 @@ CONVERSATION_TOOL_DEFINITIONS = [
         "function": {
             "name": "conversation_search",
             "description": (
-                "Search across past conversation history. Use this to find things "
-                "discussed in previous conversations that may not be in your current "
-                "context. This searches the full uncompacted conversation archives. "
+                "Search across past conversation history using substring matching. "
+                "Use this to find things discussed in previous conversations. "
+                "Searches the full uncompacted JSONL archives. "
                 "Useful for: 'when did we discuss X?', 'what did I say about Y?'"
             ),
             "parameters": {

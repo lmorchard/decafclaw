@@ -49,10 +49,11 @@ See [docs/installation.md](docs/installation.md) for full setup and configuratio
 | `current_time` | Get current date and time |
 | `debug_context` | Dump context as JSON file attachments |
 | `context_stats` | Token budget breakdown and diagnostics |
-| `memory_save` | Save a persistent memory with tags |
-| `memory_search` | Search memories (semantic or substring) |
-| `memory_recent` | Recall recent memories |
-| `conversation_search` | Search past conversations semantically |
+| `vault_read/write/list` | Read, write, and list vault pages |
+| `vault_journal_append` | Append timestamped journal entry |
+| `vault_search` | Search vault (semantic or substring) |
+| `vault_backlinks` | Find pages linking to a given page |
+| `conversation_search` | Search past conversations (substring) |
 | `conversation_compact` | Manually trigger conversation compaction |
 | `todo_add/complete/list/clear` | Per-conversation to-do lists |
 | `workspace_read/write/list` | Sandboxed file operations (read supports line ranges) |

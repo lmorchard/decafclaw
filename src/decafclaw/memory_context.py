@@ -9,6 +9,10 @@ log = logging.getLogger(__name__)
 
 # Source type labels for display
 SOURCE_LABELS = {
+    "page": "Agent page",
+    "user": "User page",
+    "journal": "Journal",
+    # Legacy compat
     "wiki": "Wiki",
     "memory": "Memory",
     "conversation": "Conversation",
@@ -39,8 +43,8 @@ async def retrieve_memory_context(config, user_message: str) -> list[dict]:
             config, query_embedding, top_k=mc.max_results * 2
         )
 
-        # Exclude conversation entries — they add noise (see #133)
-        results = [r for r in results if r["source_type"] != "conversation"]
+        # Exclude legacy conversation embeddings — they add noise (see #133)
+        results = [r for r in results if r.get("source_type") != "conversation"]
 
         # Filter by similarity threshold
         results = [r for r in results if r["similarity"] >= mc.similarity_threshold]

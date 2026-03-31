@@ -28,6 +28,11 @@ def main():
 
     config = load_config()
 
+    # Ensure vault directories exist
+    config.vault_root.mkdir(parents=True, exist_ok=True)
+    config.vault_agent_pages_dir.mkdir(parents=True, exist_ok=True)
+    config.vault_agent_journal_dir.mkdir(parents=True, exist_ok=True)
+
     # Assemble system prompt from markdown files (bundled + workspace overrides)
     from .prompts import load_system_prompt
     config.system_prompt, config.discovered_skills = load_system_prompt(config)
