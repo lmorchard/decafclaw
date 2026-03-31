@@ -121,8 +121,8 @@ function showWikiPage(page, { replace = false } = {}) {
   if (sidebar) sidebar.switchToWiki();
   // Update URL for bookmarking — push history so back button works
   const params = new URLSearchParams(location.search);
-  if (params.get('wiki') !== page) {
-    params.set('wiki', page);
+  if (params.get('vault') !== page) {
+    params.set('vault', page);
     const url = '?' + params.toString();
     if (replace) {
       history.replaceState(null, '', url);
@@ -137,7 +137,7 @@ function showWikiPage(page, { replace = false } = {}) {
 // @ts-ignore — global function accessed from conversation-store.js
 window.getOpenWikiPage = function() {
   const params = new URLSearchParams(location.search);
-  return params.get('wiki') || null;
+  return params.get('vault') || null;
 };
 
 /** Hide the wiki view. */
@@ -146,8 +146,8 @@ function hideWikiView() {
   wikiResizeHandle?.classList.add('hidden');
   // Clear wiki param from URL
   const params = new URLSearchParams(location.search);
-  if (params.has('wiki')) {
-    params.delete('wiki');
+  if (params.has('vault')) {
+    params.delete('vault');
     const qs = params.toString();
     history.replaceState(null, '', qs ? '?' + qs : location.pathname);
   }
@@ -202,7 +202,7 @@ wikiMainEl?.addEventListener('wiki-close', () => hideWikiView());
 
 // Handle browser back/forward for wiki navigation
 window.addEventListener('popstate', () => {
-  const wiki = new URLSearchParams(location.search).get('wiki');
+  const wiki = new URLSearchParams(location.search).get('vault');
   if (wiki) {
     showWikiPage(wiki, { replace: true });
   } else {
@@ -292,9 +292,9 @@ function getConvFromUrl() {
   return new URLSearchParams(location.search).get('conv') || null;
 }
 
-/** Read ?wiki= on startup and open that wiki page */
+/** Read ?vault= on startup and open that vault page */
 function getWikiFromUrl() {
-  return new URLSearchParams(location.search).get('wiki') || null;
+  return new URLSearchParams(location.search).get('vault') || null;
 }
 
 // -- Init ---------------------------------------------------------------------

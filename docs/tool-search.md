@@ -22,10 +22,10 @@ The effective budget is `COMPACTION_MAX_TOKENS * TOOL_CONTEXT_BUDGET_PCT`. With 
 
 These tools are always sent to the LLM, even in deferred mode:
 
-- `think`, `memory_save`, `memory_search`, `memory_recent`
-- `activate_skill`, `shell`
+- `think`, `activate_skill`, `shell`
 - `workspace_read`, `workspace_write`
-- `web_fetch`, `current_time`, `delegate_task`
+- `web_fetch`, `current_time`, `delegate_task`, `set_effort`
+- Vault tools are always-loaded via the vault skill (not in this list)
 
 Use `ALWAYS_LOADED_TOOLS` to add more (extends, does not replace the defaults).
 

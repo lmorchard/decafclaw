@@ -50,7 +50,7 @@ class TestGetAlwaysLoadedNames:
     def test_defaults(self, config):
         names = get_always_loaded_names(config)
         assert "think" in names
-        assert "memory_search" in names
+        assert "current_time" in names
         assert "activate_skill" in names
         assert "shell" in names
 

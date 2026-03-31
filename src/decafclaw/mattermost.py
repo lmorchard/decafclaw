@@ -789,7 +789,7 @@ class MattermostClient:
                     st = item.get("source_type", "unknown")
                     source_counts[st] = source_counts.get(st, 0) + 1
                 parts = []
-                for st in ("wiki", "memory", "conversation"):
+                for st in ("page", "user", "journal", "wiki", "memory"):
                     if source_counts.get(st):
                         parts.append(f"{source_counts[st]} {st}")
                 summary = ", ".join(parts) or "context"
