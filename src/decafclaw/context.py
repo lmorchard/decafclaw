@@ -66,6 +66,7 @@ class Context:
         self.is_child: bool = False
         self.skip_reflection: bool = False
         self.skip_memory_context: bool = False
+        self.wiki_page: str | None = None  # open wiki page from web UI
         self.effort: str = "default"
 
     @classmethod
@@ -147,6 +148,7 @@ class Context:
         child.is_child = self.is_child
         child.skip_reflection = self.skip_reflection
         child.skip_memory_context = self.skip_memory_context
+        child.wiki_page = self.wiki_page
         child.effort = self.effort
         # Share tools + skills (concurrent tool calls read but don't mutate)
         child.tools = self.tools
