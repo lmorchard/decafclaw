@@ -1,10 +1,10 @@
 # DecafClaw
 
-An AI agent testbed in Python. Built to explore agent development patterns — tool calling, memory, reflection, skills, multi-model routing, and more.
+An AI agent testbed in Python. Built to explore agent development patterns — tool calling, memory, reflection, skills, multi-model routing, and more. Increasingly focused on personal knowledge management and writing tools, with an Obsidian-like shared vault where user and agent collaborate on markdown documents.
 
 ## What it does
 
-Connects to Mattermost as a chat bot (or runs in terminal mode), calls an LLM with tool-calling, executes tools, and responds. Streams responses as they arrive.
+Multi-channel AI agent with a shared knowledge vault. Connects to Mattermost as a chat bot, runs in a web UI with WYSIWYG wiki editing, or runs in terminal mode. Calls an LLM with tool-calling, executes tools, and responds. Streams responses as they arrive.
 
 **Features:**
 - **[Skills](docs/skills.md)** — portable tool packages following the [Agent Skills](https://agentskills.io) standard
