@@ -54,26 +54,34 @@ def test_parse_duplicate_mention():
     assert len(result) == 1
 
 
+def test_parse_pipe_display_syntax():
+    """@[[target|display]] extracts the target before the pipe."""
+    result = _parse_wiki_references("see @[[Tempest (arcade game)|Tempest arcade game]]")
+    assert len(result) == 1
+    assert result[0]["page"] == "Tempest (arcade game)"
+    assert result[0]["source"] == "mention"
+
+
 # -- _read_wiki_page ----------------------------------------------------------
 
 
 def test_read_wiki_page_found(config):
     """Existing page returns content."""
-    wiki_dir = config.workspace_path / "wiki"
-    wiki_dir.mkdir(parents=True)
-    (wiki_dir / "TestPage.md").write_text("# Test\nHello")
+    vault_dir = config.vault_root
+    vault_dir.mkdir(parents=True, exist_ok=True)
+    (vault_dir / "TestPage.md").write_text("# Test\nHello")
     assert _read_wiki_page(config, "TestPage") == "# Test\nHello"
 
 
 def test_read_wiki_page_not_found(config):
     """Missing page returns None."""
-    wiki_dir = config.workspace_path / "wiki"
-    wiki_dir.mkdir(parents=True)
+    vault_dir = config.vault_root
+    vault_dir.mkdir(parents=True, exist_ok=True)
     assert _read_wiki_page(config, "Missing") is None
 
 
-def test_read_wiki_page_no_wiki_dir(config):
-    """No wiki directory → None (no crash)."""
+def test_read_wiki_page_no_vault_dir(config):
+    """No vault directory → None (no crash)."""
     assert _read_wiki_page(config, "Anything") is None
 
 
@@ -110,9 +118,9 @@ async def test_prepare_messages_injects_wiki_context(ctx):
     """Wiki context messages are injected into history."""
     from decafclaw.agent import _prepare_messages
 
-    wiki_dir = ctx.config.workspace_path / "wiki"
-    wiki_dir.mkdir(parents=True)
-    (wiki_dir / "TestPage.md").write_text("wiki content here")
+    vault_dir = ctx.config.vault_root
+    vault_dir.mkdir(parents=True, exist_ok=True)
+    (vault_dir / "TestPage.md").write_text("wiki content here")
     ctx.config.system_prompt = "system"
     ctx.skip_memory_context = True
 
@@ -137,9 +145,9 @@ async def test_prepare_messages_skips_already_injected(ctx):
     """Pages already in history are not re-injected."""
     from decafclaw.agent import _prepare_messages
 
-    wiki_dir = ctx.config.workspace_path / "wiki"
-    wiki_dir.mkdir(parents=True)
-    (wiki_dir / "TestPage.md").write_text("wiki content")
+    vault_dir = ctx.config.vault_root
+    vault_dir.mkdir(parents=True, exist_ok=True)
+    (vault_dir / "TestPage.md").write_text("wiki content")
     ctx.config.system_prompt = "system"
     ctx.skip_memory_context = True
 
@@ -160,9 +168,9 @@ async def test_prepare_messages_injects_open_page(ctx):
     """Open wiki page from ctx.wiki_page is injected."""
     from decafclaw.agent import _prepare_messages
 
-    wiki_dir = ctx.config.workspace_path / "wiki"
-    wiki_dir.mkdir(parents=True)
-    (wiki_dir / "OpenPage.md").write_text("open page content")
+    vault_dir = ctx.config.vault_root
+    vault_dir.mkdir(parents=True, exist_ok=True)
+    (vault_dir / "OpenPage.md").write_text("open page content")
     ctx.config.system_prompt = "system"
     ctx.skip_memory_context = True
     ctx.wiki_page = "OpenPage"
@@ -182,8 +190,8 @@ async def test_prepare_messages_missing_page_error(ctx):
     """Missing @[[PageName]] injects error note."""
     from decafclaw.agent import _prepare_messages
 
-    wiki_dir = ctx.config.workspace_path / "wiki"
-    wiki_dir.mkdir(parents=True)
+    vault_dir = ctx.config.vault_root
+    vault_dir.mkdir(parents=True, exist_ok=True)
     ctx.config.system_prompt = "system"
     ctx.skip_memory_context = True
 

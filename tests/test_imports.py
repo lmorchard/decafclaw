@@ -29,15 +29,10 @@ def test_import_llm():
     assert call_llm is not None
 
 
-def test_import_memory():
-    from decafclaw.memory import recent_entries, save_entry, search_entries
-    assert save_entry is not None
-
-
-def test_import_memory_tools():
-    from decafclaw.tools.memory_tools import MEMORY_TOOL_DEFINITIONS, MEMORY_TOOLS
-    assert len(MEMORY_TOOLS) > 0
-    assert len(MEMORY_TOOL_DEFINITIONS) > 0
+def test_import_vault_tools():
+    from decafclaw.skills.vault.tools import TOOL_DEFINITIONS, TOOLS
+    assert len(TOOLS) > 0
+    assert len(TOOL_DEFINITIONS) > 0
 
 
 def test_import_archive():

@@ -1,21 +1,21 @@
 ---
 name: garden
-description: Wiki gardening sweep — merge, link, split, and tidy wiki pages
+description: Vault gardening sweep — merge, link, split, and tidy agent pages
 schedule: "0 3 * * 0"
 effort: strong
 required-skills:
-  - wiki
+  - vault
 user-invocable: true
 context: fork
 ---
 
-# Wiki Gardening Sweep
+# Vault Gardening Sweep
 
-Perform a holistic maintenance pass over the wiki knowledge base. This is about structural quality, not adding new information.
+Perform a holistic maintenance pass over your agent pages in the vault. This is about structural quality, not adding new information. Only read and write within `agent/`.
 
 ## Step 1: Survey
 
-1. Use `wiki_list` to get all pages.
+1. Use `vault_list` with `folder=agent/pages` to get all your pages.
 2. Read through pages, noting structural issues.
 
 ## Step 2: Merge Overlapping Pages
@@ -34,9 +34,9 @@ Perform a holistic maintenance pass over the wiki knowledge base. This is about 
 
 ## Step 4: Add Missing Connections
 
-- Read through pages and look for topics mentioned in the text that have their own wiki pages but aren't linked.
+- Read through pages and look for topics mentioned in the text that have their own pages but aren't linked.
 - Add `[[wiki-links]]` where they're missing.
-- Use `wiki_backlinks` on key pages to check their connectivity.
+- Use `vault_backlinks` on key pages to check their connectivity.
 
 ## Step 5: Update tl;dr Summaries
 
@@ -51,11 +51,11 @@ Perform a holistic maintenance pass over the wiki knowledge base. This is about 
 
 ## Step 7: Review Orphan Pages
 
-- Use `wiki_backlinks` to find pages with no incoming links.
+- Use `vault_backlinks` to find pages with no incoming links.
 - For each orphan, find related pages and add links to it.
 - If a page is truly disconnected and has little value, note it for review.
 
 ## Finishing Up
 
 - Summarize what you tidied: pages merged, links fixed, summaries added, etc.
-- If the wiki is already in good shape, respond with HEARTBEAT_OK.
+- If the vault is already in good shape, respond with HEARTBEAT_OK.

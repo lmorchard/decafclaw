@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
-  <title>Wiki — DecafClaw</title>
+  <title>Vault — DecafClaw</title>
   <link rel="stylesheet" href="/static/vendor/bundle/pico.min.css">
   <link rel="stylesheet" href="/static/style.css">
   <script type="importmap">
@@ -43,8 +43,8 @@
   <script type="module">
     import '/static/components/wiki-page.js';
 
-    // Extract page name from URL: /wiki/Page%20Name
-    const path = decodeURIComponent(window.location.pathname.replace(/^\/wiki\//, ''));
+    // Extract page name from URL: /vault/Page%20Name
+    const path = decodeURIComponent(window.location.pathname.replace(/^\/vault\//, ''));
     const wikiPage = document.querySelector('wiki-page');
     if (wikiPage && path) {
       wikiPage.page = path;
@@ -53,7 +53,7 @@
       const observer = new MutationObserver(() => {
         const title = wikiPage.querySelector('.wiki-page-title');
         if (title?.textContent) {
-          document.title = title.textContent + ' — DecafClaw Wiki';
+          document.title = title.textContent + ' — DecafClaw Vault';
           observer.disconnect();
         }
       });

@@ -75,7 +75,7 @@ def test_build_tool_list_base_tools(ctx):
     # Should have at least the base tools, no deferral on small set
     assert len(tools) > 0
     names = [t["function"]["name"] for t in tools]
-    assert "memory_save" in names
+    assert "current_time" in names
     assert deferred_text is None
 
 

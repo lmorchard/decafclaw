@@ -6,7 +6,7 @@ from pathlib import Path
 
 from starlette.applications import Starlette
 from starlette.requests import Request
-from starlette.responses import FileResponse, JSONResponse
+from starlette.responses import FileResponse, JSONResponse, RedirectResponse
 from starlette.routing import Mount, Route, WebSocketRoute
 from starlette.staticfiles import StaticFiles
 
@@ -224,84 +224,80 @@ def create_app(config, event_bus, app_ctx=None) -> Starlette:
             headers["Content-Disposition"] = f'attachment; filename="{resolved.name}"'
         return FileResponse(str(resolved), media_type=content_type, headers=headers)
 
-    # -- Wiki routes --------------------------------------------------------------
+    # -- Vault routes --------------------------------------------------------------
 
-    def _wiki_dir():
-        return config.workspace_path / "wiki"
+    def _vault_root():
+        return config.vault_root
 
-    def _resolve_wiki_page(page_name: str):
-        """Resolve a wiki page name to a file path (reuses wiki tool logic)."""
-        if ".." in page_name or page_name.startswith("/"):
-            return None
-        wiki_root = _wiki_dir().resolve()
-        if not wiki_root.is_dir():
-            return None
-        # Direct path first
-        direct = (wiki_root / f"{page_name}.md").resolve()
-        if direct.is_relative_to(wiki_root) and direct.exists():
-            return direct
-        # Search subdirectories by stem
-        for path in wiki_root.rglob("*.md"):
-            if path.stem == page_name and path.resolve().is_relative_to(wiki_root):
-                return path
-        return None
+    def _resolve_vault_page(page_name: str):
+        """Resolve a vault page name to a file path."""
+        from .skills.vault.tools import resolve_page
+        return resolve_page(config, page_name)
+
+    def _vault_source_type(filepath):
+        """Determine source type for a vault file."""
+        from .skills.vault.tools import _source_type_for_path
+        return _source_type_for_path(config, filepath)
 
     @_authenticated
-    async def wiki_list(request: Request, username: str) -> JSONResponse:
-        """List all wiki pages with titles and modified dates."""
-        wiki_root = _wiki_dir()
-        if not wiki_root.is_dir():
+    async def vault_list(request: Request, username: str) -> JSONResponse:
+        """List all vault pages with titles, paths, and modified dates."""
+        vault = _vault_root()
+        if not vault.is_dir():
             return JSONResponse([])
         pages = []
-        for path in sorted(wiki_root.rglob("*.md")):
-            if not path.resolve().is_relative_to(wiki_root.resolve()):
+        for path in sorted(vault.rglob("*.md")):
+            if not path.resolve().is_relative_to(vault.resolve()):
                 continue
             stat = path.stat()
+            rel = path.relative_to(vault)
             pages.append({
                 "title": path.stem,
+                "path": str(rel.with_suffix("")),
+                "folder": str(rel.parent) if rel.parent != Path(".") else "",
                 "modified": stat.st_mtime,
             })
-        pages.sort(key=lambda p: p["title"].lower())
+        pages.sort(key=lambda p: p["path"].lower())
         return JSONResponse(pages)
 
     @_authenticated
-    async def wiki_read(request: Request, username: str) -> JSONResponse:
-        """Read a single wiki page as JSON."""
+    async def vault_read(request: Request, username: str) -> JSONResponse:
+        """Read a single vault page as JSON."""
         page_name = request.path_params.get("page", "")
         if not page_name:
             return JSONResponse({"error": "page name required"}, status_code=400)
-        resolved = _resolve_wiki_page(page_name)
+        resolved = _resolve_vault_page(page_name)
         if not resolved:
             return JSONResponse({"error": "not found"}, status_code=404)
         content = resolved.read_text(encoding="utf-8")
         stat = resolved.stat()
+        vault = _vault_root().resolve()
+        rel = resolved.relative_to(vault)
         return JSONResponse({
             "title": resolved.stem,
+            "path": str(rel.with_suffix("")),
             "content": content,
             "modified": stat.st_mtime,
         })
 
     @_authenticated
-    async def wiki_write(request: Request, username: str) -> JSONResponse:
-        """Create or update a wiki page."""
+    async def vault_write(request: Request, username: str) -> JSONResponse:
+        """Create or update a vault page."""
         page_name = request.path_params.get("page", "")
         if not page_name:
             return JSONResponse({"error": "page name required"}, status_code=400)
-        # Validate page path
         if ".." in page_name or page_name.startswith("/"):
             return JSONResponse({"error": "invalid page path"}, status_code=400)
-        wiki_root = _wiki_dir()
-        wiki_root.mkdir(parents=True, exist_ok=True)
-        target = (wiki_root / f"{page_name}.md").resolve()
-        if not target.is_relative_to(wiki_root.resolve()):
-            return JSONResponse({"error": "path outside wiki directory"}, status_code=403)
-        # Parse body
+        vault = _vault_root()
+        vault.mkdir(parents=True, exist_ok=True)
+        target = (vault / f"{page_name}.md").resolve()
+        if not target.is_relative_to(vault.resolve()):
+            return JSONResponse({"error": "path outside vault directory"}, status_code=403)
         body = await request.json()
         content = body.get("content")
         if content is None or not isinstance(content, str):
             return JSONResponse({"error": "content (string) required"}, status_code=400)
-        # Conflict detection: if modified timestamp provided and file exists,
-        # check that the file hasn't been modified since the client read it
+        # Conflict detection
         modified = body.get("modified")
         if modified is not None:
             try:
@@ -315,23 +311,23 @@ def create_app(config, event_bus, app_ctx=None) -> Starlette:
                         {"error": "conflict", "server_modified": file_mtime},
                         status_code=409,
                     )
-        # Write
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content, encoding="utf-8")
         # Update semantic search index
+        source_type = _vault_source_type(target)
         try:
             from .embeddings import delete_entries, index_entry
-            rel_path = str(target.relative_to(config.workspace_path.resolve()))
-            delete_entries(config, rel_path, source_type="wiki")
-            await index_entry(config, rel_path, content, source_type="wiki")
+            rel_path = str(target.relative_to(vault.resolve()))
+            delete_entries(config, rel_path, source_type=source_type)
+            await index_entry(config, rel_path, content, source_type=source_type)
         except Exception as e:
-            log.warning(f"Failed to index wiki page '{page_name}': {e}")
+            log.warning(f"Failed to index vault page '{page_name}': {e}")
         new_mtime = target.stat().st_mtime
         return JSONResponse({"ok": True, "modified": new_mtime})
 
     @_authenticated
-    async def wiki_create(request: Request, username: str) -> JSONResponse:
-        """Create a new wiki page."""
+    async def vault_create(request: Request, username: str) -> JSONResponse:
+        """Create a new vault page."""
         body = await request.json()
         name = body.get("name")
         if not name or not isinstance(name, str):
@@ -339,42 +335,40 @@ def create_app(config, event_bus, app_ctx=None) -> Starlette:
         name = name.strip()
         if not name:
             return JSONResponse({"error": "name (string) required"}, status_code=400)
-        # Validate name: block path traversal and absolute paths
         if ".." in name or name.startswith("/"):
             return JSONResponse({"error": "invalid page name"}, status_code=400)
-        wiki_root = _wiki_dir()
-        wiki_root.mkdir(parents=True, exist_ok=True)
-        target = (wiki_root / f"{name}.md").resolve()
-        if not target.is_relative_to(wiki_root.resolve()):
-            return JSONResponse({"error": "path outside wiki directory"}, status_code=403)
+        vault = _vault_root()
+        vault.mkdir(parents=True, exist_ok=True)
+        target = (vault / f"{name}.md").resolve()
+        if not target.is_relative_to(vault.resolve()):
+            return JSONResponse({"error": "path outside vault directory"}, status_code=403)
         if target.exists():
             return JSONResponse({"error": "page already exists"}, status_code=409)
         content = body.get("content")
         if content is None or not isinstance(content, str):
-            content = f"# {name}\n"
-        # Create parent directories and write file
+            content = f"# {Path(name).stem}\n"
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content, encoding="utf-8")
         # Update semantic search index
+        source_type = _vault_source_type(target)
         try:
             from .embeddings import delete_entries, index_entry
-            rel_path = str(target.relative_to(config.workspace_path.resolve()))
-            await index_entry(config, rel_path, content, source_type="wiki")
+            rel_path = str(target.relative_to(vault.resolve()))
+            await index_entry(config, rel_path, content, source_type=source_type)
         except Exception as e:
-            log.warning(f"Failed to index new wiki page '{name}': {e}")
+            log.warning(f"Failed to index new vault page '{name}': {e}")
         new_mtime = target.stat().st_mtime
         return JSONResponse({"ok": True, "page": name, "modified": new_mtime})
 
-    async def serve_wiki_page(request: Request):
-        """Serve the standalone wiki page HTML shell."""
+    async def serve_vault_page(request: Request):
+        """Serve the vault page HTML shell."""
         username = _require_auth(request)
         if not username:
-            # Redirect to login
             return JSONResponse({"error": "not authenticated"}, status_code=401)
-        wiki_html = Path(__file__).parent / "web" / "static" / "wiki.html"
-        if not wiki_html.exists():
-            return JSONResponse({"error": "wiki page not found"}, status_code=404)
-        return FileResponse(str(wiki_html))
+        vault_html = Path(__file__).parent / "web" / "static" / "vault.html"
+        if not vault_html.exists():
+            return JSONResponse({"error": "vault page not found"}, status_code=404)
+        return FileResponse(str(vault_html))
 
     # -- Upload route -------------------------------------------------------------
 
@@ -594,11 +588,16 @@ def create_app(config, event_bus, app_ctx=None) -> Starlette:
         Route("/api/config/files", config_list_files, methods=["GET"]),
         Route("/api/config/files/{path:path}", config_read_file, methods=["GET"]),
         Route("/api/config/files/{path:path}", config_write_file, methods=["PUT"]),
-        Route("/api/wiki", wiki_create, methods=["POST"]),
-        Route("/api/wiki", wiki_list, methods=["GET"]),
-        Route("/api/wiki/{page:path}", wiki_write, methods=["PUT"]),
-        Route("/api/wiki/{page:path}", wiki_read, methods=["GET"]),
-        Route("/wiki/{page:path}", serve_wiki_page, methods=["GET"]),
+        Route("/api/vault", vault_create, methods=["POST"]),
+        Route("/api/vault", vault_list, methods=["GET"]),
+        Route("/api/vault/{page:path}", vault_write, methods=["PUT"]),
+        Route("/api/vault/{page:path}", vault_read, methods=["GET"]),
+        Route("/vault/{page:path}", serve_vault_page, methods=["GET"]),
+        # Legacy wiki routes (redirect to vault)
+        Route("/api/wiki", vault_list, methods=["GET"]),
+        Route("/api/wiki/{page:path}", vault_read, methods=["GET"]),
+        Route("/wiki/{page:path}", lambda r: RedirectResponse(
+            f"/vault/{r.path_params['page']}", status_code=301), methods=["GET"]),
         WebSocketRoute("/ws/chat", ws_chat),
     ]
 

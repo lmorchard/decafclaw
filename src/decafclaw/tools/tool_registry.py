@@ -9,8 +9,7 @@ log = logging.getLogger(__name__)
 
 # Tools that are always sent to the LLM, even in deferred mode.
 DEFAULT_ALWAYS_LOADED = {
-    "think", "memory_save", "memory_search", "memory_recent",
-    "activate_skill", "shell", "workspace_read", "workspace_write",
+    "think", "activate_skill", "shell", "workspace_read", "workspace_write",
     "web_fetch", "current_time", "delegate_task", "set_effort",
 }
 
@@ -23,7 +22,7 @@ def estimate_tool_tokens(tool_defs: list[dict]) -> int:
 def get_always_loaded_names(config) -> set[str]:
     """Return the set of tool names that should always be loaded.
 
-    Includes tools from always-loaded skills (e.g. wiki).
+    Includes tools from always-loaded skills (e.g. vault).
     """
     extra = set(config.agent.always_loaded_tools)
     # Include tool names from always-loaded skills

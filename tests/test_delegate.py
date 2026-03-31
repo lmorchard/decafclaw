@@ -59,7 +59,7 @@ class TestRunChildTurn:
         assert "delegate_task" not in child_ctx.tools.allowed
         assert "activate_skill" not in child_ctx.tools.allowed
         # Core tools should be inherited
-        assert "memory_search" in child_ctx.tools.allowed
+        assert "current_time" in child_ctx.tools.allowed
 
     @pytest.mark.asyncio
     async def test_inherits_parent_skill_data(self, ctx):

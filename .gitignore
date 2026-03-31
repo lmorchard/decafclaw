@@ -7,3 +7,4 @@ dist/
 data/
 evals/results/
 node_modules/
+.playwright-mcp/

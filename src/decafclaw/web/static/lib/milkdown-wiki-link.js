@@ -32,10 +32,14 @@ function splitTextNode(value) {
     if (match.index > lastIndex) {
       parts.push({ type: 'text', value: value.slice(lastIndex, match.index) });
     }
+    const inner = match[1];
+    const pipeIdx = inner.indexOf('|');
+    const target = pipeIdx >= 0 ? inner.slice(0, pipeIdx).trim() : inner;
+    const display = pipeIdx >= 0 ? inner.slice(pipeIdx + 1).trim() : inner;
     parts.push({
       type: 'wiki_link',
-      children: [{ type: 'text', value: match[1] }],
-      data: { target: match[1] },
+      children: [{ type: 'text', value: display }],
+      data: { target, display },
     });
     lastIndex = WIKI_LINK_RE.lastIndex;
   }
@@ -77,31 +81,43 @@ const remarkWikiLink = $remark('remarkWikiLink', () => () =>
 
 const wikiLinkMark = $mark('wiki_link', () => ({
   inclusive: false,
+  attrs: {
+    target: { default: null },
+  },
   parseDOM: [
     {
       tag: 'a.wiki-link',
-      getAttrs: (/** @type {HTMLElement} */ _dom) => ({}),
+      getAttrs: (/** @type {HTMLElement} */ dom) => {
+        const t = dom.getAttribute('data-wiki-page');
+        return t ? { target: t } : {};
+      },
     },
   ],
-  toDOM: (/** @type {any} */ _mark) => [
-    'a',
-    { class: 'wiki-link' },
-    0,
-  ],
+  toDOM: (/** @type {any} */ mark) => {
+    /** @type {Record<string, string>} */
+    const attrs = { class: 'wiki-link' };
+    if (mark.attrs.target) attrs['data-wiki-page'] = mark.attrs.target;
+    return ['a', attrs, 0];
+  },
   parseMarkdown: {
     match: (/** @type {{ type: string }} */ node) => node.type === 'wiki_link',
     runner: (/** @type {any} */ state, /** @type {any} */ node, /** @type {any} */ markType) => {
-      state.openMark(markType);
+      const target = node.data?.target || '';
+      const display = node.children?.[0]?.value || target;
+      const attrs = target && target !== display ? { target } : {};
+      state.openMark(markType, attrs);
       state.next(node.children);
       state.closeMark(markType);
     },
   },
   toMarkdown: {
     match: (/** @type {{ type: { name: string } }} */ mark) => mark.type.name === 'wiki_link',
-    runner: (/** @type {any} */ state, /** @type {any} */ _mark, /** @type {any} */ node) => {
-      // Serialize as [[text]] — produce a text node with the delimiters
+    runner: (/** @type {any} */ state, /** @type {any} */ mark, /** @type {any} */ node) => {
       const text = node.text || '';
-      state.addNode('text', undefined, undefined, { value: `[[${text}]]` });
+      const target = mark.attrs.target || '';
+      const wiki = target && target !== text ? `[[${target}|${text}]]` : `[[${text}]]`;
+      state.addNode('text', undefined, undefined, { value: wiki });
+      return true; // prevent default text handler from also emitting the text
     },
   },
 }));
@@ -111,9 +127,12 @@ const wikiLinkMark = $mark('wiki_link', () => ({
 const wikiLinkInputRule = $inputRule(ctx => {
   const markType = wikiLinkMark.type(ctx);
   return new InputRule(/\[\[([^\]]+)\]\]$/, (state, match, start, end) => {
-    const target = match[1];
+    const inner = match[1];
+    const pipeIdx = inner.indexOf('|');
+    const target = pipeIdx >= 0 ? inner.slice(0, pipeIdx).trim() : inner;
+    const display = pipeIdx >= 0 ? inner.slice(pipeIdx + 1).trim() : inner;
     return state.tr
-      .replaceWith(start, end, state.schema.text(target, [markType.create()]))
+      .replaceWith(start, end, state.schema.text(display, [markType.create(target !== display ? { target } : {})]))
       .removeStoredMark(markType);  // don't continue the mark after
   });
 });

@@ -5,7 +5,7 @@
  *   page (String) — page name for API path
  *   content (String) — initial markdown
  *   modified (Number) — file mtime for conflict detection
- *   saveEndpoint (String) — API prefix, default '/api/wiki/'
+ *   saveEndpoint (String) — API prefix, default '/api/vault/'
  *
  * Behavior:
  *   Dispatches a 'close' CustomEvent when the public close() method is called.
@@ -85,7 +85,7 @@ export class WikiEditor extends LitElement {
     this.page = '';
     this.content = '';
     /** @type {number} */ this.modified = 0;
-    this.saveEndpoint = '/api/wiki/';
+    this.saveEndpoint = '/api/vault/';
     /** @type {import('lit').TemplateResult|null} Extra content for toolbar right side */
     this.toolbarExtra = null;
     /** @type {'idle'|'editing'|'saving'|'saved'|'error'|'conflict'} */
@@ -126,7 +126,7 @@ export class WikiEditor extends LitElement {
     root.addEventListener('dblclick', (/** @type {MouseEvent} */ e) => {
       const link = /** @type {HTMLElement} */ (e.target).closest('a.wiki-link');
       if (!link) return;
-      const page = link.textContent?.trim();
+      const page = link.getAttribute('data-wiki-page') || link.textContent?.trim();
       if (!page) return;
       e.preventDefault();
       this.dispatchEvent(new CustomEvent('wiki-navigate', {
@@ -235,7 +235,7 @@ export class WikiEditor extends LitElement {
 
   async #reload() {
     try {
-      const res = await fetch(`/api/wiki/${encodeURIComponent(this.page)}`);
+      const res = await fetch(`/api/vault/${encodeURIComponent(this.page)}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       this.content = data.content;

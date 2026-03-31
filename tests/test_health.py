@@ -100,17 +100,17 @@ async def test_health_embeddings_with_data(ctx):
         entry_text TEXT, embedding BLOB, source_type TEXT DEFAULT 'memory',
         created_at TEXT)""")
     conn.execute(
-        "INSERT INTO memory_embeddings VALUES (1,'f','h1','t',X'00','memory','2024-01-01')"
+        "INSERT INTO memory_embeddings VALUES (1,'f','h1','t',X'00','journal','2024-01-01')"
     )
     conn.execute(
-        "INSERT INTO memory_embeddings VALUES (2,'f','h2','t',X'00','conversation','2024-01-01')"
+        "INSERT INTO memory_embeddings VALUES (2,'f','h2','t',X'00','page','2024-01-01')"
     )
     conn.commit()
     conn.close()
 
     result = await tool_health_status(ctx)
-    assert "Memory:" in result
-    assert "Conversation:" in result
+    assert "Journal:" in result
+    assert "Page:" in result
 
 
 @pytest.mark.asyncio

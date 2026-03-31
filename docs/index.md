@@ -10,10 +10,9 @@
 
 - [Skills System](skills.md) — Agent Skills standard, portable skill packages, native Python + shell-based tools
 - [MCP Server Support](mcp-servers.md) — Connect external MCP servers as tool providers (stdio + HTTP)
-- [Memory](memory.md) — Persistent memory with tags, substring and semantic search
-- [Proactive Memory Context](memory-context.md) — Automatically surface relevant memories/wiki per turn
-- [Knowledge Base (Wiki)](wiki.md) — Obsidian-compatible wiki for curated, evolving knowledge
-- [Dream Consolidation](dream-consolidation.md) — Periodic memory review and wiki gardening
+- [Vault](vault.md) — Unified knowledge base: curated pages, journal entries, user notes
+- [Proactive Memory Context](memory-context.md) — Automatically surface relevant vault content per turn
+- [Dream Consolidation](dream-consolidation.md) — Periodic journal review and vault page gardening
 - [Conversations](conversations.md) — Archive, resume, and compaction of conversation history
 - [Semantic Search](semantic-search.md) — Embedding-based search over memories and conversations
 - [Eval Loop](eval-loop.md) — Test prompts and tools with real LLM calls
