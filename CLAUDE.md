@@ -144,6 +144,7 @@ Session docs live in `.claude/dev-sessions/YYYY-MM-DD-HHMM-slug/` with `spec.md`
 - **Skill schedule frontmatter.** Skills can declare `schedule: "cron expression"` in SKILL.md to run as scheduled tasks. Only bundled and admin-level skills are honored (workspace skills cannot self-schedule). File-based schedules override skill schedules on name collision. Skills with both `schedule` and `user-invocable: true` serve as both scheduled tasks and on-demand commands.
 - **Self-reflection is fail-open.** The reflection judge evaluates responses before delivery, but errors (network, parse, etc.) always pass through the response as-is. Retries consume `max_tool_iterations` budget. Skipped for child agents, cancelled turns, and empty responses.
 - **Proactive memory context is fail-open.** Before each interactive turn, relevant memories/wiki are auto-injected as context. Errors silently return empty results. Skipped for heartbeat, scheduled tasks, and child agents (`skip_memory_context` flag on ctx). Requires an embedding model to be configured — silently disabled otherwise.
+- **Wiki chat context.** Users can share wiki pages into conversations via `@[[PageName]]` mentions (all channels) or by having a page open in the web UI sidebar. Pages are injected once per conversation as `wiki_context` role messages, tracked by scanning history. Parsing happens in `agent.py` `_prepare_messages()`, not in channel handlers.
 - **LOG_LEVEL env var.** Set `LOG_LEVEL=DEBUG` for verbose logging (default: INFO).
 
 ## Keeping docs current
