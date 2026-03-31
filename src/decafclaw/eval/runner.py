@@ -9,7 +9,6 @@ from ..agent import run_agent_turn
 from ..config import Config, load_config
 from ..context import Context
 from ..events import EventBus
-from ..memory import save_entry
 
 log = logging.getLogger(__name__)
 
@@ -29,31 +28,37 @@ async def _setup_workspace(config, test_case: dict):
             shutil.copy2(fixture_path, dest)
             log.info(f"Copied embeddings fixture from {fixture_path}")
 
-    # Save memory entries
+    # Save journal entries (replaces memories)
     memories = setup.get("memories", [])
-    for mem in memories:
-        save_entry(
-            config,
-            channel_name="eval",
-            channel_id="eval",
-            thread_id="",
-            tags=mem.get("tags", []),
-            content=mem["content"],
-        )
+    if memories:
+        now = datetime.now()
+        journal_dir = config.vault_agent_journal_dir / str(now.year)
+        journal_dir.mkdir(parents=True, exist_ok=True)
+        filepath = journal_dir / f"{now:%Y-%m-%d}.md"
+        with open(filepath, "a", encoding="utf-8") as f:
+            for mem in memories:
+                tag_str = ", ".join(mem.get("tags", []))
+                entry = (
+                    f"\n## {now:%Y-%m-%d %H:%M}\n\n"
+                    f"- **channel:** eval (eval)\n"
+                    f"- **tags:** {tag_str}\n"
+                    f"\n{mem['content']}\n"
+                )
+                f.write(entry)
 
-    # Index memories for semantic search if strategy is semantic
+    # Index journal entries for semantic search if strategy is semantic
     if config.embedding.search_strategy == "semantic" and memories:
         from ..embeddings import index_entry
         for mem in memories:
             tag_str = ", ".join(mem.get("tags", []))
-            # Format like actual markdown entries for consistent embeddings
             entry_text = (
                 f"## 2026-01-01 00:00\n\n"
                 f"- **channel:** eval (eval)\n"
                 f"- **tags:** {tag_str}\n\n"
                 f"{mem['content']}"
             )
-            await index_entry(config, "eval-fixture", entry_text)
+            await index_entry(config, "eval-fixture", entry_text,
+                              source_type="journal")
 
 
 def _count_tool_calls(history: list) -> int:

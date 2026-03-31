@@ -68,7 +68,7 @@ export class WikiPage extends LitElement {
     this._error = '';
     this._content = '';
     try {
-      const res = await fetch('/api/wiki/' + encodeURIComponent(this.page));
+      const res = await fetch('/api/vault/' + encodeURIComponent(this.page));
       if (!res.ok) {
         this._error = res.status === 404 ? `Page "${this.page}" not found.` : `Error loading page (${res.status}).`;
         return;
@@ -144,7 +144,7 @@ export class WikiPage extends LitElement {
       return nothing;
     }
 
-    const newTabUrl = '/wiki/' + encodeURIComponent(this.page);
+    const newTabUrl = '/vault/' + encodeURIComponent(this.page);
     const modeIcon = this._editing ? '\u{1f441}' : '\u{270e}';
     const modeTitle = this._editing ? 'Switch to view mode' : 'Switch to edit mode';
     const closeBtn = this.standalone ? nothing : html`

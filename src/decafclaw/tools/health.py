@@ -136,23 +136,23 @@ def get_embeddings_data(config) -> dict:
                 """
                 SELECT
                     COUNT(*) AS total,
-                    SUM(CASE WHEN source_type = 'memory' THEN 1 ELSE 0 END),
-                    SUM(CASE WHEN source_type = 'conversation' THEN 1 ELSE 0 END),
-                    SUM(CASE WHEN source_type = 'wiki' THEN 1 ELSE 0 END)
+                    SUM(CASE WHEN source_type = 'journal' THEN 1 ELSE 0 END),
+                    SUM(CASE WHEN source_type = 'page' THEN 1 ELSE 0 END),
+                    SUM(CASE WHEN source_type = 'user' THEN 1 ELSE 0 END)
                 FROM memory_embeddings
                 """
             ).fetchone()
-            total, memory, conversation, wiki = row
-            memory = memory or 0
-            conversation = conversation or 0
-            wiki = wiki or 0
+            total, journal, page, user = row
+            journal = journal or 0
+            page = page or 0
+            user = user or 0
         finally:
             conn.close()
     except sqlite3.Error as exc:
         log.exception("Failed to read embeddings database at %s", db_path)
-        return {"total": 0, "memory": 0, "conversation": 0, "wiki": 0, "error": str(exc)}
+        return {"total": 0, "journal": 0, "page": 0, "user": 0, "error": str(exc)}
 
-    return {"total": total, "memory": memory, "conversation": conversation, "wiki": wiki}
+    return {"total": total, "journal": journal, "page": page, "user": user}
 
 
 def get_schedule_data(config) -> dict:
@@ -359,7 +359,7 @@ def _embeddings_section(config) -> list[str]:
     return [
         "### Embeddings",
         f"- **Total entries:** {data['total']}",
-        f"- **Memory:** {data['memory']} | **Conversation:** {data['conversation']} | **Wiki:** {data['wiki']}",
+        f"- **Journal:** {data['journal']} | **Page:** {data['page']} | **User:** {data['user']}",
     ]
 
 

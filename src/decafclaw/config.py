@@ -26,6 +26,7 @@ from .config_types import (
     MattermostConfig,
     MemoryContextConfig,
     ReflectionConfig,
+    VaultConfig,
 )
 
 log = logging.getLogger(__name__)
@@ -142,6 +143,7 @@ class Config:
     models: dict[str, dict[str, str]] = field(default_factory=dict)
     reflection: ReflectionConfig = field(default_factory=ReflectionConfig)
     memory_context: MemoryContextConfig = field(default_factory=MemoryContextConfig)
+    vault: VaultConfig = field(default_factory=VaultConfig)
 
     # Custom environment variables from config.json "env" section
     env: dict[str, str] = field(default_factory=dict)
@@ -176,6 +178,28 @@ class Config:
         if self.http.base_url:
             return self.http.base_url.rstrip("/")
         return f"http://{self.http.host}:{self.http.port}"
+
+    @property
+    def vault_root(self) -> Path:
+        """Vault root directory (configurable, default workspace/vault/)."""
+        p = Path(self.vault.vault_path)
+        return p if p.is_absolute() else self.agent_path / p
+
+    @property
+    def vault_agent_dir(self) -> Path:
+        """Agent's home folder within the vault."""
+        p = Path(self.vault.agent_folder)
+        return p if p.is_absolute() else self.vault_root / p
+
+    @property
+    def vault_agent_pages_dir(self) -> Path:
+        """Agent's curated wiki pages directory."""
+        return self.vault_agent_dir / "pages"
+
+    @property
+    def vault_agent_journal_dir(self) -> Path:
+        """Agent's daily journal directory."""
+        return self.vault_agent_dir / "journal"
 
     @property
     def tool_context_budget(self) -> int:
@@ -313,6 +337,9 @@ def load_config() -> Config:
     memory_context = load_sub_config(
         MemoryContextConfig, file_data.get("memory_context", {}), "MEMORY_CONTEXT")
 
+    vault = load_sub_config(
+        VaultConfig, file_data.get("vault", {}), "VAULT")
+
     # Custom env vars from config file
     env_vars: dict[str, str] = {
         str(k): str(v) for k, v in file_data.get("env", {}).items()
@@ -333,6 +360,7 @@ def load_config() -> Config:
         models=models,
         reflection=reflection,
         memory_context=memory_context,
+        vault=vault,
         env=env_vars,
         system_prompt=system_prompt,
     )

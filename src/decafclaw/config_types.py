@@ -128,6 +128,12 @@ class ReflectionConfig:
 
 
 @dataclass
+class VaultConfig:
+    vault_path: str = "workspace/vault/"
+    agent_folder: str = "agent/"
+
+
+@dataclass
 class MemoryContextConfig:
     enabled: bool = True
     similarity_threshold: float = 0.3

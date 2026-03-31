@@ -44,18 +44,24 @@ const wikiLinkExtension = {
   tokenizer(/** @type {string} */ src) {
     const match = /^\[\[([^\]]+)\]\]/.exec(src);
     if (match) {
+      const inner = match[1].trim();
+      const pipeIdx = inner.indexOf('|');
+      const page = pipeIdx >= 0 ? inner.slice(0, pipeIdx).trim() : inner;
+      const display = pipeIdx >= 0 ? inner.slice(pipeIdx + 1).trim() : inner;
       return {
         type: 'wikiLink',
         raw: match[0],
-        page: match[1].trim(),
+        page,
+        display,
       };
     }
     return undefined;
   },
-  renderer(/** @type {{page: string}} */ token) {
+  renderer(/** @type {{page: string, display: string}} */ token) {
     const page = token.page;
-    const href = '/wiki/' + encodeURIComponent(page);
-    return `<a href="${href}" class="wiki-link" data-wiki-page="${page.replace(/"/g, '&quot;')}">${page}</a>`;
+    const display = token.display || page;
+    const href = '/vault/' + encodeURIComponent(page);
+    return `<a href="${href}" class="wiki-link" data-wiki-page="${page.replace(/"/g, '&quot;')}">${display}</a>`;
   },
 };
 

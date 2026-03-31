@@ -53,9 +53,17 @@ fmt:
 test:
 	uv run pytest tests/ -v
 
-# Rebuild production embedding index from memory files
+# Rebuild production embedding index
 reindex:
 	uv run decafclaw-reindex
+
+# Migrate wiki/memories to unified vault structure
+migrate-vault:
+	uv run python scripts/migrate_to_vault.py
+
+# Dry-run vault migration (show what would change)
+migrate-vault-dry:
+	uv run python scripts/migrate_to_vault.py --dry-run
 
 # Build web UI vendor bundle (npm + esbuild)
 # Run after changing JS dependencies in src/decafclaw/web/static/package.json

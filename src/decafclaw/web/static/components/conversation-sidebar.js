@@ -40,7 +40,7 @@ export class ConversationSidebar extends LitElement {
     this._collapsed = localStorage.getItem('sidebar-collapsed') === 'true';
     this._mobileOpen = false;
     this._sidebarTab = 'conversations';
-    /** @type {Array<{title: string, modified: number}>} */
+    /** @type {Array<{title: string, path?: string, folder?: string, modified: number}>} */
     this._wikiPages = [];
     this._wikiLoading = false;
   }
@@ -110,7 +110,7 @@ export class ConversationSidebar extends LitElement {
   async #fetchWikiPages() {
     this._wikiLoading = true;
     try {
-      const res = await fetch('/api/wiki');
+      const res = await fetch('/api/vault');
       if (res.ok) {
         this._wikiPages = await res.json();
       }
@@ -245,7 +245,7 @@ export class ConversationSidebar extends LitElement {
     const name = prompt('New page name:');
     if (!name || !name.trim()) return;
     try {
-      const res = await fetch('/api/wiki', {
+      const res = await fetch('/api/vault', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: name.trim() }),
@@ -268,16 +268,16 @@ export class ConversationSidebar extends LitElement {
 
   #renderWikiTab() {
     if (this._wikiLoading) {
-      return html`<div class="conv-list"><p style="padding: 1rem; color: var(--pico-muted-color);">Loading wiki pages...</p></div>`;
+      return html`<div class="conv-list"><p style="padding: 1rem; color: var(--pico-muted-color);">Loading vault pages...</p></div>`;
     }
     return html`
       <div class="conv-list">
         <button class="wiki-new-page-btn outline" @click=${() => this.#createWikiPage()}>+ New Page</button>
         ${this._wikiPages.length === 0
-          ? html`<p style="padding: 1rem; color: var(--pico-muted-color);">No wiki pages found.</p>`
+          ? html`<p style="padding: 1rem; color: var(--pico-muted-color);">No vault pages found.</p>`
           : this._wikiPages.map(p => html`
-            <div class="conv-item wiki-item" @click=${() => this.#handleWikiSelect(p.title)} title=${p.title}>
-              <span class="conv-title">${p.title}</span>
+            <div class="conv-item wiki-item" @click=${() => this.#handleWikiSelect(p.path || p.title)} title=${p.path || p.title}>
+              <span class="conv-title">${p.path || p.title}</span>
             </div>
           `)
         }
@@ -300,7 +300,7 @@ export class ConversationSidebar extends LitElement {
           <button class="sidebar-tab ${this._sidebarTab === 'conversations' ? 'active' : ''}"
             @click=${() => this.#switchTab('conversations')}>Chats</button>
           <button class="sidebar-tab ${this._sidebarTab === 'wiki' ? 'active' : ''}"
-            @click=${() => this.#switchTab('wiki')}>Wiki</button>
+            @click=${() => this.#switchTab('wiki')}>Vault</button>
         </div>
         <button class="mobile-close-btn" @click=${() => this.closeMobile()} title="Close sidebar">&#10005;</button>
         <button class="collapse-btn" @click=${this.#toggleCollapse} title="Collapse sidebar">‹</button>

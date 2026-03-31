@@ -24,7 +24,6 @@ if TYPE_CHECKING:
 
 from .archive import append_message
 from .compaction import compact_history
-from .embeddings import index_entry
 from .llm import call_llm
 from .media import ToolResult, extract_workspace_media
 from .persistence import read_skill_data, read_skills_state, write_skill_data, write_skills_state
@@ -47,7 +46,6 @@ def invalidate_skill_cache(config) -> None:
 log = logging.getLogger(__name__)
 
 # Track background tasks to prevent GC and surface exceptions
-_background_tasks: set[asyncio.Task] = set()
 
 
 def _conv_id(ctx) -> str:
@@ -110,26 +108,6 @@ def _archive(ctx, msg) -> None:
     except Exception as e:
         log.error(f"Archive write failed: {e}")
 
-    # Index user/assistant messages for conversation search (fire and forget)
-    # Requires an embedding model to be configured
-    if ctx.config.embedding.model and msg.get("role") in ("user", "assistant"):
-        content = msg.get("content")
-        if content and len(content) > 20:  # skip trivial messages
-            task = asyncio.create_task(_index_conversation_message(ctx, msg))
-            _background_tasks.add(task)
-            task.add_done_callback(_background_tasks.discard)
-
-
-async def _index_conversation_message(ctx, msg) -> None:
-    """Index a conversation message for semantic search (background)."""
-    try:
-        conv_id = _conv_id(ctx)
-        role = msg.get("role", "unknown")
-        content = msg.get("content", "")
-        entry_text = f"{role}: {content}"
-        await index_entry(ctx.config, conv_id, entry_text, source_type="conversation")
-    except Exception as e:
-        log.debug(f"Conversation indexing failed: {e}")
 
 
 async def _maybe_compact(ctx, config, history, prompt_tokens) -> None:
@@ -676,7 +654,9 @@ def _parse_wiki_references(
 
     # Parse @[[...]] mentions from message text
     for match in _WIKI_MENTION_RE.finditer(user_message):
-        page_name = match.group(1).strip()
+        raw = match.group(1).strip()
+        # Handle @[[target|display]] — extract target before pipe
+        page_name = raw.split("|")[0].strip()
         if page_name and page_name not in seen:
             seen.add(page_name)
             results.append({"page": page_name, "source": "mention"})
@@ -690,7 +670,7 @@ def _parse_wiki_references(
 
 def _read_wiki_page(config, page_name: str) -> str | None:
     """Resolve and read a wiki page. Returns content or None. Fail-open."""
-    from .skills.wiki.tools import resolve_page
+    from .skills.vault.tools import resolve_page
 
     resolved = resolve_page(config, page_name)
     if not resolved:
@@ -745,8 +725,8 @@ async def _prepare_messages(
         user_msg["attachments"] = attachments
 
     # Wiki context — inject referenced/open wiki pages before user message
-    wiki_dir = config.workspace_path / "wiki"
-    wiki_refs = _parse_wiki_references(user_message, ctx.wiki_page) if wiki_dir.exists() else []
+    vault_dir = config.vault_root
+    wiki_refs = _parse_wiki_references(user_message, ctx.wiki_page) if vault_dir.exists() else []
     if wiki_refs:
         already_injected = _get_already_injected_pages(history)
         for ref in wiki_refs:

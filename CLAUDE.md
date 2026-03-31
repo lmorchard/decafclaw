@@ -24,7 +24,6 @@ An AI agent testbed for exploring agent development patterns. Connects to Matter
 - `src/decafclaw/config_cli.py` — CLI tool for config show/get/set
 - `src/decafclaw/context.py` — Forkable runtime context with sub-objects: TokenUsage, ToolState, SkillState
 - `src/decafclaw/events.py` — In-process pub/sub event bus
-- `src/decafclaw/memory.py` — Memory file read/write operations
 - `src/decafclaw/memory_context.py` — Proactive memory retrieval: auto-inject relevant context per turn
 - `src/decafclaw/archive.py` — Conversation archive (JSONL per conversation)
 - `src/decafclaw/compaction.py` — History compaction via summarization
@@ -35,9 +34,9 @@ An AI agent testbed for exploring agent development patterns. Connects to Matter
 - `src/decafclaw/skills/tabstack/` — Bundled Tabstack skill (SKILL.md + tools.py)
 - `src/decafclaw/http_server.py` — HTTP server (Starlette/uvicorn): interactive button callbacks, health check
 - `src/decafclaw/skills/health/` — Bundled `!health` command: agent diagnostic status
-- `src/decafclaw/skills/wiki/` — Bundled wiki skill: Obsidian-compatible knowledge base, always-loaded
-- `src/decafclaw/skills/dream/` — Dream consolidation: periodic memory review → wiki updates (every 3 hours)
-- `src/decafclaw/skills/garden/` — Wiki gardening: structural maintenance sweep (weekly scheduled)
+- `src/decafclaw/skills/vault/` — Bundled vault skill: unified knowledge base (pages + journal), always-loaded
+- `src/decafclaw/skills/dream/` — Dream consolidation: periodic journal review → vault page updates (every 3 hours)
+- `src/decafclaw/skills/garden/` — Vault gardening: structural maintenance sweep (weekly scheduled)
 - `src/decafclaw/skills/claude_code/` — Claude Code subagent skill (sessions, permissions, output logging)
 - `src/decafclaw/eval/` — Eval harness (YAML tests, failure reflection)
 - `src/decafclaw/mcp_client.py` — MCP client: config, registry, server connections, auto-restart
@@ -46,7 +45,7 @@ An AI agent testbed for exploring agent development patterns. Connects to Matter
 - `src/decafclaw/media.py` — Media handling: ToolResult, MediaSaveResult, MediaHandler interface (LocalFile/Mattermost), workspace ref scanning
 - `src/decafclaw/util.py` — Shared utilities (estimate_tokens)
 - `src/decafclaw/polling.py` — Shared polling loop and task preamble builder (used by heartbeat + schedules)
-- `src/decafclaw/tools/` — Tool registry: core, memory, todo, workspace, file_share, shell, conversation, skill activation, MCP status, health, delegation
+- `src/decafclaw/tools/` — Tool registry: core, todo, workspace, file_share, shell, conversation, skill activation, MCP status, health, delegation
 - `src/decafclaw/tools/health.py` — Health/diagnostic status tool: uptime, MCP, heartbeat, tools, embeddings
 - `src/decafclaw/tools/effort_tools.py` — Effort level tool: `set_effort` for conversation model switching
 - `src/decafclaw/tools/delegate.py` — Sub-agent delegation: `delegate_task` forks a child agent for a single subtask (call multiple times for parallel work)
@@ -72,7 +71,8 @@ make check-js     # Type check JS (tsc --checkJs)
 make check        # Lint + type check combined (Python + JS)
 make test         # Run pytest
 make vendor       # Rebuild web UI vendor bundle (npm + esbuild)
-make reindex      # Rebuild embedding index from memory files
+make reindex      # Rebuild embedding index from vault files
+make migrate-vault # Migrate wiki/memories to unified vault structure
 make build-eval-fixtures  # Rebuild eval embedding fixtures
 make config       # Show resolved config values
 ```
@@ -127,11 +127,11 @@ Session docs live in `.claude/dev-sessions/YYYY-MM-DD-HHMM-slug/` with `spec.md`
 - **Commit after each logical step.** Lint and test before committing.
 - **Work in a branch for iterative changes.** When making multiple related fixes (especially to UX-sensitive code like streaming/placeholder logic), work in a branch and test the full set before merging to main. Don't push rapid-fire fixes directly to main — regressions compound.
 - **One agent turn per conversation at a time.** Concurrent conversations (different threads/channels) are fine.
-- **Memory lives in `data/{agent_id}/workspace/memories/`.** Daily markdown files, append-only. Tools read context from ctx, not config.
+- **Vault is the unified knowledge base.** Configurable root (default `workspace/vault/`), with agent files under `agent/`. Agent pages in `agent/pages/`, daily journal in `agent/journal/`. User's Obsidian vault can be the vault root. Config: `vault_path`, `agent_folder` in config.json.
 - **Agent data at `data/{agent_id}/`.** Admin files (SOUL.md, AGENT.md, USER.md, COMPACTION.md, config.yaml) live at the root — read-only to the agent. Agent read/write files live in `workspace/` subdirectory.
 - **System prompt from files.** SOUL.md + AGENT.md bundled in code, overridable at `data/{agent_id}/`. USER.md is workspace-only.
 - **Skills are lazy-loaded (unless always-loaded).** Skill catalog (name + description) is in the system prompt. Full content and tools only load when the agent calls `activate_skill`. Per-conversation activation via `ctx.extra_tools`. Exception: skills with `always-loaded: true` in SKILL.md are auto-activated at startup — body in system prompt, tools always available, exempt from deferral.
-- **Wiki is curated knowledge, memory is episodic.** Memory is append-only daily entries ("Les said X on March 13"). Wiki pages (`workspace/wiki/`) are living documents revised over time ("Les's drink preferences: Boulevardier, Old Fashioned"). The agent uses wiki for distilled facts, memory for timestamped observations. Wiki pages are Obsidian-compatible — filenames are page titles, `[[wiki-links]]` work.
+- **Pages are curated knowledge, journal is episodic.** Journal entries (`vault_journal_append`) are append-only timestamped observations. Pages (`vault_write`) are living documents revised over time. The dream process distills journal entries into curated pages. Vault is Obsidian-compatible — filenames are page titles, `[[wiki-links]]` work. Embedding source types: `page` (agent), `user` (user's Obsidian), `journal`, `conversation`.
 - **User-invokable commands.** Skills with `user-invocable: true` can be triggered by `!name` (Mattermost) or `/name` (web UI). Supports `$ARGUMENTS`/`$0`/`$1` substitution, `context: fork` for isolated execution, and `allowed-tools` for tool pre-approval. `!help`/`/help` lists available commands.
 - **Skill permissions at agent level.** `data/{agent_id}/skill_permissions.json` — outside the workspace, so the agent can't grant itself permission. User confirms activation with yes/no/always.
 - **Bundled skills in `src/decafclaw/skills/`.** Each skill has SKILL.md (required) + tools.py (optional for native Python tools). Skill scan order: workspace > agent-level > bundled.
@@ -144,7 +144,7 @@ Session docs live in `.claude/dev-sessions/YYYY-MM-DD-HHMM-slug/` with `spec.md`
 - **Skill schedule frontmatter.** Skills can declare `schedule: "cron expression"` in SKILL.md to run as scheduled tasks. Only bundled and admin-level skills are honored (workspace skills cannot self-schedule). File-based schedules override skill schedules on name collision. Skills with both `schedule` and `user-invocable: true` serve as both scheduled tasks and on-demand commands.
 - **Self-reflection is fail-open.** The reflection judge evaluates responses before delivery, but errors (network, parse, etc.) always pass through the response as-is. Retries consume `max_tool_iterations` budget. Skipped for child agents, cancelled turns, and empty responses.
 - **Proactive memory context is fail-open.** Before each interactive turn, relevant memories/wiki are auto-injected as context. Errors silently return empty results. Skipped for heartbeat, scheduled tasks, and child agents (`skip_memory_context` flag on ctx). Requires an embedding model to be configured — silently disabled otherwise.
-- **Wiki chat context.** Users can share wiki pages into conversations via `@[[PageName]]` mentions (all channels) or by having a page open in the web UI sidebar. Pages are injected once per conversation as `wiki_context` role messages, tracked by scanning history. Parsing happens in `agent.py` `_prepare_messages()`, not in channel handlers.
+- **Vault chat context.** Users can share vault pages into conversations via `@[[PageName]]` mentions (all channels) or by having a page open in the web UI sidebar. Pages are injected once per conversation as `wiki_context` role messages, tracked by scanning history. Parsing happens in `agent.py` `_prepare_messages()`, not in channel handlers. Page resolution uses vault root, not a fixed wiki directory.
 - **LOG_LEVEL env var.** Set `LOG_LEVEL=DEBUG` for verbose logging (default: INFO).
 
 ## Keeping docs current
