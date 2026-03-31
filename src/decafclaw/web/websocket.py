@@ -201,6 +201,7 @@ async def _handle_send(ws_send, index, username, msg, state):
     conv_id = msg.get("conv_id", "")
     text = msg.get("text", "").strip()
     attachments = msg.get("attachments") or None
+    wiki_page = msg.get("wiki_page") or None
     if not conv_id or (not text and not attachments):
         await ws_send({"type": "error", "message": "conv_id and text (or attachments) required"})
         return
@@ -259,16 +260,18 @@ async def _handle_send(ws_send, index, username, msg, state):
             log.info(f"WS: queuing message for busy conversation {conv_id}")
         pending_queue.setdefault(conv_id, []).append(
             {"text": text, "command_ctx": command_ctx,
-             "command_display": command_display, "attachments": attachments})
+             "command_display": command_display, "attachments": attachments,
+             "wiki_page": wiki_page})
         return
 
     _start_agent_turn(state, index, conv_id, username, text, ws_send,
                       command_ctx=command_ctx, archive_text=command_display,
-                      attachments=attachments)
+                      attachments=attachments, wiki_page=wiki_page)
 
 
 def _start_agent_turn(state, index, conv_id, username, text, ws_send,
-                      command_ctx=None, archive_text="", attachments=None):
+                      command_ctx=None, archive_text="", attachments=None,
+                      wiki_page=None):
     """Launch an agent turn task with queue drain on completion."""
     busy_convs = state.setdefault("busy_convs", set())
     pending_queue = state.setdefault("pending_msgs", {})
@@ -282,7 +285,7 @@ def _start_agent_turn(state, index, conv_id, username, text, ws_send,
             state["websocket"], state["app_ctx"], state["config"], state["event_bus"],
             index, conv_id, username, text, cancel_event,
             command_ctx=command_ctx, archive_text=archive_text,
-            attachments=attachments,
+            attachments=attachments, wiki_page=wiki_page,
         )
     )
     state["agent_tasks"].add(task)
@@ -308,11 +311,15 @@ def _start_agent_turn(state, index, conv_id, username, text, ws_send,
             for q in queued:
                 if q.get("attachments"):
                     all_attachments.extend(q["attachments"])
+            # Use last wiki_page — it reflects what's currently open.
+            # Earlier pages from queued messages are still available via @[[...]] syntax.
+            last_wiki_page = queued[-1].get("wiki_page")
             combined = "\n".join(texts)
             log.info(f"WS: draining {len(queued)} queued message(s) for {cid}")
             _start_agent_turn(state, index, cid, username, combined, ws_send,
                               command_ctx=last_ctx, archive_text=last_display,
-                              attachments=all_attachments or None)
+                              attachments=all_attachments or None,
+                              wiki_page=last_wiki_page)
 
     task.add_done_callback(_on_task_done)
 
@@ -442,7 +449,8 @@ async def websocket_chat(websocket: WebSocket, config, event_bus, app_ctx):
 
 async def _run_agent_turn(websocket, app_ctx, config, event_bus,
                           index, conv_id, username, text, cancel_event=None,
-                          command_ctx=None, archive_text="", attachments=None):
+                          command_ctx=None, archive_text="", attachments=None,
+                          wiki_page=None):
     """Run an agent turn for a web conversation, streaming events to WebSocket."""
     from ..agent import run_agent_turn  # deferred: circular dep
     from ..archive import read_archive
@@ -464,6 +472,7 @@ async def _run_agent_turn(websocket, app_ctx, config, event_bus,
     ctx.thread_id = ""
     ctx.conv_id = conv_id
     ctx.media_handler = LocalFileMediaHandler(config)
+    ctx.wiki_page = wiki_page
     # Apply pre-configured command state (set by dispatch_command)
     if command_ctx:
         ctx.tools.preapproved = command_ctx.tools.preapproved
@@ -552,6 +561,16 @@ async def _run_agent_turn(websocket, app_ctx, config, event_bus,
                     await ws_send({
                         "type": "tool_status", "conv_id": conv_id,
                         "tool": "memory_context",
+                        "message": text,
+                        "tool_call_id": "",
+                    })
+
+            elif event_type == "wiki_context":
+                text = event.get("text", "")
+                if text:
+                    await ws_send({
+                        "type": "tool_status", "conv_id": conv_id,
+                        "tool": "wiki_context",
                         "message": text,
                         "tool_call_id": "",
                     })

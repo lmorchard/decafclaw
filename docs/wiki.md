@@ -61,6 +61,19 @@ The agent follows these principles (encoded in the skill's system prompt):
 - **Split when large** — break big pages into sub-pages with a summary parent
 - **Update over duplicate** — edit existing pages rather than creating new ones
 
+## Chat Context Integration
+
+Users can share wiki pages directly into conversation context:
+
+- **Open page in UI**: When a wiki page is open in the web UI side panel and the user sends a message, the page content is automatically injected as context. The agent sees `[Currently viewing wiki page: PageName]` followed by the page content.
+- **@[[PageName]] mentions**: Users can reference wiki pages in their message text using `@[[PageName]]` syntax. This works across all channels (web, Mattermost, terminal). The agent sees `[Referenced wiki page: PageName]` followed by the page content.
+
+Each page is injected **once per conversation** — subsequent messages with the same page open or mentioned will not re-inject. This is tracked by scanning conversation history for existing `wiki_context` role messages.
+
+If a referenced page doesn't exist, the agent sees `[Wiki page 'PageName' not found]`.
+
+Wiki context messages use the `wiki_context` role internally, remapped to `user` for the LLM. They carry a `wiki_page` metadata field for tracking.
+
 ## Semantic Search
 
 Wiki pages are indexed in the embeddings database as `source_type: "wiki"`. They receive a 1.2x score boost over memory and conversation results, since curated knowledge is higher signal.

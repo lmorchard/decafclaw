@@ -132,6 +132,14 @@ function showWikiPage(page, { replace = false } = {}) {
   }
 }
 
+/** Get the currently open wiki page name, or null if none.
+ * @type {() => string | null} */
+// @ts-ignore — global function accessed from conversation-store.js
+window.getOpenWikiPage = function() {
+  const params = new URLSearchParams(location.search);
+  return params.get('wiki') || null;
+};
+
 /** Hide the wiki view. */
 function hideWikiView() {
   wikiMainEl?.classList.add('hidden');
