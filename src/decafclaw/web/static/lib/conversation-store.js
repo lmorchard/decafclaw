@@ -199,6 +199,8 @@ export class ConversationStore extends EventTarget {
     this.#toolStatusStore.clearToolStatus();
     const wsMsg = { type: 'send', conv_id: this.#currentConvId, text };
     if (attachments.length) wsMsg.attachments = attachments;
+    const wikiPage = /** @type {any} */ (window).getOpenWikiPage?.();
+    if (wikiPage) wsMsg.wiki_page = wikiPage;
     this.#ws.send(wsMsg);
     this.#emitChange();
   }

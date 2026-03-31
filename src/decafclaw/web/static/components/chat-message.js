@@ -50,6 +50,10 @@ export class ChatMessage extends LitElement {
       return html`<tool-message .tool=${'memory_context'} .content=${this.content} .icon=${'\u{1f9e0}'}></tool-message>`;
     }
 
+    if (this.role === 'wiki_context') {
+      return html`<tool-message .tool=${'wiki_context'} .content=${this.content} .icon=${'\u{1f4d6}'}></tool-message>`;
+    }
+
     if (this.role === 'tool_call') {
       return html`<tool-call-message variant="tool_call" .content=${this.content}></tool-call-message>`;
     }

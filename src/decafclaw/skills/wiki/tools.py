@@ -15,7 +15,7 @@ def _wiki_dir(config) -> Path:
     return config.workspace_path / "wiki"
 
 
-def _resolve_page(config, page: str) -> Path | None:
+def resolve_page(config, page: str) -> Path | None:
     """Resolve a page name to a file path, searching subdirectories.
 
     Returns None if the page doesn't exist or the name is invalid.
@@ -51,7 +51,7 @@ def _safe_write_path(config, page: str) -> Path | None:
 async def tool_wiki_read(ctx, page: str) -> str | ToolResult:
     """Read a wiki page by name."""
     log.info(f"[tool:wiki_read] page={page}")
-    path = _resolve_page(ctx.config, page)
+    path = resolve_page(ctx.config, page)
     if path is None:
         return ToolResult(text=f"[error: wiki page '{page}' not found]")
     return ToolResult(text=path.read_text(), display_short_text=page)

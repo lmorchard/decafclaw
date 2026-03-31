@@ -657,6 +657,63 @@ async def _setup_turn_state(ctx, config, history) -> dict[str, str]:
     return effort_overrides
 
 
+# -- Wiki context helpers ------------------------------------------------------
+
+_WIKI_MENTION_RE = _re.compile(r'@\[\[([^\]]+)\]\]')
+
+
+def _parse_wiki_references(
+    user_message: str, wiki_page: str | None = None,
+) -> list[dict]:
+    """Parse @[[PageName]] mentions and optional open wiki page.
+
+    Returns a list of dicts: {"page": name, "source": "mention"|"open_page"}.
+    Does NOT resolve or read pages — caller filters against already-injected
+    pages first, then resolves only the ones needed.
+    """
+    seen: set[str] = set()
+    results: list[dict] = []
+
+    # Parse @[[...]] mentions from message text
+    for match in _WIKI_MENTION_RE.finditer(user_message):
+        page_name = match.group(1).strip()
+        if page_name and page_name not in seen:
+            seen.add(page_name)
+            results.append({"page": page_name, "source": "mention"})
+
+    # Add open wiki page from web UI (if not already mentioned)
+    if wiki_page and wiki_page not in seen:
+        results.append({"page": wiki_page, "source": "open_page"})
+
+    return results
+
+
+def _read_wiki_page(config, page_name: str) -> str | None:
+    """Resolve and read a wiki page. Returns content or None. Fail-open."""
+    from .skills.wiki.tools import resolve_page
+
+    resolved = resolve_page(config, page_name)
+    if not resolved:
+        return None
+    try:
+        return resolved.read_text()
+    except (OSError, UnicodeError):
+        log.warning("Failed to read wiki page %s at %s", page_name, resolved,
+                     exc_info=True)
+        return None
+
+
+def _get_already_injected_pages(history: list) -> set[str]:
+    """Scan history for wiki_context messages and return set of page names."""
+    pages: set[str] = set()
+    for msg in history:
+        if msg.get("role") == "wiki_context":
+            page = msg.get("wiki_page")
+            if page:
+                pages.add(page)
+    return pages
+
+
 async def _prepare_messages(
     ctx, config, user_message: str, history: list,
     archive_text: str = "",
@@ -687,6 +744,30 @@ async def _prepare_messages(
     if attachments:
         user_msg["attachments"] = attachments
 
+    # Wiki context — inject referenced/open wiki pages before user message
+    wiki_dir = config.workspace_path / "wiki"
+    wiki_refs = _parse_wiki_references(user_message, ctx.wiki_page) if wiki_dir.exists() else []
+    if wiki_refs:
+        already_injected = _get_already_injected_pages(history)
+        for ref in wiki_refs:
+            if ref["page"] in already_injected:
+                continue
+            content = _read_wiki_page(config, ref["page"])
+            if content is None:
+                text = f"[Wiki page '{ref['page']}' not found]"
+            elif ref["source"] == "open_page":
+                text = f"[Currently viewing wiki page: {ref['page']}]\n\n{content}"
+            else:
+                text = f"[Referenced wiki page: {ref['page']}]\n\n{content}"
+            wc_msg: dict = {
+                "role": "wiki_context",
+                "content": text,
+                "wiki_page": ref["page"],
+            }
+            history.append(wc_msg)
+            _archive(ctx, wc_msg)
+            await ctx.publish("wiki_context", text=text, page=ref["page"])
+
     # Proactive memory context — inject before user message
     retrieved_context_text = ""
     if not ctx.skip_memory_context:
@@ -715,7 +796,7 @@ async def _prepare_messages(
     # Build the messages array: system prompt + history
     # Filter out metadata roles (effort, reflection) that aren't valid LLM messages
     # Remap non-standard roles that should appear in LLM context
-    ROLE_REMAP = {"memory_context": "user"}
+    ROLE_REMAP = {"memory_context": "user", "wiki_context": "user"}
     from .archive import LLM_ROLES
     llm_history = []
     for m in history:
