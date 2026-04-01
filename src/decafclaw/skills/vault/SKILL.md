@@ -49,6 +49,16 @@ Your files live under `agent/` in the vault:
 - Use `vault_read` before `vault_write` when updating existing pages — `vault_write` overwrites the entire page.
 - The user's files are readable but not yours to modify autonomously. Only edit user files when asked.
 
+## Organizing with Folders
+
+The vault supports hierarchical folders. Use them to keep related pages together as topics grow.
+
+- **Prefer folders over flat lists.** When a topic area accumulates 3+ related pages, group them into a folder (e.g. `agent/pages/projects/decafclaw/`).
+- **Suggested conventions:** `projects/`, `people/`, `resources/`, or topic-specific areas. These aren't rigid — let the content guide the structure.
+- **Use folder paths in vault tools:** `vault_write(page="agent/pages/projects/decafclaw/roadmap", ...)`.
+- **Use `vault_list` with folder filter** to explore a specific area: `vault_list(folder="agent/pages/projects")`.
+- **Link with folder paths (vault-root-relative):** `[[agent/pages/projects/decafclaw/roadmap]]` for explicit links, or `[[roadmap]]` for stem-based resolution (picks the closest match).
+
 ## Navigating the Knowledge Graph
 
 **Follow links.** When you read a page, note any `[[wiki-links]]` in the content. If the linked pages are relevant to your current task, read them too — context builds through connections.

@@ -1,4 +1,13 @@
 /**
+ * Encode a page path for use in URLs, preserving `/` separators.
+ * @param {string} page
+ * @returns {string}
+ */
+export function encodePagePath(page) {
+  return page.split('/').map(encodeURIComponent).join('/');
+}
+
+/**
  * Format an ISO timestamp to a locale time string (HH:MM).
  * @param {string} ts
  * @returns {string}
