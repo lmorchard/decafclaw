@@ -748,8 +748,10 @@ async def _prepare_messages(
             _archive(ctx, wc_msg)
             await ctx.publish("wiki_context", text=text, page=ref["page"])
 
-    # Proactive memory context — inject before user message
+    # Proactive memory context — inject before user message in history
+    # (but publish the UI event after the user message so it renders below)
     retrieved_context_text = ""
+    mc_results = None
     if not ctx.skip_memory_context:
         from .memory_context import format_memory_context, retrieve_memory_context
         mc_results = await retrieve_memory_context(config, user_message)
@@ -758,10 +760,6 @@ async def _prepare_messages(
             mc_msg = {"role": "memory_context", "content": retrieved_context_text}
             history.append(mc_msg)
             _archive(ctx, mc_msg)
-            if config.memory_context.show_in_ui:
-                await ctx.publish("memory_context",
-                                  text=retrieved_context_text,
-                                  results=mc_results)
 
     history.append(user_msg)
     # Archive the display version for inline commands (short), full text for normal messages
@@ -788,6 +786,13 @@ async def _prepare_messages(
     # Resolve attachments into multimodal content arrays for the LLM
     llm_history = [_resolve_attachments(config, m) for m in llm_history]
     messages = [{"role": "system", "content": config.system_prompt}] + llm_history
+
+    # Publish memory context event after user message so it renders below
+    # in the web UI (history ordering is already correct for the LLM)
+    if mc_results and config.memory_context.show_in_ui:
+        await ctx.publish("memory_context",
+                          text=retrieved_context_text,
+                          results=mc_results)
 
     return messages, retrieved_context_text
 
