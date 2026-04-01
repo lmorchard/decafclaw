@@ -117,8 +117,11 @@ function showWikiPage(page, { replace = false } = {}) {
   configPanelEl?.classList.add('hidden');
   wikiMainEl?.classList.remove('hidden');
   wikiResizeHandle?.classList.remove('hidden');
-  // Switch sidebar to wiki tab
-  if (sidebar) sidebar.switchToWiki();
+  // Switch sidebar to wiki tab and navigate to page's folder
+  if (sidebar) {
+    sidebar.switchToWiki();
+    sidebar.navigateToPageFolder(page);
+  }
   // Update URL for bookmarking — push history so back button works
   const params = new URLSearchParams(location.search);
   if (params.get('vault') !== page) {
@@ -144,6 +147,7 @@ window.getOpenWikiPage = function() {
 function hideWikiView() {
   wikiMainEl?.classList.add('hidden');
   wikiResizeHandle?.classList.add('hidden');
+  if (sidebar) sidebar.clearOpenPage();
   // Clear wiki param from URL
   const params = new URLSearchParams(location.search);
   if (params.has('vault')) {
@@ -195,6 +199,15 @@ document.addEventListener('wiki-open', (e) => {
 wikiMainEl?.addEventListener('wiki-navigate', (e) => {
   const page = /** @type {CustomEvent} */ (e).detail?.page;
   if (page) showWikiPage(page);
+});
+
+// Navigate sidebar to folder from editor breadcrumbs
+wikiMainEl?.addEventListener('wiki-navigate-folder', (e) => {
+  const folder = /** @type {CustomEvent} */ (e).detail?.folder ?? '';
+  if (sidebar) {
+    sidebar.switchToWiki();
+    sidebar.navigateToFolder(folder);
+  }
 });
 
 // Close wiki pane via X button
