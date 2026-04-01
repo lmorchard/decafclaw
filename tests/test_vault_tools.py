@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from decafclaw.skills.vault.tools import (
+    resolve_page,
     tool_vault_backlinks,
     tool_vault_journal_append,
     tool_vault_list,
@@ -36,6 +37,40 @@ def agent_journal(config):
     d = config.vault_agent_journal_dir
     d.mkdir(parents=True, exist_ok=True)
     return d
+
+
+class TestResolvePage:
+    def test_explicit_folder_path(self, config, vault_dir):
+        sub = vault_dir / "folder1"
+        sub.mkdir()
+        (sub / "Page.md").write_text("# Page in folder1")
+        result = resolve_page(config, "folder1/Page")
+        assert result is not None
+        assert result.name == "Page.md"
+        assert "folder1" in str(result)
+
+    def test_ambiguous_stem_returns_sorted_first(self, config, vault_dir):
+        for name in ["folder2", "folder1"]:
+            d = vault_dir / name
+            d.mkdir(exist_ok=True)
+            (d / "Page.md").write_text(f"# Page in {name}")
+        result = resolve_page(config, "Page")
+        assert result is not None
+        # Sorted alphabetically — folder1 comes first
+        assert "folder1" in str(result)
+
+    def test_from_page_proximity(self, config, vault_dir):
+        for name in ["folder1", "folder2"]:
+            d = vault_dir / name
+            d.mkdir(exist_ok=True)
+            (d / "Page.md").write_text(f"# Page in {name}")
+        (vault_dir / "folder2" / "Other.md").write_text("# Other")
+        result = resolve_page(config, "Page", from_page="folder2/Other")
+        assert result is not None
+        assert "folder2" in str(result)
+
+    def test_nonexistent_returns_none(self, config, vault_dir):
+        assert resolve_page(config, "DoesNotExist") is None
 
 
 class TestVaultRead:
@@ -193,6 +228,30 @@ class TestVaultList:
     async def test_empty_vault(self, ctx, config):
         result = await tool_vault_list(ctx)
         assert "does not exist" in result.lower()
+
+
+class TestWikiMentionRegex:
+    """Verify @[[folder/Page]] mentions work with folder paths."""
+
+    def test_folder_path_mention(self):
+        from decafclaw.agent import _WIKI_MENTION_RE
+        text = "Check @[[agent/pages/Foo]] for details"
+        matches = _WIKI_MENTION_RE.findall(text)
+        assert matches == ["agent/pages/Foo"]
+
+    def test_pipe_display_with_folder(self):
+        from decafclaw.agent import _WIKI_MENTION_RE
+        text = "See @[[agent/pages/Foo|my display text]]"
+        matches = _WIKI_MENTION_RE.findall(text)
+        assert matches == ["agent/pages/Foo|my display text"]
+
+    def test_multiple_folder_mentions(self):
+        from decafclaw.agent import _parse_wiki_references
+        text = "Check @[[projects/Alpha]] and @[[people/Bob]]"
+        results = _parse_wiki_references(text)
+        pages = [r["page"] for r in results]
+        assert "projects/Alpha" in pages
+        assert "people/Bob" in pages
 
 
 class TestVaultBacklinks:

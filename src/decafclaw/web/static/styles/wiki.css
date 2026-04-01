@@ -49,6 +49,7 @@ a.wiki-link:hover {
 }
 
 .wiki-edit-btn,
+.wiki-delete-btn,
 .wiki-open-tab,
 .wiki-close-btn {
   text-decoration: none;
@@ -65,9 +66,96 @@ a.wiki-link:hover {
   line-height: 1;
 }
 .wiki-edit-btn:hover,
+.wiki-delete-btn:hover,
 .wiki-open-tab:hover,
 .wiki-close-btn:hover {
   color: var(--pico-primary);
+}
+
+.wiki-page-breadcrumbs {
+  font-size: 0.8rem;
+  color: var(--pico-muted-color);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+button.wiki-bc-segment {
+  all: unset;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+}
+
+.wiki-bc-segment {
+  cursor: pointer;
+}
+
+.wiki-bc-segment:hover {
+  color: var(--pico-primary);
+  text-decoration: underline;
+}
+
+.wiki-bc-segment:focus-visible {
+  outline: 2px solid var(--pico-primary);
+  outline-offset: 2px;
+}
+
+.wiki-bc-sep {
+  margin: 0 0.2rem;
+}
+
+.wiki-bc-page {
+  color: var(--pico-color);
+}
+
+.wiki-rename-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 0.75rem;
+  color: var(--pico-muted-color);
+  padding: 0 0.25rem;
+  margin: 0 0 0 0.25rem;
+}
+
+.wiki-rename-btn:hover {
+  color: var(--pico-primary);
+}
+
+.wiki-rename-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.wiki-rename-input {
+  flex: 1;
+  font-size: 0.8rem;
+  padding: 0.15rem 0.35rem;
+  margin: 0;
+  border: 1px solid var(--pico-muted-border-color);
+  border-radius: 3px;
+  background: var(--pico-background-color);
+  color: var(--pico-color);
+}
+
+.wiki-rename-ok,
+.wiki-rename-cancel {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 0.85rem;
+  padding: 0 0.2rem;
+  margin: 0;
+}
+
+.wiki-rename-ok { color: var(--pico-primary); }
+.wiki-rename-cancel { color: var(--pico-muted-color); }
+
+.wiki-rename-error {
+  font-size: 0.75rem;
+  color: var(--pico-del-color, #c62828);
 }
 
 .wiki-page-body {

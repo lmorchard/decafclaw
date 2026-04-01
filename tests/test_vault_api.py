@@ -57,7 +57,10 @@ async def client(app, http_config):
 async def test_vault_list_empty(client):
     resp = await client.get("/api/vault")
     assert resp.status_code == 200
-    assert resp.json() == []
+    data = resp.json()
+    assert data["folder"] == ""
+    assert data["pages"] == []
+    assert isinstance(data["folders"], list)
 
 
 @pytest.mark.asyncio
@@ -65,12 +68,38 @@ async def test_vault_list_with_pages(client, http_config):
     pages_dir = http_config.vault_agent_pages_dir
     (pages_dir / "Foo.md").write_text("# Foo")
     (pages_dir / "Bar.md").write_text("# Bar")
+    resp = await client.get("/api/vault?folder=agent/pages")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["folder"] == "agent/pages"
+    paths = [p["path"] for p in data["pages"]]
+    assert "agent/pages/Bar" in paths
+    assert "agent/pages/Foo" in paths
+
+
+@pytest.mark.asyncio
+async def test_vault_list_root_shows_folders(client, http_config):
+    """Root listing should show 'agent' as a subfolder."""
+    pages_dir = http_config.vault_agent_pages_dir
+    (pages_dir / "Foo.md").write_text("# Foo")
     resp = await client.get("/api/vault")
     assert resp.status_code == 200
     data = resp.json()
-    paths = [p["path"] for p in data]
-    assert "agent/pages/Bar" in paths
-    assert "agent/pages/Foo" in paths
+    folder_names = [f["name"] for f in data["folders"]]
+    assert "agent" in folder_names
+    assert data["pages"] == []
+
+
+@pytest.mark.asyncio
+async def test_vault_list_invalid_folder(client):
+    resp = await client.get("/api/vault?folder=../etc")
+    assert resp.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_vault_list_nonexistent_folder(client):
+    resp = await client.get("/api/vault?folder=does/not/exist")
+    assert resp.status_code == 404
 
 
 # -- vault_read ----------------------------------------------------------------
@@ -158,3 +187,122 @@ async def test_vault_create_duplicate(client, http_config):
         json={"name": "agent/pages/Dupe"},
     )
     assert resp.status_code == 409
+
+
+# -- vault_rename --------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_vault_rename_page(client, http_config):
+    pages_dir = http_config.vault_agent_pages_dir
+    (pages_dir / "OldName.md").write_text("# Old")
+    resp = await client.put(
+        "/api/vault/agent/pages/OldName",
+        json={"rename_to": "agent/pages/NewName"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["ok"] is True
+    assert data["path"] == "agent/pages/NewName"
+    assert not (pages_dir / "OldName.md").exists()
+    assert (pages_dir / "NewName.md").exists()
+
+
+@pytest.mark.asyncio
+async def test_vault_rename_to_new_folder(client, http_config):
+    pages_dir = http_config.vault_agent_pages_dir
+    (pages_dir / "MovMe.md").write_text("# Move me")
+    resp = await client.put(
+        "/api/vault/agent/pages/MovMe",
+        json={"rename_to": "agent/subfolder/MovMe"},
+    )
+    assert resp.status_code == 200
+    vault = http_config.vault_root
+    assert (vault / "agent" / "subfolder" / "MovMe.md").exists()
+    assert not (pages_dir / "MovMe.md").exists()
+
+
+@pytest.mark.asyncio
+async def test_vault_rename_conflict(client, http_config):
+    pages_dir = http_config.vault_agent_pages_dir
+    (pages_dir / "A.md").write_text("# A")
+    (pages_dir / "B.md").write_text("# B")
+    resp = await client.put(
+        "/api/vault/agent/pages/A",
+        json={"rename_to": "agent/pages/B"},
+    )
+    assert resp.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_vault_rename_not_found(client):
+    resp = await client.put(
+        "/api/vault/agent/pages/NonExistent",
+        json={"rename_to": "agent/pages/Whatever"},
+    )
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_vault_rename_traversal(client, http_config):
+    pages_dir = http_config.vault_agent_pages_dir
+    (pages_dir / "Safe.md").write_text("# Safe")
+    resp = await client.put(
+        "/api/vault/agent/pages/Safe",
+        json={"rename_to": "../../../etc/passwd"},
+    )
+    assert resp.status_code == 400
+
+
+# -- vault_create_folder -------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_vault_create_folder(client, http_config):
+    resp = await client.post(
+        "/api/vault/folders",
+        json={"folder": "agent/pages/newfolder"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["ok"] is True
+    assert (http_config.vault_root / "agent" / "pages" / "newfolder").is_dir()
+
+
+@pytest.mark.asyncio
+async def test_vault_create_folder_duplicate(client, http_config):
+    (http_config.vault_root / "agent" / "pages" / "existing").mkdir(parents=True)
+    resp = await client.post(
+        "/api/vault/folders",
+        json={"folder": "agent/pages/existing"},
+    )
+    assert resp.status_code == 409
+
+
+# -- vault_delete --------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_vault_delete_page(client, http_config):
+    pages_dir = http_config.vault_agent_pages_dir
+    (pages_dir / "ToDelete.md").write_text("# Delete me")
+    resp = await client.delete("/api/vault/agent/pages/ToDelete")
+    assert resp.status_code == 200
+    assert not (pages_dir / "ToDelete.md").exists()
+
+
+@pytest.mark.asyncio
+async def test_vault_delete_not_found(client):
+    resp = await client.delete("/api/vault/agent/pages/NonExistent")
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_vault_delete_cleans_empty_dirs(client, http_config):
+    vault = http_config.vault_root
+    sub = vault / "agent" / "temp" / "deep"
+    sub.mkdir(parents=True)
+    (sub / "Only.md").write_text("# Only page")
+    resp = await client.delete("/api/vault/agent/temp/deep/Only")
+    assert resp.status_code == 200
+    # Both temp/ and temp/deep/ should be cleaned up
+    assert not (vault / "agent" / "temp").exists()

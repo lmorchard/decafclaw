@@ -24,6 +24,21 @@ Config options in `config.json`:
 
 `agent_folder` is resolved relative to `vault_path`.
 
+## Folders
+
+The vault supports hierarchical folders. The API and web UI provide folder-aware browsing:
+
+- **Sidebar navigation** — file-browser style with breadcrumbs. Click folders to navigate in, breadcrumbs to navigate up.
+- **Editor breadcrumbs** — clickable folder path above each page.
+- **Rename/move** — rename a page to change its folder path (e.g. `agent/pages/Foo` → `agent/pages/projects/Foo`). Parent directories are auto-created; empty directories are cleaned up.
+- **New pages** — created in the currently browsed folder.
+
+### API
+
+`GET /api/vault?folder=agent/pages` returns `{folder, folders, pages}` — immediate subfolders and pages in that folder.
+
+`PUT /api/vault/{page}` with `{"rename_to": "new/path"}` renames/moves a page. Returns 409 if target exists.
+
 ## Wiki Links
 
 Standard Obsidian `[[wiki-links]]` connect pages:
@@ -84,7 +99,7 @@ The agent follows these principles (encoded in the vault skill's system prompt):
 Users can share vault pages directly into conversation context:
 
 - **Open page in UI**: When a page is open in the web UI side panel, its content is automatically injected as context.
-- **@[[PageName]] mentions**: Reference pages in message text using `@[[PageName]]` syntax. Works across all channels.
+- **@[[PageName]] mentions**: Reference pages in message text using `@[[PageName]]` or `@[[folder/PageName]]` syntax. Works across all channels.
 
 Each page is injected **once per conversation**. If a referenced page doesn't exist, the agent sees an error note.
 

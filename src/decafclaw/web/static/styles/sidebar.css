@@ -355,14 +355,63 @@ conversation-sidebar .mobile-close-btn:hover {
   color: var(--pico-color);
 }
 
-.wiki-new-page-btn {
-  display: block;
-  width: 100%;
-  text-align: left;
+.vault-action-btns {
+  display: flex;
+  gap: 0.35rem;
   margin-bottom: 0.5rem;
+}
+
+.vault-action-btns button {
+  flex: 1;
+  text-align: left;
   font-size: 0.9rem;
+  padding: 0.4rem 0.75rem;
+  margin: 0;
 }
 
 .wiki-item {
   cursor: pointer;
+}
+
+.wiki-folder-item .conv-title {
+  font-weight: 500;
+}
+
+.vault-breadcrumbs {
+  padding: 0.4rem 0.75rem;
+  font-size: 0.8rem;
+  color: var(--pico-muted-color);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+button.vault-breadcrumb-segment {
+  all: unset;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+}
+
+.vault-breadcrumb-segment {
+  cursor: pointer;
+}
+
+.vault-breadcrumb-segment:hover:not(.active) {
+  color: var(--pico-primary);
+  text-decoration: underline;
+}
+
+.vault-breadcrumb-segment:focus-visible {
+  outline: 2px solid var(--pico-primary);
+  outline-offset: 2px;
+}
+
+.vault-breadcrumb-segment.active {
+  cursor: default;
+  color: var(--pico-color);
+}
+
+.vault-breadcrumb-sep {
+  margin: 0 0.2rem;
 }
