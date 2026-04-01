@@ -287,7 +287,7 @@ def create_app(config, event_bus, app_ctx=None) -> Starlette:
         # Build folder list from all child directories
         folders = []
         for child in sorted(target_dir.iterdir(), key=lambda c: c.name.lower()):
-            if child.is_dir():
+            if child.is_dir() and not child.name.startswith('.'):
                 rel = child.relative_to(vault_resolved)
                 folders.append({"name": child.name, "path": str(rel)})
 
