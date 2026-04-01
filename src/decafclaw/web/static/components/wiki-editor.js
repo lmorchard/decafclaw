@@ -14,6 +14,7 @@
  */
 
 import { LitElement, html, nothing } from 'lit';
+import { encodePagePath } from '../lib/utils.js';
 import {
   Editor, rootCtx, defaultValueCtx,
   commonmark, gfm, history, listener, listenerCtx, clipboard,
@@ -65,6 +66,8 @@ export class WikiEditor extends LitElement {
     saveEndpoint: { type: String, attribute: 'save-endpoint' },
     /** Extra template content rendered at the right end of the toolbar */
     toolbarExtra: { attribute: false },
+    /** Template content rendered at the left of the toolbar (replaces format buttons) */
+    toolbarLeft: { attribute: false },
     _status: { state: true },
     _error: { state: true },
   };
@@ -88,6 +91,8 @@ export class WikiEditor extends LitElement {
     this.saveEndpoint = '/api/vault/';
     /** @type {import('lit').TemplateResult|null} Extra content for toolbar right side */
     this.toolbarExtra = null;
+    /** @type {import('lit').TemplateResult|null} Content for toolbar left side (replaces format buttons) */
+    this.toolbarLeft = null;
     /** @type {'idle'|'editing'|'saving'|'saved'|'error'|'conflict'} */
     this._status = 'idle';
     /** @type {string} */ this._error = '';
@@ -179,7 +184,7 @@ export class WikiEditor extends LitElement {
     this._status = 'saving';
     try {
       const res = await fetch(
-        `${this.saveEndpoint}${encodeURIComponent(this.page)}`,
+        `${this.saveEndpoint}${encodePagePath(this.page)}`,
         {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
@@ -235,7 +240,7 @@ export class WikiEditor extends LitElement {
 
   async #reload() {
     try {
-      const res = await fetch(`/api/vault/${encodeURIComponent(this.page)}`);
+      const res = await fetch(`/api/vault/${encodePagePath(this.page)}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       this.content = data.content;
@@ -259,7 +264,7 @@ export class WikiEditor extends LitElement {
     try {
       const content = this.#currentMarkdown;
       const res = await fetch(
-        `${this.saveEndpoint}${encodeURIComponent(this.page)}`,
+        `${this.saveEndpoint}${encodePagePath(this.page)}`,
         {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
@@ -310,15 +315,18 @@ export class WikiEditor extends LitElement {
     return html`
       <div class="wiki-editor-container">
         <div class="wiki-editor-toolbar">
-          ${TOOLBAR.map(item =>
-            item === null
-              ? html`<span class="wiki-editor-separator"></span>`
-              : html`<button
-                  class="wiki-editor-toolbar-btn"
-                  title=${item.title}
-                  @click=${() => this.#execCommand(item.cmd)}
-                >${item.label}</button>`
-          )}
+          ${this.toolbarLeft
+            ? this.toolbarLeft
+            : TOOLBAR.map(item =>
+                item === null
+                  ? html`<span class="wiki-editor-separator"></span>`
+                  : html`<button
+                      class="wiki-editor-toolbar-btn"
+                      title=${item.title}
+                      @click=${() => this.#execCommand(item.cmd)}
+                    >${item.label}</button>`
+              )
+          }
           <span class="wiki-editor-spacer"></span>
           <span class="wiki-editor-status ${this._status}">${statusText}</span>
           ${this.toolbarExtra || nothing}
