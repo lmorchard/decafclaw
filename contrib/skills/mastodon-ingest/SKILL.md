@@ -1,17 +1,19 @@
 ---
 name: mastodon-ingest
-description: Fetch recent Mastodon posts and record interesting content to the wiki
+description: Fetch recent Mastodon posts and record interesting content to the vault
 schedule: "30 */4 * * *"
 effort: default
-required-skills:
-  - wiki
-allowed-tools: shell($SKILL_DIR/fetch.sh), wiki_read, wiki_write, wiki_search, wiki_list, wiki_backlinks, memory_recent, memory_search, current_time
+allowed-tools: shell($SKILL_DIR/fetch.sh), vault_read, vault_write, vault_search, vault_list, vault_backlinks, vault_journal_append, current_time
 user-invocable: true
 ---
 
 # Mastodon Post Ingestion
 
-Fetch recent Mastodon posts and integrate interesting content into the wiki knowledge base.
+Fetch recent Mastodon posts and integrate interesting content into the vault knowledge base.
+
+## Output Folder
+
+Write all Mastodon-derived pages into `agent/pages/mastodon/`. Use sub-organization by topic when it makes sense. Include `[[wiki-links]]` back to related pages elsewhere in the vault.
 
 ## Configuration
 
@@ -43,7 +45,7 @@ If the script fails (missing env vars, binary not found), report the error and s
 ## Step 2: Review the output
 
 Read through the fetched posts. For each one, consider:
-- Is it about a topic that has (or should have) a wiki page?
+- Is it about a topic that has (or should have) a vault page?
 - Does it express a preference, opinion, or decision worth recording?
 - Does it mention a project, person, or recurring theme?
 
@@ -52,18 +54,18 @@ Skip boring posts — routine posts, casual replies, and low-signal content don'
 ## Step 3: Update the wiki
 
 For each interesting post:
-1. `wiki_search` to find existing relevant pages
-2. If a page exists: `wiki_read` it, revise with new context, `wiki_write` the updated page
+1. `vault_search` to find existing relevant pages
+2. If a page exists: `vault_read` it, revise with new context, `vault_write` the updated page
 3. If no page exists: create a new page with `[[wiki-links]]` and a `## Sources` section
 4. In Sources, note the Mastodon post date and include the post URL if available
 
 ## Step 4: Finish
 
-If you made wiki changes, summarize what you added/updated.
+If you made vault changes, summarize what you added/updated.
 If there was nothing interesting to ingest, respond with HEARTBEAT_OK.
 
 ## Rules
 
 - Only ingest the user's OWN posts — do not quote or reproduce other people's content without attribution
 - Convert relative dates ("yesterday", "last week") to absolute dates
-- Don't create wiki pages for throwaway posts — only for content revealing preferences, projects, or recurring interests
+- Don't create vault pages for throwaway posts — only for content revealing preferences, projects, or recurring interests
