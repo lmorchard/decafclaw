@@ -162,8 +162,10 @@ export class ConversationSidebar extends LitElement {
     this._openWikiPage = pagePath;
     const lastSlash = pagePath.lastIndexOf('/');
     const folder = lastSlash >= 0 ? pagePath.substring(0, lastSlash) : '';
-    this._vaultFolder = folder;
-    this.#fetchWikiPages();
+    if (folder !== this._vaultFolder) {
+      this._vaultFolder = folder;
+      this.#fetchWikiPages();
+    }
   }
 
   /** Clear the open page highlight (called when wiki pane is closed). */
