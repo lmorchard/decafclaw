@@ -1,18 +1,21 @@
 ---
 name: linkding-ingest
-description: Fetch recent Linkding bookmarks, read their content, and record insights to the wiki
+description: Fetch recent Linkding bookmarks, read their content, and record insights to the vault
 schedule: "45 */4 * * *"
 effort: default
 required-skills:
-  - wiki
   - tabstack
-allowed-tools: shell($SKILL_DIR/fetch.sh), wiki_read, wiki_write, wiki_search, wiki_list, wiki_backlinks, tabstack_extract_markdown, memory_recent, memory_search, current_time, delegate_task
+allowed-tools: shell($SKILL_DIR/fetch.sh), vault_read, vault_write, vault_search, vault_list, vault_backlinks, tabstack_extract_markdown, vault_journal_append, current_time, delegate_task
 user-invocable: true
 ---
 
 # Linkding Bookmark Ingestion
 
-Fetch recent bookmarks from Linkding, then delegate each bookmark to a child agent for content extraction and wiki integration.
+Fetch recent bookmarks from Linkding, then delegate each bookmark to a child agent for content extraction and vault integration.
+
+## Output Folder
+
+Write all bookmark-derived pages into `agent/pages/bookmarks/`. Use sub-organization by topic when it makes sense (e.g. `agent/pages/bookmarks/programming/`, `agent/pages/bookmarks/tools/`). Include `[[wiki-links]]` back to related pages elsewhere in the vault.
 
 ## Configuration
 
@@ -54,20 +57,20 @@ Description: {bookmark_description}
 
 You have these tools available:
 - tabstack_extract_markdown(url) — fetch full article content
-- wiki_search(query) — search wiki pages by name/content
-- wiki_read(page) — read a wiki page (parameter is "page", not "path")
-- wiki_write(page, content) — create or overwrite a wiki page (parameters are "page" and "content")
-- wiki_backlinks(page) — find pages linking to a page
+- vault_search(query) — search vault pages by name/content
+- vault_read(page) — read a vault page (parameter is "page", not "path")
+- vault_write(page, content) — create or overwrite a vault page (parameters are "page" and "content")
+- vault_backlinks(page) — find pages linking to a page
 
 Instructions:
 1. Use tabstack_extract_markdown(url="{bookmark_url}") to fetch the full content. If it fails (paywall, dead link), work with just the title, tags, and description above.
 2. Analyze the content for key facts, insights, technologies, people, projects, or concepts.
-3. Use wiki_search(query="relevant topic") to find existing wiki pages.
-4. If a relevant page exists: wiki_read(page="Page Name") to get it, revise with new info, wiki_write(page="Page Name", content="...") to save.
-5. If no relevant page exists and the topic is substantial: wiki_write(page="New Page", content="...") with [[wiki-links]] and a ## Sources section.
+3. Use vault_search(query="relevant topic") to find existing vault pages.
+4. If a relevant page exists: vault_read(page="Page Name") to get it, revise with new info, vault_write(page="Page Name", content="...") to save.
+5. If no relevant page exists and the topic is substantial: vault_write(page="agent/pages/bookmarks/New Page", content="...") with [[wiki-links]] and a ## Sources section.
 6. Include the original URL and {bookmark_date} in ## Sources.
 7. Extract knowledge — "X uses Y approach for Z problem" is better than "bookmarked an article about X".
-8. Prefer adding to existing wiki pages over creating new ones.
+8. Prefer adding to existing vault pages over creating new ones.
 9. Do NOT use tool_search — it is not available. Use only the tools listed above.
 ```
 

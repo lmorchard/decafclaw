@@ -8,7 +8,7 @@ user-invocable: true
 
 To perform the daily to-do migration, you MUST follow these steps in order:
 
-1.  **Activate Skill**: Activate the `markdown_vault` skill.
+1.  **Activate Skill**: Activate the `vault` skill.
 2.  **Confirm Vault Path**: Search memory for the user's vault `base_path`. If not found, ask the user for it and save it. A common default is `obsidian/main`.
 3.  **Get Paths**: Call `vault_daily_path` for both yesterday (`offset=-1`) and today.
 4.  **Check for Today's Note**: Use `workspace_list` on the directory of today's note to check if the file exists.
