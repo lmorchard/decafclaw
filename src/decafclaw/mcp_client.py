@@ -579,12 +579,14 @@ class MCPRegistry:
 
     async def _connect_http(self, exit_stack, server_config, message_handler=None):
         """Connect to an HTTP MCP server. Override in tests."""
+        import httpx
         from mcp import ClientSession
         from mcp.client.streamable_http import streamable_http_client
 
-        http_kwargs = {"url": server_config.url}
+        http_kwargs: dict = {"url": server_config.url}
         if server_config.headers:
-            http_kwargs["headers"] = server_config.headers
+            http_client = httpx.AsyncClient(headers=server_config.headers)
+            http_kwargs["http_client"] = http_client
 
         read_stream, write_stream, _ = await exit_stack.enter_async_context(
             streamable_http_client(**http_kwargs)
