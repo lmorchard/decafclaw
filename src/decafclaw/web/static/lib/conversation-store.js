@@ -29,17 +29,23 @@
  * @property {string} message
  */
 
+/**
+ * @typedef {object} FolderEntry
+ * @property {string} name
+ * @property {string} path
+ * @property {boolean} [virtual]
+ */
+
 import { uploadFile } from './upload-client.js';
+import { encodePagePath } from './utils.js';
 import { MessageStore } from './message-store.js';
 import { ToolStatusStore } from './tool-status-store.js';
 import { WebSocketClient } from './websocket-client.js';
 
 /**
  * Central state store for conversations.
- * Talks to the server via WebSocketClient, holds all UI state,
- * and emits 'change' events for components to re-render.
- *
- * Message and tool-status state are delegated to sub-stores.
+ * Conversation management (list, create, rename, archive, folders) uses REST.
+ * Real-time chat streaming uses WebSocket.
  *
  * @fires ConversationStore#change
  */
@@ -50,14 +56,36 @@ export class ConversationStore extends EventTarget {
   #messageStore;
   /** @type {ToolStatusStore} */
   #toolStatusStore;
+
+  // -- Active conversations state --
   /** @type {ConversationMeta[]} */
   #conversations = [];
+  /** @type {FolderEntry[]} */
+  #folders = [];
+  /** @type {string} */
+  #currentFolder = '';
+
+  // -- Archived conversations state --
+  /** @type {ConversationMeta[]} */
+  #archivedConversations = [];
+  /** @type {FolderEntry[]} */
+  #archivedFolders = [];
+  /** @type {string} */
+  #archivedCurrentFolder = '';
+
+  // -- System conversations state --
+  /** @type {object[]} */
+  #systemConversations = [];
+  /** @type {FolderEntry[]} */
+  #systemFolders = [];
+  /** @type {string} */
+  #systemCurrentFolder = '';
+
+  // -- Current conversation state --
   /** @type {string|null} */
   #currentConvId = null;
   /** @type {boolean} */
   #busy = false;
-  /** @type {ConversationMeta[]} */
-  #archivedConversations = [];
   /** @type {number} prompt tokens used in the last completed turn */
   #contextUsage = 0;
   /** @type {number} effective context limit (compaction threshold) */
@@ -66,8 +94,6 @@ export class ConversationStore extends EventTarget {
   #currentEffort = 'default';
   /** @type {string} resolved model name for the current effort level */
   #effortModel = '';
-  /** @type {object[]} system conversations (schedule, heartbeat, etc.) */
-  #systemConversations = [];
   /** @type {boolean} whether the current conversation is read-only */
   #readOnly = false;
   /** @type {string|null} message queued while creating a conversation */
@@ -90,6 +116,10 @@ export class ConversationStore extends EventTarget {
 
   /** @returns {ConversationMeta[]} sorted by updated_at desc */
   get conversations() { return this.#conversations; }
+  /** @returns {FolderEntry[]} */
+  get folders() { return this.#folders; }
+  /** @returns {string} */
+  get currentFolder() { return this.#currentFolder; }
   /** @returns {string|null} */
   get currentConvId() { return this.#currentConvId; }
   /** @returns {ChatMessage[]} */
@@ -106,6 +136,10 @@ export class ConversationStore extends EventTarget {
   get toolStatus() { return this.#toolStatusStore.toolStatus; }
   /** @returns {ConversationMeta[]} */
   get archivedConversations() { return this.#archivedConversations; }
+  /** @returns {FolderEntry[]} */
+  get archivedFolders() { return this.#archivedFolders; }
+  /** @returns {string} */
+  get archivedCurrentFolder() { return this.#archivedCurrentFolder; }
   /** @returns {number} */
   get contextUsage() { return this.#contextUsage; }
   /** @returns {number} */
@@ -116,21 +150,236 @@ export class ConversationStore extends EventTarget {
   get effortModel() { return this.#effortModel; }
   /** @returns {object[]} */
   get systemConversations() { return this.#systemConversations; }
+  /** @returns {FolderEntry[]} */
+  get systemFolders() { return this.#systemFolders; }
+  /** @returns {string} */
+  get systemCurrentFolder() { return this.#systemCurrentFolder; }
   /** @returns {boolean} */
   get isReadOnly() { return this.#readOnly; }
 
-  // -- Actions (called by components) -----------------------------------------
+  // -- REST-based conversation management ------------------------------------
 
-  listConversations() {
-    this.#ws.send({ type: 'list_convs' });
+  /** @param {string} [folder] */
+  async listConversations(folder = '') {
+    try {
+      const url = folder
+        ? `/api/conversations?folder=${encodeURIComponent(folder)}`
+        : '/api/conversations';
+      const resp = await fetch(url);
+      if (!resp.ok) return;
+      const data = await resp.json();
+      this.#conversations = data.conversations || [];
+      this.#folders = data.folders || [];
+      this.#currentFolder = data.folder || '';
+      this.#emitChange();
+    } catch (err) {
+      console.error('Failed to list conversations:', err);
+    }
   }
 
-  /** @param {string} [title] @param {string} [effort] */
-  createConversation(title = '', effort = '') {
-    const msg = { type: 'create_conv', title };
-    if (effort) msg.effort = effort;
-    this.#ws.send(msg);
+  /** @param {string} [folder] */
+  async listArchivedConversations(folder = '') {
+    try {
+      const url = folder
+        ? `/api/conversations/archived?folder=${encodeURIComponent(folder)}`
+        : '/api/conversations/archived';
+      const resp = await fetch(url);
+      if (!resp.ok) return;
+      const data = await resp.json();
+      this.#archivedConversations = data.conversations || [];
+      this.#archivedFolders = data.folders || [];
+      this.#archivedCurrentFolder = data.folder || '';
+      this.#emitChange();
+    } catch (err) {
+      console.error('Failed to list archived conversations:', err);
+    }
   }
+
+  /** @param {string} [folder] */
+  async listSystemConversations(folder = '') {
+    try {
+      const url = folder
+        ? `/api/conversations/system?folder=${encodeURIComponent(folder)}`
+        : '/api/conversations/system';
+      const resp = await fetch(url);
+      if (!resp.ok) return;
+      const data = await resp.json();
+      this.#systemConversations = data.conversations || [];
+      this.#systemFolders = data.folders || [];
+      this.#systemCurrentFolder = data.folder || '';
+      this.#emitChange();
+    } catch (err) {
+      console.error('Failed to list system conversations:', err);
+    }
+  }
+
+  /**
+   * @param {string} [title]
+   * @param {string} [effort]
+   * @param {string} [folder]
+   */
+  async createConversation(title = '', effort = '', folder = '') {
+    try {
+      /** @type {Record<string, string>} */
+      const body = { title };
+      if (effort) body.effort = effort;
+      if (folder) body.folder = folder;
+      const resp = await fetch('/api/conversations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!resp.ok) return;
+      const conv = await resp.json();
+      // Insert into local list and select
+      this.#conversations.unshift(conv);
+      if (conv.effort) this.#currentEffort = conv.effort;
+      this.selectConversation(conv.conv_id);
+      // Flush any message queued while the conversation was being created
+      if (this.#pendingMessage) {
+        const text = this.#pendingMessage;
+        const atts = this.#pendingAttachments;
+        this.#pendingMessage = null;
+        this.#pendingAttachments = [];
+        this.#uploadAndSend(conv.conv_id, text, atts);
+      }
+    } catch (err) {
+      console.error('Failed to create conversation:', err);
+    }
+  }
+
+  /** @param {string} convId @param {string} title */
+  async renameConversation(convId, title) {
+    try {
+      const resp = await fetch(`/api/conversations/${convId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title }),
+      });
+      if (!resp.ok) return;
+      const updated = await resp.json();
+      this.#conversations = this.#conversations.map(c =>
+        c.conv_id === convId ? { ...c, ...updated } : c
+      );
+      this.#emitChange();
+    } catch (err) {
+      console.error('Failed to rename conversation:', err);
+    }
+  }
+
+  /** @param {string} convId @param {string} folder */
+  async moveConversation(convId, folder) {
+    try {
+      const resp = await fetch(`/api/conversations/${convId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ folder }),
+      });
+      if (!resp.ok) return;
+      // Re-fetch current folder listing
+      await this.listConversations(this.#currentFolder);
+    } catch (err) {
+      console.error('Failed to move conversation:', err);
+    }
+  }
+
+  /** @param {string} convId */
+  async archiveConversation(convId) {
+    try {
+      const resp = await fetch(`/api/conversations/${convId}/archive`, {
+        method: 'POST',
+      });
+      if (!resp.ok) return;
+      // If we're viewing the archived conversation, deselect it
+      if (this.#currentConvId === convId) {
+        this.#currentConvId = null;
+        this.#messageStore.clear();
+      }
+      // Re-fetch current folder listing
+      await this.listConversations(this.#currentFolder);
+    } catch (err) {
+      console.error('Failed to archive conversation:', err);
+    }
+  }
+
+  /** @param {string} convId */
+  async unarchiveConversation(convId) {
+    try {
+      const resp = await fetch(`/api/conversations/${convId}/unarchive`, {
+        method: 'POST',
+      });
+      if (!resp.ok) return;
+      // Re-fetch archived listing
+      await this.listArchivedConversations(this.#archivedCurrentFolder);
+    } catch (err) {
+      console.error('Failed to unarchive conversation:', err);
+    }
+  }
+
+  // -- Folder management (REST) -----------------------------------------------
+
+  /** @param {string} path */
+  async createFolder(path) {
+    try {
+      const resp = await fetch('/api/conversations/folders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path }),
+      });
+      if (!resp.ok) {
+        const data = await resp.json();
+        console.error('Failed to create folder:', data.error);
+        return false;
+      }
+      await this.listConversations(this.#currentFolder);
+      return true;
+    } catch (err) {
+      console.error('Failed to create folder:', err);
+      return false;
+    }
+  }
+
+  /** @param {string} path */
+  async deleteFolder(path) {
+    try {
+      const resp = await fetch(`/api/conversations/folders/${encodePagePath(path)}`, {
+        method: 'DELETE',
+      });
+      if (!resp.ok) {
+        const data = await resp.json();
+        console.error('Failed to delete folder:', data.error);
+        return false;
+      }
+      await this.listConversations(this.#currentFolder);
+      return true;
+    } catch (err) {
+      console.error('Failed to delete folder:', err);
+      return false;
+    }
+  }
+
+  /** @param {string} oldPath @param {string} newPath */
+  async renameFolder(oldPath, newPath) {
+    try {
+      const resp = await fetch(`/api/conversations/folders/${encodePagePath(oldPath)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: newPath }),
+      });
+      if (!resp.ok) {
+        const data = await resp.json();
+        console.error('Failed to rename folder:', data.error);
+        return false;
+      }
+      await this.listConversations(this.#currentFolder);
+      return true;
+    } catch (err) {
+      console.error('Failed to rename folder:', err);
+      return false;
+    }
+  }
+
+  // -- WebSocket-based actions (chat streaming) --------------------------------
 
   /** @param {string} convId */
   selectConversation(convId) {
@@ -147,35 +396,6 @@ export class ConversationStore extends EventTarget {
     this.#emitChange();
   }
 
-  /** @param {string} convId @param {string} title */
-  renameConversation(convId, title) {
-    this.#ws.send({ type: 'rename_conv', conv_id: convId, title });
-  }
-
-  listArchivedConversations() {
-    this.#ws.send({ type: 'list_archived' });
-  }
-
-  listSystemConversations() {
-    this.#ws.send({ type: 'list_system_convs' });
-  }
-
-  /** @param {string} convId */
-  unarchiveConversation(convId) {
-    this.#ws.send({ type: 'unarchive_conv', conv_id: convId });
-  }
-
-  /** @param {string} convId */
-  archiveConversation(convId) {
-    this.#ws.send({ type: 'archive_conv', conv_id: convId });
-    // If we're viewing the archived conversation, deselect it
-    if (this.#currentConvId === convId) {
-      this.#currentConvId = null;
-      this.#messageStore.clear();
-      this.#emitChange();
-    }
-  }
-
   /**
    * @param {string} text
    * @param {{filename: string, path: string, mime_type: string}[]} [attachments]
@@ -187,7 +407,7 @@ export class ConversationStore extends EventTarget {
       this.#pendingMessage = text;
       this.#pendingAttachments = attachments;
       const effort = this.#currentEffort !== 'default' ? this.#currentEffort : '';
-      this.createConversation('', effort);
+      this.createConversation('', effort, this.#currentFolder);
       return;
     }
     // Optimistically add user message
@@ -207,7 +427,6 @@ export class ConversationStore extends EventTarget {
 
   /**
    * Upload any pending File objects, then send the message.
-   * Used when a conversation was just created and files need uploading.
    * @param {string} convId
    * @param {string} text
    * @param {object[]} attachments
@@ -258,7 +477,7 @@ export class ConversationStore extends EventTarget {
     this.#toolStatusStore.respondToConfirm(contextId, tool, toolCallId, approved, extra);
   }
 
-  // -- Message handling (from WebSocket) --------------------------------------
+  // -- WebSocket message handling (chat streaming) ----------------------------
 
   /** @param {object} msg */
   #handleMessage(msg) {
@@ -278,7 +497,7 @@ export class ConversationStore extends EventTarget {
           this.#busy = false;
           if (msg.usage?.prompt_tokens) this.#contextUsage = msg.usage.prompt_tokens;
           if (msg.context_limit) this.#contextLimit = msg.context_limit;
-          this.listConversations();
+          this.listConversations(this.#currentFolder);
         }
       }
       this.#emitChange();
@@ -292,59 +511,8 @@ export class ConversationStore extends EventTarget {
 
     // Messages handled directly by ConversationStore
     switch (msg.type) {
-      case 'conv_list':
-        this.#conversations = msg.conversations || [];
-        break;
-
-      case 'conv_created':
-        this.#conversations.unshift(msg);
-        if (msg.effort) this.#currentEffort = msg.effort;
-        this.selectConversation(msg.conv_id);
-        // Flush any message queued while the conversation was being created
-        if (this.#pendingMessage) {
-          const text = this.#pendingMessage;
-          const atts = this.#pendingAttachments;
-          this.#pendingMessage = null;
-          this.#pendingAttachments = [];
-          this.#uploadAndSend(msg.conv_id, text, atts);
-        }
-        break;
-
       case 'conv_selected':
         if (msg.read_only) this.#readOnly = true;
-        break;
-
-      case 'system_conv_list':
-        this.#systemConversations = msg.conversations || [];
-        break;
-
-      case 'conv_archived':
-        this.#conversations = this.#conversations.filter(c => c.conv_id !== msg.conv_id);
-        if (this.#currentConvId === msg.conv_id) {
-          this.#currentConvId = null;
-          this.#messageStore.clear();
-        }
-        this.#archivedConversations = [
-          { conv_id: msg.conv_id, title: msg.title,
-            created_at: msg.created_at, updated_at: msg.updated_at },
-          ...this.#archivedConversations,
-        ];
-        break;
-
-      case 'archived_list':
-        this.#archivedConversations = msg.conversations || [];
-        break;
-
-      case 'conv_unarchived':
-        this.#archivedConversations = this.#archivedConversations.filter(
-          c => c.conv_id !== msg.conv_id
-        );
-        break;
-
-      case 'conv_renamed':
-        this.#conversations = this.#conversations.map(c =>
-          c.conv_id === msg.conv_id ? { ...c, title: msg.title } : c
-        );
         break;
 
       case 'turn_start':

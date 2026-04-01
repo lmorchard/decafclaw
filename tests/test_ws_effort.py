@@ -8,7 +8,6 @@ from decafclaw.archive import append_message, read_archive
 from decafclaw.events import EventBus
 from decafclaw.web.conversations import ConversationIndex
 from decafclaw.web.websocket import (
-    _handle_create_conv,
     _handle_load_history,
     _handle_set_effort,
 )
@@ -166,47 +165,8 @@ class TestLoadHistoryEffort:
 
 
 class TestCreateConvEffort:
-    @pytest.mark.asyncio
-    async def test_create_with_effort(self, ws_state, index):
-        """Creating a conversation with effort should persist it in archive."""
-        ws_send = AsyncMock()
-        await _handle_create_conv(ws_send, index, "testuser",
-                                  {"title": "Test", "effort": "strong"}, ws_state)
+    """Tests for effort level on conversation creation (now via REST)."""
 
-        msg = ws_send.call_args[0][0]
-        assert msg["type"] == "conv_created"
-        conv_id = msg["conv_id"]
-
-        # Verify effort was recorded
-        messages = read_archive(ws_state["config"], conv_id)
-        effort_msgs = [m for m in messages if m.get("role") == "effort"]
-        assert len(effort_msgs) == 1
-        assert effort_msgs[0]["content"] == "strong"
-
-    @pytest.mark.asyncio
-    async def test_create_without_effort(self, ws_state, index):
-        """Creating a conversation without effort should not record effort."""
-        ws_send = AsyncMock()
-        await _handle_create_conv(ws_send, index, "testuser",
-                                  {"title": "Test"}, ws_state)
-
-        msg = ws_send.call_args[0][0]
-        conv_id = msg["conv_id"]
-
-        messages = read_archive(ws_state["config"], conv_id)
-        effort_msgs = [m for m in messages if m.get("role") == "effort"]
-        assert len(effort_msgs) == 0
-
-    @pytest.mark.asyncio
-    async def test_create_with_default_effort_no_record(self, ws_state, index):
-        """Creating with effort='default' should not record (it's the default)."""
-        ws_send = AsyncMock()
-        await _handle_create_conv(ws_send, index, "testuser",
-                                  {"title": "Test", "effort": "default"}, ws_state)
-
-        msg = ws_send.call_args[0][0]
-        conv_id = msg["conv_id"]
-
-        messages = read_archive(ws_state["config"], conv_id)
-        effort_msgs = [m for m in messages if m.get("role") == "effort"]
-        assert len(effort_msgs) == 0
+    # These tests are in test_web_conversations.py (test_create_conv_with_effort)
+    # since conversation creation moved from WebSocket to REST.
+    pass
