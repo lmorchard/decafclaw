@@ -5,15 +5,14 @@ export class ConversationSidebar extends LitElement {
     store: { type: Object, attribute: false },
     authClient: { type: Object, attribute: false },
     _conversations: { type: Array, state: true },
-    _archived: { type: Array, state: true },
+    _chatFolders: { type: Array, state: true },
+    _chatSection: { type: String, state: true },
+    _chatFolder: { type: String, state: true },
     _activeId: { type: String, state: true },
-    _showArchived: { type: Boolean, state: true },
     _contextUsage: { type: Number, state: true },
     _contextLimit: { type: Number, state: true },
     _currentEffort: { type: String, state: true },
     _effortModel: { type: String, state: true },
-    _systemConversations: { type: Array, state: true },
-    _showSystem: { type: Boolean, state: true },
     _collapsed: { type: Boolean, state: true },
     _mobileOpen: { type: Boolean, state: true },
     _sidebarTab: { type: String, state: true },
@@ -31,15 +30,17 @@ export class ConversationSidebar extends LitElement {
     this.store = null;
     this.authClient = null;
     this._conversations = [];
-    this._archived = [];
+    /** @type {Array<{name: string, path: string, virtual?: boolean}>} */
+    this._chatFolders = [];
+    /** @type {string} which section: '' (active), '_archived', '_system' */
+    this._chatSection = '';
+    /** @type {string} folder path within the section */
+    this._chatFolder = '';
     this._activeId = null;
-    this._showArchived = false;
     this._contextUsage = 0;
     this._contextLimit = 0;
     this._currentEffort = 'default';
     this._effortModel = '';
-    this._systemConversations = [];
-    this._showSystem = false;
     this._collapsed = localStorage.getItem('sidebar-collapsed') === 'true';
     this._mobileOpen = false;
     this._sidebarTab = 'conversations';
@@ -64,14 +65,22 @@ export class ConversationSidebar extends LitElement {
   connectedCallback() {
     super.connectedCallback();
     this._onStoreChange = () => {
-      this._conversations = this.store?.conversations || [];
-      this._archived = this.store?.archivedConversations || [];
       this._activeId = this.store?.currentConvId;
       this._contextUsage = this.store?.contextUsage || 0;
       this._contextLimit = this.store?.contextLimit || 0;
       this._currentEffort = this.store?.currentEffort || 'default';
       this._effortModel = this.store?.effortModel || '';
-      this._systemConversations = this.store?.systemConversations || [];
+      // Update conversation list and folders based on current section
+      if (this._chatSection === '_archived') {
+        this._conversations = this.store?.archivedConversations || [];
+        this._chatFolders = this.store?.archivedFolders || [];
+      } else if (this._chatSection === '_system') {
+        this._conversations = this.store?.systemConversations || [];
+        this._chatFolders = this.store?.systemFolders || [];
+      } else {
+        this._conversations = this.store?.conversations || [];
+        this._chatFolders = this.store?.folders || [];
+      }
     };
   }
 
@@ -189,7 +198,114 @@ export class ConversationSidebar extends LitElement {
   }
 
   #handleNew() {
-    this.store?.createConversation();
+    // Create in current folder (only in active section)
+    const folder = this._chatSection === '' ? this._chatFolder : '';
+    this.store?.createConversation('', '', folder);
+  }
+
+  async #createChatFolder() {
+    const name = prompt('New folder name:');
+    if (!name || !name.trim()) return;
+    if (name.trim().startsWith('_')) {
+      alert('Folder names starting with "_" are reserved.');
+      return;
+    }
+    const path = this._chatFolder
+      ? `${this._chatFolder}/${name.trim()}`
+      : name.trim();
+    const ok = await this.store?.createFolder(path);
+    if (!ok) alert('Failed to create folder.');
+  }
+
+  /**
+   * @param {string} folderPath
+   * @param {string} folderName
+   */
+  async #renameChatFolder(folderPath, folderName) {
+    const newName = prompt('Rename folder:', folderName);
+    if (!newName || !newName.trim() || newName.trim() === folderName) return;
+    if (newName.trim().startsWith('_')) {
+      alert('Folder names starting with "_" are reserved.');
+      return;
+    }
+    // Build new path: replace last segment
+    const parts = folderPath.split('/');
+    parts[parts.length - 1] = newName.trim();
+    const newPath = parts.join('/');
+    const ok = await this.store?.renameFolder(folderPath, newPath);
+    if (!ok) alert('Failed to rename folder.');
+  }
+
+  /** @param {string} folderPath */
+  async #deleteChatFolder(folderPath) {
+    if (!confirm(`Delete folder "${folderPath}"? It must be empty.`)) return;
+    const ok = await this.store?.deleteFolder(folderPath);
+    if (!ok) alert('Failed to delete folder. It may not be empty.');
+  }
+
+  #renderChatBreadcrumbs() {
+    // Build breadcrumb path based on section and folder
+    const section = this._chatSection;
+    const folder = this._chatFolder;
+
+    // At the very top level — no breadcrumbs needed
+    if (!section && !folder) return nothing;
+
+    const crumbs = [];
+
+    // Root "Chats" segment — always navigates to top level
+    crumbs.push(html`
+      <button type="button" class="vault-breadcrumb-segment"
+        @click=${() => this.#navigateChatFolder('', '')}>Chats</button>
+    `);
+
+    // Section segment (Archived or System)
+    if (section === '_archived') {
+      if (folder) {
+        crumbs.push(html`
+          <span class="vault-breadcrumb-sep">/</span>
+          <button type="button" class="vault-breadcrumb-segment"
+            @click=${() => this.#navigateChatFolder('_archived', '')}>Archived</button>
+        `);
+      } else {
+        crumbs.push(html`
+          <span class="vault-breadcrumb-sep">/</span>
+          <span class="vault-breadcrumb-segment active">Archived</span>
+        `);
+      }
+    } else if (section === '_system') {
+      if (folder) {
+        crumbs.push(html`
+          <span class="vault-breadcrumb-sep">/</span>
+          <button type="button" class="vault-breadcrumb-segment"
+            @click=${() => this.#navigateChatFolder('_system', '')}>System</button>
+        `);
+      } else {
+        crumbs.push(html`
+          <span class="vault-breadcrumb-sep">/</span>
+          <span class="vault-breadcrumb-segment active">System</span>
+        `);
+      }
+    }
+
+    // Folder path segments
+    if (folder) {
+      const segments = folder.split('/');
+      segments.forEach((seg, i) => {
+        const path = segments.slice(0, i + 1).join('/');
+        const isLast = i === segments.length - 1;
+        crumbs.push(html`
+          <span class="vault-breadcrumb-sep">/</span>
+          ${isLast
+            ? html`<span class="vault-breadcrumb-segment active">${seg}</span>`
+            : html`<button type="button" class="vault-breadcrumb-segment"
+                @click=${() => this.#navigateChatFolder(section, path)}>${seg}</button>`
+          }
+        `);
+      });
+    }
+
+    return html`<div class="vault-breadcrumbs">${crumbs}</div>`;
   }
 
   /** @param {string} convId */
@@ -279,17 +395,20 @@ export class ConversationSidebar extends LitElement {
     `;
   }
 
-  #toggleArchived() {
-    this._showArchived = !this._showArchived;
-    if (this._showArchived) {
-      this.store?.listArchivedConversations();
-    }
-  }
-
-  #toggleSystem() {
-    this._showSystem = !this._showSystem;
-    if (this._showSystem) {
-      this.store?.listSystemConversations();
+  /**
+   * Navigate the chat sidebar to a section and folder.
+   * @param {string} section — '' (active), '_archived', '_system'
+   * @param {string} folder — folder path within the section
+   */
+  #navigateChatFolder(section, folder) {
+    this._chatSection = section;
+    this._chatFolder = folder;
+    if (section === '_archived') {
+      this.store?.listArchivedConversations(folder);
+    } else if (section === '_system') {
+      this.store?.listSystemConversations(folder);
+    } else {
+      this.store?.listConversations(folder);
     }
   }
 
@@ -426,55 +545,63 @@ export class ConversationSidebar extends LitElement {
       </div>
       ${this._sidebarTab === 'wiki' ? this.#renderWikiTab() : nothing}
       <div class="conv-list" style="${this._sidebarTab !== 'conversations' ? 'display:none' : ''}">
-        <button class="new-conv-btn outline" @click=${this.#handleNew} title="New chat (⌘K)">+ Chat</button>
-        ${this._conversations.length === 0
-          ? nothing
-          : this._conversations.map(c => this.#renderConversationItem(c, {
-              isActive: c.conv_id === this._activeId,
-              actionLabel: '\u00d7',
-              actionTitle: 'Archive conversation',
-              onAction: (id) => this.#handleArchive(id),
-              onDblClick: (/** @type {Event} */ e) => { e.stopPropagation(); this.#handleRename(c.conv_id, c.title); },
-            }))
-        }
-
-        <div
-          class="archived-toggle"
-          @click=${this.#toggleArchived}
-        >
-          <span>${this._showArchived ? '\u25bc' : '\u25b6'} Archived</span>
-        </div>
-
-        ${this._showArchived ? html`
-          ${this._archived.length === 0
-            ? html`<p style="padding: 0.25rem 0.75rem; color: var(--pico-muted-color); font-size: 0.85rem;">No archived conversations</p>`
-            : this._archived.map(c => this.#renderConversationItem(c, {
-                extraClass: 'archived',
-                actionLabel: '\u21a9',
-                actionTitle: 'Unarchive conversation',
-                onAction: (id) => this.#handleUnarchive(id),
-              }))
-          }
+        ${this._chatSection === '' ? html`
+          <div class="vault-action-btns">
+            <button class="new-conv-btn outline" @click=${this.#handleNew} title="New chat (⌘K)">+ Chat</button>
+            <button class="wiki-new-folder-btn outline" @click=${() => this.#createChatFolder()}>+ Folder</button>
+          </div>
         ` : nothing}
-
-        <div
-          class="archived-toggle"
-          @click=${this.#toggleSystem}
-        >
-          <span>${this._showSystem ? '\u25bc' : '\u25b6'} System</span>
-        </div>
-
-        ${this._showSystem ? html`
-          ${this._systemConversations.length === 0
-            ? html`<p style="padding: 0.25rem 0.75rem; color: var(--pico-muted-color); font-size: 0.85rem;">No system conversations</p>`
-            : this._systemConversations.map(c => this.#renderConversationItem(c, {
+        ${this.#renderChatBreadcrumbs()}
+        ${this._chatFolders.map(f => {
+          const isVirtual = f.virtual || f.path === '_archived' || f.path === '_system' || this._chatSection !== '';
+          return html`
+            <div class="conv-item wiki-item wiki-folder-item"
+              @click=${() => {
+                if (f.path === '_archived') {
+                  this.#navigateChatFolder('_archived', '');
+                } else if (f.path === '_system') {
+                  this.#navigateChatFolder('_system', '');
+                } else {
+                  this.#navigateChatFolder(this._chatSection, f.path);
+                }
+              }}
+              @dblclick=${!isVirtual ? (/** @type {Event} */ e) => { e.stopPropagation(); this.#renameChatFolder(f.path, f.name); } : nothing}
+              title=${f.path}>
+              <span class="conv-title">\u{1F4C1} ${f.name}</span>
+              ${!isVirtual ? html`
+                <button class="conv-archive" aria-label="Delete folder"
+                  @click=${(/** @type {Event} */ e) => { e.stopPropagation(); this.#deleteChatFolder(f.path); }}
+                  title="Delete folder">\u00d7</button>
+              ` : nothing}
+            </div>
+          `;
+        })}
+        ${this._conversations.length === 0 && this._chatFolders.length === 0
+          ? html`<p style="padding: 0.5rem 0.75rem; color: var(--pico-muted-color); font-size: 0.85rem;">No conversations</p>`
+          : nothing
+        }
+        ${this._chatSection === '_archived'
+          ? this._conversations.map(c => this.#renderConversationItem(c, {
+              extraClass: 'archived',
+              actionLabel: '\u21a9',
+              actionTitle: 'Unarchive conversation',
+              onAction: (id) => this.#handleUnarchive(id),
+            }))
+          : this._chatSection === '_system'
+            ? this._conversations.map(c => this.#renderConversationItem(c, {
                 isActive: c.conv_id === this._activeId,
                 extraClass: 'system',
                 badge: c.conv_type,
                 titleSuffix: c.conv_type,
               }))
-          }
-        ` : nothing}
+            : this._conversations.map(c => this.#renderConversationItem(c, {
+                isActive: c.conv_id === this._activeId,
+                actionLabel: '\u00d7',
+                actionTitle: 'Archive conversation',
+                onAction: (id) => this.#handleArchive(id),
+                onDblClick: (/** @type {Event} */ e) => { e.stopPropagation(); this.#handleRename(c.conv_id, c.title); },
+              }))
+        }
       </div>
       <div class="effort-picker" title="${this._effortModel ? `Model: ${this._effortModel}` : ''}">
         <div class="effort-picker-label">Effort</div>
