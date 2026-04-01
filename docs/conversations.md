@@ -71,6 +71,57 @@ Place a `COMPACTION.md` file at `data/{agent_id}/COMPACTION.md` to customize the
 - **`conversation_compact`** — manually trigger compaction without waiting for the token budget to be exceeded
 - **`conversation_search`** — search past conversations using semantic search (across all archived conversations, not just the current one)
 
+## Web UI Conversations
+
+Web conversations are managed through a REST API. The web UI sidebar shows conversations organized into folders.
+
+### Conversation Folders
+
+Users can organize conversations into nested folders. Folder structure is tracked in a per-user JSON index file — conversation archive files stay in place (no filesystem moves).
+
+**Index file:** `data/{agent_id}/web/users/{username}/conversation_folders.json`
+
+```json
+{
+  "folders": ["projects", "projects/bot-redesign", "research"],
+  "assignments": {
+    "web-les-abc123": "projects/bot-redesign",
+    "web-les-def456": "research"
+  }
+}
+```
+
+- Conversations not in the index default to the top level
+- Folder names starting with `_` are reserved for virtual folders
+- Archiving preserves folder assignment; unarchiving restores it
+- Renaming a folder to an existing name merges them
+
+### Virtual Folders
+
+The sidebar shows two virtual folders at the top level:
+
+- **Archived** — archived conversations, preserving their folder structure
+- **System** — system conversations grouped into sub-folders by type (heartbeat, schedule, delegated)
+
+Virtual folders are navigable but not renamable or deletable.
+
+### REST API
+
+All conversation management uses REST (WebSocket is only for real-time chat streaming):
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/conversations?folder=` | List conversations + subfolders in a folder |
+| `GET` | `/api/conversations/archived?folder=` | List archived conversations by folder |
+| `GET` | `/api/conversations/system?folder=` | List system conversations by type |
+| `POST` | `/api/conversations` | Create conversation (optional: folder, effort) |
+| `PATCH` | `/api/conversations/{id}` | Rename and/or move to a folder |
+| `POST` | `/api/conversations/{id}/archive` | Archive a conversation |
+| `POST` | `/api/conversations/{id}/unarchive` | Unarchive a conversation |
+| `POST` | `/api/conversations/folders` | Create a folder |
+| `DELETE` | `/api/conversations/folders/{path}` | Delete an empty folder |
+| `PUT` | `/api/conversations/folders/{path}` | Rename/move a folder (merges on collision) |
+
 ## Files on disk
 
 ```
@@ -78,6 +129,9 @@ data/{agent_id}/workspace/
   conversations/
     {conv_id}.jsonl          # Append-only archive per conversation
   embeddings.db              # Semantic search index (includes conversation messages)
+data/{agent_id}/web/
+  users/{username}/
+    conversation_folders.json # Per-user folder index
 ```
 
-All files are human-readable (JSONL) and crash-recoverable (append-only writes).
+All files are human-readable (JSON/JSONL) and crash-recoverable (append-only writes, atomic folder index updates).

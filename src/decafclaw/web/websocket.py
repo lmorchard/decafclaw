@@ -21,59 +21,6 @@ def _is_safe_conv_id(conv_id: str) -> bool:
 # -- WebSocket message handlers ------------------------------------------------
 
 
-async def _handle_list_convs(ws_send, index, username, msg, state):
-    convs = index.list_for_user(username)
-    await ws_send({"type": "conv_list", "conversations": [c.to_dict() for c in convs]})
-
-
-async def _handle_list_archived(ws_send, index, username, msg, state):
-    convs = index.list_for_user(username, include_archived=True)
-    archived = [c for c in convs if c.archived]
-    await ws_send({"type": "archived_list", "conversations": [c.to_dict() for c in archived]})
-
-
-async def _handle_unarchive_conv(ws_send, index, username, msg, state):
-    conv_id = msg.get("conv_id", "")
-    conv = index.get(conv_id)
-    if conv and conv.user_id == username:
-        index.unarchive(conv_id)
-        await ws_send({"type": "conv_unarchived", "conv_id": conv_id})
-        active = index.list_for_user(username)
-        await ws_send({"type": "conv_list", "conversations": [c.to_dict() for c in active]})
-        all_convs = index.list_for_user(username, include_archived=True)
-        archived = [c for c in all_convs if c.archived]
-        await ws_send({"type": "archived_list", "conversations": [c.to_dict() for c in archived]})
-    else:
-        await ws_send({"type": "error", "message": "Conversation not found"})
-
-
-async def _handle_list_system_convs(ws_send, index, username, msg, state):
-    from .conversations import list_system_conversations
-    try:
-        limit = min(max(1, int(msg.get("limit", 100))), 500)
-    except (TypeError, ValueError):
-        limit = 100
-    convs = list_system_conversations(state["config"], username=username,
-                                      limit=limit)
-    await ws_send({"type": "system_conv_list", "conversations": convs})
-
-
-async def _handle_create_conv(ws_send, index, username, msg, state):
-    title = msg.get("title", "")
-    conv = index.create(username, title=title)
-
-    # Record initial effort level if specified
-    effort = msg.get("effort", "")
-    if effort:
-        from ..config import EFFORT_LEVELS
-        if effort in EFFORT_LEVELS and effort != "default":
-            from ..archive import append_message
-            append_message(state["config"], conv.conv_id,
-                           {"role": "effort", "content": effort})
-
-    await ws_send({"type": "conv_created", **conv.to_dict(),
-                   **({"effort": effort} if effort else {})})
-
 
 async def _handle_select_conv(ws_send, index, username, msg, state):
     conv_id = msg.get("conv_id", "")
@@ -171,30 +118,6 @@ async def _handle_load_history(ws_send, index, username, msg, state):
         response["effort_model"] = resolved_model
     await ws_send(response)
 
-
-async def _handle_rename_conv(ws_send, index, username, msg, state):
-    conv_id = msg.get("conv_id", "")
-    title = msg.get("title", "")
-    conv = index.get(conv_id)
-    if conv and conv.user_id == username:
-        updated = index.rename(conv_id, title)
-        if updated:
-            await ws_send({"type": "conv_renamed", "conv_id": conv_id, "title": updated.title})
-    else:
-        await ws_send({"type": "error", "message": "Conversation not found"})
-
-
-async def _handle_archive_conv(ws_send, index, username, msg, state):
-    conv_id = msg.get("conv_id", "")
-    conv = index.get(conv_id)
-    if conv and conv.user_id == username:
-        index.archive(conv_id)
-
-        await ws_send({"type": "conv_archived", **conv.to_dict()})
-        convs = index.list_for_user(username)
-        await ws_send({"type": "conv_list", "conversations": [c.to_dict() for c in convs]})
-    else:
-        await ws_send({"type": "error", "message": "Conversation not found"})
 
 
 async def _handle_send(ws_send, index, username, msg, state):
@@ -370,15 +293,8 @@ async def _handle_confirm_response(ws_send, index, username, msg, state):
 
 
 _HANDLERS = {
-    "list_convs": _handle_list_convs,
-    "list_archived": _handle_list_archived,
-    "list_system_convs": _handle_list_system_convs,
-    "unarchive_conv": _handle_unarchive_conv,
-    "create_conv": _handle_create_conv,
     "select_conv": _handle_select_conv,
     "load_history": _handle_load_history,
-    "rename_conv": _handle_rename_conv,
-    "archive_conv": _handle_archive_conv,
     "send": _handle_send,
     "cancel_turn": _handle_cancel_turn,
     "set_effort": _handle_set_effort,

@@ -55,7 +55,8 @@ An AI agent testbed for exploring agent development patterns. Connects to Matter
 - `src/decafclaw/commands.py` — User-invokable commands: trigger parsing, argument substitution, execution (fork/inline)
 - `src/decafclaw/tools/confirmation.py` — Shared confirmation request helper (event-bus-based user approval)
 - `src/decafclaw/runner.py` — Top-level orchestrator: manages MCP, HTTP server, Mattermost, heartbeat as parallel tasks
-- `src/decafclaw/web/` — Web gateway: auth, conversations, WebSocket chat handler
+- `src/decafclaw/web/` — Web gateway: auth, conversations, conversation folders, WebSocket chat handler
+- `src/decafclaw/web/conversation_folders.py` — Per-user conversation folder index (JSON file, metadata-only)
 - `src/decafclaw/web/static/` — Frontend: Lit web components, service layer (AuthClient, WebSocketClient, ConversationStore, MessageStore, ToolStatusStore, markdown, utils)
 
 ## Running
@@ -114,6 +115,7 @@ Session docs live in `.claude/dev-sessions/YYYY-MM-DD-HHMM-slug/` with `spec.md`
 - **Tool calls run concurrently.** When the model emits multiple tool calls in one response, they execute via `asyncio.gather` with a semaphore (`max_concurrent_tools`, default 5). Each call gets a forked ctx with its own `current_tool_call_id`. All tool events carry `tool_call_id` for UI correlation.
 - **Tool deferral.** When tool definitions exceed `tool_context_budget_pct` (default 10%) of `compaction_max_tokens`, non-essential tools are deferred behind `tool_search`. The model sees a name+description list and fetches full schemas on demand. Always-loaded tools configured via `ALWAYS_LOADED_TOOLS` env var. Fetched tools persist for the conversation.
 - **Events for progress.** Tools publish `tool_status` events via `ctx.publish()`. The agent loop publishes `llm_start/end` and `tool_start/end`. Subscribers (Mattermost, terminal) handle display.
+- **Web UI conversation management is REST-only.** All conversation listing, creation, renaming, archiving, folder management uses REST endpoints. WebSocket is only for real-time chat streaming, conversation selection/history loading, effort changes, and turn cancellation. Conversation folders are metadata-only (per-user JSON index file); archive files stay in place.
 - **Mattermost concerns stay in `mattermost.py`.** Progress formatting, placeholder management, threading logic — all in `MattermostClient`.
 - **Mattermost PATCH API quirks.** Omitting `props` from a PATCH preserves existing props (including attachments). To strip attachments, you must explicitly send `props: {"attachments": []}`. However, sending a PATCH with only `props` and no `message` field clears the message text, showing "(message deleted)". Always include the message text when patching props — fetch it first if needed.
 - **Config via defaults → config.json → env vars.** Config is resolved in priority order: dataclass defaults → `data/{agent_id}/config.json` → env vars. Env vars are highest priority. Dataclass defaults in `config.py`, sub-dataclasses in `config_types.py`.
