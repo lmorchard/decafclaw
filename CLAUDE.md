@@ -23,9 +23,10 @@ An AI agent testbed for exploring agent development patterns. Connects to Matter
 - `src/decafclaw/config_types.py` — Config sub-dataclasses (LlmConfig, MattermostConfig, etc.)
 - `src/decafclaw/config_cli.py` — CLI tool for config show/get/set
 - `src/decafclaw/context.py` — Forkable runtime context with sub-objects: TokenUsage, ToolState, SkillState, ComposerState
-- `src/decafclaw/context_composer.py` — Context composer: unified context assembly for agent turns (system prompt, history, memory, wiki, tools)
+- `src/decafclaw/context_composer.py` — Context composer: unified context assembly, relevance scoring, dynamic budget allocation
+- `src/decafclaw/frontmatter.py` — YAML frontmatter parsing/serialization for vault pages (summary, keywords, tags, importance)
 - `src/decafclaw/events.py` — In-process pub/sub event bus
-- `src/decafclaw/memory_context.py` — Proactive memory retrieval: auto-inject relevant context per turn
+- `src/decafclaw/memory_context.py` — Proactive memory retrieval: embedding search, graph expansion, metadata enrichment
 - `src/decafclaw/archive.py` — Conversation archive (JSONL per conversation)
 - `src/decafclaw/compaction.py` — History compaction via summarization
 - `src/decafclaw/embeddings.py` — Semantic search index (sqlite-vec cosine similarity)
@@ -147,6 +148,9 @@ Session docs live in `docs/dev-sessions/YYYY-MM-DD-HHMM-slug/` with `spec.md`, `
 - **Skill schedule frontmatter.** Skills can declare `schedule: "cron expression"` in SKILL.md to run as scheduled tasks. Only bundled and admin-level skills are honored (workspace skills cannot self-schedule). File-based schedules override skill schedules on name collision. Skills with both `schedule` and `user-invocable: true` serve as both scheduled tasks and on-demand commands.
 - **Self-reflection is fail-open.** The reflection judge evaluates responses before delivery, but errors (network, parse, etc.) always pass through the response as-is. Retries consume `max_tool_iterations` budget. Skipped for child agents, cancelled turns, and empty responses.
 - **Context assembly via ContextComposer.** All context for an LLM turn is assembled by `ContextComposer.compose()` in `context_composer.py`. This produces a `ComposedContext` with messages, tools, deferred tools, token estimates, and per-source diagnostics. The composer is stateful per-conversation (via `ComposerState` on `ctx.composer`), tracking what was included and actual token usage across turns. Mode-aware: `INTERACTIVE`, `HEARTBEAT`, `SCHEDULED`, `CHILD_AGENT` control which sources are included. Tool assembly in the iteration loop still uses `_build_tool_list()` since fetched tools change mid-turn.
+- **Relevance scoring for memory context.** Retrieval candidates are scored by `composite_score = w_similarity * similarity + w_recency * recency + w_importance * importance`. Weights configurable via `RelevanceConfig`. Candidates ranked by score; dynamic budget allocation fills from top until budget exhausted. Fixed costs (system prompt, history, tools, explicit `@[[Page]]` refs) reserved first.
+- **Vault page frontmatter.** Vault pages support optional YAML frontmatter with `summary`, `keywords`, `tags`, `importance` fields. Parsed by `frontmatter.py`. Composite embeddings prepend metadata to body for richer semantic search. Frontmatter is LLM-generated (Phase B) and human-editable.
+- **Wiki-link graph expansion.** Memory context retrieval follows `[[wiki-links]]` one hop from top embedding hits to expand the candidate pool. Linked pages get discounted similarity and compete on composite score. Configurable via `RelevanceConfig.graph_expansion_enabled`.
 - **Proactive memory context is fail-open.** Before each interactive turn, relevant memories/wiki are auto-injected as context via the ContextComposer. Errors silently return empty results. Skipped for heartbeat, scheduled tasks, and child agents. Requires an embedding model to be configured — silently disabled otherwise.
 - **Vault chat context.** Users can share vault pages into conversations via `@[[PageName]]` mentions (all channels) or by having a page open in the web UI sidebar. Pages are injected once per conversation as `wiki_context` role messages, tracked by scanning history. Parsing happens in the ContextComposer via helpers in `agent.py`. Page resolution uses vault root, not a fixed wiki directory.
 - **LOG_LEVEL env var.** Set `LOG_LEVEL=DEBUG` for verbose logging (default: INFO).

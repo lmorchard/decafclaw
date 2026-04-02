@@ -12,6 +12,7 @@
 - [MCP Server Support](mcp-servers.md) — Connect external MCP servers as tool providers (stdio + HTTP)
 - [Vault](vault.md) — Unified knowledge base: curated pages, journal entries, user notes
 - [Proactive Memory Context](memory-context.md) — Automatically surface relevant vault content per turn
+- [Relevance Scoring](relevance-scoring.md) — Three-factor scoring, graph expansion, dynamic budget allocation
 - [Dream Consolidation](dream-consolidation.md) — Periodic journal review and vault page gardening
 - [Conversations](conversations.md) — Archive, resume, and compaction of conversation history
 - [Semantic Search](semantic-search.md) — Embedding-based search over memories and conversations

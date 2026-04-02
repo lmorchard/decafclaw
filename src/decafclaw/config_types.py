@@ -143,6 +143,17 @@ class MemoryContextConfig:
     show_in_ui: bool = True
 
 
+@dataclass
+class RelevanceConfig:
+    w_similarity: float = 0.5
+    w_recency: float = 0.3
+    w_importance: float = 0.2
+    recency_decay_rate: float = 0.99  # per-hour exponential decay
+    min_composite_score: float = 0.65  # candidates below this are dropped
+    graph_expansion_enabled: bool = True
+    graph_expansion_similarity_discount: float = 0.7
+
+
 def is_secret(dc_class: type, field_name: str) -> bool:
     """Check if a dataclass field is marked as secret."""
     for f in dc_fields(dc_class):

@@ -26,6 +26,7 @@ from .config_types import (
     MattermostConfig,
     MemoryContextConfig,
     ReflectionConfig,
+    RelevanceConfig,
     VaultConfig,
 )
 
@@ -143,6 +144,7 @@ class Config:
     models: dict[str, dict[str, str]] = field(default_factory=dict)
     reflection: ReflectionConfig = field(default_factory=ReflectionConfig)
     memory_context: MemoryContextConfig = field(default_factory=MemoryContextConfig)
+    relevance: RelevanceConfig = field(default_factory=RelevanceConfig)
     vault: VaultConfig = field(default_factory=VaultConfig)
 
     # Custom environment variables from config.json "env" section
@@ -337,6 +339,9 @@ def load_config() -> Config:
     memory_context = load_sub_config(
         MemoryContextConfig, file_data.get("memory_context", {}), "MEMORY_CONTEXT")
 
+    relevance = load_sub_config(
+        RelevanceConfig, file_data.get("relevance", {}), "RELEVANCE")
+
     vault = load_sub_config(
         VaultConfig, file_data.get("vault", {}), "VAULT")
 
@@ -360,6 +365,7 @@ def load_config() -> Config:
         models=models,
         reflection=reflection,
         memory_context=memory_context,
+        relevance=relevance,
         vault=vault,
         env=env_vars,
         system_prompt=system_prompt,
