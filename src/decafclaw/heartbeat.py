@@ -155,6 +155,7 @@ async def run_section_turn(
             conv_id=f"heartbeat-{timestamp}-{index}",
             channel_id="heartbeat",
             channel_name="heartbeat",
+            task_mode="heartbeat",
         )
 
         prompt = build_section_prompt(section)
