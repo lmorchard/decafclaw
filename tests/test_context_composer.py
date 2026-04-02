@@ -80,7 +80,7 @@ class TestComposerState:
         assert state.last_total_tokens_estimated == 0
         assert state.last_prompt_tokens_actual == 0
         assert state.last_completion_tokens_actual == 0
-        assert state.recent_memory_ids == []
+        assert state.injected_paths == set()
 
 
 # -- ContextComposer ----------------------------------------------------------
@@ -214,10 +214,12 @@ class TestComposeMemoryContext:
             assert entry is None
 
     @pytest.mark.asyncio
-    async def test_tracks_recent_memory_ids(self, ctx, config):
+    async def test_tracks_injected_paths(self, ctx, config):
         mock_results = [
-            {"entry_text": "first memory entry", "source_type": "page", "similarity": 0.8},
-            {"entry_text": "second memory entry", "source_type": "journal", "similarity": 0.7},
+            {"entry_text": "first", "source_type": "page", "similarity": 0.9,
+             "file_path": "pages/first.md", "modified_at": "", "importance": 0.5},
+            {"entry_text": "second", "source_type": "journal", "similarity": 0.85,
+             "file_path": "journal/second.md", "modified_at": "", "importance": 0.5},
         ]
         with (
             patch("decafclaw.memory_context.retrieve_memory_context",
@@ -229,7 +231,32 @@ class TestComposeMemoryContext:
             await composer._compose_memory_context(
                 ctx, config, "hello", ComposerMode.INTERACTIVE,
             )
-            assert len(composer.state.recent_memory_ids) == 2
+            assert "pages/first.md" in composer.state.injected_paths
+            assert "journal/second.md" in composer.state.injected_paths
+
+    @pytest.mark.asyncio
+    async def test_suppresses_already_injected(self, ctx, config):
+        mock_results = [
+            {"entry_text": "first", "source_type": "page", "similarity": 0.8,
+             "file_path": "pages/first.md", "modified_at": "", "importance": 0.5},
+        ]
+        with (
+            patch("decafclaw.memory_context.retrieve_memory_context",
+                  new_callable=AsyncMock, return_value=mock_results),
+            patch("decafclaw.memory_context.format_memory_context",
+                  return_value="formatted"),
+        ):
+            composer = ContextComposer()
+            # First turn: injected
+            _, _, _, entry1 = await composer._compose_memory_context(
+                ctx, config, "hello", ComposerMode.INTERACTIVE,
+            )
+            assert entry1 is not None
+            # Second turn: suppressed (already in context)
+            _, _, _, entry2 = await composer._compose_memory_context(
+                ctx, config, "hello again", ComposerMode.INTERACTIVE,
+            )
+            assert entry2 is None  # no results after suppression
 
 
 # -- Wiki context --------------------------------------------------------------
@@ -447,6 +474,64 @@ class TestCompose:
             composer = ContextComposer()
             result = await composer.compose(ctx, "hello", [], mode=ComposerMode.INTERACTIVE)
             assert result.retrieved_context_text == "formatted memory"
+
+
+# -- Relevance scoring ---------------------------------------------------------
+
+
+class TestScoreCandidates:
+    def test_produces_composite_scores(self, config):
+        candidates = [
+            {"similarity": 0.8, "modified_at": "", "importance": 0.5},
+            {"similarity": 0.6, "modified_at": "", "importance": 0.5},
+        ]
+        composer = ContextComposer()
+        scored = composer._score_candidates(candidates, config)
+        assert all("composite_score" in c for c in scored)
+
+    def test_sorted_by_score_descending(self, config):
+        candidates = [
+            {"similarity": 0.3, "modified_at": "", "importance": 0.5},
+            {"similarity": 0.9, "modified_at": "", "importance": 0.5},
+            {"similarity": 0.6, "modified_at": "", "importance": 0.5},
+        ]
+        composer = ContextComposer()
+        scored = composer._score_candidates(candidates, config)
+        scores = [c["composite_score"] for c in scored]
+        assert scores == sorted(scores, reverse=True)
+
+    def test_recency_favors_recent(self, config):
+        from datetime import datetime, timedelta
+        now = datetime.now()
+        recent = (now - timedelta(hours=1)).isoformat()
+        old = (now - timedelta(hours=1000)).isoformat()
+        candidates = [
+            {"similarity": 0.5, "modified_at": old, "importance": 0.5},
+            {"similarity": 0.5, "modified_at": recent, "importance": 0.5},
+        ]
+        composer = ContextComposer()
+        scored = composer._score_candidates(candidates, config)
+        # Recent item should score higher
+        assert scored[0]["modified_at"] == recent
+
+    def test_importance_influences_score(self, config):
+        candidates = [
+            {"similarity": 0.5, "modified_at": "", "importance": 0.1},
+            {"similarity": 0.5, "modified_at": "", "importance": 0.9},
+        ]
+        composer = ContextComposer()
+        scored = composer._score_candidates(candidates, config)
+        # Higher importance should score higher
+        assert scored[0]["importance"] == 0.9
+
+    def test_missing_modified_at_defaults_recency(self, config):
+        candidates = [
+            {"similarity": 0.8, "importance": 0.5},
+        ]
+        composer = ContextComposer()
+        scored = composer._score_candidates(candidates, config)
+        assert scored[0]["composite_score"] > 0
+
 
 
 class TestContextComposerOnContext:
