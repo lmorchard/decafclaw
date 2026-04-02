@@ -24,6 +24,7 @@ if TYPE_CHECKING:
 
 from .archive import append_message
 from .compaction import compact_history
+from .context_composer import ComposerMode, ContextComposer
 from .llm import call_llm
 from .media import ToolResult, extract_workspace_media
 from .persistence import read_skill_data, read_skills_state, write_skill_data, write_skills_state
@@ -701,6 +702,10 @@ async def _prepare_messages(
 ) -> tuple[list, str]:
     """Build the LLM messages array from history and user input.
 
+    .. deprecated::
+        Replaced by ContextComposer.compose() in context_composer.py.
+        Kept for test compatibility; will be removed in a future cleanup.
+
     Handles:
     - Truncating oversized user messages
     - Injecting proactive memory context before the user message
@@ -824,14 +829,47 @@ async def run_agent_turn(ctx, user_message: str, history: list,
     conv_id = ctx.conv_id or ctx.channel_id
 
     try:
-        messages, retrieved_context_text = await _prepare_messages(
-            ctx, config, user_message, history,
-            archive_text=archive_text, attachments=attachments,
-        )
-        ctx.messages = messages
+        # Determine composer mode from context flags.
+        # Note: skip_memory_context is handled directly by the composer,
+        # not via mode — HEARTBEAT/SCHEDULED skip wiki too, which isn't
+        # always desired when only memory should be skipped.
+        _task_mode_map = {
+            "heartbeat": ComposerMode.HEARTBEAT,
+            "scheduled": ComposerMode.SCHEDULED,
+        }
+        if ctx.is_child:
+            composer_mode = ComposerMode.CHILD_AGENT
+        elif ctx.task_mode in _task_mode_map:
+            composer_mode = _task_mode_map[ctx.task_mode]
+        else:
+            composer_mode = ComposerMode.INTERACTIVE
 
-        # Slot for deferred tools system message (replaced each iteration)
-        deferred_msg: dict | None = None
+        composer = ContextComposer(state=ctx.composer)
+        composed = await composer.compose(
+            ctx, user_message, history,
+            mode=composer_mode, attachments=attachments,
+        )
+        messages = composed.messages
+        ctx.messages = messages
+        retrieved_context_text = composed.retrieved_context_text
+
+        # Archive messages the composer added (wiki, memory, user).
+        # For inline commands, swap the user message with the short display version.
+        for msg in composed.messages_to_archive:
+            if archive_text and msg.get("role") == "user":
+                archive_msg: dict = {"role": "user", "content": archive_text}
+                if msg.get("attachments"):
+                    archive_msg["attachments"] = msg["attachments"]
+                _archive(ctx, archive_msg)
+            else:
+                _archive(ctx, msg)
+
+        # Track the deferred tools system message (replaced each iteration).
+        # If compose() already inserted one, reference it so the loop can update it.
+        if len(messages) > 1 and messages[1].get("role") == "system" and composed.deferred_tools:
+            deferred_msg: dict | None = messages[1]
+        else:
+            deferred_msg = None
 
         prompt_tokens = 0
         empty_retries = 0
@@ -873,9 +911,11 @@ async def run_agent_turn(ctx, user_message: str, history: list,
             usage = response.get("usage")
             if usage:
                 prompt_tokens = usage.get("prompt_tokens", 0)
+                completion_tokens = usage.get("completion_tokens", 0)
                 ctx.tokens.total_prompt += prompt_tokens
-                ctx.tokens.total_completion += usage.get("completion_tokens", 0)
+                ctx.tokens.total_completion += completion_tokens
                 ctx.tokens.last_prompt = prompt_tokens
+                composer.record_actuals(prompt_tokens, completion_tokens)
 
             tool_calls = response.get("tool_calls")
             if tool_calls:

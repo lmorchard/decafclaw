@@ -237,6 +237,7 @@ async def run_schedule_task(config, event_bus, task: ScheduleTask) -> dict:
         channel_id=channel,
         channel_name=channel,
         effort=task.effort,
+        task_mode="scheduled",
         allowed_tools=allowed_tools_set,
         preapproved_tools=preapproved,
         preapproved_shell_patterns=shell_patterns,

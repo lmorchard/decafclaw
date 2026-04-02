@@ -30,6 +30,7 @@
 ## Architecture
 
 - [Data Layout](data-layout.md) — File structure, admin vs workspace trust boundary
+- [Context Composer](context-composer.md) — Unified context assembly pipeline for agent turns
 - [Context Map](context-map.md) — System prompt layout, tool definitions, context assembly
 - [Original Agent Spec](original-agent-spec.md) — The original design sketch
 
