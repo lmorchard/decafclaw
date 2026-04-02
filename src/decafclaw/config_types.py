@@ -18,6 +18,7 @@ class LlmConfig:
     model: str = "gemini-2.5-flash"
     api_key: str = field(default="dummy", metadata={"secret": True})
     streaming: bool = True
+    context_window_size: int = 0  # 0 = not specified, fall back to compaction_max_tokens
 
 
 @dataclass
