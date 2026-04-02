@@ -7,6 +7,8 @@ from dataclasses import dataclass, field, replace
 from typing import Any
 from uuid import uuid4
 
+from .context_composer import ComposerState
+
 
 @dataclass
 class TokenUsage:
@@ -54,6 +56,7 @@ class Context:
         self.tokens = TokenUsage()
         self.tools = ToolState()
         self.skills = SkillState()
+        self.composer = ComposerState()
 
         # Per-conversation state (set via fork() overrides)
         self.history: list | None = None
@@ -68,6 +71,7 @@ class Context:
         self.skip_memory_context: bool = False
         self.wiki_page: str | None = None  # open wiki page from web UI
         self.effort: str = "default"
+        self.task_mode: str = ""  # "heartbeat" | "scheduled" | "" (interactive)
 
     @classmethod
     def for_task(
@@ -80,6 +84,7 @@ class Context:
         channel_id: str = "",
         channel_name: str = "",
         effort: str = "default",
+        task_mode: str = "",
         skip_reflection: bool = True,
         skip_memory_context: bool = True,
         allowed_tools: set | None = None,
@@ -90,6 +95,9 @@ class Context:
 
         Provides sensible defaults for non-interactive work: reflection and
         memory context are skipped by default.
+
+        ``task_mode`` should be ``"heartbeat"`` or ``"scheduled"`` so that
+        ``run_agent_turn`` can select the matching ``ComposerMode``.
         """
         ctx = cls(config=config, event_bus=event_bus)
         ctx.user_id = user_id
@@ -97,6 +105,7 @@ class Context:
         ctx.channel_id = channel_id
         ctx.channel_name = channel_name
         ctx.effort = effort
+        ctx.task_mode = task_mode
         ctx.skip_reflection = skip_reflection
         ctx.skip_memory_context = skip_memory_context
         if allowed_tools is not None:
@@ -108,7 +117,14 @@ class Context:
         return ctx
 
     def fork(self, **overrides) -> "Context":
-        """Create a child context with a new ID, sharing the event bus."""
+        """Create a child context with a new ID, sharing the event bus.
+
+        Each fork gets a fresh ComposerState by default, since forks may
+        represent unrelated conversations (e.g. Mattermost request contexts
+        forked from the long-lived app_ctx).  Callers that want to share
+        composer state (same conversation, same turn) should pass
+        ``composer=parent.composer`` explicitly.
+        """
         config = overrides.pop("config", self.config)
         child = Context(
             config=config,
@@ -150,9 +166,10 @@ class Context:
         child.skip_memory_context = self.skip_memory_context
         child.wiki_page = self.wiki_page
         child.effort = self.effort
-        # Share tools + skills (concurrent tool calls read but don't mutate)
+        # Share tools + skills + composer (concurrent tool calls read but don't mutate)
         child.tools = self.tools
         child.skills = self.skills
+        child.composer = self.composer
         # Fresh token counters — don't accumulate child usage into parent
         child.tokens = TokenUsage()
         # Override the tool call ID (the purpose of this fork)
