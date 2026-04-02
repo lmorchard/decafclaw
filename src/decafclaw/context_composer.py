@@ -78,7 +78,7 @@ class ComposerState:
     last_total_tokens_estimated: int = 0
     last_prompt_tokens_actual: int = 0
     last_completion_tokens_actual: int = 0
-    recent_memory_ids: list[str] = field(default_factory=list)
+    injected_paths: set[str] = field(default_factory=set)  # file_paths already in context; cleared on compaction
 
 
 # -- Composer -----------------------------------------------------------------
@@ -137,6 +137,7 @@ class ContextComposer:
         sources.append(system_entry)
 
         # -- Wiki context (injected before user message in history) --
+        # Explicit @[[Page]] references are fixed costs — always included.
         wiki_msgs, wiki_entry = self._compose_wiki_context(
             ctx, config, user_message, history, mode,
         )
@@ -147,9 +148,48 @@ class ContextComposer:
         if wiki_entry:
             sources.append(wiki_entry)
 
+        # -- Tools (compute before budget so we have actual token cost) --
+        active_tools, deferred_tools, deferred_text, tools_entry = self._compose_tools(ctx, config)
+        sources.append(tools_entry)
+
+        # -- Compute fixed costs for dynamic budget allocation --
+        # Fixed costs: system prompt + wiki refs + tools + existing history
+        fixed_tokens = system_entry.tokens_estimated
+        if wiki_entry:
+            fixed_tokens += wiki_entry.tokens_estimated
+        # Estimate existing history (before this turn's additions)
+        # Only exclude wiki messages injected THIS turn (wiki_msgs);
+        # prior turns' memory/wiki are already in history and sent to the LLM.
+        injected_wiki_ids = {id(wm) for wm in wiki_msgs}
+        existing_history_tokens = sum(
+            estimate_tokens(str(m.get("content", "")))
+            for m in history
+            if id(m) not in injected_wiki_ids
+        )
+        fixed_tokens += existing_history_tokens
+        # User message
+        fixed_tokens += estimate_tokens(user_message)
+        # Tools (actual token cost, not estimate)
+        fixed_tokens += tools_entry.tokens_estimated
+
+        # Response reserve (leave room for the model's response)
+        response_reserve = 4096
+
+        # Dynamic budget for scored candidates
+        window_size = self._get_context_window_size(config)
+        remaining_budget = max(0, window_size - fixed_tokens - response_reserve)
+
+        # Fall back to fixed max_tokens if remaining budget is unreasonable
+        # (e.g. context_window_size not configured)
+        memory_budget: int | None = None
+        if remaining_budget > 0:
+            memory_budget = remaining_budget
+        # else: None → _compose_memory_context falls back to max_tokens
+
         # -- Memory context (injected before user message in history) --
         memory_msgs, retrieved_context_text, mc_results, memory_entry = await self._compose_memory_context(
             ctx, config, user_message, mode,
+            token_budget=memory_budget,
         )
         for mm in memory_msgs:
             history.append(mm)
@@ -192,10 +232,6 @@ class ContextComposer:
             details={"total_llm_messages": len(llm_history)},
         )
         sources.append(history_entry)
-
-        # -- Tools --
-        active_tools, deferred_tools, deferred_text, tools_entry = self._compose_tools(ctx, config)
-        sources.append(tools_entry)
 
         # -- Assemble final messages --
         messages = [{"role": "system", "content": system_text}]
@@ -244,12 +280,56 @@ class ContextComposer:
         )
         return text, entry
 
+    def _score_candidates(self, candidates: list[dict], config) -> list[dict]:
+        """Score retrieval candidates using recency + importance + similarity.
+
+        Each candidate gets a composite_score field. Returns sorted descending.
+        """
+        from datetime import datetime
+
+        relevance = config.relevance
+        now = datetime.now()
+
+        for c in candidates:
+            similarity = min(1.0, max(0.0, c.get("similarity", 0.0)))
+
+            # Recency: exponential decay based on hours since modification
+            modified_at = c.get("modified_at", "")
+            if modified_at:
+                try:
+                    mod_time = datetime.fromisoformat(modified_at)
+                    hours = max(0.0, (now - mod_time).total_seconds() / 3600)
+                    recency = relevance.recency_decay_rate ** hours
+                    recency = min(1.0, max(0.0, recency))
+                except (ValueError, TypeError):
+                    recency = 0.5
+            else:
+                recency = 0.5
+
+            importance = min(1.0, max(0.0, c.get("importance", 0.5)))
+
+            c["composite_score"] = (
+                relevance.w_similarity * similarity
+                + relevance.w_recency * recency
+                + relevance.w_importance * importance
+            )
+
+        candidates.sort(key=lambda c: c.get("composite_score", 0), reverse=True)
+        return candidates
+
     async def _compose_memory_context(
         self, ctx, config, user_message: str, mode: ComposerMode,
+        token_budget: int | None = None,
     ) -> tuple[list[dict], str, list[dict], SourceEntry | None]:
         """Retrieve and format memory context for injection.
 
+        Args:
+            token_budget: Dynamic budget from composer. If None, falls back
+                to config.memory_context.max_tokens for backward compatibility.
+
         Returns (messages_to_inject, formatted_text, raw_results, source_entry).
+        Retrieval candidates are scored by composite relevance and selected
+        by score order within the token budget.
         Fail-open: exceptions log a warning and return empty results.
         """
         from .util import estimate_tokens
@@ -265,19 +345,64 @@ class ContextComposer:
             if not results:
                 return [], "", [], None
 
+            # Filter out candidates already injected in this conversation
+            # (they're already in history — re-injecting wastes tokens)
+            if self.state.injected_paths:
+                before = len(results)
+                results = [r for r in results if r.get("file_path", "") not in self.state.injected_paths]
+                suppressed = before - len(results)
+                if suppressed:
+                    log.debug("Memory context: suppressed %d already-injected candidates", suppressed)
+
+            if not results:
+                return [], "", [], None
+
+            # Score and rank candidates
+            total_candidates = len(results)
+            results = self._score_candidates(results, config)
+
+            # Drop candidates below minimum score threshold
+            score_threshold = config.relevance.min_composite_score
+            results = [r for r in results if r.get("composite_score", 0) >= score_threshold]
+
+            # Select by token budget (score order replaces similarity order)
+            budget = token_budget if token_budget is not None else config.memory_context.max_tokens
+            log.debug("Memory context: %d candidates, budget=%d tokens (%s)",
+                      total_candidates, budget,
+                      "dynamic" if token_budget is not None else "fixed")
+            from .memory_context import _trim_to_token_budget
+            results = _trim_to_token_budget(results, budget)
+            if results:
+                log.debug("Memory context: selected %d/%d candidates (scores %.3f–%.3f)",
+                          len(results), total_candidates,
+                          results[0].get("composite_score", 0),
+                          results[-1].get("composite_score", 0))
+
             formatted = format_memory_context(results)
             msg = {"role": "memory_context", "content": formatted}
 
-            # Track recently injected entries
-            self.state.recent_memory_ids = [
-                r.get("entry_text", "")[:80] for r in results
-            ]
+            # Track injected paths so they're suppressed in future turns
+            # (cleared on compaction when the content is summarized away)
+            for r in results:
+                path = r.get("file_path", "")
+                if path:
+                    self.state.injected_paths.add(path)
 
             tokens = estimate_tokens(formatted)
+            top_score = results[0].get("composite_score", 0) if results else 0
+            min_score = results[-1].get("composite_score", 0) if results else 0
             entry = SourceEntry(
                 source="memory",
                 tokens_estimated=tokens,
                 items_included=len(results),
+                items_truncated=total_candidates - len(results),
+                details={
+                    "top_score": round(top_score, 3),
+                    "min_score": round(min_score, 3),
+                    "candidates_considered": total_candidates,
+                    "token_budget": budget,
+                    "budget_source": "dynamic" if token_budget is not None else "fixed",
+                },
             )
             return [msg], formatted, results, entry
 
@@ -394,7 +519,7 @@ class ContextComposer:
         Prefers the explicit context_window_size if set, otherwise falls back
         to compaction_max_tokens as a conservative proxy.
 
-        Not yet called — will be used by budget allocation in a future phase.
+        Used by compose() for dynamic budget allocation.
         """
         window = config.llm.context_window_size
         if window and window > 0:

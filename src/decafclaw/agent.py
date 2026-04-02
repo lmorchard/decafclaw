@@ -120,6 +120,9 @@ async def _maybe_compact(ctx, config, history, prompt_tokens) -> None:
                  f"triggering compaction")
         try:
             await compact_history(ctx, history)
+            # After compaction, summarized content replaces originals —
+            # allow previously-injected pages to be re-injected if relevant.
+            ctx.composer.injected_paths.clear()
         except Exception as e:
             log.error(f"Compaction failed: {e}")
 
