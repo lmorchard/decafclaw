@@ -279,7 +279,7 @@ def search_similar_sync(config, query_embedding: list[float], top_k: int = 5,
         fetch_k = top_k * 3
 
         rows = conn.execute("""
-            SELECT m.entry_text, m.file_path, m.source_type, v.distance
+            SELECT m.entry_text, m.file_path, m.source_type, m.created_at, v.distance
             FROM (
                 SELECT rowid, distance
                 FROM embeddings_vec
@@ -303,7 +303,7 @@ def search_similar_sync(config, query_embedding: list[float], top_k: int = 5,
     }
 
     results = []
-    for entry_text, file_path, row_source_type, distance in rows:
+    for entry_text, file_path, row_source_type, created_at, distance in rows:
         if source_type and row_source_type != source_type:
             continue
         similarity = 1.0 - distance
@@ -313,6 +313,7 @@ def search_similar_sync(config, query_embedding: list[float], top_k: int = 5,
             "file_path": file_path,
             "similarity": similarity,
             "source_type": row_source_type,
+            "created_at": created_at,
         })
 
     results.sort(key=lambda x: x["similarity"], reverse=True)
@@ -429,7 +430,12 @@ def _iter_vault_pages(config):
 
     Indexes all non-journal vault pages (agent pages + user pages).
     Journal entries are indexed separately via _iter_journal_entries.
+
+    If a page has YAML frontmatter, the embedding text is a composite of
+    summary + keywords + tags + body for richer semantic search.
     """
+    from .frontmatter import build_composite_text, parse_frontmatter
+
     vault = config.vault_root
     if not vault.is_dir():
         return
@@ -443,12 +449,15 @@ def _iter_vault_pages(config):
                 continue
         except (ValueError, OSError):
             pass
-        text = filepath.read_text().strip()
-        if not text:
+        raw_text = filepath.read_text()
+        if not raw_text.strip():
             continue
+        # Build composite embedding text from frontmatter + body
+        metadata, body = parse_frontmatter(raw_text)
+        embed_text = build_composite_text(metadata, body)
         rel_path = str(filepath.relative_to(vault))
         source_type = _source_type_for_vault_path(config, filepath)
-        yield rel_path, text, source_type, {}
+        yield rel_path, embed_text, source_type, {}
 
 
 async def reindex_journal(config, concurrency: int = 4):

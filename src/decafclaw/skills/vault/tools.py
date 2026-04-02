@@ -158,13 +158,16 @@ async def tool_vault_write(ctx, page: str, content: str) -> str | ToolResult:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content)
 
-    # Update semantic search index
+    # Update semantic search index with composite text (frontmatter-enriched)
     source_type = _source_type_for_path(ctx.config, path)
     try:
         from decafclaw.embeddings import delete_entries, index_entry
+        from decafclaw.frontmatter import build_composite_text, parse_frontmatter
         rel_path = str(path.resolve().relative_to(ctx.config.vault_root.resolve()))
         delete_entries(ctx.config, rel_path, source_type=source_type)
-        await index_entry(ctx.config, rel_path, content, source_type=source_type)
+        metadata, body = parse_frontmatter(content)
+        embed_text = build_composite_text(metadata, body)
+        await index_entry(ctx.config, rel_path, embed_text, source_type=source_type)
     except Exception as e:
         log.warning(f"Failed to index vault page '{page}': {e}")
 
