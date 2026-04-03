@@ -10,6 +10,7 @@ from decafclaw.config_types import AgentConfig, LlmConfig, ReflectionConfig
 from decafclaw.reflection import (
     ReflectionResult,
     _parse_verdict,
+    _summarize_tool_result,
     build_prior_turn_summary,
     build_tool_summary,
     evaluate_response,
@@ -100,6 +101,129 @@ class TestBuildToolSummary:
         assert result == ""  # no tools in current turn
         result_old = build_tool_summary(history, 0)
         assert "old_tool" in result_old
+
+
+
+class TestSummarizeToolResult:
+    def test_short_content_unchanged(self):
+        content = "Short result"
+        assert _summarize_tool_result(content, 2000) == content
+
+    def test_preserves_headings(self):
+        content = "# Title\n" + "x" * 5000
+        result = _summarize_tool_result(content, 500)
+        assert "# Title" in result
+
+    def test_preserves_tldrs(self):
+        content = "x" * 3000 + "\n> tl;dr: Important summary.\n" + "y" * 3000
+        result = _summarize_tool_result(content, 500)
+        assert "Important summary" in result
+
+    def test_preserves_result_separators(self):
+        content = (
+            "--- Result 1 ---\n# Page A\nfoo\n"
+            + "x" * 5000 + "\n"
+            "--- Result 2 ---\n# Page B\nbar\n"
+            + "y" * 5000
+        )
+        result = _summarize_tool_result(content, 500)
+        assert "Result 1" in result
+        assert "Result 2" in result
+        assert "Page A" in result
+        assert "Page B" in result
+
+    def test_single_long_line_preserves_snippet(self):
+        """A single long line (e.g. minified JSON) should still produce a snippet."""
+        content = "x" * 10000
+        result = _summarize_tool_result(content, 500)
+        # Should have some content, not just the omission note
+        assert result.startswith("x")
+        assert "chars of detail omitted" in result
+
+    def test_result_within_max_len(self):
+        """Summary + omission note should fit within max_len."""
+        content = "# Title\n" + "x" * 10000
+        result = _summarize_tool_result(content, 500)
+        assert len(result) <= 600  # max_len + reasonable omission note
+
+    def test_includes_omission_note(self):
+        content = "x" * 10000
+        result = _summarize_tool_result(content, 500)
+        assert "chars of detail omitted" in result
+
+    def test_structural_lines_prioritized_over_body(self):
+        """Even with lots of body text, all structural lines should appear."""
+        content = ""
+        for i in range(10):
+            content += f"# Page {i}\n> tl;dr: Summary {i}\n" + "x" * 2000 + "\n"
+        result = _summarize_tool_result(content, 2000)
+        for i in range(10):
+            assert f"Page {i}" in result
+            assert f"Summary {i}" in result
+
+
+class TestBuildToolSummaryVaultSearch:
+    """Tests specifically for vault_search tool result summarization."""
+
+    def test_vault_search_preserves_page_titles(self):
+        """Regression: vault_search with large results should preserve page
+        titles/summaries so the judge can verify the agent's response references
+        real content, not hallucinations. Issue #200."""
+        # Simulate vault_search returning multiple pages — each page has a title
+        # and tl;dr that the agent references in its response. With raw truncation
+        # at 2000 chars, only the first result's partial text would be visible.
+        result_content = "Found 5 result(s):\n\n"
+        for i, title in enumerate([
+            "Comparison of Short Stories",
+            "There was no minimum safe size",
+            "Rays of a Distant Sun",
+            "When the Halloween invite",
+            "Les Orchard",
+        ]):
+            result_content += f"--- Result {i+1} ---\n# {title}\n\n> tl;dr: Summary of {title}.\n\n"
+            result_content += f"{'x' * 3000}\n\n"  # bulk content that makes it large
+
+        history = [
+            {"role": "user", "content": "What do you know about my stories?"},
+            {"role": "assistant", "content": None, "tool_calls": [
+                {"id": "tc1", "function": {
+                    "name": "vault_search",
+                    "arguments": json.dumps({"query": "stories"}),
+                }},
+            ]},
+            {"role": "tool", "content": result_content},
+            {"role": "assistant", "content": "You have written three stories..."},
+        ]
+        summary = build_tool_summary(history, 0, max_result_len=2000)
+        # All page titles should be visible to the judge, not just the first one
+        assert "Comparison of Short Stories" in summary
+        assert "There was no minimum safe size" in summary
+        assert "Rays of a Distant Sun" in summary
+        assert "When the Halloween invite" in summary
+        assert "Les Orchard" in summary
+
+    def test_vault_search_preserves_tldrs(self):
+        """tl;dr lines from vault_search results should survive summarization."""
+        result_content = (
+            "Found 2 result(s):\n\n"
+            "--- Result 1 ---\n# Page One\n\n> tl;dr: A story about robots.\n\n"
+            + "x" * 5000 + "\n\n"
+            "--- Result 2 ---\n# Page Two\n\n> tl;dr: A poem about cats.\n\n"
+            + "y" * 5000
+        )
+        history = [
+            {"role": "user", "content": "search"},
+            {"role": "assistant", "content": None, "tool_calls": [
+                {"id": "tc1", "function": {
+                    "name": "vault_search",
+                    "arguments": json.dumps({"query": "writing"}),
+                }},
+            ]},
+            {"role": "tool", "content": result_content},
+        ]
+        summary = build_tool_summary(history, 0, max_result_len=2000)
+        assert "A story about robots" in summary
+        assert "A poem about cats" in summary
 
 
 # ---------------------------------------------------------------------------
