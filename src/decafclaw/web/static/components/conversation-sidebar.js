@@ -1,4 +1,5 @@
 import { LitElement, html, nothing } from 'lit';
+import './context-inspector.js';
 
 export class ConversationSidebar extends LitElement {
   static properties = {
@@ -21,6 +22,8 @@ export class ConversationSidebar extends LitElement {
     _vaultFolder: { type: String, state: true },
     _vaultFolders: { type: Array, state: true },
     _openWikiPage: { type: String, state: true },
+    _contextInspectorOpen: { type: Boolean, state: true },
+    _contextVersion: { type: Number, state: true },
   };
 
   createRenderRoot() { return this; }
@@ -52,6 +55,8 @@ export class ConversationSidebar extends LitElement {
     this._vaultFolders = [];
     /** @type {string|null} */
     this._openWikiPage = null;
+    this._contextInspectorOpen = false;
+    this._contextVersion = 0;
   }
 
   openMobile() {
@@ -65,8 +70,12 @@ export class ConversationSidebar extends LitElement {
   connectedCallback() {
     super.connectedCallback();
     this._onStoreChange = () => {
-      this._activeId = this.store?.currentConvId;
-      this._contextUsage = this.store?.contextUsage || 0;
+      const newId = this.store?.currentConvId;
+      if (newId !== this._activeId) this._contextInspectorOpen = false;
+      this._activeId = newId;
+      const newUsage = this.store?.contextUsage || 0;
+      if (newUsage !== this._contextUsage) this._contextVersion++;
+      this._contextUsage = newUsage;
       this._contextLimit = this.store?.contextLimit || 0;
       this._currentEffort = this.store?.currentEffort || 'default';
       this._effortModel = this.store?.effortModel || '';
@@ -619,7 +628,12 @@ export class ConversationSidebar extends LitElement {
           const pct = Math.round(this._contextUsage / this._contextLimit * 100);
           const cls = pct >= 100 ? 'full' : pct >= 80 ? 'warn' : '';
           return html`
-            <div class="context-usage ${cls}" title="${this._contextUsage.toLocaleString()} / ${this._contextLimit.toLocaleString()} tokens">
+            <div class="context-usage ${cls}" title="Click for details"
+                 style="cursor:pointer;position:relative"
+                 role="button" tabindex="0"
+                 aria-expanded=${this._contextInspectorOpen}
+                 @click=${() => { this._contextInspectorOpen = !this._contextInspectorOpen; }}
+                 @keydown=${(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); this._contextInspectorOpen = !this._contextInspectorOpen; }}}>
               <div class="context-usage-label">
                 <span>Context</span>
                 <span>${pct}%</span>
@@ -627,6 +641,12 @@ export class ConversationSidebar extends LitElement {
               <div class="context-usage-bar">
                 <div class="context-usage-fill" style="width: ${Math.min(100, pct)}%"></div>
               </div>
+              <context-inspector
+                .convId=${this._activeId || ''}
+                .open=${this._contextInspectorOpen}
+                .contextVersion=${this._contextVersion}
+                @close=${() => { this._contextInspectorOpen = false; }}
+              ></context-inspector>
             </div>
           `;
         })()}

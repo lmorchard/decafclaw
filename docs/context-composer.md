@@ -67,11 +67,21 @@ Each context source produces a `SourceEntry` with token estimates, item counts, 
 
 The agent loop (`run_agent_turn`) creates a `ContextComposer` at the start of each turn and calls `compose()` once. The iteration loop still uses `_build_tool_list()` per-iteration because fetched tools change mid-turn as the model calls `tool_search`. After each LLM response, `record_actuals()` stores the real token counts for future calibration.
 
+## Context Inspection
+
+After each turn, the agent writes a diagnostics sidecar file (`workspace/conversations/{conv_id}.context.json`) with per-source token estimates, scoring details, and memory candidate breakdowns.
+
+**REST endpoint:** `GET /api/conversations/{id}/context` returns the sidecar data.
+
+**Web UI:** Click the context usage bar in the sidebar to open a popover with:
+- Waffle chart (grid map) showing token allocation by source
+- Summary stats (estimated vs actual tokens, window size, compaction threshold)
+- Source breakdown table with token counts and item details
+- Memory candidates with composite scores, score breakdowns, and graph expansion provenance
+
 ## Future work (deferred)
 
-- Relevance scoring (recency + importance + similarity)
-- Dynamic budget allocation across sources
-- Budget-aware truncation/summarization
-- Context stats command for surfacing diagnostics
 - Calibrating estimates from actuals
 - Model switching as alternative to compaction
+- Mattermost `!context` command (uses REST endpoint)
+- Agent self-inspection tool

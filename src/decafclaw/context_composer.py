@@ -8,8 +8,10 @@ Tracks per-turn diagnostics (what was included, token estimates, actuals).
 from __future__ import annotations
 
 import enum
+import json
 import logging
 from dataclasses import dataclass, field
+from pathlib import Path
 
 log = logging.getLogger(__name__)
 
@@ -61,6 +63,7 @@ class ComposedContext:
     sources: list[SourceEntry]
     messages_to_archive: list[dict] = field(default_factory=list)
     retrieved_context_text: str = ""
+    memory_results: list[dict] = field(default_factory=list)
 
 
 # -- Per-conversation state ---------------------------------------------------
@@ -79,6 +82,43 @@ class ComposerState:
     last_prompt_tokens_actual: int = 0
     last_completion_tokens_actual: int = 0
     injected_paths: set[str] = field(default_factory=set)  # file_paths already in context; cleared on compaction
+
+
+# -- Sidecar persistence ------------------------------------------------------
+
+
+def _context_sidecar_path(config, conv_id: str) -> Path:
+    """Path to the context diagnostics sidecar file."""
+    base_dir = (config.workspace_path / "conversations").resolve()
+    safe_name = conv_id.replace("/", "").replace("\\", "").replace("..", "")
+    if not safe_name:
+        return base_dir / "_invalid.context.json"
+    path = (base_dir / f"{safe_name}.context.json").resolve()
+    if not path.is_relative_to(base_dir):
+        return base_dir / "_invalid.context.json"
+    return path
+
+
+def write_context_sidecar(config, conv_id: str, diagnostics: dict) -> None:
+    """Write context diagnostics to the sidecar file. Fail-open."""
+    try:
+        path = _context_sidecar_path(config, conv_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(diagnostics, indent=2, default=str))
+    except Exception:
+        log.warning("Failed to write context sidecar for %s", conv_id, exc_info=True)
+
+
+def read_context_sidecar(config, conv_id: str) -> dict | None:
+    """Read context diagnostics from the sidecar file. Returns None if missing."""
+    try:
+        path = _context_sidecar_path(config, conv_id)
+        if not path.exists():
+            return None
+        return json.loads(path.read_text())
+    except Exception:
+        log.warning("Failed to read context sidecar for %s", conv_id, exc_info=True)
+        return None
 
 
 # -- Composer -----------------------------------------------------------------
@@ -260,6 +300,7 @@ class ContextComposer:
             sources=sources,
             messages_to_archive=to_archive,
             retrieved_context_text=retrieved_context_text,
+            memory_results=mc_results,
         )
 
     def _compose_system_prompt(self, config) -> tuple[str, SourceEntry]:
@@ -308,6 +349,7 @@ class ContextComposer:
 
             importance = min(1.0, max(0.0, c.get("importance", 0.5)))
 
+            c["recency"] = recency
             c["composite_score"] = (
                 relevance.w_similarity * similarity
                 + relevance.w_recency * recency
@@ -377,6 +419,10 @@ class ContextComposer:
                           len(results), total_candidates,
                           results[0].get("composite_score", 0),
                           results[-1].get("composite_score", 0))
+
+            # Compute per-candidate token estimates for diagnostics
+            for r in results:
+                r["tokens_estimated"] = estimate_tokens(r.get("entry_text", ""))
 
             formatted = format_memory_context(results)
             msg = {"role": "memory_context", "content": formatted}
@@ -530,3 +576,43 @@ class ContextComposer:
         """Record actual token usage from the LLM response."""
         self.state.last_prompt_tokens_actual = prompt_tokens
         self.state.last_completion_tokens_actual = completion_tokens
+
+    def build_diagnostics(self, config, composed: ComposedContext) -> dict:
+        """Build the full diagnostics dict for the context sidecar file."""
+        from datetime import datetime, timezone
+
+        candidates = []
+        for r in composed.memory_results:
+            entry = {
+                "file_path": r.get("file_path", ""),
+                "source_type": r.get("source_type", ""),
+                "composite_score": round(r.get("composite_score", 0), 3),
+                "similarity": round(r.get("similarity", 0), 3),
+                "recency": round(r.get("recency", 0.5), 3),
+                "importance": round(r.get("importance", 0.5), 3),
+                "modified_at": r.get("modified_at", ""),
+                "tokens_estimated": r.get("tokens_estimated", 0),
+            }
+            if r.get("linked_from"):
+                entry["linked_from"] = r["linked_from"]
+            candidates.append(entry)
+
+        sources = []
+        for s in composed.sources:
+            sources.append({
+                "source": s.source,
+                "tokens_estimated": s.tokens_estimated,
+                "items_included": s.items_included,
+                "items_truncated": s.items_truncated,
+                "details": s.details,
+            })
+
+        return {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "total_tokens_estimated": composed.total_tokens_estimated,
+            "total_tokens_actual": self.state.last_prompt_tokens_actual,
+            "context_window_size": self._get_context_window_size(config),
+            "compaction_threshold": config.compaction.max_tokens,
+            "sources": sources,
+            "memory_candidates": candidates,
+        }
