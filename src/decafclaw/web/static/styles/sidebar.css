@@ -169,6 +169,8 @@ conversation-sidebar .effort-btn.active {
 conversation-sidebar .context-usage {
   padding: 0.4rem 1rem 0.5rem;
   border-top: 1px solid var(--pico-muted-border-color);
+  background: transparent;
+  color: inherit;
 }
 
 conversation-sidebar .context-usage-label {
