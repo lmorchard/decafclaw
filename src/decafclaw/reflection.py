@@ -69,6 +69,67 @@ def _format_tool_args(fn: dict) -> str:
     return f"Tool: {name}({key_args})"
 
 
+def _summarize_tool_result(content: str, max_len: int) -> str:
+    """Summarize a tool result, preserving key structure.
+
+    Instead of blindly truncating, extract headings, tl;dr lines, and
+    result counts so the reflection judge can verify the agent's response
+    references real content. Non-structural body text fills remaining budget.
+    """
+    if len(content) <= max_len:
+        return content
+
+    lines = content.split("\n")
+
+    # First pass: collect all structural lines (headings, tl;dr, separators)
+    structural: list[str] = []
+    body: list[str] = []
+    for line in lines:
+        stripped = line.strip()
+        is_structural = (
+            stripped.startswith("# ")
+            or stripped.startswith("## ")
+            or stripped.startswith("> tl;dr:")
+            or (stripped.startswith("Found ") and "result" in stripped)
+            or stripped.startswith("--- ")
+        )
+        if is_structural:
+            structural.append(line)
+        else:
+            body.append(line)
+
+    # Build result: all structural lines first, then fill with body
+    # Reserve space for the omission note
+    omission_reserve = 60  # "[... NNNNN chars of detail omitted]"
+    budget = max_len - omission_reserve
+
+    result_parts = list(structural)
+    total_len = sum(len(s) + 1 for s in result_parts)
+
+    if budget > total_len:
+        for line in body:
+            remaining = budget - total_len
+            if remaining <= 0:
+                break
+            if len(line) + 1 <= remaining:
+                result_parts.append(line)
+                total_len += len(line) + 1
+            else:
+                # Truncate oversized body lines (e.g. minified JSON/HTML)
+                snippet = line[:max(0, remaining - 1)]
+                if snippet:
+                    result_parts.append(snippet)
+                    total_len += len(snippet) + 1
+                break
+
+    selected = "\n".join(result_parts)
+    if len(selected) >= len(content):
+        return selected
+
+    omitted = len(content) - len(selected)
+    return selected + f"\n[... {omitted} chars of detail omitted]"
+
+
 def _extract_tool_lines(messages: list, max_result_len: int) -> list[str]:
     """Extract tool call/result lines from a slice of history messages."""
     tool_lines: list[str] = []
@@ -78,8 +139,7 @@ def _extract_tool_lines(messages: list, max_result_len: int) -> list[str]:
                 tool_lines.append(_format_tool_args(tc.get("function", {})))
         if msg.get("role") == "tool":
             content = msg.get("content", "")
-            if len(content) > max_result_len:
-                content = content[:max_result_len] + "..."
+            content = _summarize_tool_result(content, max_result_len)
             tool_lines.append(f"Result: {content}")
     return tool_lines
 
