@@ -110,6 +110,12 @@ context-inspector .source-table {
   border-collapse: collapse;
   margin-bottom: 0.75rem;
   font-size: 0.75rem;
+  background: transparent;
+}
+
+context-inspector .source-table th,
+context-inspector .source-table td {
+  background: transparent;
 }
 
 context-inspector .source-table th {

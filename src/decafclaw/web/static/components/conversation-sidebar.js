@@ -630,7 +630,7 @@ export class ConversationSidebar extends LitElement {
           return html`
             <div class="context-usage ${cls}" title="Click for details"
                  style="cursor:pointer;position:relative"
-                 role="button" tabindex="0"
+                 tabindex="0"
                  aria-expanded=${this._contextInspectorOpen}
                  @click=${() => { this._contextInspectorOpen = !this._contextInspectorOpen; }}
                  @keydown=${(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); this._contextInspectorOpen = !this._contextInspectorOpen; }}}>
