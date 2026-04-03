@@ -374,6 +374,21 @@ def create_app(config, event_bus, app_ctx=None) -> Starlette:
         return JSONResponse({"messages": messages, "has_more": has_more})
 
     @_authenticated
+    async def get_context_diagnostics(request: Request, username: str) -> JSONResponse:
+        """Return context composer diagnostics for a conversation."""
+        conv_id = request.path_params["id"]
+        from .web.conversations import ConversationIndex
+        index = ConversationIndex(config)
+        conv = index.get(conv_id)
+        if not conv or conv.user_id != username:
+            return JSONResponse({"error": "not found"}, status_code=404)
+        from .context_composer import read_context_sidecar
+        data = read_context_sidecar(config, conv_id)
+        if data is None:
+            return JSONResponse({"error": "no context data"}, status_code=404)
+        return JSONResponse(data)
+
+    @_authenticated
     async def serve_workspace_file(request: Request, username: str):
         """Serve a file from the agent workspace (authenticated, read-only)."""
         file_path = request.path_params.get("path", "")
@@ -975,6 +990,7 @@ def create_app(config, event_bus, app_ctx=None) -> Starlette:
         Route("/api/conversations/{id}", get_conversation, methods=["GET"]),
         Route("/api/conversations/{id}", rename_conversation, methods=["PATCH"]),
         Route("/api/conversations/{id}/history", get_conversation_history, methods=["GET"]),
+        Route("/api/conversations/{id}/context", get_context_diagnostics, methods=["GET"]),
         Route("/api/conversations/folders", create_conv_folder, methods=["POST"]),
         Route("/api/conversations/folders/{path:path}", delete_conv_folder, methods=["DELETE"]),
         Route("/api/conversations/folders/{path:path}", rename_conv_folder, methods=["PUT"]),
