@@ -1,0 +1,197 @@
+/* Context inspector popover — light DOM styles */
+
+context-inspector {
+  display: none;
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  right: 0;
+  z-index: 100;
+  margin-bottom: 4px;
+}
+
+context-inspector[open] {
+  display: block;
+}
+
+context-inspector .inspector {
+  background: var(--pico-card-background-color, #fff);
+  border: 1px solid var(--pico-muted-border-color, #ddd);
+  border-radius: 8px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+  padding: 1rem;
+  max-height: 70vh;
+  overflow-y: auto;
+  font-size: 0.8rem;
+  color: var(--pico-color, #333);
+}
+
+context-inspector .inspector-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.75rem;
+}
+
+context-inspector .inspector-header h3 {
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+context-inspector .close-btn {
+  background: none;
+  border: none;
+  font-size: 1.2rem;
+  cursor: pointer;
+  color: var(--pico-muted-color);
+  padding: 0 0.25rem;
+}
+
+/* Waffle chart */
+context-inspector .waffle {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1px;
+  margin-bottom: 0.75rem;
+  padding: 4px;
+  background: var(--pico-muted-border-color, #eee);
+  border-radius: 4px;
+}
+
+context-inspector .waffle-cell {
+  width: 6px;
+  height: 6px;
+  border-radius: 1px;
+}
+
+/* Legend */
+context-inspector .legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+context-inspector .legend-item {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.7rem;
+  color: var(--pico-muted-color);
+}
+
+context-inspector .legend-swatch {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+}
+
+/* Summary stats */
+context-inspector .stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.25rem 1rem;
+  margin-bottom: 0.75rem;
+  font-size: 0.75rem;
+}
+
+context-inspector .stats dt {
+  color: var(--pico-muted-color);
+}
+
+context-inspector .stats dd {
+  margin: 0;
+  text-align: right;
+}
+
+/* Source breakdown */
+context-inspector .source-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 0.75rem;
+  font-size: 0.75rem;
+}
+
+context-inspector .source-table th {
+  text-align: left;
+  font-weight: 600;
+  padding: 0.25rem 0.5rem;
+  border-bottom: 1px solid var(--pico-muted-border-color);
+  color: var(--pico-muted-color);
+}
+
+context-inspector .source-table td {
+  padding: 0.25rem 0.5rem;
+}
+
+context-inspector .source-swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  margin-right: 0.3rem;
+  vertical-align: middle;
+}
+
+/* Memory candidates */
+context-inspector .candidates-header {
+  font-weight: 600;
+  font-size: 0.75rem;
+  margin-bottom: 0.4rem;
+  color: var(--pico-muted-color);
+}
+
+context-inspector .candidate {
+  padding: 0.3rem 0;
+  border-bottom: 1px solid var(--pico-muted-border-color, #eee);
+}
+
+context-inspector .candidate:last-child {
+  border-bottom: none;
+}
+
+context-inspector .candidate-path {
+  font-weight: 500;
+  font-size: 0.75rem;
+}
+
+context-inspector .candidate-meta {
+  display: flex;
+  gap: 0.5rem;
+  font-size: 0.7rem;
+  color: var(--pico-muted-color);
+  margin-top: 0.15rem;
+}
+
+context-inspector .candidate-provenance {
+  font-size: 0.65rem;
+  color: var(--pico-muted-color);
+  font-style: italic;
+}
+
+context-inspector .score-bars {
+  display: flex;
+  gap: 2px;
+  align-items: center;
+  margin-top: 0.15rem;
+}
+
+context-inspector .score-bar {
+  height: 4px;
+  border-radius: 2px;
+  min-width: 2px;
+}
+
+context-inspector .score-label {
+  font-size: 0.6rem;
+  color: var(--pico-muted-color);
+  margin-left: 0.25rem;
+}
+
+context-inspector .loading,
+context-inspector .error-msg,
+context-inspector .empty-msg {
+  text-align: center;
+  padding: 1rem;
+  color: var(--pico-muted-color);
+}

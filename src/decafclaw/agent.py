@@ -831,6 +831,9 @@ async def run_agent_turn(ctx, user_message: str, history: list,
 
     conv_id = ctx.conv_id or ctx.channel_id
 
+    composed = None
+    composer = None
+
     try:
         # Determine composer mode from context flags.
         # Note: skip_memory_context is handled directly by the composer,
@@ -1018,6 +1021,15 @@ async def run_agent_turn(ctx, user_message: str, history: list,
         return ToolResult(text=msg)
 
     finally:
+        # Write context diagnostics on any exit path
+        if composed is not None and composer is not None and conv_id:
+            try:
+                from .context_composer import write_context_sidecar
+                diagnostics = composer.build_diagnostics(config, composed)
+                write_context_sidecar(config, conv_id, diagnostics)
+            except Exception:
+                pass
+
         # Persist activated skills and skill_data after every turn
         if conv_id:
             activated = ctx.skills.activated

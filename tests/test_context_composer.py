@@ -534,6 +534,89 @@ class TestScoreCandidates:
 
 
 
+# -- Diagnostics and sidecar ---------------------------------------------------
+
+
+class TestBuildDiagnostics:
+    def test_produces_valid_dict(self, config):
+        config.system_prompt = "System."
+        composed = ComposedContext(
+            messages=[{"role": "system", "content": "System."}],
+            tools=[], deferred_tools=[],
+            total_tokens_estimated=5000,
+            sources=[
+                SourceEntry(source="system_prompt", tokens_estimated=800, items_included=1),
+                SourceEntry(source="history", tokens_estimated=3000, items_included=10),
+            ],
+            memory_results=[
+                {"file_path": "page.md", "source_type": "page",
+                 "composite_score": 0.75, "similarity": 0.9,
+                 "recency": 0.8, "importance": 0.5,
+                 "modified_at": "2026-04-01T12:00:00",
+                 "tokens_estimated": 200},
+            ],
+        )
+        composer = ContextComposer()
+        composer.record_actuals(5200, 300)
+        diag = composer.build_diagnostics(config, composed)
+        assert "timestamp" in diag
+        assert diag["total_tokens_estimated"] == 5000
+        assert diag["total_tokens_actual"] == 5200
+        assert len(diag["sources"]) == 2
+        assert len(diag["memory_candidates"]) == 1
+        assert diag["memory_candidates"][0]["composite_score"] == 0.75
+        assert diag["memory_candidates"][0]["recency"] == 0.8
+
+    def test_handles_empty_memory(self, config):
+        config.system_prompt = "System."
+        composed = ComposedContext(
+            messages=[], tools=[], deferred_tools=[],
+            total_tokens_estimated=100, sources=[], memory_results=[],
+        )
+        composer = ContextComposer()
+        diag = composer.build_diagnostics(config, composed)
+        assert diag["memory_candidates"] == []
+
+    def test_includes_linked_from(self, config):
+        config.system_prompt = "System."
+        composed = ComposedContext(
+            messages=[], tools=[], deferred_tools=[],
+            total_tokens_estimated=100, sources=[],
+            memory_results=[
+                {"file_path": "linked.md", "source_type": "graph_expansion",
+                 "composite_score": 0.6, "similarity": 0.5,
+                 "recency": 0.7, "importance": 0.5,
+                 "modified_at": "", "tokens_estimated": 100,
+                 "linked_from": "parent.md"},
+            ],
+        )
+        composer = ContextComposer()
+        diag = composer.build_diagnostics(config, composed)
+        assert diag["memory_candidates"][0]["linked_from"] == "parent.md"
+
+
+class TestContextSidecar:
+    def test_write_and_read(self, config):
+        from decafclaw.context_composer import read_context_sidecar, write_context_sidecar
+        data = {"timestamp": "2026-04-02T12:00:00", "sources": [], "total_tokens_estimated": 100}
+        write_context_sidecar(config, "test-conv", data)
+        result = read_context_sidecar(config, "test-conv")
+        assert result is not None
+        assert result["total_tokens_estimated"] == 100
+
+    def test_read_missing_returns_none(self, config):
+        from decafclaw.context_composer import read_context_sidecar
+        result = read_context_sidecar(config, "nonexistent-conv")
+        assert result is None
+
+    def test_write_fail_open(self, config):
+        from decafclaw.context_composer import write_context_sidecar
+        # Should not raise even with bad data
+        with patch("decafclaw.context_composer.Path.write_text", side_effect=OSError("fail")):
+            write_context_sidecar(config, "test-conv", {"data": True})
+            # No exception raised
+
+
 class TestContextComposerOnContext:
     def test_ctx_has_composer_state(self, ctx):
         assert isinstance(ctx.composer, ComposerState)
