@@ -111,6 +111,7 @@ Session docs live in `docs/dev-sessions/YYYY-MM-DD-HHMM-slug/` with `spec.md`, `
 - **Prefer clarity over abstraction.** This is an exploration project — we try to keep things simple but aren't afraid to explore complexity when a feature calls for it. Readability matters more than cleverness.
 - **Files on disk, human-readable.** All agent state uses files you can read, edit, and inspect: markdown for memories and to-dos, JSONL for conversation archives, SQLite for embeddings. No opaque databases. Crash-recoverable by design.
 - **Tool error returns use `ToolResult`.** Error returns should use `ToolResult(text="[error: ...]")` rather than bare strings, for consistency across all tool modules.
+- **`ToolResult.data` for structured results.** Tools can return `ToolResult(text=..., data={...})` to provide machine-readable structured data alongside the human-readable text. The agent loop auto-appends a fenced JSON block to the tool result content when `data` is set. Use for tools where the caller needs to branch programmatically on the result.
 - **Use `asyncio.Lock` for concurrency guards.** Prefer `asyncio.Lock` over boolean flags — locks auto-release on exception, preventing stuck state.
 - **Conversation state in `ConversationState` dataclass.** Per-conversation state (history, skill state, busy flag, etc.) is tracked via `ConversationState` in mattermost.py, not parallel dicts.
 - **Tools receive `ctx` as first param.** All tool functions take a runtime context, even if they don't use it yet.

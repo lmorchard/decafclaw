@@ -153,6 +153,91 @@ def test_build_summary_empty(tmp_path):
     assert "No tool calls" in summary
 
 
+def test_build_data_shape(tmp_path):
+    """build_data() returns a dict with expected keys and JSON-safe values."""
+    logger = SessionLogger(tmp_path, "test-session")
+    logger.files_changed = ["src/foo.py", "src/bar.py", "src/foo.py"]
+    logger.tools_used = ["Read", "Edit", "Read", "Edit", "Edit"]
+    logger.errors = ["ImportError: no module named foo"]
+    logger.total_cost_usd = 0.45
+    logger.duration_ms = 5000
+    logger.num_turns = 3
+    logger.result_text = "Done"
+
+    data = logger.build_data(
+        session_id="abc123",
+        exit_status="success",
+        sdk_session_id="sdk-456",
+        send_count=2,
+    )
+
+    assert data["exit_status"] == "success"
+    assert data["files_changed"] == ["src/foo.py", "src/bar.py"]  # deduplicated
+    assert data["tools_used"] == {"Read": 2, "Edit": 3}
+    assert data["errors"] == [{"message": "ImportError: no module named foo"}]
+    assert data["cost_usd"] == 0.45
+    assert data["duration_ms"] == 5000
+    assert data["send_count"] == 2
+    assert data["num_turns"] == 3
+    assert data["result_text"] == "Done"
+    assert data["result_text_truncated"] is False
+    assert data["sdk_session_id"] == "sdk-456"
+    assert "test-session" in data["log_path"]
+
+    # Must be JSON-serializable
+    json_str = json.dumps(data)
+    assert json.loads(json_str) == data
+
+
+def test_build_data_defaults(tmp_path):
+    """build_data() works with no metrics set."""
+    logger = SessionLogger(tmp_path, "test-session")
+    data = logger.build_data()
+
+    assert data["exit_status"] == "success"
+    assert data["files_changed"] == []
+    assert data["tools_used"] == {}
+    assert data["errors"] == []
+    assert data["cost_usd"] == 0
+    assert data["sdk_session_id"] == ""
+
+    json.dumps(data)  # must not raise
+
+
+def test_log_exec(tmp_path):
+    """log_exec() writes a JSON record with exec type and all fields."""
+    logger = SessionLogger(tmp_path, "test-session")
+    logger.log_exec(
+        command="make test",
+        exit_code=0,
+        stdout="all passed\n",
+        stderr="",
+        duration_ms=1234,
+    )
+
+    assert logger.path.exists()
+    with open(logger.path) as f:
+        record = json.loads(f.readline())
+    assert record["type"] == "exec"
+    assert record["command"] == "make test"
+    assert record["exit_code"] == 0
+    assert record["stdout"] == "all passed\n"
+    assert record["stderr"] == ""
+    assert record["duration_ms"] == 1234
+    assert "timestamp" in record
+
+
+def test_log_exec_timeout(tmp_path):
+    """log_exec() handles None exit_code for timeouts."""
+    logger = SessionLogger(tmp_path, "test-session")
+    logger.log_exec("sleep 999", None, "", "killed", 30000)
+
+    with open(logger.path) as f:
+        record = json.loads(f.readline())
+    assert record["exit_code"] is None
+    assert record["stderr"] == "killed"
+
+
 def test_deduplicates_files_changed(tmp_path):
     logger = SessionLogger(tmp_path, "test-session")
     msg = AssistantMessage(
