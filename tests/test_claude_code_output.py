@@ -169,6 +169,7 @@ def test_build_data_shape(tmp_path):
         exit_status="success",
         sdk_session_id="sdk-456",
         send_count=2,
+        diff="--- a/foo.py\n+++ b/foo.py\n@@ changed @@",
     )
 
     assert data["exit_status"] == "success"
@@ -183,6 +184,7 @@ def test_build_data_shape(tmp_path):
     assert data["result_text_truncated"] is False
     assert data["sdk_session_id"] == "sdk-456"
     assert "test-session" in data["log_path"]
+    assert data["diff"] == "--- a/foo.py\n+++ b/foo.py\n@@ changed @@"
 
     # Must be JSON-serializable
     json_str = json.dumps(data)
@@ -200,6 +202,7 @@ def test_build_data_defaults(tmp_path):
     assert data["errors"] == []
     assert data["cost_usd"] == 0
     assert data["sdk_session_id"] == ""
+    assert data["diff"] is None
 
     json.dumps(data)  # must not raise
 

@@ -22,6 +22,7 @@ class Session:
     total_cost_usd: float = 0
     send_count: int = 0
     approved: bool = False
+    instructions: str = ""
 
 
 class SessionManager:
@@ -35,7 +36,8 @@ class SessionManager:
         self.budget_max = budget_max
 
     def create(self, cwd: str, description: str = "",
-               model: str | None = None, budget_usd: float | None = None) -> Session:
+               model: str | None = None, budget_usd: float | None = None,
+               instructions: str = "") -> Session:
         """Create a new session. Raises ValueError if cwd already has an active session."""
         # Resolve and normalize path
         cwd = str(cwd).rstrip("/")
@@ -63,6 +65,7 @@ class SessionManager:
             budget_usd=budget,
             created_at=now,
             last_active=now,
+            instructions=instructions,
         )
         self.sessions[session.session_id] = session
         self.cwd_to_session[cwd] = session.session_id
