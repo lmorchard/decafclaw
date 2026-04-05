@@ -108,7 +108,8 @@ class SessionLogger:
         return "\n".join(parts)
 
     def build_data(self, session_id: str = "", exit_status: str = "success",
-                   sdk_session_id: str | None = None, send_count: int = 0) -> dict:
+                   sdk_session_id: str | None = None, send_count: int = 0,
+                   diff: str | None = None) -> dict:
         """Return structured result dict with JSON-safe types only."""
         from collections import Counter
         tool_counts = dict(Counter(self.tools_used))
@@ -127,6 +128,7 @@ class SessionLogger:
             "result_text_truncated": len(self.result_text) > 500,
             "sdk_session_id": sdk_session_id or "",
             "log_path": str(self.path),
+            "diff": diff,
         }
 
     def log_exec(self, command: str, exit_code: int | None,
