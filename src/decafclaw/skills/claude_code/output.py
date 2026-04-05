@@ -2,6 +2,7 @@
 
 import json
 import logging
+from datetime import datetime, timezone
 from pathlib import Path
 
 from claude_code_sdk import (
@@ -105,6 +106,43 @@ class SessionLogger:
             parts.append(f"\n**Result:**\n{preview}")
 
         return "\n".join(parts)
+
+    def build_data(self, session_id: str = "", exit_status: str = "success",
+                   sdk_session_id: str | None = None, send_count: int = 0) -> dict:
+        """Return structured result dict with JSON-safe types only."""
+        from collections import Counter
+        tool_counts = dict(Counter(self.tools_used))
+        unique_files = list(dict.fromkeys(self.files_changed))
+        errors = [{"message": e} for e in self.errors[:10]]
+        return {
+            "exit_status": exit_status,
+            "files_changed": unique_files,
+            "tools_used": tool_counts,
+            "errors": errors,
+            "cost_usd": self.total_cost_usd,
+            "duration_ms": self.duration_ms,
+            "send_count": send_count,
+            "num_turns": self.num_turns,
+            "result_text": self.result_text[:500] if self.result_text else "",
+            "result_text_truncated": len(self.result_text) > 500,
+            "sdk_session_id": sdk_session_id or "",
+            "log_path": str(self.path),
+        }
+
+    def log_exec(self, command: str, exit_code: int | None,
+                 stdout: str, stderr: str, duration_ms: int) -> None:
+        """Log a claude_code_exec command to the session's JSONL log."""
+        record = {
+            "type": "exec",
+            "command": command,
+            "exit_code": exit_code,
+            "stdout": stdout,
+            "stderr": stderr,
+            "duration_ms": duration_ms,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+        with open(self.path, "a") as f:
+            f.write(json.dumps(record) + "\n")
 
     def _track_file_change(self, tool_name: str, tool_input: dict) -> None:
         """Track file paths from Edit/Write tool calls."""

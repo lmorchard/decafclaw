@@ -21,6 +21,7 @@ class Session:
     last_active: float = field(default_factory=time.monotonic)
     total_cost_usd: float = 0
     send_count: int = 0
+    approved: bool = False
 
 
 class SessionManager:
