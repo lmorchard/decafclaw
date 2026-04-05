@@ -70,6 +70,17 @@ _PROBE_FILES = ["Makefile", "pyproject.toml", "package.json", "go.mod", "Cargo.t
                 "CLAUDE.md", "README.md", ".env"]
 
 
+def _assemble_prompt(prompt: str, instructions: str = "", context: str = "") -> str:
+    """Build the full prompt with optional instructions and context preamble."""
+    parts = []
+    if instructions:
+        parts.append(f"<instructions>\n{instructions}\n</instructions>")
+    if context:
+        parts.append(f"<context>\n{context}\n</context>")
+    parts.append(prompt)
+    return "\n\n".join(parts)
+
+
 async def _probe_environment(cwd: str) -> dict:
     """Run a quick environment probe in cwd. Best-effort, 5s timeout."""
     result: dict = {"tools_available": [], "project_files": [], "git": None}
@@ -149,9 +160,71 @@ async def _run_setup_command(cwd: str, command: str, timeout: float = 30.0) -> d
     }
 
 
+async def _get_git_head(cwd: str) -> str | None:
+    """Get the current git HEAD hash, or None if not a git repo / empty repo."""
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "git", "-C", cwd, "rev-parse", "HEAD",
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, _ = await proc.communicate()
+        if proc.returncode == 0:
+            return stdout.decode().strip()
+        return None
+    except Exception:
+        return None
+
+
+async def _capture_git_diff(cwd: str, baseline_ref: str | None) -> str | None:
+    """Capture git diff since baseline. Returns None if not applicable, "" if no changes."""
+    if baseline_ref is None:
+        return None
+
+    try:
+        parts = []
+
+        # 1. Committed changes since baseline (baseline..HEAD, excludes working tree)
+        proc = await asyncio.create_subprocess_exec(
+            "git", "-C", cwd, "diff", f"{baseline_ref}..HEAD",
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, _ = await proc.communicate()
+        committed_diff = stdout.decode(errors="replace").strip() if proc.returncode == 0 else ""
+        if committed_diff:
+            parts.append(committed_diff)
+
+        # 2. Unstaged changes to tracked files (working tree vs index)
+        proc = await asyncio.create_subprocess_exec(
+            "git", "-C", cwd, "diff",
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, _ = await proc.communicate()
+        unstaged_diff = stdout.decode(errors="replace").strip() if proc.returncode == 0 else ""
+        if unstaged_diff:
+            parts.append(unstaged_diff)
+
+        # 3. New untracked files
+        proc = await asyncio.create_subprocess_exec(
+            "git", "-C", cwd, "ls-files", "--others", "--exclude-standard",
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, _ = await proc.communicate()
+        untracked = stdout.decode(errors="replace").strip() if proc.returncode == 0 else ""
+        if untracked:
+            file_list = "\n".join(f"  {f}" for f in untracked.splitlines() if f)
+            parts.append(f"New untracked files:\n{file_list}")
+
+        return "\n".join(parts) if parts else ""
+
+    except Exception as e:
+        log.warning(f"Git diff capture failed: {e}")
+        return None
+
+
 async def tool_claude_code_start(ctx, cwd: str, description: str = "",
                                   model: str = "", budget_usd: float = 0,
-                                  setup_command: str = "") -> ToolResult:
+                                  setup_command: str = "",
+                                  instructions: str = "") -> ToolResult:
     """Start a new Claude Code session for a working directory within the workspace."""
     log.info(f"[tool:claude_code_start] cwd={cwd}")
     manager = _get_manager()
@@ -173,6 +246,7 @@ async def tool_claude_code_start(ctx, cwd: str, description: str = "",
             description=description,
             model=model or None,
             budget_usd=budget_usd if budget_usd > 0 else None,
+            instructions=instructions,
         )
     except ValueError as e:
         return ToolResult(text=f"[error: {e}]")
@@ -277,12 +351,15 @@ def _send_error_data(exit_status: str, **extra) -> dict:
         "result_text_truncated": False,
         "sdk_session_id": "",
         "log_path": "",
+        "diff": None,
     }
     data.update(extra)
     return data
 
 
-async def tool_claude_code_send(ctx, session_id: str, prompt: str) -> ToolResult:
+async def tool_claude_code_send(ctx, session_id: str, prompt: str,
+                                context: str = "",
+                                include_diff: bool = True) -> ToolResult:
     """Send a prompt to an active Claude Code session."""
     log.info(f"[tool:claude_code_send] session={session_id}")
     manager = _get_manager()
@@ -366,12 +443,20 @@ async def tool_claude_code_send(ctx, session_id: str, prompt: str) -> ToolResult
     # Set up logger (log_dir already created above for stderr)
     logger = SessionLogger(log_dir, session.session_id)
 
+    # Capture git baseline for diff (before any changes)
+    baseline_ref = None
+    if include_diff:
+        baseline_ref = await _get_git_head(session.cwd)
+
+    # Assemble full prompt with session instructions and per-send context
+    full_prompt = _assemble_prompt(prompt, session.instructions, context)
+
     # Wrap prompt as async iterable (required when can_use_tool is set)
     # Format per SDK docs: type, message, parent_tool_use_id, session_id
     async def prompt_stream():
         yield {
             "type": "user",
-            "message": {"role": "user", "content": prompt},
+            "message": {"role": "user", "content": full_prompt},
             "parent_tool_use_id": None,
             "session_id": session.sdk_session_id or "default",
         }
@@ -418,12 +503,18 @@ async def tool_claude_code_send(ctx, session_id: str, prompt: str) -> ToolResult
     session.send_count += 1
     manager.touch(session_id)
 
+    # Capture git diff of changes made during this send
+    diff = None
+    if include_diff:
+        diff = await _capture_git_diff(session.cwd, baseline_ref)
+
     summary = logger.build_summary(session_id)
     data = logger.build_data(
         session_id=session_id,
         exit_status="error" if logger.errors else "success",
         sdk_session_id=session.sdk_session_id,
         send_count=session.send_count,
+        diff=diff,
     )
     return ToolResult(text=summary, data=data)
 
@@ -635,6 +726,13 @@ TOOL_DEFINITIONS = [
                             "is ready (e.g., 'uv sync', 'npm install'). Requires confirmation."
                         ),
                     },
+                    "instructions": {
+                        "type": "string",
+                        "description": (
+                            "Persistent instructions prepended to every send in this session. "
+                            "Use for project conventions, coding style, constraints."
+                        ),
+                    },
                 },
                 "required": ["cwd"],
             },
@@ -659,6 +757,20 @@ TOOL_DEFINITIONS = [
                     "prompt": {
                         "type": "string",
                         "description": "The coding task or follow-up message",
+                    },
+                    "context": {
+                        "type": "string",
+                        "description": (
+                            "Per-task context prepended to this send only. "
+                            "Use for relevant specs, vault pages, conversation excerpts."
+                        ),
+                    },
+                    "include_diff": {
+                        "type": "boolean",
+                        "description": (
+                            "Capture git diff of changes made during this send (default true). "
+                            "Requires the cwd to be a git repo."
+                        ),
                     },
                 },
                 "required": ["session_id", "prompt"],
