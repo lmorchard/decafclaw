@@ -486,10 +486,17 @@ async def _execute_single_tool(call_ctx, tc, semaphore):
                                    media=result.media or [],
                                    tool_call_id=tool_call_id)
 
+    content = result.text
+    if result.data is not None:
+        try:
+            content += "\n\n```json\n" + json.dumps(result.data, indent=2) + "\n```"
+        except (TypeError, ValueError) as e:
+            log.warning(f"Failed to serialize ToolResult.data for {fn_name}: {e}")
+            content += "\n\n[structured data omitted: serialization error]"
     tool_msg = {
         "role": "tool",
         "tool_call_id": tool_call_id,
-        "content": result.text,
+        "content": content,
     }
     if result.display_short_text:
         tool_msg["display_short_text"] = result.display_short_text
