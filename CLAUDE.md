@@ -49,6 +49,7 @@ An AI agent testbed for exploring agent development patterns. Connects to Matter
 - `src/decafclaw/polling.py` — Shared polling loop and task preamble builder (used by heartbeat + schedules)
 - `src/decafclaw/tools/` — Tool registry: core, todo, workspace, file_share, shell, background processes, conversation, skill activation, MCP status, health, delegation
 - `src/decafclaw/tools/background_tools.py` — Background process management: start, status, stop, list long-running processes (servers, watchers)
+- `src/decafclaw/tools/http_tools.py` — General-purpose HTTP request tool: all methods, headers, body, URL-based allowlist
 - `src/decafclaw/tools/health.py` — Health/diagnostic status tool: uptime, MCP, heartbeat, tools, embeddings
 - `src/decafclaw/tools/effort_tools.py` — Effort level tool: `set_effort` for conversation model switching
 - `src/decafclaw/tools/delegate.py` — Sub-agent delegation: `delegate_task` forks a child agent for a single subtask (call multiple times for parallel work)
