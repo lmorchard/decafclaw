@@ -14,6 +14,9 @@ export class ToolCallMessage extends LitElement {
     content: { type: String },
     /** Array of tool call objects from assistant message history */
     toolCalls: { type: Array, attribute: false },
+    /** Array of {text, timestamp} status history entries */
+    statusHistory: { type: Array, attribute: false },
+    _expanded: { type: Boolean, state: true },
   };
 
   createRenderRoot() { return this; }
@@ -24,18 +27,41 @@ export class ToolCallMessage extends LitElement {
     this.content = '';
     /** @type {Array|null} */
     this.toolCalls = null;
+    /** @type {Array<{text: string, timestamp: string}>|null} */
+    this.statusHistory = null;
+    this._expanded = false;
+  }
+
+  #toggleExpand() {
+    if (this.statusHistory?.length > 1) {
+      this._expanded = !this._expanded;
+    }
   }
 
   render() {
     if (this.variant === 'tool_call') {
-      // Live tool call in progress
+      const hasHistory = this.statusHistory?.length > 1;
       return html`
         <div class="message tool">
-          <div class="tool-result-header">
+          <div class="tool-result-header" @click=${hasHistory ? this.#toggleExpand : nothing}>
             <span class="tool-icon">\u{1f527}</span>
             <span class="tool-summary">${this.content}</span>
             <span class="streaming-indicator"></span>
+            ${hasHistory ? html`
+              <span class="status-history-badge" title="Click to show progress history">${this.statusHistory.length}</span>
+              <span class="expand-toggle">${this._expanded ? '\u25b2' : '\u25bc'}</span>
+            ` : nothing}
           </div>
+          ${this._expanded ? html`
+            <div class="status-history">
+              ${this.statusHistory.map(entry => html`
+                <div class="status-history-entry">
+                  <span class="status-history-time">${this.#formatTime(entry.timestamp)}</span>
+                  <span class="status-history-text">${entry.text}</span>
+                </div>
+              `)}
+            </div>
+          ` : nothing}
         </div>
       `;
     }
@@ -56,6 +82,16 @@ export class ToolCallMessage extends LitElement {
         </div>
       </div>
     `;
+  }
+
+  /** @param {string} isoStr */
+  #formatTime(isoStr) {
+    try {
+      const d = new Date(isoStr);
+      return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    } catch {
+      return '';
+    }
   }
 }
 

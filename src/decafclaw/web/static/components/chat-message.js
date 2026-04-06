@@ -13,6 +13,7 @@ export class ChatMessage extends LitElement {
     display_short_text: { type: String, attribute: false },
     toolCalls: { type: Array, attribute: false },
     toolCallId: { type: String, attribute: false },
+    statusHistory: { type: Array, attribute: false },
     usage: { type: Object, attribute: false },
     timestamp: { type: String },
     attachments: { type: Array, attribute: false },
@@ -30,6 +31,8 @@ export class ChatMessage extends LitElement {
     /** @type {Array|null} */
     this.toolCalls = null;
     this.toolCallId = '';
+    /** @type {Array<{text: string, timestamp: string}>|null} */
+    this.statusHistory = null;
     /** @type {object|null} */
     this.usage = null;
     this.timestamp = '';
@@ -55,11 +58,11 @@ export class ChatMessage extends LitElement {
     }
 
     if (this.role === 'tool_call') {
-      return html`<tool-call-message variant="tool_call" .content=${this.content}></tool-call-message>`;
+      return html`<tool-call-message variant="tool_call" .content=${this.content} .statusHistory=${this.statusHistory}></tool-call-message>`;
     }
 
     if (this.role === 'tool') {
-      return html`<tool-message .tool=${this.tool} .content=${this.content} .display_short_text=${this.display_short_text || ''} .timestamp=${this.timestamp}></tool-message>`;
+      return html`<tool-message .tool=${this.tool} .content=${this.content} .display_short_text=${this.display_short_text || ''} .statusHistory=${this.statusHistory} .timestamp=${this.timestamp}></tool-message>`;
     }
 
     if (this.role === 'assistant' && this.toolCalls?.length) {
