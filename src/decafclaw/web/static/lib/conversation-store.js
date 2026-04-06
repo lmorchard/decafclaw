@@ -304,6 +304,26 @@ export class ConversationStore extends EventTarget {
   }
 
   /** @param {string} convId */
+  async deleteConversation(convId) {
+    try {
+      const resp = await fetch(`/api/conversations/${convId}`, {
+        method: 'DELETE',
+      });
+      if (!resp.ok) return;
+      // If we're viewing the deleted conversation, deselect it
+      if (this.#currentConvId === convId) {
+        this.#currentConvId = null;
+        this.#messageStore.clear();
+      }
+      // Re-fetch archived listing to update folder counts
+      await this.listArchivedConversations(this.#archivedCurrentFolder);
+      this.#emitChange();
+    } catch (err) {
+      console.error('Failed to delete conversation:', err);
+    }
+  }
+
+  /** @param {string} convId */
   async unarchiveConversation(convId) {
     try {
       const resp = await fetch(`/api/conversations/${convId}/unarchive`, {

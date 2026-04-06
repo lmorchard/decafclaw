@@ -561,3 +561,68 @@ async def test_create_conv_folder_reserved_prefix(authed_client):
         "/api/conversations/folders", json={"path": "_reserved"}
     )
     assert resp.status_code == 400
+
+
+# -- Delete conversation tests ------------------------------------------------
+
+
+def test_delete_from_index(config):
+    config.agent_path.mkdir(parents=True, exist_ok=True)
+    index = ConversationIndex(config)
+    conv = index.create("alice", "Deletable")
+    assert index.get(conv.conv_id) is not None
+    assert index.delete(conv.conv_id) is True
+    assert index.get(conv.conv_id) is None
+
+
+def test_delete_nonexistent_from_index(config):
+    config.agent_path.mkdir(parents=True, exist_ok=True)
+    index = ConversationIndex(config)
+    assert index.delete("nonexistent") is False
+
+
+@pytest.mark.asyncio
+async def test_delete_conv_route(authed_client, http_config):
+    http_config.workspace_path.mkdir(parents=True, exist_ok=True)
+    r = await authed_client.post("/api/conversations", json={"title": "To delete"})
+    conv_id = r.json()["conv_id"]
+
+    # Add some archive content so we can verify file cleanup
+    append_message(http_config, conv_id, {"role": "user", "content": "hello"})
+    conv_dir = http_config.workspace_path / "conversations"
+    (conv_dir / f"{conv_id}.compacted.jsonl").write_text("{}\n")
+    (conv_dir / f"{conv_id}.context.json").write_text("{}\n")
+
+    resp = await authed_client.delete(f"/api/conversations/{conv_id}")
+    assert resp.status_code == 200
+    assert resp.json()["ok"] is True
+
+    # Should not appear in any listing
+    resp = await authed_client.get("/api/conversations")
+    ids = [c["conv_id"] for c in resp.json()["conversations"]]
+    assert conv_id not in ids
+
+    # Files should be gone
+    assert not (conv_dir / f"{conv_id}.jsonl").exists()
+    assert not (conv_dir / f"{conv_id}.compacted.jsonl").exists()
+    assert not (conv_dir / f"{conv_id}.context.json").exists()
+
+
+@pytest.mark.asyncio
+async def test_delete_conv_not_found(authed_client):
+    resp = await authed_client.delete("/api/conversations/nonexistent")
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_delete_conv_wrong_user(authed_client, http_config):
+    """Cannot delete another user's conversation."""
+    http_config.agent_path.mkdir(parents=True, exist_ok=True)
+    index = ConversationIndex(http_config)
+    conv = index.create("otheruser", "Not yours")
+
+    resp = await authed_client.delete(f"/api/conversations/{conv.conv_id}")
+    assert resp.status_code == 404
+
+    # Should still exist
+    assert index.get(conv.conv_id) is not None
