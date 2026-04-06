@@ -386,6 +386,20 @@ conversation-sidebar .mobile-close-btn:hover {
   color: var(--pico-color);
 }
 
+.recent-item {
+  flex-wrap: wrap;
+}
+
+.recent-folder {
+  width: 100%;
+  font-size: 0.7rem;
+  color: var(--pico-muted-color);
+  line-height: 1.2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .recent-time {
   font-size: 0.75rem;
   color: var(--pico-muted-color);
