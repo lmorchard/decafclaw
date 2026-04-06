@@ -177,16 +177,16 @@ class ConversationDisplay:
                     post_id,
                     f"\U0001f527 {tool_name}: {message}",
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                log.debug("Mattermost API call failed: %s", exc)
         else:
             # Standalone status (no preceding tool_start) — create a new post
             try:
                 await self.client.send(
                     self._channel_id, message, root_id=self._root_id,
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                log.debug("Mattermost API call failed: %s", exc)
 
     async def on_tool_end(self, tool_name, result_text, display_text, media,
                           tool_call_id="", display_short_text=None):
@@ -206,8 +206,8 @@ class ConversationDisplay:
                 )
                 if self._stop_on_post == post_id:
                     self._stop_on_post = None
-            except Exception:
-                pass
+            except Exception as exc:
+                log.debug("Mattermost API call failed: %s", exc)
 
         # Reset tool state when all concurrent tools are done
         if not self._tool_posts:
@@ -273,8 +273,8 @@ class ConversationDisplay:
             else:
                 try:
                     await self.client.edit_message(tool_post_id, msg)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    log.debug("Mattermost API call failed: %s", exc)
                 confirm_post_id = tool_post_id
         else:
             confirm_post_id = await self.client.send(
@@ -308,8 +308,8 @@ class ConversationDisplay:
                 # Never got any text — delete the thinking placeholder
                 try:
                     await self.client.delete_message(self._current_post_id)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    log.debug("Mattermost API call failed: %s", exc)
 
         # Strip stop button from whichever post currently has it
         if self._stop_on_post:
@@ -333,8 +333,8 @@ class ConversationDisplay:
             await self.client.edit_message(
                 post_id, current_text, props={"attachments": []},
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            log.debug("Mattermost API call failed: %s", exc)
         if self._stop_on_post == post_id:
             self._stop_on_post = None
 
@@ -350,8 +350,8 @@ class ConversationDisplay:
                     )
                     if self._stop_on_post == self._current_post_id:
                         self._stop_on_post = None
-                except Exception:
-                    pass
+                except Exception as exc:
+                    log.debug("Mattermost API call failed: %s", exc)
             else:
                 await self._strip_stop_from(self._current_post_id)
             self._current_type = None
@@ -375,9 +375,9 @@ class ConversationDisplay:
         self._last_edit_time = time.monotonic()
         try:
             await self.client.send_typing(self._channel_id)
-        except Exception:
-            pass
+        except Exception as exc:
+            log.debug("Mattermost API call failed: %s", exc)
         try:
             await self.client.edit_message(post_id, text)
-        except Exception:
-            pass
+        except Exception as exc:
+            log.debug("Mattermost API call failed: %s", exc)

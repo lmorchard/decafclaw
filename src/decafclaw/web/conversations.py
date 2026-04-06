@@ -127,6 +127,9 @@ class ConversationIndex:
     def __init__(self, config):
         self.config = config
         self.path = config.agent_path / "web_conversations.json"
+        # Note: _load/_save are sync, so read-modify-write is atomic
+        # within the asyncio event loop (no yield points between them).
+        # If these ever become async, add an asyncio.Lock.
 
     def _load(self) -> list[dict]:
         if not self.path.exists():

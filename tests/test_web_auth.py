@@ -112,10 +112,10 @@ async def test_auth_me_authenticated(client, http_config):
     token = create_token(http_config, "testuser")
     # Login first to get cookie
     login_resp = await client.post("/api/auth/login", json={"token": token})
-    cookies = login_resp.cookies
+    client.cookies.update(login_resp.cookies)
 
-    # Use the cookie
-    resp = await client.get("/api/auth/me", cookies=cookies)
+    # Use the cookie (set on client, not per-request)
+    resp = await client.get("/api/auth/me")
     assert resp.status_code == 200
     assert resp.json()["username"] == "testuser"
 
@@ -130,13 +130,12 @@ async def test_auth_me_unauthenticated(client):
 async def test_logout_clears_cookie(client, http_config):
     token = create_token(http_config, "testuser")
     login_resp = await client.post("/api/auth/login", json={"token": token})
-    cookies = login_resp.cookies
+    client.cookies.update(login_resp.cookies)
 
-    logout_resp = await client.post("/api/auth/logout", cookies=cookies)
+    logout_resp = await client.post("/api/auth/logout")
     assert logout_resp.status_code == 200
 
-    # Cookie should be cleared — me should return 401
-    # Note: httpx may not clear cookies from the response automatically,
-    # so we check by sending without cookies
+    # Cookie should be cleared — clear client cookies and verify 401
+    client.cookies.clear()
     resp = await client.get("/api/auth/me")
     assert resp.status_code == 401

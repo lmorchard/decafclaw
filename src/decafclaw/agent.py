@@ -36,6 +36,11 @@ from .tools.tool_registry import (
     get_fetched_tools,
 )
 
+_TASK_MODE_TO_COMPOSER: dict[str, ComposerMode] = {
+    "heartbeat": ComposerMode.HEARTBEAT,
+    "scheduled": ComposerMode.SCHEDULED,
+}
+
 # Cache preloaded skill definitions by config id, avoiding Config mutation
 _skill_def_cache: dict[int, list] = {}
 
@@ -152,7 +157,7 @@ def _should_reflect(ctx, config, content: str, reflection_retries: int) -> bool:
         return False
     if not content or not content.strip():
         return False
-    if getattr(ctx, "cancelled", None) and ctx.cancelled.is_set():
+    if ctx.cancelled and ctx.cancelled.is_set():
         return False
     return True
 
@@ -705,113 +710,6 @@ def _get_already_injected_pages(history: list) -> set[str]:
     return pages
 
 
-async def _prepare_messages(
-    ctx, config, user_message: str, history: list,
-    archive_text: str = "",
-    attachments: list[dict] | None = None,
-) -> tuple[list, str]:
-    """Build the LLM messages array from history and user input.
-
-    .. deprecated::
-        Replaced by ContextComposer.compose() in context_composer.py.
-        Kept for test compatibility; will be removed in a future cleanup.
-
-    Handles:
-    - Truncating oversized user messages
-    - Injecting proactive memory context before the user message
-    - Archiving the user message (using archive_text for inline commands)
-    - Building the messages array (system prompt + filtered/remapped history)
-    - Resolving attachments into multipart content
-
-    Returns (messages, retrieved_context_text).
-    """
-    # Truncate oversized user messages
-    max_len = config.agent.max_message_length
-    if max_len and len(user_message) > max_len:
-        original_len = len(user_message)
-        user_message = (
-            user_message[:max_len]
-            + f"\n\n[truncated at {max_len:,} chars, original was {original_len:,}]"
-        )
-        log.warning(f"User message truncated: {original_len:,} -> {max_len:,} chars")
-
-    user_msg: dict = {"role": "user", "content": user_message}
-    if attachments:
-        user_msg["attachments"] = attachments
-
-    # Wiki context — inject referenced/open wiki pages before user message
-    vault_dir = config.vault_root
-    wiki_refs = _parse_wiki_references(user_message, ctx.wiki_page) if vault_dir.exists() else []
-    if wiki_refs:
-        already_injected = _get_already_injected_pages(history)
-        for ref in wiki_refs:
-            if ref["page"] in already_injected:
-                continue
-            content = _read_wiki_page(config, ref["page"])
-            if content is None:
-                text = f"[Wiki page '{ref['page']}' not found]"
-            elif ref["source"] == "open_page":
-                text = f"[Currently viewing wiki page: {ref['page']}]\n\n{content}"
-            else:
-                text = f"[Referenced wiki page: {ref['page']}]\n\n{content}"
-            wc_msg: dict = {
-                "role": "vault_references",
-                "content": text,
-                "wiki_page": ref["page"],
-            }
-            history.append(wc_msg)
-            _archive(ctx, wc_msg)
-            await ctx.publish("vault_references", text=text, page=ref["page"])
-
-    # Proactive memory context — inject before user message in history
-    # (but publish the UI event after the user message so it renders below)
-    retrieved_context_text = ""
-    mc_results = None
-    if not ctx.skip_vault_retrieval:
-        from .memory_context import format_memory_context, retrieve_memory_context
-        mc_results = await retrieve_memory_context(config, user_message)
-        if mc_results:
-            retrieved_context_text = format_memory_context(mc_results)
-            mc_msg = {"role": "vault_retrieval", "content": retrieved_context_text}
-            history.append(mc_msg)
-            _archive(ctx, mc_msg)
-
-    history.append(user_msg)
-    # Archive the display version for inline commands (short), full text for normal messages
-    if archive_text:
-        archive_msg: dict = {"role": "user", "content": archive_text}
-        if attachments:
-            archive_msg["attachments"] = attachments
-    else:
-        archive_msg = user_msg
-    _archive(ctx, archive_msg)
-
-    # Build the messages array: system prompt + history
-    # Filter out metadata roles (effort, reflection) that aren't valid LLM messages
-    # Remap non-standard roles that should appear in LLM context
-    ROLE_REMAP = {"vault_retrieval": "user", "vault_references": "user"}
-    from .archive import LLM_ROLES
-    llm_history = []
-    for m in history:
-        role = m.get("role")
-        if role in LLM_ROLES:
-            llm_history.append(m)
-        elif role in ROLE_REMAP:
-            llm_history.append({**m, "role": ROLE_REMAP[role]})
-    # Resolve attachments into multimodal content arrays for the LLM
-    llm_history = [_resolve_attachments(config, m) for m in llm_history]
-    messages = [{"role": "system", "content": config.system_prompt}] + llm_history
-
-    # Publish memory context event after user message so it renders below
-    # in the web UI (history ordering is already correct for the LLM)
-    if mc_results and config.vault_retrieval.show_in_ui:
-        await ctx.publish("vault_retrieval",
-                          text=retrieved_context_text,
-                          results=mc_results)
-
-    return messages, retrieved_context_text
-
-
 # -- Main agent turn -----------------------------------------------------------
 
 
@@ -846,14 +744,10 @@ async def run_agent_turn(ctx, user_message: str, history: list,
         # Note: skip_vault_retrieval is handled directly by the composer,
         # not via mode — HEARTBEAT/SCHEDULED skip wiki too, which isn't
         # always desired when only memory should be skipped.
-        _task_mode_map = {
-            "heartbeat": ComposerMode.HEARTBEAT,
-            "scheduled": ComposerMode.SCHEDULED,
-        }
         if ctx.is_child:
             composer_mode = ComposerMode.CHILD_AGENT
-        elif ctx.task_mode in _task_mode_map:
-            composer_mode = _task_mode_map[ctx.task_mode]
+        elif ctx.task_mode in _TASK_MODE_TO_COMPOSER:
+            composer_mode = _TASK_MODE_TO_COMPOSER[ctx.task_mode]
         else:
             composer_mode = ComposerMode.INTERACTIVE
 

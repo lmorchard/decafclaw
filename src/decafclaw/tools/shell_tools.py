@@ -93,56 +93,55 @@ def _suggest_pattern(command: str) -> str:
     return command
 
 
-async def tool_shell(ctx, command: str) -> str | ToolResult:
+async def check_shell_approval(ctx, command: str, tool_name: str = "shell",
+                               message: str = "") -> dict:
+    """Check whether a shell command is approved (shared by shell + background tools).
+
+    Returns {"approved": True} if auto-approved, or the user's confirmation result.
+    """
+    if ctx.user_id == "heartbeat-admin":
+        log.info(f"[{tool_name}] auto-approved for heartbeat: {command}")
+        return {"approved": True}
+
+    if "shell" in ctx.tools.preapproved or tool_name in ctx.tools.preapproved:
+        log.info(f"[{tool_name}] pre-approved by command: {command}")
+        return {"approved": True}
+
+    if (ctx.tools.preapproved_shell_patterns
+        and not _has_shell_metacharacters(command)
+            and _command_matches_pattern(command, ctx.tools.preapproved_shell_patterns)):
+        log.info(f"[{tool_name}] pre-approved by scoped pattern: {command}")
+        return {"approved": True}
+
+    patterns = _load_allow_patterns(ctx.config)
+    if _command_matches_pattern(command, patterns):
+        log.info(f"[{tool_name}] auto-approved by pattern: {command}")
+        return {"approved": True}
+
+    suggested_pattern = _suggest_pattern(command)
+    result = await request_confirmation(
+        ctx, tool_name=tool_name, command=command,
+        message=message or f"Shell command: `{command}`",
+        suggested_pattern=suggested_pattern,
+    )
+    if result.get("add_pattern"):
+        _save_allow_pattern(ctx.config, suggested_pattern)
+    return result
+
+
+async def tool_shell(ctx, command: str) -> ToolResult:
     """Run a shell command after user confirmation."""
     log.info(f"[tool:shell] requesting confirmation for: {command}")
 
-    # Admin heartbeat turns auto-approve shell commands (admin-authored prompts)
-    is_heartbeat = ctx.user_id == "heartbeat-admin"
-    if is_heartbeat:
-        log.info(f"[tool:shell] auto-approved for heartbeat: {command}")
-        return _execute_command(ctx, command)
-
-    # Command pre-approved tools bypass confirmation (blanket shell approval)
-    if "shell" in ctx.tools.preapproved:
-        log.info(f"[tool:shell] pre-approved by command: {command}")
-        return _execute_command(ctx, command)
-
-    # Scoped shell patterns from skill frontmatter (e.g. shell($SKILL_DIR/fetch.sh))
-    # Reject commands with shell chaining/metacharacters to prevent bypass
-    if ctx.tools.preapproved_shell_patterns and not _has_shell_metacharacters(
-        command
-    ) and _command_matches_pattern(command, ctx.tools.preapproved_shell_patterns):
-        log.info(f"[tool:shell] pre-approved by scoped pattern: {command}")
-        return _execute_command(ctx, command)
-
-    # Check allow patterns
-    patterns = _load_allow_patterns(ctx.config)
-    if _command_matches_pattern(command, patterns):
-        log.info(f"[tool:shell] auto-approved by pattern: {command}")
-        return _execute_command(ctx, command)
-
-    # Generate suggested pattern for the confirmation message
-    suggested_pattern = _suggest_pattern(command)
-
-    result = await request_confirmation(
-        ctx, tool_name="shell", command=command,
-        message=f"Shell command: `{command}`",
-        suggested_pattern=suggested_pattern,
-    )
-
+    result = await check_shell_approval(ctx, command, tool_name="shell")
     if not result.get("approved"):
         log.info(f"[tool:shell] command denied: {command}")
         return ToolResult(text="[error: shell command was denied by user]")
 
-    # If user chose to add the pattern, save it
-    if result.get("add_pattern"):
-        _save_allow_pattern(ctx.config, suggested_pattern)
-
     return _execute_command(ctx, command)
 
 
-def _execute_command(ctx, command: str) -> str | ToolResult:
+def _execute_command(ctx, command: str) -> ToolResult:
     """Execute a shell command and return the output."""
     log.info(f"[tool:shell] executing command: {command}")
     try:
@@ -155,7 +154,7 @@ def _execute_command(ctx, command: str) -> str | ToolResult:
             output += f"\n[stderr]\n{result.stderr}"
         if result.returncode != 0:
             output += f"\n[exit code: {result.returncode}]"
-        return output or "(no output)"
+        return ToolResult(text=output or "(no output)")
     except subprocess.TimeoutExpired:
         return ToolResult(text="[error: command timed out after 30 seconds]")
 

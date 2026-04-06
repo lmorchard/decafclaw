@@ -572,9 +572,6 @@ class MattermostClient:
             if cancel_sub is not None:
                 req_ctx.event_bus.unsubscribe(cancel_sub)
             conv.last_response_time = time.monotonic()
-            conv.busy = False
-            conv.cancel = None
-            self.circuit_breaker.record_turn(conv)
 
             # Persist per-conversation skill state for next turn
             if req_ctx.skills.activated:
@@ -584,7 +581,10 @@ class MattermostClient:
                     "activated_skills": req_ctx.skills.activated,
                 }
 
-        await conv_display.finalize()
+            await conv_display.finalize()
+            conv.busy = False
+            conv.cancel = None
+            self.circuit_breaker.record_turn(conv)
 
         await self._post_response(
             response, channel_id, root_id=req_ctx.thread_id or None,
@@ -670,7 +670,7 @@ class MattermostClient:
 
         # Wrap the sync callback from WebSocket into async
         def on_message_sync(msg):
-            asyncio.get_event_loop().create_task(on_message(msg))
+            asyncio.get_running_loop().create_task(on_message(msg))
 
         try:
             await self.listen(on_message_sync, shutdown_event=shutdown_event)

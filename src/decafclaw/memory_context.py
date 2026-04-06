@@ -148,6 +148,7 @@ def _expand_graph_links(
     from datetime import datetime
 
     from .frontmatter import build_composite_text, get_frontmatter_field, parse_frontmatter
+    from .skills.vault.tools import resolve_page
 
     vault_root = config.vault_root.resolve()
     seen_paths = {r.get("file_path") for r in results}
@@ -182,8 +183,6 @@ def _expand_graph_links(
             if not page_name:
                 continue
 
-            # Resolve the linked page against vault root
-            from .skills.vault.tools import resolve_page
             linked_path = resolve_page(config, page_name, from_page=file_path)
             if linked_path is None or not linked_path.exists():
                 log.debug("Graph expansion: link [[%s]] from %s — not found", page_name, file_path)

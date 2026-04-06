@@ -183,8 +183,9 @@ async def activate_skill_internal(ctx, skill_info) -> str | ToolResult:
             # Cache tool names for always-loaded skills so tool_registry
             # can exempt them from deferral
             if getattr(skill_info, "always_loaded", False):
-                cached = getattr(ctx.config, "_always_loaded_skill_tools", set())
-                ctx.config._always_loaded_skill_tools = cached | set(tool_names)
+                ctx.config.always_loaded_skill_tools = (
+                    ctx.config.always_loaded_skill_tools | set(tool_names)
+                )
 
         except Exception as e:
             log.error(f"Failed to load skill '{name}' tools: {e}")
@@ -215,6 +216,9 @@ def tool_refresh_skills(ctx) -> str | ToolResult:
     log.info("[tool:refresh_skills]")
     from ..agent import invalidate_skill_cache  # deferred: circular dep
     from ..prompts import load_system_prompt
+    # Intentional mutation: runtime fields need to update the shared config
+    # object that the agent loop holds. dataclasses.replace() would create
+    # a disconnected copy.
     config = ctx.config
     config.system_prompt, config.discovered_skills = load_system_prompt(config)
     invalidate_skill_cache(config)

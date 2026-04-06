@@ -338,13 +338,13 @@ def _substring_search(config, query: str, days: int = 0,
                       display_short_text=f"'{query}' — {len(results)} result(s)")
 
 
-async def tool_vault_list(ctx, folder: str = "", pattern: str = "") -> str:
+async def tool_vault_list(ctx, folder: str = "", pattern: str = "") -> str | ToolResult:
     """List vault pages, optionally filtered by folder and pattern."""
     log.info(f"[tool:vault_list] folder={folder} pattern={pattern}")
     if folder:
         safe = _safe_folder(ctx.config, folder)
         if safe is None:
-            return f"[error: invalid folder path '{folder}']"
+            return ToolResult(text=f"[error: invalid folder path '{folder}']")
     vault = _vault_root(ctx.config)
     search_root = vault / folder if folder else vault
 

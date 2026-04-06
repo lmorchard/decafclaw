@@ -2,7 +2,7 @@
 
 import logging
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from .skills import SkillInfo, find_command, list_commands
 
@@ -61,9 +61,6 @@ def substitute_body(body: str, arguments: str = "", skill_dir: str = "") -> str:
 
     return result
 
-
-# Backward compat alias
-substitute_arguments = substitute_body
 
 
 def format_help(discovered_skills: list[SkillInfo], prefix: str = "!") -> str:

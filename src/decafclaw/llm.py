@@ -7,6 +7,9 @@ import httpx
 
 log = logging.getLogger(__name__)
 
+# Max SSE events kept for diagnostic dump on empty LLM responses
+_MAX_DIAGNOSTIC_EVENTS = 50
+
 
 def _sanitize_tool_call_id(tc_id: str) -> str:
     """Strip LiteLLM's embedded thinking data from tool call IDs.
@@ -148,6 +151,8 @@ async def call_llm_streaming(config, messages, tools=None,
                         continue
 
                     _all_events.append(chunk)
+                    if len(_all_events) > _MAX_DIAGNOSTIC_EVENTS:
+                        _all_events.pop(0)
 
                     # Check for usage in final chunk
                     chunk_usage = chunk.get("usage")
