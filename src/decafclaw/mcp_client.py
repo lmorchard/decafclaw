@@ -1,9 +1,11 @@
 """MCP client — connect to external MCP servers as tool providers."""
 
 import asyncio
+import base64
 import contextlib
 import json
 import logging
+import mimetypes
 import os
 import re
 import time
@@ -19,6 +21,18 @@ def _ga(obj, key, default=None):
     if isinstance(obj, dict):
         return obj.get(key, default)
     return getattr(obj, key, default)
+
+
+def _extract_list(result, attr: str) -> list:
+    """Extract a list from an MCP SDK response (handles dict, object, or raw list)."""
+    if isinstance(result, list):
+        return result
+    value = _ga(result, attr, [])
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return value
+    return []
 
 
 # Server name validation: lowercase alphanumeric + hyphens
@@ -169,12 +183,9 @@ def _decode_media(item, label: str, count: int, default_mime: str, default_ext: 
 
     Returns (media_dict, placeholder_text).
     """
-    import base64
-    import mimetypes as _mimetypes
-
     data_str = _ga(item, "data", "")
     mime_type = _ga(item, "mimeType", "") or default_mime
-    ext = _mimetypes.guess_extension(mime_type) or default_ext
+    ext = mimetypes.guess_extension(mime_type) or default_ext
 
     try:
         data = base64.b64decode(data_str)
@@ -240,9 +251,6 @@ def _convert_resource_response(result):
     Handles TextResourceContents and BlobResourceContents.
     Returns a ToolResult with text and optional media attachments.
     """
-    import base64
-    import mimetypes as _mimetypes
-
     from .media import ToolResult
 
     contents = _ga(result, "contents", [])
@@ -263,7 +271,7 @@ def _convert_resource_response(result):
             parts.append(item_text)
         elif item_blob is not None:
             mime_type = item_mime or "application/octet-stream"
-            ext = _mimetypes.guess_extension(mime_type) or ".bin"
+            ext = mimetypes.guess_extension(mime_type) or ".bin"
             try:
                 data = base64.b64decode(item_blob)
             except Exception:
@@ -421,12 +429,9 @@ class MCPRegistry:
 
         try:
             res_result = await state.session.list_resources()
-            state.resources = (res_result.resources if hasattr(res_result, "resources")
-                               else res_result if isinstance(res_result, list) else [])
+            state.resources = _extract_list(res_result, "resources")
             tmpl_result = await state.session.list_resource_templates()
-            state.resource_templates = (tmpl_result.resourceTemplates
-                                        if hasattr(tmpl_result, "resourceTemplates")
-                                        else tmpl_result if isinstance(tmpl_result, list) else [])
+            state.resource_templates = _extract_list(tmpl_result, "resourceTemplates")
             log.info(f"MCP server {server_name!r} resources refreshed: "
                      f"{len(state.resources)} resource(s), {len(state.resource_templates)} template(s)")
         except Exception as e:
@@ -442,8 +447,7 @@ class MCPRegistry:
 
         try:
             prompts_result = await state.session.list_prompts()
-            state.prompts = (prompts_result.prompts if hasattr(prompts_result, "prompts")
-                             else prompts_result if isinstance(prompts_result, list) else [])
+            state.prompts = _extract_list(prompts_result, "prompts")
             log.info(f"MCP server {server_name!r} prompts refreshed: {len(state.prompts)} prompt(s)")
         except Exception as e:
             log.warning(f"MCP server {server_name!r}: failed to refresh prompts: {e}")
@@ -520,13 +524,9 @@ class MCPRegistry:
             if state.capabilities and getattr(state.capabilities, "resources", None):
                 try:
                     res_result = await session.list_resources()
-                    state.resources = (res_result.resources if hasattr(res_result, "resources")
-                                       else res_result if isinstance(res_result, list) else [])
+                    state.resources = _extract_list(res_result, "resources")
                     tmpl_result = await session.list_resource_templates()
-                    state.resource_templates = (tmpl_result.resourceTemplates
-                                                if hasattr(tmpl_result, "resourceTemplates")
-                                                else tmpl_result if isinstance(tmpl_result, list)
-                                                else [])
+                    state.resource_templates = _extract_list(tmpl_result, "resourceTemplates")
                 except Exception as e:
                     log.warning(f"MCP server {name!r}: failed to discover resources: {e}")
 
@@ -534,8 +534,7 @@ class MCPRegistry:
             if state.capabilities and getattr(state.capabilities, "prompts", None):
                 try:
                     prompts_result = await session.list_prompts()
-                    state.prompts = (prompts_result.prompts if hasattr(prompts_result, "prompts")
-                                     else prompts_result if isinstance(prompts_result, list) else [])
+                    state.prompts = _extract_list(prompts_result, "prompts")
                 except Exception as e:
                     log.warning(f"MCP server {name!r}: failed to discover prompts: {e}")
 
@@ -678,9 +677,11 @@ class MCPRegistry:
         return False
 
     async def connect_all(self, configs: list[MCPServerConfig]):
-        """Connect to all configured MCP servers."""
-        for cfg in configs:
-            await self.connect_server(cfg)
+        """Connect to all configured MCP servers (in parallel)."""
+        await asyncio.gather(
+            *(self.connect_server(cfg) for cfg in configs),
+            return_exceptions=True,
+        )
 
         connected = sum(1 for s in self.servers.values() if s.status == "connected")
         failed = sum(1 for s in self.servers.values() if s.status == "failed")

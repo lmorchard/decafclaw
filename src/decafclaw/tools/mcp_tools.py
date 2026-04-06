@@ -9,7 +9,7 @@ log = logging.getLogger(__name__)
 
 async def tool_mcp_status(ctx, action: str = "status", server: str = "") -> str | ToolResult:
     """Show MCP server status or restart servers."""
-    from ..mcp_client import get_registry, init_mcp, load_mcp_config, shutdown_mcp
+    from ..mcp_client import get_registry
 
     log.info(f"[tool:mcp_status] action={action} server={server}")
 

@@ -208,43 +208,17 @@ async def tool_shell_background_start(ctx, command: str) -> ToolResult:
     """Start a background process. Returns immediately with a job ID."""
     log.info(f"[tool:shell_background_start] command={command[:80]}")
 
-    # Reuse shell confirmation logic
-    from .confirmation import request_confirmation
-    from .shell_tools import (
-        _command_matches_pattern,
-        _has_shell_metacharacters,
-        _load_allow_patterns,
-        _save_allow_pattern,
-        _suggest_pattern,
+    from .shell_tools import check_shell_approval
+
+    result = await check_shell_approval(
+        ctx, command, tool_name="shell_background_start",
+        message=f"Background process: `{command}`",
     )
-
-    # Auto-approve checks (same as shell tool)
-    approved = False
-    if ctx.user_id == "heartbeat-admin":
-        approved = True
-    elif "shell" in ctx.tools.preapproved:
-        approved = True
-    elif (ctx.tools.preapproved_shell_patterns
-          and not _has_shell_metacharacters(command)
-          and _command_matches_pattern(command, ctx.tools.preapproved_shell_patterns)):
-        approved = True
-    elif _command_matches_pattern(command, _load_allow_patterns(ctx.config)):
-        approved = True
-
-    if not approved:
-        suggested_pattern = _suggest_pattern(command)
-        result = await request_confirmation(
-            ctx, tool_name="shell_background_start", command=command,
-            message=f"Background process: `{command}`",
-            suggested_pattern=suggested_pattern,
+    if not result.get("approved"):
+        return ToolResult(
+            text="[error: background process was denied by user]",
+            data={"status": "error"},
         )
-        if not result.get("approved"):
-            return ToolResult(
-                text="[error: background process was denied by user]",
-                data={"status": "error"},
-            )
-        if result.get("add_pattern"):
-            _save_allow_pattern(ctx.config, suggested_pattern)
 
     manager = _get_job_manager(ctx)
     await manager.cleanup_expired()

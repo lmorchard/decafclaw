@@ -166,13 +166,12 @@ class Context:
         child.skip_vault_retrieval = self.skip_vault_retrieval
         child.wiki_page = self.wiki_page
         child.effort = self.effort
-        # Share tools + skills + composer (concurrent tool calls read but don't mutate)
-        child.tools = self.tools
+        # Share skills + composer (concurrent tool calls read but don't mutate)
         child.skills = self.skills
         child.composer = self.composer
         # Fresh token counters — don't accumulate child usage into parent
         child.tokens = TokenUsage()
-        # Override the tool call ID (the purpose of this fork)
+        # Fork tools with the specific tool call ID (the purpose of this fork)
         child.tools = replace(self.tools, current_call_id=tool_call_id)
         return child
 

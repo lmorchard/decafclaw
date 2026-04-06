@@ -34,9 +34,18 @@ async def reflect_on_failure(config, test_case: dict, result: dict,
     expected = test_case.get("expect", {}).get("response_contains", "?")
     setup_memories = test_case.get("setup", {}).get("memories", [])
 
+    # Multi-turn tests use "turns" instead of "input"
+    if "turns" in test_case:
+        input_text = "\n".join(
+            f"[{t.get('role', 'user')}] {t.get('content', '')}"
+            for t in test_case["turns"]
+        )
+    else:
+        input_text = test_case.get("input", "")
+
     prompt = REFLECTION_PROMPT.format(
         name=test_case["name"],
-        input=test_case["input"],
+        input=input_text,
         expected=expected,
         setup=[m.get("content", "") for m in setup_memories],
         response=result["response"],

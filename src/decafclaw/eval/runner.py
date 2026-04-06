@@ -6,7 +6,7 @@ from datetime import datetime
 from pathlib import Path
 
 from ..agent import run_agent_turn
-from ..config import Config, load_config
+from ..config import Config
 from ..context import Context
 from ..events import EventBus
 
@@ -204,9 +204,10 @@ async def run_eval(yaml_data: list[dict], config: Config,
                    verbose: bool = False) -> tuple[dict, str, str]:
     """Run all test cases and return (results, timestamp, model_name)."""
     import tempfile
+    from dataclasses import replace
 
     if model:
-        config.llm.model = model
+        config = replace(config, llm=replace(config.llm, model=model))
 
     effective_model = config.llm.model
     timestamp = datetime.now().strftime("%Y-%m-%d-%H%M")
