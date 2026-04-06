@@ -11,6 +11,11 @@ from claude_code_sdk import (
 )
 
 from decafclaw.skills.claude_code.output import SessionLogger
+from decafclaw.skills.claude_code.tools import (
+    _build_short_text,
+    _summarize_tool_result,
+    _summarize_tool_use,
+)
 
 
 def test_log_creates_file(tmp_path):
@@ -253,3 +258,159 @@ def test_deduplicates_files_changed(tmp_path):
     )
     logger.log_message(msg)
     assert logger.files_changed == ["x.py"]  # deduplicated
+
+
+# -- _build_short_text tests --------------------------------------------------
+
+
+def test_short_text_success_with_cost_and_files(tmp_path):
+    logger = SessionLogger(tmp_path, "test")
+    logger.total_cost_usd = 0.36
+    logger.files_changed = ["a.py", "b.py", "c.py"]
+    result = _build_short_text("success", logger)
+    assert result == "success - $0.36 - 3 files changed"
+
+
+def test_short_text_success_single_file(tmp_path):
+    logger = SessionLogger(tmp_path, "test")
+    logger.total_cost_usd = 0.10
+    logger.files_changed = ["a.py"]
+    result = _build_short_text("success", logger)
+    assert result == "success - $0.10 - 1 file changed"
+
+
+def test_short_text_success_no_cost_no_files(tmp_path):
+    logger = SessionLogger(tmp_path, "test")
+    result = _build_short_text("success", logger)
+    assert result == "success"
+
+
+def test_short_text_error_with_errors(tmp_path):
+    logger = SessionLogger(tmp_path, "test")
+    logger.total_cost_usd = 0.05
+    logger.errors = ["ImportError", "SyntaxError"]
+    result = _build_short_text("error", logger)
+    assert result == "error - $0.05 - 2 errors"
+
+
+def test_short_text_error_single_error(tmp_path):
+    logger = SessionLogger(tmp_path, "test")
+    logger.errors = ["boom"]
+    result = _build_short_text("error", logger)
+    assert result == "error - 1 error"
+
+
+def test_short_text_deduplicates_files(tmp_path):
+    logger = SessionLogger(tmp_path, "test")
+    logger.files_changed = ["a.py", "b.py", "a.py"]
+    result = _build_short_text("success", logger)
+    assert result == "success - 2 files changed"
+
+
+# -- _summarize_tool_use tests ------------------------------------------------
+
+
+def test_summarize_edit():
+    assert _summarize_tool_use("Edit", {"file_path": "src/foo.py", "old_string": "x", "new_string": "y"}) == "Edit src/foo.py"
+
+
+def test_summarize_write():
+    assert _summarize_tool_use("Write", {"file_path": "new.py", "content": "..."}) == "Write new.py"
+
+
+def test_summarize_read_with_range():
+    result = _summarize_tool_use("Read", {"file_path": "bar.py", "offset": 10, "limit": 40})
+    assert result == "Read bar.py (lines 10-50)"
+
+
+def test_summarize_read_with_offset_only():
+    result = _summarize_tool_use("Read", {"file_path": "bar.py", "offset": 100})
+    assert result == "Read bar.py (from line 100)"
+
+
+def test_summarize_read_simple():
+    assert _summarize_tool_use("Read", {"file_path": "bar.py"}) == "Read bar.py"
+
+
+def test_summarize_bash():
+    assert _summarize_tool_use("Bash", {"command": "make test"}) == "Bash — make test"
+
+
+def test_summarize_bash_multiline():
+    result = _summarize_tool_use("Bash", {"command": "echo hello\necho world"})
+    assert result == "Bash — echo hello"
+
+
+def test_summarize_bash_truncated():
+    long_cmd = "x" * 100
+    result = _summarize_tool_use("Bash", {"command": long_cmd})
+    assert len(result) < 100
+    assert result.endswith("...")
+
+
+def test_summarize_glob():
+    assert _summarize_tool_use("Glob", {"pattern": "**/*.py"}) == "Glob **/*.py"
+
+
+def test_summarize_glob_with_path():
+    result = _summarize_tool_use("Glob", {"pattern": "*.js", "path": "src/"})
+    assert result == "Glob *.js in src/"
+
+
+def test_summarize_grep():
+    result = _summarize_tool_use("Grep", {"pattern": "TODO", "path": "src/"})
+    assert result == "Grep /TODO/ in src/"
+
+
+def test_summarize_websearch():
+    result = _summarize_tool_use("WebSearch", {"query": "python asyncio"})
+    assert result == 'WebSearch "python asyncio"'
+
+
+def test_summarize_webfetch():
+    result = _summarize_tool_use("WebFetch", {"url": "https://example.com"})
+    assert result == "WebFetch https://example.com"
+
+
+def test_summarize_unknown_tool_with_input():
+    result = _summarize_tool_use("CustomTool", {"target": "xyz", "mode": "fast"})
+    assert result == "CustomTool — target=xyz, mode=fast"
+
+
+def test_summarize_unknown_tool_empty_input():
+    assert _summarize_tool_use("CustomTool", {}) == "CustomTool"
+
+
+def test_summarize_unknown_tool_long_value():
+    result = _summarize_tool_use("CustomTool", {"data": "x" * 100})
+    assert "..." in result
+    assert len(result) < 200
+
+
+# -- _summarize_tool_result tests ---------------------------------------------
+
+
+def test_result_success():
+    result = _summarize_tool_result("Bash", "Tests passed\n5 passed in 2s", False)
+    assert result == "Bash — Tests passed"
+
+
+def test_result_success_empty():
+    assert _summarize_tool_result("Edit", "", False) == "Edit — done"
+
+
+def test_result_success_none():
+    assert _summarize_tool_result("Edit", None, False) == "Edit — done"
+
+
+def test_result_error():
+    result = _summarize_tool_result("Bash", "Command not found: foobar", True)
+    assert "failed" in result
+    assert "Command not found" in result
+
+
+def test_result_long_first_line():
+    long_line = "x" * 200
+    result = _summarize_tool_result("Read", long_line, False)
+    assert len(result) < 200
+    assert result.endswith("...")

@@ -43,7 +43,9 @@ export class MessageStore {
     this.#currentMessages.push(msg);
   }
 
-  /** Update a tool_call message by tool_call_id (for status updates). */
+  /** Update a tool_call message by tool_call_id (for status updates).
+   * Accumulates a statusHistory array so the UI can show the full progress log.
+   */
   updateToolCall(/** @type {string} */ toolCallId, /** @type {string} */ content) {
     if (!toolCallId) {
       // Fallback: update the last tool_call message (legacy behavior)
@@ -54,10 +56,20 @@ export class MessageStore {
     const msg = this.#currentMessages.find(
       m => m.role === 'tool_call' && m.tool_call_id === toolCallId
     );
-    if (msg) msg.content = content;
+    if (msg) {
+      if (!msg.statusHistory) msg.statusHistory = [];
+      msg.statusHistory.push({ text: content, timestamp: new Date().toISOString() });
+      // Cap history to prevent unbounded growth from long-running tools
+      if (msg.statusHistory.length > 200) {
+        msg.statusHistory = msg.statusHistory.slice(-200);
+      }
+      msg.content = content;
+    }
   }
 
-  /** Replace a tool_call message by tool_call_id with a completed tool result. */
+  /** Replace a tool_call message by tool_call_id with a completed tool result.
+   * Carries over statusHistory from the in-progress message so the UI can still show it.
+   */
   replaceToolCall(/** @type {string} */ toolCallId, /** @type {ChatMessage} */ msg) {
     if (!toolCallId) {
       // Fallback: replace the last tool_call (legacy behavior)
@@ -68,7 +80,13 @@ export class MessageStore {
     const idx = this.#currentMessages.findIndex(
       m => m.role === 'tool_call' && m.tool_call_id === toolCallId
     );
-    if (idx >= 0) this.#currentMessages[idx] = msg;
+    if (idx >= 0) {
+      const old = this.#currentMessages[idx];
+      if (old.statusHistory?.length) {
+        msg.statusHistory = old.statusHistory;
+      }
+      this.#currentMessages[idx] = msg;
+    }
   }
 
   /** Insert a message before the last user message (for memory context). */

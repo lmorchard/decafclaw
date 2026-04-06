@@ -7,6 +7,8 @@ export class ToolMessage extends LitElement {
     content: { type: String },
     icon: { type: String },
     display_short_text: { type: String },
+    /** Array of {text, timestamp} status history entries from the tool_call phase */
+    statusHistory: { type: Array, attribute: false },
     _expanded: { type: Boolean, state: true },
   };
 
@@ -18,6 +20,8 @@ export class ToolMessage extends LitElement {
     this.content = '';
     this.icon = '\u{1f527}';
     this.display_short_text = '';
+    /** @type {Array<{text: string, timestamp: string}>|null} */
+    this.statusHistory = null;
     this._expanded = false;
   }
 
@@ -31,22 +35,52 @@ export class ToolMessage extends LitElement {
     return content.substring(0, maxLen) + '...';
   }
 
+  /** @param {string} isoStr */
+  #formatTime(isoStr) {
+    try {
+      const d = new Date(isoStr);
+      return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    } catch {
+      return '';
+    }
+  }
+
   render() {
     const hasContent = this.content && this.content.length > 0;
+    const hasHistory = this.statusHistory?.length > 0;
+    const expandable = hasContent || hasHistory;
     return html`
       <div class="message tool">
-        <div class="tool-result-header" @click=${hasContent ? this.#toggleExpand : nothing}>
+        <div class="tool-result-header" @click=${expandable ? this.#toggleExpand : nothing}>
           <span class="tool-icon">${this.icon}</span>
           <span class="tool-name">${this.tool}</span>
           ${hasContent ? html`
             <span class="tool-preview">${this.display_short_text || this.#truncate(this.content)}</span>
+          ` : nothing}
+          ${hasHistory && !hasContent ? html`
+            <span class="tool-preview">${this.statusHistory.length} progress updates</span>
+          ` : nothing}
+          ${expandable ? html`
+            ${hasHistory ? html`<span class="status-history-badge">${this.statusHistory.length}</span>` : nothing}
             <span class="expand-toggle">${this._expanded ? '\u25b2' : '\u25bc'}</span>
           ` : nothing}
         </div>
         ${this._expanded ? html`
-          <div class="tool-result-detail">
-            <pre>${this.content}</pre>
-          </div>
+          ${hasHistory ? html`
+            <div class="status-history">
+              ${this.statusHistory.map(entry => html`
+                <div class="status-history-entry">
+                  <span class="status-history-time">${this.#formatTime(entry.timestamp)}</span>
+                  <span class="status-history-text">${entry.text}</span>
+                </div>
+              `)}
+            </div>
+          ` : nothing}
+          ${hasContent ? html`
+            <div class="tool-result-detail">
+              <pre>${this.content}</pre>
+            </div>
+          ` : nothing}
         ` : nothing}
       </div>
     `;
