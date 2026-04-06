@@ -780,7 +780,7 @@ class MattermostClient:
                         f"{critique}")
                 await cd.on_tool_status("reflection", text)
 
-        async def handle_memory_context(event):
+        async def handle_vault_retrieval(event):
             assert cd is not None
             results = event.get("results") or []
             if results:
@@ -794,7 +794,7 @@ class MattermostClient:
                         parts.append(f"{source_counts[st]} {st}")
                 summary = ", ".join(parts) or "context"
                 await cd.on_tool_status(
-                    "memory_context",
+                    "vault_retrieval",
                     f"\U0001f9e0 Retrieved {summary}")
 
         async def handle_compaction_start(event):
@@ -847,7 +847,7 @@ class MattermostClient:
                 "tool_media_uploaded": handle_tool_media_uploaded,
                 "tool_confirm_request": handle_tool_confirm_request,
                 "reflection_result": handle_reflection_result,
-                "memory_context": handle_memory_context,
+                "vault_retrieval": handle_vault_retrieval,
             })
         dispatch["compaction_start"] = handle_compaction_start
         dispatch["compaction_end"] = handle_compaction_end

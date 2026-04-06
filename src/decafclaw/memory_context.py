@@ -31,7 +31,7 @@ async def retrieve_memory_context(config, user_message: str) -> list[dict]:
     Fail-open: any error logs a warning and returns empty list.
     """
     try:
-        mc = config.memory_context
+        mc = config.vault_retrieval
         if not mc.enabled:
             return []
         if not config.embedding.model:

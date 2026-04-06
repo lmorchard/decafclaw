@@ -60,8 +60,8 @@ def _extract_previous_summary(config, conv_id: str) -> tuple[str | None, str | N
 def _split_into_turns(messages: list[dict]) -> list[list[dict]]:
     """Split a flat message list into turns.
 
-    A turn starts with a user or memory_context message and includes
-    everything until the next turn boundary. memory_context is treated
+    A turn starts with a user or vault_retrieval message and includes
+    everything until the next turn boundary. vault_retrieval is treated
     as a turn start because it's injected before the user message it
     belongs to.
     """
@@ -69,7 +69,7 @@ def _split_into_turns(messages: list[dict]) -> list[list[dict]]:
     current_turn = []
     for msg in messages:
         role = msg.get("role")
-        if role in ("user", "memory_context") and current_turn:
+        if role in ("user", "vault_retrieval") and current_turn:
             turns.append(current_turn)
             current_turn = []
         current_turn.append(msg)

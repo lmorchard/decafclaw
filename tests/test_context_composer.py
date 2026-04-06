@@ -148,10 +148,10 @@ class TestGetContextWindowSize:
 
 class TestComposeMemoryContext:
     @pytest.mark.asyncio
-    async def test_skips_when_skip_memory_context(self, ctx, config):
-        ctx.skip_memory_context = True
+    async def test_skips_when_skip_vault_retrieval(self, ctx, config):
+        ctx.skip_vault_retrieval = True
         composer = ContextComposer()
-        msgs, text, raw, entry = await composer._compose_memory_context(
+        msgs, text, raw, entry = await composer._compose_vault_retrieval(
             ctx, config, "hello", ComposerMode.INTERACTIVE,
         )
         assert msgs == []
@@ -162,7 +162,7 @@ class TestComposeMemoryContext:
     @pytest.mark.asyncio
     async def test_skips_for_heartbeat_mode(self, ctx, config):
         composer = ContextComposer()
-        msgs, text, raw, entry = await composer._compose_memory_context(
+        msgs, text, raw, entry = await composer._compose_vault_retrieval(
             ctx, config, "hello", ComposerMode.HEARTBEAT,
         )
         assert msgs == []
@@ -171,7 +171,7 @@ class TestComposeMemoryContext:
     @pytest.mark.asyncio
     async def test_skips_for_child_agent_mode(self, ctx, config):
         composer = ContextComposer()
-        msgs, text, raw, entry = await composer._compose_memory_context(
+        msgs, text, raw, entry = await composer._compose_vault_retrieval(
             ctx, config, "hello", ComposerMode.CHILD_AGENT,
         )
         assert msgs == []
@@ -189,11 +189,11 @@ class TestComposeMemoryContext:
                   return_value="formatted memory"),
         ):
             composer = ContextComposer()
-            msgs, text, raw, entry = await composer._compose_memory_context(
+            msgs, text, raw, entry = await composer._compose_vault_retrieval(
                 ctx, config, "hello", ComposerMode.INTERACTIVE,
             )
             assert len(msgs) == 1
-            assert msgs[0]["role"] == "memory_context"
+            assert msgs[0]["role"] == "vault_retrieval"
             assert text == "formatted memory"
             assert len(raw) == 1
             assert entry is not None
@@ -205,7 +205,7 @@ class TestComposeMemoryContext:
         with patch("decafclaw.memory_context.retrieve_memory_context",
                    new_callable=AsyncMock, side_effect=RuntimeError("boom")):
             composer = ContextComposer()
-            msgs, text, raw, entry = await composer._compose_memory_context(
+            msgs, text, raw, entry = await composer._compose_vault_retrieval(
                 ctx, config, "hello", ComposerMode.INTERACTIVE,
             )
             assert msgs == []
@@ -228,7 +228,7 @@ class TestComposeMemoryContext:
                   return_value="formatted"),
         ):
             composer = ContextComposer()
-            await composer._compose_memory_context(
+            await composer._compose_vault_retrieval(
                 ctx, config, "hello", ComposerMode.INTERACTIVE,
             )
             assert "pages/first.md" in composer.state.injected_paths
@@ -248,12 +248,12 @@ class TestComposeMemoryContext:
         ):
             composer = ContextComposer()
             # First turn: injected
-            _, _, _, entry1 = await composer._compose_memory_context(
+            _, _, _, entry1 = await composer._compose_vault_retrieval(
                 ctx, config, "hello", ComposerMode.INTERACTIVE,
             )
             assert entry1 is not None
             # Second turn: suppressed (already in context)
-            _, _, _, entry2 = await composer._compose_memory_context(
+            _, _, _, entry2 = await composer._compose_vault_retrieval(
                 ctx, config, "hello again", ComposerMode.INTERACTIVE,
             )
             assert entry2 is None  # no results after suppression
@@ -265,7 +265,7 @@ class TestComposeMemoryContext:
 class TestComposeWikiContext:
     def test_skips_for_heartbeat_mode(self, ctx, config):
         composer = ContextComposer()
-        msgs, entry = composer._compose_wiki_context(
+        msgs, entry = composer._compose_vault_references(
             ctx, config, "hello", [], ComposerMode.HEARTBEAT,
         )
         assert msgs == []
@@ -275,7 +275,7 @@ class TestComposeWikiContext:
         # Point vault to non-existent dir
         config.vault.vault_path = str(tmp_path / "nonexistent")
         composer = ContextComposer()
-        msgs, entry = composer._compose_wiki_context(
+        msgs, entry = composer._compose_vault_references(
             ctx, config, "hello", [], ComposerMode.INTERACTIVE,
         )
         assert msgs == []
@@ -291,11 +291,11 @@ class TestComposeWikiContext:
             with patch("decafclaw.agent._read_wiki_page",
                        return_value="Page content here"):
                 composer = ContextComposer()
-                msgs, entry = composer._compose_wiki_context(
+                msgs, entry = composer._compose_vault_references(
                     ctx, config, "@[[TestPage]]", [], ComposerMode.INTERACTIVE,
                 )
                 assert len(msgs) == 1
-                assert msgs[0]["role"] == "wiki_context"
+                assert msgs[0]["role"] == "vault_references"
                 assert "TestPage" in msgs[0]["content"]
                 assert entry is not None
                 assert entry.source == "wiki"
@@ -305,11 +305,11 @@ class TestComposeWikiContext:
         vault_dir = tmp_path / "vault"
         vault_dir.mkdir()
         config.vault.vault_path = str(vault_dir)
-        history = [{"role": "wiki_context", "content": "old", "wiki_page": "TestPage"}]
+        history = [{"role": "vault_references", "content": "old", "wiki_page": "TestPage"}]
         with patch("decafclaw.agent._parse_wiki_references",
                    return_value=[{"page": "TestPage", "source": "mention"}]):
             composer = ContextComposer()
-            msgs, entry = composer._compose_wiki_context(
+            msgs, entry = composer._compose_vault_references(
                 ctx, config, "@[[TestPage]]", history, ComposerMode.INTERACTIVE,
             )
             assert msgs == []

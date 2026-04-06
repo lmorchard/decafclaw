@@ -98,7 +98,7 @@ export class ToolStatusStore {
       case 'tool_status':
         this.#toolStatus = `${msg.tool}: ${msg.message}`;
         if (msg.conv_id === currentConvId) {
-          if (msg.tool === 'memory_context' || msg.tool === 'wiki_context') {
+          if (msg.tool === 'vault_retrieval' || msg.tool === 'vault_references') {
             this.#messageStore.insertBeforeLastUser({
               role: msg.tool,
               content: msg.message,
