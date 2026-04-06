@@ -780,6 +780,39 @@ def create_app(config, event_bus, app_ctx=None) -> Starlette:
         index.unarchive(conv_id)
         return JSONResponse({"ok": True})
 
+    @_authenticated
+    async def delete_conversation(request: Request, username: str) -> JSONResponse:
+        """Permanently delete a conversation and all associated files."""
+        conv_id = request.path_params["id"]
+        from .web.conversations import ConversationIndex
+        index = ConversationIndex(config)
+        conv = index.get(conv_id)
+        if not conv or conv.user_id != username:
+            return JSONResponse({"error": "not found"}, status_code=404)
+
+        # Delete files on disk (with path sandboxing)
+        conv_dir = config.workspace_path / "conversations"
+        for suffix in [".jsonl", ".compacted.jsonl", ".context.json"]:
+            path = (conv_dir / f"{conv_id}{suffix}").resolve()
+            if not path.is_relative_to(conv_dir.resolve()):
+                continue  # path traversal guard
+            if path.exists():
+                path.unlink()
+
+        # Delete uploads directory
+        from .attachments import delete_conversation_uploads
+        delete_conversation_uploads(config, conv_id)
+
+        # Remove from conversation index
+        index.delete(conv_id)
+
+        # Remove from folder index
+        from .web.conversation_folders import ConversationFolderIndex
+        folder_index = ConversationFolderIndex(config, username)
+        await folder_index.remove_assignment(conv_id)
+
+        return JSONResponse({"ok": True})
+
     # -- Conversation folder routes -----------------------------------------------
 
     @_authenticated
@@ -994,6 +1027,7 @@ def create_app(config, event_bus, app_ctx=None) -> Starlette:
         Route("/api/conversations/folders", create_conv_folder, methods=["POST"]),
         Route("/api/conversations/folders/{path:path}", delete_conv_folder, methods=["DELETE"]),
         Route("/api/conversations/folders/{path:path}", rename_conv_folder, methods=["PUT"]),
+        Route("/api/conversations/{id}", delete_conversation, methods=["DELETE"]),
         Route("/api/conversations/{id}/archive", archive_conversation, methods=["POST"]),
         Route("/api/conversations/{id}/unarchive", unarchive_conversation, methods=["POST"]),
         Route("/api/upload/{conv_id}", handle_upload, methods=["POST"]),
