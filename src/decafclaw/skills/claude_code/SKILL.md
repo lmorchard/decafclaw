@@ -10,6 +10,31 @@ requires:
 
 Claude Code is a powerful coding agent that can read, edit, and execute code in repositories. Use this skill to delegate coding tasks that require file manipulation.
 
+## Delegation Philosophy
+
+**Prefer high-level, goal-oriented delegation over atomic step-by-step control.** Claude Code is a full coding agent — it can read code, write code, run tests, start servers, diagnose failures, and iterate on fixes. Your role is project manager, not micro-manager.
+
+**Default approach:** Give Claude Code the end-state goal and success criteria in a single `claude_code_send`. Let it handle the implementation, testing, debugging, and iteration autonomously. Only fall back to step-by-step orchestration when you have a specific reason (e.g., you need to inject external context between steps, or the task requires coordination across multiple repos).
+
+**Anti-pattern — avoid this:**
+1. `claude_code_send` → "Create file X with this content"
+2. `claude_code_exec` → run tests yourself
+3. `claude_code_send` → "Fix this test failure: ..."
+4. `claude_code_exec` → run tests again
+5. Repeat...
+
+**Preferred pattern — do this instead:**
+1. `claude_code_send` → "Implement feature X. Write the code, run the tests with `make test`, and fix any failures. The feature is done when all tests pass."
+
+Claude Code will run the full develop/test/debug cycle internally, iterating until it succeeds or exhausts its budget. This is faster, cheaper (fewer round-trips), and produces better results because Claude Code has direct access to error output, stack traces, and the full codebase context.
+
+**When composing prompts for `claude_code_send`:**
+- State the goal, not the steps. Describe what "done" looks like.
+- Include success criteria: "Tests pass", "Server responds 200 on /endpoint", "Linter reports no errors".
+- Include the verification method: "Run `make test`", "Start the server and hit the health endpoint", "Run `mypy .`".
+- If there's a debug/fix loop involved, say so explicitly: "If tests fail, diagnose and fix. Repeat until green."
+- Trust Claude Code to figure out the implementation details — it has the full codebase.
+
 ## Available Tools
 
 ### 1. `claude_code_start` — Start a new coding session
@@ -128,28 +153,32 @@ Shows all active sessions with ID, working directory, age, and cost so far.
 
 ## Workflow
 
-### Basic
-1. **Start** a session with `claude_code_start` pointing at the repo
-2. **Send** tasks with `claude_code_send` — iterate as needed
-3. **Stop** when done with `claude_code_stop`
+### Autonomous (preferred)
 
-### With context and review
+The default workflow. Delegate the full objective — implementation, verification, and debugging — in a single send.
+
 1. **Start** → `claude_code_start` with `instructions` for project conventions
-2. **Send** → `claude_code_send` with `context` (specs, vault pages) and `include_diff=true`
-3. **Review** → inspect the `diff` field in the structured result
-4. **Fix** → if changes need adjustment, `claude_code_send` with feedback
-5. **Verify** → `claude_code_exec` to run tests
-6. **Stop** → `claude_code_stop` when satisfied
+2. **Delegate** → `claude_code_send` with a goal-oriented prompt that includes success criteria and verification steps. Let Claude Code handle the build/test/debug loop internally.
+3. **Review** → inspect `diff` and `result_text` in the structured result
+4. **Adjust** → if the result needs refinement, send targeted feedback (not step-by-step instructions)
+5. **Stop** → `claude_code_stop` when satisfied
 
-### Verify loop (TDD-style)
+**Example prompt:**
+> "Build a REST API endpoint `POST /tasks` that creates a task and stores it in SQLite. Write tests. Run `make test` and fix any failures until all tests pass. Then start the server with `make run`, verify `curl -X POST localhost:8000/tasks -d '{"title":"test"}'` returns 201, and stop the server."
+
+### Supervised (when you need control between steps)
+
+Use when you need to inject external context, coordinate across repos, or make decisions between steps that Claude Code can't make on its own.
+
 1. **Start** → `claude_code_start` with optional `setup_command`
-2. **Implement** → `claude_code_send` with the coding task
-3. **Verify** → `claude_code_exec` to run tests (`make test`, `pytest`, etc.)
-4. **Fix** → if tests failed, `claude_code_send` with the failure output
-5. **Verify** → `claude_code_exec` again to confirm the fix
-6. **Stop** → `claude_code_stop` when satisfied
+2. **Send** → `claude_code_send` with a focused task and `include_diff=true`
+3. **Review** → inspect the `diff` field
+4. **Verify** → `claude_code_exec` to run tests (cheap, no LLM cost)
+5. **Fix** → if changes need adjustment, `claude_code_send` with feedback + test output
+6. **Repeat** steps 3-5 as needed
+7. **Stop** → `claude_code_stop` when satisfied
 
-The exec tool makes the verify steps cheap (no LLM cost, no latency). Use this pattern for iterative development.
+Only use this pattern when you have a concrete reason the autonomous pattern won't work. Examples: you need to pull a file from another session between steps, you need to ask the user a question mid-task, or the task spans multiple repositories.
 
 Sessions expire after 30 minutes of inactivity. If a session expires, start a new one and restate the context.
 
@@ -165,9 +194,10 @@ If the cwd isn't already a git repo, consider running `claude_code_exec` with `g
 ## Cost Awareness
 
 Each Claude Code interaction costs money (Anthropic API usage). The structured result after each `claude_code_send` includes the cost. Be mindful of:
-- Keep tasks focused — one clear objective per send
-- Use `claude_code_exec` for verification instead of burning a full `claude_code_send`
+- **One high-level goal per send is usually cheaper than many small sends** — each send has prompt overhead; a single autonomous send avoids re-transmitting context repeatedly
+- Use `claude_code_exec` for quick checks when you *do* need to orchestrate between steps
 - Use `claude_code_stop` when done to free the session
+- Set an appropriate `budget_usd` on start — higher budgets for complex autonomous tasks that may need many internal iterations
 - Default budget limit applies per session
 
 ## Permission Model
