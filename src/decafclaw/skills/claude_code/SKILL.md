@@ -139,3 +139,12 @@ Each Claude Code interaction costs money (Anthropic API usage). The structured r
 ## Permission Model
 
 Claude Code tools require confirmation before executing. The first `claude_code_send` or `claude_code_exec` in a session requires user approval (via Mattermost reactions or web UI). Once approved, subsequent calls in the same session are auto-approved. Setup commands also require confirmation.
+
+## Progress Reporting
+
+During `claude_code_send`, the skill publishes `tool_status` events with richer detail:
+
+- **Tool call count**: Each tool use is numbered — `"Tool call 5: Using Edit..."`. Counter resets per send.
+- **Error snippets**: Tool failures include the tool name and first 100 chars of error text — `"Edit failed — SyntaxError: unexpected indent"`. Published as they happen, before the send completes.
+- **Running cost**: Session cost updated on each SDK result — `"Session cost: $0.45 of $2.00 budget"`. Note: this is cumulative session cost, not per-send.
+- **Budget warnings**: Published when session cost crosses 50%, 75%, and 90% of the session budget. Each threshold fires at most once per send.
