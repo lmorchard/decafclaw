@@ -215,6 +215,16 @@ class ConversationIndex:
                 return True
         return False
 
+    def delete(self, conv_id: str) -> bool:
+        """Remove a conversation from the index entirely."""
+        data = self._load()
+        new_data = [d for d in data if d.get("conv_id") != conv_id]
+        if len(new_data) == len(data):
+            return False
+        self._save(new_data)
+        log.info(f"Deleted web conversation {conv_id} from index")
+        return True
+
     def touch(self, conv_id: str) -> None:
         """Update the updated_at timestamp."""
         data = self._load()

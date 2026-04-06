@@ -344,6 +344,12 @@ export class ConversationSidebar extends LitElement {
     this.store?.unarchiveConversation(convId);
   }
 
+  /** @param {string} convId */
+  #handleDelete(convId) {
+    if (!confirm('Permanently delete this conversation? This cannot be undone.')) return;
+    this.store?.deleteConversation(convId);
+  }
+
   #openConfig() {
     this.dispatchEvent(new CustomEvent('config-open', {
       bubbles: true,
@@ -371,6 +377,9 @@ export class ConversationSidebar extends LitElement {
    * @param {string}   [opts.actionLabel] - Button label/symbol (e.g. '×', '↩')
    * @param {string}   [opts.actionTitle] - Button title text
    * @param {function} [opts.onAction]    - Click handler for the action button
+   * @param {string}   [opts.action2Label] - Second action button label
+   * @param {string}   [opts.action2Title] - Second action button title
+   * @param {function} [opts.onAction2]   - Click handler for the second action button
    * @param {function} [opts.onDblClick]  - Double-click handler on the title span
    * @param {string}   [opts.badge]       - Optional badge text shown after title
    * @param {string}   [opts.titleSuffix] - Extra text appended to the title attr
@@ -393,6 +402,13 @@ export class ConversationSidebar extends LitElement {
           @dblclick=${opts.onDblClick || nothing}
         >${conv.title}</span>
         ${opts.badge ? html`<span class="conv-type-badge">${opts.badge}</span>` : nothing}
+        ${opts.onAction2 ? html`
+          <button
+            class="conv-archive"
+            @click=${(/** @type {Event} */ e) => { e.stopPropagation(); opts.onAction2(conv.conv_id); }}
+            title=${opts.action2Title || ''}
+          >${opts.action2Label}</button>
+        ` : nothing}
         ${opts.onAction ? html`
           <button
             class="conv-archive"
@@ -595,6 +611,9 @@ export class ConversationSidebar extends LitElement {
               actionLabel: '\u21a9',
               actionTitle: 'Unarchive conversation',
               onAction: (id) => this.#handleUnarchive(id),
+              action2Label: '\u{1F5D1}',
+              action2Title: 'Delete conversation permanently',
+              onAction2: (id) => this.#handleDelete(id),
             }))
           : this._chatSection === '_system'
             ? this._conversations.map(c => this.#renderConversationItem(c, {
