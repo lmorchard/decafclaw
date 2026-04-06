@@ -28,7 +28,7 @@ class ComposerMode(enum.Enum):
     - SCHEDULED — cron-style scheduled tasks (skips memory + wiki)
     - CHILD_AGENT — delegate_task sub-agents (skips memory + wiki)
 
-    ``skip_memory_context`` on the context is an independent flag that
+    ``skip_vault_retrieval`` on the context is an independent flag that
     skips memory retrieval without affecting wiki injection or mode.
     """
     INTERACTIVE = "interactive"
@@ -178,13 +178,13 @@ class ContextComposer:
 
         # -- Wiki context (injected before user message in history) --
         # Explicit @[[Page]] references are fixed costs — always included.
-        wiki_msgs, wiki_entry = self._compose_wiki_context(
+        wiki_msgs, wiki_entry = self._compose_vault_references(
             ctx, config, user_message, history, mode,
         )
         for wm in wiki_msgs:
             history.append(wm)
             to_archive.append(wm)
-            await ctx.publish("wiki_context", text=wm["content"], page=wm.get("wiki_page"))
+            await ctx.publish("vault_references", text=wm["content"], page=wm.get("wiki_page"))
         if wiki_entry:
             sources.append(wiki_entry)
 
@@ -224,10 +224,10 @@ class ContextComposer:
         memory_budget: int | None = None
         if remaining_budget > 0:
             memory_budget = remaining_budget
-        # else: None → _compose_memory_context falls back to max_tokens
+        # else: None → _compose_vault_retrieval falls back to max_tokens
 
         # -- Memory context (injected before user message in history) --
-        memory_msgs, retrieved_context_text, mc_results, memory_entry = await self._compose_memory_context(
+        memory_msgs, retrieved_context_text, mc_results, memory_entry = await self._compose_vault_retrieval(
             ctx, config, user_message, mode,
             token_budget=memory_budget,
         )
@@ -242,7 +242,7 @@ class ContextComposer:
         to_archive.append(user_msg)
 
         # -- Build LLM messages (filter + remap roles) --
-        role_remap = {"memory_context": "user", "wiki_context": "user"}
+        role_remap = {"vault_retrieval": "user", "vault_references": "user"}
         llm_history = []
         for m in history:
             role = m.get("role")
@@ -280,8 +280,8 @@ class ContextComposer:
         messages.extend(llm_history)
 
         # -- Publish memory context event (after user message for UI ordering) --
-        if mc_results and config.memory_context.show_in_ui:
-            await ctx.publish("memory_context",
+        if mc_results and config.vault_retrieval.show_in_ui:
+            await ctx.publish("vault_retrieval",
                               text=retrieved_context_text,
                               results=mc_results)
 
@@ -359,7 +359,7 @@ class ContextComposer:
         candidates.sort(key=lambda c: c.get("composite_score", 0), reverse=True)
         return candidates
 
-    async def _compose_memory_context(
+    async def _compose_vault_retrieval(
         self, ctx, config, user_message: str, mode: ComposerMode,
         token_budget: int | None = None,
     ) -> tuple[list[dict], str, list[dict], SourceEntry | None]:
@@ -367,7 +367,7 @@ class ContextComposer:
 
         Args:
             token_budget: Dynamic budget from composer. If None, falls back
-                to config.memory_context.max_tokens for backward compatibility.
+                to config.vault_retrieval.max_tokens for backward compatibility.
 
         Returns (messages_to_inject, formatted_text, raw_results, source_entry).
         Retrieval candidates are scored by composite relevance and selected
@@ -377,7 +377,7 @@ class ContextComposer:
         from .util import estimate_tokens
 
         skip_modes = {ComposerMode.HEARTBEAT, ComposerMode.SCHEDULED, ComposerMode.CHILD_AGENT}
-        if ctx.skip_memory_context or mode in skip_modes:
+        if ctx.skip_vault_retrieval or mode in skip_modes:
             return [], "", [], None
 
         try:
@@ -408,7 +408,7 @@ class ContextComposer:
             results = [r for r in results if r.get("composite_score", 0) >= score_threshold]
 
             # Select by token budget (score order replaces similarity order)
-            budget = token_budget if token_budget is not None else config.memory_context.max_tokens
+            budget = token_budget if token_budget is not None else config.vault_retrieval.max_tokens
             log.debug("Memory context: %d candidates, budget=%d tokens (%s)",
                       total_candidates, budget,
                       "dynamic" if token_budget is not None else "fixed")
@@ -425,7 +425,7 @@ class ContextComposer:
                 r["tokens_estimated"] = estimate_tokens(r.get("entry_text", ""))
 
             formatted = format_memory_context(results)
-            msg = {"role": "memory_context", "content": formatted}
+            msg = {"role": "vault_retrieval", "content": formatted}
 
             # Track injected paths so they're suppressed in future turns
             # (cleared on compaction when the content is summarized away)
@@ -456,7 +456,7 @@ class ContextComposer:
             log.warning("Memory context composition failed", exc_info=True)
             return [], "", [], None
 
-    def _compose_wiki_context(
+    def _compose_vault_references(
         self, ctx, config, user_message: str, history: list, mode: ComposerMode,
     ) -> tuple[list[dict], SourceEntry | None]:
         """Build wiki context messages for referenced/open pages.
@@ -495,7 +495,7 @@ class ContextComposer:
             else:
                 text = f"[Referenced wiki page: {ref['page']}]\n\n{content}"
             messages.append({
-                "role": "wiki_context",
+                "role": "vault_references",
                 "content": text,
                 "wiki_page": ref["page"],
             })

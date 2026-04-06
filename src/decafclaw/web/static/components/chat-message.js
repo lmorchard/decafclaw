@@ -46,12 +46,12 @@ export class ChatMessage extends LitElement {
       return html`<tool-message .tool=${this.tool || 'reflection'} .content=${this.content} .icon=${'\u{1f441}'}></tool-message>`;
     }
 
-    if (this.role === 'memory_context') {
-      return html`<tool-message .tool=${'memory_context'} .content=${this.content} .icon=${'\u{1f9e0}'}></tool-message>`;
+    if (this.role === 'vault_retrieval') {
+      return html`<tool-message .tool=${'vault_retrieval'} .content=${this.content} .icon=${'\u{1f9e0}'}></tool-message>`;
     }
 
-    if (this.role === 'wiki_context') {
-      return html`<tool-message .tool=${'wiki_context'} .content=${this.content} .icon=${'\u{1f4d6}'}></tool-message>`;
+    if (this.role === 'vault_references') {
+      return html`<tool-message .tool=${'vault_references'} .content=${this.content} .icon=${'\u{1f4d6}'}></tool-message>`;
     }
 
     if (this.role === 'tool_call') {

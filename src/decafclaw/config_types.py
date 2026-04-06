@@ -135,7 +135,7 @@ class VaultConfig:
 
 
 @dataclass
-class MemoryContextConfig:
+class VaultRetrievalConfig:
     enabled: bool = True
     similarity_threshold: float = 0.3
     max_results: int = 5

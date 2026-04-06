@@ -24,10 +24,10 @@ from .config_types import (
     HttpConfig,
     LlmConfig,
     MattermostConfig,
-    MemoryContextConfig,
     ReflectionConfig,
     RelevanceConfig,
     VaultConfig,
+    VaultRetrievalConfig,
 )
 
 log = logging.getLogger(__name__)
@@ -143,7 +143,7 @@ class Config:
     skills: dict[str, dict[str, Any]] = field(default_factory=dict)
     models: dict[str, dict[str, str]] = field(default_factory=dict)
     reflection: ReflectionConfig = field(default_factory=ReflectionConfig)
-    memory_context: MemoryContextConfig = field(default_factory=MemoryContextConfig)
+    vault_retrieval: VaultRetrievalConfig = field(default_factory=VaultRetrievalConfig)
     relevance: RelevanceConfig = field(default_factory=RelevanceConfig)
     vault: VaultConfig = field(default_factory=VaultConfig)
 
@@ -336,8 +336,8 @@ def load_config() -> Config:
     reflection = load_sub_config(
         ReflectionConfig, file_data.get("reflection", {}), "REFLECTION")
 
-    memory_context = load_sub_config(
-        MemoryContextConfig, file_data.get("memory_context", {}), "MEMORY_CONTEXT")
+    vault_retrieval = load_sub_config(
+        VaultRetrievalConfig, file_data.get("vault_retrieval", {}), "MEMORY_CONTEXT")
 
     relevance = load_sub_config(
         RelevanceConfig, file_data.get("relevance", {}), "RELEVANCE")
@@ -364,7 +364,7 @@ def load_config() -> Config:
         skills=skills,
         models=models,
         reflection=reflection,
-        memory_context=memory_context,
+        vault_retrieval=vault_retrieval,
         relevance=relevance,
         vault=vault,
         env=env_vars,

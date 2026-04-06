@@ -695,10 +695,10 @@ def _read_wiki_page(config, page_name: str) -> str | None:
 
 
 def _get_already_injected_pages(history: list) -> set[str]:
-    """Scan history for wiki_context messages and return set of page names."""
+    """Scan history for vault_references messages and return set of page names."""
     pages: set[str] = set()
     for msg in history:
-        if msg.get("role") == "wiki_context":
+        if msg.get("role") == "vault_references":
             page = msg.get("wiki_page")
             if page:
                 pages.add(page)
@@ -755,24 +755,24 @@ async def _prepare_messages(
             else:
                 text = f"[Referenced wiki page: {ref['page']}]\n\n{content}"
             wc_msg: dict = {
-                "role": "wiki_context",
+                "role": "vault_references",
                 "content": text,
                 "wiki_page": ref["page"],
             }
             history.append(wc_msg)
             _archive(ctx, wc_msg)
-            await ctx.publish("wiki_context", text=text, page=ref["page"])
+            await ctx.publish("vault_references", text=text, page=ref["page"])
 
     # Proactive memory context — inject before user message in history
     # (but publish the UI event after the user message so it renders below)
     retrieved_context_text = ""
     mc_results = None
-    if not ctx.skip_memory_context:
+    if not ctx.skip_vault_retrieval:
         from .memory_context import format_memory_context, retrieve_memory_context
         mc_results = await retrieve_memory_context(config, user_message)
         if mc_results:
             retrieved_context_text = format_memory_context(mc_results)
-            mc_msg = {"role": "memory_context", "content": retrieved_context_text}
+            mc_msg = {"role": "vault_retrieval", "content": retrieved_context_text}
             history.append(mc_msg)
             _archive(ctx, mc_msg)
 
@@ -789,7 +789,7 @@ async def _prepare_messages(
     # Build the messages array: system prompt + history
     # Filter out metadata roles (effort, reflection) that aren't valid LLM messages
     # Remap non-standard roles that should appear in LLM context
-    ROLE_REMAP = {"memory_context": "user", "wiki_context": "user"}
+    ROLE_REMAP = {"vault_retrieval": "user", "vault_references": "user"}
     from .archive import LLM_ROLES
     llm_history = []
     for m in history:
@@ -804,8 +804,8 @@ async def _prepare_messages(
 
     # Publish memory context event after user message so it renders below
     # in the web UI (history ordering is already correct for the LLM)
-    if mc_results and config.memory_context.show_in_ui:
-        await ctx.publish("memory_context",
+    if mc_results and config.vault_retrieval.show_in_ui:
+        await ctx.publish("vault_retrieval",
                           text=retrieved_context_text,
                           results=mc_results)
 
@@ -843,7 +843,7 @@ async def run_agent_turn(ctx, user_message: str, history: list,
 
     try:
         # Determine composer mode from context flags.
-        # Note: skip_memory_context is handled directly by the composer,
+        # Note: skip_vault_retrieval is handled directly by the composer,
         # not via mode — HEARTBEAT/SCHEDULED skip wiki too, which isn't
         # always desired when only memory should be skipped.
         _task_mode_map = {
