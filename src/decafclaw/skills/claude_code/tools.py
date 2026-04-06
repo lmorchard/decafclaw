@@ -11,7 +11,9 @@ from claude_code_sdk import (
     ClaudeCodeOptions,
     ResultMessage,
     TextBlock,
+    ToolResultBlock,
     ToolUseBlock,
+    UserMessage,
     query,
 )
 
@@ -79,6 +81,24 @@ def _assemble_prompt(prompt: str, instructions: str = "", context: str = "") -> 
         parts.append(f"<context>\n{context}\n</context>")
     parts.append(prompt)
     return "\n\n".join(parts)
+
+
+_BUDGET_THRESHOLDS = [0.5, 0.75, 0.9]
+
+
+def _check_budget_warnings(cost: float, budget: float, fired: set[float]) -> list[str]:
+    """Return list of budget warning messages for newly crossed thresholds."""
+    warnings = []
+    for threshold in _BUDGET_THRESHOLDS:
+        if threshold not in fired and budget > 0 and cost >= budget * threshold:
+            pct = int(threshold * 100)
+            actual_pct = (cost / budget) * 100
+            warnings.append(
+                f"Budget warning: exceeded {pct}% threshold "
+                f"({actual_pct:.0f}% used, ${cost:.2f} of ${budget:.2f})"
+            )
+            fired.add(threshold)
+    return warnings
 
 
 async def _probe_environment(cwd: str) -> dict:
@@ -443,6 +463,11 @@ async def tool_claude_code_send(ctx, session_id: str, prompt: str,
     # Set up logger (log_dir already created above for stderr)
     logger = SessionLogger(log_dir, session.session_id)
 
+    # Per-send progress tracking
+    tool_call_count = 0
+    tool_id_to_name: dict[str, str] = {}
+    warnings_fired: set[float] = set()
+
     # Capture git baseline for diff (before any changes)
     baseline_ref = None
     if include_diff:
@@ -477,9 +502,23 @@ async def tool_claude_code_send(ctx, session_id: str, prompt: str,
                         # Don't publish every text chunk — just tool usage
                         pass
                     elif isinstance(block, ToolUseBlock):
+                        tool_call_count += 1
+                        tool_id_to_name[block.id] = block.name
                         await ctx.publish(
                             "tool_status", tool="claude_code",
-                            message=f"Using {block.name}..."
+                            message=f"Tool call {tool_call_count}: Using {block.name}..."
+                        )
+
+            elif isinstance(message, UserMessage):
+                for block in getattr(message, "content", []):
+                    if isinstance(block, ToolResultBlock) and block.is_error:
+                        tool_name = tool_id_to_name.get(
+                            block.tool_use_id, "unknown tool")
+                        snippet = (block.content if isinstance(block.content, str)
+                                   else str(block.content))[:100]
+                        await ctx.publish(
+                            "tool_status", tool="claude_code",
+                            message=f"{tool_name} failed — {snippet}"
                         )
 
             elif isinstance(message, ResultMessage):
@@ -489,6 +528,19 @@ async def tool_claude_code_send(ctx, session_id: str, prompt: str,
                 # Update cost tracking
                 if message.total_cost_usd is not None:
                     session.total_cost_usd = message.total_cost_usd
+                    await ctx.publish(
+                        "tool_status", tool="claude_code",
+                        message=(f"Session cost: ${session.total_cost_usd:.2f} "
+                                 f"of ${session.budget_usd:.2f} budget")
+                    )
+                    for warning in _check_budget_warnings(
+                        session.total_cost_usd, session.budget_usd,
+                        warnings_fired
+                    ):
+                        await ctx.publish(
+                            "tool_status", tool="claude_code",
+                            message=warning
+                        )
 
     except Exception as e:
         log.error(f"Claude Code SDK error: {e}", exc_info=True)
