@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import shutil
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -685,6 +686,128 @@ async def tool_claude_code_exec(ctx, session_id: str, command: str,
     return ToolResult(text="\n".join(parts), data=data)
 
 
+async def tool_claude_code_push_file(ctx, session_id: str, source_path: str,
+                                     dest_name: str = "") -> ToolResult:
+    """Copy a file from the parent's workspace into the session's cwd."""
+    log.info(f"[tool:claude_code_push_file] session={session_id} source={source_path}")
+    manager = _get_manager()
+
+    session = manager.get(session_id)
+    if session is None:
+        return ToolResult(
+            text=(f"[error: session '{session_id}' not found or expired.]"),
+            data={"status": "error"},
+        )
+
+    # Resolve source relative to workspace, enforce sandbox
+    workspace = _config.workspace_path if _config else Path(".")
+    source = (workspace / source_path).resolve()
+    if not source.is_relative_to(workspace.resolve()):
+        return ToolResult(
+            text=f"[error: source path must be within the workspace ({workspace})]",
+            data={"status": "error"},
+        )
+    if not source.exists():
+        return ToolResult(
+            text=f"[error: source file not found: {source_path}]",
+            data={"status": "error"},
+        )
+    if not source.is_file():
+        return ToolResult(
+            text=f"[error: source is not a file (directories not supported): {source_path}]",
+            data={"status": "error"},
+        )
+
+    # Resolve dest relative to session cwd, enforce sandbox
+    if not dest_name:
+        dest_name = source.name
+    dest = Path(session.cwd, dest_name).resolve()
+    if not dest.is_relative_to(Path(session.cwd).resolve()):
+        return ToolResult(
+            text=f"[error: dest path must be within the session cwd ({session.cwd})]",
+            data={"status": "error"},
+        )
+
+    try:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, dest)
+    except Exception as e:
+        return ToolResult(
+            text=f"[error: copy failed: {e}]",
+            data={"status": "error"},
+        )
+
+    manager.touch(session_id)
+    size = dest.stat().st_size
+
+    return ToolResult(
+        text=f"Pushed `{source_path}` → `{dest_name}` ({size} bytes)",
+        data={"status": "success", "source": str(source), "dest": str(dest),
+              "size_bytes": size},
+    )
+
+
+async def tool_claude_code_pull_file(ctx, session_id: str, source_name: str,
+                                     dest_path: str = "") -> ToolResult:
+    """Copy a file from the session's cwd to the parent's workspace."""
+    log.info(f"[tool:claude_code_pull_file] session={session_id} source={source_name}")
+    manager = _get_manager()
+
+    session = manager.get(session_id)
+    if session is None:
+        return ToolResult(
+            text=(f"[error: session '{session_id}' not found or expired.]"),
+            data={"status": "error"},
+        )
+
+    # Resolve source relative to session cwd, enforce sandbox
+    source = Path(session.cwd, source_name).resolve()
+    if not source.is_relative_to(Path(session.cwd).resolve()):
+        return ToolResult(
+            text=f"[error: source path must be within the session cwd ({session.cwd})]",
+            data={"status": "error"},
+        )
+    if not source.exists():
+        return ToolResult(
+            text=f"[error: source file not found: {source_name}]",
+            data={"status": "error"},
+        )
+    if not source.is_file():
+        return ToolResult(
+            text=f"[error: source is not a file (directories not supported): {source_name}]",
+            data={"status": "error"},
+        )
+
+    # Resolve dest relative to workspace, enforce sandbox
+    workspace = _config.workspace_path if _config else Path(".")
+    if not dest_path:
+        dest_path = source.name
+    dest = (workspace / dest_path).resolve()
+    if not dest.is_relative_to(workspace.resolve()):
+        return ToolResult(
+            text=f"[error: dest path must be within the workspace ({workspace})]",
+            data={"status": "error"},
+        )
+
+    try:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, dest)
+    except Exception as e:
+        return ToolResult(
+            text=f"[error: copy failed: {e}]",
+            data={"status": "error"},
+        )
+
+    manager.touch(session_id)
+    size = dest.stat().st_size
+
+    return ToolResult(
+        text=f"Pulled `{source_name}` → `{dest_path}` ({size} bytes)",
+        data={"status": "success", "source": str(source), "dest": str(dest),
+              "size_bytes": size},
+    )
+
+
 async def tool_claude_code_stop(ctx, session_id: str) -> str:
     """Stop a Claude Code session and clean up."""
     log.info(f"[tool:claude_code_stop] session={session_id}")
@@ -738,6 +861,8 @@ TOOLS = {
     "claude_code_start": tool_claude_code_start,
     "claude_code_send": tool_claude_code_send,
     "claude_code_exec": tool_claude_code_exec,
+    "claude_code_push_file": tool_claude_code_push_file,
+    "claude_code_pull_file": tool_claude_code_pull_file,
     "claude_code_stop": tool_claude_code_stop,
     "claude_code_sessions": tool_claude_code_sessions,
 }
@@ -855,6 +980,70 @@ TOOL_DEFINITIONS = [
                     },
                 },
                 "required": ["session_id", "command"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "claude_code_push_file",
+            "description": (
+                "Copy a file from the parent's workspace into a Claude Code session's "
+                "working directory. Use to provide specs, configs, or other files to "
+                "the coding session."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "session_id": {
+                        "type": "string",
+                        "description": "Session ID from claude_code_start",
+                    },
+                    "source_path": {
+                        "type": "string",
+                        "description": "Path to the file in the workspace (relative to workspace root)",
+                    },
+                    "dest_name": {
+                        "type": "string",
+                        "description": (
+                            "Filename or relative path within the session's cwd. "
+                            "Defaults to the basename of source_path."
+                        ),
+                    },
+                },
+                "required": ["session_id", "source_path"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "claude_code_pull_file",
+            "description": (
+                "Copy a file from a Claude Code session's working directory to the "
+                "parent's workspace. Use to retrieve build artifacts, generated code, "
+                "or test results."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "session_id": {
+                        "type": "string",
+                        "description": "Session ID from claude_code_start",
+                    },
+                    "source_name": {
+                        "type": "string",
+                        "description": "Filename or relative path within the session's cwd",
+                    },
+                    "dest_path": {
+                        "type": "string",
+                        "description": (
+                            "Path in the workspace to copy to (relative to workspace root). "
+                            "Defaults to the basename of source_name."
+                        ),
+                    },
+                },
+                "required": ["session_id", "source_name"],
             },
         },
     },
