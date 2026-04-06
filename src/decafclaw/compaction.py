@@ -1,7 +1,6 @@
 """Conversation compaction — summarize old history to stay within context budget."""
 
 import logging
-from pathlib import Path
 
 from .archive import read_archive, read_compacted_history, write_compacted_history
 from .llm import call_llm

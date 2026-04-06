@@ -30,7 +30,7 @@ def get_always_loaded_names(config) -> set[str]:
         if skill.always_loaded and skill.has_native_tools:
             # Tool names aren't known until loaded, but we store them on config
             # after first activation. Check the cached set.
-            extra |= set(getattr(config, "_always_loaded_skill_tools", []))
+            extra |= config.always_loaded_skill_tools
     return DEFAULT_ALWAYS_LOADED | extra
 
 

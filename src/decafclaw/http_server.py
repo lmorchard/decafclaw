@@ -2,6 +2,7 @@
 
 import functools
 import logging
+import re
 from pathlib import Path
 
 from starlette.applications import Starlette
@@ -840,7 +841,6 @@ def create_app(config, event_bus, app_ctx=None) -> Starlette:
                     return config.workspace_path / path_str.removeprefix("workspace/"), f["scope"]
                 return config.agent_path / path_str, f["scope"]
         # Check schedules pattern
-        import re
         if re.match(r"^schedules/[^/]+\.md$", path_str):
             return config.agent_path / path_str, "admin"
         if re.match(r"^workspace/schedules/[^/]+\.md$", path_str):

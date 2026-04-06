@@ -443,112 +443,111 @@ async def tool_claude_code_send(ctx, session_id: str, prompt: str,
     log_dir.mkdir(parents=True, exist_ok=True)
     stderr_path = log_dir / f"{session.session_id}.stderr.log"
     stderr_file = open(stderr_path, "a")
-    # bypassPermissions at CLI level — the SDK's can_use_tool callback
-    # has a known bug where the CLI's control protocol closes the stream
-    # before permission responses arrive, even with the documented
-    # PreToolUse hook workaround (github.com/anthropics/claude-code/issues/24607).
-    # Instead, we use upfront confirmation per claude_code_send (above)
-    # and bypassPermissions for the CLI subprocess.
-    options = ClaudeCodeOptions(
-        cwd=session.cwd,
-        model=model,
-        permission_mode="bypassPermissions",
-        debug_stderr=stderr_file,
-    )
-
-    # Resume existing session if we have an SDK session ID from a previous send
-    if session.sdk_session_id:
-        options.resume = session.sdk_session_id
-        options.continue_conversation = True
-
-    # Set up logger (log_dir already created above for stderr)
-    logger = SessionLogger(log_dir, session.session_id)
-
-    # Per-send progress tracking
-    tool_call_count = 0
-    tool_id_to_name: dict[str, str] = {}
-    warnings_fired: set[float] = set()
-
-    # Capture git baseline for diff (before any changes)
-    baseline_ref = None
-    if include_diff:
-        baseline_ref = await _get_git_head(session.cwd)
-
-    # Assemble full prompt with session instructions and per-send context
-    full_prompt = _assemble_prompt(prompt, session.instructions, context)
-
-    # Wrap prompt as async iterable (required when can_use_tool is set)
-    # Format per SDK docs: type, message, parent_tool_use_id, session_id
-    async def prompt_stream():
-        yield {
-            "type": "user",
-            "message": {"role": "user", "content": full_prompt},
-            "parent_tool_use_id": None,
-            "session_id": session.sdk_session_id or "default",
-        }
-
-    # Stream messages from the SDK
-    await ctx.publish("tool_status", tool="claude_code",
-                      message=f"Sending to Claude Code ({session.cwd})...")
-
     try:
-        async for message in query(prompt=prompt_stream(), options=options):
-            log.debug(f"Claude Code message: {type(message).__name__}")
-            logger.log_message(message)
-
-            # Publish progress for Mattermost display
-            if isinstance(message, AssistantMessage):
-                for block in message.content:
-                    if isinstance(block, TextBlock) and block.text:
-                        # Don't publish every text chunk — just tool usage
-                        pass
-                    elif isinstance(block, ToolUseBlock):
-                        tool_call_count += 1
-                        tool_id_to_name[block.id] = block.name
-                        await ctx.publish(
-                            "tool_status", tool="claude_code",
-                            message=f"Tool call {tool_call_count}: Using {block.name}..."
-                        )
-
-            elif isinstance(message, UserMessage):
-                for block in getattr(message, "content", []):
-                    if isinstance(block, ToolResultBlock) and block.is_error:
-                        tool_name = tool_id_to_name.get(
-                            block.tool_use_id, "unknown tool")
-                        snippet = (block.content if isinstance(block.content, str)
-                                   else str(block.content))[:100]
-                        await ctx.publish(
-                            "tool_status", tool="claude_code",
-                            message=f"{tool_name} failed — {snippet}"
-                        )
-
-            elif isinstance(message, ResultMessage):
-                # Capture the SDK session ID for resume
-                if message.session_id:
-                    session.sdk_session_id = message.session_id
-                # Update cost tracking
-                if message.total_cost_usd is not None:
-                    session.total_cost_usd = message.total_cost_usd
-                    await ctx.publish(
-                        "tool_status", tool="claude_code",
-                        message=(f"Session cost: ${session.total_cost_usd:.2f} "
-                                 f"of ${session.budget_usd:.2f} budget")
-                    )
-                    for warning in _check_budget_warnings(
-                        session.total_cost_usd, session.budget_usd,
-                        warnings_fired
-                    ):
-                        await ctx.publish(
-                            "tool_status", tool="claude_code",
-                            message=warning
-                        )
-
-    except Exception as e:
-        log.error(f"Claude Code SDK error: {e}", exc_info=True)
-        return ToolResult(
-            text=f"[error: Claude Code failed: {e}]",
-            data=_send_error_data("error", errors=[{"message": str(e)}]),
+        # bypassPermissions at CLI level — the SDK's can_use_tool callback
+        # has a known bug where the CLI's control protocol closes the stream
+        # before permission responses arrive, even with the documented
+        # PreToolUse hook workaround (github.com/anthropics/claude-code/issues/24607).
+        # Instead, we use upfront confirmation per claude_code_send (above)
+        # and bypassPermissions for the CLI subprocess.
+        options = ClaudeCodeOptions(
+            cwd=session.cwd,
+            model=model,
+            permission_mode="bypassPermissions",
+            debug_stderr=stderr_file,
         )
+
+        # Resume existing session if we have an SDK session ID from a previous send
+        if session.sdk_session_id:
+            options.resume = session.sdk_session_id
+            options.continue_conversation = True
+
+        # Set up logger (log_dir already created above for stderr)
+        logger = SessionLogger(log_dir, session.session_id)
+
+        # Per-send progress tracking
+        tool_call_count = 0
+        tool_id_to_name: dict[str, str] = {}
+        warnings_fired: set[float] = set()
+
+        # Capture git baseline for diff (before any changes)
+        baseline_ref = None
+        if include_diff:
+            baseline_ref = await _get_git_head(session.cwd)
+
+        # Assemble full prompt with session instructions and per-send context
+        full_prompt = _assemble_prompt(prompt, session.instructions, context)
+
+        # Wrap prompt as async iterable (required when can_use_tool is set)
+        # Format per SDK docs: type, message, parent_tool_use_id, session_id
+        async def prompt_stream():
+            yield {
+                "type": "user",
+                "message": {"role": "user", "content": full_prompt},
+                "parent_tool_use_id": None,
+                "session_id": session.sdk_session_id or "default",
+            }
+
+        # Stream messages from the SDK
+        await ctx.publish("tool_status", tool="claude_code",
+                          message=f"Sending to Claude Code ({session.cwd})...")
+        try:
+            async for message in query(prompt=prompt_stream(), options=options):
+                log.debug(f"Claude Code message: {type(message).__name__}")
+                logger.log_message(message)
+
+                # Publish progress for Mattermost display
+                if isinstance(message, AssistantMessage):
+                    for block in message.content:
+                        if isinstance(block, TextBlock) and block.text:
+                            # Don't publish every text chunk — just tool usage
+                            pass
+                        elif isinstance(block, ToolUseBlock):
+                            tool_call_count += 1
+                            tool_id_to_name[block.id] = block.name
+                            await ctx.publish(
+                                "tool_status", tool="claude_code",
+                                message=f"Tool call {tool_call_count}: Using {block.name}..."
+                            )
+
+                elif isinstance(message, UserMessage):
+                    for block in getattr(message, "content", []):
+                        if isinstance(block, ToolResultBlock) and block.is_error:
+                            tool_name = tool_id_to_name.get(
+                                block.tool_use_id, "unknown tool")
+                            snippet = (block.content if isinstance(block.content, str)
+                                       else str(block.content))[:100]
+                            await ctx.publish(
+                                "tool_status", tool="claude_code",
+                                message=f"{tool_name} failed — {snippet}"
+                            )
+
+                elif isinstance(message, ResultMessage):
+                    # Capture the SDK session ID for resume
+                    if message.session_id:
+                        session.sdk_session_id = message.session_id
+                    # Update cost tracking
+                    if message.total_cost_usd is not None:
+                        session.total_cost_usd = message.total_cost_usd
+                        await ctx.publish(
+                            "tool_status", tool="claude_code",
+                            message=(f"Session cost: ${session.total_cost_usd:.2f} "
+                                     f"of ${session.budget_usd:.2f} budget")
+                        )
+                        for warning in _check_budget_warnings(
+                            session.total_cost_usd, session.budget_usd,
+                            warnings_fired
+                        ):
+                            await ctx.publish(
+                                "tool_status", tool="claude_code",
+                                message=warning
+                            )
+        except Exception as e:
+            log.error(f"Claude Code SDK error: {e}", exc_info=True)
+            return ToolResult(
+                text=f"[error: Claude Code failed: {e}]",
+                data=_send_error_data("error", errors=[{"message": str(e)}]),
+            )
     finally:
         stderr_file.close()
 
@@ -808,14 +807,14 @@ async def tool_claude_code_pull_file(ctx, session_id: str, source_name: str,
     )
 
 
-async def tool_claude_code_stop(ctx, session_id: str) -> str:
+async def tool_claude_code_stop(ctx, session_id: str) -> str | ToolResult:
     """Stop a Claude Code session and clean up."""
     log.info(f"[tool:claude_code_stop] session={session_id}")
     manager = _get_manager()
 
     session = manager.stop(session_id)
     if session is None:
-        return f"[error: session '{session_id}' not found]"
+        return ToolResult(text=f"[error: session '{session_id}' not found]")
 
     elapsed = time.monotonic() - session.created_at
     return (

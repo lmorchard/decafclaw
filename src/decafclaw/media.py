@@ -68,10 +68,6 @@ class MediaHandler:
         """Send a message with attached media references."""
         raise NotImplementedError
 
-    def format_image_url(self, url: str) -> str:
-        """Format a URL for inline display."""
-        return f"![image]({url})"
-
     def format_attachment_card(self, title: str, text: str,
                                image_url: str | None = None,
                                thumb_url: str | None = None) -> dict:
@@ -230,15 +226,6 @@ class MattermostMediaHandler(MediaHandler):
             resp.raise_for_status()
 
         return first_post_id
-
-    def format_attachment_card(self, title, text, image_url=None, thumb_url=None):
-        """Build a Mattermost/Slack-style attachment card."""
-        card = {"title": title, "text": text}
-        if image_url:
-            card["image_url"] = image_url
-        if thumb_url:
-            card["thumb_url"] = thumb_url
-        return card
 
 
 async def upload_and_collect(handler: MediaHandler, channel_id: str,

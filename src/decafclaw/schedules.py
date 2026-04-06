@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import re
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -155,7 +156,6 @@ def discover_schedules(config) -> list[ScheduleTask]:
 
 def _safe_task_name(task_name: str) -> str:
     """Sanitize task name for use in filesystem paths."""
-    import re
     # Strip path separators and dots, keep alphanumeric + hyphens + underscores
     safe = re.sub(r"[^a-zA-Z0-9_-]", "_", task_name)
     if not safe or safe in (".", ".."):

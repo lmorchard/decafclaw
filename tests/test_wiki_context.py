@@ -105,101 +105,79 @@ def test_already_injected_finds_vault_references():
 def test_already_injected_ignores_other_roles():
     history = [
         {"role": "user", "content": "hi"},
-        {"role": "memory_context", "content": "..."},
+        {"role": "vault_retrieval", "content": "..."},
     ]
     assert _get_already_injected_pages(history) == set()
 
 
-# -- Integration: injection in _prepare_messages --------------------------------
+# -- Integration: wiki context via ContextComposer --------------------------------
 
 
-@pytest.mark.asyncio
-async def test_prepare_messages_injects_vault_references(ctx):
-    """Wiki context messages are injected into history."""
-    from decafclaw.agent import _prepare_messages
+def test_compose_wiki_context_injects(ctx):
+    """Wiki context messages are produced for @[[PageName]] references."""
+    from decafclaw.context_composer import ComposerMode, ContextComposer
 
     vault_dir = ctx.config.vault_root
     vault_dir.mkdir(parents=True, exist_ok=True)
     (vault_dir / "TestPage.md").write_text("wiki content here")
-    ctx.config.system_prompt = "system"
-    ctx.skip_memory_context = True
 
-    history = []
-    messages, _ = await _prepare_messages(
-        ctx, ctx.config, "tell me about @[[TestPage]]", history,
+    composer = ContextComposer()
+    msgs, entry = composer._compose_vault_references(
+        ctx, ctx.config, "tell me about @[[TestPage]]", [], ComposerMode.INTERACTIVE,
     )
-
-    # Check that vault_references was injected into history
-    wiki_msgs = [m for m in history if m.get("role") == "vault_references"]
-    assert len(wiki_msgs) == 1
-    assert "wiki content here" in wiki_msgs[0]["content"]
-    assert wiki_msgs[0]["wiki_page"] == "TestPage"
-
-    # Check that vault_references is remapped to "user" in LLM messages
-    user_msgs = [m for m in messages if m["role"] == "user"]
-    assert any("wiki content here" in m["content"] for m in user_msgs)
+    assert len(msgs) == 1
+    assert "wiki content here" in msgs[0]["content"]
+    assert msgs[0]["wiki_page"] == "TestPage"
+    assert entry is not None
+    assert entry.items_included == 1
 
 
-@pytest.mark.asyncio
-async def test_prepare_messages_skips_already_injected(ctx):
+def test_compose_wiki_context_skips_already_injected(ctx):
     """Pages already in history are not re-injected."""
-    from decafclaw.agent import _prepare_messages
+    from decafclaw.context_composer import ComposerMode, ContextComposer
 
     vault_dir = ctx.config.vault_root
     vault_dir.mkdir(parents=True, exist_ok=True)
     (vault_dir / "TestPage.md").write_text("wiki content")
-    ctx.config.system_prompt = "system"
-    ctx.skip_memory_context = True
 
     history = [
         {"role": "vault_references", "content": "[Referenced wiki page: TestPage]\n\nwiki content",
          "wiki_page": "TestPage"},
     ]
-    messages, _ = await _prepare_messages(
-        ctx, ctx.config, "tell me more about @[[TestPage]]", history,
+    composer = ContextComposer()
+    msgs, entry = composer._compose_vault_references(
+        ctx, ctx.config, "tell me more about @[[TestPage]]", history, ComposerMode.INTERACTIVE,
     )
-
-    wiki_msgs = [m for m in history if m.get("role") == "vault_references"]
-    assert len(wiki_msgs) == 1  # still just the original, no duplicate
+    assert len(msgs) == 0  # no duplicate injection
 
 
-@pytest.mark.asyncio
-async def test_prepare_messages_injects_open_page(ctx):
+def test_compose_wiki_context_injects_open_page(ctx):
     """Open wiki page from ctx.wiki_page is injected."""
-    from decafclaw.agent import _prepare_messages
+    from decafclaw.context_composer import ComposerMode, ContextComposer
 
     vault_dir = ctx.config.vault_root
     vault_dir.mkdir(parents=True, exist_ok=True)
     (vault_dir / "OpenPage.md").write_text("open page content")
-    ctx.config.system_prompt = "system"
-    ctx.skip_memory_context = True
     ctx.wiki_page = "OpenPage"
 
-    history = []
-    messages, _ = await _prepare_messages(
-        ctx, ctx.config, "hello", history,
+    composer = ContextComposer()
+    msgs, _ = composer._compose_vault_references(
+        ctx, ctx.config, "hello", [], ComposerMode.INTERACTIVE,
     )
-
-    wiki_msgs = [m for m in history if m.get("role") == "vault_references"]
-    assert len(wiki_msgs) == 1
-    assert "[Currently viewing wiki page: OpenPage]" in wiki_msgs[0]["content"]
+    assert len(msgs) == 1
+    assert "[Currently viewing wiki page: OpenPage]" in msgs[0]["content"]
 
 
-@pytest.mark.asyncio
-async def test_prepare_messages_missing_page_error(ctx):
-    """Missing @[[PageName]] injects error note."""
-    from decafclaw.agent import _prepare_messages
+def test_compose_wiki_context_missing_page(ctx):
+    """Missing @[[PageName]] produces error note."""
+    from decafclaw.context_composer import ComposerMode, ContextComposer
 
     vault_dir = ctx.config.vault_root
     vault_dir.mkdir(parents=True, exist_ok=True)
-    ctx.config.system_prompt = "system"
-    ctx.skip_memory_context = True
 
-    history = []
-    messages, _ = await _prepare_messages(
-        ctx, ctx.config, "see @[[NonExistent]]", history,
+    composer = ContextComposer()
+    msgs, _ = composer._compose_vault_references(
+        ctx, ctx.config, "see @[[NonExistent]]", [], ComposerMode.INTERACTIVE,
     )
-
-    wiki_msgs = [m for m in history if m.get("role") == "vault_references"]
-    assert len(wiki_msgs) == 1
-    assert "[Wiki page 'NonExistent' not found]" in wiki_msgs[0]["content"]
+    assert len(msgs) == 1
+    assert "[Wiki page 'NonExistent' not found]" in msgs[0]["content"]
