@@ -340,3 +340,14 @@ chat-message .copy-btn {
 chat-message pre:hover .copy-btn {
   opacity: 1;
 }
+
+chat-message .code-lang-label {
+  position: absolute;
+  top: 4px;
+  left: 8px;
+  font-size: 0.75rem;
+  color: var(--pico-muted-color);
+  pointer-events: none;
+  user-select: none;
+  line-height: 1.4;
+}

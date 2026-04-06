@@ -34,6 +34,20 @@ export class AssistantMessage extends LitElement {
   updated() {
     this.querySelectorAll('pre:not(.has-copy)').forEach(pre => {
       pre.classList.add('has-copy');
+
+      // Add language label if the code block specifies a language
+      const code = pre.querySelector('code[class*="language-"]');
+      if (code) {
+        const match = code.className.match(/language-(\S+)/);
+        if (match) {
+          const label = document.createElement('span');
+          label.className = 'code-lang-label';
+          label.textContent = match[1];
+          pre.style.paddingTop = '2rem';
+          pre.appendChild(label);
+        }
+      }
+
       const btn = document.createElement('button');
       btn.className = 'copy-btn';
       btn.textContent = 'Copy';
