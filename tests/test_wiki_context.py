@@ -92,12 +92,12 @@ def test_already_injected_empty():
     assert _get_already_injected_pages([]) == set()
 
 
-def test_already_injected_finds_wiki_context():
+def test_already_injected_finds_vault_references():
     history = [
         {"role": "user", "content": "hi"},
-        {"role": "wiki_context", "content": "...", "wiki_page": "Page1"},
+        {"role": "vault_references", "content": "...", "wiki_page": "Page1"},
         {"role": "assistant", "content": "ok"},
-        {"role": "wiki_context", "content": "...", "wiki_page": "Page2"},
+        {"role": "vault_references", "content": "...", "wiki_page": "Page2"},
     ]
     assert _get_already_injected_pages(history) == {"Page1", "Page2"}
 
@@ -114,7 +114,7 @@ def test_already_injected_ignores_other_roles():
 
 
 @pytest.mark.asyncio
-async def test_prepare_messages_injects_wiki_context(ctx):
+async def test_prepare_messages_injects_vault_references(ctx):
     """Wiki context messages are injected into history."""
     from decafclaw.agent import _prepare_messages
 
@@ -129,13 +129,13 @@ async def test_prepare_messages_injects_wiki_context(ctx):
         ctx, ctx.config, "tell me about @[[TestPage]]", history,
     )
 
-    # Check that wiki_context was injected into history
-    wiki_msgs = [m for m in history if m.get("role") == "wiki_context"]
+    # Check that vault_references was injected into history
+    wiki_msgs = [m for m in history if m.get("role") == "vault_references"]
     assert len(wiki_msgs) == 1
     assert "wiki content here" in wiki_msgs[0]["content"]
     assert wiki_msgs[0]["wiki_page"] == "TestPage"
 
-    # Check that wiki_context is remapped to "user" in LLM messages
+    # Check that vault_references is remapped to "user" in LLM messages
     user_msgs = [m for m in messages if m["role"] == "user"]
     assert any("wiki content here" in m["content"] for m in user_msgs)
 
@@ -152,14 +152,14 @@ async def test_prepare_messages_skips_already_injected(ctx):
     ctx.skip_memory_context = True
 
     history = [
-        {"role": "wiki_context", "content": "[Referenced wiki page: TestPage]\n\nwiki content",
+        {"role": "vault_references", "content": "[Referenced wiki page: TestPage]\n\nwiki content",
          "wiki_page": "TestPage"},
     ]
     messages, _ = await _prepare_messages(
         ctx, ctx.config, "tell me more about @[[TestPage]]", history,
     )
 
-    wiki_msgs = [m for m in history if m.get("role") == "wiki_context"]
+    wiki_msgs = [m for m in history if m.get("role") == "vault_references"]
     assert len(wiki_msgs) == 1  # still just the original, no duplicate
 
 
@@ -180,7 +180,7 @@ async def test_prepare_messages_injects_open_page(ctx):
         ctx, ctx.config, "hello", history,
     )
 
-    wiki_msgs = [m for m in history if m.get("role") == "wiki_context"]
+    wiki_msgs = [m for m in history if m.get("role") == "vault_references"]
     assert len(wiki_msgs) == 1
     assert "[Currently viewing wiki page: OpenPage]" in wiki_msgs[0]["content"]
 
@@ -200,6 +200,6 @@ async def test_prepare_messages_missing_page_error(ctx):
         ctx, ctx.config, "see @[[NonExistent]]", history,
     )
 
-    wiki_msgs = [m for m in history if m.get("role") == "wiki_context"]
+    wiki_msgs = [m for m in history if m.get("role") == "vault_references"]
     assert len(wiki_msgs) == 1
     assert "[Wiki page 'NonExistent' not found]" in wiki_msgs[0]["content"]

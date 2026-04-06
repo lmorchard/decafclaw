@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from decafclaw.config_types import MemoryContextConfig
+from decafclaw.config_types import VaultRetrievalConfig
 from decafclaw.memory_context import (
     _WIKI_LINK_RE,
     _enrich_results,
@@ -64,7 +64,7 @@ class TestRetrieveMemoryContext:
     @pytest.mark.asyncio
     async def test_disabled(self, config):
         from dataclasses import replace
-        cfg = replace(config, memory_context=MemoryContextConfig(enabled=False))
+        cfg = replace(config, vault_retrieval=VaultRetrievalConfig(enabled=False))
         results = await retrieve_memory_context(cfg, "hello")
         assert results == []
 
@@ -99,7 +99,7 @@ class TestRetrieveMemoryContext:
     @pytest.mark.asyncio
     async def test_respects_max_results(self, config):
         from dataclasses import replace
-        cfg = replace(config, memory_context=MemoryContextConfig(max_results=2))
+        cfg = replace(config, vault_retrieval=VaultRetrievalConfig(max_results=2))
         fake_embedding = [1.0] * 768
         search_results = [_make_result(similarity=0.8) for _ in range(5)]
         with patch("decafclaw.memory_context.embed_text", new_callable=AsyncMock, return_value=fake_embedding), \
@@ -117,7 +117,7 @@ class TestRetrieveMemoryContext:
     async def test_returns_all_candidates_for_composer(self, config):
         """retrieve_memory_context returns all candidates — the composer handles budget trimming."""
         from dataclasses import replace
-        cfg = replace(config, memory_context=MemoryContextConfig(max_tokens=100))
+        cfg = replace(config, vault_retrieval=VaultRetrievalConfig(max_tokens=100))
         fake_embedding = [1.0] * 768
         # Each entry is 400 chars = 100 tokens; all 3 should be returned
         search_results = [

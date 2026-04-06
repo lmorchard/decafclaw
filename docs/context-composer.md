@@ -51,7 +51,7 @@ The composer is mode-aware via `ComposerMode`:
 | `SCHEDULED` | No | No | Full | Scheduled tasks (set via `ctx.task_mode="scheduled"`) |
 | `CHILD_AGENT` | No | No | Full | `delegate_task` sub-agents (set via `ctx.is_child`) |
 
-`skip_memory_context` on the context is an independent flag — it skips memory retrieval without affecting wiki injection or the composer mode.
+`skip_vault_retrieval` on the context is an independent flag — it skips vault retrieval without affecting vault references or the composer mode.
 
 ### Source diagnostics
 
