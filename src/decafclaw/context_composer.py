@@ -288,6 +288,15 @@ class ContextComposer:
         # -- Total token estimate --
         total_tokens = sum(s.tokens_estimated for s in sources)
 
+        # -- Context status note (for agent self-regulation) --
+        if config.agent.show_context_status:
+            effective_window = self._get_context_window_size(config)
+            status_line = self._build_context_status(
+                total_tokens, effective_window, history_msg_count,
+            )
+            if status_line:
+                messages.append({"role": "system", "content": status_line})
+
         # -- Update state --
         self.state.last_sources = sources
         self.state.last_total_tokens_estimated = total_tokens
@@ -571,6 +580,25 @@ class ContextComposer:
         if window and window > 0:
             return window
         return config.compaction.max_tokens
+
+    @staticmethod
+    def _build_context_status(
+        total_tokens: int, context_window: int, message_count: int,
+    ) -> str | None:
+        """Build a one-line context usage note for the agent.
+
+        Returns None if context_window is zero (unconfigured).
+        """
+        if context_window <= 0:
+            return None
+        pct = total_tokens / context_window * 100
+        hint = ""
+        if pct > 70:
+            hint = " — consider being concise"
+        return (
+            f"[Context: ~{total_tokens:,} / {context_window:,} tokens"
+            f" ({pct:.0f}%), {message_count} messages{hint}]"
+        )
 
     def record_actuals(self, prompt_tokens: int, completion_tokens: int) -> None:
         """Record actual token usage from the LLM response."""
