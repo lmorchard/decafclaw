@@ -26,7 +26,7 @@ An AI agent testbed for exploring agent development patterns. Connects to Matter
 - `src/decafclaw/context_composer.py` — Context composer: unified context assembly, relevance scoring, dynamic budget allocation
 - `src/decafclaw/frontmatter.py` — YAML frontmatter parsing/serialization for vault pages (summary, keywords, tags, importance)
 - `src/decafclaw/events.py` — In-process pub/sub event bus
-- `src/decafclaw/memory_context.py` — Proactive memory retrieval: embedding search, graph expansion, metadata enrichment
+- `src/decafclaw/memory_context.py` — Vault retrieval: embedding search, graph expansion, metadata enrichment
 - `src/decafclaw/archive.py` — Conversation archive (JSONL per conversation)
 - `src/decafclaw/compaction.py` — History compaction via summarization
 - `src/decafclaw/embeddings.py` — Semantic search index (sqlite-vec cosine similarity)
@@ -156,7 +156,7 @@ Session docs live in `docs/dev-sessions/YYYY-MM-DD-HHMM-slug/` with `spec.md`, `
 - **Vault page frontmatter.** Vault pages support optional YAML frontmatter with `summary`, `keywords`, `tags`, `importance` fields. Parsed by `frontmatter.py`. Composite embeddings prepend metadata to body for richer semantic search. Frontmatter is LLM-generated (Phase B) and human-editable.
 - **Wiki-link graph expansion.** Memory context retrieval follows `[[wiki-links]]` one hop from top embedding hits to expand the candidate pool. Linked pages get discounted similarity and compete on composite score. Configurable via `RelevanceConfig.graph_expansion_enabled`.
 - **Proactive memory context is fail-open.** Before each interactive turn, relevant memories/wiki are auto-injected as context via the ContextComposer. Errors silently return empty results. Skipped for heartbeat, scheduled tasks, and child agents. Requires an embedding model to be configured — silently disabled otherwise.
-- **Vault chat context.** Users can share vault pages into conversations via `@[[PageName]]` mentions (all channels) or by having a page open in the web UI sidebar. Pages are injected once per conversation as `wiki_context` role messages, tracked by scanning history. Parsing happens in the ContextComposer via helpers in `agent.py`. Page resolution uses vault root, not a fixed wiki directory.
+- **Vault chat context.** Users can share vault pages into conversations via `@[[PageName]]` mentions (all channels) or by having a page open in the web UI sidebar. Pages are injected once per conversation as `vault_references` role messages, tracked by scanning history. Parsing happens in the ContextComposer via helpers in `agent.py`. Page resolution uses vault root, not a fixed wiki directory.
 - **Context diagnostics sidecar.** After each turn, the agent loop writes `workspace/conversations/{conv_id}.context.json` with per-source token estimates, scoring details, and memory candidate breakdowns. REST endpoint `GET /api/conversations/{id}/context` returns this data. Web UI popover with waffle chart visualization triggered by clicking the context bar.
 - **LOG_LEVEL env var.** Set `LOG_LEVEL=DEBUG` for verbose logging (default: INFO).
 

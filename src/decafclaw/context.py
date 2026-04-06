@@ -68,7 +68,7 @@ class Context:
         self._current_iteration: int = 1
         self.is_child: bool = False
         self.skip_reflection: bool = False
-        self.skip_memory_context: bool = False
+        self.skip_vault_retrieval: bool = False
         self.wiki_page: str | None = None  # open wiki page from web UI
         self.effort: str = "default"
         self.task_mode: str = ""  # "heartbeat" | "scheduled" | "" (interactive)
@@ -86,7 +86,7 @@ class Context:
         effort: str = "default",
         task_mode: str = "",
         skip_reflection: bool = True,
-        skip_memory_context: bool = True,
+        skip_vault_retrieval: bool = True,
         allowed_tools: set | None = None,
         preapproved_tools: set | None = None,
         preapproved_shell_patterns: list[str] | None = None,
@@ -107,7 +107,7 @@ class Context:
         ctx.effort = effort
         ctx.task_mode = task_mode
         ctx.skip_reflection = skip_reflection
-        ctx.skip_memory_context = skip_memory_context
+        ctx.skip_vault_retrieval = skip_vault_retrieval
         if allowed_tools is not None:
             ctx.tools.allowed = allowed_tools
         if preapproved_tools is not None:
@@ -163,7 +163,7 @@ class Context:
         child._current_iteration = self._current_iteration
         child.is_child = self.is_child
         child.skip_reflection = self.skip_reflection
-        child.skip_memory_context = self.skip_memory_context
+        child.skip_vault_retrieval = self.skip_vault_retrieval
         child.wiki_page = self.wiki_page
         child.effort = self.effort
         # Share tools + skills + composer (concurrent tool calls read but don't mutate)

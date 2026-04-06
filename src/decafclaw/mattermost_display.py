@@ -164,7 +164,7 @@ class ConversationDisplay:
     async def on_tool_status(self, tool_name, message, tool_call_id=""):
         """Tool status update — edit the tool call's progress message.
 
-        If no existing tool post is found (e.g., memory_context or reflection
+        If no existing tool post is found (e.g., vault_retrieval or reflection
         events that arrive without a preceding tool_start), create a standalone post.
         """
         post_id = self._tool_posts.get(tool_call_id)

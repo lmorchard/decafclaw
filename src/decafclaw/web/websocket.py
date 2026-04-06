@@ -471,22 +471,22 @@ async def _run_agent_turn(websocket, app_ctx, config, event_bus,
                     payload["display_short_text"] = short
                 await ws_send(payload)
 
-            elif event_type == "memory_context":
+            elif event_type == "vault_retrieval":
                 text = event.get("text", "")
                 if text:
                     await ws_send({
                         "type": "tool_status", "conv_id": conv_id,
-                        "tool": "memory_context",
+                        "tool": "vault_retrieval",
                         "message": text,
                         "tool_call_id": "",
                     })
 
-            elif event_type == "wiki_context":
+            elif event_type == "vault_references":
                 text = event.get("text", "")
                 if text:
                     await ws_send({
                         "type": "tool_status", "conv_id": conv_id,
-                        "tool": "wiki_context",
+                        "tool": "vault_references",
                         "message": text,
                         "tool_call_id": "",
                     })
