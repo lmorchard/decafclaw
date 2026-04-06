@@ -48,6 +48,7 @@ class CompactionConfig:
     max_tokens: int = 100000
     llm_max_tokens: int = 0  # 0 = use max_tokens
     preserve_turns: int = 5
+    memory_sweep_enabled: bool = True
 
     def resolved(self, config) -> CompactionConfig:
         """Return copy with empty fields filled from config.llm."""
