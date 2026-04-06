@@ -107,6 +107,7 @@ class AgentConfig:
     child_max_tool_iterations: int = 10
     child_timeout_sec: int = 300
     turn_on_new_message: str = "queue"  # "queue" or "cancel"
+    show_context_status: bool = True
 
 
 @dataclass
