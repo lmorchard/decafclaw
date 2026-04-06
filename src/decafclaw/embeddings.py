@@ -14,6 +14,16 @@ log = logging.getLogger(__name__)
 
 
 
+# Source type boosts for semantic search: curated pages > user pages > journal
+_SOURCE_BOOSTS = {
+    "page": 1.3,
+    "user": 1.2,
+    "wiki": 1.2,  # legacy compat
+    "journal": 1.0,
+    "memory": 1.0,  # legacy compat
+}
+
+
 def _db_path(config) -> Path:
     """Path to the embeddings SQLite database."""
     return config.workspace_path / "embeddings.db"
@@ -144,12 +154,6 @@ async def embed_text(config, text: str, max_retries: int = 3) -> list[float] | N
             data = resp.json()
             return data["data"][0]["embedding"]
         except httpx.HTTPStatusError as e:
-            if e.response.status_code == 429 and attempt < max_retries:
-                delay = 2 ** attempt
-                log.warning(f"Embedding API rate limited, retrying in {delay}s "
-                            f"(attempt {attempt + 1}/{max_retries})")
-                await _asyncio.sleep(delay)
-                continue
             log.error(f"Embedding API call failed: {e}")
             return None
         except Exception as e:
@@ -293,21 +297,12 @@ def search_similar_sync(config, query_embedding: list[float], top_k: int = 5,
     if not rows:
         return []
 
-    # Source type boosts: curated pages > user pages > journal
-    SOURCE_BOOSTS = {
-        "page": 1.3,
-        "user": 1.2,
-        "wiki": 1.2,  # legacy compat
-        "journal": 1.0,
-        "memory": 1.0,  # legacy compat
-    }
-
     results = []
     for entry_text, file_path, row_source_type, created_at, distance in rows:
         if source_type and row_source_type != source_type:
             continue
         similarity = 1.0 - distance
-        similarity *= SOURCE_BOOSTS.get(row_source_type, 1.0)
+        similarity *= _SOURCE_BOOSTS.get(row_source_type, 1.0)
         results.append({
             "entry_text": entry_text,
             "file_path": file_path,

@@ -153,6 +153,7 @@ class Config:
     # Runtime-only (not in config file)
     system_prompt: str = ""
     discovered_skills: list = field(default_factory=list)
+    always_loaded_skill_tools: set[str] = field(default_factory=set)
 
     def apply_env(self) -> None:
         """Apply env vars from the config. Only sets vars not already in the environment.
@@ -377,23 +378,3 @@ def load_config() -> Config:
     return config
 
 
-def reload_env(config: Config) -> dict[str, str]:
-    """Re-read the env section from config.json and apply new vars.
-
-    Returns dict of newly applied vars (name → value).
-    """
-    config_path = config.agent_path / "config.json"
-    if not config_path.exists():
-        return {}
-    try:
-        file_data = json.loads(config_path.read_text())
-    except (json.JSONDecodeError, OSError):
-        return {}
-    new_env = {str(k): str(v) for k, v in file_data.get("env", {}).items()}
-    applied: dict[str, str] = {}
-    for key, value in new_env.items():
-        if key not in os.environ:
-            os.environ[key] = value
-            applied[key] = value
-    config.env = new_env
-    return applied

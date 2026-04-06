@@ -141,8 +141,6 @@ def tool_file_share(ctx, path: str, message: str = "") -> "ToolResult":
     """Share a file from the workspace as an attachment."""
     import mimetypes
 
-    from ..media import ToolResult
-
     log.info(f"[tool:file_share] {path}")
     resolved = _resolve_safe(ctx.config, path)
     if resolved is None:

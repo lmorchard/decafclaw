@@ -153,7 +153,11 @@ async def run_interactive(ctx):
             if user_input.lower() in ("quit", "exit"):
                 break
 
-            result = await run_agent_turn(ctx, user_input, history)
+            try:
+                result = await run_agent_turn(ctx, user_input, history)
+            except Exception as e:
+                print(f"\n[error: {e}]\n")
+                continue
 
             if config.llm.streaming:
                 print()  # final newline after streamed text
