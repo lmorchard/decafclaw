@@ -378,6 +378,96 @@ def _send_error_data(exit_status: str, **extra) -> dict:
     return data
 
 
+def _build_short_text(exit_status: str, logger: SessionLogger) -> str:
+    """Build a plain-text short preview for the collapsed tool result in the web UI."""
+    cost_str = f"${logger.total_cost_usd:.2f}" if logger.total_cost_usd else ""
+    n_files = len(dict.fromkeys(logger.files_changed))
+    short_parts = [exit_status]
+    if cost_str:
+        short_parts.append(cost_str)
+    if n_files:
+        short_parts.append(f"{n_files} file{'s' if n_files != 1 else ''} changed")
+    if logger.errors:
+        short_parts.append(f"{len(logger.errors)} error{'s' if len(logger.errors) != 1 else ''}")
+    return " - ".join(short_parts)
+
+
+def _summarize_tool_use(name: str, inp: dict) -> str:
+    """Build a one-liner describing a Claude Code sub-agent tool call."""
+    # Well-known tools get formatted summaries
+    if name in ("Edit", "Write", "NotebookEdit"):
+        path = inp.get("file_path", "")
+        return f"{name} {path}" if path else name
+    if name == "Read":
+        path = inp.get("file_path", "")
+        offset = inp.get("offset")
+        limit = inp.get("limit")
+        suffix = ""
+        if offset is not None and limit is not None:
+            suffix = f" (lines {offset}-{offset + limit})"
+        elif offset is not None:
+            suffix = f" (from line {offset})"
+        return f"{name} {path}{suffix}" if path else name
+    if name == "Bash":
+        cmd = inp.get("command", "")
+        # Show first line, truncated
+        first_line = cmd.split("\n", 1)[0]
+        if len(first_line) > 80:
+            first_line = first_line[:77] + "..."
+        return f"{name} — {first_line}" if first_line else name
+    if name == "Glob":
+        pattern = inp.get("pattern", "")
+        path = inp.get("path", "")
+        parts = [name, pattern]
+        if path:
+            parts.append(f"in {path}")
+        return " ".join(parts)
+    if name == "Grep":
+        pattern = inp.get("pattern", "")
+        path = inp.get("path", "")
+        parts = [name, f"/{pattern}/"]
+        if path:
+            parts.append(f"in {path}")
+        return " ".join(parts)
+    if name == "WebSearch":
+        query = inp.get("query", "")
+        return f'{name} "{query}"' if query else name
+    if name == "WebFetch":
+        url = inp.get("url", "")
+        return f"{name} {url}" if url else name
+    # Fallback: show the tool name + compact key=value pairs from input
+    if not inp:
+        return name
+    pairs = []
+    for k, v in inp.items():
+        s = str(v)
+        if len(s) > 40:
+            s = s[:37] + "..."
+        pairs.append(f"{k}={s}")
+    detail = ", ".join(pairs)
+    if len(detail) > 120:
+        detail = detail[:117] + "..."
+    return f"{name} — {detail}"
+
+
+def _summarize_tool_result(tool_name: str, content: "str | list | None",
+                           is_error: bool) -> str:
+    """Build a one-liner describing a tool result."""
+    if is_error:
+        snippet = (content if isinstance(content, str)
+                   else str(content) if content else "")[:100]
+        return f"{tool_name} failed — {snippet}"
+    # Successful result — show a brief snippet
+    text = content if isinstance(content, str) else str(content) if content else ""
+    if not text:
+        return f"{tool_name} — done"
+    # For Bash, show exit code or first line of output
+    first_line = text.split("\n", 1)[0].strip()
+    if len(first_line) > 100:
+        first_line = first_line[:97] + "..."
+    return f"{tool_name} — {first_line}" if first_line else f"{tool_name} — done"
+
+
 async def tool_claude_code_send(ctx, session_id: str, prompt: str,
                                 context: str = "",
                                 include_diff: bool = True) -> ToolResult:
@@ -489,14 +579,14 @@ async def tool_claude_code_send(ctx, session_id: str, prompt: str,
             }
 
         # Stream messages from the SDK
-        await ctx.publish("tool_status", tool="claude_code",
+        await ctx.publish("tool_status", tool="claude_code_send",
                           message=f"Sending to Claude Code ({session.cwd})...")
         try:
             async for message in query(prompt=prompt_stream(), options=options):
                 log.debug(f"Claude Code message: {type(message).__name__}")
                 logger.log_message(message)
 
-                # Publish progress for Mattermost display
+                # Publish progress for web UI / Mattermost display
                 if isinstance(message, AssistantMessage):
                     for block in message.content:
                         if isinstance(block, TextBlock) and block.text:
@@ -505,21 +595,22 @@ async def tool_claude_code_send(ctx, session_id: str, prompt: str,
                         elif isinstance(block, ToolUseBlock):
                             tool_call_count += 1
                             tool_id_to_name[block.id] = block.name
+                            summary = _summarize_tool_use(block.name, block.input)
                             await ctx.publish(
-                                "tool_status", tool="claude_code",
-                                message=f"Tool call {tool_call_count}: Using {block.name}..."
+                                "tool_status", tool="claude_code_send",
+                                message=f"[{tool_call_count}] {summary}"
                             )
 
                 elif isinstance(message, UserMessage):
                     for block in getattr(message, "content", []):
-                        if isinstance(block, ToolResultBlock) and block.is_error:
+                        if isinstance(block, ToolResultBlock):
                             tool_name = tool_id_to_name.get(
                                 block.tool_use_id, "unknown tool")
-                            snippet = (block.content if isinstance(block.content, str)
-                                       else str(block.content))[:100]
+                            summary = _summarize_tool_result(
+                                tool_name, block.content, bool(block.is_error))
                             await ctx.publish(
-                                "tool_status", tool="claude_code",
-                                message=f"{tool_name} failed — {snippet}"
+                                "tool_status", tool="claude_code_send",
+                                message=f"\u2192 {summary}"
                             )
 
                 elif isinstance(message, ResultMessage):
@@ -530,7 +621,7 @@ async def tool_claude_code_send(ctx, session_id: str, prompt: str,
                     if message.total_cost_usd is not None:
                         session.total_cost_usd = message.total_cost_usd
                         await ctx.publish(
-                            "tool_status", tool="claude_code",
+                            "tool_status", tool="claude_code_send",
                             message=(f"Session cost: ${session.total_cost_usd:.2f} "
                                      f"of ${session.budget_usd:.2f} budget")
                         )
@@ -539,7 +630,7 @@ async def tool_claude_code_send(ctx, session_id: str, prompt: str,
                             warnings_fired
                         ):
                             await ctx.publish(
-                                "tool_status", tool="claude_code",
+                                "tool_status", tool="claude_code_send",
                                 message=warning
                             )
         except Exception as e:
@@ -561,14 +652,17 @@ async def tool_claude_code_send(ctx, session_id: str, prompt: str,
         diff = await _capture_git_diff(session.cwd, baseline_ref)
 
     summary = logger.build_summary(session_id)
+    exit_status = "error" if logger.errors else "success"
     data = logger.build_data(
         session_id=session_id,
-        exit_status="error" if logger.errors else "success",
+        exit_status=exit_status,
         sdk_session_id=session.sdk_session_id,
         send_count=session.send_count,
         diff=diff,
     )
-    return ToolResult(text=summary, data=data)
+    # Build a short preview for the collapsed tool result in the web UI
+    short_text = _build_short_text(exit_status, logger)
+    return ToolResult(text=summary, data=data, display_short_text=short_text)
 
 
 async def tool_claude_code_exec(ctx, session_id: str, command: str,
