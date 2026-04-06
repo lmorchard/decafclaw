@@ -43,7 +43,7 @@ export class AssistantMessage extends LitElement {
           const label = document.createElement('span');
           label.className = 'code-lang-label';
           label.textContent = match[1];
-          pre.style.paddingTop = '2rem';
+          /** @type {HTMLElement} */ (pre).style.paddingTop = '2rem';
           pre.appendChild(label);
         }
       }

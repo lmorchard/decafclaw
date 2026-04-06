@@ -1,5 +1,6 @@
 """Tests for vault REST API endpoints."""
 
+import os
 from pathlib import Path
 
 import pytest
@@ -306,3 +307,56 @@ async def test_vault_delete_cleans_empty_dirs(client, http_config):
     assert resp.status_code == 200
     # Both temp/ and temp/deep/ should be cleaned up
     assert not (vault / "agent" / "temp").exists()
+
+
+# -- vault_recent --------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_vault_recent_empty(client):
+    resp = await client.get("/api/vault/recent")
+    assert resp.status_code == 200
+    assert resp.json()["pages"] == []
+
+
+@pytest.mark.asyncio
+async def test_vault_recent_sorted_by_mtime(client, http_config):
+    vault = http_config.vault_root
+    old_page = vault / "Old.md"
+    new_page = vault / "New.md"
+    old_page.write_text("# Old")
+    new_page.write_text("# New")
+    os.utime(old_page, (1_700_000_000, 1_700_000_000))
+    os.utime(new_page, (1_700_000_100, 1_700_000_100))
+
+    resp = await client.get("/api/vault/recent")
+    assert resp.status_code == 200
+    pages = resp.json()["pages"]
+    assert len(pages) >= 2
+    titles = [p["title"] for p in pages]
+    assert titles.index("New") < titles.index("Old")
+
+
+@pytest.mark.asyncio
+async def test_vault_recent_respects_limit(client, http_config):
+    vault = http_config.vault_root
+    for i in range(5):
+        (vault / f"Page{i}.md").write_text(f"# Page {i}")
+
+    resp = await client.get("/api/vault/recent?limit=2")
+    assert resp.status_code == 200
+    assert len(resp.json()["pages"]) == 2
+
+
+@pytest.mark.asyncio
+async def test_vault_recent_includes_subfolders(client, http_config):
+    vault = http_config.vault_root
+    sub = vault / "agent" / "pages"
+    sub.mkdir(parents=True, exist_ok=True)
+    (sub / "Deep.md").write_text("# Deep")
+
+    resp = await client.get("/api/vault/recent")
+    pages = resp.json()["pages"]
+    deep = [p for p in pages if p["title"] == "Deep"]
+    assert len(deep) == 1
+    assert deep[0]["folder"] == "agent/pages"

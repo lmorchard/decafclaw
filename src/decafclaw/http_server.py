@@ -486,6 +486,41 @@ def create_app(config, event_bus, app_ctx=None) -> Starlette:
         })
 
     @_authenticated
+    async def vault_recent(request: Request, username: str) -> JSONResponse:
+        """List recently modified vault pages sorted by mtime descending."""
+        vault = _vault_root()
+        if not vault.is_dir():
+            return JSONResponse({"pages": []})
+
+        vault_resolved = vault.resolve()
+        limit = config.vault.recent_changes_limit
+        try:
+            limit = int(request.query_params.get("limit", limit))
+        except (ValueError, TypeError):
+            pass
+        limit = max(0, limit)
+
+        pages = []
+        for md_file in vault_resolved.rglob("*.md"):
+            if not md_file.is_file():
+                continue
+            if not md_file.resolve().is_relative_to(vault_resolved):
+                continue
+            # Skip hidden directories (.obsidian, .git, .trash, etc.)
+            if any(part.startswith('.') for part in md_file.relative_to(vault_resolved).parts[:-1]):
+                continue
+            rel = md_file.relative_to(vault_resolved)
+            pages.append({
+                "title": md_file.stem,
+                "path": str(rel.with_suffix("")),
+                "folder": str(rel.parent) if str(rel.parent) != "." else "",
+                "modified": md_file.stat().st_mtime,
+            })
+
+        pages.sort(key=lambda p: p["modified"], reverse=True)
+        return JSONResponse({"pages": pages[:limit]})
+
+    @_authenticated
     async def vault_read(request: Request, username: str) -> JSONResponse:
         """Read a single vault page as JSON."""
         page_name = request.path_params.get("page", "")
@@ -1038,6 +1073,7 @@ def create_app(config, event_bus, app_ctx=None) -> Starlette:
         Route("/api/vault", vault_create, methods=["POST"]),
         Route("/api/vault", vault_list, methods=["GET"]),
         Route("/api/vault/folders", vault_create_folder, methods=["POST"]),
+        Route("/api/vault/recent", vault_recent, methods=["GET"]),
         Route("/api/vault/{page:path}", vault_write, methods=["PUT"]),
         Route("/api/vault/{page:path}", vault_read, methods=["GET"]),
         Route("/api/vault/{page:path}", vault_delete, methods=["DELETE"]),
