@@ -134,6 +134,7 @@ class ReflectionConfig:
 class VaultConfig:
     vault_path: str = "workspace/vault/"
     agent_folder: str = "agent/"
+    recent_changes_limit: int = 50
 
 
 @dataclass
