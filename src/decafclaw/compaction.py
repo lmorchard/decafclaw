@@ -1,12 +1,75 @@
 """Conversation compaction — summarize old history to stay within context budget."""
 
+import asyncio
 import logging
+from pathlib import Path
 
 from .archive import read_archive, read_compacted_history, write_compacted_history
 from .llm import call_llm
 from .util import estimate_tokens
 
 log = logging.getLogger(__name__)
+
+_BUNDLED_SWEEP_PROMPT_PATH = Path(__file__).parent / "prompts" / "MEMORY_SWEEP.md"
+
+
+def _load_sweep_prompt(config) -> str:
+    """Load the memory sweep prompt (agent-level override or bundled default)."""
+    override = config.agent_path / "MEMORY_SWEEP.md"
+    if override.exists():
+        return override.read_text()
+    return _BUNDLED_SWEEP_PROMPT_PATH.read_text()
+
+
+async def _run_memory_sweep(ctx, old_messages: list[dict]) -> None:
+    """Run a background memory sweep over messages about to be compacted.
+
+    Fires off an isolated child agent turn with vault tools to save
+    noteworthy information before it's summarized away. Fail-open:
+    errors are logged and discarded.
+    """
+    from .agent import run_agent_turn  # deferred: circular dep
+    from .context import Context
+    from .skills.vault.tools import TOOL_DEFINITIONS as VAULT_TOOL_DEFS
+    from .skills.vault.tools import TOOLS as VAULT_TOOLS
+
+    config = ctx.config
+    conv_id = ctx.conv_id or ctx.channel_id or "unknown"
+    log.info(f"Memory sweep starting for {conv_id} ({len(old_messages)} messages)")
+
+    try:
+        sweep_prompt = _load_sweep_prompt(config)
+        flattened = flatten_messages(old_messages)
+        task_prompt = f"Conversation history to review:\n\n{flattened}"
+
+        # Build an isolated child context with vault tools only
+        from dataclasses import replace
+        child_config = replace(
+            config,
+            agent=replace(config.agent,
+                          max_tool_iterations=config.agent.child_max_tool_iterations),
+            system_prompt=sweep_prompt,
+        )
+        child_ctx = Context.for_task(
+            child_config, ctx.event_bus,
+            user_id="memory-sweep",
+            conv_id=conv_id,
+            task_mode="scheduled",
+            skip_reflection=True,
+            skip_vault_retrieval=True,
+        )
+        child_ctx.is_child = True
+
+        # Only vault tools — preapproved so no confirmation prompts
+        child_ctx.tools.allowed = set(VAULT_TOOLS.keys())
+        child_ctx.tools.extra = dict(VAULT_TOOLS)
+        child_ctx.tools.extra_definitions = list(VAULT_TOOL_DEFS)
+        child_ctx.tools.preapproved = set(VAULT_TOOLS.keys())
+
+        result = await run_agent_turn(child_ctx, task_prompt, [])
+        log.info(f"Memory sweep completed for {conv_id}: {len(result.text)} chars response")
+    except Exception as e:
+        log.warning(f"Memory sweep failed for {conv_id}: {e}")
 
 DEFAULT_COMPACTION_PROMPT = """\
 Summarize the following conversation, preserving:
@@ -390,6 +453,11 @@ async def compact_history(ctx, history: list) -> bool:
         f"({len(recent_turns)} turns)"
         f"{f', incremental ({len(mode.newly_old_turns)} new turns)' if mode.incremental else ''}"
     )
+
+    # Fire off background memory sweep before summarization loses detail
+    if config.compaction.memory_sweep_enabled:
+        sweep_messages = list(mode.old_messages)  # snapshot
+        asyncio.create_task(_run_memory_sweep(ctx, sweep_messages))
 
     budget = config.compaction_context_budget
     estimated = 0

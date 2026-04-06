@@ -8,6 +8,7 @@ from decafclaw.archive import append_message, write_compacted_history
 from decafclaw.compaction import (
     SUMMARY_PREFIX,
     _extract_previous_summary,
+    _run_memory_sweep,
     _split_into_turns,
     _turn_has_protected_tool,
     compact_history,
@@ -379,3 +380,104 @@ class TestSkillProtectionDuringCompaction:
 
         result = await compact_history(ctx, history)
         assert result is False
+
+
+class TestMemorySweep:
+    @pytest.fixture
+    def populated_archive(self, config):
+        """Create an archive with 8 turns."""
+        conv_id = "test-conv"
+        for i in range(8):
+            append_message(config, conv_id, {"role": "user", "content": f"message {i}"})
+            append_message(config, conv_id, {"role": "assistant", "content": f"response {i}"})
+        return conv_id
+
+    @pytest.mark.asyncio
+    async def test_sweep_runs_during_compaction(self, ctx, populated_archive):
+        """Memory sweep should be fired as a background task during compaction."""
+        import asyncio
+
+        ctx.config.compaction.preserve_turns = 5
+        ctx.config.compaction.memory_sweep_enabled = True
+        history = [{"role": "user", "content": f"message {i}"} for i in range(8)]
+
+        mock_response = {
+            "content": "Summary.", "tool_calls": None,
+            "role": "assistant", "usage": None,
+        }
+
+        created_tasks = []
+        original_create_task = asyncio.create_task
+
+        def capture_create_task(coro, **kwargs):
+            task = original_create_task(coro, **kwargs)
+            created_tasks.append(task)
+            return task
+
+        with (
+            patch("decafclaw.compaction.call_llm", new_callable=AsyncMock, return_value=mock_response),
+            patch("decafclaw.agent.run_agent_turn", new_callable=AsyncMock,
+                  return_value=AsyncMock(text="sweep done")),
+            patch("decafclaw.compaction.asyncio.create_task", side_effect=capture_create_task),
+        ):
+            result = await compact_history(ctx, history)
+
+        assert result is True
+        assert len(created_tasks) == 1  # sweep task was created
+        await asyncio.gather(*created_tasks, return_exceptions=True)
+
+    @pytest.mark.asyncio
+    async def test_sweep_skipped_when_disabled(self, ctx, populated_archive):
+        """Memory sweep should not run when disabled."""
+        ctx.config.compaction.preserve_turns = 5
+        ctx.config.compaction.memory_sweep_enabled = False
+        history = [{"role": "user", "content": f"message {i}"} for i in range(8)]
+
+        mock_response = {
+            "content": "Summary.", "tool_calls": None,
+            "role": "assistant", "usage": None,
+        }
+
+        with (
+            patch("decafclaw.compaction.call_llm", new_callable=AsyncMock, return_value=mock_response),
+            patch("decafclaw.compaction.asyncio.create_task") as mock_ct,
+        ):
+            result = await compact_history(ctx, history)
+
+        assert result is True
+        mock_ct.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_sweep_receives_vault_tools(self, ctx):
+        """The sweep child context should have vault tools available."""
+        from decafclaw.media import ToolResult
+
+        messages = [
+            {"role": "user", "content": "hello"},
+            {"role": "assistant", "content": "hi there"},
+        ]
+
+        mock_result = ToolResult(text="Nothing noteworthy.")
+
+        with patch("decafclaw.agent.run_agent_turn", new_callable=AsyncMock,
+                    return_value=mock_result) as mock_turn:
+            await _run_memory_sweep(ctx, messages)
+
+        mock_turn.assert_called_once()
+        child_ctx = mock_turn.call_args[0][0]
+        # Child should have vault tools in its allowed set
+        assert "vault_write" in child_ctx.tools.allowed
+        assert "vault_journal_append" in child_ctx.tools.allowed
+        assert "vault_search" in child_ctx.tools.allowed
+        # Vault tools should be preapproved
+        assert "vault_write" in child_ctx.tools.preapproved
+
+    @pytest.mark.asyncio
+    async def test_sweep_error_is_logged_not_raised(self, ctx):
+        """Sweep errors are caught and logged, not propagated."""
+        messages = [{"role": "user", "content": "hello"}]
+
+        with patch("decafclaw.agent.run_agent_turn", new_callable=AsyncMock,
+                    side_effect=Exception("LLM exploded")):
+            # Should not raise
+            await _run_memory_sweep(ctx, messages)
