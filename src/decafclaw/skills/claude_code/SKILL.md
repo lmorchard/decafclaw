@@ -84,11 +84,45 @@ Runs a shell command directly in a session's working directory. No LLM involved 
 
 **Confirmation model:** Inherits from session approval. If the user has already approved a `claude_code_send` for this session, exec calls are auto-approved. Otherwise, requests its own confirmation.
 
-### 4. `claude_code_stop` — End a session
+### 4. `claude_code_push_file` — Push a file to the session
+
+Copies a file from the parent's workspace into the session's working directory. Use to provide specs, configs, or reference files to the coding session.
+
+**Parameters:**
+- `session_id` (required) — which session to use
+- `source_path` (required) — path to the file in the workspace (relative to workspace root)
+- `dest_name` (optional) — filename or relative path within the session's cwd. Defaults to the basename of source_path.
+
+**Returns structured data:**
+- `status` — `success` or `error`
+- `source` — resolved source path
+- `dest` — resolved dest path
+- `size_bytes` — file size after copy
+
+Auto-approved — no user confirmation needed. Supports any file type (text, binary). Single files only.
+
+### 5. `claude_code_pull_file` — Pull a file from the session
+
+Copies a file from the session's working directory to the parent's workspace. Use to retrieve build artifacts, generated code, or test results.
+
+**Parameters:**
+- `session_id` (required) — which session to use
+- `source_name` (required) — filename or relative path within the session's cwd
+- `dest_path` (optional) — path in the workspace to copy to (relative to workspace root). Defaults to the basename of source_name.
+
+**Returns structured data:**
+- `status` — `success` or `error`
+- `source` — resolved source path
+- `dest` — resolved dest path
+- `size_bytes` — file size after copy
+
+Auto-approved. Supports any file type. Single files only.
+
+### 6. `claude_code_stop` — End a session
 
 Closes a session and reports final cost.
 
-### 5. `claude_code_sessions` — List active sessions
+### 7. `claude_code_sessions` — List active sessions
 
 Shows all active sessions with ID, working directory, age, and cost so far.
 
@@ -139,6 +173,8 @@ Each Claude Code interaction costs money (Anthropic API usage). The structured r
 ## Permission Model
 
 Claude Code tools require confirmation before executing. The first `claude_code_send` or `claude_code_exec` in a session requires user approval (via Mattermost reactions or web UI). Once approved, subsequent calls in the same session are auto-approved. Setup commands also require confirmation.
+
+**Exceptions:** `claude_code_push_file` and `claude_code_pull_file` are auto-approved without user confirmation — they only copy files within sandboxed paths (workspace ↔ session cwd).
 
 ## Progress Reporting
 
