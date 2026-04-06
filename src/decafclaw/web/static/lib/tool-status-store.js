@@ -9,8 +9,8 @@
  * Sub-store managing tool execution status and confirmation requests.
  */
 export class ToolStatusStore {
-  /** @type {string|null} */
-  #toolStatus = null;
+  /** @type {Map<string, string>} tool_call_id → status text */
+  #activeTools = new Map();
   /** @type {PendingConfirm[]} */
   #pendingConfirms = [];
   /** @type {() => void} */
@@ -33,8 +33,11 @@ export class ToolStatusStore {
 
   // -- Getters ----------------------------------------------------------------
 
-  /** @returns {string|null} */
-  get toolStatus() { return this.#toolStatus; }
+  /** @returns {string|null} Combined status of all active tools, or null if idle. */
+  get toolStatus() {
+    if (this.#activeTools.size === 0) return null;
+    return [...this.#activeTools.values()].join(' | ');
+  }
   /** @returns {PendingConfirm[]} */
   get pendingConfirms() { return this.#pendingConfirms; }
 
@@ -42,12 +45,12 @@ export class ToolStatusStore {
 
   /** Reset state when switching conversations. */
   clear() {
-    this.#toolStatus = null;
+    this.#activeTools.clear();
     this.#pendingConfirms = [];
   }
 
   clearToolStatus() {
-    this.#toolStatus = null;
+    this.#activeTools.clear();
   }
 
   /**
@@ -83,20 +86,24 @@ export class ToolStatusStore {
    */
   handleMessage(msg, currentConvId) {
     switch (msg.type) {
-      case 'tool_start':
-        this.#toolStatus = `Running ${msg.tool}...`;
+      case 'tool_start': {
+        const tcId = msg.tool_call_id || '';
+        this.#activeTools.set(tcId, `Running ${msg.tool}...`);
         if (msg.conv_id === currentConvId) {
           this.#messageStore.pushMessage({
             role: 'tool_call',
             content: `Running ${msg.tool}...`,
             tool: msg.tool,
+            tool_call_id: tcId,
             timestamp: new Date().toISOString(),
           });
         }
         return true;
+      }
 
-      case 'tool_status':
-        this.#toolStatus = `${msg.tool}: ${msg.message}`;
+      case 'tool_status': {
+        const tcId = msg.tool_call_id || '';
+        this.#activeTools.set(tcId, `${msg.tool}: ${msg.message}`);
         if (msg.conv_id === currentConvId) {
           if (msg.tool === 'vault_retrieval' || msg.tool === 'vault_references') {
             this.#messageStore.insertBeforeLastUser({
@@ -105,15 +112,17 @@ export class ToolStatusStore {
               timestamp: new Date().toISOString(),
             });
           } else {
-            this.#messageStore.updateLastToolCall(`${msg.tool}: ${msg.message}`);
+            this.#messageStore.updateToolCall(tcId, `${msg.tool}: ${msg.message}`);
           }
         }
         return true;
+      }
 
-      case 'tool_end':
-        this.#toolStatus = null;
+      case 'tool_end': {
+        const tcId = msg.tool_call_id || '';
+        this.#activeTools.delete(tcId);
         if (msg.conv_id === currentConvId) {
-          this.#messageStore.replaceLastToolCall({
+          this.#messageStore.replaceToolCall(tcId, {
             role: 'tool',
             content: msg.result_text || '',
             tool: msg.tool,
@@ -122,6 +131,7 @@ export class ToolStatusStore {
           });
         }
         return true;
+      }
 
       case 'confirm_request':
         this.#pendingConfirms = [...this.#pendingConfirms, {

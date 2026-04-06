@@ -43,20 +43,32 @@ export class MessageStore {
     this.#currentMessages.push(msg);
   }
 
-  /** Update the content of the last tool_call message (for status updates). */
-  updateLastToolCall(/** @type {string} */ content) {
-    const last = this.#currentMessages[this.#currentMessages.length - 1];
-    if (last?.role === 'tool_call') {
-      last.content = content;
+  /** Update a tool_call message by tool_call_id (for status updates). */
+  updateToolCall(/** @type {string} */ toolCallId, /** @type {string} */ content) {
+    if (!toolCallId) {
+      // Fallback: update the last tool_call message (legacy behavior)
+      const last = this.#currentMessages[this.#currentMessages.length - 1];
+      if (last?.role === 'tool_call') last.content = content;
+      return;
     }
+    const msg = this.#currentMessages.find(
+      m => m.role === 'tool_call' && m.tool_call_id === toolCallId
+    );
+    if (msg) msg.content = content;
   }
 
-  /** Replace the last tool_call message with a completed tool result. */
-  replaceLastToolCall(/** @type {ChatMessage} */ msg) {
-    const idx = this.#currentMessages.findLastIndex(m => m.role === 'tool_call');
-    if (idx >= 0) {
-      this.#currentMessages[idx] = msg;
+  /** Replace a tool_call message by tool_call_id with a completed tool result. */
+  replaceToolCall(/** @type {string} */ toolCallId, /** @type {ChatMessage} */ msg) {
+    if (!toolCallId) {
+      // Fallback: replace the last tool_call (legacy behavior)
+      const idx = this.#currentMessages.findLastIndex(m => m.role === 'tool_call');
+      if (idx >= 0) this.#currentMessages[idx] = msg;
+      return;
     }
+    const idx = this.#currentMessages.findIndex(
+      m => m.role === 'tool_call' && m.tool_call_id === toolCallId
+    );
+    if (idx >= 0) this.#currentMessages[idx] = msg;
   }
 
   /** Insert a message before the last user message (for memory context). */
