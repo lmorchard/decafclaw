@@ -22,6 +22,8 @@ export class ConversationSidebar extends LitElement {
     _vaultFolder: { type: String, state: true },
     _vaultFolders: { type: Array, state: true },
     _openWikiPage: { type: String, state: true },
+    _vaultView: { type: String, state: true },
+    _recentPages: { type: Array, state: true },
     _contextInspectorOpen: { type: Boolean, state: true },
     _contextVersion: { type: Number, state: true },
   };
@@ -55,6 +57,9 @@ export class ConversationSidebar extends LitElement {
     this._vaultFolders = [];
     /** @type {string|null} */
     this._openWikiPage = null;
+    this._vaultView = 'browse'; // 'browse' | 'recent'
+    /** @type {Array<{title: string, path: string, folder: string, modified: number}>} */
+    this._recentPages = [];
     this._contextInspectorOpen = false;
     this._contextVersion = 0;
   }
@@ -116,7 +121,11 @@ export class ConversationSidebar extends LitElement {
   #switchTab(tab) {
     this._sidebarTab = tab;
     if (tab === 'wiki') {
-      this.#fetchWikiPages();
+      if (this._vaultView === 'recent') {
+        this.#fetchRecentPages();
+      } else {
+        this.#fetchWikiPages();
+      }
     }
     this.dispatchEvent(new CustomEvent('sidebar-tab-change', {
       detail: { tab },
@@ -154,6 +163,32 @@ export class ConversationSidebar extends LitElement {
       this._wikiPages = [];
     } finally {
       this._wikiLoading = false;
+    }
+  }
+
+  async #fetchRecentPages() {
+    this._wikiLoading = true;
+    try {
+      const res = await fetch('/api/vault/recent');
+      if (res.ok) {
+        const data = await res.json();
+        this._recentPages = data.pages || [];
+      } else {
+        this._recentPages = [];
+      }
+    } catch (e) {
+      this._recentPages = [];
+    } finally {
+      this._wikiLoading = false;
+    }
+  }
+
+  #switchVaultView(view) {
+    this._vaultView = view;
+    if (view === 'recent') {
+      this.#fetchRecentPages();
+    } else {
+      this.#fetchWikiPages();
     }
   }
 
@@ -514,37 +549,80 @@ export class ConversationSidebar extends LitElement {
     `;
   }
 
+  /** Format a timestamp as a relative time string (e.g., "2h ago"). */
+  #formatRelativeTime(mtime) {
+    const seconds = Math.floor((Date.now() / 1000) - mtime);
+    if (seconds < 60) return 'just now';
+    const minutes = Math.floor(seconds / 60);
+    if (minutes < 60) return `${minutes}m ago`;
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return `${hours}h ago`;
+    const days = Math.floor(hours / 24);
+    if (days < 30) return `${days}d ago`;
+    return new Date(mtime * 1000).toLocaleDateString();
+  }
+
   #renderWikiTab() {
     if (this._wikiLoading) {
       return html`<div class="conv-list"><p style="padding: 1rem; color: var(--pico-muted-color);">Loading vault pages...</p></div>`;
     }
-    const hasContent = this._vaultFolders.length > 0 || this._wikiPages.length > 0;
     return html`
       <div class="conv-list">
-        <div class="vault-action-btns">
-          <button class="wiki-new-page-btn outline" @click=${() => this.#createWikiPage()}>+ Page</button>
-          <button class="wiki-new-folder-btn outline" @click=${() => this.#createVaultFolder()}>+ Folder</button>
+        <div class="vault-view-toggle">
+          <button class="${this._vaultView === 'browse' ? 'active' : ''}"
+            @click=${() => this.#switchVaultView('browse')}>Browse</button>
+          <button class="${this._vaultView === 'recent' ? 'active' : ''}"
+            @click=${() => this.#switchVaultView('recent')}>Recent</button>
         </div>
-        <div class="vault-breadcrumbs">${this.#renderVaultBreadcrumbs()}</div>
-        ${this._vaultFolders.map(f => html`
-          <div class="conv-item wiki-item wiki-folder-item" @click=${() => this.#navigateToFolder(f.path)} title=${f.path}>
-            <span class="conv-title">\u{1F4C1} ${f.name}</span>
-          </div>
-        `)}
-        ${this._wikiPages.map(p => {
-          const pagePath = p.path || p.title;
-          const isOpen = pagePath === this._openWikiPage;
-          return html`
-            <div class="conv-item wiki-item ${isOpen ? 'active' : ''}" @click=${() => this.#handleWikiSelect(pagePath)} title=${pagePath}>
-              <span class="conv-title">${p.title}</span>
-            </div>
-          `;
-        })}
-        ${!hasContent
-          ? html`<p style="padding: 1rem; color: var(--pico-muted-color);">Empty folder.</p>`
-          : nothing
-        }
+        ${this._vaultView === 'browse' ? this.#renderVaultBrowse() : this.#renderVaultRecent()}
       </div>
+    `;
+  }
+
+  #renderVaultBrowse() {
+    const hasContent = this._vaultFolders.length > 0 || this._wikiPages.length > 0;
+    return html`
+      <div class="vault-action-btns">
+        <button class="wiki-new-page-btn outline" @click=${() => this.#createWikiPage()}>+ Page</button>
+        <button class="wiki-new-folder-btn outline" @click=${() => this.#createVaultFolder()}>+ Folder</button>
+      </div>
+      <div class="vault-breadcrumbs">${this.#renderVaultBreadcrumbs()}</div>
+      ${this._vaultFolders.map(f => html`
+        <div class="conv-item wiki-item wiki-folder-item" @click=${() => this.#navigateToFolder(f.path)} title=${f.path}>
+          <span class="conv-title">\u{1F4C1} ${f.name}</span>
+        </div>
+      `)}
+      ${this._wikiPages.map(p => {
+        const pagePath = p.path || p.title;
+        const isOpen = pagePath === this._openWikiPage;
+        return html`
+          <div class="conv-item wiki-item ${isOpen ? 'active' : ''}" @click=${() => this.#handleWikiSelect(pagePath)} title=${pagePath}>
+            <span class="conv-title">${p.title}</span>
+          </div>
+        `;
+      })}
+      ${!hasContent
+        ? html`<p style="padding: 1rem; color: var(--pico-muted-color);">Empty folder.</p>`
+        : nothing
+      }
+    `;
+  }
+
+  #renderVaultRecent() {
+    if (!this._recentPages.length) {
+      return html`<p style="padding: 1rem; color: var(--pico-muted-color);">No recent changes.</p>`;
+    }
+    return html`
+      ${this._recentPages.map(p => {
+        const pagePath = p.path || p.title;
+        const isOpen = pagePath === this._openWikiPage;
+        return html`
+          <div class="conv-item wiki-item ${isOpen ? 'active' : ''}" @click=${() => this.#handleWikiSelect(pagePath)} title=${pagePath}>
+            <span class="conv-title">${p.title}</span>
+            <span class="recent-time">${this.#formatRelativeTime(p.modified)}</span>
+          </div>
+        `;
+      })}
     `;
   }
 
