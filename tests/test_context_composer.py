@@ -421,8 +421,9 @@ class TestCompose:
             # Deferred text second (since tools are over budget)
             assert result.messages[1]["role"] == "system"
             assert "tool_search" in result.messages[1]["content"]
-            # User message last
-            assert result.messages[-1]["content"] == "hello"
+            # User message before context status
+            user_msgs = [m for m in result.messages if m.get("role") == "user"]
+            assert user_msgs[-1]["content"] == "hello"
 
     @pytest.mark.asyncio
     async def test_truncates_long_user_message(self, ctx, config):
@@ -438,8 +439,8 @@ class TestCompose:
             composer = ContextComposer()
             long_msg = "x" * 200
             result = await composer.compose(ctx, long_msg, [], mode=ComposerMode.INTERACTIVE)
-            user_msg = result.messages[-1]
-            assert "[truncated at" in user_msg["content"]
+            user_msgs = [m for m in result.messages if m.get("role") == "user"]
+            assert "[truncated at" in user_msgs[-1]["content"]
 
     @pytest.mark.asyncio
     async def test_stores_sources_on_state(self, ctx, config):
@@ -632,3 +633,71 @@ class TestContextComposerOnContext:
     def test_fork_for_tool_call_shares_composer(self, ctx):
         child = ctx.fork_for_tool_call("call-123")
         assert child.composer is ctx.composer
+
+
+# -- Context status ------------------------------------------------------------
+
+
+class TestBuildContextStatus:
+    def test_basic_format(self):
+        line = ContextComposer._build_context_status(12400, 100000, 5)
+        assert line is not None
+        assert "12,400" in line
+        assert "100,000" in line
+        assert "12%" in line
+        assert "5 messages" in line
+
+    def test_high_usage_hint(self):
+        line = ContextComposer._build_context_status(78000, 100000, 12)
+        assert line is not None
+        assert "consider being concise" in line
+
+    def test_low_usage_no_hint(self):
+        line = ContextComposer._build_context_status(5000, 100000, 2)
+        assert line is not None
+        assert "consider being concise" not in line
+
+    def test_zero_max_returns_none(self):
+        assert ContextComposer._build_context_status(5000, 0, 2) is None
+
+    def test_negative_max_returns_none(self):
+        assert ContextComposer._build_context_status(5000, -1, 2) is None
+
+
+class TestContextStatusInCompose:
+    @pytest.mark.asyncio
+    async def test_context_status_injected_by_default(self, ctx, config):
+        config.system_prompt = "System."
+        config.agent.tool_context_budget_pct = 1.0
+        config.compaction.max_tokens = 100000
+        with (
+            patch("decafclaw.agent._collect_all_tool_defs", return_value=[]),
+            patch("decafclaw.memory_context.retrieve_memory_context",
+                  new_callable=AsyncMock, return_value=[]),
+        ):
+            composer = ContextComposer()
+            result = await composer.compose(ctx, "hello", [], mode=ComposerMode.INTERACTIVE)
+            # Last message should be the context status
+            last = result.messages[-1]
+            assert last["role"] == "system"
+            assert "[Context:" in last["content"]
+            assert "100,000" in last["content"]
+            assert "messages" in last["content"]
+
+    @pytest.mark.asyncio
+    async def test_context_status_disabled(self, ctx, config):
+        config.system_prompt = "System."
+        config.agent.show_context_status = False
+        config.agent.tool_context_budget_pct = 1.0
+        config.compaction.max_tokens = 100000
+        with (
+            patch("decafclaw.agent._collect_all_tool_defs", return_value=[]),
+            patch("decafclaw.memory_context.retrieve_memory_context",
+                  new_callable=AsyncMock, return_value=[]),
+        ):
+            composer = ContextComposer()
+            result = await composer.compose(ctx, "hello", [], mode=ComposerMode.INTERACTIVE)
+            # Last message should be the user message, not context status
+            last = result.messages[-1]
+            assert last["role"] == "user"
+            assert last["content"] == "hello"
