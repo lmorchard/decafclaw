@@ -121,6 +121,64 @@ def read_context_sidecar(config, conv_id: str) -> dict | None:
         return None
 
 
+# -- History sanitization -----------------------------------------------------
+
+
+def _reorder_tool_results(messages: list[dict]) -> list[dict]:
+    """Ensure each tool result immediately follows its assistant tool_call.
+
+    LiteLLM / Gemini require tool results to appear right after the assistant
+    message that issued the call.  After compaction or concurrent archiving,
+    results can be orphaned (no matching assistant) or displaced (appear after
+    a different assistant message).
+
+    Strategy: walk messages, collect tool results separately, and re-insert
+    each batch right after the assistant message whose tool_calls they match.
+    Orphans (no matching assistant) are dropped.
+    """
+    # Map tool_call_id → assistant message index (first match wins)
+    tc_id_to_assistant_idx: dict[str, int] = {}
+    non_tool_messages: list[tuple[int, dict]] = []  # (original_idx, msg)
+    tool_results: list[dict] = []
+
+    for msg in messages:
+        if msg.get("role") == "tool":
+            tool_results.append(msg)
+        else:
+            idx = len(non_tool_messages)
+            non_tool_messages.append((idx, msg))
+            for tc in msg.get("tool_calls") or []:
+                tc_id = tc.get("id")
+                if tc_id:
+                    tc_id_to_assistant_idx[tc_id] = idx
+
+    if not tool_results:
+        return messages
+
+    # Group tool results by their assistant message index
+    assistant_tool_results: dict[int, list[dict]] = {}
+    dropped = 0
+    for tr in tool_results:
+        tc_id = tr.get("tool_call_id", "")
+        asst_idx = tc_id_to_assistant_idx.get(tc_id)
+        if asst_idx is None:
+            dropped += 1
+            continue
+        assistant_tool_results.setdefault(asst_idx, []).append(tr)
+
+    if dropped:
+        log.info(f"Dropped {dropped} orphaned tool result(s) from history")
+
+    # Rebuild: interleave non-tool messages with their tool results
+    result: list[dict] = []
+    for idx, msg in non_tool_messages:
+        result.append(msg)
+        if idx in assistant_tool_results:
+            result.extend(assistant_tool_results[idx])
+
+    return result
+
+
 # -- Composer -----------------------------------------------------------------
 
 
@@ -250,22 +308,14 @@ class ContextComposer:
                 llm_history.append(m)
             elif role in role_remap:
                 llm_history.append({**m, "role": role_remap[role]})
-        # Strip orphaned tool results — after compaction the assistant message
-        # carrying the matching tool_call may have been summarized away, which
-        # causes LiteLLM / Gemini to reject the request.
-        valid_tc_ids: set[str] = set()
-        for m in llm_history:
-            for tc in m.get("tool_calls") or []:
-                if tc_id := tc.get("id"):
-                    valid_tc_ids.add(tc_id)
-        before_len = len(llm_history)
-        llm_history = [
-            m for m in llm_history
-            if m.get("role") != "tool"
-            or m.get("tool_call_id") in valid_tc_ids
-        ]
-        if (dropped := before_len - len(llm_history)):
-            log.info(f"Dropped {dropped} orphaned tool result(s) from history")
+        # Sanitize tool message ordering for LLM compatibility.
+        # LiteLLM / Gemini require each tool result to immediately follow
+        # the assistant message that issued its tool_call. After compaction
+        # or concurrent archiving, results can end up orphaned (no matching
+        # assistant) or displaced (after a *different* assistant message).
+        # Fix: pull tool results out and reattach them right after their
+        # matching assistant message; drop any with no match.
+        llm_history = _reorder_tool_results(llm_history)
         llm_history = [_resolve_attachments(config, m) for m in llm_history]
 
         # -- History source entry --
