@@ -511,6 +511,7 @@ export class ConversationStore extends EventTarget {
         if (msg.current_effort) this.#currentEffort = msg.current_effort;
         if (msg.effort_model) this.#effortModel = msg.effort_model;
         if (msg.read_only) this.#readOnly = true;
+        if (msg.turn_active) this.#busy = true;
       }
       if (msg.type === 'message_complete' && msg.conv_id === this.#currentConvId) {
         this.#toolStatusStore.clearToolStatus();
