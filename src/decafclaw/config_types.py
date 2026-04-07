@@ -18,6 +18,7 @@ class LlmConfig:
     model: str = "gemini-2.5-flash"
     api_key: str = field(default="dummy", metadata={"secret": True})
     streaming: bool = True
+    timeout: int = 300  # seconds for LLM HTTP requests
     context_window_size: int = 0  # 0 = not specified, fall back to compaction_max_tokens
 
 

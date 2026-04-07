@@ -53,7 +53,8 @@ async def call_llm(config, messages, tools=None,
     log.debug(f"LLM request: model={model}, messages={len(messages)}, tools={len(tools) if tools else 0}")
 
     async with httpx.AsyncClient() as client:
-        resp = await client.post(url, json=body, headers=headers, timeout=120)
+        timeout = getattr(config.llm, "timeout", 300)
+        resp = await client.post(url, json=body, headers=headers, timeout=timeout)
     resp.raise_for_status()
     data = resp.json()
 
@@ -96,6 +97,7 @@ async def call_llm_streaming(config, messages, tools=None,
     url = llm_url or config.llm.url
     model = llm_model or config.llm.model
     api_key = llm_api_key or config.llm.api_key
+    timeout = getattr(config.llm, "timeout", 300)
 
     body = {
         "model": model,
@@ -131,7 +133,7 @@ async def call_llm_streaming(config, messages, tools=None,
     try:
         async with httpx.AsyncClient() as client:
             async with aconnect_sse(client, "POST", url, json=body,
-                                     headers=headers, timeout=httpx.Timeout(120.0)) as event_source:
+                                     headers=headers, timeout=httpx.Timeout(timeout)) as event_source:
                 async for event in event_source.aiter_sse():
                     if cancel_event and cancel_event.is_set():
                         log.info("LLM streaming cancelled by user")
