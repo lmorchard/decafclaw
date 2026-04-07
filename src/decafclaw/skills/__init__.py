@@ -112,7 +112,9 @@ def _parse_allowed_tools(raw: str) -> tuple[list[str], list[str]]:
     tools: list[str] = []
     patterns: list[str] = []
 
-    for entry in raw.split(","):
+    # Handle both comma-separated string and YAML list formats
+    entries = raw if isinstance(raw, list) else raw.split(",")
+    for entry in entries:
         entry = entry.strip()
         if not entry:
             continue
