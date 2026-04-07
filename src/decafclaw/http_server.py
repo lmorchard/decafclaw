@@ -487,12 +487,20 @@ def create_app(config, event_bus, app_ctx=None) -> Starlette:
 
     @_authenticated
     async def vault_recent(request: Request, username: str) -> JSONResponse:
-        """List recently modified vault pages sorted by mtime descending."""
-        vault = _vault_root()
-        if not vault.is_dir():
+        """List recently modified agent vault pages sorted by mtime descending.
+
+        Only scans the agent's folder within the vault (pages + journal),
+        not the user's personal vault files.
+        """
+        agent_dir = config.vault_agent_dir
+        if not agent_dir.is_dir():
             return JSONResponse({"pages": []})
 
-        vault_resolved = vault.resolve()
+        vault_resolved = _vault_root().resolve()
+        agent_resolved = agent_dir.resolve()
+        if not agent_resolved.is_relative_to(vault_resolved):
+            log.warning("vault_agent_dir is outside vault_root, skipping recent changes")
+            return JSONResponse({"pages": []})
         limit = config.vault.recent_changes_limit
         try:
             limit = int(request.query_params.get("limit", limit))
@@ -501,13 +509,13 @@ def create_app(config, event_bus, app_ctx=None) -> Starlette:
         limit = max(0, limit)
 
         pages = []
-        for md_file in vault_resolved.rglob("*.md"):
+        for md_file in agent_resolved.rglob("*.md"):
             if not md_file.is_file():
                 continue
-            if not md_file.resolve().is_relative_to(vault_resolved):
+            if not md_file.resolve().is_relative_to(agent_resolved):
                 continue
             # Skip hidden directories (.obsidian, .git, .trash, etc.)
-            if any(part.startswith('.') for part in md_file.relative_to(vault_resolved).parts[:-1]):
+            if any(part.startswith('.') for part in md_file.relative_to(agent_resolved).parts[:-1]):
                 continue
             rel = md_file.relative_to(vault_resolved)
             pages.append({

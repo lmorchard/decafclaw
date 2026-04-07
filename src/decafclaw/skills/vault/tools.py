@@ -36,6 +36,9 @@ def resolve_page(config, page: str, from_page: str | None = None) -> Path | None
     """
     if ".." in page or page.startswith("/"):
         return None
+    # Strip .md suffix if the caller included it (prevents Foo.md.md)
+    if page.endswith(".md"):
+        page = page[:-3]
     vault = _vault_root(config).resolve()
     if not vault.is_dir():
         return None
@@ -86,6 +89,9 @@ def _safe_write_path(config, page: str) -> Path | None:
     """
     if ".." in page or page.startswith("/"):
         return None
+    # Strip .md suffix if the caller included it (prevents Foo.md.md)
+    if page.endswith(".md"):
+        page = page[:-3]
     vault = _vault_root(config).resolve()
     path = (vault / f"{page}.md").resolve()
     if not path.is_relative_to(vault):

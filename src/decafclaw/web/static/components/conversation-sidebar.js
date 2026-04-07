@@ -617,7 +617,8 @@ export class ConversationSidebar extends LitElement {
         const pagePath = p.path || p.title;
         const isOpen = pagePath === this._openWikiPage;
         return html`
-          <div class="conv-item wiki-item ${isOpen ? 'active' : ''}" @click=${() => this.#handleWikiSelect(pagePath)} title=${pagePath}>
+          <div class="conv-item wiki-item recent-item ${isOpen ? 'active' : ''}" @click=${() => this.#handleWikiSelect(pagePath)} title=${pagePath}>
+            ${p.folder ? html`<span class="recent-folder">${p.folder}/</span>` : nothing}
             <span class="conv-title">${p.title}</span>
             <span class="recent-time">${this.#formatRelativeTime(p.modified)}</span>
           </div>
