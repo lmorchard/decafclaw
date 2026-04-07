@@ -438,8 +438,11 @@ TOOL_DEFINITIONS = [
         "function": {
             "name": "vault_read",
             "description": (
-                "Read a vault page by name or path. Returns the full page content. "
-                "Use to check existing content before writing updates."
+                "Read a vault page (knowledge base) by name or path. ONLY for "
+                "vault knowledge pages — NOT for workspace files, blog posts, "
+                "code, or project files (use workspace_read for those). Returns "
+                "the full page content. Use to check existing content before "
+                "writing updates."
             ),
             "parameters": {
                 "type": "object",
@@ -461,7 +464,10 @@ TOOL_DEFINITIONS = [
         "function": {
             "name": "vault_write",
             "description": (
-                "Create or overwrite a vault page. ALWAYS vault_read first if "
+                "Create or overwrite a vault page (knowledge base). ONLY for "
+                "vault knowledge pages — NOT for workspace files, blog posts, "
+                "code, configs, or any file in a project directory. Use "
+                "workspace_write for those. ALWAYS vault_read first if "
                 "updating an existing page to preserve content you want to keep. "
                 "Use [[Page Name]] syntax to link to other pages. Include a "
                 "## Sources section. Default to writing in agent/pages/ — only "
