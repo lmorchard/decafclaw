@@ -22,6 +22,7 @@ class ConversationState:
     """Per-conversation state tracked during the bot's lifetime."""
     history: list = field(default_factory=list)
     skill_state: dict | None = None
+    skip_vault_retrieval: bool = False
     pending_msgs: list = field(default_factory=list)
     debounce_timer: asyncio.Task | None = None
     last_response_time: float = 0
@@ -325,11 +326,13 @@ class MattermostClient:
         )
         req_ctx.media_handler = MattermostMediaHandler(self._http, channel_id=channel_id)
 
-        # Restore per-conversation skill state from previous turns
+        # Restore per-conversation state from previous turns
         if conv.skill_state:
             req_ctx.tools.extra = conv.skill_state.get("extra_tools", {})
             req_ctx.tools.extra_definitions = conv.skill_state.get("extra_tool_definitions", [])
             req_ctx.skills.activated = conv.skill_state.get("activated_skills", set())
+        if conv.skip_vault_retrieval:
+            req_ctx.skip_vault_retrieval = True
 
         # Create conversation display for this turn
         conv_display = ConversationDisplay(
@@ -571,13 +574,15 @@ class MattermostClient:
                 req_ctx.event_bus.unsubscribe(cancel_sub)
             conv.last_response_time = time.monotonic()
 
-            # Persist per-conversation skill state for next turn
+            # Persist per-conversation state for next turn
             if req_ctx.skills.activated:
                 conv.skill_state = {
                     "extra_tools": req_ctx.tools.extra,
                     "extra_tool_definitions": req_ctx.tools.extra_definitions,
                     "activated_skills": req_ctx.skills.activated,
                 }
+            if req_ctx.skip_vault_retrieval:
+                conv.skip_vault_retrieval = True
 
             await conv_display.finalize()
             conv.busy = False

@@ -170,6 +170,9 @@ async def _handle_send(ws_send, index, username, msg, state):
         # cmd_ctx has preapproved_tools, activated_skills, extra_tools set
         state["_command_ctx"] = cmd_ctx
         state["_command_display"] = cmd_result.display_text
+        # Persist command flags for subsequent turns in this conversation
+        if cmd_ctx.skip_vault_retrieval:
+            state["conv_flags"].setdefault(conv_id, {})["skip_vault_retrieval"] = True
         # Acknowledge the command so the user sees it was recognized
         skill_name = cmd_result.skill.name if cmd_result.skill else "unknown"
         await ws_send({
@@ -227,6 +230,7 @@ def _start_agent_turn(state, index, conv_id, username, text, ws_send,
             command_ctx=command_ctx, archive_text=archive_text,
             attachments=attachments, wiki_page=wiki_page,
             conv_viewers=conv_viewers,
+            conv_flags=state.get("conv_flags", {}).get(conv_id),
         )
     )
     state["agent_tasks"].add(task)
@@ -346,6 +350,7 @@ async def websocket_chat(websocket: WebSocket, config, event_bus, app_ctx):
     state = {
         "agent_tasks": set(),
         "cancel_events": {},
+        "conv_flags": {},  # per-conversation flags (e.g., skip_vault_retrieval)
         "config": config,
         "event_bus": event_bus,
         "app_ctx": app_ctx,
@@ -387,7 +392,7 @@ async def websocket_chat(websocket: WebSocket, config, event_bus, app_ctx):
 async def _run_agent_turn(websocket, app_ctx, config, event_bus,
                           index, conv_id, username, text, cancel_event=None,
                           command_ctx=None, archive_text="", attachments=None,
-                          wiki_page=None, conv_viewers=None):
+                          wiki_page=None, conv_viewers=None, conv_flags=None):
     """Run an agent turn for a web conversation, streaming events to WebSocket."""
     from ..agent import run_agent_turn  # deferred: circular dep
     from ..archive import read_archive
@@ -425,6 +430,10 @@ async def _run_agent_turn(websocket, app_ctx, config, event_bus,
         from ..commands import apply_command_ctx
         apply_command_ctx(ctx, command_ctx)
         ctx.tools.extra_definitions = command_ctx.tools.extra_definitions
+    # Restore per-conversation flags from previous turns
+    if conv_flags:
+        if conv_flags.get("skip_vault_retrieval"):
+            ctx.skip_vault_retrieval = True
     if cancel_event:
         ctx.cancelled = cancel_event
 
