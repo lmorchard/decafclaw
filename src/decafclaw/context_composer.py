@@ -250,6 +250,22 @@ class ContextComposer:
                 llm_history.append(m)
             elif role in role_remap:
                 llm_history.append({**m, "role": role_remap[role]})
+        # Strip orphaned tool results — after compaction the assistant message
+        # carrying the matching tool_call may have been summarized away, which
+        # causes LiteLLM / Gemini to reject the request.
+        valid_tc_ids: set[str] = set()
+        for m in llm_history:
+            for tc in m.get("tool_calls") or []:
+                if tc_id := tc.get("id"):
+                    valid_tc_ids.add(tc_id)
+        before_len = len(llm_history)
+        llm_history = [
+            m for m in llm_history
+            if m.get("role") != "tool"
+            or m.get("tool_call_id") in valid_tc_ids
+        ]
+        if (dropped := before_len - len(llm_history)):
+            log.info(f"Dropped {dropped} orphaned tool result(s) from history")
         llm_history = [_resolve_attachments(config, m) for m in llm_history]
 
         # -- History source entry --
