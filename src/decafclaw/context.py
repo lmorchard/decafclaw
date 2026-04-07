@@ -69,6 +69,7 @@ class Context:
         self.is_child: bool = False
         self.skip_reflection: bool = False
         self.skip_vault_retrieval: bool = False
+        self.skip_archive: bool = False
         self.wiki_page: str | None = None  # open wiki page from web UI
         self.effort: str = "default"
         self.task_mode: str = ""  # "heartbeat" | "scheduled" | "" (interactive)
@@ -87,6 +88,7 @@ class Context:
         task_mode: str = "",
         skip_reflection: bool = True,
         skip_vault_retrieval: bool = True,
+        skip_archive: bool = False,
         allowed_tools: set | None = None,
         preapproved_tools: set | None = None,
         preapproved_shell_patterns: list[str] | None = None,
@@ -108,6 +110,7 @@ class Context:
         ctx.task_mode = task_mode
         ctx.skip_reflection = skip_reflection
         ctx.skip_vault_retrieval = skip_vault_retrieval
+        ctx.skip_archive = skip_archive
         if allowed_tools is not None:
             ctx.tools.allowed = allowed_tools
         if preapproved_tools is not None:

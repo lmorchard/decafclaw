@@ -109,6 +109,8 @@ def _resolve_attachments(config, message: dict) -> dict:
 
 def _archive(ctx, msg) -> None:
     """Archive a message, logging errors but never raising."""
+    if ctx.skip_archive:
+        return
     try:
         append_message(ctx.config, _conv_id(ctx), msg)
     except Exception as e:

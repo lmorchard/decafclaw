@@ -57,6 +57,7 @@ async def _run_memory_sweep(ctx, old_messages: list[dict]) -> None:
             task_mode="scheduled",
             skip_reflection=True,
             skip_vault_retrieval=True,
+            skip_archive=True,
         )
         child_ctx.is_child = True
 
