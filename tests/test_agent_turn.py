@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from decafclaw.agent import (
+    _archive,
     _build_tool_list,
     _check_cancelled,
     _conv_id,
@@ -37,6 +38,22 @@ def test_conv_id_falls_back_to_unknown(config):
     from decafclaw.events import EventBus
     bare_ctx = Context(config=config, event_bus=EventBus())
     assert _conv_id(bare_ctx) == "unknown"
+
+
+def test_archive_skipped_when_flag_set(ctx, config):
+    """_archive should not write when ctx.skip_archive is True."""
+    from decafclaw.archive import read_archive
+    ctx.conv_id = "test-skip-archive"
+    msg = {"role": "user", "content": "should not persist"}
+
+    # Normal archive writes
+    _archive(ctx, msg)
+    assert len(read_archive(config, "test-skip-archive")) == 1
+
+    # With skip_archive, nothing new is written
+    ctx.skip_archive = True
+    _archive(ctx, {"role": "assistant", "content": "also skipped"})
+    assert len(read_archive(config, "test-skip-archive")) == 1
 
 
 def test_check_cancelled_returns_none_when_not_cancelled(ctx):

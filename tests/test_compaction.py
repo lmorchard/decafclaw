@@ -471,6 +471,8 @@ class TestMemorySweep:
         assert "vault_search" in child_ctx.tools.allowed
         # Vault tools should be preapproved
         assert "vault_write" in child_ctx.tools.preapproved
+        # Sweep must not archive into the parent conversation
+        assert child_ctx.skip_archive is True
 
     @pytest.mark.asyncio
     async def test_sweep_error_is_logged_not_raised(self, ctx):
