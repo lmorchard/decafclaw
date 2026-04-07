@@ -72,6 +72,14 @@ class TestResolvePage:
     def test_nonexistent_returns_none(self, config, vault_dir):
         assert resolve_page(config, "DoesNotExist") is None
 
+    def test_strips_md_suffix(self, config, vault_dir):
+        """Passing 'Page.md' should resolve to Page.md, not Page.md.md."""
+        (vault_dir / "Hello.md").write_text("# Hello")
+        result = resolve_page(config, "Hello.md")
+        assert result is not None
+        assert result.name == "Hello.md"
+        assert not (vault_dir / "Hello.md.md").exists()
+
 
 class TestVaultRead:
     @pytest.mark.asyncio
@@ -145,6 +153,15 @@ class TestVaultWrite:
     async def test_rejects_empty_content(self, ctx, vault_dir):
         result = await tool_vault_write(ctx, "agent/pages/Empty", "")
         assert "error" in result.text.lower()
+
+    @pytest.mark.asyncio
+    async def test_strips_md_suffix(self, ctx, vault_dir):
+        """Writing 'page.md' should create page.md, not page.md.md."""
+        with patch("decafclaw.embeddings.index_entry", new_callable=AsyncMock):
+            result = await tool_vault_write(ctx, "agent/pages/Test.md", "# Test")
+        assert "saved" in result.lower() or "saved" in str(result).lower()
+        assert (vault_dir / "agent" / "pages" / "Test.md").exists()
+        assert not (vault_dir / "agent" / "pages" / "Test.md.md").exists()
 
 
 class TestVaultJournalAppend:
