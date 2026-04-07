@@ -60,6 +60,14 @@ def test_parse_glob_pattern():
     assert patterns == ["$SKILL_DIR/*.sh"]
 
 
+def test_parse_yaml_list():
+    """YAML list format (list of strings) should work like comma-separated."""
+    tools, patterns = _parse_allowed_tools(["shell", "vault_read", "shell($SKILL_DIR/run.sh)"])
+    assert "shell" in tools
+    assert "vault_read" in tools
+    assert patterns == ["$SKILL_DIR/run.sh"]
+
+
 # -- parse_skill_md with scoped shell --
 
 
