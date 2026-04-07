@@ -481,7 +481,7 @@ WORKSPACE_TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "workspace_read",
-            "description": "Read a file from your workspace filesystem (blog posts, code, configs, scripts, project files). NOT for vault knowledge pages (use vault_read for those). Returns content with line numbers. Optionally read a specific line range with start_line/end_line (1-based, inclusive). Paths are relative to the workspace root.",
+            "description": "Read a file from your workspace filesystem (blog posts, code, configs, scripts, project files). NOT for vault knowledge pages (use vault_read for those). Returns content with line numbers. Optionally read a specific line range with start_line/end_line (1-based, inclusive). Paths are relative to the workspace root — do NOT prefix with 'workspace/'.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -506,7 +506,7 @@ WORKSPACE_TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "workspace_write",
-            "description": "Write content to a file in your workspace filesystem. Use this for blog posts, code, configs, scripts, and any project files. NOT for vault knowledge pages (use vault_write for those). Creates parent directories as needed. Paths are relative to the workspace root.",
+            "description": "Write content to a file in your workspace filesystem. Use this for blog posts, code, configs, scripts, and any project files. NOT for vault knowledge pages (use vault_write for those). Creates parent directories as needed. Paths are relative to the workspace root — do NOT prefix with 'workspace/' (use 'blog/post.md' not 'workspace/blog/post.md').",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -765,7 +765,7 @@ WORKSPACE_TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "workspace_list",
-            "description": "List files and directories in your workspace. Paths are relative to the workspace root.",
+            "description": "List files and directories in your workspace. Paths are relative to the workspace root — do NOT prefix with 'workspace/'.",
             "parameters": {
                 "type": "object",
                 "properties": {
