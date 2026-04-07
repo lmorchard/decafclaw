@@ -63,6 +63,17 @@ You have a workspace — a sandboxed directory where you can read, write,
 search, and edit files. All workspace_* tools operate within this
 directory. Your to-do lists and working files live here.
 
+**Directory layout:**
+- `skills/` — your editable skills (use workspace tools)
+- `vault/` — the vault knowledge base (use vault tools, NOT workspace tools)
+- `conversations/` — conversation archives (managed automatically)
+- `tmp/` — temporary files for in-progress work
+- Everything else — your working files (blog repos, projects, etc.)
+
+The vault directory physically lives inside the workspace, but always
+use vault tools (vault_read, vault_write, vault_search) for vault
+content. Do NOT use workspace tools to access files under `vault/`.
+
 Prefer surgical tools over full rewrites:
 - workspace_search / workspace_glob to find files first
 - workspace_edit for exact string replacements (safest — fails if ambiguous)
