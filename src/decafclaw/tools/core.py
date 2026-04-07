@@ -125,6 +125,21 @@ def tool_current_time(ctx) -> str | ToolResult:
     return now.strftime("%Y-%m-%d %H:%M:%S (%A)")
 
 
+async def tool_wait(ctx, seconds: int = 30) -> str | ToolResult:
+    """Wait for the specified number of seconds before returning.
+
+    Use this when waiting for a background process or external operation
+    to complete. Avoids burning iterations polling in a tight loop.
+    Maximum wait time is 300 seconds (5 minutes).
+    """
+    import asyncio
+    max_wait = 300
+    seconds = max(1, min(seconds, max_wait))
+    log.info(f"[tool:wait] sleeping {seconds}s")
+    await asyncio.sleep(seconds)
+    return f"Waited {seconds} seconds."
+
+
 def tool_context_stats(ctx) -> str | ToolResult:
     """Report token budget statistics for the current conversation."""
     log.info("[tool:context_stats]")
@@ -216,6 +231,7 @@ CORE_TOOLS = {
     "context_stats": tool_context_stats,
     "think": tool_think,
     "current_time": tool_current_time,
+    "wait": tool_wait,
 }
 
 CORE_TOOL_DEFINITIONS = [
@@ -294,6 +310,28 @@ CORE_TOOL_DEFINITIONS = [
                     },
                 },
                 "required": ["content"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "wait",
+            "description": (
+                "Sleep for the specified number of seconds before returning. "
+                "Use this when waiting for a background process to complete "
+                "instead of polling shell_background_status in a tight loop. "
+                "Call wait FIRST, then check status. Maximum 300 seconds."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "seconds": {
+                        "type": "integer",
+                        "description": "Number of seconds to wait (1-300, default 30)",
+                    },
+                },
+                "required": [],
             },
         },
     },
