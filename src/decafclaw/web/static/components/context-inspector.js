@@ -103,16 +103,24 @@ export class ContextInspector extends LitElement {
     }
   }
 
-  #renderWaffle(sources, windowSize) {
+  #renderWaffle(sources, windowSize, totalActual) {
     if (!windowSize || !sources?.length) return nothing;
 
     // Aim for ~300 cells
     const tokensPerCell = Math.max(1, Math.ceil(windowSize / 300));
     const totalCells = Math.ceil(windowSize / tokensPerCell);
 
+    // When actual token count is available, scale estimated source sizes
+    // proportionally so the waffle reflects real usage, not estimates.
+    const totalEstimated = sources.reduce((sum, s) => sum + (s.tokens_estimated || 0), 0);
+    const scale = (totalActual && totalEstimated > 0)
+      ? totalActual / totalEstimated
+      : 1;
+
     const cells = [];
     for (const s of sources) {
-      const count = Math.max(1, Math.round(s.tokens_estimated / tokensPerCell));
+      const scaledTokens = (s.tokens_estimated || 0) * scale;
+      const count = Math.max(1, Math.round(scaledTokens / tokensPerCell));
       const color = SOURCE_COLORS[s.source] || '#ccc';
       for (let i = 0; i < count && cells.length < totalCells; i++) {
         cells.push(color);
@@ -236,7 +244,7 @@ export class ContextInspector extends LitElement {
     } else {
       const d = this._data;
       content = html`
-        ${this.#renderWaffle(d.sources, d.context_window_size)}
+        ${this.#renderWaffle(d.sources, d.context_window_size, d.total_tokens_actual)}
         ${this.#renderStats(d)}
         ${this.#renderSourceTable(d.sources)}
         ${this.#renderCandidates(d.memory_candidates)}
