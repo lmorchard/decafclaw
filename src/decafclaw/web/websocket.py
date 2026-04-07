@@ -422,9 +422,8 @@ async def _run_agent_turn(websocket, app_ctx, config, event_bus,
     ctx.wiki_page = wiki_page
     # Apply pre-configured command state (set by dispatch_command)
     if command_ctx:
-        ctx.tools.preapproved = command_ctx.tools.preapproved
-        ctx.skills.activated = command_ctx.skills.activated
-        ctx.tools.extra = command_ctx.tools.extra
+        from ..commands import apply_command_ctx
+        apply_command_ctx(ctx, command_ctx)
         ctx.tools.extra_definitions = command_ctx.tools.extra_definitions
     if cancel_event:
         ctx.cancelled = cancel_event

@@ -9,6 +9,20 @@ from .skills import SkillInfo, find_command, list_commands
 log = logging.getLogger(__name__)
 
 
+def apply_command_ctx(target_ctx, cmd_ctx) -> None:
+    """Copy command-prepared state from cmd_ctx onto a turn context.
+
+    Centralizes the field copying that both web and Mattermost handlers
+    need when running an inline command.
+    """
+    target_ctx.tools.preapproved = cmd_ctx.tools.preapproved
+    target_ctx.tools.preapproved_shell_patterns = cmd_ctx.tools.preapproved_shell_patterns
+    target_ctx.skills.activated = cmd_ctx.skills.activated
+    target_ctx.tools.extra.update(cmd_ctx.tools.extra)
+    target_ctx.tools.extra_definitions.extend(cmd_ctx.tools.extra_definitions)
+    target_ctx.skip_vault_retrieval = cmd_ctx.skip_vault_retrieval
+
+
 def parse_command_trigger(text: str, prefix: str = "!") -> tuple[str, str] | None:
     """Parse a command trigger from message text.
 
@@ -354,6 +368,10 @@ async def execute_command(ctx, skill: SkillInfo, arguments: str) -> tuple[str, s
     """
     from .media import ToolResult as _ToolResult
     from .tools.skill_tools import activate_skill_internal
+
+    # Command invocations provide a focused prompt — vault retrieval would
+    # inject unrelated context that confuses the model.
+    ctx.skip_vault_retrieval = True
 
     # Set pre-approved tools and scoped shell patterns
     ctx.tools.preapproved = set(skill.allowed_tools)
