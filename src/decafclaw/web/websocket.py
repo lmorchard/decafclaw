@@ -161,6 +161,13 @@ async def _handle_send(ws_send, index, username, msg, state):
         # cmd_ctx has preapproved_tools, activated_skills, extra_tools set
         state["_command_ctx"] = cmd_ctx
         state["_command_display"] = cmd_result.display_text
+        # Acknowledge the command so the user sees it was recognized
+        skill_name = cmd_result.skill.name if cmd_result.skill else "unknown"
+        await ws_send({
+            "type": "command_ack", "conv_id": conv_id,
+            "command": cmd_result.display_text,
+            "skill": skill_name,
+        })
     else:
         pass  # not a command, text unchanged
 

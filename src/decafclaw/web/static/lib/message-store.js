@@ -143,6 +143,16 @@ export class MessageStore {
         }
         return true;
 
+      case 'command_ack':
+        if (msg.conv_id === currentConvId) {
+          this.#currentMessages.push({
+            role: 'command',
+            content: `Running skill: ${msg.skill}`,
+            timestamp: new Date().toISOString(),
+          });
+        }
+        return true;
+
       case 'compaction_done':
         if (msg.conv_id === currentConvId) {
           this.#currentMessages.push({

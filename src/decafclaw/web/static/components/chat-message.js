@@ -41,6 +41,10 @@ export class ChatMessage extends LitElement {
   }
 
   render() {
+    if (this.role === 'command') {
+      return html`<div class="compaction-notice">${this.content}</div>`;
+    }
+
     if (this.role === 'compaction') {
       return html`<div class="compaction-notice">${this.content}</div>`;
     }
