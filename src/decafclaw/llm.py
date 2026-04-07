@@ -1,5 +1,6 @@
 """LLM client — raw HTTP to an OpenAI-compatible endpoint (LiteLLM)."""
 
+import asyncio
 import json
 import logging
 
@@ -130,111 +131,120 @@ async def call_llm_streaming(config, messages, tools=None,
                 log.debug(f"Stream chunk callback error: {e}")
 
     _all_events = []  # collect for diagnostic on empty response
+    _max_retries = 3
     try:
-        async with httpx.AsyncClient() as client:
-            async with aconnect_sse(client, "POST", url, json=body,
-                                     headers=headers, timeout=httpx.Timeout(timeout)) as event_source:
-                async for event in event_source.aiter_sse():
-                    if cancel_event and cancel_event.is_set():
-                        log.info("LLM streaming cancelled by user")
-                        break
-                    if event.data == "[DONE]":
-                        break
+        # Retry loop for transient errors (429 rate limits, 5xx server errors).
+        # On success, the loop breaks after streaming completes.
+        for _attempt in range(_max_retries + 1):
+            async with httpx.AsyncClient() as client:
+                async with aconnect_sse(client, "POST", url, json=body,
+                                         headers=headers, timeout=httpx.Timeout(timeout)) as event_source:
+                    # Check HTTP status before entering SSE parsing.
+                    # On 429/5xx the response is JSON, not SSE — aiter_sse()
+                    # would blow up on the content-type mismatch.
+                    status = event_source.response.status_code
+                    if status == 429 or status >= 500:
+                        error_body = (await event_source.response.aread()).decode(errors="replace")[:500]
+                        if _attempt < _max_retries:
+                            delay = min(int(event_source.response.headers.get(
+                                "retry-after", 2 ** _attempt)), 30)
+                            log.warning(f"LLM {'rate limited' if status == 429 else 'server error'} "
+                                        f"({status}), retrying in {delay}s "
+                                        f"(attempt {_attempt + 1}/{_max_retries}): {error_body[:200]}")
+                            await asyncio.sleep(delay)
+                            continue
+                        raise Exception(f"LLM failed after {_max_retries} retries "
+                                        f"(status {status}): {error_body[:200]}")
 
-                    # Log non-default SSE event types (e.g. "error")
-                    event_type = getattr(event, "event", None)
-                    if event_type and event_type != "message":
-                        log.warning(f"LLM SSE event type={event_type}: {event.data[:500]}")
+                    async for event in event_source.aiter_sse():
+                        if cancel_event and cancel_event.is_set():
+                            log.info("LLM streaming cancelled by user")
+                            break
+                        if event.data == "[DONE]":
+                            break
 
-                    try:
-                        chunk = json.loads(event.data)
-                    except json.JSONDecodeError:
-                        log.debug(f"LLM non-JSON SSE data: {event.data[:200]}")
-                        continue
+                        # Log non-default SSE event types (e.g. "error")
+                        event_type = getattr(event, "event", None)
+                        if event_type and event_type != "message":
+                            log.warning(f"LLM SSE event type={event_type}: {event.data[:500]}")
 
-                    _all_events.append(chunk)
-                    if len(_all_events) > _MAX_DIAGNOSTIC_EVENTS:
-                        _all_events.pop(0)
+                        try:
+                            chunk = json.loads(event.data)
+                        except json.JSONDecodeError:
+                            log.debug(f"LLM non-JSON SSE data: {event.data[:200]}")
+                            continue
 
-                    # Check for usage in final chunk
-                    chunk_usage = chunk.get("usage")
-                    if chunk_usage:
-                        usage = chunk_usage
+                        _all_events.append(chunk)
+                        if len(_all_events) > _MAX_DIAGNOSTIC_EVENTS:
+                            _all_events.pop(0)
 
-                    choices = chunk.get("choices", [])
-                    if not choices:
-                        # Log chunks with no choices (may contain error info)
-                        if chunk.get("error") or not chunk.get("usage"):
-                            log.debug(f"LLM chunk with no choices: {json.dumps(chunk)[:500]}")
-                        continue
+                        # Check for usage in final chunk
+                        chunk_usage = chunk.get("usage")
+                        if chunk_usage:
+                            usage = chunk_usage
 
-                    # Log non-normal finish reasons
-                    finish_reason = choices[0].get("finish_reason")
-                    if finish_reason and finish_reason not in ("stop", "tool_calls"):
-                        log.warning(f"LLM finish_reason: {finish_reason}")
+                        choices = chunk.get("choices", [])
+                        if not choices:
+                            # Log chunks with no choices (may contain error info)
+                            if chunk.get("error") or not chunk.get("usage"):
+                                log.debug(f"LLM chunk with no choices: {json.dumps(chunk)[:500]}")
+                            continue
 
-                    delta = choices[0].get("delta", {})
+                        # Log non-normal finish reasons
+                        finish_reason = choices[0].get("finish_reason")
+                        if finish_reason and finish_reason not in ("stop", "tool_calls"):
+                            log.warning(f"LLM finish_reason: {finish_reason}")
 
-                    # Text content
-                    text = delta.get("content")
-                    if text:
-                        content_parts.append(text)
-                        await _emit("text", text)
+                        delta = choices[0].get("delta", {})
 
-                    # Tool calls
-                    tc_deltas = delta.get("tool_calls")
-                    if tc_deltas:
-                        for tc_delta in tc_deltas:
-                            idx = tc_delta.get("index", 0)
-                            func = tc_delta.get("function", {})
+                        # Text content
+                        text = delta.get("content")
+                        if text:
+                            content_parts.append(text)
+                            await _emit("text", text)
 
-                            if idx not in tool_calls_in_progress:
-                                # New tool call
-                                raw_id = tc_delta.get("id", f"call_{idx}")
-                                tool_calls_in_progress[idx] = {
-                                    "id": _sanitize_tool_call_id(raw_id),
-                                    "type": "function",
-                                    "function": {
-                                        "name": func.get("name", ""),
-                                        "arguments": func.get("arguments", ""),
-                                    },
-                                }
-                                if func.get("name"):
-                                    await _emit("tool_call_start", {
-                                        "index": idx,
-                                        "name": func["name"],
-                                    })
-                            else:
-                                # Append to existing tool call
-                                args_delta = func.get("arguments", "")
-                                if args_delta:
-                                    tool_calls_in_progress[idx]["function"]["arguments"] += args_delta
-                                    await _emit("tool_call_delta", {
-                                        "index": idx,
-                                        "arguments_delta": args_delta,
-                                    })
-                                # Update name if provided (rare but possible)
-                                name_delta = func.get("name", "")
-                                if name_delta:
-                                    tool_calls_in_progress[idx]["function"]["name"] += name_delta
+                        # Tool calls
+                        tc_deltas = delta.get("tool_calls")
+                        if tc_deltas:
+                            for tc_delta in tc_deltas:
+                                idx = tc_delta.get("index", 0)
+                                func = tc_delta.get("function", {})
+
+                                if idx not in tool_calls_in_progress:
+                                    # New tool call
+                                    raw_id = tc_delta.get("id", f"call_{idx}")
+                                    tool_calls_in_progress[idx] = {
+                                        "id": _sanitize_tool_call_id(raw_id),
+                                        "type": "function",
+                                        "function": {
+                                            "name": func.get("name", ""),
+                                            "arguments": func.get("arguments", ""),
+                                        },
+                                    }
+                                    if func.get("name"):
+                                        await _emit("tool_call_start", {
+                                            "index": idx,
+                                            "name": func["name"],
+                                        })
+                                else:
+                                    # Append to existing tool call
+                                    args_delta = func.get("arguments", "")
+                                    if args_delta:
+                                        tool_calls_in_progress[idx]["function"]["arguments"] += args_delta
+                                        await _emit("tool_call_delta", {
+                                            "index": idx,
+                                            "arguments_delta": args_delta,
+                                        })
+                                    # Update name if provided (rare but possible)
+                                    name_delta = func.get("name", "")
+                                    if name_delta:
+                                        tool_calls_in_progress[idx]["function"]["name"] += name_delta
+
+            break  # Success — exit retry loop
 
     except Exception as e:
         log.error(f"LLM streaming error: {e}")
         _stream_error = e
-        # If SSE failed (likely non-SSE error response), retry non-streaming
-        # to capture the actual error body from the LLM.
-        if "text/event-stream" in str(e):
-            try:
-                async with httpx.AsyncClient() as diag_client:
-                    diag_body = {**body, "stream": False}
-                    diag_body.pop("stream_options", None)
-                    diag = await diag_client.post(
-                        url, json=diag_body, headers=headers,
-                        timeout=httpx.Timeout(30.0),
-                    )
-                    log.error(f"LLM error detail ({diag.status_code}): {diag.text[:2000]}")
-            except Exception as diag_err:
-                log.error(f"LLM diagnostic request also failed: {diag_err}")
 
     # If nothing was accumulated and an error occurred, re-raise so the caller
     # knows the LLM call failed (instead of silently returning empty).

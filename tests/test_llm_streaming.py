@@ -15,10 +15,22 @@ class FakeSSEEvent:
         self.data = data
 
 
+class FakeResponse:
+    """Simulates an httpx Response with a status code."""
+    def __init__(self, status_code=200, body=b""):
+        self.status_code = status_code
+        self.headers = {}
+        self._body = body
+
+    async def aread(self):
+        return self._body
+
+
 class FakeEventSource:
     """Simulates an httpx-sse event source that yields events."""
-    def __init__(self, events):
+    def __init__(self, events, status_code=200):
         self._events = events
+        self.response = FakeResponse(status_code)
 
     async def aiter_sse(self):
         for event in self._events:
@@ -247,6 +259,7 @@ class ErrorEventSource:
     def __init__(self, events_before_error, error):
         self._events = events_before_error
         self._error = error
+        self.response = FakeResponse(200)
 
     async def aiter_sse(self):
         for event in self._events:
@@ -283,3 +296,43 @@ async def test_streaming_error_returns_partial_on_partial_content():
 
     # Should return the partial content, not raise
     assert result["content"] == "Hello"
+
+
+@pytest.mark.asyncio
+async def test_streaming_429_retries_then_succeeds():
+    """429 rate limit triggers retry, then succeeds on next attempt."""
+    success_events = _make_text_events(["OK"])
+    call_count = 0
+
+    class RetryThenSuccessSource:
+        def __init__(self):
+            self.response = FakeResponse(429 if call_count == 0 else 200)
+            self.response.headers = {"retry-after": "0"}
+
+        async def aiter_sse(self):
+            for event in success_events:
+                yield event
+
+        async def aread(self):
+            return b'{"error": "rate limited"}'
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            pass
+
+    with patch("httpx_sse.aconnect_sse") as mock_sse:
+        def make_source(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            src = RetryThenSuccessSource()
+            src.response = FakeResponse(429 if call_count == 1 else 200)
+            src.response.headers = {"retry-after": "0"}
+            return src
+
+        mock_sse.side_effect = make_source
+        result = await call_llm_streaming(_config(), [])
+
+    assert result["content"] == "OK"
+    assert call_count == 2  # first attempt 429, second succeeds
