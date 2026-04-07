@@ -116,6 +116,15 @@ async def _handle_load_history(ws_send, index, username, msg, state):
     if current_effort is not None:
         response["current_effort"] = current_effort
         response["effort_model"] = resolved_model
+
+    # Register this WebSocket as a viewer of this conversation so it
+    # receives live events (including for in-progress turns after reload).
+    conv_viewers = state.setdefault("conv_viewers", {})
+    conv_viewers.setdefault(conv_id, set()).add(state["websocket"])
+    busy_convs = state.get("busy_convs", set())
+    if conv_id in busy_convs:
+        response["turn_active"] = True
+
     await ws_send(response)
 
 
@@ -210,12 +219,14 @@ def _start_agent_turn(state, index, conv_id, username, text, ws_send,
     state["cancel_events"][conv_id] = cancel_event
     busy_convs.add(conv_id)
 
+    conv_viewers = state.setdefault("conv_viewers", {})
     task = asyncio.create_task(
         _run_agent_turn(
             state["websocket"], state["app_ctx"], state["config"], state["event_bus"],
             index, conv_id, username, text, cancel_event,
             command_ctx=command_ctx, archive_text=archive_text,
             attachments=attachments, wiki_page=wiki_page,
+            conv_viewers=conv_viewers,
         )
     )
     state["agent_tasks"].add(task)
@@ -362,6 +373,9 @@ async def websocket_chat(websocket: WebSocket, config, event_bus, app_ctx):
     except Exception as e:
         log.error(f"WebSocket error for {username}: {e}", exc_info=True)
     finally:
+        # Remove this WebSocket from all conversation viewer sets
+        for viewers in state.get("conv_viewers", {}).values():
+            viewers.discard(state["websocket"])
         state["closing"] = True
         # Wait for all in-flight tasks, including any spawned by queue drain
         while state["agent_tasks"]:
@@ -373,18 +387,28 @@ async def websocket_chat(websocket: WebSocket, config, event_bus, app_ctx):
 async def _run_agent_turn(websocket, app_ctx, config, event_bus,
                           index, conv_id, username, text, cancel_event=None,
                           command_ctx=None, archive_text="", attachments=None,
-                          wiki_page=None):
+                          wiki_page=None, conv_viewers=None):
     """Run an agent turn for a web conversation, streaming events to WebSocket."""
     from ..agent import run_agent_turn  # deferred: circular dep
     from ..archive import read_archive
     from ..context import Context
 
+    # Track all WebSockets viewing each conversation so events reach every
+    # tab (including reconnections after a page reload mid-turn).
+    if conv_viewers is None:
+        conv_viewers = {}
+    conv_viewers.setdefault(conv_id, set()).add(websocket)
+
     async def ws_send(msg):
-        """Send JSON to WebSocket, ignoring errors if connection closed."""
-        try:
-            await websocket.send_json(msg)
-        except Exception:
-            pass
+        """Send JSON to all WebSockets currently viewing this conversation."""
+        viewers = conv_viewers.get(conv_id, set())
+        # Always include the originating WebSocket even if not yet registered
+        targets = viewers | {websocket}
+        for ws in list(targets):
+            try:
+                await ws.send_json(msg)
+            except Exception:
+                viewers.discard(ws)
 
     # Fork a request context for this turn
     from ..media import LocalFileMediaHandler
