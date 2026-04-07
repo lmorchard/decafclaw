@@ -42,7 +42,7 @@ export class ChatMessage extends LitElement {
 
   render() {
     if (this.role === 'command') {
-      return html`<div class="compaction-notice">${this.content}</div>`;
+      return html`<tool-message .tool=${this.content} .content=${''} .icon=${'\u{2699}\u{fe0f}'}></tool-message>`;
     }
 
     if (this.role === 'compaction') {
