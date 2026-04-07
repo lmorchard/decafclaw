@@ -275,6 +275,11 @@ async def _handle_cancel_turn(ws_send, index, username, msg, state):
     if event:
         log.info(f"Cancelling agent turn for {conv_id}")
         event.set()
+        # Also cancel the asyncio task for immediate interruption
+        # (the event alone only works when checked in the streaming loop)
+        for task in list(state.get("agent_tasks", set())):
+            if not task.done():
+                task.cancel()
 
 
 async def _handle_set_effort(ws_send, index, username, msg, state):
@@ -630,6 +635,15 @@ async def _run_agent_turn(websocket, app_ctx, config, event_bus,
                 title += "..."
             index.rename(conv_id, title)
 
+    except asyncio.CancelledError:
+        log.info(f"Web agent turn cancelled for {conv_id}")
+        try:
+            await ws_send({
+                "type": "message_complete", "conv_id": conv_id,
+                "role": "assistant", "text": "[cancelled]", "final": True,
+            })
+        except Exception:
+            pass
     except Exception as e:
         log.error(f"Web agent turn failed: {e}", exc_info=True)
         try:

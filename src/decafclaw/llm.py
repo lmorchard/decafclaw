@@ -151,7 +151,17 @@ async def call_llm_streaming(config, messages, tools=None,
                             log.warning(f"LLM {'rate limited' if status == 429 else 'server error'} "
                                         f"({status}), retrying in {delay}s "
                                         f"(attempt {_attempt + 1}/{_max_retries}): {error_body[:200]}")
-                            await asyncio.sleep(delay)
+                            # Cancellable sleep — break out if cancel is set
+                            if cancel_event:
+                                try:
+                                    await asyncio.wait_for(
+                                        cancel_event.wait(), timeout=delay)
+                                    log.info("LLM retry sleep cancelled by user")
+                                    raise asyncio.CancelledError()
+                                except asyncio.TimeoutError:
+                                    pass  # timeout expired, proceed with retry
+                            else:
+                                await asyncio.sleep(delay)
                             continue
                         raise Exception(f"LLM failed after {_max_retries} retries "
                                         f"(status {status}): {error_body[:200]}")
