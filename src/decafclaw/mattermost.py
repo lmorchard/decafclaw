@@ -493,10 +493,8 @@ class MattermostClient:
         if cmd_result.mode == "inline":
             combined_text = cmd_result.text
             archive_text = cmd_result.display_text
-            req_ctx.tools.preapproved = cmd_ctx.tools.preapproved
-            req_ctx.skills.activated = cmd_ctx.skills.activated
-            req_ctx.tools.extra.update(cmd_ctx.tools.extra)
-            req_ctx.tools.extra_definitions.extend(cmd_ctx.tools.extra_definitions)
+            from .commands import apply_command_ctx
+            apply_command_ctx(req_ctx, cmd_ctx)
 
         return req_ctx, conv_display, cancel_task, sub_id, combined_text, archive_text
 
