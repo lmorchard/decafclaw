@@ -15,6 +15,7 @@ def apply_command_ctx(target_ctx, cmd_ctx) -> None:
     Centralizes the field copying that both web and Mattermost handlers
     need when running an inline command.
     """
+    target_ctx.tools.allowed = cmd_ctx.tools.allowed
     target_ctx.tools.preapproved = cmd_ctx.tools.preapproved
     target_ctx.tools.preapproved_shell_patterns = cmd_ctx.tools.preapproved_shell_patterns
     target_ctx.skills.activated = cmd_ctx.skills.activated
@@ -373,7 +374,11 @@ async def execute_command(ctx, skill: SkillInfo, arguments: str) -> tuple[str, s
     # inject unrelated context that confuses the model.
     ctx.skip_vault_retrieval = True
 
-    # Set pre-approved tools and scoped shell patterns
+    # Restrict and pre-approve tools. When allowed-tools is specified,
+    # the agent can ONLY use those tools — this prevents confusion between
+    # similar tools (e.g. vault_write vs workspace_write).
+    if skill.allowed_tools:
+        ctx.tools.allowed = set(skill.allowed_tools)
     ctx.tools.preapproved = set(skill.allowed_tools)
     skill_dir = str(skill.location)
     ctx.tools.preapproved_shell_patterns = [
