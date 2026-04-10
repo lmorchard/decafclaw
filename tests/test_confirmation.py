@@ -436,3 +436,27 @@ async def test_preapproved_skips_pending(ctx):
     )
     assert result["approved"] is True
     assert ctx.pending_confirmation is None
+
+
+@pytest.mark.asyncio
+async def test_pending_confirmation_cleared_on_cancellation(ctx):
+    """ctx.pending_confirmation is cleared when the task is cancelled."""
+    ctx.conv_id = "test-conv"
+
+    async def cancel_after_delay(task):
+        await asyncio.sleep(0.05)
+        # Verify pending is set before cancellation
+        assert ctx.pending_confirmation is not None
+        task.cancel()
+
+    task = asyncio.create_task(
+        request_confirmation(
+            ctx, tool_name="test_tool", command="cmd", message="Confirm?",
+        )
+    )
+    asyncio.create_task(cancel_after_delay(task))
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert ctx.pending_confirmation is None
