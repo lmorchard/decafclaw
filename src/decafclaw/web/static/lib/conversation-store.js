@@ -23,6 +23,7 @@
 /**
  * @typedef {object} PendingConfirm
  * @property {string} context_id
+ * @property {string} conv_id
  * @property {string} tool
  * @property {string} tool_call_id
  * @property {string} command

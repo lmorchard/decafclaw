@@ -134,8 +134,10 @@ export class ToolStatusStore {
       }
 
       case 'confirm_request':
+        if (msg.conv_id !== currentConvId) return true;  // not for this conversation
         this.#pendingConfirms = [...this.#pendingConfirms, {
           context_id: msg.context_id,
+          conv_id: msg.conv_id || '',
           tool: msg.tool,
           tool_call_id: msg.tool_call_id || '',
           command: msg.command || '',
