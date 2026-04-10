@@ -12,6 +12,10 @@ log = logging.getLogger(__name__)
 # conv_id must be safe for use as a filename — alphanumeric, hyphens, dots, underscores only
 _SAFE_CONV_ID = re.compile(r"^[a-zA-Z0-9._-]+$")
 
+# Shared across all WebSocket connections so a new connection (page reload,
+# device switch) can find the Context for an in-progress agent turn.
+_active_contexts: dict[str, object] = {}  # conv_id → Context
+
 
 def _is_safe_conv_id(conv_id: str) -> bool:
     """Reject conv_ids that could escape the conversations directory."""
@@ -130,8 +134,7 @@ async def _handle_load_history(ws_send, index, username, msg, state):
 
     # Re-push pending confirmations if the conversation has any (recovery
     # after page reload, device switch, or conversation switch).
-    active_contexts = state.get("active_contexts", {})
-    active_ctx = active_contexts.get(conv_id)
+    active_ctx = _active_contexts.get(conv_id)
     if active_ctx and active_ctx.pending_confirmations:
         for pc in active_ctx.pending_confirmations:
             await ws_send({
@@ -242,7 +245,6 @@ def _start_agent_turn(state, index, conv_id, username, text, ws_send,
     busy_convs.add(conv_id)
 
     conv_viewers = state.setdefault("conv_viewers", {})
-    active_contexts = state.setdefault("active_contexts", {})
     task = asyncio.create_task(
         _run_agent_turn(
             state["websocket"], state["app_ctx"], state["config"], state["event_bus"],
@@ -250,7 +252,6 @@ def _start_agent_turn(state, index, conv_id, username, text, ws_send,
             command_ctx=command_ctx, archive_text=archive_text,
             attachments=attachments, wiki_page=wiki_page,
             conv_viewers=conv_viewers,
-            active_contexts=active_contexts,
             conv_flags=state.get("conv_flags", {}).get(conv_id),
         )
     )
@@ -430,8 +431,7 @@ async def websocket_chat(websocket: WebSocket, config, event_bus, app_ctx):
 async def _run_agent_turn(websocket, app_ctx, config, event_bus,
                           index, conv_id, username, text, cancel_event=None,
                           command_ctx=None, archive_text="", attachments=None,
-                          wiki_page=None, conv_viewers=None,
-                          active_contexts=None, conv_flags=None):
+                          wiki_page=None, conv_viewers=None, conv_flags=None):
     """Run an agent turn for a web conversation, streaming events to WebSocket."""
     from ..agent import run_agent_turn  # deferred: circular dep
     from ..archive import read_archive
@@ -442,8 +442,6 @@ async def _run_agent_turn(websocket, app_ctx, config, event_bus,
     if conv_viewers is None:
         conv_viewers = {}
     conv_viewers.setdefault(conv_id, set()).add(websocket)
-    if active_contexts is None:
-        active_contexts = {}
 
     async def ws_send(msg):
         """Send JSON to all WebSockets currently viewing this conversation."""
@@ -627,7 +625,7 @@ async def _run_agent_turn(websocket, app_ctx, config, event_bus,
 
     forward_tasks: set[asyncio.Task] = set()
     turn_sub_id = event_bus.subscribe(on_turn_event)
-    active_contexts[conv_id] = ctx
+    _active_contexts[conv_id] = ctx
 
     try:
         # Load history: use compacted base if available, then append newer messages
@@ -701,5 +699,5 @@ async def _run_agent_turn(websocket, app_ctx, config, event_bus,
         except Exception:
             pass
     finally:
-        active_contexts.pop(conv_id, None)
+        _active_contexts.pop(conv_id, None)
         event_bus.unsubscribe(turn_sub_id)
