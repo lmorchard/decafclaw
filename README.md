@@ -4,7 +4,7 @@ An AI agent testbed in Python. Built to explore agent development patterns — t
 
 ## What it does
 
-Multi-channel AI agent with a shared knowledge vault. Connects to Mattermost as a chat bot, runs in a web UI with WYSIWYG wiki editing, or runs in terminal mode. Calls an LLM with tool-calling, executes tools, and responds. Streams responses as they arrive.
+Multi-channel AI agent with a shared knowledge vault. Connects to Mattermost as a chat bot, runs in a web UI with WYSIWYG wiki editing, or runs in terminal mode. Multi-provider LLM support (Vertex/Gemini, OpenAI, OpenAI-compatible) with named model configs and per-conversation model selection. Streams responses as they arrive.
 
 **Features:**
 - **[Skills](docs/skills.md)** — portable tool packages following the [Agent Skills](https://agentskills.io) standard
@@ -28,8 +28,8 @@ uv sync
 
 # Configure
 cp .env.example .env
-# Edit .env with your LLM endpoint and optional Mattermost keys
-# Or use data/{agent_id}/config.json — env vars take priority
+# Edit .env with optional Mattermost keys
+# Configure LLM providers in data/{agent_id}/config.json — see docs/providers.md
 
 # Run interactively (no Mattermost needed)
 make run
@@ -45,7 +45,6 @@ See [docs/installation.md](docs/installation.md) for full setup and configuratio
 | Tool | What it does |
 |------|-------------|
 | `web_fetch` | Fetch raw HTML from a URL |
-| `think` | Internal reasoning scratchpad (hidden from user) |
 | `current_time` | Get current date and time |
 | `debug_context` | Dump context as JSON file attachments |
 | `context_stats` | Token budget breakdown and diagnostics |

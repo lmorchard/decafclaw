@@ -71,7 +71,7 @@ class Context:
         self.skip_vault_retrieval: bool = False
         self.skip_archive: bool = False
         self.wiki_page: str | None = None  # open wiki page from web UI
-        self.effort: str = "default"
+        self.active_model: str = ""  # named model config from config.model_configs
         self.task_mode: str = ""  # "heartbeat" | "scheduled" | "" (interactive)
 
     @classmethod
@@ -84,7 +84,7 @@ class Context:
         conv_id: str,
         channel_id: str = "",
         channel_name: str = "",
-        effort: str = "default",
+        active_model: str = "",
         task_mode: str = "",
         skip_reflection: bool = True,
         skip_vault_retrieval: bool = True,
@@ -106,7 +106,7 @@ class Context:
         ctx.conv_id = conv_id
         ctx.channel_id = channel_id
         ctx.channel_name = channel_name
-        ctx.effort = effort
+        ctx.active_model = active_model
         ctx.task_mode = task_mode
         ctx.skip_reflection = skip_reflection
         ctx.skip_vault_retrieval = skip_vault_retrieval
@@ -168,7 +168,7 @@ class Context:
         child.skip_reflection = self.skip_reflection
         child.skip_vault_retrieval = self.skip_vault_retrieval
         child.wiki_page = self.wiki_page
-        child.effort = self.effort
+        child.active_model = self.active_model
         # Share skills + composer (concurrent tool calls read but don't mutate)
         child.skills = self.skills
         child.composer = self.composer

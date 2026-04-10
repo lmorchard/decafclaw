@@ -38,7 +38,7 @@ class TestParseScheduleFile:
         assert task.schedule == "0 9 * * 1-5"
         assert task.channel == "#reports"
         assert task.enabled is True
-        assert task.effort == "default"
+        assert task.model == ""
         assert "Summarize the day." in task.body
 
     def test_all_frontmatter_fields(self, tmp_path):
@@ -59,7 +59,7 @@ class TestParseScheduleFile:
         task = parse_schedule_file(f)
         assert task is not None
         assert task.enabled is False
-        assert task.effort == "fast"
+        assert task.model == "fast"
         assert task.allowed_tools == ["workspace_read", "workspace_list"]
         assert task.required_skills == ["tabstack"]
 
@@ -85,7 +85,7 @@ class TestParseScheduleFile:
         assert task is not None
         assert task.channel == ""
         assert task.enabled is True
-        assert task.effort == "default"
+        assert task.model == ""
         assert task.allowed_tools == []
         assert task.required_skills == []
 
@@ -191,7 +191,7 @@ class TestDiscoverSchedules:
         assert "admin-job" in names
         task = [t for t in tasks if t.name == "admin-job"][0]
         assert task.source == "admin"
-        assert task.effort == "fast"
+        assert task.model == "fast"
 
     def test_skill_allowed_tools_propagated(self, config):
         """Skill allowed-tools are propagated to the ScheduleTask."""
@@ -319,7 +319,7 @@ class TestRunScheduleTask:
         task = ScheduleTask(
             name="test-task", schedule="* * * * *",
             body="Do the thing.", source="admin", path=Path("/fake"),
-            effort="fast",
+            model="fast",
         )
         mock_response = MagicMock()
         mock_response.text = "Done."

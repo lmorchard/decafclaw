@@ -549,7 +549,7 @@ async def test_reflection_max_retries_delivers_last(ctx):
 
     # After 1 retry (max_retries=1), delivers whatever it has (plus escalation nudge)
     assert "Mediocre answer" in result.text
-    assert "think-harder" in result.text  # escalation nudge appended
+    assert "model picker" in result.text  # escalation nudge appended
     # Judge called once (first attempt), then retry delivers without reflection
     assert mock_eval.call_count == 1
 
