@@ -312,3 +312,127 @@ async def test_concurrent_confirmations_independent(ctx):
 
     assert results["call_2"] is True  # approved
     assert results["call_1"] is False  # timed out — only call_2 was approved
+
+
+# -- pending_confirmation lifecycle tests --------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_pending_confirmation_set_during_wait(ctx):
+    """ctx.pending_confirmation is set while waiting for response."""
+    ctx.conv_id = "test-conv"
+
+    async def check_and_approve():
+        await asyncio.sleep(0.05)
+        # Should be set while waiting
+        assert ctx.pending_confirmation is not None
+        assert ctx.pending_confirmation.tool_name == "test_tool"
+        assert ctx.pending_confirmation.conv_id == "test-conv"
+        assert ctx.pending_confirmation.context_id == ctx.context_id
+        await ctx.event_bus.publish({
+            "type": "tool_confirm_response",
+            "context_id": ctx.context_id,
+            "tool": "test_tool",
+            "approved": True,
+        })
+
+    asyncio.create_task(check_and_approve())
+    result = await request_confirmation(
+        ctx, tool_name="test_tool", command="do thing", message="Confirm?",
+    )
+    assert result["approved"] is True
+    # Should be cleared after completion
+    assert ctx.pending_confirmation is None
+
+
+@pytest.mark.asyncio
+async def test_pending_confirmation_cleared_on_timeout(ctx):
+    """ctx.pending_confirmation is cleared after timeout."""
+    ctx.conv_id = "test-conv"
+    await request_confirmation(
+        ctx, tool_name="test_tool", command="do thing", message="Confirm?",
+        timeout=0.1,
+    )
+    assert ctx.pending_confirmation is None
+
+
+@pytest.mark.asyncio
+async def test_pending_confirmation_cleared_on_denial(ctx):
+    """ctx.pending_confirmation is cleared after denial."""
+    ctx.conv_id = "test-conv"
+
+    async def deny():
+        await asyncio.sleep(0.05)
+        await ctx.event_bus.publish({
+            "type": "tool_confirm_response",
+            "context_id": ctx.context_id,
+            "tool": "test_tool",
+            "approved": False,
+        })
+
+    asyncio.create_task(deny())
+    result = await request_confirmation(
+        ctx, tool_name="test_tool", command="do thing", message="Confirm?",
+    )
+    assert result["approved"] is False
+    assert ctx.pending_confirmation is None
+
+
+@pytest.mark.asyncio
+async def test_pending_confirmation_stores_labels(ctx):
+    """approve_label and deny_label from extra_event_fields are stored on PendingConfirmation."""
+    ctx.conv_id = "test-conv"
+
+    async def approve():
+        await asyncio.sleep(0.05)
+        # Check labels while pending
+        assert ctx.pending_confirmation.approve_label == "Ship it"
+        assert ctx.pending_confirmation.deny_label == "Needs work"
+        await ctx.event_bus.publish({
+            "type": "tool_confirm_response",
+            "context_id": ctx.context_id,
+            "tool": "test_tool",
+            "approved": True,
+        })
+
+    asyncio.create_task(approve())
+    await request_confirmation(
+        ctx, tool_name="test_tool", command="review", message="Review?",
+        approve_label="Ship it", deny_label="Needs work",
+    )
+
+
+@pytest.mark.asyncio
+async def test_published_event_includes_conv_id(ctx):
+    """The tool_confirm_request event includes conv_id."""
+    ctx.conv_id = "test-conv-123"
+    captured = []
+
+    def capture(event):
+        if event.get("type") == "tool_confirm_request":
+            captured.append(event)
+
+    sub_id = ctx.event_bus.subscribe(capture)
+    try:
+        # Use short timeout so we don't wait long
+        await request_confirmation(
+            ctx, tool_name="test_tool", command="cmd", message="Msg?",
+            timeout=0.1,
+        )
+    finally:
+        ctx.event_bus.unsubscribe(sub_id)
+
+    assert len(captured) == 1
+    assert captured[0]["conv_id"] == "test-conv-123"
+
+
+@pytest.mark.asyncio
+async def test_preapproved_skips_pending(ctx):
+    """Pre-approved tools don't set pending_confirmation."""
+    ctx.tools.preapproved = {"test_tool"}
+    ctx.conv_id = "test-conv"
+    result = await request_confirmation(
+        ctx, tool_name="test_tool", command="cmd", message="Msg?",
+    )
+    assert result["approved"] is True
+    assert ctx.pending_confirmation is None

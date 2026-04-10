@@ -3,6 +3,8 @@
 import asyncio
 import logging
 
+from ..context import PendingConfirmation
+
 log = logging.getLogger(__name__)
 
 
@@ -27,18 +29,32 @@ async def request_confirmation(
     to the same tool.
 
     Times out after `timeout` seconds, returning {"approved": False}.
+
+    Stores PendingConfirmation on ctx.pending_confirmation so the
+    WebSocket handler can re-push it on reconnect/conversation switch.
     """
     # Check command pre-approval before prompting
     if tool_name in ctx.tools.preapproved:
         log.info(f"Confirmation pre-approved for {tool_name}")
         return {"approved": True}
 
-    confirm_event = asyncio.Event()
-    result = {"approved": False}
     tool_call_id = ctx.tools.current_call_id
     # Match against the context_id used for publishing (event_context_id if set,
     # otherwise context_id). Child agents publish under the parent's event_context_id.
     match_context_id = ctx.event_context_id or ctx.context_id
+
+    # Build the pending confirmation and register it on the context
+    pending = PendingConfirmation(
+        tool_name=tool_name,
+        command=command,
+        message=message,
+        context_id=match_context_id,
+        conv_id=ctx.conv_id,
+        tool_call_id=tool_call_id,
+        approve_label=extra_event_fields.get("approve_label", ""),
+        deny_label=extra_event_fields.get("deny_label", ""),
+    )
+    ctx.pending_confirmation = pending
 
     def on_confirm(event):
         if (event.get("type") == "tool_confirm_response"
@@ -49,8 +65,8 @@ async def request_confirmation(
             resp_id = event.get("tool_call_id", "")
             if tool_call_id and resp_id and resp_id != tool_call_id:
                 return
-            result.update(event)
-            confirm_event.set()
+            pending.result.update(event)
+            pending.event.set()
 
     sub_id = ctx.event_bus.subscribe(on_confirm)
     try:
@@ -60,14 +76,16 @@ async def request_confirmation(
             command=command,
             message=message,
             tool_call_id=tool_call_id,
+            conv_id=ctx.conv_id,
             **extra_event_fields,
         )
         try:
-            await asyncio.wait_for(confirm_event.wait(), timeout=timeout)
+            await asyncio.wait_for(pending.event.wait(), timeout=timeout)
         except asyncio.TimeoutError:
             log.info(f"Confirmation timed out for {tool_name}: {command}")
             return {"approved": False}
     finally:
+        ctx.pending_confirmation = None
         ctx.event_bus.unsubscribe(sub_id)
 
-    return result
+    return pending.result

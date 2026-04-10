@@ -11,6 +11,25 @@ from .context_composer import ComposerState
 
 
 @dataclass
+class PendingConfirmation:
+    """State for a confirmation request awaiting user response.
+
+    Stored on Context.pending_confirmation so the WebSocket handler can
+    re-push it when a client reconnects or switches conversations.
+    """
+    tool_name: str
+    command: str
+    message: str
+    context_id: str
+    conv_id: str
+    tool_call_id: str = ""
+    approve_label: str = ""
+    deny_label: str = ""
+    event: asyncio.Event = field(default_factory=asyncio.Event)
+    result: dict = field(default_factory=lambda: {"approved": False})
+
+
+@dataclass
 class TokenUsage:
     """Per-turn token counters."""
     total_prompt: int = 0
@@ -79,6 +98,7 @@ class Context:
         self.wiki_page: str | None = None  # open wiki page from web UI
         self.active_model: str = ""  # named model config from config.model_configs
         self.task_mode: str = ""  # "heartbeat" | "scheduled" | "" (interactive)
+        self.pending_confirmation: PendingConfirmation | None = None
 
     @classmethod
     def for_task(
