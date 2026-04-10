@@ -340,6 +340,21 @@ class _VertexStreamState:
 # Message format translation
 # ---------------------------------------------------------------------------
 
+def _clean_schema(schema: dict) -> dict:
+    """Remove keys that Vertex/Gemini doesn't accept in JSON Schema (e.g. $schema)."""
+    cleaned = {k: v for k, v in schema.items() if k != "$schema"}
+    # Recurse into nested schemas (properties, items, etc.)
+    if "properties" in cleaned:
+        cleaned["properties"] = {
+            k: _clean_schema(v) if isinstance(v, dict) else v
+            for k, v in cleaned["properties"].items()
+        }
+    for key in ("items", "additionalProperties"):
+        if key in cleaned and isinstance(cleaned[key], dict):
+            cleaned[key] = _clean_schema(cleaned[key])
+    return cleaned
+
+
 def _build_request_body(
     messages: list[dict], tools: list[dict] | None = None,
 ) -> dict:
@@ -426,7 +441,7 @@ def _build_request_body(
             }
             params = func.get("parameters")
             if params:
-                decl["parameters"] = params
+                decl["parameters"] = _clean_schema(params)
             func_decls.append(decl)
         body["tools"] = [{"functionDeclarations": func_decls}]
 
