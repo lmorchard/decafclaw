@@ -391,11 +391,14 @@ async def tool_health_status(ctx) -> str:
     # Process
     try:
         sections.extend(_process_section())
-        # Add effort/model info (per-conversation state)
-        from ..config import resolve_effort
-        effort = getattr(ctx, "effort", "default")
-        resolved = resolve_effort(ctx.config, effort)
-        sections.append(f"- **Model:** {resolved.model} (effort: {effort})")
+        # Add model info (per-conversation state)
+        active_model = getattr(ctx, "active_model", "")
+        if active_model:
+            sections.append(f"- **Active model:** {active_model}")
+        elif ctx.config.default_model:
+            sections.append(f"- **Active model:** {ctx.config.default_model} (default)")
+        else:
+            sections.append(f"- **Active model:** {ctx.config.llm.model} (legacy config.llm)")
     except Exception as e:
         sections.append(f"### Process\n- [error: {e}]")
 

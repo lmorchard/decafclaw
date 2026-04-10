@@ -25,7 +25,7 @@ class ScheduleTask:
     path: Path
     channel: str = ""
     enabled: bool = True
-    effort: str = "default"
+    model: str = ""  # named model config, empty = default
     allowed_tools: list[str] = field(default_factory=list)
     shell_patterns: list[str] = field(default_factory=list)
     required_skills: list[str] = field(default_factory=list)
@@ -77,7 +77,7 @@ def parse_schedule_file(path: Path) -> ScheduleTask | None:
         path=path,
         channel=str(meta.get("channel", "")),
         enabled=enabled,
-        effort=str(meta.get("effort", "default")),
+        model=str(meta.get("model", meta.get("effort", ""))),
         allowed_tools=allowed_tools,
         shell_patterns=shell_patterns,
         required_skills=[str(s) for s in required_skills],
@@ -142,7 +142,7 @@ def discover_schedules(config) -> list[ScheduleTask]:
                 source=source_label,
                 path=skill_md,
                 enabled=skill.enabled,
-                effort=skill.effort or "default",
+                model=skill.model or "",
                 allowed_tools=skill.allowed_tools,
                 shell_patterns=skill.shell_patterns,
                 required_skills=skill.requires_skills,
@@ -236,7 +236,7 @@ async def run_schedule_task(config, event_bus, task: ScheduleTask) -> dict:
         conv_id=f"schedule-{task.name}-{timestamp}",
         channel_id=channel,
         channel_name=channel,
-        effort=task.effort,
+        active_model=task.model,
         task_mode="scheduled",
         allowed_tools=allowed_tools_set,
         preapproved_tools=preapproved,

@@ -49,8 +49,16 @@ lint-fix:
 fmt:
 	uv run ruff format src/ tests/
 
-# Run tests (pytest)
+# Run tests (pytest, excludes integration tests)
 test:
+	uv run pytest tests/ -v -m "not integration"
+
+# Run integration tests only (requires provider credentials)
+test-integration:
+	uv run pytest tests/ -v -m integration
+
+# Run all tests including integration
+test-all:
 	uv run pytest tests/ -v
 
 # Rebuild production embedding index

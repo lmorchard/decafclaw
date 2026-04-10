@@ -494,13 +494,17 @@ async def test_create_conv_in_folder(authed_client, folder_index):
 
 
 @pytest.mark.asyncio
-async def test_create_conv_with_effort(authed_client, http_config):
+async def test_create_conv_with_model(authed_client, http_config):
+    from decafclaw.config_types import ModelConfig, ProviderConfig
+    # Add model configs to the test config
+    http_config.providers = {"vertex": ProviderConfig(type="vertex", project="test")}
+    http_config.model_configs = {"gemini-pro": ModelConfig(provider="vertex", model="gemini-2.5-pro")}
     http_config.workspace_path.mkdir(parents=True, exist_ok=True)
     r = await authed_client.post(
-        "/api/conversations", json={"title": "Strong", "effort": "strong"}
+        "/api/conversations", json={"title": "Pro", "model": "gemini-pro"}
     )
     assert r.status_code == 201
-    assert r.json()["effort"] == "strong"
+    assert r.json()["model"] == "gemini-pro"
 
 
 # -- Folder CRUD endpoint tests -----------------------------------------------

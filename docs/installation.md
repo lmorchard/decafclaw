@@ -1,12 +1,12 @@
 # Installation & Setup
 
-DecafClaw is a Python project managed with [uv](https://docs.astral.sh/uv/). It requires Python 3.13+ and an OpenAI-compatible LLM endpoint.
+DecafClaw is a Python project managed with [uv](https://docs.astral.sh/uv/). It requires Python 3.13+ and an LLM provider (Vertex AI, OpenAI, or any OpenAI-compatible endpoint).
 
 ## Prerequisites
 
 - **Python 3.13+**
 - **[uv](https://docs.astral.sh/uv/)** — Python package/project manager
-- **An LLM endpoint** — any OpenAI-compatible API (LiteLLM, ollama, vLLM, OpenRouter, etc.)
+- **An LLM provider** — Vertex AI (Gemini), OpenAI, or any OpenAI-compatible API (LiteLLM, Ollama, vLLM, OpenRouter). See [LLM Providers](providers.md) for setup.
 
 Optional:
 - **Mattermost instance** — for chat bot mode (interactive terminal mode works without it)
@@ -31,7 +31,19 @@ cp .env.example .env
 
 Edit `.env` with your settings:
 
-### Required
+### LLM (choose one approach)
+
+**Option A: Provider config in `config.json`** (recommended — see [LLM Providers](providers.md)):
+
+```json
+{
+  "providers": { "vertex": { "type": "vertex", "project": "my-project" } },
+  "model_configs": { "gemini-flash": { "provider": "vertex", "model": "gemini-2.5-flash" } },
+  "default_model": "gemini-flash"
+}
+```
+
+**Option B: Legacy env vars** (auto-migrated to a "default" litellm provider):
 
 | Variable | Description | Example |
 |----------|-------------|---------|

@@ -6,7 +6,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
-from decafclaw.llm import _sanitize_tool_call_id, call_llm_streaming
+from decafclaw.llm import call_llm_streaming
+from decafclaw.llm.providers.openai_compat import _sanitize_tool_call_id
 
 
 class FakeSSEEvent:

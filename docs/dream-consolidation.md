@@ -9,7 +9,7 @@ DecafClaw can periodically "dream" — reviewing recent memories and conversatio
 | `!dream` / `/dream` | Hourly (`0 * * * *`) | Review recent memories/conversations, update wiki pages |
 | `!garden` / `/garden` | Weekly (Sunday 3am: `0 3 * * 0`) | Structural wiki maintenance: merge, link, split, tidy |
 
-Both commands run at `strong` effort level for quality wiki writing. They can be triggered manually or run automatically via [scheduled tasks](schedules.md).
+Both commands can be configured with a specific model for quality wiki writing. They can be triggered manually or run automatically via [scheduled tasks](schedules.md).
 
 ## How It Works
 
@@ -67,7 +67,7 @@ To change the consolidation schedule, create a file-based schedule that override
 ```markdown
 ---
 schedule: "0 */3 * * *"
-effort: strong
+model: gemini-pro
 required-skills:
   - wiki
 ---

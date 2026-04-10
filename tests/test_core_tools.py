@@ -1,14 +1,8 @@
-"""Tests for core tools — think, current_time."""
+"""Tests for core tools — current_time."""
 
 from datetime import datetime
 
-from decafclaw.tools.core import tool_current_time, tool_think
-
-
-def test_tool_think_returns_ok(ctx):
-    """tool_think returns the constant string 'OK' (content is logged but not echoed)."""
-    result = tool_think(ctx, content="hello")
-    assert result == "OK"
+from decafclaw.tools.core import tool_current_time
 
 
 def test_tool_current_time_returns_parseable_datetime(ctx):

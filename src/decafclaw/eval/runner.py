@@ -207,9 +207,13 @@ async def run_eval(yaml_data: list[dict], config: Config,
     from dataclasses import replace
 
     if model:
-        config = replace(config, llm=replace(config.llm, model=model))
+        # If model matches a model config, set it as the default
+        if model in config.model_configs:
+            config = replace(config, default_model=model)
+        else:
+            config = replace(config, llm=replace(config.llm, model=model))
 
-    effective_model = config.llm.model
+    effective_model = config.default_model or config.llm.model
     timestamp = datetime.now().strftime("%Y-%m-%d-%H%M")
 
     results = {

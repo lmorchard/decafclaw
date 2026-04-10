@@ -49,7 +49,6 @@ class TestEstimateToolTokens:
 class TestGetAlwaysLoadedNames:
     def test_defaults(self, config):
         names = get_always_loaded_names(config)
-        assert "think" in names
         assert "current_time" in names
         assert "activate_skill" in names
         assert "shell" in names
@@ -60,7 +59,7 @@ class TestGetAlwaysLoadedNames:
         assert "my_custom_tool" in names
         assert "another_one" in names
         # Defaults still present
-        assert "think" in names
+        assert "current_time" in names
 
     def test_empty_override(self, config):
         config.agent.always_loaded_tools = []
@@ -85,14 +84,14 @@ class TestClassifyTools:
         # Create enough tools to exceed a tiny budget
         tools = [_make_tool_def(f"tool_{i}", "x" * 200) for i in range(20)]
         # Add an always-loaded tool
-        tools.append(_make_tool_def("think", "Internal reasoning"))
+        tools.append(_make_tool_def("current_time", "Get current time"))
         config.compaction.max_tokens = 100  # tiny budget → 10 token budget
 
         active, deferred = classify_tools(tools, config)
         active_names = {td["function"]["name"] for td in active}
         deferred_names = {td["function"]["name"] for td in deferred}
 
-        assert "think" in active_names
+        assert "current_time" in active_names
         assert len(deferred) > 0
         # Non-always-loaded tools are deferred
         assert "tool_0" in deferred_names

@@ -186,10 +186,10 @@ async def _handle_reflection(
         last_reflection = None  # clear stale result from prior retry
 
         # Suggest model escalation if reflection retries exhausted
-        if reflection_exhausted and ctx.effort != "strong":
+        if reflection_exhausted:
             final_text += (
                 "\n\n---\n*I'm not confident in this answer. "
-                "Try `!think-harder` to retry with a more capable model.*"
+                "Try switching to a more capable model in the web UI model picker.*"
             )
         return final_text, False, reflection_retries, last_reflection
 
@@ -342,9 +342,16 @@ def _build_tool_list(ctx) -> tuple[list, str | None]:
 
 
 async def _call_llm_with_events(ctx, config, messages, tools,
-                                llm_url=None, llm_model=None, llm_api_key=None) -> dict:
-    """Call the LLM with event publishing for progress tracking."""
+                                model_name=None,
+                                llm_url=None, llm_model=None,
+                                llm_api_key=None) -> dict:
+    """Call the LLM with event publishing for progress tracking.
+
+    Accepts model_name (new path) or llm_url/llm_model/llm_api_key (legacy).
+    """
     llm_kwargs: dict = {}
+    if model_name:
+        llm_kwargs["model_name"] = model_name
     if llm_url:
         llm_kwargs["llm_url"] = llm_url
     if llm_model:
@@ -354,7 +361,8 @@ async def _call_llm_with_events(ctx, config, messages, tools,
 
     iteration = ctx._current_iteration
     await ctx.publish("llm_start", iteration=iteration)
-    if config.llm.streaming:
+    from .config import resolve_streaming
+    if resolve_streaming(config, getattr(ctx, "active_model", "")):
         from .llm import call_llm_streaming
         on_chunk = ctx.on_stream_chunk
         cancel_event = ctx.cancelled
@@ -587,15 +595,15 @@ async def _execute_tool_calls(ctx, tool_calls, history, messages):
 
 
 async def _setup_turn_state(ctx, config, history) -> dict[str, str]:
-    """Restore persisted skill/effort state and resolve effort overrides.
+    """Restore persisted skill/model state and resolve model overrides.
 
     Handles:
     - Skill restoration from sidecar (persisted activated skills + skill_data)
     - Auto-activation of always-loaded bundled skills
-    - Effort level restoration from archive
-    - Effort resolution to LLM config overrides
+    - Active model restoration from archive
+    - Model resolution to LLM config overrides
 
-    Returns effort_overrides dict (may be empty if no override needed).
+    Returns model_override dict (may be empty if no override needed).
     """
     from .tools.skill_tools import restore_skills  # deferred: circular dep
 
@@ -629,28 +637,28 @@ async def _setup_turn_state(ctx, config, history) -> dict[str, str]:
         except Exception as e:
             log.error(f"Failed to auto-activate skill '{skill_info.name}': {e}")
 
-    # Restore effort level from archive (scan for last effort event)
-    if ctx.effort == "default" and conv_id:
+    # Restore active model from archive (scan reverse for last valid model message).
+    if not ctx.active_model and conv_id:
         from .archive import read_archive
         for msg in reversed(read_archive(config, conv_id)):
-            if msg.get("role") == "effort":
-                ctx.effort = msg.get("content", "default")
-                break
+            if msg.get("role") == "model":
+                name = msg.get("content", "")
+                if name and name in config.model_configs:
+                    ctx.active_model = name
+                    break
 
-    # Resolve effort level to LLM overrides (without mutating config.llm,
-    # so compaction/reflection/embedding still fall back to the base model)
-    from .config import resolve_effort
-    effort_llm = resolve_effort(config, ctx.effort)
-    effort_overrides: dict[str, str] = {}
-    if effort_llm != config.llm:
-        effort_overrides = {
-            "llm_url": effort_llm.url,
-            "llm_model": effort_llm.model,
-            "llm_api_key": effort_llm.api_key,
-        }
-    log.info(f"Agent turn: effort={ctx.effort}, model={effort_llm.model}")
+    # Build model override for the LLM call
+    model_override: dict[str, str] = {}
+    if ctx.active_model and ctx.active_model in config.model_configs:
+        model_override = {"model_name": ctx.active_model}
+        log.info("Agent turn: model=%s", ctx.active_model)
+    elif config.default_model:
+        model_override = {"model_name": config.default_model}
+        log.info("Agent turn: model=%s (default)", config.default_model)
+    else:
+        log.info("Agent turn: model=%s (legacy config.llm)", config.llm.model)
 
-    return effort_overrides
+    return model_override
 
 
 # -- Wiki context helpers ------------------------------------------------------
@@ -734,7 +742,7 @@ async def run_agent_turn(ctx, user_message: str, history: list,
     config = ctx.config
     ctx.history = history
 
-    effort_overrides = await _setup_turn_state(ctx, config, history)
+    model_override = await _setup_turn_state(ctx, config, history)
 
     conv_id = ctx.conv_id or ctx.channel_id
 
@@ -814,7 +822,7 @@ async def run_agent_turn(ctx, user_message: str, history: list,
                 deferred_msg = None
 
             response = await _call_llm_with_events(ctx, config, messages, all_tools,
-                                                     **effort_overrides)
+                                                     **model_override)
 
             # Track token usage
             usage = response.get("usage")

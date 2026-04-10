@@ -125,25 +125,42 @@ def _entry_hash(text: str) -> str:
 async def embed_text(config, text: str, max_retries: int = 3) -> list[float] | None:
     """Call the embedding API and return the vector.
 
-    Retries with exponential backoff on 429 (rate limit) responses.
+    Routes through the provider system if embedding.provider is set,
+    otherwise uses the legacy httpx path via resolved().
     """
+    ec = config.embedding
+
+    # Provider path: explicit provider > default model's provider > legacy
+    provider_name = ec.provider
+    if not provider_name and config.default_model and config.default_model in config.model_configs:
+        provider_name = config.model_configs[config.default_model].provider
+
+    if provider_name and provider_name in config.providers:
+        from .llm import get_provider
+        try:
+            provider = get_provider(provider_name)
+            return await provider.embed(ec.model, text)
+        except KeyError:
+            log.warning("Embedding provider '%s' not in registry, falling back to legacy", provider_name)
+
+    # Legacy path: direct httpx to resolved URL
     import asyncio as _asyncio
 
-    ec = config.embedding.resolved(config)
+    resolved = ec.resolved(config)
 
     body = {
-        "model": ec.model,
+        "model": resolved.model,
         "input": text,
     }
     headers = {
         "Content-Type": "application/json",
-        "Authorization": f"Bearer {ec.api_key}",
+        "Authorization": f"Bearer {resolved.api_key}",
     }
 
     for attempt in range(max_retries + 1):
         try:
             async with httpx.AsyncClient() as client:
-                resp = await client.post(ec.url, json=body, headers=headers, timeout=30)
+                resp = await client.post(resolved.url, json=body, headers=headers, timeout=30)
             if resp.status_code == 429 and attempt < max_retries:
                 delay = 2 ** attempt  # 1s, 2s, 4s
                 log.warning(f"Embedding API rate limited, retrying in {delay}s "
