@@ -88,7 +88,7 @@ async def test_agent_loop_appends_json_block(ctx):
     semaphore = asyncio.Semaphore(1)
 
     with patch("decafclaw.agent.execute_tool", new_callable=AsyncMock, return_value=mock_result):
-        tool_msg = await _execute_single_tool(ctx, tc, semaphore)
+        tool_msg, _ = await _execute_single_tool(ctx, tc, semaphore)
 
     assert tool_msg["role"] == "tool"
     assert tool_msg["content"].startswith("task completed")
@@ -115,7 +115,7 @@ async def test_agent_loop_no_json_block_without_data(ctx):
     semaphore = asyncio.Semaphore(1)
 
     with patch("decafclaw.agent.execute_tool", new_callable=AsyncMock, return_value=mock_result):
-        tool_msg = await _execute_single_tool(ctx, tc, semaphore)
+        tool_msg, _ = await _execute_single_tool(ctx, tc, semaphore)
 
     assert tool_msg["content"] == "plain result"
     assert "```json" not in tool_msg["content"]
@@ -134,7 +134,7 @@ async def test_agent_loop_handles_unserializable_data(ctx):
     semaphore = asyncio.Semaphore(1)
 
     with patch("decafclaw.agent.execute_tool", new_callable=AsyncMock, return_value=mock_result):
-        tool_msg = await _execute_single_tool(ctx, tc, semaphore)
+        tool_msg, _ = await _execute_single_tool(ctx, tc, semaphore)
 
     assert "result" in tool_msg["content"]
     assert "serialization error" in tool_msg["content"]

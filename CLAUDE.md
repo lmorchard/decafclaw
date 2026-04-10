@@ -45,6 +45,7 @@ An AI agent testbed for exploring agent development patterns. Connects to Matter
 - `src/decafclaw/skills/dream/` — Dream consolidation: periodic journal review → vault page updates (every 3 hours)
 - `src/decafclaw/skills/garden/` — Vault gardening: structural maintenance sweep (weekly scheduled)
 - `src/decafclaw/skills/claude_code/` — Claude Code subagent skill (sessions, permissions, output logging)
+- `src/decafclaw/skills/project/` — Project workflow skill: state machine (`state.py`), plan parser (`plan_parser.py`), lifecycle tools, dynamic tool loading (`get_tools`), `end_turn` for phase boundaries
 - `src/decafclaw/eval/` — Eval harness (YAML tests, failure reflection)
 - `src/decafclaw/mcp_client.py` — MCP client: config, registry, server connections, auto-restart
 - `src/decafclaw/heartbeat.py` — Heartbeat: periodic wake-up, section parsing, timer, cycle runner
@@ -125,6 +126,8 @@ Session docs live in `docs/dev-sessions/YYYY-MM-DD-HHMM-slug/` with `spec.md`, `
 - **Sync vs async tools.** `execute_tool` auto-detects via `asyncio.iscoroutinefunction`. Sync tools run in `asyncio.to_thread`.
 - **Tool calls run concurrently.** When the model emits multiple tool calls in one response, they execute via `asyncio.gather` with a semaphore (`max_concurrent_tools`, default 5). Each call gets a forked ctx with its own `current_tool_call_id`. All tool events carry `tool_call_id` for UI correlation.
 - **Tool deferral.** When tool definitions exceed `tool_context_budget_pct` (default 10%) of `compaction_max_tokens`, non-essential tools are deferred behind `tool_search`. The model sees a name+description list and fetches full schemas on demand. Always-loaded tools configured via `ALWAYS_LOADED_TOOLS` env var. Fetched tools persist for the conversation.
+- **`end_turn` on ToolResult.** Tools can return `ToolResult(text="...", end_turn=True)` to mechanically end the agent turn. The loop makes one final no-tools LLM call (forcing text output), then returns. For review gates, use `end_turn=EndTurnConfirm(message=..., on_approve=..., on_deny=...)` — the agent loop shows confirmation buttons; approval continues the loop, denial ends the turn. `EndTurnConfirm` takes priority over `True` in parallel batches.
+- **Dynamic skill tools via `get_tools(ctx)`.** Skills can export `get_tools(ctx) -> (dict, list)` to supply different tools per turn based on state. Called each iteration before `_build_tool_list()`. Falls back to static `TOOLS`/`TOOL_DEFINITIONS` for skills without it. Refreshes via `_refresh_dynamic_tools()` which tracks provider names to remove stale entries.
 - **Events for progress.** Tools publish `tool_status` events via `ctx.publish()`. The agent loop publishes `llm_start/end` and `tool_start/end`. Subscribers (Mattermost, terminal) handle display.
 - **Web UI conversation management is REST-only.** All conversation listing, creation, renaming, archiving, folder management uses REST endpoints. WebSocket is only for real-time chat streaming, conversation selection/history loading, model changes, and turn cancellation. Conversation folders are metadata-only (per-user JSON index file); archive files stay in place.
 - **Mattermost concerns stay in `mattermost.py`.** Progress formatting, placeholder management, threading logic — all in `MattermostClient`.

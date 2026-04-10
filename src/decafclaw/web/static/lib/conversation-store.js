@@ -28,6 +28,8 @@
  * @property {string} command
  * @property {string} suggested_pattern
  * @property {string} message
+ * @property {string} approve_label
+ * @property {string} deny_label
  */
 
 /**

@@ -23,6 +23,7 @@
 - [Streaming](streaming.md) — Stream LLM tokens as they arrive, configurable throttle
 - [HTTP Server & Interactive Buttons](http-server.md) — Button-based confirmations, HTTP callback server
 - [Sub-Agent Delegation](delegation.md) — Fork child agents for concurrent subtasks
+- [Project Skill](project-skill.md) — Structured workflow: brainstorm → spec → plan → execute for multi-step tasks
 - [User Commands](commands.md) — User-invokable commands (!command / /command) with argument substitution
 - [Tool Search / Deferred Loading](tool-search.md) — Defer tool definitions behind search when context budget exceeded
 - [Self-Reflection](reflection.md) — Binary judge + critique + retry before delivering responses (Reflexion pattern)

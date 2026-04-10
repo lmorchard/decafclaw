@@ -3,13 +3,34 @@
 import logging
 import mimetypes
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 log = logging.getLogger(__name__)
 
 # Matches ![alt text](workspace://path/to/file.ext)
 _WORKSPACE_IMG_RE = re.compile(r"!\[([^\]]*)\]\(workspace://([^)]+)\)")
+
+
+@dataclass
+class EndTurnConfirm:
+    """End-of-turn action: show confirmation buttons and wait for user response.
+
+    When a tool returns ToolResult(end_turn=EndTurnConfirm(...)), the agent
+    loop presents buttons via the event bus. If approved, the loop continues
+    (model chains into next phase). If denied, the turn ends.
+
+    on_approve/on_deny: optional async callbacks invoked by the agent loop
+    after the user responds. Use for state transitions that should happen
+    before the model sees the result (e.g., advancing project state).
+    """
+    message: str = ""
+    approve_label: str = "Approve"
+    deny_label: str = "Deny"
+    on_approve: Callable[[], Any] | None = None
+    on_deny: Callable[[], Any] | None = None
 
 
 @dataclass
@@ -21,6 +42,9 @@ class ToolResult:
     display_text: str | None = None
     display_short_text: str | None = None
     data: dict | None = None
+    # end_turn: True = end turn with final no-tools LLM call.
+    # EndTurnConfirm = show confirmation buttons; approved → continue, denied → end.
+    end_turn: bool | EndTurnConfirm = False
 
     @classmethod
     def from_text(cls, text: str) -> "ToolResult":
