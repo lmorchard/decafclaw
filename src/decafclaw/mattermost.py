@@ -344,7 +344,8 @@ class MattermostClient:
         )
 
         # Set streaming callback
-        if app_ctx.config.llm.streaming:
+        from .config import resolve_streaming
+        if resolve_streaming(app_ctx.config, req_ctx.active_model):
             req_ctx.on_stream_chunk = conv_display.on_stream_chunk
 
         # Set up cancellation event and poll for stop reaction
@@ -377,7 +378,7 @@ class MattermostClient:
         sub_id = self._subscribe_progress(
             req_ctx.event_bus, req_ctx.context_id,
             channel_id=channel_id, root_id=root_id,
-            streaming=app_ctx.config.llm.streaming,
+            streaming=resolve_streaming(app_ctx.config, req_ctx.active_model),
             conv_display=conv_display,
             reflection_visibility=app_ctx.config.reflection.visibility,
         )

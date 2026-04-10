@@ -4,7 +4,6 @@ import asyncio
 import logging
 from dataclasses import replace
 
-from ..config import EFFORT_LEVELS
 from ..media import ToolResult
 
 log = logging.getLogger(__name__)
@@ -18,12 +17,12 @@ DEFAULT_CHILD_SYSTEM_PROMPT = (
 )
 
 
-async def _run_child_turn(parent_ctx, task, effort: str = "",
+async def _run_child_turn(parent_ctx, task, model: str = "",
                           max_iterations: int = 0):
     """Run a single child agent turn, inheriting parent's tools and skills.
 
     Args:
-        effort: Override effort level for the child. Empty = inherit parent's.
+        model: Override model for the child. Empty = inherit parent's.
         max_iterations: Override max tool iterations. 0 = use child_max_tool_iterations.
 
     Returns the child's text response, or an error string on failure.
@@ -87,8 +86,8 @@ async def _run_child_turn(parent_ctx, task, effort: str = "",
     child_ctx.skip_reflection = True
     child_ctx.skip_vault_retrieval = True
 
-    # Set effort level: explicit override > parent's level > default
-    child_ctx.effort = effort if effort else getattr(parent_ctx, "effort", "default")
+    # Set active model: explicit override > parent's model
+    child_ctx.active_model = model if model else parent_ctx.active_model
 
     timeout = config.agent.child_timeout_sec
 
@@ -104,14 +103,14 @@ async def _run_child_turn(parent_ctx, task, effort: str = "",
         return ToolResult(text=f"[error: subtask failed: {e}]")
 
 
-async def tool_delegate_task(ctx, task: str, effort: str = "") -> str | ToolResult:
+async def tool_delegate_task(ctx, task: str, model: str = "") -> str | ToolResult:
     """Delegate a subtask to a child agent."""
-    log.info(f"[tool:delegate_task] effort={effort or 'inherit'} {task[:80]}...")
+    log.info("[tool:delegate_task] model=%s %s...", model or "inherit", task[:80])
 
     if not task or not task.strip():
         return ToolResult(text="[error: task description is required]")
 
-    return await _run_child_turn(ctx, task, effort=effort)
+    return await _run_child_turn(ctx, task, model=model)
 
 
 DELEGATE_TOOLS = {
@@ -140,13 +139,11 @@ DELEGATE_TOOL_DEFINITIONS = [
                             "child agent to work independently"
                         ),
                     },
-                    "effort": {
+                    "model": {
                         "type": "string",
-                        "enum": sorted(EFFORT_LEVELS),
                         "description": (
-                            "Effort level for the subtask. 'fast' for "
-                            "procedural/compliant tasks, 'strong' for "
-                            "complex reasoning. Omit to inherit parent's level."
+                            "Named model config for the subtask. "
+                            "Omit to inherit parent's model."
                         ),
                     },
                 },

@@ -58,10 +58,11 @@ async def reflect_on_failure(config, test_case: dict, result: dict,
     ]
 
     try:
-        response = await call_llm(
-            config, messages,
-            llm_model=judge_model,
-        )
+        # Route through named model config if available, else legacy override
+        if judge_model in config.model_configs:
+            response = await call_llm(config, messages, model_name=judge_model)
+        else:
+            response = await call_llm(config, messages, llm_model=judge_model)
         reflection = response.get("content", "")
         if not reflection:
             return None

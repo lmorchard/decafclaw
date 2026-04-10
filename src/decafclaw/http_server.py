@@ -280,15 +280,13 @@ def create_app(config, event_bus, app_ctx=None) -> Starlette:
 
     @_authenticated
     async def create_conversation(request: Request, username: str) -> JSONResponse:
-        """Create a new conversation, optionally in a folder with an effort level."""
+        """Create a new conversation, optionally in a folder with a model."""
         body = await request.json()
         folder = str(body.get("folder", "")).strip()
-        effort = str(body.get("effort", "")).strip()
-        # Validate effort level
-        if effort:
-            from .config import EFFORT_LEVELS
-            if effort not in EFFORT_LEVELS:
-                return JSONResponse({"error": f"Unknown effort level: {effort}"}, status_code=400)
+        model_name = str(body.get("model", body.get("effort", ""))).strip()
+        # Validate model name
+        if model_name and model_name not in config.model_configs:
+            return JSONResponse({"error": f"Unknown model: {model_name}"}, status_code=400)
         # Validate folder exists before creating conversation
         if folder:
             from .web.conversation_folders import ConversationFolderIndex
@@ -301,16 +299,16 @@ def create_app(config, event_bus, app_ctx=None) -> Starlette:
         # Assign to folder
         if folder:
             await folder_index.set_folder(conv.conv_id, folder)
-        # Record initial effort level
-        if effort and effort != "default":
+        # Record initial model selection
+        if model_name:
             from .archive import append_message
             append_message(config, conv.conv_id,
-                           {"role": "effort", "content": effort})
+                           {"role": "model", "content": model_name})
         result = conv.to_dict()
         if folder:
             result["folder"] = folder
-        if effort:
-            result["effort"] = effort
+        if model_name:
+            result["model"] = model_name
         return JSONResponse(result, status_code=201)
 
     @_authenticated

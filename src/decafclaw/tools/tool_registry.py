@@ -9,8 +9,8 @@ log = logging.getLogger(__name__)
 
 # Tools that are always sent to the LLM, even in deferred mode.
 DEFAULT_ALWAYS_LOADED = {
-    "think", "activate_skill", "shell", "workspace_read", "workspace_write",
-    "web_fetch", "current_time", "delegate_task", "set_effort",
+    "activate_skill", "shell", "workspace_read", "workspace_write",
+    "web_fetch", "current_time", "delegate_task",
 }
 
 

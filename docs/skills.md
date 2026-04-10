@@ -51,7 +51,7 @@ These are loaded into context only when the skill is activated.
 | `user-invocable` | No | Bool, default true. |
 | `context` | No | `inline` (default) or `fork`. Fork runs the skill as an isolated child turn. |
 | `allowed-tools` | No | Comma-separated tool names pre-approved for this skill. |
-| `effort` | No | Effort level (`fast`/`default`/`strong`). Only applies to `context: fork`. See [Effort Levels](effort-levels.md). |
+| `model` | No | Named model config for `context: fork` skills. See [Model Selection](model-selection.md). |
 | `argument-hint` | No | Hint text for command argument substitution. |
 
 ### Native Python tools (tools.py)

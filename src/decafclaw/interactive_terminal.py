@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 
+from .config import resolve_streaming
 from .tools import TOOL_DEFINITIONS
 
 log = logging.getLogger(__name__)
@@ -22,7 +23,7 @@ def _setup_interactive_context(ctx) -> None:
     ctx.conv_id = "interactive"
     ctx.media_handler = LocalFileMediaHandler(config)
 
-    if config.llm.streaming:
+    if resolve_streaming(config):
         async def _terminal_stream_chunk(chunk_type, data):
             if chunk_type == "text":
                 print(data, end="", flush=True)
@@ -37,7 +38,7 @@ def _print_banner(config) -> None:
     from .mcp_client import get_registry
 
     print("DecafClaw interactive mode. Type 'quit' to exit.")
-    print(f"Model: {config.llm.model}")
+    print(f"Model: {config.default_model or config.llm.model}")
     print(f"Tools: {', '.join(t['function']['name'] for t in TOOL_DEFINITIONS)}")
     skills = getattr(config, "discovered_skills", [])
     if skills:
@@ -159,7 +160,7 @@ async def run_interactive(ctx):
                 print(f"\n[error: {e}]\n")
                 continue
 
-            if config.llm.streaming:
+            if resolve_streaming(config):
                 print()  # final newline after streamed text
             else:
                 print(f"\nagent> {result.text}\n")
