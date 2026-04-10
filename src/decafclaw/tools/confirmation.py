@@ -13,7 +13,7 @@ async def request_confirmation(
     tool_name: str,
     command: str,
     message: str,
-    timeout: float = 60,
+    timeout: float = 86400,
     **extra_event_fields,
 ) -> dict:
     """Request user confirmation via the event bus.

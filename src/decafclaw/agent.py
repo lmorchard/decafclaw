@@ -283,7 +283,6 @@ async def _handle_end_turn_confirm(ctx, action: EndTurnConfirm) -> bool:
         tool_name="end_turn_confirm",
         command=action.message or "Review",
         message=action.message,
-        timeout=300,
         approve_label=action.approve_label,
         deny_label=action.deny_label,
     )
