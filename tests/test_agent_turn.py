@@ -12,10 +12,11 @@ from decafclaw.agent import (
     _check_cancelled,
     _conv_id,
     _execute_tool_calls,
+    _refresh_dynamic_tools,
     run_agent_turn,
 )
 from decafclaw.config_types import ReflectionConfig
-from decafclaw.media import ToolResult
+from decafclaw.media import EndTurnConfirm, ToolResult
 from decafclaw.reflection import ReflectionResult
 
 # -- Helper tests --------------------------------------------------------------
@@ -89,11 +90,11 @@ def test_check_cancelled_not_set(ctx):
 
 def test_build_tool_list_base_tools(ctx):
     tools, deferred_text = _build_tool_list(ctx)
-    # Should have at least the base tools, no deferral on small set
+    # Should have some active tools and may defer some with max_active_tools
     assert len(tools) > 0
     names = [t["function"]["name"] for t in tools]
+    # Core tools that are always-loaded should be present
     assert "current_time" in names
-    assert deferred_text is None
 
 
 def test_build_tool_list_with_extra_tools(ctx):
@@ -123,8 +124,9 @@ async def test_execute_tool_calls_runs_tools(ctx):
     ]
     history = []
     messages = []
-    result = await _execute_tool_calls(ctx, tool_calls, history, messages)
-    assert result is None  # not cancelled
+    cancelled, end_turn = await _execute_tool_calls(ctx, tool_calls, history, messages)
+    assert cancelled is None  # not cancelled
+    assert end_turn is False
     assert len(history) == 1
     assert history[0]["role"] == "tool"
     assert history[0]["tool_call_id"] == "tc1"
@@ -145,8 +147,8 @@ async def test_execute_tool_calls_handles_malformed_json(ctx):
     messages = []
 
     # Should not raise — handles JSONDecodeError gracefully
-    result = await _execute_tool_calls(ctx, tool_calls, history, messages)
-    assert result is None
+    cancelled, _ = await _execute_tool_calls(ctx, tool_calls, history, messages)
+    assert cancelled is None
     assert len(history) == 1
 
 
@@ -163,9 +165,9 @@ async def test_execute_tool_calls_cancellation(ctx):
     ]
     history = []
     messages = []
-    result = await _execute_tool_calls(ctx, tool_calls, history, messages)
-    assert result is not None
-    assert "cancelled" in result.text
+    cancelled, _ = await _execute_tool_calls(ctx, tool_calls, history, messages)
+    assert cancelled is not None
+    assert "cancelled" in cancelled.text
 
 
 # -- Concurrent tool execution tests -------------------------------------------
@@ -197,9 +199,9 @@ async def test_execute_tool_calls_concurrent(ctx):
 
 
     with patch("decafclaw.agent.execute_tool", side_effect=_concurrent_tool):
-        result = await _execute_tool_calls(ctx, tool_calls, history, messages)
+        cancelled, _ = await _execute_tool_calls(ctx, tool_calls, history, messages)
 
-    assert result is None
+    assert cancelled is None
     assert len(history) == 3
     # All 3 started before any completed — proves concurrency
     assert len(all_started) == 3
@@ -254,9 +256,9 @@ async def test_execute_tool_calls_one_fails_others_succeed(ctx):
 
 
     with patch("decafclaw.agent.execute_tool", side_effect=_maybe_fail):
-        result = await _execute_tool_calls(ctx, tool_calls, history, messages)
+        cancelled, _ = await _execute_tool_calls(ctx, tool_calls, history, messages)
 
-    assert result is None
+    assert cancelled is None
     assert len(history) == 3
     # Results in call order: tc0 succeeded, tc1 failed, tc2 succeeded
     assert "ok-tc0" in history[0]["content"]
@@ -284,6 +286,205 @@ async def test_execute_tool_calls_preserves_order(ctx):
     assert history[0]["tool_call_id"] == "tc0"
     assert history[1]["tool_call_id"] == "tc1"
     assert history[2]["tool_call_id"] == "tc2"
+
+
+# -- end_turn tests ------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_execute_tool_calls_end_turn_signal(ctx):
+    """A tool returning end_turn=True propagates through the batch."""
+
+    async def _end_turn_tool(ctx_arg, name, args):
+        return ToolResult(text="spec written", end_turn=True)
+
+    tool_calls = [
+        {"id": "tc0", "function": {"name": "tool", "arguments": "{}"}}
+    ]
+    history = []
+    messages = []
+
+    with patch("decafclaw.agent.execute_tool", side_effect=_end_turn_tool):
+        cancelled, end_turn = await _execute_tool_calls(ctx, tool_calls, history, messages)
+
+    assert cancelled is None
+    assert end_turn is True
+    assert len(history) == 1
+
+
+@pytest.mark.asyncio
+async def test_execute_tool_calls_end_turn_in_parallel_batch(ctx):
+    """If one tool in a parallel batch signals end_turn, all still execute."""
+
+    async def _mixed_tools(ctx_arg, name, args):
+        call_id = ctx_arg.tools.current_call_id
+        if call_id == "tc1":
+            return ToolResult(text="end here", end_turn=True)
+        return ToolResult(text=f"normal-{call_id}")
+
+    tool_calls = [
+        {"id": f"tc{i}", "function": {"name": "tool", "arguments": "{}"}}
+        for i in range(3)
+    ]
+    history = []
+    messages = []
+
+    with patch("decafclaw.agent.execute_tool", side_effect=_mixed_tools):
+        cancelled, end_turn = await _execute_tool_calls(ctx, tool_calls, history, messages)
+
+    assert cancelled is None
+    assert end_turn is True
+    # All 3 tools executed
+    assert len(history) == 3
+    assert "normal-tc0" in history[0]["content"]
+    assert "end here" in history[1]["content"]
+    assert "normal-tc2" in history[2]["content"]
+
+
+@pytest.mark.asyncio
+async def test_execute_tool_calls_no_end_turn_for_bare_strings(ctx):
+    """Tools returning bare strings don't trigger end_turn."""
+
+    async def _string_tool(ctx_arg, name, args):
+        return "just a string"
+
+    tool_calls = [
+        {"id": "tc0", "function": {"name": "tool", "arguments": "{}"}}
+    ]
+    history = []
+    messages = []
+
+    with patch("decafclaw.agent.execute_tool", side_effect=_string_tool):
+        cancelled, end_turn = await _execute_tool_calls(ctx, tool_calls, history, messages)
+
+    assert cancelled is None
+    assert end_turn is False
+
+
+@pytest.mark.asyncio
+async def test_execute_tool_calls_end_turn_confirm(ctx):
+    """EndTurnConfirm propagates through the batch."""
+    action = EndTurnConfirm(message="Review spec", approve_label="OK", deny_label="No")
+
+    async def _confirm_tool(ctx_arg, name, args):
+        return ToolResult(text="spec ready", end_turn=action)
+
+    tool_calls = [
+        {"id": "tc0", "function": {"name": "tool", "arguments": "{}"}}
+    ]
+    history = []
+    messages = []
+
+    with patch("decafclaw.agent.execute_tool", side_effect=_confirm_tool):
+        cancelled, end_turn_signal = await _execute_tool_calls(ctx, tool_calls, history, messages)
+
+    assert cancelled is None
+    assert isinstance(end_turn_signal, EndTurnConfirm)
+    assert end_turn_signal.message == "Review spec"
+
+
+@pytest.mark.asyncio
+async def test_execute_tool_calls_end_turn_confirm_takes_priority(ctx):
+    """EndTurnConfirm takes priority over end_turn=True in a batch."""
+
+    async def _mixed_tools(ctx_arg, name, args):
+        call_id = ctx_arg.tools.current_call_id
+        if call_id == "tc0":
+            return ToolResult(text="simple end", end_turn=True)
+        return ToolResult(text="confirm", end_turn=EndTurnConfirm(message="review"))
+
+    tool_calls = [
+        {"id": "tc0", "function": {"name": "tool", "arguments": "{}"}},
+        {"id": "tc1", "function": {"name": "tool", "arguments": "{}"}},
+    ]
+    history = []
+    messages = []
+
+    with patch("decafclaw.agent.execute_tool", side_effect=_mixed_tools):
+        cancelled, end_turn_signal = await _execute_tool_calls(ctx, tool_calls, history, messages)
+
+    assert cancelled is None
+    assert isinstance(end_turn_signal, EndTurnConfirm)
+
+
+# -- _refresh_dynamic_tools tests ----------------------------------------------
+
+
+def test_refresh_dynamic_tools_updates_extra(ctx):
+    """Dynamic provider replaces skill tools each call."""
+    # Seed initial tools
+    ctx.tools.extra = {"tool_a": lambda: None, "other_tool": lambda: None}
+    ctx.tools.extra_definitions = [
+        {"function": {"name": "tool_a"}},
+        {"function": {"name": "other_tool"}},
+    ]
+
+    call_count = 0
+
+    def get_tools(c):
+        nonlocal call_count
+        call_count += 1
+        # Return only tool_b this turn (tool_a removed)
+        return (
+            {"tool_b": lambda: None},
+            [{"function": {"name": "tool_b"}}],
+        )
+
+    ctx.tools.dynamic_providers = {"my_skill": get_tools}
+    # Simulate previous turn having tool_a
+    ctx.tools.dynamic_provider_names = {"my_skill": {"tool_a"}}
+
+    _refresh_dynamic_tools(ctx)
+
+    assert call_count == 1
+    # tool_a removed, tool_b added, other_tool unchanged
+    assert "tool_b" in ctx.tools.extra
+    assert "tool_a" not in ctx.tools.extra
+    assert "other_tool" in ctx.tools.extra
+    # Definitions updated
+    def_names = {td["function"]["name"] for td in ctx.tools.extra_definitions}
+    assert "tool_b" in def_names
+    assert "tool_a" not in def_names
+    assert "other_tool" in def_names
+
+
+def test_refresh_dynamic_tools_noop_without_providers(ctx):
+    """No providers means no changes."""
+    ctx.tools.extra = {"existing": lambda: None}
+    _refresh_dynamic_tools(ctx)
+    assert "existing" in ctx.tools.extra
+
+
+def test_refresh_dynamic_tools_tracks_provider_names(ctx):
+    """Provider names are tracked for stale removal on next call."""
+
+    def get_tools(c):
+        return (
+            {"t1": lambda: None, "t2": lambda: None},
+            [{"function": {"name": "t1"}}, {"function": {"name": "t2"}}],
+        )
+
+    ctx.tools.dynamic_providers = {"skill": get_tools}
+    _refresh_dynamic_tools(ctx)
+    assert ctx.tools.dynamic_provider_names["skill"] == {"t1", "t2"}
+
+
+def test_refresh_dynamic_tools_handles_provider_error(ctx):
+    """A failing provider doesn't crash and clears its tracked names."""
+
+    def bad_provider(c):
+        raise RuntimeError("boom")
+
+    ctx.tools.dynamic_providers = {"bad": bad_provider}
+    ctx.tools.dynamic_provider_names = {"bad": {"old_tool"}}
+    ctx.tools.extra = {"old_tool": lambda: None}
+    ctx.tools.extra_definitions = [{"function": {"name": "old_tool"}}]
+
+    _refresh_dynamic_tools(ctx)
+
+    # Old tool removed, provider names cleared
+    assert "old_tool" not in ctx.tools.extra
+    assert ctx.tools.dynamic_provider_names["bad"] == set()
 
 
 # -- run_agent_turn integration tests ------------------------------------------
@@ -549,7 +750,7 @@ async def test_reflection_max_retries_delivers_last(ctx):
 
     # After 1 retry (max_retries=1), delivers whatever it has (plus escalation nudge)
     assert "Mediocre answer" in result.text
-    assert "think-harder" in result.text  # escalation nudge appended
+    assert "model picker" in result.text  # escalation nudge appended
     # Judge called once (first attempt), then retry delivers without reflection
     assert mock_eval.call_count == 1
 

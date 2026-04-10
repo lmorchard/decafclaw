@@ -121,49 +121,28 @@ conversation-sidebar .conv-item.active .conv-type-badge {
   color: inherit;
 }
 
-conversation-sidebar .effort-picker {
+conversation-sidebar .model-picker {
   padding: 0.4rem 1rem 0.5rem;
   border-top: 1px solid var(--pico-muted-border-color);
 }
 
-conversation-sidebar .effort-picker-label {
+conversation-sidebar .model-picker-label {
   font-size: 0.75rem;
   color: var(--pico-muted-color);
   margin-bottom: 0.25rem;
+  display: block;
 }
 
-conversation-sidebar .effort-picker-buttons {
-  display: flex;
-  gap: 0;
-  border-radius: 4px;
-  overflow: hidden;
-  border: 1px solid var(--pico-muted-border-color);
-}
-
-conversation-sidebar .effort-btn {
-  flex: 1;
-  padding: 0.2rem 0;
-  font-size: 0.7rem;
-  border: none;
-  border-radius: 0;
-  background: transparent;
-  color: var(--pico-muted-color);
-  cursor: pointer;
+conversation-sidebar .model-select {
+  width: 100%;
+  font-size: 0.75rem;
+  padding: 0.25rem 0.4rem;
   margin: 0;
-  text-transform: capitalize;
-}
-
-conversation-sidebar .effort-btn:not(:last-child) {
-  border-right: 1px solid var(--pico-muted-border-color);
-}
-
-conversation-sidebar .effort-btn:hover {
-  background: var(--pico-muted-border-color);
-}
-
-conversation-sidebar .effort-btn.active {
-  background: var(--pico-primary);
-  color: var(--pico-primary-inverse);
+  border-radius: 4px;
+  border: 1px solid var(--pico-muted-border-color);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
 }
 
 conversation-sidebar .context-usage {
@@ -281,7 +260,7 @@ conversation-sidebar[collapsed] {
 }
 
 conversation-sidebar[collapsed] .conv-list,
-conversation-sidebar[collapsed] .effort-picker,
+conversation-sidebar[collapsed] .model-picker,
 conversation-sidebar[collapsed] .context-usage,
 conversation-sidebar[collapsed] .sidebar-footer,
 conversation-sidebar[collapsed] .archived-toggle {

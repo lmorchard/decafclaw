@@ -63,6 +63,7 @@ class CompactionConfig:
 @dataclass
 class EmbeddingConfig:
     model: str = "text-embedding-004"
+    provider: str = ""  # named provider from config.providers; empty = legacy resolved()
     url: str = ""       # empty = resolve from llm via resolved()
     api_key: str = field(default="", metadata={"secret": True})
     search_strategy: str = "substring"
@@ -104,6 +105,7 @@ class AgentConfig:
     max_concurrent_tools: int = 5
     max_message_length: int = 50000
     tool_context_budget_pct: float = 0.10
+    max_active_tools: int = 30
     always_loaded_tools: list[str] = field(default_factory=list)
     child_max_tool_iterations: int = 10
     child_timeout_sec: int = 300
@@ -156,6 +158,27 @@ class RelevanceConfig:
     min_composite_score: float = 0.65  # candidates below this are dropped
     graph_expansion_enabled: bool = True
     graph_expansion_similarity_discount: float = 0.7
+
+
+@dataclass
+class ProviderConfig:
+    """Connection config for an LLM provider."""
+    type: str = ""  # "vertex", "openai", "openai-compat" (also accepts "litellm")
+    api_key: str = field(default="", metadata={"secret": True})
+    url: str = ""           # litellm/openai base URL
+    project: str = ""       # vertex GCP project
+    region: str = ""        # vertex region (e.g. "us-central1")
+    service_account_file: str = ""  # vertex: path to service account JSON key
+
+
+@dataclass
+class ModelConfig:
+    """Named model configuration referencing a provider."""
+    provider: str = ""      # key into providers dict
+    model: str = ""         # model name for the provider
+    context_window_size: int = 0
+    timeout: int = 300
+    streaming: bool = True
 
 
 def is_secret(dc_class: type, field_name: str) -> bool:

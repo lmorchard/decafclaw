@@ -9,7 +9,7 @@ Resolution order (first non-empty wins):
 import json
 import logging
 import os
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from dataclasses import fields as dc_fields
 from pathlib import Path
 from typing import Any, get_origin
@@ -24,6 +24,8 @@ from .config_types import (
     HttpConfig,
     LlmConfig,
     MattermostConfig,
+    ModelConfig,
+    ProviderConfig,
     ReflectionConfig,
     RelevanceConfig,
     VaultConfig,
@@ -141,8 +143,10 @@ class Config:
     http: HttpConfig = field(default_factory=HttpConfig)
     agent: AgentConfig = field(default_factory=AgentConfig)
     skills: dict[str, dict[str, Any]] = field(default_factory=dict)
-    models: dict[str, dict[str, str]] = field(default_factory=dict)
     reflection: ReflectionConfig = field(default_factory=ReflectionConfig)
+    providers: dict[str, ProviderConfig] = field(default_factory=dict)
+    model_configs: dict[str, ModelConfig] = field(default_factory=dict)
+    default_model: str = ""
     vault_retrieval: VaultRetrievalConfig = field(default_factory=VaultRetrievalConfig)
     relevance: RelevanceConfig = field(default_factory=RelevanceConfig)
     vault: VaultConfig = field(default_factory=VaultConfig)
@@ -218,32 +222,98 @@ class Config:
 # Effort level resolution
 # ---------------------------------------------------------------------------
 
-EFFORT_LEVELS = {"fast", "default", "strong"}
+# ---------------------------------------------------------------------------
+# Model resolution (new provider-based system)
+# ---------------------------------------------------------------------------
 
+def resolve_model(
+    config: Config, name: str = "",
+) -> tuple[ProviderConfig, ModelConfig]:
+    """Resolve a named model config to its provider + model config.
 
-def resolve_effort(config: Config, level: str) -> LlmConfig:
-    """Resolve an effort level to a concrete LLM config.
-
-    Merges config.models[level] over config.llm defaults.
-    Unknown levels, absent models section, or invalid entries fall back to config.llm.
+    Falls back to config.default_model if name is empty.
+    Raises KeyError if the model or its provider isn't found.
     """
-    entry = config.models.get(level, {})
-    if not entry or not isinstance(entry, dict):
-        if entry and not isinstance(entry, dict):
-            log.warning("Invalid models entry for '%s': expected dict, got %s",
-                        level, type(entry).__name__)
-        return config.llm
-    return replace(
-        config.llm,
-        model=entry.get("model") or config.llm.model,
-        url=entry.get("url") or config.llm.url,
-        api_key=entry.get("api_key") or config.llm.api_key,
-    )
+    model_name = name or config.default_model
+    if not model_name:
+        raise KeyError("No model name given and no default_model configured")
+
+    if model_name not in config.model_configs:
+        available = ", ".join(sorted(config.model_configs.keys())) or "(none)"
+        raise KeyError(
+            f"Unknown model config '{model_name}'. Available: {available}"
+        )
+
+    mc = config.model_configs[model_name]
+    if mc.provider not in config.providers:
+        available = ", ".join(sorted(config.providers.keys())) or "(none)"
+        raise KeyError(
+            f"Model '{model_name}' references unknown provider '{mc.provider}'. "
+            f"Available: {available}"
+        )
+
+    return config.providers[mc.provider], mc
+
+
+def resolve_streaming(config: "Config", active_model: str = "") -> bool:
+    """Resolve whether streaming is enabled for the given model.
+
+    Checks the active model config first, then default_model, then config.llm.
+    """
+    name = active_model or config.default_model
+    if name and name in config.model_configs:
+        return config.model_configs[name].streaming
+    return config.llm.streaming
 
 
 # ---------------------------------------------------------------------------
 # Loader
 # ---------------------------------------------------------------------------
+
+def _load_providers(raw: dict) -> dict[str, ProviderConfig]:
+    """Parse providers section from config.json into ProviderConfig instances."""
+    if not isinstance(raw, dict):
+        log.warning("Invalid 'providers' section: expected object, got %s",
+                    type(raw).__name__)
+        return {}
+    result: dict[str, ProviderConfig] = {}
+    for name, entry in raw.items():
+        if not isinstance(entry, dict):
+            log.warning("Invalid provider '%s': expected object, got %s",
+                        name, type(entry).__name__)
+            continue
+        result[name] = ProviderConfig(
+            type=entry.get("type", ""),
+            api_key=entry.get("api_key", ""),
+            url=entry.get("url", ""),
+            project=entry.get("project", ""),
+            region=entry.get("region", ""),
+            service_account_file=entry.get("service_account_file", ""),
+        )
+    return result
+
+
+def _load_model_configs(raw: dict) -> dict[str, ModelConfig]:
+    """Parse model_configs section from config.json into ModelConfig instances."""
+    if not isinstance(raw, dict):
+        log.warning("Invalid 'model_configs' section: expected object, got %s",
+                    type(raw).__name__)
+        return {}
+    result: dict[str, ModelConfig] = {}
+    for name, entry in raw.items():
+        if not isinstance(entry, dict):
+            log.warning("Invalid model config '%s': expected object, got %s",
+                        name, type(entry).__name__)
+            continue
+        result[name] = ModelConfig(
+            provider=entry.get("provider", ""),
+            model=entry.get("model", ""),
+            context_window_size=entry.get("context_window_size", 0),
+            timeout=entry.get("timeout", 300),
+            streaming=entry.get("streaming", True),
+        )
+    return result
+
 
 def load_config() -> Config:
     """Load config from defaults → config.json → env vars."""
@@ -322,18 +392,6 @@ def load_config() -> Config:
     else:
         skills = raw_skills
 
-    # Models — effort level to LLM config mapping, raw dict
-    raw_models = file_data.get("models", {})
-    if not isinstance(raw_models, dict):
-        log.warning(
-            "Invalid 'models' section in config.json: expected an object, "
-            "got %s; defaulting to empty dict.",
-            type(raw_models).__name__,
-        )
-        models: dict[str, dict[str, str]] = {}
-    else:
-        models = raw_models
-
     reflection = load_sub_config(
         ReflectionConfig, file_data.get("reflection", {}), "REFLECTION")
 
@@ -345,6 +403,28 @@ def load_config() -> Config:
 
     vault = load_sub_config(
         VaultConfig, file_data.get("vault", {}), "VAULT")
+
+    # Providers — named provider connection configs
+    providers = _load_providers(file_data.get("providers", {}))
+    model_configs = _load_model_configs(file_data.get("model_configs", {}))
+    default_model = file_data.get("default_model", "")
+
+    # Migration: if no providers/model_configs but old-style llm config exists,
+    # auto-generate a "default" openai-compat provider + model config
+    from .llm.types import PROVIDER_OPENAI_COMPAT
+    if not providers and llm.url:
+        providers["default"] = ProviderConfig(
+            type=PROVIDER_OPENAI_COMPAT, url=llm.url, api_key=llm.api_key,
+        )
+        model_configs["default"] = ModelConfig(
+            provider="default",
+            model=llm.model,
+            context_window_size=llm.context_window_size,
+            timeout=llm.timeout,
+            streaming=llm.streaming,
+        )
+        if not default_model:
+            default_model = "default"
 
     # Custom env vars from config file
     env_vars: dict[str, str] = {
@@ -363,8 +443,10 @@ def load_config() -> Config:
         http=http,
         agent=agent,
         skills=skills,
-        models=models,
         reflection=reflection,
+        providers=providers,
+        model_configs=model_configs,
+        default_model=default_model,
         vault_retrieval=vault_retrieval,
         relevance=relevance,
         vault=vault,

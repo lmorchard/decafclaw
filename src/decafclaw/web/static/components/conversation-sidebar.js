@@ -12,8 +12,9 @@ export class ConversationSidebar extends LitElement {
     _activeId: { type: String, state: true },
     _contextUsage: { type: Number, state: true },
     _contextLimit: { type: Number, state: true },
-    _currentEffort: { type: String, state: true },
-    _effortModel: { type: String, state: true },
+    _activeModel: { type: String, state: true },
+    _availableModels: { type: Array, state: true },
+    _defaultModel: { type: String, state: true },
     _collapsed: { type: Boolean, state: true },
     _mobileOpen: { type: Boolean, state: true },
     _sidebarTab: { type: String, state: true },
@@ -44,8 +45,9 @@ export class ConversationSidebar extends LitElement {
     this._activeId = null;
     this._contextUsage = 0;
     this._contextLimit = 0;
-    this._currentEffort = 'default';
-    this._effortModel = '';
+    this._activeModel = '';
+    this._availableModels = [];
+    this._defaultModel = '';
     this._collapsed = localStorage.getItem('sidebar-collapsed') === 'true';
     this._mobileOpen = false;
     this._sidebarTab = 'conversations';
@@ -82,8 +84,9 @@ export class ConversationSidebar extends LitElement {
       if (newUsage !== this._contextUsage) this._contextVersion++;
       this._contextUsage = newUsage;
       this._contextLimit = this.store?.contextLimit || 0;
-      this._currentEffort = this.store?.currentEffort || 'default';
-      this._effortModel = this.store?.effortModel || '';
+      this._activeModel = this.store?.activeModel || '';
+      this._availableModels = this.store?.availableModels || [];
+      this._defaultModel = this.store?.defaultModel || '';
       // Update conversation list and folders based on current section
       if (this._chatSection === '_archived') {
         this._conversations = this.store?.archivedConversations || [];
@@ -392,15 +395,10 @@ export class ConversationSidebar extends LitElement {
     }));
   }
 
-  /** @param {string} level */
-  #handleEffortClick(level) {
-    if (this._activeId) {
-      // Active conversation — send to server
-      this.store?.setEffort(level);
-    } else {
-      // No conversation yet — update local state for next creation
-      this._currentEffort = level;
-    }
+  /** @param {Event} e */
+  #handleModelChange(e) {
+    const model = /** @type {HTMLSelectElement} */ (e.target).value;
+    this.store?.setModel(model);
   }
 
   /**
@@ -710,17 +708,20 @@ export class ConversationSidebar extends LitElement {
               }))
         }
       </div>
-      <div class="effort-picker" title="${this._effortModel ? `Model: ${this._effortModel}` : ''}">
-        <div class="effort-picker-label">Effort</div>
-        <div class="effort-picker-buttons">
-          ${['fast', 'default', 'strong'].map(level => html`
-            <button
-              class="effort-btn ${this._currentEffort === level ? 'active' : ''}"
-              @click=${() => this.#handleEffortClick(level)}
-            >${level}</button>
+      ${this._availableModels.length > 0 ? html`
+      <div class="model-picker">
+        <label class="model-picker-label" for="model-select">Model</label>
+        <select id="model-select" class="model-select"
+                .value=${this._activeModel || this._defaultModel}
+                @change=${(e) => this.#handleModelChange(e)}>
+          ${this._availableModels.map(m => html`
+            <option value="${m}">
+              ${m}${m === this._defaultModel ? ' (default)' : ''}
+            </option>
           `)}
-        </div>
+        </select>
       </div>
+      ` : nothing}
       ${this._contextLimit > 0 ? html`
         ${(() => {
           const pct = Math.round(this._contextUsage / this._contextLimit * 100);

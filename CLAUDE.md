@@ -2,7 +2,7 @@
 
 ## What is this?
 
-An AI agent testbed for exploring agent development patterns. Connects to Mattermost as a chat bot, with a web UI and interactive terminal mode as alternatives. Uses an OpenAI-compatible LLM endpoint (via LiteLLM) and Tabstack for web tools.
+An AI agent testbed for exploring agent development patterns. Connects to Mattermost as a chat bot, with a web UI and interactive terminal mode as alternatives. Multi-provider LLM support (Vertex/Gemini, OpenAI, LiteLLM-compat) with named model configs. Tabstack for web tools.
 
 ## Architecture
 
@@ -18,9 +18,14 @@ An AI agent testbed for exploring agent development patterns. Connects to Matter
 - `src/decafclaw/interactive_terminal.py` — Interactive terminal mode (stdin/stdout REPL)
 - `src/decafclaw/mattermost.py` — Mattermost client, message handling, flood protection, progress subscriber
 - `src/decafclaw/mattermost_display.py` — ConversationDisplay: per-turn Mattermost message sequencing
-- `src/decafclaw/llm.py` — LLM client (OpenAI-compatible)
+- `src/decafclaw/llm/` — LLM client package: provider abstraction, registry, multi-provider support
+- `src/decafclaw/llm/types.py` — Provider protocol, StreamCallback type
+- `src/decafclaw/llm/registry.py` — Provider registry: init, lookup, lifecycle
+- `src/decafclaw/llm/providers/openai_compat.py` — OpenAI-compatible provider (httpx + SSE): LiteLLM, Ollama, vLLM, OpenRouter
+- `src/decafclaw/llm/providers/openai.py` — Direct OpenAI API provider
+- `src/decafclaw/llm/providers/vertex.py` — Vertex AI Gemini provider (native REST + ADC auth)
 - `src/decafclaw/config.py` — Dataclass config from env vars / .env
-- `src/decafclaw/config_types.py` — Config sub-dataclasses (LlmConfig, MattermostConfig, etc.)
+- `src/decafclaw/config_types.py` — Config sub-dataclasses (ProviderConfig, ModelConfig, LlmConfig, MattermostConfig, etc.)
 - `src/decafclaw/config_cli.py` — CLI tool for config show/get/set
 - `src/decafclaw/context.py` — Forkable runtime context with sub-objects: TokenUsage, ToolState, SkillState, ComposerState
 - `src/decafclaw/context_composer.py` — Context composer: unified context assembly, relevance scoring, dynamic budget allocation
@@ -40,6 +45,7 @@ An AI agent testbed for exploring agent development patterns. Connects to Matter
 - `src/decafclaw/skills/dream/` — Dream consolidation: periodic journal review → vault page updates (every 3 hours)
 - `src/decafclaw/skills/garden/` — Vault gardening: structural maintenance sweep (weekly scheduled)
 - `src/decafclaw/skills/claude_code/` — Claude Code subagent skill (sessions, permissions, output logging)
+- `src/decafclaw/skills/project/` — Project workflow skill: state machine (`state.py`), plan parser (`plan_parser.py`), lifecycle tools, dynamic tool loading (`get_tools`), `end_turn` for phase boundaries
 - `src/decafclaw/eval/` — Eval harness (YAML tests, failure reflection)
 - `src/decafclaw/mcp_client.py` — MCP client: config, registry, server connections, auto-restart
 - `src/decafclaw/heartbeat.py` — Heartbeat: periodic wake-up, section parsing, timer, cycle runner
@@ -51,7 +57,7 @@ An AI agent testbed for exploring agent development patterns. Connects to Matter
 - `src/decafclaw/tools/background_tools.py` — Background process management: start, status, stop, list long-running processes (servers, watchers)
 - `src/decafclaw/tools/http_tools.py` — General-purpose HTTP request tool: all methods, headers, body, URL-based allowlist
 - `src/decafclaw/tools/health.py` — Health/diagnostic status tool: uptime, MCP, heartbeat, tools, embeddings
-- `src/decafclaw/tools/effort_tools.py` — Effort level tool: `set_effort` for conversation model switching
+- `src/decafclaw/tools/model_tools.py` — Model selection tool: `set_model` (user-only, not agent-callable)
 - `src/decafclaw/tools/delegate.py` — Sub-agent delegation: `delegate_task` forks a child agent for a single subtask (call multiple times for parallel work)
 - `src/decafclaw/tools/tool_registry.py` — Tool classification (always-loaded vs deferred), token estimation, deferred list formatting
 - `src/decafclaw/tools/search_tools.py` — `tool_search` tool: keyword and exact-name lookup for deferred tools
@@ -120,8 +126,10 @@ Session docs live in `docs/dev-sessions/YYYY-MM-DD-HHMM-slug/` with `spec.md`, `
 - **Sync vs async tools.** `execute_tool` auto-detects via `asyncio.iscoroutinefunction`. Sync tools run in `asyncio.to_thread`.
 - **Tool calls run concurrently.** When the model emits multiple tool calls in one response, they execute via `asyncio.gather` with a semaphore (`max_concurrent_tools`, default 5). Each call gets a forked ctx with its own `current_tool_call_id`. All tool events carry `tool_call_id` for UI correlation.
 - **Tool deferral.** When tool definitions exceed `tool_context_budget_pct` (default 10%) of `compaction_max_tokens`, non-essential tools are deferred behind `tool_search`. The model sees a name+description list and fetches full schemas on demand. Always-loaded tools configured via `ALWAYS_LOADED_TOOLS` env var. Fetched tools persist for the conversation.
+- **`end_turn` on ToolResult.** Tools can return `ToolResult(text="...", end_turn=True)` to mechanically end the agent turn. The loop makes one final no-tools LLM call (forcing text output), then returns. For review gates, use `end_turn=EndTurnConfirm(message=..., on_approve=..., on_deny=...)` — the agent loop shows confirmation buttons; approval continues the loop, denial ends the turn. `EndTurnConfirm` takes priority over `True` in parallel batches.
+- **Dynamic skill tools via `get_tools(ctx)`.** Skills can export `get_tools(ctx) -> (dict, list)` to supply different tools per turn based on state. Called each iteration before `_build_tool_list()`. Falls back to static `TOOLS`/`TOOL_DEFINITIONS` for skills without it. Refreshes via `_refresh_dynamic_tools()` which tracks provider names to remove stale entries.
 - **Events for progress.** Tools publish `tool_status` events via `ctx.publish()`. The agent loop publishes `llm_start/end` and `tool_start/end`. Subscribers (Mattermost, terminal) handle display.
-- **Web UI conversation management is REST-only.** All conversation listing, creation, renaming, archiving, folder management uses REST endpoints. WebSocket is only for real-time chat streaming, conversation selection/history loading, effort changes, and turn cancellation. Conversation folders are metadata-only (per-user JSON index file); archive files stay in place.
+- **Web UI conversation management is REST-only.** All conversation listing, creation, renaming, archiving, folder management uses REST endpoints. WebSocket is only for real-time chat streaming, conversation selection/history loading, model changes, and turn cancellation. Conversation folders are metadata-only (per-user JSON index file); archive files stay in place.
 - **Mattermost concerns stay in `mattermost.py`.** Progress formatting, placeholder management, threading logic — all in `MattermostClient`.
 - **Mattermost PATCH API quirks.** Omitting `props` from a PATCH preserves existing props (including attachments). To strip attachments, you must explicitly send `props: {"attachments": []}`. However, sending a PATCH with only `props` and no `message` field clears the message text, showing "(message deleted)". Always include the message text when patching props — fetch it first if needed.
 - **Config via defaults → config.json → env vars.** Config is resolved in priority order: dataclass defaults → `data/{agent_id}/config.json` → env vars. Env vars are highest priority. Dataclass defaults in `config.py`, sub-dataclasses in `config_types.py`.
@@ -149,10 +157,10 @@ Session docs live in `docs/dev-sessions/YYYY-MM-DD-HHMM-slug/` with `spec.md`, `
 - **Bundled skills in `src/decafclaw/skills/`.** Each skill has SKILL.md (required) + tools.py (optional for native Python tools). Skill scan order: workspace > agent-level > bundled.
 - **Skills must use absolute imports.** The skill loader uses `importlib.spec_from_file_location` without package context, so relative imports (`from .` or `from ...`) fail at runtime. Use `from decafclaw.skills.my_skill.module import ...` instead.
 - **Skill config via `SkillConfig` dataclass in `tools.py`.** Skills own their config schema by exporting a `SkillConfig` dataclass. The loader resolves it at activation time via `load_sub_config` (env vars + `config.skills[name]` dict + defaults). `init(config, skill_config)` receives both the global config and the typed skill config. Skills without `SkillConfig` get the old `init(config)` signature.
-- **Effort levels for model routing.** Three levels: `fast` (cheap/compliant), `default` (normal), `strong` (complex reasoning). Configured in `config.json` `models` section mapping levels to partial LLM configs. Set per-conversation via `set_effort` tool or `!think-harder`/`!think-faster`/`!think-normal` commands. Skills declare `effort` in SKILL.md frontmatter (forked contexts only). `delegate_task` accepts optional `effort` parameter. Resolved at turn start by forking config with the resolved LLM settings. Persisted in conversation sidecar.
+- **Multi-provider LLM support.** Config has two layers: `providers` (connection configs: type, credentials, region) and `model_configs` (named model + provider ref + per-model settings). Provider types: `vertex` (Gemini via ADC), `openai` (direct API), `litellm` (OpenAI-compat proxy/Ollama/vLLM). `default_model` sets the conversation default. Users switch models via web UI dropdown or WebSocket `set_model` message — the agent cannot change its own model (cost control). Model selection persisted in archive as `{"role": "model"}` messages. Legacy `LlmConfig` auto-migrates to a "default" litellm provider.
 - **MCP servers are globally available.** Configured in `data/{agent_id}/mcp_servers.json` (Claude Code compatible format). Connected eagerly on startup, tools namespaced as `mcp__<server>__<tool>`. Module-level global registry in `mcp_client.py`.
 - **MCP auto-restart.** Crashed stdio servers auto-reconnect on next tool call with exponential backoff (max 3 retries). Use `mcp_status(action="restart")` for manual control.
-- **Scheduled tasks via cron-style files.** Markdown files with YAML frontmatter in `data/{agent_id}/schedules/` (admin) and `workspace/schedules/` (agent-writable). Frontmatter fields: `schedule` (5-field cron), `channel` (Mattermost channel **ID** — `#name` resolution not yet implemented), `enabled`, `effort`, `allowed-tools`, `required-skills`. Independent timer loop (60s poll), per-task last-run tracking in `workspace/.schedule_last_run/`. Uses `croniter` for cron evaluation. Mattermost channel reporting not yet wired — results currently go to agent log.
+- **Scheduled tasks via cron-style files.** Markdown files with YAML frontmatter in `data/{agent_id}/schedules/` (admin) and `workspace/schedules/` (agent-writable). Frontmatter fields: `schedule` (5-field cron), `channel` (Mattermost channel **ID** — `#name` resolution not yet implemented), `enabled`, `model`, `allowed-tools`, `required-skills`. Independent timer loop (60s poll), per-task last-run tracking in `workspace/.schedule_last_run/`. Uses `croniter` for cron evaluation. Mattermost channel reporting not yet wired — results currently go to agent log.
 - **Skill schedule frontmatter.** Skills can declare `schedule: "cron expression"` in SKILL.md to run as scheduled tasks. Only bundled and admin-level skills are honored (workspace skills cannot self-schedule). File-based schedules override skill schedules on name collision. Skills with both `schedule` and `user-invocable: true` serve as both scheduled tasks and on-demand commands.
 - **Pre-compaction memory sweep.** Before compaction summarizes old history, a background child agent reviews the about-to-be-compacted messages and saves noteworthy information to the vault. Runs as an isolated `asyncio.Task` with vault tools only — does not block compaction. Controlled by `compaction.memory_sweep_enabled` (default true). Sweep prompt loaded from `data/{agent_id}/MEMORY_SWEEP.md` with bundled fallback. Fail-open: errors logged and discarded.
 - **Self-reflection is fail-open.** The reflection judge evaluates responses before delivery, but errors (network, parse, etc.) always pass through the response as-is. Retries consume `max_tool_iterations` budget. Skipped for child agents, cancelled turns, and empty responses.

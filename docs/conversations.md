@@ -114,7 +114,7 @@ All conversation management uses REST (WebSocket is only for real-time chat stre
 | `GET` | `/api/conversations?folder=` | List conversations + subfolders in a folder |
 | `GET` | `/api/conversations/archived?folder=` | List archived conversations by folder |
 | `GET` | `/api/conversations/system?folder=` | List system conversations by type |
-| `POST` | `/api/conversations` | Create conversation (optional: folder, effort) |
+| `POST` | `/api/conversations` | Create conversation (optional: folder, model) |
 | `PATCH` | `/api/conversations/{id}` | Rename and/or move to a folder |
 | `POST` | `/api/conversations/{id}/archive` | Archive a conversation |
 | `POST` | `/api/conversations/{id}/unarchive` | Unarchive a conversation |

@@ -275,15 +275,20 @@ async def evaluate_response(
             prior_turn_tools=prior_turn_summary,
         )
 
-        rc = config.reflection.resolved(config)
         messages = [{"role": "user", "content": prompt}]
 
-        response = await call_llm(
-            config, messages,
-            llm_url=rc.url,
-            llm_model=rc.model,
-            llm_api_key=rc.api_key,
-        )
+        # Route through named model config: explicit > default_model > legacy
+        rc_model = config.reflection.model
+        if rc_model and rc_model in config.model_configs:
+            response = await call_llm(config, messages, model_name=rc_model)
+        elif config.default_model:
+            response = await call_llm(config, messages, model_name=config.default_model)
+        else:
+            rc = config.reflection.resolved(config)
+            response = await call_llm(
+                config, messages,
+                llm_url=rc.url, llm_model=rc.model, llm_api_key=rc.api_key,
+            )
 
         raw = response.get("content", "")
         passed, critique = _parse_verdict(raw)

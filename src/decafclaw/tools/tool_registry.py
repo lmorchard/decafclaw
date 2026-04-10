@@ -9,8 +9,8 @@ log = logging.getLogger(__name__)
 
 # Tools that are always sent to the LLM, even in deferred mode.
 DEFAULT_ALWAYS_LOADED = {
-    "think", "activate_skill", "shell", "workspace_read", "workspace_write",
-    "web_fetch", "current_time", "delegate_task", "set_effort",
+    "activate_skill", "shell", "workspace_read", "workspace_write",
+    "web_fetch", "current_time", "delegate_task",
 }
 
 
@@ -38,23 +38,28 @@ def classify_tools(
     all_tool_defs: list[dict],
     config,
     fetched_names: set[str] | None = None,
+    skill_tool_names: set[str] | None = None,
 ) -> tuple[list[dict], list[dict]]:
     """Split tool definitions into active and deferred sets.
 
-    If total token cost is under the budget, returns (all, []) — no deferral.
-    Otherwise: active = always-loaded + fetched; deferred = everything else.
+    If total token cost is under the budget and count is under max_active_tools,
+    returns (all, []) — no deferral. Otherwise: active = always-loaded +
+    fetched + skill tools; deferred = everything else.
     """
     if fetched_names is None:
         fetched_names = set()
+    if skill_tool_names is None:
+        skill_tool_names = set()
 
     budget = config.tool_context_budget
     total_tokens = estimate_tool_tokens(all_tool_defs)
 
-    if total_tokens <= budget:
+    max_active = getattr(config.agent, "max_active_tools", 40)
+    if total_tokens <= budget and len(all_tool_defs) <= max_active:
         return all_tool_defs, []
 
     always_loaded = get_always_loaded_names(config)
-    include_names = always_loaded | fetched_names
+    include_names = always_loaded | fetched_names | skill_tool_names
 
     active = []
     deferred = []

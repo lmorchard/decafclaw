@@ -7,7 +7,7 @@ from pathlib import Path
 
 log = logging.getLogger(__name__)
 
-# Roles that are valid in LLM message history. Metadata roles (effort,
+# Roles that are valid in LLM message history. Metadata roles (model,
 # reflection, etc.) are stored in the archive but filtered out before
 # sending to the LLM.
 LLM_ROLES = {"system", "user", "assistant", "tool"}

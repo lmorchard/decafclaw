@@ -28,6 +28,12 @@ class ToolState:
     preapproved: set[str] = field(default_factory=set)
     preapproved_shell_patterns: list[str] = field(default_factory=list)
     current_call_id: str = ""
+    # Dynamic tool providers: skill_name → get_tools(ctx) callable.
+    # Called each turn to refresh that skill's tools and definitions.
+    dynamic_providers: dict[str, Any] = field(default_factory=dict)
+    # Tracks which tool names each dynamic provider contributed last turn,
+    # so stale entries can be removed when the provider returns fewer tools.
+    dynamic_provider_names: dict[str, set[str]] = field(default_factory=dict)
 
 
 @dataclass
@@ -71,7 +77,7 @@ class Context:
         self.skip_vault_retrieval: bool = False
         self.skip_archive: bool = False
         self.wiki_page: str | None = None  # open wiki page from web UI
-        self.effort: str = "default"
+        self.active_model: str = ""  # named model config from config.model_configs
         self.task_mode: str = ""  # "heartbeat" | "scheduled" | "" (interactive)
 
     @classmethod
@@ -84,7 +90,7 @@ class Context:
         conv_id: str,
         channel_id: str = "",
         channel_name: str = "",
-        effort: str = "default",
+        active_model: str = "",
         task_mode: str = "",
         skip_reflection: bool = True,
         skip_vault_retrieval: bool = True,
@@ -106,7 +112,7 @@ class Context:
         ctx.conv_id = conv_id
         ctx.channel_id = channel_id
         ctx.channel_name = channel_name
-        ctx.effort = effort
+        ctx.active_model = active_model
         ctx.task_mode = task_mode
         ctx.skip_reflection = skip_reflection
         ctx.skip_vault_retrieval = skip_vault_retrieval
@@ -168,7 +174,7 @@ class Context:
         child.skip_reflection = self.skip_reflection
         child.skip_vault_retrieval = self.skip_vault_retrieval
         child.wiki_page = self.wiki_page
-        child.effort = self.effort
+        child.active_model = self.active_model
         # Share skills + composer (concurrent tool calls read but don't mutate)
         child.skills = self.skills
         child.composer = self.composer

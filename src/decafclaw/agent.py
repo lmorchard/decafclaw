@@ -26,7 +26,7 @@ from .archive import append_message
 from .compaction import compact_history
 from .context_composer import ComposerMode, ContextComposer
 from .llm import call_llm
-from .media import ToolResult, extract_workspace_media
+from .media import EndTurnConfirm, ToolResult, extract_workspace_media
 from .persistence import read_skill_data, read_skills_state, write_skill_data, write_skills_state
 from .tools import TOOL_DEFINITIONS, execute_tool
 from .tools.search_tools import SEARCH_TOOL_DEFINITIONS
@@ -186,10 +186,10 @@ async def _handle_reflection(
         last_reflection = None  # clear stale result from prior retry
 
         # Suggest model escalation if reflection retries exhausted
-        if reflection_exhausted and ctx.effort != "strong":
+        if reflection_exhausted:
             final_text += (
                 "\n\n---\n*I'm not confident in this answer. "
-                "Try `!think-harder` to retry with a more capable model.*"
+                "Try switching to a more capable model in the web UI model picker.*"
             )
         return final_text, False, reflection_retries, last_reflection
 
@@ -269,13 +269,83 @@ async def _handle_reflection(
     return final_text, False, reflection_retries, last_reflection
 
 
+async def _handle_end_turn_confirm(ctx, action: EndTurnConfirm) -> bool:
+    """Handle an EndTurnConfirm action via the event bus.
+
+    Publishes a confirmation request and waits for the user to click
+    Approve or Deny. Returns True if approved, False if denied.
+    Uses the same event pattern as request_confirmation in
+    tools/confirmation.py.
+    """
+    from .tools.confirmation import request_confirmation
+    result = await request_confirmation(
+        ctx,
+        tool_name="end_turn_confirm",
+        command=action.message or "Review",
+        message=action.message,
+        timeout=300,
+        approve_label=action.approve_label,
+        deny_label=action.deny_label,
+    )
+    return result.get("approved", False)
+
+
+def _refresh_dynamic_tools(ctx) -> None:
+    """Call dynamic tool providers to refresh skill tools for this turn.
+
+    Skills that export get_tools(ctx) have their tools and definitions
+    replaced each turn based on current state (e.g., project phase).
+    Collects all possible tool names from providers, removes stale entries,
+    then re-adds the current set.
+    """
+    providers = ctx.tools.dynamic_providers
+    if not providers:
+        return
+
+    # Collect names from previous turn + this turn so we can remove stale entries
+    names_to_remove: set[str] = set()
+    for skill_name in providers:
+        names_to_remove.update(ctx.tools.dynamic_provider_names.get(skill_name, set()))
+
+    # Call each provider for this turn's tools
+    provider_results: list[tuple[str, dict, list]] = []
+    for skill_name, get_tools_fn in providers.items():
+        try:
+            tools, tool_defs = get_tools_fn(ctx)
+            names_to_remove.update(tools.keys())
+            ctx.tools.dynamic_provider_names[skill_name] = set(tools.keys())
+            provider_results.append((skill_name, tools, tool_defs))
+        except Exception as e:
+            # Fail-open: remove this provider's stale tools. If the model
+            # tries to call a removed tool, it gets a "tool not found" error.
+            log.warning(f"Dynamic tool provider for '{skill_name}' failed: {e}")
+            ctx.tools.dynamic_provider_names[skill_name] = set()
+
+    # Remove all dynamic-provider tools (old + new names) from extra
+    ctx.tools.extra = {
+        name: fn for name, fn in ctx.tools.extra.items()
+        if name not in names_to_remove
+    }
+    ctx.tools.extra_definitions = [
+        td for td in ctx.tools.extra_definitions
+        if td.get("function", {}).get("name") not in names_to_remove
+    ]
+
+    # Re-add the current turn's tools from each provider
+    for skill_name, tools, tool_defs in provider_results:
+        ctx.tools.extra.update(tools)
+        ctx.tools.extra_definitions.extend(tool_defs)
+
+
 def _collect_all_tool_defs(ctx) -> list:
     """Gather all available tool definitions (core + skill + MCP + extra).
 
     Does NOT apply allowed_tools filter — returns the full unfiltered set
     so classification can see everything before deciding what to defer.
     """
-    all_tools = list(TOOL_DEFINITIONS) + ctx.tools.extra_definitions
+    # Skill tools first — activated skill tools get priority positioning
+    # so the model sees them before the long tail of core tools
+    all_tools = list(ctx.tools.extra_definitions) + list(TOOL_DEFINITIONS)
 
     # Pre-load tool definitions from discovered skills (stable tool list).
     # Cached by config id to avoid re-executing tools.py every iteration.
@@ -317,7 +387,12 @@ def _build_tool_list(ctx) -> tuple[list, str | None]:
     """
     all_defs = _collect_all_tool_defs(ctx)
     fetched = get_fetched_tools(ctx)
-    active, deferred = classify_tools(all_defs, ctx.config, fetched)
+    # Skill tools (from activated skills) should never be deferred
+    skill_tool_names = {
+        td.get("function", {}).get("name", "")
+        for td in ctx.tools.extra_definitions
+    }
+    active, deferred = classify_tools(all_defs, ctx.config, fetched, skill_tool_names)
 
     # Apply allowed_tools filter to the active set only
     allowed = ctx.tools.allowed
@@ -342,9 +417,16 @@ def _build_tool_list(ctx) -> tuple[list, str | None]:
 
 
 async def _call_llm_with_events(ctx, config, messages, tools,
-                                llm_url=None, llm_model=None, llm_api_key=None) -> dict:
-    """Call the LLM with event publishing for progress tracking."""
+                                model_name=None,
+                                llm_url=None, llm_model=None,
+                                llm_api_key=None) -> dict:
+    """Call the LLM with event publishing for progress tracking.
+
+    Accepts model_name (new path) or llm_url/llm_model/llm_api_key (legacy).
+    """
     llm_kwargs: dict = {}
+    if model_name:
+        llm_kwargs["model_name"] = model_name
     if llm_url:
         llm_kwargs["llm_url"] = llm_url
     if llm_model:
@@ -354,7 +436,8 @@ async def _call_llm_with_events(ctx, config, messages, tools,
 
     iteration = ctx._current_iteration
     await ctx.publish("llm_start", iteration=iteration)
-    if config.llm.streaming:
+    from .config import resolve_streaming
+    if resolve_streaming(config, getattr(ctx, "active_model", "")):
         from .llm import call_llm_streaming
         on_chunk = ctx.on_stream_chunk
         cancel_event = ctx.cancelled
@@ -449,7 +532,7 @@ async def _process_tool_media(ctx, result: ToolResult) -> list[str]:
 
 
 async def _execute_single_tool(call_ctx, tc, semaphore):
-    """Execute one tool call. Returns tool_msg dict.
+    """Execute one tool call. Returns (tool_msg dict, end_turn flag).
 
     Designed to run concurrently — uses its own forked ctx so
     current_tool_call_id doesn't race with other calls.
@@ -508,17 +591,18 @@ async def _execute_single_tool(call_ctx, tc, semaphore):
     if result.display_short_text:
         tool_msg["display_short_text"] = result.display_short_text
     _archive(call_ctx, tool_msg)
-    return tool_msg
+    return tool_msg, result.end_turn
 
 
 async def _execute_tool_calls(ctx, tool_calls, history, messages):
     """Execute tool calls concurrently, add results to history.
 
-    Returns ToolResult if cancelled, None otherwise.
+    Returns (ToolResult, False) if cancelled, (None, end_turn_signal) otherwise.
+    end_turn_signal is False, True, or an EndTurnConfirm action.
     """
     cancelled = _check_cancelled(ctx, history)
     if cancelled:
-        return cancelled
+        return cancelled, False
 
     semaphore = asyncio.Semaphore(ctx.config.agent.max_concurrent_tools)
 
@@ -556,9 +640,12 @@ async def _execute_tool_calls(ctx, tool_calls, history, messages):
     # Check if we were cancelled during execution
     cancelled = _check_cancelled(ctx, history)
     if cancelled:
-        return cancelled
+        return cancelled, False
 
-    # Collect results in original call order (gather preserves order)
+    # Collect results in original call order (gather preserves order).
+    # end_turn_signal: False (no signal), True (simple end), or EndTurnConfirm.
+    # EndTurnConfirm takes priority over True if both appear in a batch.
+    end_turn_signal: bool | EndTurnConfirm = False
     for i, result in enumerate(results):
         if isinstance(result, BaseException):
             # Task was cancelled or failed — gather with return_exceptions.
@@ -576,26 +663,30 @@ async def _execute_tool_calls(ctx, tool_calls, history, messages):
             messages.append(tool_msg)
             _archive(ctx, tool_msg)
         else:
-            tool_msg = result
+            tool_msg, end_turn = result
+            if isinstance(end_turn, EndTurnConfirm):
+                end_turn_signal = end_turn  # EndTurnConfirm takes priority
+            elif end_turn and not isinstance(end_turn_signal, EndTurnConfirm):
+                end_turn_signal = True
             history.append(tool_msg)
             messages.append(tool_msg)
 
-    return None
+    return None, end_turn_signal
 
 
 # -- Turn setup helpers ---------------------------------------------------------
 
 
 async def _setup_turn_state(ctx, config, history) -> dict[str, str]:
-    """Restore persisted skill/effort state and resolve effort overrides.
+    """Restore persisted skill/model state and resolve model overrides.
 
     Handles:
     - Skill restoration from sidecar (persisted activated skills + skill_data)
     - Auto-activation of always-loaded bundled skills
-    - Effort level restoration from archive
-    - Effort resolution to LLM config overrides
+    - Active model restoration from archive
+    - Model resolution to LLM config overrides
 
-    Returns effort_overrides dict (may be empty if no override needed).
+    Returns model_override dict (may be empty if no override needed).
     """
     from .tools.skill_tools import restore_skills  # deferred: circular dep
 
@@ -629,28 +720,28 @@ async def _setup_turn_state(ctx, config, history) -> dict[str, str]:
         except Exception as e:
             log.error(f"Failed to auto-activate skill '{skill_info.name}': {e}")
 
-    # Restore effort level from archive (scan for last effort event)
-    if ctx.effort == "default" and conv_id:
+    # Restore active model from archive (scan reverse for last valid model message).
+    if not ctx.active_model and conv_id:
         from .archive import read_archive
         for msg in reversed(read_archive(config, conv_id)):
-            if msg.get("role") == "effort":
-                ctx.effort = msg.get("content", "default")
-                break
+            if msg.get("role") == "model":
+                name = msg.get("content", "")
+                if name and name in config.model_configs:
+                    ctx.active_model = name
+                    break
 
-    # Resolve effort level to LLM overrides (without mutating config.llm,
-    # so compaction/reflection/embedding still fall back to the base model)
-    from .config import resolve_effort
-    effort_llm = resolve_effort(config, ctx.effort)
-    effort_overrides: dict[str, str] = {}
-    if effort_llm != config.llm:
-        effort_overrides = {
-            "llm_url": effort_llm.url,
-            "llm_model": effort_llm.model,
-            "llm_api_key": effort_llm.api_key,
-        }
-    log.info(f"Agent turn: effort={ctx.effort}, model={effort_llm.model}")
+    # Build model override for the LLM call
+    model_override: dict[str, str] = {}
+    if ctx.active_model and ctx.active_model in config.model_configs:
+        model_override = {"model_name": ctx.active_model}
+        log.info("Agent turn: model=%s", ctx.active_model)
+    elif config.default_model:
+        model_override = {"model_name": config.default_model}
+        log.info("Agent turn: model=%s (default)", config.default_model)
+    else:
+        log.info("Agent turn: model=%s (legacy config.llm)", config.llm.model)
 
-    return effort_overrides
+    return model_override
 
 
 # -- Wiki context helpers ------------------------------------------------------
@@ -734,7 +825,7 @@ async def run_agent_turn(ctx, user_message: str, history: list,
     config = ctx.config
     ctx.history = history
 
-    effort_overrides = await _setup_turn_state(ctx, config, history)
+    model_override = await _setup_turn_state(ctx, config, history)
 
     conv_id = ctx.conv_id or ctx.channel_id
 
@@ -796,6 +887,7 @@ async def run_agent_turn(ctx, user_message: str, history: list,
             log.debug(f"Agent iteration {iteration + 1}")
             ctx._current_iteration = iteration + 1
 
+            _refresh_dynamic_tools(ctx)
             all_tools, deferred_text = _build_tool_list(ctx)
 
             # Inject/update deferred tool list in messages
@@ -814,7 +906,7 @@ async def run_agent_turn(ctx, user_message: str, history: list,
                 deferred_msg = None
 
             response = await _call_llm_with_events(ctx, config, messages, all_tools,
-                                                     **effort_overrides)
+                                                     **model_override)
 
             # Track token usage
             usage = response.get("usage")
@@ -843,11 +935,83 @@ async def run_agent_turn(ctx, user_message: str, history: list,
                     accumulated_text_parts.append(iter_content)
                     await ctx.publish("text_before_tools", text=iter_content)
 
-                cancelled = await _execute_tool_calls(
+                cancelled, end_turn_signal = await _execute_tool_calls(
                     ctx, tool_calls, history, messages
                 )
                 if cancelled:
                     return cancelled
+
+                if isinstance(end_turn_signal, EndTurnConfirm):
+                    # Confirmation gate: present the artifact, show buttons, wait.
+                    # 1. No-tools LLM call so model presents the artifact
+                    # 2. Show confirmation buttons
+                    # 3. Approved → continue loop. Denied → fall through to
+                    #    end_turn handler which makes another LLM call for
+                    #    the feedback-request message (two messages total on
+                    #    denial: presentation + "what would you like changed?").
+                    log.info("EndTurnConfirm — making presentation LLM call before confirmation")
+                    present_response = await _call_llm_with_events(
+                        ctx, config, messages, [],  # no tools
+                        **model_override
+                    )
+                    present_content = present_response.get("content") or ""
+                    present_msg = {"role": "assistant", "content": present_content}
+                    history.append(present_msg)
+                    messages.append(present_msg)
+                    _archive(ctx, present_msg)
+
+                    log.info("EndTurnConfirm — requesting confirmation")
+                    approved = await _handle_end_turn_confirm(
+                        ctx, end_turn_signal
+                    )
+                    if approved:
+                        log.info("EndTurnConfirm approved — continuing agent loop")
+                        if end_turn_signal.on_approve:
+                            if asyncio.iscoroutinefunction(end_turn_signal.on_approve):
+                                await end_turn_signal.on_approve()
+                            else:
+                                end_turn_signal.on_approve()
+                        note = f"[User approved: {end_turn_signal.message or 'review'}]"
+                        history.append({"role": "user", "content": note})
+                        messages.append({"role": "user", "content": note})
+                        continue  # Next iteration — model sees approval and continues
+                    else:
+                        log.info("EndTurnConfirm denied — ending turn")
+                        if end_turn_signal.on_deny:
+                            if asyncio.iscoroutinefunction(end_turn_signal.on_deny):
+                                await end_turn_signal.on_deny()
+                            else:
+                                end_turn_signal.on_deny()
+                        # Inject denial note and make one more LLM call for feedback request
+                        deny_label = end_turn_signal.deny_label or "denied"
+                        note = f"[User selected '{deny_label}'. Ask what they'd like changed.]"
+                        history.append({"role": "user", "content": note})
+                        messages.append({"role": "user", "content": note})
+                        end_turn_signal = True  # Fall through to end-turn handling
+
+                if end_turn_signal:
+                    # end_turn=True: make one final LLM call with no tools
+                    # to produce a text response, then return.
+                    log.info("Tool signalled end_turn — making final no-tools LLM call")
+                    final_response = await _call_llm_with_events(
+                        ctx, config, messages, [],  # empty tool list
+                        **model_override
+                    )
+                    content = final_response.get("content") or ""
+                    final_msg = {"role": "assistant", "content": content}
+                    history.append(final_msg)
+                    _archive(ctx, final_msg)
+
+                    handler = ctx.media_handler
+                    should_extract = (handler is None or handler.strips_workspace_refs)
+                    if should_extract:
+                        cleaned_text, workspace_media = extract_workspace_media(
+                            content or "", config.workspace_path
+                        )
+                        if workspace_media:
+                            return ToolResult(text=cleaned_text, media=workspace_media)
+                    return ToolResult(text=content or "")
+
                 continue
 
             # No tool calls — final response

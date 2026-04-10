@@ -51,7 +51,7 @@ These are loaded into context only when the skill is activated.
 | `user-invocable` | No | Bool, default true. |
 | `context` | No | `inline` (default) or `fork`. Fork runs the skill as an isolated child turn. |
 | `allowed-tools` | No | Comma-separated tool names pre-approved for this skill. |
-| `effort` | No | Effort level (`fast`/`default`/`strong`). Only applies to `context: fork`. See [Effort Levels](effort-levels.md). |
+| `model` | No | Named model config for `context: fork` skills. See [Model Selection](model-selection.md). |
 | `argument-hint` | No | Hint text for command argument substitution. |
 
 ### Native Python tools (tools.py)
@@ -97,6 +97,76 @@ async def shutdown():
 ```
 
 All tool functions receive `ctx` as first parameter.
+
+### Dynamic tool loading (get_tools)
+
+Skills can export a `get_tools(ctx)` function to supply different tools per turn based on runtime state. When present, the agent loop calls it at the start of each iteration, replacing the skill's tools and definitions dynamically. Skills without `get_tools` continue to use the static `TOOLS`/`TOOL_DEFINITIONS` dicts.
+
+```python
+def get_tools(ctx) -> tuple[dict, list]:
+    """Return (tools_dict, tool_definitions) for this turn.
+
+    Called once per agent loop iteration. Use ctx to read
+    current state and return only the tools appropriate
+    for the current workflow phase.
+    """
+    if some_condition(ctx):
+        return {"tool_a": tool_a_fn}, [TOOL_A_DEF]
+    else:
+        return {"tool_b": tool_b_fn}, [TOOL_B_DEF]
+```
+
+The function must return the same shape as the static exports: a dict mapping names to callables, and a list of OpenAI-format tool definitions. The static `TOOLS` and `TOOL_DEFINITIONS` should still be present as the full set — they're used for the pre-load cache and as a fallback.
+
+This is useful for workflow skills (like `project`) where different phases expose different tools, preventing the model from calling phase-inappropriate tools.
+
+### Ending the agent turn (end_turn)
+
+Tools can signal that the current turn should end by returning `ToolResult(text="...", end_turn=True)`. When any tool in a parallel execution batch sets `end_turn`, the agent loop:
+
+1. Completes all tools in the current batch normally
+2. Appends their results to history
+3. Makes one final LLM call with an **empty tool list** (forcing text output)
+4. Returns that text as the turn response
+
+Use `end_turn` at workflow phase boundaries where the model should stop. Do NOT use it on every tool call — during execution phases, the model should chain freely.
+
+### Confirmation gates (EndTurnConfirm)
+
+For review gates where the user should approve or deny before continuing, return `EndTurnConfirm` as the `end_turn` value:
+
+```python
+from decafclaw.media import EndTurnConfirm, ToolResult
+
+async def tool_submit_for_review(ctx) -> ToolResult:
+    # ... advance to review state ...
+    def on_approve():
+        # Advance to next phase
+        info.status = NextPhase
+        save(info)
+
+    def on_deny():
+        # Revert to editing phase
+        info.status = PrevPhase
+        save(info)
+
+    return ToolResult(
+        text="Submitted for review.",
+        end_turn=EndTurnConfirm(
+            message="Click Approve to proceed or Needs Feedback to request changes.",
+            approve_label="Approve",
+            deny_label="Needs Feedback",
+            on_approve=on_approve,
+            on_deny=on_deny,
+        ),
+    )
+```
+
+The agent loop handles the confirmation via the event bus:
+- **Approved:** calls `on_approve`, injects an approval note into history, and **continues the loop** — the model chains into the next phase
+- **Denied:** calls `on_deny`, injects a denial note, makes a final no-tools LLM call, and **ends the turn**
+
+`EndTurnConfirm` takes priority over `end_turn=True` if both appear in a parallel tool batch.
 
 ### Skill-owned config (SkillConfig)
 
@@ -199,6 +269,21 @@ Features:
 - Upfront user confirmation per task via Mattermost reactions
 
 **Note:** Per-tool permission control (`can_use_tool` callback) is blocked by an upstream SDK bug. Currently uses `bypassPermissions` with upfront confirmation as a workaround. See [issue #53](https://github.com/lmorchard/decafclaw/issues/53) for details and upstream tracking.
+
+### project
+
+Structured workflow for complex multi-step tasks. Guides the agent through a brainstorm → spec → plan → execute lifecycle with persistent markdown artifacts. See [Project Skill](project-skill.md) for full details.
+
+Tools: `project_create`, `project_status`, `project_list`, `project_switch`, `project_next_task`, `project_task_done`, `project_update_spec`, `project_update_plan`, `project_update_step`, `project_add_steps`, `project_advance`, `project_note`
+
+Features:
+- State machine with 6 phases and enforced transitions (including backward transitions)
+- Dynamic tool loading — only phase-appropriate tools are visible (`get_tools`)
+- Phase-boundary tools use `end_turn` to force user interaction before continuing
+- Execution-phase tools chain freely for sustained work
+- Persistent plan checklist with sub-steps, parsed and updated by tools
+- Mid-execution replanning via `project_add_steps`
+- User-invocable as `!project` / `/project`
 
 ## Using community skills
 

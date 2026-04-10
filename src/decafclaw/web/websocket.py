@@ -70,9 +70,9 @@ async def _handle_load_history(ws_send, index, username, msg, state):
         limit = 50
     before = msg.get("before", "")
     # Metadata roles that should not be rendered as chat messages
-    _HIDDEN_ROLES = {"effort"}
+    _HIDDEN_ROLES = {"effort", "model"}
 
-    # Read archive once and reuse for history, token estimation, and effort scan
+    # Read archive once and reuse for history, token estimation, and model scan
     from ..archive import read_archive as _read_archive
     from ..archive import read_compacted_history
 
@@ -87,22 +87,20 @@ async def _handle_load_history(ws_send, index, username, msg, state):
     messages = [m for m in messages if m.get("role") not in _HIDDEN_ROLES]
 
     estimated_tokens = None
-    current_effort = None
-    resolved_model = None
+    current_model = None
     if not before:
         from ..compaction import estimate_tokens, flatten_messages
-        from ..config import resolve_effort
         working = read_compacted_history(config, conv_id) or all_msgs
         if working:
             estimated_tokens = estimate_tokens(flatten_messages(working))
 
-        # Extract current effort level (scan reverse for last effort message)
-        current_effort = "default"
+        # Extract current model (scan reverse for last valid model message).
         for m in reversed(all_msgs):
-            if m.get("role") == "effort":
-                current_effort = m.get("content", "default")
-                break
-        resolved_model = resolve_effort(config, current_effort).model
+            if m.get("role") == "model":
+                name = m.get("content", "")
+                if name and name in config.model_configs:
+                    current_model = name
+                    break
 
     response = {
         "type": "conv_history", "conv_id": conv_id,
@@ -113,9 +111,12 @@ async def _handle_load_history(ws_send, index, username, msg, state):
         response["read_only"] = True
     if estimated_tokens is not None:
         response["estimated_tokens"] = estimated_tokens
-    if current_effort is not None:
-        response["current_effort"] = current_effort
-        response["effort_model"] = resolved_model
+    if current_model is not None:
+        response["active_model"] = current_model
+    # Send available model configs so the UI can offer a picker
+    if config.model_configs:
+        response["available_models"] = sorted(config.model_configs.keys())
+        response["default_model"] = config.default_model
 
     # Register this WebSocket as a viewer of this conversation so it
     # receives live events (including for in-progress turns after reload).
@@ -282,27 +283,29 @@ async def _handle_cancel_turn(ws_send, index, username, msg, state):
                 task.cancel()
 
 
-async def _handle_set_effort(ws_send, index, username, msg, state):
+async def _handle_set_model(ws_send, index, username, msg, state):
     conv_id = msg.get("conv_id", "")
-    level = msg.get("level", "")
+    model_name = msg.get("model", msg.get("level", ""))
     conv = index.get(conv_id)
     if not conv or conv.user_id != username:
         await ws_send({"type": "error", "message": "Conversation not found"})
         return
 
-    from ..config import EFFORT_LEVELS, resolve_effort
-    if level not in EFFORT_LEVELS:
-        await ws_send({"type": "error", "message": f"Unknown effort level: {level}"})
+    config = state["config"]
+    if not model_name:
+        await ws_send({"type": "error", "message": "No model specified"})
+        return
+    if model_name not in config.model_configs:
+        await ws_send({"type": "error", "message": f"Unknown model: {model_name}"})
         return
 
-    # Record effort change in archive
+    # Record model change in archive
     from ..archive import append_message
-    append_message(state["config"], conv_id, {"role": "effort", "content": level})
+    append_message(config, conv_id, {"role": "model", "content": model_name})
 
-    resolved_model = resolve_effort(state["config"], level).model
     await ws_send({
-        "type": "effort_changed", "conv_id": conv_id,
-        "level": level, "model": resolved_model,
+        "type": "model_changed", "conv_id": conv_id,
+        "model": model_name,
     })
 
 
@@ -324,7 +327,8 @@ _HANDLERS = {
     "load_history": _handle_load_history,
     "send": _handle_send,
     "cancel_turn": _handle_cancel_turn,
-    "set_effort": _handle_set_effort,
+    "set_effort": _handle_set_model,  # backward compat for old web UI
+    "set_model": _handle_set_model,
     "confirm_response": _handle_confirm_response,
 }
 
@@ -350,6 +354,15 @@ async def websocket_chat(websocket: WebSocket, config, event_bus, app_ctx):
             await websocket.send_json(msg)
         except Exception:
             pass
+
+    # Send available models immediately so the picker is visible before
+    # any conversation is selected
+    if config.model_configs:
+        await ws_send({
+            "type": "models_available",
+            "available_models": sorted(config.model_configs.keys()),
+            "default_model": config.default_model,
+        })
 
     index = ConversationIndex(config)
     state = {
@@ -452,7 +465,8 @@ async def _run_agent_turn(websocket, app_ctx, config, event_bus,
             # (next iteration) or message_complete (end of turn)
             pass
 
-    if config.llm.streaming:
+    from ..config import resolve_streaming
+    if resolve_streaming(config, ctx.active_model):
         ctx.on_stream_chunk = on_stream_chunk
 
     # Track streaming state across LLM iterations
@@ -536,6 +550,13 @@ async def _run_agent_turn(websocket, app_ctx, config, event_bus,
                     })
 
             elif event_type == "tool_confirm_request":
+                # Flush any pending streamed text before showing confirmation
+                if streaming_buffer["text"]:
+                    await ws_send({
+                        "type": "message_complete", "conv_id": conv_id,
+                        "role": "assistant", "text": streaming_buffer["text"],
+                    })
+                    streaming_buffer["text"] = ""
                 log.info(f"Forwarding confirm request to web UI: {event.get('tool')}")
                 await ws_send({
                     "type": "confirm_request", "conv_id": conv_id,
@@ -545,6 +566,8 @@ async def _run_agent_turn(websocket, app_ctx, config, event_bus,
                     "suggested_pattern": event.get("suggested_pattern", ""),
                     "message": event.get("message", ""),
                     "tool_call_id": event.get("tool_call_id", ""),
+                    "approve_label": event.get("approve_label", ""),
+                    "deny_label": event.get("deny_label", ""),
                 })
 
             elif event_type == "reflection_result":

@@ -41,12 +41,12 @@ export class ConfirmView extends LitElement {
         </div>
         <div class="confirm-buttons">
           <button class="outline" @click=${() => this.#handleConfirm(c.context_id, c.tool, c.tool_call_id, true)}>
-            Approve
+            ${c.approve_label || 'Approve'}
           </button>
           <button class="outline secondary" @click=${() => this.#handleConfirm(c.context_id, c.tool, c.tool_call_id, false)}>
-            Deny
+            ${c.deny_label || 'Deny'}
           </button>
-          ${c.tool === 'shell' && c.suggested_pattern ? html`
+          ${c.approve_label ? '' : c.tool === 'shell' && c.suggested_pattern ? html`
             <button class="outline" @click=${() => this.#handleConfirm(c.context_id, c.tool, c.tool_call_id, true, { add_pattern: true })}>
               Allow: ${c.suggested_pattern}
             </button>

@@ -25,6 +25,7 @@ def main():
     parser.add_argument("--model", help="Override LLM model")
     parser.add_argument("--judge-model", help="Model for failure reflection (default: same as --model)")
     parser.add_argument("--verbose", action="store_true", help="Show full responses")
+    parser.add_argument("--concurrency", type=int, default=4, help="Max concurrent tests (default: 4)")
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -53,14 +54,21 @@ def main():
         sys.exit(1)
 
     config = load_config()
-    model_name = args.model or config.llm.model
+
+    # Initialize provider registry
+    from ..llm import init_providers
+    init_providers(config)
+
+    # Resolve model: check model_configs first, then fall back to raw name
+    model_name = args.model or config.default_model or config.llm.model
     judge_model = args.judge_model or model_name
 
     print(f"\ndecafclaw eval — {model_name} — {args.path}\n")
 
     # Run evals
     results, timestamp, effective_model = asyncio.run(
-        run_eval(all_cases, config, model=args.model, verbose=args.verbose)
+        run_eval(all_cases, config, model=args.model, verbose=args.verbose,
+                 concurrency=args.concurrency)
     )
 
     # Create result bundle

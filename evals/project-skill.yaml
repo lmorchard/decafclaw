@@ -1,0 +1,153 @@
+# Evals for the project skill workflow.
+# Tests that the agent follows the structured brainstorm → spec → plan → execute lifecycle.
+#
+# NOTE: Evals use auto_confirm (default true), so EndTurnConfirm buttons
+# auto-approve instantly. This means the model can chain through the full
+# lifecycle (spec → plan → execute) in a single turn when told to.
+# Tool count limits are set high for turns that may chain through phases.
+#
+# In production, confirmation buttons block until user clicks — preventing
+# runaway chaining. The evals test workflow correctness, not pacing.
+
+# --- Project creation: must happen before brainstorming ---
+
+- name: "creates project before asking questions"
+  setup:
+    skills: [project]
+  input: "Let's start a project to audit our documentation for accuracy."
+  expect:
+    response_contains:
+      - "re:project|created|brainstorming"
+      - "re:\\?"
+    max_tool_calls: 3
+    max_tool_errors: 0
+
+# --- Brainstorming: agent must interview the user ---
+
+- name: "asks a question on first turn, does not jump to spec"
+  setup:
+    skills: [project]
+  input: "I need to write a FAQ document about our product. Let's use a project for this."
+  expect:
+    response_contains:
+      - "re:\\?"
+    response_not_contains:
+      - "spec_review"
+      - "project_update_spec"
+    max_tool_calls: 3
+    max_tool_errors: 0
+
+- name: "continues interviewing after first answer"
+  setup:
+    skills: [project]
+  turns:
+    - input: "Start a project to redesign our homepage."
+      expect:
+        response_contains:
+          - "re:\\?"
+        max_tool_calls: 3
+        max_tool_errors: 0
+    - input: "We want it to be more modern and mobile-friendly."
+      expect:
+        response_not_contains:
+          - "executing"
+        max_tool_calls: 15
+        max_tool_errors: 2
+
+# --- Spec writing ---
+
+- name: "writes spec when asked"
+  setup:
+    skills: [project]
+  turns:
+    - input: "Start a project to write a haiku about morning coffee."
+      expect:
+        response_contains:
+          - "re:\\?"
+        max_tool_calls: 3
+        max_tool_errors: 0
+    - input: "Keep it simple and evocative. Write the spec."
+      expect:
+        # With auto-confirm, model may chain through spec → plan → execution
+        response_contains:
+          - "re:spec|haiku|coffee|plan|step"
+        max_tool_calls: 50
+        max_tool_errors: 1
+
+- name: "writes plan after spec approval"
+  setup:
+    skills: [project]
+  turns:
+    - input: "Start a project to write a short glossary of 5 AI terms."
+      expect:
+        response_contains:
+          - "re:\\?"
+        max_tool_calls: 3
+        max_tool_errors: 0
+    - input: "Cover LLM, RAG, embeddings, fine-tuning, and prompt engineering. Write the spec and plan."
+      expect:
+        response_contains:
+          - "re:plan|step|\\[ \\]|glossary|LLM|RAG"
+        max_tool_calls: 40
+        max_tool_errors: 1
+
+- name: "does not ask verbal approval question"
+  setup:
+    skills: [project]
+  turns:
+    - input: "Start a project to draft a haiku about coding."
+      expect:
+        response_contains:
+          - "re:\\?"
+        max_tool_calls: 3
+        max_tool_errors: 0
+    - input: "A simple haiku about the joy of coding. Write the spec."
+      expect:
+        response_contains:
+          - "re:spec|haiku|coding"
+        response_not_contains:
+          - "do you approve"
+          - "please confirm"
+        max_tool_calls: 60
+        max_tool_errors: 1
+
+# --- Full execution ---
+
+- name: "executes plan steps"
+  setup:
+    skills: [project]
+  turns:
+    - input: "Start a project to write a short poem about rain."
+      expect:
+        response_contains:
+          - "re:\\?"
+        max_tool_calls: 3
+        max_tool_errors: 0
+    - input: "A 4-line poem, simple and evocative. Save it to a file. Write the spec, plan, and execute."
+      expect:
+        response_contains:
+          - "re:poem|rain|complete|done"
+        max_tool_calls: 50
+        max_tool_errors: 1
+
+# --- Review denial ---
+
+- name: "handles review denial gracefully"
+  setup:
+    skills: [project]
+    auto_confirm: false
+  turns:
+    - input: "Start a project to write a thank-you note."
+      expect:
+        response_contains:
+          - "re:\\?"
+        max_tool_calls: 3
+        max_tool_errors: 0
+    - input: "A short thank-you to a mentor. Write the spec."
+      expect:
+        # With auto_confirm: false, EndTurnConfirm denies.
+        # Agent should ask what to change.
+        response_contains:
+          - "re:change|feedback|revise|update|what|denied|review"
+        max_tool_calls: 10
+        max_tool_errors: 0

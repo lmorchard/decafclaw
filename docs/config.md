@@ -16,10 +16,15 @@ Only include settings you want to override — absent keys use defaults.
 
 ```json
 {
-  "llm": {
-    "url": "http://192.168.0.199:4000/v1/chat/completions",
-    "model": "gemini-2.5-flash"
+  "providers": {
+    "vertex": { "type": "vertex", "project": "my-project", "region": "us-central1" },
+    "openai": { "type": "openai", "api_key": "sk-..." }
   },
+  "model_configs": {
+    "gemini-flash": { "provider": "vertex", "model": "gemini-2.5-flash" },
+    "gpt-4o": { "provider": "openai", "model": "gpt-4o" }
+  },
+  "default_model": "gemini-flash",
   "mattermost": {
     "url": "https://comms.example.com",
     "bot_username": "decafclaw",
@@ -47,9 +52,9 @@ decafclaw config import .env.prod  # from a specific file
 
 ## Config groups
 
-### `llm`
+### `llm` (legacy)
 
-LLM endpoint settings.
+Legacy LLM endpoint settings. **Prefer `providers` + `model_configs` for new setups.** The `llm` section is still supported and auto-migrates to a "default" litellm provider when no `providers` section exists.
 
 | Field | Type | Default | Env Var | Secret |
 |-------|------|---------|---------|--------|
@@ -161,23 +166,55 @@ Agent identity, loop limits, tool loading, and delegation.
 
 `data_home` and `id` are resolved from env vars only (not from the config file) since they determine where the config file lives.
 
-### `models`
+### `providers`
 
-Maps effort levels to LLM configs for multi-model routing. See [Effort Levels](effort-levels.md) for full details.
+Named LLM provider connections. See [LLM Providers](providers.md) for full details.
 
 ```json
 {
-  "models": {
-    "fast": { "model": "gemini-2.5-flash" },
-    "default": { "model": "gemini-2.5-flash" },
-    "strong": { "model": "gemini-2.5-pro" }
+  "providers": {
+    "vertex": { "type": "vertex", "project": "my-project", "region": "us-central1" },
+    "openai": { "type": "openai", "api_key": "sk-..." }
   }
 }
 ```
 
-Each entry can include `model`, `url`, and `api_key`. Omitted fields fall back to the `llm` section. If the entire `models` section is absent, all effort levels use `config.llm`.
+| Field | Type | Providers | Description |
+|-------|------|-----------|-------------|
+| `type` | str | all | `"vertex"`, `"openai"`, or `"litellm"` |
+| `api_key` | str | openai, litellm | API key (secret) |
+| `url` | str | openai, litellm | Base URL for the API endpoint |
+| `project` | str | vertex | GCP project ID |
+| `region` | str | vertex | GCP region (default: `us-central1`) |
+| `service_account_file` | str | vertex | Path to service account JSON key file |
 
-No env var overrides per level — use the config file for this.
+No env var overrides per provider — configure `api_key`, `url`, `project`, etc. in the config file. The one exception is `GOOGLE_APPLICATION_CREDENTIALS`, which is read by the Google Auth SDK for Vertex ADC auth.
+
+### `model_configs`
+
+Named model configurations referencing a provider. See [Model Selection](model-selection.md).
+
+```json
+{
+  "model_configs": {
+    "gemini-flash": { "provider": "vertex", "model": "gemini-2.5-flash" },
+    "gpt-4o": { "provider": "openai", "model": "gpt-4o" }
+  },
+  "default_model": "gemini-flash"
+}
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `provider` | str | required | Key into `providers` dict |
+| `model` | str | required | Model name for the provider |
+| `context_window_size` | int | `0` | Context window tokens (0 = use compaction_max_tokens) |
+| `timeout` | int | `300` | HTTP timeout in seconds |
+| `streaming` | bool | `true` | Use streaming responses |
+
+`default_model` (top-level string) sets which model config to use when none is explicitly selected.
+
+**Migration:** If no `providers`/`model_configs` sections exist but the `llm` section is present, a "default" litellm provider and model config are auto-generated from the `llm` values.
 
 ### `skills`
 

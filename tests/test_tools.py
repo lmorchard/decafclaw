@@ -3,17 +3,6 @@
 import pytest
 
 from decafclaw.tools import execute_tool
-from decafclaw.tools.core import tool_think
-
-
-def test_think_returns_ok(ctx):
-    result = tool_think(ctx, "I should search for cocktails first")
-    assert result == "OK"
-
-
-def test_think_with_empty_content(ctx):
-    result = tool_think(ctx, "")
-    assert result == "OK"
 
 
 @pytest.mark.asyncio
@@ -25,13 +14,6 @@ async def test_execute_tool_with_extra_tools(ctx):
     ctx.tools.extra = {"mock_search": mock_tool}
     result = await execute_tool(ctx, "mock_search", {"query": "hello"})
     assert result.text == "mock result: hello"
-
-
-@pytest.mark.asyncio
-async def test_execute_tool_extra_tools_not_present(ctx):
-    """execute_tool works when ctx has no extra_tools (backward compat)."""
-    result = await execute_tool(ctx, "think", {"content": "test"})
-    assert result.text == "OK"
 
 
 @pytest.mark.asyncio
@@ -86,7 +68,7 @@ async def test_execute_tool_mcp_tool_not_found(ctx, monkeypatch):
 async def test_execute_tool_returns_tool_result(ctx):
     """execute_tool always returns a ToolResult."""
     from decafclaw.media import ToolResult
-    result = await execute_tool(ctx, "think", {"content": "test"})
+    result = await execute_tool(ctx, "current_time", {})
     assert isinstance(result, ToolResult)
     assert result.media == []
 

@@ -18,15 +18,17 @@
 - [Semantic Search](semantic-search.md) — Embedding-based search over memories and conversations
 - [Eval Loop](eval-loop.md) — Test prompts and tools with real LLM calls
 - [Heartbeat](heartbeat.md) — Periodic agent wake-up for monitoring and recurring tasks
-- [Scheduled Tasks](schedules.md) — Cron-style per-task scheduling with effort, tool, and skill configuration
+- [Scheduled Tasks](schedules.md) — Cron-style per-task scheduling with model, tool, and skill configuration
 - [File Attachments](file-attachments.md) — Upload files, MCP media, workspace image refs, rich cards
 - [Streaming](streaming.md) — Stream LLM tokens as they arrive, configurable throttle
 - [HTTP Server & Interactive Buttons](http-server.md) — Button-based confirmations, HTTP callback server
 - [Sub-Agent Delegation](delegation.md) — Fork child agents for concurrent subtasks
+- [Project Skill](project-skill.md) — Structured workflow: brainstorm → spec → plan → execute for multi-step tasks
 - [User Commands](commands.md) — User-invokable commands (!command / /command) with argument substitution
 - [Tool Search / Deferred Loading](tool-search.md) — Defer tool definitions behind search when context budget exceeded
 - [Self-Reflection](reflection.md) — Binary judge + critique + retry before delivering responses (Reflexion pattern)
-- [Effort Levels](effort-levels.md) — Multi-model routing: fast/default/strong effort levels, per-conversation model switching
+- [LLM Providers](providers.md) — Multi-provider LLM support: Vertex/Gemini, OpenAI, LiteLLM-compat, service accounts
+- [Model Selection](model-selection.md) — Named model configs, per-conversation model switching, migration from effort levels
 
 ## Architecture
 
