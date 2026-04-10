@@ -353,7 +353,7 @@ class TestComposeTools:
         config.compaction.max_tokens = 100
         many_tools = [_make_tool_def(f"tool_{i}", "x" * 200) for i in range(20)]
         # Add one always-loaded tool
-        many_tools.append(_make_tool_def("think", "Think step by step"))
+        many_tools.append(_make_tool_def("current_time", "Get current time"))
         with patch("decafclaw.agent._collect_all_tool_defs", return_value=many_tools):
             composer = ContextComposer()
             active, deferred, text, entry = composer._compose_tools(ctx, config)
@@ -361,9 +361,9 @@ class TestComposeTools:
             assert text is not None
             assert entry.details["deferred_mode"] is True
             assert entry.items_truncated == len(deferred)
-            # "think" should be in active (always-loaded)
+            # "current_time" should be in active (always-loaded)
             active_names = {t["function"]["name"] for t in active}
-            assert "think" in active_names
+            assert "current_time" in active_names
 
     def test_allowed_tools_filter(self, ctx, config):
         config.agent.tool_context_budget_pct = 1.0

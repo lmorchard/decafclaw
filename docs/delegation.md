@@ -31,7 +31,7 @@ Each call spawns an independent child agent that:
 | Field | Required | Description |
 |-------|----------|-------------|
 | `task` | Yes | Task description — becomes the child agent's user message |
-| `effort` | No | Effort level (`fast`/`default`/`strong`). Omit to inherit parent's level. See [Effort Levels](effort-levels.md). |
+| `model` | No | Named model config for the subtask. Omit to inherit parent's model. See [Model Selection](model-selection.md). |
 
 ## Results
 

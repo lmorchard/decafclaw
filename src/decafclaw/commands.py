@@ -423,7 +423,7 @@ async def execute_command(ctx, skill: SkillInfo, arguments: str) -> tuple[str, s
             ctx.tools.allowed = set(skill.allowed_tools)
         # User-invoked commands use the full iteration limit, not the child limit
         result = await _run_child_turn(
-            ctx, body, effort=skill.effort or "",
+            ctx, body, model=skill.model or "",
             max_iterations=ctx.config.agent.max_tool_iterations)
         from .media import ToolResult as _TR
         return "fork", result.text if isinstance(result, _TR) else str(result)

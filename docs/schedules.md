@@ -12,7 +12,7 @@ Each task is a markdown file with YAML frontmatter. The body is the prompt fed t
 ---
 schedule: "0 9 * * 1-5"
 channel: "abc123channelid"
-effort: default
+model: gemini-flash
 allowed-tools:
   - workspace_read
   - workspace_list
@@ -33,7 +33,7 @@ Report key themes and anything that needs attention.
 | `schedule` | string | yes | — | 5-field cron expression (min hour dom month dow) |
 | `channel` | string | no | — | Mattermost channel **ID** to report to. If omitted, output goes to agent log only. Channel name resolution (`#name`) is not yet supported. |
 | `enabled` | bool | no | `true` | Quick toggle without deleting the file |
-| `effort` | string | no | `default` | Effort level for model routing (`fast`, `default`, `strong`) |
+| `model` | string | no | — | Named model config for this task. Omit to use `default_model`. |
 | `allowed-tools` | list | no | all | Restrict which tools the task can use |
 | `required-skills` | list | no | — | Skills to pre-activate before running the task |
 
@@ -72,7 +72,7 @@ Skills can also declare schedules in their SKILL.md frontmatter:
 ---
 name: dream
 schedule: "0 * * * *"
-effort: strong
+model: gemini-pro
 required-skills:
   - wiki
 user-invocable: true
@@ -111,15 +111,15 @@ Same pattern as heartbeat — if a task has nothing to report, the agent should 
 
 ## Task configuration
 
-### Effort levels
+### Model selection
 
-Use `effort` to control which model runs the task:
+Use `model` to control which model runs the task:
 
 ```yaml
-effort: fast      # cheap model for simple checks
-effort: default   # normal model
-effort: strong    # capable model for complex analysis
+model: gemini-flash   # use a specific named model config
 ```
+
+Omit to use the `default_model` from config. See [Model Selection](model-selection.md).
 
 ### Tool restrictions
 
@@ -154,7 +154,7 @@ Skills are activated without permission checks (same as heartbeat admin sections
 ---
 schedule: "0 9 * * 1-5"
 channel: "abc123channelid"
-effort: default
+model: gemini-flash
 ---
 
 Summarize what happened in the workspace in the last 24 hours.
@@ -167,7 +167,7 @@ Report key themes and anything that needs attention.
 ```markdown
 ---
 schedule: "0 * * * *"
-effort: fast
+model: gemini-flash
 ---
 
 Run health_status and check for any issues.
@@ -182,7 +182,7 @@ to workspace memories.
 ---
 schedule: "0 10 * * 1"
 channel: "abc123channelid"
-effort: default
+model: gemini-flash
 required-skills:
   - tabstack
 ---
@@ -209,7 +209,7 @@ This task is disabled but the file is kept so it's easy to re-enable.
 | **Timing** | Single interval for all sections | Per-task cron expression |
 | **Format** | `## Section` headers in one file | One file per task |
 | **Config** | `HEARTBEAT_INTERVAL` env var | `schedule` frontmatter per file |
-| **Effort** | Inherits default | Per-task `effort` field |
+| **Model** | Inherits `default_model` | Per-task `model` field |
 | **Tools** | All available | Per-task `allowed-tools` |
 | **Skills** | None pre-activated | Per-task `required-skills` |
 | **Timer** | Shared timer loop | Independent timer loop |

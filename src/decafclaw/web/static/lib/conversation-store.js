@@ -91,10 +91,12 @@ export class ConversationStore extends EventTarget {
   #contextUsage = 0;
   /** @type {number} effective context limit (compaction threshold) */
   #contextLimit = 0;
-  /** @type {string} current effort level for the active conversation */
-  #currentEffort = 'default';
-  /** @type {string} resolved model name for the current effort level */
-  #effortModel = '';
+  /** @type {string} active model config name for the conversation */
+  #activeModel = '';
+  /** @type {string[]} available model config names from server */
+  #availableModels = [];
+  /** @type {string} default model from server config */
+  #defaultModel = '';
   /** @type {boolean} whether the current conversation is read-only */
   #readOnly = false;
   /** @type {string|null} message queued while creating a conversation */
@@ -146,9 +148,11 @@ export class ConversationStore extends EventTarget {
   /** @returns {number} */
   get contextLimit() { return this.#contextLimit; }
   /** @returns {string} */
-  get currentEffort() { return this.#currentEffort; }
+  get activeModel() { return this.#activeModel; }
+  /** @returns {string[]} */
+  get availableModels() { return this.#availableModels; }
   /** @returns {string} */
-  get effortModel() { return this.#effortModel; }
+  get defaultModel() { return this.#defaultModel; }
   /** @returns {object[]} */
   get systemConversations() { return this.#systemConversations; }
   /** @returns {FolderEntry[]} */
@@ -216,14 +220,14 @@ export class ConversationStore extends EventTarget {
 
   /**
    * @param {string} [title]
-   * @param {string} [effort]
+   * @param {string} [model]
    * @param {string} [folder]
    */
-  async createConversation(title = '', effort = '', folder = '') {
+  async createConversation(title = '', model = '', folder = '') {
     try {
       /** @type {Record<string, string>} */
       const body = { title };
-      if (effort) body.effort = effort;
+      if (model) body.model = model;
       if (folder) body.folder = folder;
       const resp = await fetch('/api/conversations', {
         method: 'POST',
@@ -234,7 +238,7 @@ export class ConversationStore extends EventTarget {
       const conv = await resp.json();
       // Insert into local list and select
       this.#conversations.unshift(conv);
-      if (conv.effort) this.#currentEffort = conv.effort;
+      if (conv.model) this.#activeModel = conv.model;
       this.selectConversation(conv.conv_id);
       // Flush any message queued while the conversation was being created
       if (this.#pendingMessage) {
@@ -409,8 +413,7 @@ export class ConversationStore extends EventTarget {
     this.#toolStatusStore.clear();
     this.#contextUsage = 0;
     this.#contextLimit = 0;
-    this.#currentEffort = 'default';
-    this.#effortModel = '';
+    this.#activeModel = '';
     this.#readOnly = false;
     this.#ws.send({ type: 'select_conv', conv_id: convId });
     this.#ws.send({ type: 'load_history', conv_id: convId, limit: 50 });
@@ -427,8 +430,7 @@ export class ConversationStore extends EventTarget {
       // No conversation selected — create one and queue the message
       this.#pendingMessage = text;
       this.#pendingAttachments = attachments;
-      const effort = this.#currentEffort !== 'default' ? this.#currentEffort : '';
-      this.createConversation('', effort, this.#currentFolder);
+      this.createConversation('', this.#activeModel, this.#currentFolder);
       return;
     }
     // Optimistically add user message
@@ -469,10 +471,13 @@ export class ConversationStore extends EventTarget {
     this.sendMessage(text, uploaded);
   }
 
-  /** @param {string} level */
-  setEffort(level) {
-    if (!this.#currentConvId) return;
-    this.#ws.send({ type: 'set_effort', conv_id: this.#currentConvId, level });
+  /** @param {string} model */
+  setModel(model) {
+    this.#activeModel = model;
+    if (this.#currentConvId) {
+      this.#ws.send({ type: 'set_model', conv_id: this.#currentConvId, model });
+    }
+    this.#emitChange();
   }
 
   cancelTurn() {
@@ -508,8 +513,9 @@ export class ConversationStore extends EventTarget {
       if (msg.type === 'conv_history' && msg.conv_id === this.#currentConvId) {
         if (msg.context_limit) this.#contextLimit = msg.context_limit;
         if (msg.estimated_tokens) this.#contextUsage = msg.estimated_tokens;
-        if (msg.current_effort) this.#currentEffort = msg.current_effort;
-        if (msg.effort_model) this.#effortModel = msg.effort_model;
+        if (msg.active_model) this.#activeModel = msg.active_model;
+        if (msg.available_models) this.#availableModels = msg.available_models;
+        if (msg.default_model) this.#defaultModel = msg.default_model;
         if (msg.read_only) this.#readOnly = true;
         if (msg.turn_active) this.#busy = true;
       }
@@ -543,11 +549,15 @@ export class ConversationStore extends EventTarget {
         this.#toolStatusStore.clearToolStatus();
         break;
 
-      case 'effort_changed':
+      case 'model_changed':
         if (msg.conv_id === this.#currentConvId) {
-          this.#currentEffort = msg.level || 'default';
-          this.#effortModel = msg.model || '';
+          this.#activeModel = msg.model || '';
         }
+        break;
+
+      case 'models_available':
+        if (msg.available_models) this.#availableModels = msg.available_models;
+        if (msg.default_model) this.#defaultModel = msg.default_model;
         break;
 
       case 'error':
