@@ -325,10 +325,10 @@ async def test_pending_confirmation_set_during_wait(ctx):
     async def check_and_approve():
         await asyncio.sleep(0.05)
         # Should be set while waiting
-        assert ctx.pending_confirmation is not None
-        assert ctx.pending_confirmation.tool_name == "test_tool"
-        assert ctx.pending_confirmation.conv_id == "test-conv"
-        assert ctx.pending_confirmation.context_id == ctx.context_id
+        assert len(ctx.pending_confirmations) == 1
+        assert ctx.pending_confirmations[0].tool_name == "test_tool"
+        assert ctx.pending_confirmations[0].conv_id == "test-conv"
+        assert ctx.pending_confirmations[0].context_id == ctx.context_id
         await ctx.event_bus.publish({
             "type": "tool_confirm_response",
             "context_id": ctx.context_id,
@@ -342,7 +342,7 @@ async def test_pending_confirmation_set_during_wait(ctx):
     )
     assert result["approved"] is True
     # Should be cleared after completion
-    assert ctx.pending_confirmation is None
+    assert len(ctx.pending_confirmations) == 0
 
 
 @pytest.mark.asyncio
@@ -353,7 +353,7 @@ async def test_pending_confirmation_cleared_on_timeout(ctx):
         ctx, tool_name="test_tool", command="do thing", message="Confirm?",
         timeout=0.1,
     )
-    assert ctx.pending_confirmation is None
+    assert len(ctx.pending_confirmations) == 0
 
 
 @pytest.mark.asyncio
@@ -375,7 +375,7 @@ async def test_pending_confirmation_cleared_on_denial(ctx):
         ctx, tool_name="test_tool", command="do thing", message="Confirm?",
     )
     assert result["approved"] is False
-    assert ctx.pending_confirmation is None
+    assert len(ctx.pending_confirmations) == 0
 
 
 @pytest.mark.asyncio
@@ -386,8 +386,8 @@ async def test_pending_confirmation_stores_labels(ctx):
     async def approve():
         await asyncio.sleep(0.05)
         # Check labels while pending
-        assert ctx.pending_confirmation.approve_label == "Ship it"
-        assert ctx.pending_confirmation.deny_label == "Needs work"
+        assert ctx.pending_confirmations[0].approve_label == "Ship it"
+        assert ctx.pending_confirmations[0].deny_label == "Needs work"
         await ctx.event_bus.publish({
             "type": "tool_confirm_response",
             "context_id": ctx.context_id,
@@ -435,7 +435,36 @@ async def test_preapproved_skips_pending(ctx):
         ctx, tool_name="test_tool", command="cmd", message="Msg?",
     )
     assert result["approved"] is True
-    assert ctx.pending_confirmation is None
+    assert len(ctx.pending_confirmations) == 0
+
+
+@pytest.mark.asyncio
+async def test_pending_confirmation_visible_from_parent_ctx(ctx):
+    """Confirmations set on a forked ctx are visible from the parent."""
+    ctx.conv_id = "test-conv"
+    fork = ctx.fork_for_tool_call("call_123")
+
+    async def check_parent_and_approve():
+        await asyncio.sleep(0.05)
+        # The parent should see the confirmation set by the fork
+        assert len(ctx.pending_confirmations) == 1
+        assert ctx.pending_confirmations[0].tool_name == "test_tool"
+        await ctx.event_bus.publish({
+            "type": "tool_confirm_response",
+            "context_id": ctx.context_id,
+            "tool": "test_tool",
+            "tool_call_id": "call_123",
+            "approved": True,
+        })
+
+    asyncio.create_task(check_parent_and_approve())
+    result = await request_confirmation(
+        fork, tool_name="test_tool", command="do thing", message="Confirm?",
+    )
+    assert result["approved"] is True
+    # Both parent and fork should show empty after resolution
+    assert len(ctx.pending_confirmations) == 0
+    assert len(fork.pending_confirmations) == 0
 
 
 @pytest.mark.asyncio
@@ -446,7 +475,7 @@ async def test_pending_confirmation_cleared_on_cancellation(ctx):
     async def cancel_after_delay(task):
         await asyncio.sleep(0.05)
         # Verify pending is set before cancellation
-        assert ctx.pending_confirmation is not None
+        assert len(ctx.pending_confirmations) == 1
         task.cancel()
 
     task = asyncio.create_task(
@@ -459,4 +488,4 @@ async def test_pending_confirmation_cleared_on_cancellation(ctx):
     with pytest.raises(asyncio.CancelledError):
         await task
 
-    assert ctx.pending_confirmation is None
+    assert len(ctx.pending_confirmations) == 0

@@ -14,8 +14,9 @@ from .context_composer import ComposerState
 class PendingConfirmation:
     """State for a confirmation request awaiting user response.
 
-    Stored on Context.pending_confirmation so the WebSocket handler can
-    re-push it when a client reconnects or switches conversations.
+    Stored in Context.pending_confirmations (shared mutable list) so the
+    WebSocket handler can re-push it when a client reconnects or switches
+    conversations. The list is shared between parent and forked contexts.
     """
     tool_name: str
     command: str
@@ -98,7 +99,9 @@ class Context:
         self.wiki_page: str | None = None  # open wiki page from web UI
         self.active_model: str = ""  # named model config from config.model_configs
         self.task_mode: str = ""  # "heartbeat" | "scheduled" | "" (interactive)
-        self.pending_confirmation: PendingConfirmation | None = None
+        # Mutable list shared between parent and fork_for_tool_call children,
+        # so confirmations set on a forked ctx are visible from the parent.
+        self.pending_confirmations: list[PendingConfirmation] = []
 
     @classmethod
     def for_task(
@@ -198,6 +201,8 @@ class Context:
         # Share skills + composer (concurrent tool calls read but don't mutate)
         child.skills = self.skills
         child.composer = self.composer
+        # Share pending confirmations list so parent sees confirmations set by forks
+        child.pending_confirmations = self.pending_confirmations
         # Fresh token counters — don't accumulate child usage into parent
         child.tokens = TokenUsage()
         # Fork tools with the specific tool call ID (the purpose of this fork)

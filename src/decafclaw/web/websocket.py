@@ -128,23 +128,23 @@ async def _handle_load_history(ws_send, index, username, msg, state):
 
     await ws_send(response)
 
-    # Re-push pending confirmation if the conversation has one (recovery
+    # Re-push pending confirmations if the conversation has any (recovery
     # after page reload, device switch, or conversation switch).
     active_contexts = state.get("active_contexts", {})
     active_ctx = active_contexts.get(conv_id)
-    if active_ctx and active_ctx.pending_confirmation:
-        pc = active_ctx.pending_confirmation
-        await ws_send({
-            "type": "confirm_request",
-            "conv_id": conv_id,
-            "context_id": pc.context_id,
-            "tool": pc.tool_name,
-            "command": pc.command,
-            "message": pc.message,
-            "tool_call_id": pc.tool_call_id,
-            "approve_label": pc.approve_label,
-            "deny_label": pc.deny_label,
-        })
+    if active_ctx and active_ctx.pending_confirmations:
+        for pc in active_ctx.pending_confirmations:
+            await ws_send({
+                "type": "confirm_request",
+                "conv_id": conv_id,
+                "context_id": pc.context_id,
+                "tool": pc.tool_name,
+                "command": pc.command,
+                "message": pc.message,
+                "tool_call_id": pc.tool_call_id,
+                "approve_label": pc.approve_label,
+                "deny_label": pc.deny_label,
+            })
 
 
 

@@ -30,8 +30,9 @@ async def request_confirmation(
 
     Times out after `timeout` seconds, returning {"approved": False}.
 
-    Stores PendingConfirmation on ctx.pending_confirmation so the
+    Appends PendingConfirmation to ctx.pending_confirmations so the
     WebSocket handler can re-push it on reconnect/conversation switch.
+    The list is shared between parent and forked contexts.
     """
     # Check command pre-approval before prompting
     if tool_name in ctx.tools.preapproved:
@@ -54,7 +55,7 @@ async def request_confirmation(
         approve_label=extra_event_fields.get("approve_label", ""),
         deny_label=extra_event_fields.get("deny_label", ""),
     )
-    ctx.pending_confirmation = pending
+    ctx.pending_confirmations.append(pending)
 
     def on_confirm(event):
         if (event.get("type") == "tool_confirm_response"
@@ -85,7 +86,10 @@ async def request_confirmation(
             log.info(f"Confirmation timed out for {tool_name}: {command}")
             return {"approved": False}
     finally:
-        ctx.pending_confirmation = None
+        try:
+            ctx.pending_confirmations.remove(pending)
+        except ValueError:
+            pass
         ctx.event_bus.unsubscribe(sub_id)
 
     return pending.result
