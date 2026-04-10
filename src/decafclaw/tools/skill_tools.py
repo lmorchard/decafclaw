@@ -40,7 +40,11 @@ def _save_permission(config, skill_name: str, value: str) -> None:
 
 
 def _load_native_tools(skill_info) -> tuple[dict, list, object]:
-    """Import tools.py from a skill directory and return (TOOLS, TOOL_DEFINITIONS, module)."""
+    """Import tools.py from a skill directory and return (TOOLS, TOOL_DEFINITIONS, module).
+
+    If the module exports a get_tools(ctx) function, it can be retrieved
+    via getattr(module, "get_tools", None) by the caller.
+    """
     tools_path = skill_info.location / "tools.py"
     spec = importlib.util.spec_from_file_location(
         f"decafclaw_skill_{skill_info.name}", tools_path
@@ -108,6 +112,13 @@ async def restore_skills(ctx) -> None:
             await _call_init(module, ctx.config, name)
             ctx.tools.extra.update(tools)
             ctx.tools.extra_definitions.extend(tool_defs)
+
+            # Register dynamic tool provider if available
+            get_tools_fn = getattr(module, "get_tools", None)
+            if get_tools_fn:
+                ctx.tools.dynamic_providers[name] = get_tools_fn
+                ctx.tools.dynamic_provider_names[name] = set(tools.keys())
+
             log.info(f"Restored skill '{name}' with tools: {list(tools.keys())}")
         except Exception as e:
             log.error(f"Failed to restore skill '{name}': {e}")
@@ -168,6 +179,15 @@ async def activate_skill_internal(ctx, skill_info) -> str | ToolResult:
 
             ctx.tools.extra.update(tools)
             ctx.tools.extra_definitions.extend(tool_defs)
+
+            # Register dynamic tool provider if the skill exports get_tools()
+            get_tools_fn = getattr(module, "get_tools", None)
+            if get_tools_fn:
+                ctx.tools.dynamic_providers[name] = get_tools_fn
+                # Track the initial static tool names so the first refresh
+                # can remove tools that aren't in the dynamic subset
+                ctx.tools.dynamic_provider_names[name] = set(tools.keys())
+                log.info(f"Registered dynamic tool provider for skill '{name}'")
 
             tool_names = list(tools.keys())
             result_parts.append(

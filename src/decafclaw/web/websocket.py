@@ -550,6 +550,13 @@ async def _run_agent_turn(websocket, app_ctx, config, event_bus,
                     })
 
             elif event_type == "tool_confirm_request":
+                # Flush any pending streamed text before showing confirmation
+                if streaming_buffer["text"]:
+                    await ws_send({
+                        "type": "message_complete", "conv_id": conv_id,
+                        "role": "assistant", "text": streaming_buffer["text"],
+                    })
+                    streaming_buffer["text"] = ""
                 log.info(f"Forwarding confirm request to web UI: {event.get('tool')}")
                 await ws_send({
                     "type": "confirm_request", "conv_id": conv_id,
@@ -559,6 +566,8 @@ async def _run_agent_turn(websocket, app_ctx, config, event_bus,
                     "suggested_pattern": event.get("suggested_pattern", ""),
                     "message": event.get("message", ""),
                     "tool_call_id": event.get("tool_call_id", ""),
+                    "approve_label": event.get("approve_label", ""),
+                    "deny_label": event.get("deny_label", ""),
                 })
 
             elif event_type == "reflection_result":

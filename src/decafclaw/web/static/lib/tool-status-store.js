@@ -141,6 +141,8 @@ export class ToolStatusStore {
           command: msg.command || '',
           suggested_pattern: msg.suggested_pattern || '',
           message: msg.message || '',
+          approve_label: msg.approve_label || '',
+          deny_label: msg.deny_label || '',
         }];
         return true;
 

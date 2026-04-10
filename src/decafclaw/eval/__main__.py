@@ -25,6 +25,7 @@ def main():
     parser.add_argument("--model", help="Override LLM model")
     parser.add_argument("--judge-model", help="Model for failure reflection (default: same as --model)")
     parser.add_argument("--verbose", action="store_true", help="Show full responses")
+    parser.add_argument("--concurrency", type=int, default=4, help="Max concurrent tests (default: 4)")
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -66,7 +67,8 @@ def main():
 
     # Run evals
     results, timestamp, effective_model = asyncio.run(
-        run_eval(all_cases, config, model=args.model, verbose=args.verbose)
+        run_eval(all_cases, config, model=args.model, verbose=args.verbose,
+                 concurrency=args.concurrency)
     )
 
     # Create result bundle

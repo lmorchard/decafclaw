@@ -28,6 +28,12 @@ class ToolState:
     preapproved: set[str] = field(default_factory=set)
     preapproved_shell_patterns: list[str] = field(default_factory=list)
     current_call_id: str = ""
+    # Dynamic tool providers: skill_name → get_tools(ctx) callable.
+    # Called each turn to refresh that skill's tools and definitions.
+    dynamic_providers: dict[str, Any] = field(default_factory=dict)
+    # Tracks which tool names each dynamic provider contributed last turn,
+    # so stale entries can be removed when the provider returns fewer tools.
+    dynamic_provider_names: dict[str, set[str]] = field(default_factory=dict)
 
 
 @dataclass
