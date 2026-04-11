@@ -92,4 +92,5 @@ async def request_confirmation(
             pass
         ctx.event_bus.unsubscribe(sub_id)
 
+    log.info(f"Confirmation resolved for {tool_name}: approved={pending.result.get('approved')}")
     return pending.result

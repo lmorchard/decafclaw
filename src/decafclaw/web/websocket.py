@@ -334,6 +334,8 @@ async def _handle_set_model(ws_send, index, username, msg, state):
 
 
 async def _handle_confirm_response(ws_send, index, username, msg, state):
+    log.info(f"Confirm response: tool={msg.get('tool')} context_id={msg.get('context_id')} "
+             f"approved={msg.get('approved')} tool_call_id={msg.get('tool_call_id', '')}")
     tool_call_id = msg.get("tool_call_id", "")
     await state["event_bus"].publish({
         "type": "tool_confirm_response",
