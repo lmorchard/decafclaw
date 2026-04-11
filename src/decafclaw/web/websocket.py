@@ -16,6 +16,12 @@ _SAFE_CONV_ID = re.compile(r"^[a-zA-Z0-9._-]+$")
 # device switch) can find the Context for an in-progress agent turn.
 _active_contexts: dict[str, object] = {}  # conv_id → Context
 
+# Shared viewer registry: conv_id → set of WebSockets currently viewing
+# that conversation. Used by agent turns to broadcast events. Must be
+# module-level so a reconnected WebSocket joins the same set the running
+# turn is iterating.
+_conv_viewers: dict[str, set] = {}  # conv_id → set[WebSocket]
+
 
 def _is_safe_conv_id(conv_id: str) -> bool:
     """Reject conv_ids that could escape the conversations directory."""
@@ -124,8 +130,7 @@ async def _handle_load_history(ws_send, index, username, msg, state):
 
     # Register this WebSocket as a viewer of this conversation so it
     # receives live events (including for in-progress turns after reload).
-    conv_viewers = state.setdefault("conv_viewers", {})
-    conv_viewers.setdefault(conv_id, set()).add(state["websocket"])
+    _conv_viewers.setdefault(conv_id, set()).add(state["websocket"])
     busy_convs = state.get("busy_convs", set())
     if conv_id in busy_convs:
         response["turn_active"] = True
@@ -244,14 +249,12 @@ def _start_agent_turn(state, index, conv_id, username, text, ws_send,
     state["cancel_events"][conv_id] = cancel_event
     busy_convs.add(conv_id)
 
-    conv_viewers = state.setdefault("conv_viewers", {})
     task = asyncio.create_task(
         _run_agent_turn(
             state["websocket"], state["app_ctx"], state["config"], state["event_bus"],
             index, conv_id, username, text, cancel_event,
             command_ctx=command_ctx, archive_text=archive_text,
             attachments=attachments, wiki_page=wiki_page,
-            conv_viewers=conv_viewers,
             conv_flags=state.get("conv_flags", {}).get(conv_id),
         )
     )
@@ -418,7 +421,7 @@ async def websocket_chat(websocket: WebSocket, config, event_bus, app_ctx):
         log.error(f"WebSocket error for {username}: {e}", exc_info=True)
     finally:
         # Remove this WebSocket from all conversation viewer sets
-        for viewers in state.get("conv_viewers", {}).values():
+        for viewers in _conv_viewers.values():
             viewers.discard(state["websocket"])
         state["closing"] = True
         # Wait for all in-flight tasks, including any spawned by queue drain
@@ -431,21 +434,20 @@ async def websocket_chat(websocket: WebSocket, config, event_bus, app_ctx):
 async def _run_agent_turn(websocket, app_ctx, config, event_bus,
                           index, conv_id, username, text, cancel_event=None,
                           command_ctx=None, archive_text="", attachments=None,
-                          wiki_page=None, conv_viewers=None, conv_flags=None):
+                          wiki_page=None, conv_flags=None):
     """Run an agent turn for a web conversation, streaming events to WebSocket."""
     from ..agent import run_agent_turn  # deferred: circular dep
     from ..archive import read_archive
     from ..context import Context
 
-    # Track all WebSockets viewing each conversation so events reach every
-    # tab (including reconnections after a page reload mid-turn).
-    if conv_viewers is None:
-        conv_viewers = {}
-    conv_viewers.setdefault(conv_id, set()).add(websocket)
+    # Register the originating WebSocket as a viewer of this conversation.
+    # Uses the module-level _conv_viewers so reconnected WebSockets join
+    # the same set this turn is iterating.
+    _conv_viewers.setdefault(conv_id, set()).add(websocket)
 
     async def ws_send(msg):
         """Send JSON to all WebSockets currently viewing this conversation."""
-        viewers = conv_viewers.get(conv_id, set())
+        viewers = _conv_viewers.get(conv_id, set())
         # Always include the originating WebSocket even if not yet registered
         targets = viewers | {websocket}
         for ws in list(targets):
