@@ -58,7 +58,9 @@ def get_token_registry() -> ConfirmTokenRegistry:
 
 def build_confirm_buttons(config, tool_name: str, command: str,
                           suggested_pattern: str, context_id: str,
-                          original_message: str, tool_call_id: str = "") -> list[dict]:
+                          original_message: str, tool_call_id: str = "",
+                          conv_id: str = "",
+                          confirmation_id: str = "") -> list[dict]:
     """Build Mattermost attachment with interactive action buttons.
 
     Returns the attachments list to include in a post's props.
@@ -75,6 +77,8 @@ def build_confirm_buttons(config, tool_name: str, command: str,
             server_secret=config.http.secret,
             action=action,
             tool_call_id=tool_call_id,
+            conv_id=conv_id,
+            confirmation_id=confirmation_id,
         )
 
     base_url = f"{config.http_callback_base}/actions/confirm"
@@ -169,6 +173,7 @@ def build_stop_button(config, conv_id: str) -> list[dict]:
         tool_name="_cancel",
         original_message="",
         server_secret=config.http.secret,
+        conv_id=conv_id,
     )
     base_url = f"{config.http_callback_base}/actions/cancel"
 

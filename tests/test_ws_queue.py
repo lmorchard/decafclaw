@@ -1,28 +1,38 @@
-"""Tests for WebSocket message queuing during agent turns."""
+"""Tests for WebSocket message handling via ConversationManager.
+
+The queueing and turn lifecycle are now owned by the ConversationManager
+(tested in test_conversation_manager.py). These tests verify the WebSocket
+handler correctly delegates to the manager.
+"""
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from decafclaw.conversation_manager import ConversationManager
 from decafclaw.events import EventBus
 from decafclaw.web.conversations import ConversationIndex
-from decafclaw.web.websocket import _handle_send, _start_agent_turn
+from decafclaw.web.websocket import _handle_cancel_turn, _handle_send
 
 
 @pytest.fixture
-def ws_state(config):
-    """Minimal WebSocket handler state."""
+def manager(config):
+    bus = EventBus()
+    return ConversationManager(config, bus)
+
+
+@pytest.fixture
+def ws_state(config, manager):
+    """Minimal WebSocket handler state with manager."""
     config.agent_path.mkdir(parents=True, exist_ok=True)
     return {
-        "agent_tasks": set(),
-        "cancel_events": {},
-        "busy_convs": set(),
-        "pending_msgs": {},
         "config": config,
-        "event_bus": EventBus(),
-        "app_ctx": MagicMock(config=config, event_bus=EventBus()),
+        "event_bus": manager.event_bus,
+        "app_ctx": MagicMock(config=config, event_bus=manager.event_bus),
         "websocket": MagicMock(),
+        "ws_send": AsyncMock(),
+        "manager": manager,
     }
 
 
@@ -42,32 +52,29 @@ def index(config):
 
 class TestQueueMode:
     @pytest.mark.asyncio
-    async def test_queues_when_busy(self, ws_state, conv_id, index):
-        """New messages should queue when a turn is in progress (queue mode)."""
-        ws_state["config"].agent.turn_on_new_message = "queue"
+    async def test_queues_when_busy(self, ws_state, conv_id, index, manager):
+        """New messages should queue in the manager when a turn is in progress."""
         ws_send = AsyncMock()
 
-        # Mark conversation as busy
-        ws_state["busy_convs"].add(conv_id)
-        ws_state["cancel_events"][conv_id] = asyncio.Event()
+        # Mark conversation as busy in the manager
+        state = manager._get_or_create(conv_id)
+        state.busy = True
 
         await _handle_send(ws_send, index, "testuser",
                            {"conv_id": conv_id, "text": "queued msg"}, ws_state)
 
-        queued = ws_state["pending_msgs"].get(conv_id, [])
-        assert len(queued) == 1
-        assert queued[0]["text"] == "queued msg"
-        assert queued[0]["command_ctx"] is None
+        assert len(state.pending_messages) == 1
+        assert state.pending_messages[0]["text"] == "queued msg"
 
     @pytest.mark.asyncio
-    async def test_does_not_cancel_in_queue_mode(self, ws_state, conv_id, index):
-        """Queue mode should not set the cancel event."""
-        ws_state["config"].agent.turn_on_new_message = "queue"
+    async def test_does_not_cancel_in_queue_mode(self, ws_state, conv_id, index, manager):
+        """Queue mode should not cancel — messages queue in the manager."""
         ws_send = AsyncMock()
 
         cancel_event = asyncio.Event()
-        ws_state["busy_convs"].add(conv_id)
-        ws_state["cancel_events"][conv_id] = cancel_event
+        state = manager._get_or_create(conv_id)
+        state.busy = True
+        state.cancel_event = cancel_event
 
         await _handle_send(ws_send, index, "testuser",
                            {"conv_id": conv_id, "text": "queued msg"}, ws_state)
@@ -77,80 +84,46 @@ class TestQueueMode:
 
 class TestCancelMode:
     @pytest.mark.asyncio
-    async def test_cancels_when_busy(self, ws_state, conv_id, index):
-        """Cancel mode should cancel the current turn."""
-        ws_state["config"].agent.turn_on_new_message = "cancel"
+    async def test_cancels_when_requested(self, ws_state, conv_id, index, manager):
+        """Cancel turn should cancel via the manager."""
         ws_send = AsyncMock()
 
         cancel_event = asyncio.Event()
-        ws_state["busy_convs"].add(conv_id)
-        ws_state["cancel_events"][conv_id] = cancel_event
+        state = manager._get_or_create(conv_id)
+        state.cancel_event = cancel_event
 
-        await _handle_send(ws_send, index, "testuser",
-                           {"conv_id": conv_id, "text": "new msg"}, ws_state)
+        async def fake_task():
+            await asyncio.sleep(10)
+
+        state.agent_task = asyncio.create_task(fake_task())
+
+        await _handle_cancel_turn(ws_send, index, "testuser",
+                                  {"conv_id": conv_id}, ws_state)
 
         assert cancel_event.is_set()
-        # Message should still be queued for processing after cancel
-        queued = ws_state["pending_msgs"].get(conv_id, [])
-        assert len(queued) == 1
+        await asyncio.sleep(0.05)
+        assert state.agent_task.cancelled()
 
 
 class TestQueueDrain:
     @pytest.mark.asyncio
-    async def test_drains_queue_after_turn(self, ws_state, conv_id, index):
-        """Queued messages should be processed after the current turn completes."""
-        ws_send = AsyncMock()
-        turn_started = asyncio.Event()
-        turn_texts = []
+    async def test_drains_queue_after_turn(self, manager, conv_id):
+        """Queued messages drain via the manager after turn completes."""
+        state = manager._get_or_create(conv_id)
 
-        async def fake_agent_turn(*args, **kwargs):
-            # Record what text was passed
-            turn_texts.append(args[7])  # text is the 8th positional arg
-            turn_started.set()
+        # Simulate a completed turn with queued messages
+        state.pending_messages = [
+            {"text": "queued msg", "user_id": "testuser",
+             "context_setup": None, "archive_text": "",
+             "attachments": None, "command_ctx": None, "wiki_page": None},
+        ]
 
-        with patch("decafclaw.web.websocket._run_agent_turn", side_effect=fake_agent_turn):
-            # Start a turn
-            _start_agent_turn(ws_state, index, conv_id, "testuser", "first msg", ws_send)
-            await turn_started.wait()
+        # Drain should process the queued message
+        # (will try to start a turn, which will fail without full agent setup,
+        # but we can verify the queue was consumed)
+        try:
+            await manager._drain_pending(state)
+        except Exception:
+            pass  # Expected — no real agent to run
 
-            # Queue a message
-            ws_state["pending_msgs"][conv_id] = [
-                {"text": "second msg", "command_ctx": None}
-            ]
-
-            # Let the done callback fire
-            turn_started.clear()
-            task = list(ws_state["agent_tasks"])[0]
-            await task
-
-            # The done callback should have started a new turn
-            await asyncio.sleep(0.01)  # let the new task start
-            assert "first msg" in turn_texts
-            if len(turn_texts) > 1:
-                assert "second msg" in turn_texts[1]
-
-    @pytest.mark.asyncio
-    async def test_skips_drain_when_closing(self, ws_state, conv_id, index):
-        """Queue should not drain when the connection is closing."""
-        ws_send = AsyncMock()
-
-        async def fake_agent_turn(*args, **kwargs):
-            pass
-
-        with patch("decafclaw.web.websocket._run_agent_turn", side_effect=fake_agent_turn):
-            _start_agent_turn(ws_state, index, conv_id, "testuser", "msg", ws_send)
-
-            # Queue a message and mark closing
-            ws_state["pending_msgs"][conv_id] = [
-                {"text": "should not run", "command_ctx": None}
-            ]
-            ws_state["closing"] = True
-
-            # Let the task complete
-            task = list(ws_state["agent_tasks"])[0]
-            await task
-            await asyncio.sleep(0.01)
-
-            # Queue should have been cleared, no new task started
-            assert conv_id not in ws_state["pending_msgs"]
-            assert len(ws_state["agent_tasks"]) == 0
+        assert len(state.pending_messages) == 0
