@@ -6,6 +6,7 @@ import logging
 from ..media import ToolResult
 from .attachment_tools import ATTACHMENT_TOOL_DEFINITIONS, ATTACHMENT_TOOLS
 from .background_tools import BACKGROUND_TOOL_DEFINITIONS, BACKGROUND_TOOLS
+from .checklist_tools import CHECKLIST_TOOL_DEFINITIONS, CHECKLIST_TOOLS
 from .conversation_tools import CONVERSATION_TOOL_DEFINITIONS, CONVERSATION_TOOLS
 from .core import CORE_TOOL_DEFINITIONS, CORE_TOOLS
 from .delegate import DELEGATE_TOOL_DEFINITIONS, DELEGATE_TOOLS
@@ -20,20 +21,19 @@ from .mcp_tools import (
 )
 from .shell_tools import SHELL_TOOL_DEFINITIONS, SHELL_TOOLS
 from .skill_tools import SKILL_TOOL_DEFINITIONS, SKILL_TOOLS
-from .todo_tools import TODO_TOOL_DEFINITIONS, TODO_TOOLS
 from .workspace_tools import WORKSPACE_TOOL_DEFINITIONS, WORKSPACE_TOOLS
 
 log = logging.getLogger(__name__)
 
 # Combined registry (tabstack via skill, MCP tools via registry)
-TOOLS = {**CORE_TOOLS, **TODO_TOOLS,
+TOOLS = {**CORE_TOOLS, **CHECKLIST_TOOLS,
          **CONVERSATION_TOOLS, **WORKSPACE_TOOLS, **SHELL_TOOLS,
          **BACKGROUND_TOOLS, **HTTP_TOOLS,
          **SKILL_TOOLS, **MCP_TOOLS, **MCP_DEFERRED_TOOLS,
          **HEARTBEAT_TOOLS, **HEALTH_TOOLS,
          **DELEGATE_TOOLS, **ATTACHMENT_TOOLS}
 TOOL_DEFINITIONS = (CORE_TOOL_DEFINITIONS
-                    + TODO_TOOL_DEFINITIONS
+                    + CHECKLIST_TOOL_DEFINITIONS
                     + CONVERSATION_TOOL_DEFINITIONS + WORKSPACE_TOOL_DEFINITIONS
                     + SHELL_TOOL_DEFINITIONS + BACKGROUND_TOOL_DEFINITIONS
                     + HTTP_TOOL_DEFINITIONS + SKILL_TOOL_DEFINITIONS
