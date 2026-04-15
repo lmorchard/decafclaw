@@ -355,6 +355,38 @@ def _clean_schema(schema: dict) -> dict:
     return cleaned
 
 
+def _content_to_parts(content) -> list[dict]:
+    """Convert message content (string or multimodal list) to Vertex parts.
+
+    Handles both plain string content and the OpenAI multimodal format
+    produced by _resolve_attachments: [{"type": "text", ...}, {"type": "image_url", ...}].
+    """
+    if not content:
+        return []
+    if isinstance(content, str):
+        return [{"text": content}]
+    # Multimodal list (from _resolve_attachments)
+    parts = []
+    for item in content:
+        item_type = item.get("type", "")
+        if item_type == "text":
+            text = item.get("text", "")
+            if text:
+                parts.append({"text": text})
+        elif item_type == "image_url":
+            data_url = item.get("image_url", {}).get("url", "")
+            # Parse data:mime;base64,payload
+            if data_url.startswith("data:") and ";base64," in data_url:
+                header, payload = data_url.split(";base64,", 1)
+                mime_type = header[len("data:"):]
+                parts.append({
+                    "inlineData": {"mimeType": mime_type, "data": payload},
+                })
+            else:
+                log.warning("Unsupported image_url format (not a data URI), skipping")
+    return parts
+
+
 def _build_request_body(
     messages: list[dict], tools: list[dict] | None = None,
 ) -> dict:
@@ -380,9 +412,7 @@ def _build_request_body(
                 system_parts.append({"text": content})
 
         elif role == "user":
-            parts = []
-            if content:
-                parts.append({"text": content})
+            parts = _content_to_parts(content)
             if parts:
                 contents.append({"role": "user", "parts": parts})
 
@@ -408,6 +438,10 @@ def _build_request_body(
             tool_name = msg.get("name", "") or tc_id_to_name.get(tool_call_id, "")
             try:
                 response_obj = json.loads(content)
+                # Vertex requires response to be a Struct (JSON object).
+                # Wrap bare values (int, str, list, etc.) in an object.
+                if not isinstance(response_obj, dict):
+                    response_obj = {"result": response_obj}
             except (json.JSONDecodeError, TypeError):
                 response_obj = {"result": content}
 

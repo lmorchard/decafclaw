@@ -16,7 +16,9 @@ An AI agent testbed for exploring agent development patterns. Connects to Matter
 - `src/decafclaw/__init__.py` — Entry point, config/context setup, mode dispatch
 - `src/decafclaw/agent.py` — Agent loop: turn orchestration, tool execution, LLM calls
 - `src/decafclaw/interactive_terminal.py` — Interactive terminal mode (stdin/stdout REPL)
-- `src/decafclaw/mattermost.py` — Mattermost client, message handling, flood protection, progress subscriber
+- `src/decafclaw/conversation_manager.py` — Central orchestrator: agent loop lifecycle, confirmation persistence, per-conversation event streams
+- `src/decafclaw/confirmations.py` — Confirmation types (ConfirmationAction, Request, Response), handler registry
+- `src/decafclaw/mattermost.py` — Mattermost transport adapter: message handling, debouncing, circuit breaker, ConversationDisplay lifecycle
 - `src/decafclaw/mattermost_display.py` — ConversationDisplay: per-turn Mattermost message sequencing
 - `src/decafclaw/llm/` — LLM client package: provider abstraction, registry, multi-provider support
 - `src/decafclaw/llm/types.py` — Provider protocol, StreamCallback type
@@ -63,7 +65,7 @@ An AI agent testbed for exploring agent development patterns. Connects to Matter
 - `src/decafclaw/tools/search_tools.py` — `tool_search` tool: keyword and exact-name lookup for deferred tools
 - `src/decafclaw/reflection.py` — Self-reflection: judge call, prompt assembly, result parsing (Reflexion pattern)
 - `src/decafclaw/commands.py` — User-invokable commands: trigger parsing, argument substitution, execution (fork/inline)
-- `src/decafclaw/tools/confirmation.py` — Shared confirmation request helper (event-bus-based user approval)
+- `src/decafclaw/tools/confirmation.py` — Shared confirmation request helper (bridges to ConversationManager)
 - `src/decafclaw/runner.py` — Top-level orchestrator: manages MCP, HTTP server, Mattermost, heartbeat as parallel tasks
 - `src/decafclaw/web/` — Web gateway: auth, conversations, conversation folders, WebSocket chat handler
 - `src/decafclaw/web/conversation_folders.py` — Per-user conversation folder index (JSON file, metadata-only)
@@ -129,9 +131,13 @@ Session docs live in `docs/dev-sessions/YYYY-MM-DD-HHMM-slug/` with `spec.md`, `
 - **`end_turn` on ToolResult.** Tools can return `ToolResult(text="...", end_turn=True)` to mechanically end the agent turn. The loop makes one final no-tools LLM call (forcing text output), then returns. For review gates, use `end_turn=EndTurnConfirm(message=..., on_approve=..., on_deny=...)` — the agent loop shows confirmation buttons; approval continues the loop, denial ends the turn. `EndTurnConfirm` takes priority over `True` in parallel batches.
 - **Dynamic skill tools via `get_tools(ctx)`.** Skills can export `get_tools(ctx) -> (dict, list)` to supply different tools per turn based on state. Called each iteration before `_build_tool_list()`. Falls back to static `TOOLS`/`TOOL_DEFINITIONS` for skills without it. Refreshes via `_refresh_dynamic_tools()` which tracks provider names to remove stale entries.
 - **Events for progress.** Tools publish `tool_status` events via `ctx.publish()`. The agent loop publishes `llm_start/end` and `tool_start/end`. Subscribers (Mattermost, terminal) handle display.
+- **ConversationManager owns agent loops.** All transports (WebSocket, Mattermost, interactive terminal) delegate turn lifecycle to the ConversationManager. The manager handles context setup, history loading, confirmation persistence, message queuing, and per-conversation event streams. Transports are thin adapters: parse input, format output, manage connections. Heartbeat and scheduled tasks bypass the manager (fire-and-forget, no persistent state).
+- **Confirmations are persistent conversation messages.** Confirmation requests and responses are written to the JSONL archive with `role: "confirmation_request"` / `role: "confirmation_response"`. The agent loop suspends mechanically at confirmations and resumes when resolved. Typed action handlers (`ConfirmationAction` enum) determine what happens on approval/denial. Pending confirmations survive page reload and server restart (startup scan recovers them).
+- **Transport adapters subscribe to per-conversation event streams.** Instead of subscribing to the global event bus, transports subscribe to a conversation's event stream via `manager.subscribe(conv_id, callback)`. Events include streaming chunks, tool lifecycle, confirmation requests, and turn completion. The manager bridges global event bus events to per-conversation streams.
 - **Web UI conversation management is REST-only.** All conversation listing, creation, renaming, archiving, folder management uses REST endpoints. WebSocket is only for real-time chat streaming, conversation selection/history loading, model changes, and turn cancellation. Conversation folders are metadata-only (per-user JSON index file); archive files stay in place.
 - **Mattermost concerns stay in `mattermost.py`.** Progress formatting, placeholder management, threading logic — all in `MattermostClient`.
 - **Mattermost PATCH API quirks.** Omitting `props` from a PATCH preserves existing props (including attachments). To strip attachments, you must explicitly send `props: {"attachments": []}`. However, sending a PATCH with only `props` and no `message` field clears the message text, showing "(message deleted)". Always include the message text when patching props — fetch it first if needed.
+- **Mattermost interactive button gotchas.** Button IDs must not contain underscores — Mattermost silently drops callbacks. The `http_callback_base` config must be reachable from the Mattermost server's network (not just the local machine). If buttons render but clicking does nothing and no callback hits the server, check: (1) `http_callback_base` points to an IP/host the MM server can reach, (2) the MM server's `AllowedUntrustedInternalConnections` includes that host, (3) the local IP hasn't changed (common on laptops with DHCP).
 - **Config via defaults → config.json → env vars.** Config is resolved in priority order: dataclass defaults → `data/{agent_id}/config.json` → env vars. Env vars are highest priority. Dataclass defaults in `config.py`, sub-dataclasses in `config_types.py`.
 - **Use `dataclasses.replace()` to copy Config.** Never copy fields manually — new fields get silently lost. This caused a real bug with semantic search in the eval runner. For nested sub-dataclasses, use the nested pattern: `dataclasses.replace(config, agent=dataclasses.replace(config.agent, data_home=tmp, id="eval"))`.
 - **Check for running bot instances before starting one.** Only one websocket connection per Mattermost bot account. A second instance silently misses events.

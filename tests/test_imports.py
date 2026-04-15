@@ -53,8 +53,7 @@ def test_import_mattermost_client_methods():
     assert hasattr(MattermostClient, "close")
     assert hasattr(MattermostClient, "_make_heartbeat_cycle")
     assert hasattr(MattermostClient, "_resolve_heartbeat_channel")
-    assert hasattr(MattermostClient, "_subscribe_progress")
-    assert hasattr(MattermostClient, "_poll_confirmation")
+    assert hasattr(MattermostClient, "_poll_confirmation_manager")
 
 
 def test_import_streaming():

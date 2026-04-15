@@ -302,3 +302,70 @@ def test_parse_usage():
 
 def test_parse_usage_missing():
     assert _parse_usage({}) is None
+
+
+# -- Multimodal content (image attachments) ------------------------------------
+
+
+def test_user_message_with_image_attachment():
+    """Multimodal user content (from _resolve_attachments) → Vertex inlineData."""
+    messages = [{
+        "role": "user",
+        "content": [
+            {"type": "text", "text": "What's in this image?"},
+            {
+                "type": "image_url",
+                "image_url": {"url": "data:image/png;base64,iVBORw0KGgo="},
+            },
+        ],
+    }]
+    body = _build_request_body(messages)
+    parts = body["contents"][0]["parts"]
+    assert len(parts) == 2
+    assert parts[0] == {"text": "What's in this image?"}
+    assert parts[1] == {
+        "inlineData": {"mimeType": "image/png", "data": "iVBORw0KGgo="},
+    }
+
+
+def test_user_message_with_image_only():
+    """Multimodal content with no text, just an image."""
+    messages = [{
+        "role": "user",
+        "content": [
+            {
+                "type": "image_url",
+                "image_url": {"url": "data:image/jpeg;base64,/9j/4AAQ="},
+            },
+        ],
+    }]
+    body = _build_request_body(messages)
+    parts = body["contents"][0]["parts"]
+    assert len(parts) == 1
+    assert parts[0] == {
+        "inlineData": {"mimeType": "image/jpeg", "data": "/9j/4AAQ="},
+    }
+
+
+def test_user_message_with_multiple_images():
+    """Multiple images in one message."""
+    messages = [{
+        "role": "user",
+        "content": [
+            {"type": "text", "text": "Compare these:"},
+            {
+                "type": "image_url",
+                "image_url": {"url": "data:image/png;base64,AAAA"},
+            },
+            {
+                "type": "image_url",
+                "image_url": {"url": "data:image/png;base64,BBBB"},
+            },
+        ],
+    }]
+    body = _build_request_body(messages)
+    parts = body["contents"][0]["parts"]
+    assert len(parts) == 3
+    assert parts[0] == {"text": "Compare these:"}
+    assert parts[1]["inlineData"]["data"] == "AAAA"
+    assert parts[2]["inlineData"]["data"] == "BBBB"

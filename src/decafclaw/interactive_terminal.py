@@ -1,4 +1,8 @@
-"""Interactive terminal mode for DecafClaw."""
+"""Interactive terminal mode for DecafClaw.
+
+Transport adapter that uses the ConversationManager for agent loop
+lifecycle. Handles stdin/stdout display and confirmation prompts.
+"""
 
 from __future__ import annotations
 
@@ -9,28 +13,6 @@ from .config import resolve_streaming
 from .tools import TOOL_DEFINITIONS
 
 log = logging.getLogger(__name__)
-
-
-def _setup_interactive_context(ctx) -> None:
-    """Populate context defaults and media handler for interactive mode."""
-    from .media import LocalFileMediaHandler
-    config = ctx.config
-
-    ctx.user_id = ctx.user_id or config.agent_user_id
-    ctx.channel_id = ctx.channel_id or "interactive"
-    ctx.channel_name = ctx.channel_name or "interactive"
-    ctx.thread_id = ctx.thread_id or ""
-    ctx.conv_id = "interactive"
-    ctx.media_handler = LocalFileMediaHandler(config)
-
-    if resolve_streaming(config):
-        async def _terminal_stream_chunk(chunk_type, data):
-            if chunk_type == "text":
-                print(data, end="", flush=True)
-            elif chunk_type == "tool_call_start":
-                print(f"\n  [calling {data['name']}...]", flush=True)
-
-        ctx.on_stream_chunk = _terminal_stream_chunk
 
 
 def _print_banner(config) -> None:
@@ -52,71 +34,105 @@ def _print_banner(config) -> None:
     print()
 
 
-def _create_interactive_progress_subscriber(ctx):
-    """Create the on_progress callback for interactive mode."""
-    async def on_progress(event):
-        event_type = event.get("type")
-        if event_type == "tool_status":
-            print(f"  [{event.get('tool', 'tool')}] {event['message']}")
-        elif event_type == "tool_start":
-            print(f"  [running {event.get('tool', 'tool')}...]")
-        elif event_type == "llm_start" and event.get("iteration", 1) > 1:
-            print("  [thinking...]")
-        elif event_type == "compaction_start":
-            print("  [compacting conversation...]")
-        elif event_type == "compaction_end":
-            print("  [compaction complete]")
-        elif event_type == "tool_confirm_request":
-            command = event.get("command", "")
-            tool_name = event.get("tool", "tool")
-            suggested_pattern = event.get("suggested_pattern", "")
-            print(f"\n  \U0001f6a8 Confirm {tool_name}: {command}")
-            if suggested_pattern and tool_name == "shell":
-                prompt = f"  Approve? [y]es / [n]o / [a]lways / [p]attern ({suggested_pattern}): "
-            else:
-                prompt = "  Approve? [y]es / [n]o / [a]lways: "
-            answer = await asyncio.to_thread(input, prompt)
-            choice = answer.strip().lower()
-            approved = choice in ("y", "yes", "a", "always", "p", "pattern")
-            always = choice in ("a", "always")
-            add_pattern = choice in ("p", "pattern")
-            await ctx.event_bus.publish({
-                "type": "tool_confirm_response",
-                "context_id": event.get("context_id"),
-                "tool": tool_name,
-                "approved": approved,
-                "always": always,
-                **({"add_pattern": True} if add_pattern else {}),
-            })
-
-    return on_progress
-
-
 # -- Interactive mode ----------------------------------------------------------
 
 
 async def run_interactive(ctx):
     """Run the agent in interactive terminal mode (stdin/stdout)."""
-    from .agent import run_agent_turn
-    from .archive import read_archive
+    from .conversation_manager import ConversationManager
     from .heartbeat import run_heartbeat_timer
     from .mcp_client import init_mcp, shutdown_mcp
+    from .media import LocalFileMediaHandler
 
     config = ctx.config
+    conv_id = "interactive"
 
-    _setup_interactive_context(ctx)
+    # Set up context identity
+    ctx.user_id = ctx.user_id or config.agent_user_id
+    ctx.channel_id = ctx.channel_id or "interactive"
+    ctx.channel_name = ctx.channel_name or "interactive"
+    ctx.conv_id = conv_id
+
     await init_mcp(config)
     _print_banner(config)
 
-    sub_id = ctx.event_bus.subscribe(_create_interactive_progress_subscriber(ctx))
+    # Create conversation manager
+    manager = ConversationManager(config, ctx.event_bus)
 
-    # Resume from archive if available
-    history = read_archive(config, ctx.conv_id)
-    if history:
-        log.info(f"Resumed interactive session from archive ({len(history)} messages)")
-        print(f"  (resumed {len(history)} messages from previous session)")
-    else:
-        history = []
+    # Track turn completion
+    turn_done = asyncio.Event()
+    last_response_text = {"text": ""}
+
+    # Subscribe to conversation events for terminal display
+    async def on_event(event):
+        event_type = event.get("type", "")
+
+        if event_type == "chunk":
+            print(event.get("text", ""), end="", flush=True)
+
+        elif event_type == "tool_call_start":
+            name = event.get("name", "tool")
+            print(f"\n  [calling {name}...]", flush=True)
+
+        elif event_type == "tool_start":
+            print(f"  [running {event.get('tool', 'tool')}...]")
+
+        elif event_type == "tool_status":
+            print(f"  [{event.get('tool', 'tool')}] {event.get('message', '')}")
+
+        elif event_type == "llm_start" and event.get("iteration", 1) > 1:
+            print("  [thinking...]")
+
+        elif event_type == "compaction_start":
+            print("  [compacting conversation...]")
+
+        elif event_type == "compaction_end":
+            print("  [compaction complete]")
+
+        elif event_type == "confirmation_request":
+            confirmation_id = event.get("confirmation_id", "")
+            message = event.get("message", "")
+            action_type = event.get("action_type", "")
+            action_data = event.get("action_data", {})
+
+            command = action_data.get("command", message)
+            suggested_pattern = action_data.get("suggested_pattern", "")
+
+            print(f"\n  \U0001f6a8 Confirm ({action_type}): {command}")
+            if suggested_pattern and action_type == "run_shell_command":
+                prompt = (f"  Approve? [y]es / [n]o / [a]lways / "
+                          f"[p]attern ({suggested_pattern}): ")
+            else:
+                prompt = "  Approve? [y]es / [n]o / [a]lways: "
+
+            answer = await asyncio.to_thread(input, prompt)
+            choice = answer.strip().lower()
+            approved = choice in ("y", "yes", "a", "always", "p", "pattern")
+            always = choice in ("a", "always")
+            add_pattern = choice in ("p", "pattern")
+
+            await manager.respond_to_confirmation(
+                conv_id, confirmation_id,
+                approved=approved, always=always, add_pattern=add_pattern,
+            )
+
+        elif event_type == "message_complete":
+            if event.get("final"):
+                last_response_text["text"] = event.get("text", "")
+
+        elif event_type == "turn_complete":
+            turn_done.set()
+
+        elif event_type == "error":
+            print(f"\n[error: {event.get('message', '')}]")
+            turn_done.set()
+
+    manager.subscribe(conv_id, on_event)
+
+    # Transport-specific context setup
+    def terminal_context_setup(ctx_arg):
+        ctx_arg.media_handler = LocalFileMediaHandler(config)
+        ctx_arg.channel_name = "interactive"
 
     # Start heartbeat timer
     shutdown_event = asyncio.Event()
@@ -154,16 +170,24 @@ async def run_interactive(ctx):
             if user_input.lower() in ("quit", "exit"):
                 break
 
-            try:
-                result = await run_agent_turn(ctx, user_input, history)
-            except Exception as e:
-                print(f"\n[error: {e}]\n")
-                continue
+            turn_done.clear()
+            last_response_text["text"] = ""
+
+            await manager.send_message(
+                conv_id, user_input,
+                user_id=ctx.user_id,
+                context_setup=terminal_context_setup,
+            )
+
+            # Wait for the turn to complete
+            await turn_done.wait()
 
             if resolve_streaming(config):
                 print()  # final newline after streamed text
             else:
-                print(f"\nagent> {result.text}\n")
+                text = last_response_text["text"]
+                if text:
+                    print(f"\nagent> {text}\n")
     finally:
         shutdown_event.set()
         heartbeat_task.cancel()
@@ -171,5 +195,4 @@ async def run_interactive(ctx):
             await heartbeat_task
         except asyncio.CancelledError:
             pass
-        ctx.event_bus.unsubscribe(sub_id)
         await shutdown_mcp()

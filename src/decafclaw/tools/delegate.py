@@ -54,6 +54,7 @@ async def _run_child_turn(parent_ctx, task, model: str = "",
     child_ctx = parent_ctx.fork(config=child_config)
     child_ctx.conv_id = f"{parent_conv}--child-{child_ctx.context_id[:8]}"
     child_ctx.cancelled = getattr(parent_ctx, "cancelled", None)
+    child_ctx.request_confirmation = getattr(parent_ctx, "request_confirmation", None)
 
     # Route child events to the parent's UI subscriber so confirmations
     # and tool progress are visible in the parent conversation

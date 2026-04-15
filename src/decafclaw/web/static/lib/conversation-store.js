@@ -23,6 +23,8 @@
 /**
  * @typedef {object} PendingConfirm
  * @property {string} context_id
+ * @property {string} confirmation_id
+ * @property {string} conv_id
  * @property {string} tool
  * @property {string} tool_call_id
  * @property {string} command
@@ -30,6 +32,8 @@
  * @property {string} message
  * @property {string} approve_label
  * @property {string} deny_label
+ * @property {string} action_type
+ * @property {object} action_data
  */
 
 /**
@@ -411,6 +415,7 @@ export class ConversationStore extends EventTarget {
   /** @param {string} convId */
   selectConversation(convId) {
     this.#currentConvId = convId;
+    this.#busy = false;
     this.#messageStore.clear();
     this.#toolStatusStore.clear();
     this.#contextUsage = 0;
@@ -520,6 +525,14 @@ export class ConversationStore extends EventTarget {
         if (msg.default_model) this.#defaultModel = msg.default_model;
         if (msg.read_only) this.#readOnly = true;
         if (msg.turn_active) this.#busy = true;
+        // Restore pending confirmation from server state (survives reload)
+        if (msg.pending_confirmation) {
+          this.#toolStatusStore.handleMessage({
+            type: 'confirm_request',
+            conv_id: this.#currentConvId,
+            ...msg.pending_confirmation,
+          }, this.#currentConvId);
+        }
       }
       if (msg.type === 'message_complete' && msg.conv_id === this.#currentConvId) {
         this.#toolStatusStore.clearToolStatus();
@@ -543,12 +556,22 @@ export class ConversationStore extends EventTarget {
     switch (msg.type) {
       case 'conv_selected':
         if (msg.read_only) this.#readOnly = true;
+        // Restore pending confirmation from server state (survives reload)
+        if (msg.pending_confirmation) {
+          this.#toolStatusStore.handleMessage({
+            type: 'confirm_request',
+            conv_id: msg.conv_id || this.#currentConvId,
+            ...msg.pending_confirmation,
+          }, this.#currentConvId);
+        }
         break;
 
       case 'turn_start':
-        this.#busy = true;
-        this.#messageStore.clearStreamingText();
-        this.#toolStatusStore.clearToolStatus();
+        if (!msg.conv_id || msg.conv_id === this.#currentConvId) {
+          this.#busy = true;
+          this.#messageStore.clearStreamingText();
+          this.#toolStatusStore.clearToolStatus();
+        }
         break;
 
       case 'model_changed':
@@ -564,8 +587,10 @@ export class ConversationStore extends EventTarget {
 
       case 'error':
         console.error('Server error:', msg.message);
-        this.#busy = false;
-        this.#toolStatusStore.clearToolStatus();
+        if (!msg.conv_id || msg.conv_id === this.#currentConvId) {
+          this.#busy = false;
+          this.#toolStatusStore.clearToolStatus();
+        }
         if (this.#currentConvId && this.#messageStore.currentMessages.length === 0) {
           this.#currentConvId = null;
         }
