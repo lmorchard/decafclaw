@@ -61,16 +61,27 @@ export class ToolStatusStore {
    * @param {object} [extra]
    */
   respondToConfirm(contextId, tool, toolCallId = '', approved = false, extra = {}) {
+    // Find the confirm to get its confirmation_id and conv_id
+    const confirm = this.#pendingConfirms.find(c => {
+      if (toolCallId) return c.tool_call_id === toolCallId;
+      return c.context_id === contextId && c.tool === tool;
+    });
+
     this.#ws.send({
       type: 'confirm_response',
       context_id: contextId,
       tool,
       approved,
+      // Include confirmation_id and conv_id for manager-based routing
+      ...(confirm?.confirmation_id ? { confirmation_id: confirm.confirmation_id } : {}),
+      ...(confirm?.conv_id ? { conv_id: confirm.conv_id } : {}),
       ...(toolCallId ? { tool_call_id: toolCallId } : {}),
       ...extra,
     });
     // Remove only this specific confirm
-    if (toolCallId) {
+    if (confirm?.confirmation_id) {
+      this.#pendingConfirms = this.#pendingConfirms.filter(c => c.confirmation_id !== confirm.confirmation_id);
+    } else if (toolCallId) {
       this.#pendingConfirms = this.#pendingConfirms.filter(c => c.tool_call_id !== toolCallId);
     } else {
       this.#pendingConfirms = this.#pendingConfirms.filter(c => !(c.context_id === contextId && c.tool === tool));
@@ -133,18 +144,39 @@ export class ToolStatusStore {
         return true;
       }
 
-      case 'confirm_request':
+      case 'confirm_request': {
+        // Only show confirmations for the active conversation (#235)
+        if (msg.conv_id && msg.conv_id !== currentConvId) return true;
+        // Deduplicate by confirmation_id (can arrive via both conv_history and live event)
+        const cid = msg.confirmation_id || '';
+        if (cid && this.#pendingConfirms.some(c => c.confirmation_id === cid)) {
+          return true; // already have this one
+        }
         this.#pendingConfirms = [...this.#pendingConfirms, {
-          context_id: msg.context_id,
-          tool: msg.tool,
+          context_id: msg.context_id || '',
+          confirmation_id: msg.confirmation_id || '',
+          conv_id: msg.conv_id || '',
+          tool: msg.tool || '',
           tool_call_id: msg.tool_call_id || '',
           command: msg.command || '',
           suggested_pattern: msg.suggested_pattern || '',
           message: msg.message || '',
           approve_label: msg.approve_label || '',
           deny_label: msg.deny_label || '',
+          action_type: msg.action_type || '',
+          action_data: msg.action_data || {},
         }];
         return true;
+      }
+
+      case 'confirmation_response': {
+        // Multi-tab sync: remove the resolved confirmation widget
+        const resolvedId = msg.confirmation_id || '';
+        if (resolvedId) {
+          this.#pendingConfirms = this.#pendingConfirms.filter(c => c.confirmation_id !== resolvedId);
+        }
+        return true;
+      }
 
       case 'reflection_result':
         if (msg.conv_id === currentConvId) {

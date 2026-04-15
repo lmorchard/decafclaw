@@ -51,11 +51,17 @@ async def run_all(app_ctx):
     schedule_task = None
 
     try:
+        # Create conversation manager (shared across web + future transports)
+        from .conversation_manager import ConversationManager
+        manager = ConversationManager(config, app_ctx.event_bus)
+        await manager.startup_scan()
+
         # Start HTTP server (button callbacks + web gateway)
         if config.http.enabled:
             from .http_server import run_http_server
             http_task = asyncio.create_task(
-                run_http_server(config, app_ctx.event_bus, app_ctx=app_ctx)
+                run_http_server(config, app_ctx.event_bus, app_ctx=app_ctx,
+                                manager=manager)
             )
             log.info(f"HTTP server enabled on {config.http.host}:{config.http.port}")
 
@@ -64,7 +70,7 @@ async def run_all(app_ctx):
             from .mattermost import MattermostClient
             client = MattermostClient(config)
             mattermost_task = asyncio.create_task(
-                client.run(app_ctx, shutdown_event)
+                client.run(app_ctx, shutdown_event, manager=manager)
             )
             log.info("Mattermost client starting")
 
@@ -134,6 +140,9 @@ async def run_all(app_ctx):
                 await _cancel_task(mattermost_task, "Mattermost")
             except asyncio.CancelledError:
                 pass
+
+        # Wait for in-flight agent turns managed by the conversation manager
+        await manager.shutdown()
 
         await shutdown_mcp()
         log.info("Shutdown complete")

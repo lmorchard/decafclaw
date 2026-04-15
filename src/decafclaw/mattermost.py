@@ -1,4 +1,9 @@
-"""Mattermost client — WebSocket for receiving, REST for sending."""
+"""Mattermost client — WebSocket for receiving, REST for sending.
+
+Transport adapter that handles Mattermost connections, message parsing,
+display formatting, debouncing, and circuit breaking. Agent loop lifecycle
+and conversation state are owned by the ConversationManager.
+"""
 
 import asyncio
 import json
@@ -14,60 +19,23 @@ from .mattermost_display import THINKING_INDICATOR, ConversationDisplay  # noqa:
 log = logging.getLogger(__name__)
 
 
-# -- Per-conversation state ----------------------------------------------------
+# -- Mattermost-specific per-conversation state --------------------------------
 
 
 @dataclass
-class ConversationState:
-    """Per-conversation state tracked during the bot's lifetime."""
-    history: list = field(default_factory=list)
-    skill_state: dict | None = None
-    skip_vault_retrieval: bool = False
-    pending_msgs: list = field(default_factory=list)
+class MattermostConvState:
+    """Mattermost-specific per-conversation state (transport concerns only).
+
+    Agent loop state (history, busy, skill_state, circuit breaker, etc.)
+    is in the ConversationManager's ConversationState.
+    """
     debounce_timer: asyncio.Task | None = None
     last_response_time: float = 0
-    busy: bool = False
-    cancel: asyncio.Event | None = None
-    turn_times: list = field(default_factory=list)
-    paused_until: float = 0
-
-
-# -- Circuit breaker -----------------------------------------------------------
-
-
-class CircuitBreaker:
-    """Rate-limits agent turns per conversation to prevent runaway loops."""
-
-    def __init__(self, max_turns: int, window_sec: int, pause_sec: int):
-        self.max_turns = max_turns
-        self.window_sec = window_sec
-        self.pause_sec = pause_sec
-
-    def is_tripped(self, conv: ConversationState, conv_id: str = "") -> bool:
-        """Check if the circuit breaker has tripped. Mutates conv state."""
-        now = time.monotonic()
-
-        # Check if currently paused
-        if now < conv.paused_until:
-            return True
-
-        # Clean expired entries and check
-        cutoff = now - self.window_sec
-        conv.turn_times = [t for t in conv.turn_times if t > cutoff]
-
-        if len(conv.turn_times) >= self.max_turns:
-            conv.paused_until = now + self.pause_sec
-            log.warning(
-                f"Circuit breaker tripped for {conv_id[:8]}: "
-                f"{len(conv.turn_times)} turns in {self.window_sec}s, "
-                f"pausing for {self.pause_sec}s"
-            )
-            return True
-        return False
-
-    def record_turn(self, conv: ConversationState) -> None:
-        """Record an agent turn for tracking."""
-        conv.turn_times.append(time.monotonic())
+    pending_msgs: list = field(default_factory=list)
+    # Current turn display (set per-turn, cleared on completion)
+    conv_display: ConversationDisplay | None = None
+    cancel_task: asyncio.Task | None = None
+    manager_sub_id: str = ""
 
 
 # -- Mattermost client ---------------------------------------------------------
@@ -88,11 +56,6 @@ class MattermostClient:
         self.require_mention = config.mattermost.require_mention
         self.user_rate_limit_ms = config.mattermost.user_rate_limit_ms
         self.channel_blocklist = set(config.mattermost.channel_blocklist)
-        self.circuit_breaker = CircuitBreaker(
-            max_turns=config.mattermost.circuit_breaker_max,
-            window_sec=config.mattermost.circuit_breaker_window_sec,
-            pause_sec=config.mattermost.circuit_breaker_pause_sec,
-        )
         self._http = httpx.AsyncClient(
             base_url=self.url + "/api/v4",
             headers={
@@ -253,8 +216,6 @@ class MattermostClient:
                 message = message.replace(mention, "").strip()
 
         # In non-DM channels, require @-mention if configured.
-        # Always allow thread replies (root_id present) — if we're in the thread,
-        # the user expects us to respond.
         is_dm = channel_type == "D"
         in_thread = bool(post.get("root_id"))
         if self.require_mention and not is_dm and not mentioned and not in_thread:
@@ -281,118 +242,46 @@ class MattermostClient:
 
     # -- Conversation processing -----------------------------------------------
 
-    def _get_conv(self, conversations: dict, conv_id: str) -> ConversationState:
-        """Get or create conversation state."""
-        if conv_id not in conversations:
-            conversations[conv_id] = ConversationState()
-        return conversations[conv_id]
+    def _get_mm_state(self, mm_conversations: dict, conv_id: str) -> MattermostConvState:
+        """Get or create Mattermost-specific conversation state."""
+        if conv_id not in mm_conversations:
+            mm_conversations[conv_id] = MattermostConvState()
+        return mm_conversations[conv_id]
 
-    def _prepare_history(self, conv, conv_id, root_id, channel_id, conversations, config):
-        """Get or create conversation history, resuming from archive if available."""
-        from .archive import restore_history
+    async def _download_attachments(self, msgs, conv_id, config):
+        """Download user-uploaded files from Mattermost and save as conversation attachments."""
+        from .attachments import save_attachment
 
-        if root_id:
-            hist_id = root_id
-            if not conv.history:
-                restored = restore_history(config, hist_id)
-                if restored:
-                    conv.history = restored
-                    log.info(f"Resumed thread {hist_id[:8]} from archive ({len(restored)} messages)")
-                else:
-                    channel_conv = conversations.get(channel_id)
-                    channel_history = channel_conv.history if channel_conv else []
-                    conv.history = list(channel_history)
-                    log.debug(f"Forked thread history {hist_id[:8]} from channel {channel_id[:8]} ({len(channel_history)} msgs)")
-        else:
-            if not conv.history:
-                restored = restore_history(config, channel_id)
-                if restored:
-                    conv.history = restored
-                    log.info(f"Resumed channel {channel_id[:8]} from archive ({len(restored)} messages)")
+        max_bytes = getattr(getattr(config, "http", None), "max_upload_bytes", None)
 
-        return conv.history
+        attachments = []
+        for msg in msgs:
+            file_ids = msg.get("file_ids") or []
+            file_metadata = msg.get("file_metadata") or {}
+            for fid in file_ids:
+                try:
+                    resp = await self._http.get(f"/files/{fid}")
+                    resp.raise_for_status()
+                    data = resp.content
 
-    async def _build_request_context(self, app_ctx, conv, conv_id, channel_id,
-                                     root_id, placeholder_id):
-        """Fork a request context and set up streaming, cancellation, and progress."""
-        from .media import MattermostMediaHandler
+                    if max_bytes and len(data) > max_bytes:
+                        log.warning(f"Mattermost file {fid} too large: "
+                                    f"{len(data)} bytes > {max_bytes} limit, skipping")
+                        continue
 
-        req_ctx = app_ctx.fork(
-            user_id=app_ctx.config.agent.user_id,
-            channel_id=channel_id,
-            channel_name="",
-            thread_id=root_id or "",
-            conv_id=conv_id,
-        )
-        req_ctx.media_handler = MattermostMediaHandler(self._http, channel_id=channel_id)
+                    fmeta = file_metadata.get(fid, {})
+                    filename = fmeta.get("name", f"file-{fid}")
+                    mime_type = fmeta.get("mime_type", "application/octet-stream")
 
-        # Restore per-conversation state from previous turns
-        if conv.skill_state:
-            req_ctx.tools.extra = conv.skill_state.get("extra_tools", {})
-            req_ctx.tools.extra_definitions = conv.skill_state.get("extra_tool_definitions", [])
-            req_ctx.skills.activated = conv.skill_state.get("activated_skills", set())
-        if conv.skip_vault_retrieval:
-            req_ctx.skip_vault_retrieval = True
-
-        # Create conversation display for this turn
-        conv_display = ConversationDisplay(
-            self, channel_id, root_id,
-            throttle_ms=app_ctx.config.mattermost.stream_throttle_ms,
-            initial_post_id=placeholder_id,
-            config=app_ctx.config,
-            conv_id=conv_id,
-        )
-
-        # Set streaming callback
-        from .config import resolve_streaming
-        if resolve_streaming(app_ctx.config, req_ctx.active_model):
-            req_ctx.on_stream_chunk = conv_display.on_stream_chunk
-
-        # Set up cancellation event and poll for stop reaction
-        cancel_event = asyncio.Event()
-        req_ctx.cancelled = cancel_event
-        conv.cancel = cancel_event
-        cancel_task = None
-        if placeholder_id:
-            cancel_task = asyncio.create_task(
-                self._poll_cancel(placeholder_id, cancel_event)
-            )
-
-        # Attach interactive Stop button to messages during this turn
-        from .mattermost_ui import build_stop_button
-        stop_attachments = build_stop_button(app_ctx.config, conv_id)
-        if stop_attachments and placeholder_id:
-            conv_display._stop_attachments = stop_attachments
-            conv_display._stop_on_post = placeholder_id
-            # Patch placeholder to include the stop button
-            await self.edit_message(
-                placeholder_id, THINKING_INDICATOR,
-                props={"attachments": stop_attachments},
-            )
-            # Subscribe to cancel_turn events from the button callback
-            def on_cancel(event):
-                if event.get("type") == "cancel_turn" and event.get("conv_id") == conv_id:
-                    cancel_event.set()
-            conv_display._cancel_sub = req_ctx.event_bus.subscribe(on_cancel)
-
-        sub_id = self._subscribe_progress(
-            req_ctx.event_bus, req_ctx.context_id,
-            channel_id=channel_id, root_id=root_id,
-            streaming=resolve_streaming(app_ctx.config, req_ctx.active_model),
-            conv_display=conv_display,
-            reflection_visibility=app_ctx.config.reflection.visibility,
-        )
-
-        return req_ctx, conv_display, cancel_task, sub_id
+                    att = save_attachment(config, conv_id, filename, data, mime_type)
+                    attachments.append(att)
+                    log.info(f"Saved Mattermost attachment: {att['filename']} ({mime_type})")
+                except Exception as e:
+                    log.warning(f"Failed to download Mattermost file {fid}: {e}")
+        return attachments
 
     async def _post_response(self, response, channel_id, root_id, conv_display):
-        """Post any remaining response content not handled by ConversationDisplay.
-
-        ConversationDisplay handles text streaming and tool media during the turn.
-        This handles:
-        - Text-referenced media from the final response (workspace image refs)
-        - Error responses that ConversationDisplay may not have seen
-        """
+        """Post any remaining response content not handled by ConversationDisplay."""
         response_media = response.media or []
 
         if response_media:
@@ -406,56 +295,35 @@ class MattermostClient:
                     channel_id, "", file_ids, root_id=root_id
                 )
 
-    async def _download_attachments(self, msgs, conv_id, config):
-        """Download user-uploaded files from Mattermost and save as conversation attachments.
+    async def _process_conversation(self, conv_id, channel_id, msgs,
+                                    app_ctx, mm_conversations, manager):
+        """Process accumulated messages for a conversation."""
+        mm_state = self._get_mm_state(mm_conversations, conv_id)
+        cooldown_sec = self.cooldown_ms / 1000.0
 
-        Returns a list of attachment metadata dicts (same format as web UI uploads).
-        """
-        from .attachments import save_attachment
+        # Check if busy via the manager (circuit breaker is in the manager) — queue locally and re-debounce.
+        # Cancel-on-new-message is handled by manager.send_message().
+        mgr_state = manager.get_state(conv_id)
+        if mgr_state and mgr_state.busy:
+            log.info(f"Conversation {conv_id[:8]} busy, queuing {len(msgs)} message(s)")
+            mm_state.pending_msgs = msgs + mm_state.pending_msgs
+            mm_state.debounce_timer = asyncio.create_task(
+                self._debounce_fire(conv_id, channel_id, mm_conversations,
+                                    app_ctx, manager)
+            )
+            return
 
-        max_bytes = getattr(getattr(config, "http", None), "max_upload_bytes", None)
+        # Cooldown: wait if we responded too recently
+        now = time.monotonic()
+        wait = cooldown_sec - (now - mm_state.last_response_time)
+        if wait > 0:
+            log.info(f"Cooldown: waiting {wait:.1f}s before responding in {conv_id[:8]}")
+            await asyncio.sleep(wait)
 
-        attachments = []
-        for msg in msgs:
-            file_ids = msg.get("file_ids") or []
-            file_metadata = msg.get("file_metadata") or {}
-            for fid in file_ids:
-                try:
-                    # Download file content
-                    resp = await self._http.get(f"/files/{fid}")
-                    resp.raise_for_status()
-                    data = resp.content
-
-                    # Enforce size limit (same as web UI uploads)
-                    if max_bytes and len(data) > max_bytes:
-                        log.warning(f"Mattermost file {fid} too large: "
-                                    f"{len(data)} bytes > {max_bytes} limit, skipping")
-                        continue
-
-                    # Get filename and MIME type from metadata or file info
-                    fmeta = file_metadata.get(fid, {})
-                    filename = fmeta.get("name", f"file-{fid}")
-                    mime_type = fmeta.get("mime_type", "application/octet-stream")
-
-                    # Save to conversation uploads
-                    att = save_attachment(config, conv_id, filename, data, mime_type)
-                    attachments.append(att)
-                    log.info(f"Saved Mattermost attachment: {att['filename']} ({mime_type})")
-                except Exception as e:
-                    log.warning(f"Failed to download Mattermost file {fid}: {e}")
-        return attachments
-
-    async def _prepare_conversation(self, conv, conv_id, channel_id, msgs,
-                                    app_ctx, conversations):
-        """Prepare a conversation turn: combine messages, check commands, set up context.
-
-        Returns (req_ctx, conv_display, cancel_task, sub_id, combined_text, archive_text, cmd_ctx)
-        if the agent turn should proceed, or None if a command was fully handled.
-        """
+        # -- Command dispatch --
         from .commands import dispatch_command
         from .context import Context
 
-        # Combine accumulated messages into one
         combined_text = "\n".join(m["text"] for m in msgs)
         last_msg = msgs[-1]
 
@@ -471,156 +339,323 @@ class MattermostClient:
         senders = set(m["sender_name"] for m in msgs)
         log.info(f"Processing {len(msgs)} message(s) from {', '.join(senders)} in {conv_id[:8]}")
 
-        # -- Command dispatch (centralized in commands.py) --
         cmd_ctx = Context(config=app_ctx.config, event_bus=app_ctx.event_bus)
         cmd_ctx.user_id = app_ctx.config.agent.user_id
         cmd_result = await dispatch_command(cmd_ctx, combined_text, prefixes=["!"])
 
         if cmd_result.mode in ("help", "unknown", "error", "fork"):
             await self.send(channel_id, cmd_result.text, root_id=root_id)
-            return None
+            return
 
-        # Send placeholder immediately
+        # Send placeholder
         placeholder_id = await self.send_placeholder(channel_id, root_id=root_id)
         await self.send_typing(channel_id)
 
-        # Prepare history and request context
-        self._prepare_history(
-            conv, conv_id, root_id, channel_id, conversations, app_ctx.config
-        )
-        req_ctx, conv_display, cancel_task, sub_id = await self._build_request_context(
-            app_ctx, conv, conv_id, channel_id, root_id, placeholder_id
-        )
-
-        # Apply command state to the request context (inline mode)
         archive_text = ""
+        command_ctx = None
         if cmd_result.mode == "inline":
             combined_text = cmd_result.text
             archive_text = cmd_result.display_text
-            from .commands import apply_command_ctx
-            apply_command_ctx(req_ctx, cmd_ctx)
+            command_ctx = cmd_ctx
 
-        return req_ctx, conv_display, cancel_task, sub_id, combined_text, archive_text
+        # Download user-uploaded files
+        attachments = await self._download_attachments(msgs, conv_id, app_ctx.config)
 
-    async def _process_conversation(self, conv_id, channel_id, msgs,
-                                    app_ctx, conversations):
-        """Process accumulated messages for a conversation."""
-        from .agent import run_agent_turn
+        # Create ConversationDisplay for this turn
+        conv_display = ConversationDisplay(
+            self, channel_id, root_id,
+            throttle_ms=app_ctx.config.mattermost.stream_throttle_ms,
+            initial_post_id=placeholder_id,
+            config=app_ctx.config,
+            conv_id=conv_id,
+        )
+        mm_state.conv_display = conv_display
 
-        conv = self._get_conv(conversations, conv_id)
-        cooldown_sec = self.cooldown_ms / 1000.0
-
-        # Circuit breaker check
-        if self.circuit_breaker.is_tripped(conv, conv_id):
-            log.warning(f"Dropping messages for paused conversation {conv_id[:8]}")
-            return
-
-        # One agent turn at a time per conversation
-        if conv.busy:
-            if (app_ctx.config.agent.turn_on_new_message == "cancel"
-                    and conv.cancel and not conv.cancel.is_set()):
-                log.info(f"Conversation {conv_id[:8]} busy, cancelling current turn for new message")
-                conv.cancel.set()
-            else:
-                log.info(f"Conversation {conv_id[:8]} busy, queuing {len(msgs)} message(s)")
-            conv.pending_msgs = msgs + conv.pending_msgs
-            conv.debounce_timer = asyncio.create_task(
-                self._debounce_fire(conv_id, channel_id, conversations, app_ctx)
+        # Attach stop button and start emoji-based cancel polling
+        from .mattermost_ui import build_stop_button
+        stop_attachments = build_stop_button(app_ctx.config, conv_id)
+        if stop_attachments and placeholder_id:
+            conv_display._stop_attachments = stop_attachments
+            conv_display._stop_on_post = placeholder_id
+            await self.edit_message(
+                placeholder_id, THINKING_INDICATOR,
+                props={"attachments": stop_attachments},
             )
-            return
 
-        # Cooldown: wait if we responded too recently
-        now = time.monotonic()
-        wait = cooldown_sec - (now - conv.last_response_time)
-        if wait > 0:
-            log.info(f"Cooldown: waiting {wait:.1f}s before responding in {conv_id[:8]}")
-            await asyncio.sleep(wait)
+        if placeholder_id:
+            # Poll for stop emoji reactions — cancel via manager
+            async def poll_and_cancel():
+                cancel_sentinel = asyncio.Event()
+                await self._poll_cancel(placeholder_id, cancel_sentinel)
+                if cancel_sentinel.is_set():
+                    await manager.cancel_turn(conv_id)
+            mm_state.cancel_task = asyncio.create_task(poll_and_cancel())
 
-        # Prepare conversation: combine messages, dispatch commands, build context
-        prepared = await self._prepare_conversation(
-            conv, conv_id, channel_id, msgs, app_ctx, conversations
+        # Pre-load history with Mattermost thread-fork logic.
+        # For threads: if no archive exists, fork from the channel history.
+        # The manager's load_history will use this pre-loaded history.
+        from .archive import restore_history
+        restored = restore_history(app_ctx.config, conv_id)
+        if restored:
+            manager.set_initial_history(conv_id, restored)
+        elif root_id:
+            # New thread — fork from channel history
+            channel_state = manager.get_state(channel_id)
+            channel_history = channel_state.history if channel_state else []
+            if channel_history:
+                manager.set_initial_history(conv_id, list(channel_history))
+                log.debug("Forked thread %s history from channel %s (%d msgs)",
+                          conv_id[:8], channel_id[:8], len(channel_history))
+
+        # Subscribe to manager events for this conversation
+        self._ensure_subscribed(mm_state, conv_id, channel_id, root_id,
+                                app_ctx, manager)
+
+        # Transport-specific context setup
+        def context_setup(ctx):
+            from .media import MattermostMediaHandler
+            ctx.media_handler = MattermostMediaHandler(self._http, channel_id=channel_id)
+            ctx.channel_id = channel_id
+            ctx.channel_name = ""
+            ctx.thread_id = root_id or ""
+            ctx.user_id = app_ctx.config.agent.user_id
+
+        # Start the turn via the manager
+        await manager.send_message(
+            conv_id, combined_text,
+            user_id=app_ctx.config.agent.user_id,
+            context_setup=context_setup,
+            archive_text=archive_text,
+            attachments=attachments or None,
+            command_ctx=command_ctx,
         )
-        if prepared is None:
-            return  # Command was fully handled
 
-        req_ctx, conv_display, cancel_task, sub_id, combined_text, archive_text = prepared
+    def _ensure_subscribed(self, mm_state, conv_id, channel_id, root_id,
+                           app_ctx, manager):
+        """Subscribe to manager events for a conversation, routing to ConversationDisplay."""
+        # Unsubscribe previous subscription if any (fresh per-turn display)
+        if mm_state.manager_sub_id:
+            manager.unsubscribe(conv_id, mm_state.manager_sub_id)
+            mm_state.manager_sub_id = ""
 
-        # Download user-uploaded files and store as conversation attachments
-        attachments = await self._download_attachments(
-            msgs, conv_id, app_ctx.config)
+        client = self
+        config = app_ctx.config
+        from .config import resolve_streaming
+        reflection_visibility = config.reflection.visibility
 
-        conv.busy = True
-        try:
-            response = await run_agent_turn(
-                req_ctx, combined_text, conv.history, archive_text=archive_text,
-                attachments=attachments or None)
-        except BaseException as e:
-            log.error(f"Agent turn failed: {e}")
-            from .media import ToolResult
-            response = ToolResult(text=f"[error: agent turn failed: {e}]")
-            # Show error on the placeholder instead of leaving it to be deleted
-            if conv_display._current_post_id and not conv_display._text_has_content:
-                conv_display._text_buffer = f"\u26a0\ufe0f {e}"
-                conv_display._text_has_content = True
-        finally:
-            if cancel_task:
-                cancel_task.cancel()
-                try:
-                    await cancel_task
-                except asyncio.CancelledError:
+        def is_streaming():
+            """Resolve streaming for the conversation's active model."""
+            conv_state = manager.get_state(conv_id)
+            model = conv_state.active_model if conv_state else ""
+            return resolve_streaming(config, model)
+        compaction_post_id = None
+
+        async def on_manager_event(event):
+            nonlocal compaction_post_id
+            cd = mm_state.conv_display
+            event_type = event.get("type", "")
+
+            if event_type == "chunk" and cd:
+                await cd.on_stream_chunk("text", event.get("text", ""))
+
+            elif event_type == "stream_done" and cd:
+                await cd.on_stream_chunk("done", None)
+
+            elif event_type == "tool_call_start" and cd:
+                await cd.on_stream_chunk("tool_call_start", event)
+
+            elif event_type == "llm_start" and cd:
+                await cd.on_llm_start(event.get("iteration", 1))
+
+            elif event_type == "llm_end" and cd:
+                if not is_streaming():
+                    content = event.get("content")
+                    if content:
+                        await cd.on_text_complete(content)
+
+            elif event_type == "text_before_tools" and cd:
+                content = event.get("text", "")
+                if content and not is_streaming():
+                    await cd.on_text_complete(content)
+
+            elif event_type == "tool_start" and cd:
+                await cd.on_tool_start(
+                    event.get("tool", "tool"), event.get("args", {}),
+                    tool_call_id=event.get("tool_call_id", ""))
+
+            elif event_type == "tool_status" and cd:
+                await cd.on_tool_status(
+                    event.get("tool", "tool"), event.get("message", ""),
+                    tool_call_id=event.get("tool_call_id", ""))
+
+            elif event_type == "tool_end" and cd:
+                await cd.on_tool_end(
+                    event.get("tool", "tool"),
+                    event.get("result_text", ""),
+                    event.get("display_text"),
+                    event.get("media", []),
+                    tool_call_id=event.get("tool_call_id", ""),
+                    display_short_text=event.get("display_short_text"),
+                )
+
+            elif event_type == "tool_media_uploaded" and cd:
+                await cd.on_tool_media_uploaded(
+                    event.get("file_ids", []),
+                    tool_call_id=event.get("tool_call_id", ""),
+                )
+
+            elif event_type == "confirmation_request" and cd:
+                confirmation_id = event.get("confirmation_id", "")
+                action_data = event.get("action_data", {})
+                command = action_data.get("command", event.get("message", ""))
+                suggested_pattern = action_data.get("suggested_pattern", "")
+                action_type = event.get("action_type", "")
+
+                # Create confirmation post with buttons/emoji (no legacy polling)
+                confirm_post_id = await cd.on_confirm_request(
+                    action_type, command, suggested_pattern,
+                    app_ctx.event_bus, "",  # context_id not needed for manager flow
+                    tool_call_id=event.get("tool_call_id", ""),
+                    conv_id=conv_id,
+                    confirmation_id=confirmation_id,
+                )
+
+                # Start emoji polling routed through the manager
+                if confirm_post_id:
+                    asyncio.create_task(
+                        client._poll_confirmation_manager(
+                            confirm_post_id, manager, conv_id,
+                            confirmation_id, action_type,
+                        )
+                    )
+
+            elif event_type == "reflection_result" and cd:
+                if reflection_visibility == "hidden":
                     pass
-            req_ctx.event_bus.unsubscribe(sub_id)
-            cancel_sub = getattr(conv_display, "_cancel_sub", None)
-            if cancel_sub is not None:
-                req_ctx.event_bus.unsubscribe(cancel_sub)
-            conv.last_response_time = time.monotonic()
+                elif reflection_visibility == "debug":
+                    passed = event.get("passed", True)
+                    critique = event.get("critique", "")
+                    retry_num = event.get("retry_number", 0)
+                    raw = event.get("raw_response", "")
+                    error = event.get("error", "")
+                    text = (f"\U0001f50d **Reflection** (retry {retry_num}): "
+                            f"{'PASS' if passed else 'FAIL'}")
+                    if critique:
+                        text += f"\nCritique: {critique}"
+                    if error:
+                        text += f"\nError: {error}"
+                    if raw:
+                        text += (f"\n\n<details><summary>Raw judge output"
+                                 f"</summary>\n\n{raw}\n</details>")
+                    await cd.on_tool_status("reflection", text)
+                elif not event.get("passed", True):
+                    critique = event.get("critique", "")
+                    retry_num = event.get("retry_number", 0)
+                    text = f"\U0001f50d Reflection retry {retry_num}: {critique}"
+                    await cd.on_tool_status("reflection", text)
 
-            # Persist per-conversation state for next turn
-            if req_ctx.skills.activated:
-                conv.skill_state = {
-                    "extra_tools": req_ctx.tools.extra,
-                    "extra_tool_definitions": req_ctx.tools.extra_definitions,
-                    "activated_skills": req_ctx.skills.activated,
-                }
-            if req_ctx.skip_vault_retrieval:
-                conv.skip_vault_retrieval = True
+            elif event_type == "vault_retrieval" and cd:
+                results = event.get("results") or []
+                if results:
+                    source_counts: dict[str, int] = {}
+                    for item in results:
+                        st = item.get("source_type", "unknown")
+                        source_counts[st] = source_counts.get(st, 0) + 1
+                    parts = []
+                    for st in ("page", "user", "journal", "wiki", "memory"):
+                        if source_counts.get(st):
+                            parts.append(f"{source_counts[st]} {st}")
+                    summary = ", ".join(parts) or "context"
+                    await cd.on_tool_status(
+                        "vault_retrieval",
+                        f"\U0001f9e0 Retrieved {summary}")
 
-            await conv_display.finalize()
-            conv.busy = False
-            conv.cancel = None
-            self.circuit_breaker.record_turn(conv)
+            elif event_type == "compaction_start":
+                if channel_id:
+                    compaction_post_id = await client.send(
+                        channel_id, "\U0001f4e6 Compacting conversation...",
+                        root_id=root_id,
+                    )
 
-        await self._post_response(
-            response, channel_id, root_id=req_ctx.thread_id or None,
-            conv_display=conv_display,
-        )
+            elif event_type == "compaction_end":
+                if compaction_post_id:
+                    try:
+                        elapsed = event.get("elapsed_sec", 0)
+                        before = event.get("before_messages", 0)
+                        after = event.get("after_messages", 0)
+                        est_tokens = event.get("estimated_tokens_before", 0)
+                        if elapsed < 60:
+                            duration = f"{elapsed:.0f}s"
+                        else:
+                            duration = f"{elapsed/60:.1f}m"
+                        details = f"{duration}"
+                        if before and after:
+                            details += f", {before} → {after} messages"
+                        if est_tokens:
+                            details += f", ~{est_tokens:,} tokens compacted"
+                        await client.edit_message(
+                            compaction_post_id,
+                            f"\U0001f4e6 Conversation compacted ({details})",
+                        )
+                    except Exception:
+                        pass
+                    compaction_post_id = None
 
-    async def _debounce_fire(self, conv_id, channel_id, conversations, app_ctx):
+            elif event_type == "message_complete" and event.get("final"):
+                # Post any response media (workspace image refs, etc.)
+                media = event.get("media") or []
+                if media and channel_id:
+                    try:
+                        from .media import MattermostMediaHandler, upload_and_collect
+                        handler = MattermostMediaHandler(
+                            client._http, channel_id=channel_id)
+                        file_ids = await upload_and_collect(
+                            handler, channel_id, media)
+                        if file_ids:
+                            await handler.send_with_media(
+                                channel_id, "", file_ids, root_id=root_id)
+                    except Exception as e:
+                        log.warning("Failed to post response media: %s", e)
+
+            elif event_type == "error" and cd:
+                error_msg = event.get("message", "Unknown error")
+                cd._text_buffer = f"\u26a0\ufe0f {error_msg}"
+                cd._text_has_content = True
+
+            elif event_type == "turn_complete":
+                if cd:
+                    await cd.finalize()
+                # Cancel the emoji stop-polling task
+                if mm_state.cancel_task and not mm_state.cancel_task.done():
+                    mm_state.cancel_task.cancel()
+                    mm_state.cancel_task = None
+                mm_state.last_response_time = time.monotonic()
+                mm_state.conv_display = None
+
+        mm_state.manager_sub_id = manager.subscribe(conv_id, on_manager_event)
+
+    async def _debounce_fire(self, conv_id, channel_id, mm_conversations,
+                             app_ctx, manager):
         """Wait for debounce window, then process accumulated messages."""
         debounce_sec = self.debounce_ms / 1000.0
         await asyncio.sleep(debounce_sec)
-        conv = self._get_conv(conversations, conv_id)
-        msgs = conv.pending_msgs
-        conv.pending_msgs = []
-        conv.debounce_timer = None
+        mm_state = self._get_mm_state(mm_conversations, conv_id)
+        msgs = mm_state.pending_msgs
+        mm_state.pending_msgs = []
+        mm_state.debounce_timer = None
         if msgs:
             await self._process_conversation(
-                conv_id, channel_id, msgs, app_ctx, conversations
+                conv_id, channel_id, msgs, app_ctx, mm_conversations, manager
             )
 
     # -- Main run loop ---------------------------------------------------------
 
-    async def run(self, app_ctx, shutdown_event):
-        """Run the bot: connect, listen for messages, and dispatch to the agent.
-
-        Called by the top-level orchestrator (runner.py). MCP, HTTP server,
-        heartbeat, and signal handling are managed by the orchestrator.
-        """
+    async def run(self, app_ctx, shutdown_event, manager=None):
+        """Run the bot: connect, listen for messages, and dispatch to the agent."""
         await self.connect()
 
-        # Track in-flight agent tasks for graceful shutdown
         agent_tasks = set()
-        conversations: dict[str, ConversationState] = {}
+        mm_conversations: dict[str, MattermostConvState] = {}
         user_last_msg_time: dict[str, float] = {}
 
         debounce_sec = self.debounce_ms / 1000.0
@@ -642,35 +677,35 @@ class MattermostClient:
                 return
             user_last_msg_time[user_id] = now
 
-            conv = self._get_conv(conversations, conv_id)
-            log.info(f"Message from {msg['sender_name']} in {conv_id[:8]} "
-                      f"(busy={conv.busy}): "
+            mm_state = self._get_mm_state(mm_conversations, conv_id)
+            log.info(f"Message from {msg['sender_name']} in {conv_id[:8]}: "
                       f"{msg['text'][:50]}")
 
             # Accumulate message by conversation
-            conv.pending_msgs.append(msg)
+            mm_state.pending_msgs.append(msg)
 
             # Reset debounce timer for this conversation
-            if conv.debounce_timer:
-                conv.debounce_timer.cancel()
+            if mm_state.debounce_timer:
+                mm_state.debounce_timer.cancel()
 
             async def debounce_and_process():
                 await asyncio.sleep(debounce_sec)
-                conv_inner = self._get_conv(conversations, conv_id)
-                msgs = conv_inner.pending_msgs
-                conv_inner.pending_msgs = []
-                conv_inner.debounce_timer = None
+                mm_inner = self._get_mm_state(mm_conversations, conv_id)
+                msgs = mm_inner.pending_msgs
+                mm_inner.pending_msgs = []
+                mm_inner.debounce_timer = None
                 if msgs:
                     task = asyncio.current_task()
                     agent_tasks.add(task)
                     try:
                         await self._process_conversation(
-                            conv_id, channel_id, msgs, app_ctx, conversations
+                            conv_id, channel_id, msgs, app_ctx,
+                            mm_conversations, manager,
                         )
                     finally:
                         agent_tasks.discard(task)
 
-            conv.debounce_timer = asyncio.create_task(debounce_and_process())
+            mm_state.debounce_timer = asyncio.create_task(debounce_and_process())
 
         # Wrap the sync callback from WebSocket into async
         def on_message_sync(msg):
@@ -685,202 +720,18 @@ class MattermostClient:
             await self.close()
             log.info("Mattermost client stopped")
 
-    # -- Progress subscription -------------------------------------------------
+    # -- Confirmation polling (manager-based) ----------------------------------
 
-    def _subscribe_progress(self, event_bus, context_id,
-                            channel_id=None, root_id=None, streaming=False,
-                            conv_display=None, reflection_visibility="hidden"):
-        """Subscribe to progress events and route to ConversationDisplay.
-
-        Returns the subscription ID for later unsubscribe.
-        """
-        client = self
-        compaction_post_id = None
-
-        # -- Handlers for each event type --
-        # Note: handlers that reference `cd` are only added to the dispatch
-        # dict when conv_display is not None (see dispatch table below).
-        cd = conv_display  # narrowed alias for closures
-
-        async def handle_llm_start(event):
-            assert cd is not None
-            await cd.on_llm_start(event.get("iteration", 1))
-
-        async def handle_llm_end(event):
-            assert cd is not None
-            if not streaming:
-                content = event.get("content")
-                if content:
-                    await cd.on_text_complete(content)
-
-        async def handle_text_before_tools(event):
-            assert cd is not None
-            content = event.get("text", "")
-            if content and not streaming:
-                await cd.on_text_complete(content)
-
-        async def handle_tool_start(event):
-            assert cd is not None
-            await cd.on_tool_start(
-                event.get("tool", "tool"), event.get("args", {}),
-                tool_call_id=event.get("tool_call_id", ""))
-
-        async def handle_tool_status(event):
-            assert cd is not None
-            await cd.on_tool_status(
-                event.get("tool", "tool"), event.get("message", ""),
-                tool_call_id=event.get("tool_call_id", ""))
-
-        async def handle_tool_end(event):
-            assert cd is not None
-            await cd.on_tool_end(
-                event.get("tool", "tool"),
-                event.get("result_text", ""),
-                event.get("display_text"),
-                event.get("media", []),
-                tool_call_id=event.get("tool_call_id", ""),
-                display_short_text=event.get("display_short_text"),
-            )
-
-        async def handle_tool_media_uploaded(event):
-            assert cd is not None
-            await cd.on_tool_media_uploaded(
-                event.get("file_ids", []),
-                tool_call_id=event.get("tool_call_id", ""),
-            )
-
-        async def handle_tool_confirm_request(event):
-            assert cd is not None
-            await cd.on_confirm_request(
-                event.get("tool", "tool"),
-                event.get("command", ""),
-                event.get("suggested_pattern", ""),
-                event_bus, context_id,
-                tool_call_id=event.get("tool_call_id", ""),
-            )
-
-        async def handle_reflection_result(event):
-            assert cd is not None
-            visibility = reflection_visibility
-            if visibility == "hidden":
-                return
-            passed = event.get("passed", True)
-            critique = event.get("critique", "")
-            retry_num = event.get("retry_number", 0)
-            raw = event.get("raw_response", "")
-            error = event.get("error", "")
-            if visibility == "debug":
-                text = (f"\U0001f50d **Reflection** (retry {retry_num}): "
-                        f"{'PASS' if passed else 'FAIL'}")
-                if critique:
-                    text += f"\nCritique: {critique}"
-                if error:
-                    text += f"\nError: {error}"
-                if raw:
-                    text += f"\n\n<details><summary>Raw judge output</summary>\n\n{raw}\n</details>"
-                await cd.on_tool_status("reflection", text)
-            elif not passed:
-                text = (f"\U0001f50d Reflection retry {retry_num}: "
-                        f"{critique}")
-                await cd.on_tool_status("reflection", text)
-
-        async def handle_vault_retrieval(event):
-            assert cd is not None
-            results = event.get("results") or []
-            if results:
-                source_counts: dict[str, int] = {}
-                for item in results:
-                    st = item.get("source_type", "unknown")
-                    source_counts[st] = source_counts.get(st, 0) + 1
-                parts = []
-                for st in ("page", "user", "journal", "wiki", "memory"):
-                    if source_counts.get(st):
-                        parts.append(f"{source_counts[st]} {st}")
-                summary = ", ".join(parts) or "context"
-                await cd.on_tool_status(
-                    "vault_retrieval",
-                    f"\U0001f9e0 Retrieved {summary}")
-
-        async def handle_compaction_start(event):
-            nonlocal compaction_post_id
-            if channel_id:
-                compaction_post_id = await client.send(
-                    channel_id, "\U0001f4e6 Compacting conversation...",
-                    root_id=root_id,
-                )
-
-        async def handle_compaction_end(event):
-            nonlocal compaction_post_id
-            if not compaction_post_id:
-                return
-            try:
-                elapsed = event.get("elapsed_sec", 0)
-                before = event.get("before_messages", 0)
-                after = event.get("after_messages", 0)
-                est_tokens = event.get("estimated_tokens_before", 0)
-                if elapsed < 60:
-                    duration = f"{elapsed:.0f}s"
-                else:
-                    duration = f"{elapsed/60:.1f}m"
-                details = f"{duration}"
-                if before and after:
-                    details += f", {before} → {after} messages"
-                if est_tokens:
-                    details += f", ~{est_tokens:,} tokens compacted"
-                await client.edit_message(
-                    compaction_post_id,
-                    f"\U0001f4e6 Conversation compacted ({details})",
-                )
-            except Exception:
-                pass  # best effort
-            compaction_post_id = None
-
-        # -- Dispatch table --
-        # conv_display-dependent handlers require conv_display to be set;
-        # compaction handlers work independently.
-        from typing import Any, Callable
-        dispatch: dict[str, Callable[..., Any]] = {}
-        if conv_display:
-            dispatch.update({
-                "llm_start": handle_llm_start,
-                "llm_end": handle_llm_end,
-                "text_before_tools": handle_text_before_tools,
-                "tool_start": handle_tool_start,
-                "tool_status": handle_tool_status,
-                "tool_end": handle_tool_end,
-                "tool_media_uploaded": handle_tool_media_uploaded,
-                "tool_confirm_request": handle_tool_confirm_request,
-                "reflection_result": handle_reflection_result,
-                "vault_retrieval": handle_vault_retrieval,
-            })
-        dispatch["compaction_start"] = handle_compaction_start
-        dispatch["compaction_end"] = handle_compaction_end
-
-        async def on_progress(event):
-            if event.get("context_id") != context_id:
-                return
-            handler = dispatch.get(event.get("type"))
-            if handler:
-                await handler(event)
-
-        return event_bus.subscribe(on_progress)
-
-    # -- Reaction polling ------------------------------------------------------
-
-    async def _poll_confirmation(self, post_id, event_bus, context_id, tool_name,
-                                 timeout=60, poll_interval=2, tool_call_id=""):
-        """Poll a post for thumbs up/down reactions to approve/deny a tool."""
+    async def _poll_confirmation_manager(self, post_id, manager, conv_id,
+                                         confirmation_id, action_type,
+                                         timeout=60, poll_interval=2):
+        """Poll a post for reactions to resolve a confirmation via the manager."""
 
         async def _resolve(approved, always=False, add_pattern=False, label=""):
-            await event_bus.publish({
-                "type": "tool_confirm_response",
-                "context_id": context_id,
-                "tool": tool_name,
-                "approved": approved,
-                **({"tool_call_id": tool_call_id} if tool_call_id else {}),
-                **({"always": True} if always else {}),
-                **({"add_pattern": True} if add_pattern else {}),
-            })
+            await manager.respond_to_confirmation(
+                conv_id, confirmation_id,
+                approved=approved, always=always, add_pattern=add_pattern,
+            )
             try:
                 resp = await self._http.get(f"/posts/{post_id}")
                 original_text = resp.json().get("message", "") if resp.status_code == 200 else ""
@@ -893,18 +744,18 @@ class MattermostClient:
             try:
                 resp = await self._http.get(f"/posts/{post_id}/reactions")
                 resp.raise_for_status()
-                reactions = resp.json()
+                reactions = resp.json() or []
                 for r in reactions:
                     emoji = r.get("emoji_name", "")
                     user_id = r.get("user_id", "")
                     if user_id == self.bot_user_id:
                         continue
-                    if emoji in ("notebook",) and tool_name == "shell":
+                    if emoji in ("notebook",) and action_type == "run_shell_command":
                         log.info(f"Tool approved with pattern by {user_id}")
                         await _resolve(True, add_pattern=True,
                                        label="\U0001f4d3 approved + pattern added")
                         return
-                    elif emoji in ("white_check_mark", "heavy_check_mark") and tool_name != "shell":
+                    elif emoji in ("white_check_mark", "heavy_check_mark") and action_type != "run_shell_command":
                         log.info(f"Tool always-approved by {user_id}")
                         await _resolve(True, always=True, label="\u2705 always approved")
                         return
@@ -920,7 +771,7 @@ class MattermostClient:
                 log.debug(f"Reaction poll error: {e}")
             await asyncio.sleep(poll_interval)
 
-        log.info(f"Confirmation timed out for {tool_name}")
+        log.info(f"Confirmation timed out for {action_type}")
         await _resolve(False, label="\u23f0 timed out")
 
     async def _poll_cancel(self, post_id, cancel_event, poll_interval=2):
@@ -929,7 +780,7 @@ class MattermostClient:
             try:
                 resp = await self._http.get(f"/posts/{post_id}/reactions")
                 if resp.status_code == 200:
-                    reactions = resp.json()
+                    reactions = resp.json() or []
                     for r in reactions:
                         emoji = r.get("emoji_name", "")
                         user_id = r.get("user_id", "")
@@ -968,7 +819,7 @@ class MattermostClient:
         return None
 
     def _make_heartbeat_cycle(self, _channel_id, event_bus, config):
-        """Create an on_cycle callback that runs sections and posts results as they complete."""
+        """Create an on_cycle callback that runs sections and posts results."""
 
         async def on_cycle():
             from .tools.heartbeat_tools import _guarded_heartbeat

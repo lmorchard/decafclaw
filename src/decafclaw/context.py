@@ -79,6 +79,7 @@ class Context:
         self.wiki_page: str | None = None  # open wiki page from web UI
         self.active_model: str = ""  # named model config from config.model_configs
         self.task_mode: str = ""  # "heartbeat" | "scheduled" | "" (interactive)
+        self.request_confirmation: Any = None  # set by ConversationManager
 
     @classmethod
     def for_task(
@@ -175,6 +176,7 @@ class Context:
         child.skip_vault_retrieval = self.skip_vault_retrieval
         child.wiki_page = self.wiki_page
         child.active_model = self.active_model
+        child.request_confirmation = self.request_confirmation
         # Share skills + composer (concurrent tool calls read but don't mutate)
         child.skills = self.skills
         child.composer = self.composer

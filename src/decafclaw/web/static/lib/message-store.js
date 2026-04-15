@@ -143,6 +143,21 @@ export class MessageStore {
         }
         return true;
 
+      case 'user_message':
+        // Multi-tab sync: add user message if not already present
+        // (the originating tab adds it locally before the event arrives)
+        if (msg.conv_id === currentConvId) {
+          const last = this.#currentMessages[this.#currentMessages.length - 1];
+          if (!last || last.role !== 'user' || last.content !== msg.text) {
+            this.#currentMessages.push({
+              role: 'user',
+              content: msg.text,
+              timestamp: new Date().toISOString(),
+            });
+          }
+        }
+        return true;
+
       case 'command_ack':
         if (msg.conv_id === currentConvId) {
           this.#currentMessages.push({

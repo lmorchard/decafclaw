@@ -24,7 +24,7 @@ _CONFIG_FILES = [
 ]
 
 
-def create_app(config, event_bus, app_ctx=None) -> Starlette:
+def create_app(config, event_bus, app_ctx=None, manager=None) -> Starlette:
     """Create the Starlette ASGI app with routes."""
 
     async def health(request: Request) -> JSONResponse:
@@ -62,6 +62,10 @@ def create_app(config, event_bus, app_ctx=None) -> Starlette:
             original_message = context.get("original_message", "")
             tool_call_id = context.get("tool_call_id", "")
 
+        # Extract manager-routing fields from token data
+        conv_id = (token_data or {}).get("conv_id", "") or context.get("conv_id", "")
+        confirmation_id = (token_data or {}).get("confirmation_id", "") or context.get("confirmation_id", "")
+
         log.info(f"Confirm callback: action={action} tool={tool_name} context={context_id[:8]}")
 
         # Map action to event fields
@@ -69,16 +73,22 @@ def create_app(config, event_bus, app_ctx=None) -> Starlette:
         always = action == "always"
         add_pattern = action == "add_pattern"
 
-        # Publish confirmation event on the event bus
-        await event_bus.publish({
-            "type": "tool_confirm_response",
-            "context_id": context_id,
-            "tool": tool_name,
-            "approved": approved,
-            **({"tool_call_id": tool_call_id} if tool_call_id else {}),
-            **({"always": True} if always else {}),
-            **({"add_pattern": True} if add_pattern else {}),
-        })
+        # Route through manager if available, fall back to event bus
+        if manager and conv_id and confirmation_id:
+            await manager.respond_to_confirmation(
+                conv_id, confirmation_id,
+                approved=approved, always=always, add_pattern=add_pattern,
+            )
+        else:
+            await event_bus.publish({
+                "type": "tool_confirm_response",
+                "context_id": context_id,
+                "tool": tool_name,
+                "approved": approved,
+                **({"tool_call_id": tool_call_id} if tool_call_id else {}),
+                **({"always": True} if always else {}),
+                **({"add_pattern": True} if add_pattern else {}),
+            })
 
         # Determine result label
         labels = {
@@ -1024,7 +1034,8 @@ def create_app(config, event_bus, app_ctx=None) -> Starlette:
 
     async def ws_chat(websocket):
         from .web.websocket import websocket_chat
-        await websocket_chat(websocket, config, event_bus, app_ctx)
+        await websocket_chat(websocket, config, event_bus, app_ctx,
+                             manager=manager)
 
     async def handle_cancel(request: Request) -> JSONResponse:
         """Handle Mattermost interactive button callback for stop/cancel."""
@@ -1035,13 +1046,16 @@ def create_app(config, event_bus, app_ctx=None) -> Starlette:
             log.warning("Cancel callback rejected: invalid or expired token")
             return JSONResponse({"error": "unauthorized"}, status_code=403)
 
-        conv_id = token_data["context_id"]
+        conv_id = token_data.get("conv_id", "") or token_data.get("context_id", "")
         log.info(f"Cancel button pressed for conversation {conv_id[:8]}")
 
-        await event_bus.publish({
-            "type": "cancel_turn",
-            "conv_id": conv_id,
-        })
+        if manager and conv_id:
+            await manager.cancel_turn(conv_id)
+        else:
+            await event_bus.publish({
+                "type": "cancel_turn",
+                "conv_id": conv_id,
+            })
 
         return JSONResponse({
             "update": {
@@ -1107,11 +1121,11 @@ def create_app(config, event_bus, app_ctx=None) -> Starlette:
 _http_server = None  # uvicorn.Server instance, set by run_http_server
 
 
-async def run_http_server(config, event_bus, app_ctx=None) -> None:
+async def run_http_server(config, event_bus, app_ctx=None, manager=None) -> None:
     """Start the HTTP server as an asyncio task."""
     global _http_server
     import uvicorn
-    app = create_app(config, event_bus, app_ctx=app_ctx)
+    app = create_app(config, event_bus, app_ctx=app_ctx, manager=manager)
     server_config = uvicorn.Config(
         app,
         host=config.http.host,

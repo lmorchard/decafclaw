@@ -230,9 +230,20 @@ class ConversationDisplay:
     # -- Confirmation ----------------------------------------------------------
 
     async def on_confirm_request(self, tool_name, command, suggested_pattern,
-                                  event_bus, context_id, tool_call_id=""):
-        """Tool needs confirmation — show prompt with buttons and/or emoji."""
+                                  event_bus, context_id, tool_call_id="",
+                                  conv_id="", confirmation_id="") -> str:
+        """Tool needs confirmation — show prompt with buttons and/or emoji.
+
+        Returns the post ID of the confirmation message so the caller
+        can start emoji polling via the conversation manager.
+        """
         from .mattermost_ui import build_confirm_buttons
+
+        # Map action types (e.g., "run_shell_command") back to legacy
+        # tool names the display and button builder expect.
+        _LEGACY_TOOL_NAMES = {"run_shell_command": "shell",
+                              "activate_skill": "activate_skill"}
+        tool_name = _LEGACY_TOOL_NAMES.get(tool_name) or tool_name
 
         config = self._config
 
@@ -240,7 +251,6 @@ class ConversationDisplay:
         msg = f"\U0001f6a8 **Confirm {tool_name}:**\n```\n{command}\n```"
 
         # Add emoji instructions (unless disabled)
-        # Show emoji instructions if enabled (default: on when HTTP off, off when HTTP on)
         show_emoji = not config or config.mattermost.enable_emoji_confirms
         if show_emoji:
             if tool_name == "shell" and suggested_pattern:
@@ -257,11 +267,13 @@ class ConversationDisplay:
             attachments = build_confirm_buttons(
                 config, tool_name, command, suggested_pattern,
                 context_id, msg, tool_call_id=tool_call_id,
+                conv_id=conv_id, confirmation_id=confirmation_id,
             )
             if attachments:
                 import json as _json
                 log.debug(f"Confirm buttons: {_json.dumps(attachments, indent=2)}")
 
+        confirm_post_id = ""
         tool_post_id = self._tool_posts.get(tool_call_id)
         if tool_post_id:
             # Edit existing post — can't add attachments to edit, so send new
@@ -283,14 +295,7 @@ class ConversationDisplay:
             )
             self._tool_posts[tool_call_id] = confirm_post_id
 
-        # Start emoji reaction polling if emoji confirms are enabled
-        if confirm_post_id and show_emoji:
-            asyncio.create_task(
-                self.client._poll_confirmation(
-                    confirm_post_id, event_bus, context_id, tool_name,
-                    tool_call_id=tool_call_id,
-                )
-            )
+        return confirm_post_id or ""
 
     # -- Finalization ----------------------------------------------------------
 
