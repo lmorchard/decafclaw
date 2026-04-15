@@ -11,6 +11,7 @@ log = logging.getLogger(__name__)
 DEFAULT_ALWAYS_LOADED = {
     "activate_skill", "shell", "workspace_read", "workspace_write",
     "web_fetch", "current_time", "delegate_task",
+    "checklist_create", "checklist_step_done", "checklist_abort", "checklist_status",
 }
 
 

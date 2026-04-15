@@ -54,7 +54,7 @@ See [docs/installation.md](docs/installation.md) for full setup and configuratio
 | `vault_backlinks` | Find pages linking to a given page |
 | `conversation_search` | Search past conversations (substring) |
 | `conversation_compact` | Manually trigger conversation compaction |
-| `todo_add/complete/list/clear` | Per-conversation to-do lists |
+| `checklist_create/step_done/abort/status` | Step-by-step checklist execution loop |
 | `workspace_read/write/list` | Sandboxed file operations (read supports line ranges) |
 | `workspace_edit` | Exact string replacement in workspace files |
 | `workspace_insert` | Insert text at a specific line number |

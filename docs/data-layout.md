@@ -23,7 +23,7 @@ data/{agent_id}/                    # Admin-level (read-only to agent)
         2026-03-15.md
     conversations/                  # Conversation archives (JSONL)
       {conv_id}.jsonl
-    todos/                          # Per-conversation to-do lists
+    todos/                          # Per-conversation checklists
       {conv_id}.md
     skills/                         # Agent-writable skills (ClawHub installs)
       weather/
@@ -50,7 +50,7 @@ The key architectural decision: **admin files are read-only to the agent, worksp
 
 ### Workspace (`data/{agent_id}/workspace/`)
 
-- All agent-generated state: memories, conversations, todos, embeddings
+- All agent-generated state: memories, conversations, checklists, embeddings
 - File tools (`workspace_read`, `workspace_write`, `workspace_list`) are sandboxed to this directory
 - Path traversal outside the workspace is rejected
 - Skills installed by the agent (e.g., from ClawHub) land here
@@ -69,6 +69,6 @@ The full paths are:
 
 ## Design principles
 
-- **Files on disk, human-readable.** Markdown for memories and todos, JSONL for conversation archives, SQLite for embeddings, JSON for config. Everything is inspectable and editable.
+- **Files on disk, human-readable.** Markdown for memories and checklists, JSONL for conversation archives, SQLite for embeddings, JSON for config. Everything is inspectable and editable.
 - **Crash-recoverable.** Append-only writes for archives and memories. No in-memory-only state that would be lost on crash.
 - **One agent, one directory.** All state for an agent instance lives under `data/{agent_id}/`. Multiple agents can coexist by using different IDs.
