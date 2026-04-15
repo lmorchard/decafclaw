@@ -82,6 +82,63 @@
   - Added conventions for ConversationManager, persistent confirmations, transport event streams
 - All 1296 tests pass, lint clean, type-check clean, JS type-check clean
 
-## Summary
+---
 
-This session extracted a ConversationManager as the central orchestrator for agent loops, replacing transport-coupled agent turn invocation with a clean adapter pattern. All three transports (WebSocket, Mattermost, interactive terminal) now delegate to the manager. Confirmations are persisted as first-class conversation messages with typed action handlers, surviving page reload and server restart. The architecture enables future transport additions (Discord, Telegram, etc.) as thin adapters over the same manager API.
+## Retrospective
+
+### Recap
+
+Started with two bugs (#235 confirmations in wrong conversation, #258 confirmations lost on reload) and discovered they pointed to a deeper architectural issue: the agent loop was coupled to the WebSocket handler. The session expanded into a full architectural refactor:
+
+- Extracted `ConversationManager` as the central orchestrator for agent loops
+- Made all three transports (WebSocket, Mattermost, interactive terminal) thin adapters
+- Persisted confirmations as first-class conversation messages in the JSONL archive
+- Added startup recovery for interrupted confirmations
+- Moved circuit breaker and cancel-on-new-message from transport-specific to manager-level
+- Added multi-tab sync (user messages, confirmation responses)
+- Fixed a pre-existing Vertex API bug (non-object tool results rejected by Struct type)
+
+Final diff: +3,348 / -1,251 across 25 files, 1300 tests passing.
+
+### Divergences from plan
+
+The original plan had 7 phases. The phases themselves held up well, but the PR review and manual testing added significant work:
+
+- **Self-review found 8 issues** (4 critical) that the phase-by-phase execution missed: HTTP button callbacks not wired to manager, emoji stop-polling disconnected, empty confirm UI, thread-fork history lost, response media not posted, etc.
+- **Manual testing found 5 more issues**: duplicate confirmations on reload, busy dots on all conversations, blank user messages in history, multi-tab sync gaps (user messages and confirmation responses), and cross-conversation confirmation leakage via accumulated subscriptions.
+- **Copilot review found 3 actionable issues**: confirm_request not filtered by conv_id (would have reintroduced #235), stale streaming flag per-model, and missing manager=None guard.
+- **Circuit breaker moved to manager** was Les's suggestion during review, not in the original plan. Good call — it protects all transports now.
+
+The brainstorm phase was valuable — it expanded scope from "fix two bugs" to "redesign the architecture" which was the right call. The spec accurately captured the target state.
+
+### Insights
+
+- **Transport adapter pattern works well.** The manager API (`send_message`, `respond_to_confirmation`, `cancel_turn`, `subscribe`) is clean enough that each transport adapter is straightforward. Adding a new channel (Discord, Telegram) would be a contained effort.
+- **Confirmations as archive messages is elegant.** No new storage mechanism, backward-compatible with JSONL, naturally filtered from LLM context by the existing `LLM_ROLES` whitelist.
+- **The event bus remains useful alongside the manager.** Heartbeat, scheduled tasks, and the eval runner still use the global event bus directly. The manager bridges global events to per-conversation streams — both patterns coexist cleanly.
+- **Multi-tab sync is subtle.** User messages, confirmation requests, confirmation responses, and busy state all need cross-tab handling with deduplication. Each required a slightly different approach.
+- **Mattermost button callbacks are fragile.** The callback URL must be reachable from the MM server's network, button IDs can't have underscores, and DHCP IP changes silently break everything. Documented in CLAUDE.md for future reference.
+- **Action type → legacy tool name mapping** was a recurring issue. The new `ConfirmationAction` enum values (`run_shell_command`) don't match the legacy tool names (`shell`) that the UI and button builder expect. Needed `_legacy_tool_name` in both WebSocket and Mattermost display paths.
+
+### Efficiency
+
+- **Phases 1-4 went fast** — clean incremental work, each phase left the system working.
+- **Phase 5 (Mattermost) was the biggest** as expected — lots of transport-specific logic to preserve while delegating state management.
+- **Post-execution review was the longest phase** — three rounds of code review plus manual testing found ~16 issues total. This was time well spent; most of those issues would have been user-facing bugs.
+- **The brainstorm was well-paced** — ~8 questions, each building on the last. Scope expanded naturally from "fix confirmations" to "extract conversation manager" through genuine discovery rather than over-engineering.
+
+### Process improvements
+
+- **Manual testing earlier would help.** The first code review (automated) missed issues that were immediately obvious in manual testing (duplicate confirmations, busy dots). Consider a quick smoke test after Phase 3 (first transport migrated) before continuing to Phases 4-5.
+- **Drop cost tracking from retros.** Per Les's feedback, it's not a useful signal.
+- **Action type / legacy name mapping should have been designed upfront.** The `ConfirmationAction` enum introduced a naming mismatch that caused bugs in both the web UI and Mattermost. If the spec had specified "action types map to legacy tool names for display," we'd have avoided several rounds of fixes.
+
+### Conversation turns
+
+~40 turns across brainstorm, planning, execution, review, and manual testing fixes.
+
+### Other highlights
+
+- The Vertex API fix (wrapping non-object JSON tool results) was a genuine pre-existing bug discovered by coincidence during testing. `grep -c` returns a bare integer, which `json.loads` parses successfully but Vertex rejects as an invalid Struct value. Would have eventually surfaced from any tool returning numeric output.
+- The Mattermost button debugging was a good example of a red herring — looked like a code bug but was actually a network configuration issue (laptop changed IPs). The debug logging bump to INFO was the right diagnostic step.
+- Les's suggestion to move the circuit breaker to the manager was a good architectural instinct — it unified a protection mechanism that was previously Mattermost-only.

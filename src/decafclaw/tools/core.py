@@ -1,4 +1,4 @@
-"""Core tools — web fetch, debug, think, compaction."""
+"""Core tools — web fetch, debug, time, context stats."""
 
 import json
 import logging

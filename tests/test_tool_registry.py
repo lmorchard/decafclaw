@@ -133,15 +133,15 @@ class TestBuildDeferredListText:
         assert build_deferred_list_text([]) == ""
 
     def test_core_tools(self):
-        core_names = {"workspace_edit", "todo_add"}
+        core_names = {"workspace_edit", "checklist_create"}
         tools = [
             _make_tool_def("workspace_edit", "Edit a file"),
-            _make_tool_def("todo_add", "Add a todo"),
+            _make_tool_def("checklist_create", "Create a checklist"),
         ]
         text = build_deferred_list_text(tools, core_names=core_names)
         assert "### Core" in text
         assert "workspace_edit" in text
-        assert "todo_add" in text
+        assert "checklist_create" in text
 
     def test_mcp_tools_grouped(self):
         tools = [

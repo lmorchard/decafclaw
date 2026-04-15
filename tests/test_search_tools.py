@@ -25,7 +25,7 @@ SAMPLE_POOL = [
     _make_tool_def("workspace_search", "Search for a regex pattern across files."),
     _make_tool_def("mcp__playwright__click", "Click an element on the page."),
     _make_tool_def("mcp__playwright__navigate", "Navigate to a URL."),
-    _make_tool_def("todo_add", "Add an item to the to-do list."),
+    _make_tool_def("checklist_create", "Create a checklist of steps."),
 ]
 
 
@@ -70,9 +70,9 @@ class TestKeywordSearch:
 
 class TestExactSelection:
     def test_select_by_name(self, search_ctx):
-        result = tool_search(search_ctx, "select:vault_read,todo_add")
+        result = tool_search(search_ctx, "select:vault_read,checklist_create")
         assert "vault_read" in result.text
-        assert "todo_add" in result.text
+        assert "checklist_create" in result.text
         assert "2 tool(s) loaded" in result.text
 
     def test_select_single(self, search_ctx):
