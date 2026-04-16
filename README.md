@@ -69,9 +69,10 @@ See [docs/installation.md](docs/installation.md) for full setup and configuratio
 | `shell` | Run shell commands (requires user confirmation) |
 | `activate_skill` | Load a skill's tools into the conversation |
 | `refresh_skills` | Re-scan skill directories |
-| `mcp_status` | Show/restart MCP server connections |
 | `heartbeat_trigger` | Manually fire a heartbeat cycle |
 | `delegate_task` | Delegate a subtask to a child agent (call multiple times for parallel work) |
+
+Background process management (start/status/stop/list) is available via the bundled `background` skill (auto-activates on use). MCP administration (status/resources/prompts/restart) is available via the bundled `mcp` skill. External MCP server tools (`mcp__server__tool`) appear in the catalog automatically when their servers are connected.
 
 Skills and MCP servers provide additional tools on demand.
 

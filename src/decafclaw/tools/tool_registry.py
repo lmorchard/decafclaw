@@ -1,17 +1,27 @@
-"""Tool registry — token estimation, classification, and deferred list building."""
+"""Tool registry — priority classification, token estimation, deferred catalog."""
 
 import json
 import logging
+from enum import Enum
 
 from ..util import estimate_tokens
 
 log = logging.getLogger(__name__)
 
-# Tools that are always sent to the LLM, even in deferred mode.
-DEFAULT_ALWAYS_LOADED = {
-    "activate_skill", "shell", "workspace_read", "workspace_write",
-    "web_fetch", "current_time", "delegate_task",
-    "checklist_create", "checklist_step_done", "checklist_abort", "checklist_status",
+
+class Priority(str, Enum):
+    """Tool priority tiers. Used as str values in tool definition dicts
+    via the top-level ``"priority"`` field."""
+    CRITICAL = "critical"
+    NORMAL = "normal"
+    LOW = "low"
+
+
+# Rank used for sorting. Higher rank = higher priority.
+_PRIORITY_RANK = {
+    Priority.CRITICAL.value: 2,
+    Priority.NORMAL.value: 1,
+    Priority.LOW.value: 0,
 }
 
 
@@ -20,19 +30,41 @@ def estimate_tool_tokens(tool_defs: list[dict]) -> int:
     return sum(estimate_tokens(json.dumps(td)) for td in tool_defs)
 
 
-def get_always_loaded_names(config) -> set[str]:
-    """Return the set of tool names that should always be loaded.
+def get_critical_names(config) -> set[str]:
+    """Return the set of tool names forced to `critical` priority.
 
-    Includes tools from always-loaded skills (e.g. vault).
+    Includes:
+    - User env override (``config.agent.critical_tools``)
+    - Tool names from always-loaded skills (cached on config after
+      first activation)
     """
-    extra = set(config.agent.always_loaded_tools)
-    # Include tool names from always-loaded skills
+    extra = set(config.agent.critical_tools)
     for skill in getattr(config, "discovered_skills", []):
         if skill.always_loaded and skill.has_native_tools:
-            # Tool names aren't known until loaded, but we store them on config
-            # after first activation. Check the cached set.
             extra |= config.always_loaded_skill_tools
-    return DEFAULT_ALWAYS_LOADED | extra
+    return extra
+
+
+def get_priority(tool_def: dict, config, force_critical: set[str]) -> str:
+    """Resolve the priority for a single tool definition.
+
+    Precedence (highest to lowest):
+    1. Name is in ``force_critical`` (env override, activated skills,
+       fetched, always-loaded skill tools) → ``critical``
+    2. Declared ``priority`` field on the tool def → use that
+    3. Default → ``normal`` (e.g. MCP tools, which the MCP layer doesn't
+       tag with priority; or any tool that forgot to declare — a test
+       invariant fails fast for core tools missing this field)
+    """
+    name = tool_def.get("function", {}).get("name", "")
+    if name in force_critical:
+        return Priority.CRITICAL.value
+
+    declared = tool_def.get("priority")
+    if declared in _PRIORITY_RANK:
+        return declared
+
+    return Priority.NORMAL.value
 
 
 def classify_tools(
@@ -41,40 +73,80 @@ def classify_tools(
     fetched_names: set[str] | None = None,
     skill_tool_names: set[str] | None = None,
 ) -> tuple[list[dict], list[dict]]:
-    """Split tool definitions into active and deferred sets.
+    """Split tool definitions into active and deferred sets by priority.
 
-    If total token cost is under the budget and count is under max_active_tools,
-    returns (all, []) — no deferral. Otherwise: active = always-loaded +
-    fetched + skill tools; deferred = everything else.
+    Algorithm:
+    1. Resolve every tool's priority.
+    2. All ``critical`` tools enter the active set (hard floor, included
+       even if over budget).
+    3. ``normal`` tools added one at a time while under
+       ``tool_context_budget`` and ``max_active_tools``.
+    4. ``low`` tools added only if room remains after ``normal``.
+    5. Everything else goes to deferred.
+
+    Input order within a tier is preserved so callers can influence
+    tie-breaks by ordering the input list.
     """
-    if fetched_names is None:
-        fetched_names = set()
-    if skill_tool_names is None:
-        skill_tool_names = set()
+    fetched_names = fetched_names or set()
+    skill_tool_names = skill_tool_names or set()
+
+    # Build the "force critical" set
+    force_critical = get_critical_names(config)
+    force_critical |= fetched_names
+    force_critical |= skill_tool_names
 
     budget = config.tool_context_budget
-    total_tokens = estimate_tool_tokens(all_tool_defs)
-
     max_active = getattr(config.agent, "max_active_tools", 40)
-    if total_tokens <= budget and len(all_tool_defs) <= max_active:
-        return all_tool_defs, []
 
-    always_loaded = get_always_loaded_names(config)
-    include_names = always_loaded | fetched_names | skill_tool_names
-
-    active = []
-    deferred = []
+    # Bucket by resolved priority, preserving input order. Compute
+    # each tool's token cost once up front — classify_tools runs every
+    # agent iteration, so avoid re-encoding JSON per tool per fill loop.
+    critical: list[dict] = []
+    normal: list[dict] = []
+    low: list[dict] = []
+    token_cost: dict[int, int] = {}
     for td in all_tool_defs:
-        name = td.get("function", {}).get("name", "")
-        if name in include_names:
-            active.append(td)
+        token_cost[id(td)] = estimate_tool_tokens([td])
+        prio = get_priority(td, config, force_critical)
+        if prio == Priority.CRITICAL.value:
+            critical.append(td)
+        elif prio == Priority.LOW.value:
+            low.append(td)
         else:
-            deferred.append(td)
+            normal.append(td)
 
-    log.info(
-        f"Tool deferral active: {total_tokens} tokens > {budget} budget, "
-        f"{len(active)} active, {len(deferred)} deferred"
-    )
+    # Start with critical as the hard floor
+    active = list(critical)
+    active_tokens = sum(token_cost[id(td)] for td in active)
+    deferred: list[dict] = []
+
+    if active_tokens > budget or len(active) > max_active:
+        log.warning(
+            "Critical tool set exceeds budget or count: "
+            "%d tools / %d tokens (budget %d, max %d). "
+            "Critical tools are included anyway.",
+            len(active), active_tokens, budget, max_active,
+        )
+
+    def _fill(tier: list[dict]) -> None:
+        nonlocal active_tokens
+        for td in tier:
+            tokens = token_cost[id(td)]
+            if (active_tokens + tokens <= budget
+                    and len(active) + 1 <= max_active):
+                active.append(td)
+                active_tokens += tokens
+            else:
+                deferred.append(td)
+
+    _fill(normal)
+    _fill(low)
+
+    if deferred:
+        log.info(
+            "Tool classification: %d active (%d tokens), %d deferred",
+            len(active), active_tokens, len(deferred),
+        )
     return active, deferred
 
 
@@ -91,13 +163,45 @@ def get_description(tool_def: dict) -> str:
     return desc
 
 
+def _get_declared_priority(tool_def: dict) -> str:
+    """Return the priority declared on a tool def, defaulting to normal."""
+    prio = tool_def.get("priority")
+    if prio in _PRIORITY_RANK:
+        return prio
+    return Priority.NORMAL.value
+
+
+def _deferred_sort_key(tool_def: dict) -> tuple:
+    """Sort key for the deferred catalog: (priority desc, source asc, name asc).
+
+    Priority is inverted so higher priorities come first. Source is taken
+    from the `_source_skill` tag if present (skill tools), the server
+    segment of an ``mcp__server__tool`` name (MCP tools), or empty string
+    (core tools — section heading already encodes the source).
+    """
+    name = tool_def.get("function", {}).get("name", "")
+    prio = _get_declared_priority(tool_def)
+    priority_rank = _PRIORITY_RANK.get(prio, _PRIORITY_RANK[Priority.NORMAL.value])
+
+    source = tool_def.get("_source_skill", "")
+    if not source and name.startswith("mcp__"):
+        parts = name.split("__", 2)
+        if len(parts) >= 3:
+            source = parts[1]
+
+    return (-priority_rank, source, name)
+
+
 def build_deferred_list_text(
     deferred_defs: list[dict],
     core_names: set[str] | None = None,
 ) -> str:
     """Build the deferred tool list block for system prompt injection.
 
-    Groups tools by source: Core, Skill (by name), MCP (by server).
+    Groups tools by source section (Core / Skills / MCP: server). Within
+    each section, sorts by ``(priority desc, source asc, name asc)`` so
+    high-priority tools appear first and tools from the same skill or
+    MCP server cluster together.
     """
     if not deferred_defs:
         return ""
@@ -108,42 +212,44 @@ def build_deferred_list_text(
             td.get("function", {}).get("name", "") for td in TOOL_DEFINITIONS
         }
 
-    core_tools = []
-    mcp_tools: dict[str, list[tuple[str, str]]] = {}
-    skill_tools: list[tuple[str, str]] = []
+    core_tools: list[dict] = []
+    mcp_tools: dict[str, list[dict]] = {}
+    skill_tools: list[dict] = []
 
     for td in deferred_defs:
         name = td.get("function", {}).get("name", "")
-        desc = get_description(td)
 
         if name.startswith("mcp__"):
-            # mcp__server__tool → group by server
             parts = name.split("__", 2)
             server = parts[1] if len(parts) >= 3 else "unknown"
-            mcp_tools.setdefault(server, []).append((name, desc))
+            mcp_tools.setdefault(server, []).append(td)
         elif name in core_names:
-            core_tools.append((name, desc))
+            core_tools.append(td)
         else:
-            skill_tools.append((name, desc))
+            skill_tools.append(td)
+
+    def _render(defs: list[dict]) -> list[str]:
+        defs_sorted = sorted(defs, key=_deferred_sort_key)
+        return [
+            f"- {td['function']['name']} — {get_description(td)}"
+            for td in defs_sorted
+        ]
 
     lines = ["## Available tools (use tool_search to load)\n"]
 
     if core_tools:
         lines.append("### Core")
-        for name, desc in sorted(core_tools):
-            lines.append(f"- {name} — {desc}")
+        lines.extend(_render(core_tools))
         lines.append("")
 
     if skill_tools:
         lines.append("### Skills")
-        for name, desc in sorted(skill_tools):
-            lines.append(f"- {name} — {desc}")
+        lines.extend(_render(skill_tools))
         lines.append("")
 
     for server in sorted(mcp_tools):
         lines.append(f"### MCP: {server}")
-        for name, desc in sorted(mcp_tools[server]):
-            lines.append(f"- {name} — {desc}")
+        lines.extend(_render(mcp_tools[server]))
         lines.append("")
 
     return "\n".join(lines)

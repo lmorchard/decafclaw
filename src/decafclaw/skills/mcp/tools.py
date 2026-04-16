@@ -1,15 +1,15 @@
-"""MCP management tools — status and restart."""
+"""MCP management tools — status, resources, prompts, restart."""
 
 import logging
 
-from ..media import ToolResult
+from decafclaw.media import ToolResult
 
 log = logging.getLogger(__name__)
 
 
 async def tool_mcp_status(ctx, action: str = "status", server: str = "") -> str | ToolResult:
     """Show MCP server status or restart servers."""
-    from ..mcp_client import get_registry
+    from decafclaw.mcp_client import get_registry
 
     log.info(f"[tool:mcp_status] action={action} server={server}")
 
@@ -55,8 +55,7 @@ async def _restart(ctx, registry, server_name) -> str | ToolResult:
     disconnecting old ones first, then swap the registry.
     """
     import decafclaw.mcp_client as _mcp
-
-    from ..mcp_client import MCPRegistry, load_mcp_config
+    from decafclaw.mcp_client import MCPRegistry, load_mcp_config
 
     try:
         if server_name:
@@ -93,7 +92,7 @@ async def _restart(ctx, registry, server_name) -> str | ToolResult:
 
 async def tool_mcp_list_resources(ctx) -> str | ToolResult:
     """List all MCP resources and resource templates."""
-    from ..mcp_client import get_registry
+    from decafclaw.mcp_client import get_registry
 
     registry = get_registry()
     if not registry:
@@ -142,7 +141,7 @@ async def tool_mcp_read_resource(ctx, server: str = "", uri: str = "") -> str | 
     """Read a resource from an MCP server by URI."""
     import asyncio
 
-    from ..mcp_client import _convert_resource_response, get_registry
+    from decafclaw.mcp_client import _convert_resource_response, get_registry
 
     if not server or not uri:
         return ToolResult(text="[error: both 'server' and 'uri' parameters are required]")
@@ -173,7 +172,7 @@ async def tool_mcp_read_resource(ctx, server: str = "", uri: str = "") -> str | 
 
 async def tool_mcp_list_prompts(ctx) -> str | ToolResult:
     """List all MCP prompts from connected servers."""
-    from ..mcp_client import get_registry
+    from decafclaw.mcp_client import get_registry
 
     registry = get_registry()
     if not registry:
@@ -213,7 +212,7 @@ async def tool_mcp_get_prompt(ctx, server: str = "", name: str = "",
     import asyncio
     import json as _json
 
-    from ..mcp_client import _convert_prompt_response, get_registry
+    from decafclaw.mcp_client import _convert_prompt_response, get_registry
 
     if not server or not name:
         return ToolResult(text="[error: both 'server' and 'name' parameters are required]")
@@ -247,12 +246,17 @@ async def tool_mcp_get_prompt(ctx, server: str = "", name: str = "",
         return ToolResult(text=f"[error: failed to get prompt: {e}]")
 
 
-MCP_TOOLS = {
+# -- Registration -------------------------------------------------------------
+
+TOOLS = {
     "mcp_status": tool_mcp_status,
+    "mcp_list_resources": tool_mcp_list_resources,
+    "mcp_read_resource": tool_mcp_read_resource,
+    "mcp_list_prompts": tool_mcp_list_prompts,
+    "mcp_get_prompt": tool_mcp_get_prompt,
 }
 
-# Always-loaded tool definitions (mcp_status)
-MCP_TOOL_DEFINITIONS = [
+TOOL_DEFINITIONS = [
     {
         "type": "function",
         "function": {
@@ -280,18 +284,6 @@ MCP_TOOL_DEFINITIONS = [
             },
         },
     },
-]
-
-# Deferred tool implementations (loaded via tool_search)
-MCP_DEFERRED_TOOLS = {
-    "mcp_list_resources": tool_mcp_list_resources,
-    "mcp_list_prompts": tool_mcp_list_prompts,
-    "mcp_read_resource": tool_mcp_read_resource,
-    "mcp_get_prompt": tool_mcp_get_prompt,
-}
-
-# Deferred tool definitions
-MCP_DEFERRED_TOOL_DEFINITIONS = [
     {
         "type": "function",
         "function": {

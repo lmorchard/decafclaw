@@ -352,8 +352,10 @@ class TestComposeTools:
         config.agent.tool_context_budget_pct = 0.001
         config.compaction.max_tokens = 100
         many_tools = [_make_tool_def(f"tool_{i}", "x" * 200) for i in range(20)]
-        # Add one always-loaded tool
-        many_tools.append(_make_tool_def("current_time", "Get current time"))
+        # Add one critical tool — should survive deferral
+        critical_def = _make_tool_def("current_time", "Get current time")
+        critical_def["priority"] = "critical"
+        many_tools.append(critical_def)
         with patch("decafclaw.agent._collect_all_tool_defs", return_value=many_tools):
             composer = ContextComposer()
             active, deferred, text, entry = composer._compose_tools(ctx, config)

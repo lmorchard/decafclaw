@@ -53,6 +53,11 @@ These are loaded into context only when the skill is activated.
 | `allowed-tools` | No | Comma-separated tool names pre-approved for this skill. |
 | `model` | No | Named model config for `context: fork` skills. See [Model Selection](model-selection.md). |
 | `argument-hint` | No | Hint text for command argument substitution. |
+| `always-loaded` | No | Bool, default false. **Bundled-only.** Skill is auto-activated at startup and its tools are always present. |
+| `schedule` | No | Cron expression. **Bundled and admin-only.** Runs the skill on a schedule. |
+| `auto-approve` | No | Bool, default false. **Bundled-only.** Skill activates without a user confirmation prompt. User's explicit `"deny"` in `skill_permissions.json` still overrides. |
+
+**Trust boundary:** `always-loaded`, `schedule`, and `auto-approve` are only honored for skills bundled under `src/decafclaw/skills/`. Admin-level (`data/{agent_id}/skills/`) and workspace-level skills declaring these fields get them silently stripped with a warning log. This prevents escalation from less-trusted skill locations.
 
 ### Native Python tools (tools.py)
 

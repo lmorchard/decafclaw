@@ -160,7 +160,8 @@ Agent identity, loop limits, tool loading, and delegation.
 | `max_concurrent_tools` | int | `5` | `MAX_CONCURRENT_TOOLS` |
 | `max_message_length` | int | `50000` | `MAX_MESSAGE_LENGTH` |
 | `tool_context_budget_pct` | float | `0.10` | `TOOL_CONTEXT_BUDGET_PCT` |
-| `always_loaded_tools` | list | `[]` | `ALWAYS_LOADED_TOOLS` |
+| `critical_tools` | list | `[]` | `CRITICAL_TOOLS` |
+| `max_active_tools` | int | `30` | `MAX_ACTIVE_TOOLS` |
 | `child_max_tool_iterations` | int | `10` | `CHILD_MAX_TOOL_ITERATIONS` |
 | `child_timeout_sec` | int | `300` | `CHILD_TIMEOUT_SEC` |
 

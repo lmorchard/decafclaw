@@ -70,6 +70,7 @@ SEARCH_TOOLS = {
 SEARCH_TOOL_DEFINITIONS = [
     {
         "type": "function",
+        "priority": "critical",
         "function": {
             "name": "tool_search",
             "description": (

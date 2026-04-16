@@ -57,6 +57,27 @@ it with workspace_edit. After editing, call refresh_skills to reload.
 Skills are NOT vault pages. Do not use vault_read or vault_write for
 skills. Use workspace tools for skills in `workspace/skills/`.
 
+## Tools — Finding What You Need
+
+Tools come from three places:
+1. **Active tools** in your tool list — call them directly.
+2. **Skill tools** — call `activate_skill(name)` first. Check the
+   **Available Skills** block in your instructions.
+3. **Deferred tools** — listed by name in an **Available tools (use
+   tool_search to load)** block near the end of your system prompt.
+   Call `tool_search("keyword")` or `tool_search("select:exact_name")`
+   to fetch their full schemas, then call them normally.
+
+If you're looking for a capability and don't see it in your active
+tools, check the deferred catalog before concluding it's unavailable.
+
+**Common capabilities behind skills:**
+- Background processes (servers, watchers) → activate the `background` skill
+- MCP server admin (status, resources, prompts) → activate the `mcp` skill
+
+Skills with `auto-approve: true` activate without a confirmation
+prompt — `background` and `mcp` both do.
+
 ## Workspace — Your Filesystem
 
 You have a workspace — a sandboxed directory where you can read, write,

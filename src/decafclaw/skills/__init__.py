@@ -34,6 +34,7 @@ class SkillInfo:
     always_loaded: bool = False
     schedule: str = ""  # cron expression, empty = not scheduled
     enabled: bool = True  # can be disabled via frontmatter
+    auto_approve: bool = False  # bundled-only — skip activation confirmation
 
 
 def parse_skill_md(path: Path) -> SkillInfo | None:
@@ -94,6 +95,7 @@ def parse_skill_md(path: Path) -> SkillInfo | None:
         always_loaded=bool(meta.get("always-loaded", False)),
         schedule=str(meta.get("schedule") or ""),
         enabled=_coerce_bool(meta.get("enabled", True)),
+        auto_approve=bool(meta.get("auto-approve", False)),
     )
 
 
@@ -189,6 +191,7 @@ def discover_skills(config) -> list[SkillInfo]:
 
     seen_names: dict[str, Path] = {}
     skills: list[SkillInfo] = []
+    bundled_dir = _BUNDLED_SKILLS_DIR.resolve()
 
     for base_path in scan_paths:
         if not base_path.is_dir():
@@ -205,6 +208,19 @@ def discover_skills(config) -> list[SkillInfo]:
             info = parse_skill_md(skill_md)
             if info is None:
                 continue
+
+            # auto-approve is bundled-only (trust boundary). Admin and
+            # workspace skills declaring it get the flag stripped and
+            # a warning logged.
+            if info.auto_approve:
+                is_bundled = skill_dir.resolve().is_relative_to(bundled_dir)
+                if not is_bundled:
+                    log.warning(
+                        "Ignoring 'auto-approve: true' on non-bundled skill "
+                        "'%s' at %s — only bundled skills may auto-approve.",
+                        info.name, skill_dir,
+                    )
+                    info.auto_approve = False
 
             # Check requires.env
             missing_env = [v for v in info.requires_env if not os.environ.get(v)]

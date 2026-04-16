@@ -206,6 +206,7 @@ SHELL_TOOLS = {
 SHELL_TOOL_DEFINITIONS = [
     {
         "type": "function",
+        "priority": "low",
         "function": {
             "name": "shell_patterns",
             "description": (
@@ -232,6 +233,7 @@ SHELL_TOOL_DEFINITIONS = [
     },
     {
         "type": "function",
+        "priority": "critical",
         "function": {
             "name": "shell",
             "description": (

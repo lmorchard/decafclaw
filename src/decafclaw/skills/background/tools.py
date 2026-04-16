@@ -7,7 +7,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from uuid import uuid4
 
-from ..media import ToolResult
+from decafclaw.media import ToolResult
 
 log = logging.getLogger(__name__)
 
@@ -208,7 +208,7 @@ async def tool_shell_background_start(ctx, command: str) -> ToolResult:
     """Start a background process. Returns immediately with a job ID."""
     log.info(f"[tool:shell_background_start] command={command[:80]}")
 
-    from .shell_tools import check_shell_approval
+    from decafclaw.tools.shell_tools import check_shell_approval
 
     result = await check_shell_approval(
         ctx, command, tool_name="shell_background_start",
@@ -363,14 +363,14 @@ async def tool_shell_background_list(ctx) -> ToolResult:
 
 # -- Registration -------------------------------------------------------------
 
-BACKGROUND_TOOLS = {
+TOOLS = {
     "shell_background_start": tool_shell_background_start,
     "shell_background_status": tool_shell_background_status,
     "shell_background_stop": tool_shell_background_stop,
     "shell_background_list": tool_shell_background_list,
 }
 
-BACKGROUND_TOOL_DEFINITIONS = [
+TOOL_DEFINITIONS = [
     {
         "type": "function",
         "function": {
