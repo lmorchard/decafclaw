@@ -289,8 +289,8 @@ class TestBuildDeferredListText:
             _make_tool_def("mcp__slack__send", "Send a message"),
         ]
         text = build_deferred_list_text(tools, core_names=set())
-        assert "### MCP: playwright" in text
-        assert "### MCP: slack" in text
+        assert "### Tools from MCP server `playwright`" in text
+        assert "### Tools from MCP server `slack`" in text
 
     def test_skill_tools(self):
         tools = [
@@ -324,9 +324,9 @@ class TestBuildDeferredListText:
             _make_tool_def("mcp__slack__msg", "s", priority="normal"),
         ]
         text = build_deferred_list_text(tools, core_names=set())
-        assert "### MCP: github" in text
-        assert "### MCP: slack" in text
-        github_section = text.split("### MCP: github")[1].split("###")[0]
+        assert "### Tools from MCP server `github`" in text
+        assert "### Tools from MCP server `slack`" in text
+        github_section = text.split("### Tools from MCP server `github`")[1].split("###")[0]
         # critical issue_a before normal issue_b
         a_idx = github_section.index("issue_a")
         b_idx = github_section.index("issue_b")

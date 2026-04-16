@@ -1,6 +1,7 @@
 """Tool registry — combines core and built-in tools. Skill tools loaded on demand."""
 
 import asyncio
+import difflib
 import logging
 
 from ..media import ToolResult
@@ -73,6 +74,38 @@ def _to_tool_result(value) -> ToolResult:
     return ToolResult(text=str(value))
 
 
+def _suggest_tool_names(name: str, candidates: set[str], max_results: int = 5) -> list[str]:
+    """Suggest tool names close to ``name`` using difflib + suffix match.
+
+    Returns up to ``max_results`` suggestions, most likely first. Used to
+    give the agent a "did you mean?" hint when it calls a tool that
+    doesn't exist. No correction happens — the agent must retry with the
+    exact name on the next turn.
+    """
+    if not candidates:
+        return []
+    suggestions: list[str] = []
+    # Suffix match catches the common "dropped prefix" case (e.g. Gemini
+    # truncating `mcp__oblique-strategies__get_strategy` to
+    # `strategies__get_strategy`).
+    for cand in candidates:
+        if cand.endswith(f"__{name}") or cand.endswith(name):
+            if cand != name and cand not in suggestions:
+                suggestions.append(cand)
+    # difflib fuzzy match for general typos
+    for cand in difflib.get_close_matches(name, list(candidates), n=max_results, cutoff=0.6):
+        if cand not in suggestions:
+            suggestions.append(cand)
+    return suggestions[:max_results]
+
+
+def _format_suggestions(suggestions: list[str]) -> str:
+    """Format suggestion list as 'Did you mean: a, b, c.' for error messages."""
+    if not suggestions:
+        return ""
+    return f" Did you mean: {', '.join(suggestions)}."
+
+
 async def execute_tool(ctx, name: str, arguments: dict) -> ToolResult:
     """Execute a tool by name and return the result.
 
@@ -89,19 +122,32 @@ async def execute_tool(ctx, name: str, arguments: dict) -> ToolResult:
     if name.startswith("mcp__"):
         from ..mcp_client import get_registry
         registry = get_registry()
-        if registry:
-            mcp_tools = registry.get_tools()
-            fn = mcp_tools.get(name)
-            if fn:
-                try:
-                    cancel_event = ctx.cancelled
-                    tool_task, interrupted = await _run_with_cancel(fn(arguments), cancel_event)
-                    if interrupted:
-                        return interrupted
-                    return _to_tool_result(tool_task.result())
-                except Exception as e:
-                    return ToolResult(text=f"[error executing {name}: {e}]")
-        return ToolResult(text=f"[error: MCP tool '{name}' not available]")
+        mcp_tools = registry.get_tools() if registry else {}
+        fn = mcp_tools.get(name)
+        if fn:
+            try:
+                cancel_event = ctx.cancelled
+                tool_task, interrupted = await _run_with_cancel(fn(arguments), cancel_event)
+                if interrupted:
+                    return interrupted
+                return _to_tool_result(tool_task.result())
+            except Exception as e:
+                return ToolResult(text=f"[error executing {name}: {e}]")
+        # Tool not found — suggest close matches, require the agent to retry
+        # with the exact name. No auto-correction.
+        suggestions = _suggest_tool_names(name, set(mcp_tools.keys()))
+        hint = _format_suggestions(suggestions)
+        if not mcp_tools:
+            return ToolResult(
+                text=f"[error: MCP tool '{name}' not found; no MCP servers are connected.]"
+            )
+        return ToolResult(
+            text=(
+                f"[error: MCP tool '{name}' not found.{hint} "
+                f"Use the exact name from your tool list. To discover "
+                f"available tools, call tool_search.]"
+            )
+        )
 
     # Check skill-provided tools first, then global registry, then search tools
     from .search_tools import SEARCH_TOOLS
@@ -118,7 +164,29 @@ async def execute_tool(ctx, name: str, arguments: dict) -> ToolResult:
             add_fetched_tools(ctx, {name})
             fn = extra_tools.get(name) or TOOLS.get(name)
         if fn is None:
-            return ToolResult(text=f"[error: unknown tool: {name}]")
+            # Unknown tool — suggest close matches from everything the
+            # agent could reach: active, skill, deferred pool, and MCP.
+            candidates: set[str] = set()
+            candidates.update(extra_tools.keys())
+            candidates.update(TOOLS.keys())
+            candidates.update(SEARCH_TOOLS.keys())
+            candidates.update(deferred_names)
+            try:
+                from ..mcp_client import get_registry
+                reg = get_registry()
+                if reg:
+                    candidates.update(reg.get_tools().keys())
+            except Exception:
+                pass
+            suggestions = _suggest_tool_names(name, candidates)
+            hint = _format_suggestions(suggestions)
+            return ToolResult(
+                text=(
+                    f"[error: unknown tool '{name}'.{hint} "
+                    f"Use the exact name from your tool list. To discover "
+                    f"available tools, call tool_search.]"
+                )
+            )
     cancel_event = ctx.cancelled
     try:
         coro = fn(ctx, **arguments) if asyncio.iscoroutinefunction(fn) else asyncio.to_thread(fn, ctx, **arguments)

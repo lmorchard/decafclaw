@@ -248,7 +248,7 @@ def build_deferred_list_text(
         lines.append("")
 
     for server in sorted(mcp_tools):
-        lines.append(f"### MCP: {server}")
+        lines.append(f"### Tools from MCP server `{server}`")
         lines.extend(_render(mcp_tools[server]))
         lines.append("")
 
