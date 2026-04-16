@@ -1,12 +1,14 @@
 ---
 name: mcp
-description: MCP (Model Context Protocol) admin tools — inspect connected servers, list resources and prompts, restart servers. Use when debugging MCP connectivity or fetching server-provided content.
+description: Admin tools for inspecting and restarting connected MCP servers — status, resources, prompts. Does NOT expose tools provided by MCP servers; those appear as mcp__server__tool and are fetched via tool_search.
 auto-approve: true
 ---
 
 # MCP admin
 
-MCP servers expose their own tools (namespaced as `mcp__server__tool`) that show up in the regular tool catalog. This skill is only for *administering* the MCP layer itself — inspecting status, fetching resources and prompts, or restarting servers.
+**This skill is NOT for calling tools that MCP servers provide.** Tools exposed by MCP servers are named `mcp__server__tool` and live in the regular tool catalog. If a tool like `mcp__github__create_issue` isn't immediately available, use `tool_search` to fetch it from the deferred catalog — do NOT activate this skill.
+
+This skill is only for *administering* the MCP layer itself — inspecting server status, listing or reading resources, listing or fetching prompts, or restarting servers.
 
 ## Tools
 

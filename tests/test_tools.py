@@ -18,9 +18,39 @@ async def test_execute_tool_with_extra_tools(ctx):
 
 @pytest.mark.asyncio
 async def test_execute_tool_unknown(ctx):
-    """Unknown tool returns error message."""
+    """Unknown tool returns error message with guidance to use tool_search."""
     result = await execute_tool(ctx, "nonexistent_tool", {})
-    assert "[error: unknown tool:" in result.text
+    assert "unknown tool" in result.text
+    assert "nonexistent_tool" in result.text
+    assert "tool_search" in result.text
+
+
+@pytest.mark.asyncio
+async def test_execute_tool_unknown_suggests_close_match(ctx):
+    """When the unknown name is close to a real tool, the error includes it as a suggestion."""
+    # workspace_read is a real core tool; try a typo.
+    result = await execute_tool(ctx, "workspce_read", {})
+    assert "Did you mean" in result.text
+    assert "workspace_read" in result.text
+
+
+@pytest.mark.asyncio
+async def test_execute_tool_unknown_suffix_match_suggests_mcp(ctx, monkeypatch):
+    """Dropped mcp__ prefix should surface the full MCP name as a suggestion."""
+    from unittest.mock import MagicMock
+
+    from decafclaw import mcp_client
+
+    mock_registry = MagicMock()
+    mock_registry.get_tools.return_value = {
+        "mcp__oblique-strategies__get_strategy": MagicMock(),
+    }
+    monkeypatch.setattr(mcp_client, "_registry", mock_registry)
+
+    # Call with the prefix dropped, as Gemini sometimes does.
+    result = await execute_tool(ctx, "strategies__get_strategy", {})
+    assert "Did you mean" in result.text
+    assert "mcp__oblique-strategies__get_strategy" in result.text
 
 
 @pytest.mark.asyncio

@@ -59,24 +59,35 @@ skills. Use workspace tools for skills in `workspace/skills/`.
 
 ## Tools — Finding What You Need
 
-Tools come from three places:
-1. **Active tools** in your tool list — call them directly.
-2. **Skill tools** — call `activate_skill(name)` first. Check the
-   **Available Skills** block in your instructions.
-3. **Deferred tools** — listed by name in an **Available tools (use
-   tool_search to load)** block near the end of your system prompt.
-   Call `tool_search("keyword")` or `tool_search("select:exact_name")`
-   to fetch their full schemas, then call them normally.
+If a tool isn't in your active list:
 
-If you're looking for a capability and don't see it in your active
-tools, check the deferred catalog before concluding it's unavailable.
+1. **First, search the deferred catalog.** Look for an **Available
+   tools (use tool_search to load)** block near the end of your
+   system prompt. Call `tool_search("keyword")` or
+   `tool_search("select:exact_name")` to fetch full schemas.
+   MCP server tools (named `mcp__server__tool`) live here too — you do
+   NOT need to activate any skill to use them.
 
-**Common capabilities behind skills:**
-- Background processes (servers, watchers) → activate the `background` skill
-- MCP server admin (status, resources, prompts) → activate the `mcp` skill
+2. **If the catalog doesn't have it, check the Available Skills block.**
+   Skill tools only exist after `activate_skill(name)`. Skills with
+   `auto-approve: true` activate without a confirmation prompt.
 
-Skills with `auto-approve: true` activate without a confirmation
-prompt — `background` and `mcp` both do.
+3. **Common capabilities behind skills:**
+   - Background processes (servers, watchers) → `background` skill
+   - MCP *server admin* (status, restart, list resources/prompts)
+     → `mcp` skill. (For *using* an MCP server's tools, skip the skill
+     and use `tool_search` instead.)
+
+**Tool names are EXACT strings.** Copy them verbatim from your tool
+list — do not drop prefixes, substitute hyphens for underscores (or
+vice versa), abbreviate, or improvise a shorter form. MCP server tools
+use the full form `mcp__<server>__<tool>` and the server name may
+contain hyphens. A call to the wrong name fails; the system will
+suggest close matches, and you should retry with the exact suggested
+name rather than guessing again.
+
+If you're not sure a tool exists, search the catalog first — don't
+invent a name and call it.
 
 ## Workspace — Your Filesystem
 
