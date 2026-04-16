@@ -28,12 +28,11 @@ When the conversation grows too large (exceeding the token budget), the agent au
 
 ### How it works
 
-1. Every LLM call records its `prompt_tokens` into the runtime context
-2. At the end of each agent turn (any exit path except cancellation), the loop checks the latest `prompt_tokens` against `COMPACTION_MAX_TOKENS`
-3. If tokens exceed the threshold, compaction triggers
-4. The compaction LLM reads the **archive** (source of truth) and produces a summary
-5. In-memory history is replaced with: `[summary message] + [recent turns]`
-6. The archive is not modified — it remains the complete record
+1. The agent loop checks `prompt_tokens` after each LLM call
+2. If tokens exceed `COMPACTION_MAX_TOKENS`, compaction triggers
+3. The compaction LLM reads the **archive** (source of truth) and produces a summary
+4. In-memory history is replaced with: `[summary message] + [recent turns]`
+5. The archive is not modified — it remains the complete record
 
 ### Configuration
 

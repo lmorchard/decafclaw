@@ -41,7 +41,7 @@ class TestDefaults:
         assert c.mattermost.channel_blocklist == []
         assert c.agent.data_home == "./data"
         assert c.agent.id == "decafclaw"
-        assert c.agent.always_loaded_tools == []
+        assert c.agent.critical_tools == []
         assert c.compaction.max_tokens == 100000
         assert c.embedding.search_strategy == "substring"
 

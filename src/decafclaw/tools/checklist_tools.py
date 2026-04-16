@@ -95,6 +95,7 @@ CHECKLIST_TOOLS = {
 CHECKLIST_TOOL_DEFINITIONS = [
     {
         "type": "function",
+        "priority": "critical",
         "function": {
             "name": "checklist_create",
             "description": (
@@ -119,6 +120,7 @@ CHECKLIST_TOOL_DEFINITIONS = [
     },
     {
         "type": "function",
+        "priority": "critical",
         "function": {
             "name": "checklist_step_done",
             "description": (
@@ -141,6 +143,7 @@ CHECKLIST_TOOL_DEFINITIONS = [
     },
     {
         "type": "function",
+        "priority": "critical",
         "function": {
             "name": "checklist_abort",
             "description": (
@@ -161,6 +164,7 @@ CHECKLIST_TOOL_DEFINITIONS = [
     },
     {
         "type": "function",
+        "priority": "critical",
         "function": {
             "name": "checklist_status",
             "description": "Show current checklist progress without advancing.",

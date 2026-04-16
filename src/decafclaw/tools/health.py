@@ -452,6 +452,7 @@ HEALTH_TOOLS = {
 HEALTH_TOOL_DEFINITIONS = [
     {
         "type": "function",
+        "priority": "low",
         "function": {
             "name": "health_status",
             "description": (

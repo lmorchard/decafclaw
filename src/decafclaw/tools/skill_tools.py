@@ -144,10 +144,19 @@ async def tool_activate_skill(ctx, name: str) -> str | ToolResult:
     if name in activated:
         return f"Skill '{name}' is already active."
 
-    # Check permissions — admin heartbeat turns auto-approve (admin-authored)
+    # Permission resolution, highest precedence first:
+    # 1. User's explicit "deny" in skill_permissions.json — always wins
+    # 2. Admin heartbeat turns auto-approve
+    # 3. User's explicit "always" permission
+    # 4. Bundled skill with `auto-approve: true` frontmatter
+    # 5. Interactive confirmation
     is_heartbeat = ctx.user_id == "heartbeat-admin"
     perms = _load_permissions(ctx.config)
-    if not is_heartbeat and perms.get(name) != "always":
+    if perms.get(name) == "deny":
+        return ToolResult(text=f"[error: activation of skill '{name}' was denied by user]")
+    if (not is_heartbeat
+            and perms.get(name) != "always"
+            and not skill_info.auto_approve):
         # Need confirmation
         approved, always = await _request_skill_confirmation(ctx, name)
         if not approved:
@@ -256,6 +265,7 @@ SKILL_TOOLS = {
 SKILL_TOOL_DEFINITIONS = [
     {
         "type": "function",
+        "priority": "critical",
         "function": {
             "name": "activate_skill",
             "description": (
@@ -280,6 +290,7 @@ SKILL_TOOL_DEFINITIONS = [
     },
     {
         "type": "function",
+        "priority": "low",
         "function": {
             "name": "refresh_skills",
             "description": "Re-scan skill directories and update the available skills catalog. Use when new skills have been added or removed without restarting the agent.",

@@ -55,6 +55,10 @@ Override path: `data/{agent_id}/{SOUL,AGENT,USER}.md` (admin, read-only to agent
 - Tool definitions are fixed overhead on every turn
 - As tools are added, free space shrinks — argues for skills system
   (load tools on demand)
+- Tool priority system (see [tool-priority.md](tool-priority.md)) defers
+  `normal`/`low` tools behind `tool_search` when the active set exceeds
+  `tool_context_budget_pct × COMPACTION_MAX_TOKENS`. `critical` tools
+  are always in the active set regardless of budget.
 
 ## Files Involved
 

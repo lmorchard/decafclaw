@@ -466,19 +466,6 @@ async def _call_llm_with_events(ctx, config, messages, tools,
                 response = llm_task.result()
         else:
             response = await call_llm(config, messages, tools=tools, **llm_kwargs)
-    # Track token usage for every LLM call so compaction decisions (taken
-    # in the finally block of run_agent_turn) always see the latest values,
-    # regardless of which exit path the turn takes (normal response,
-    # end_turn=True, EndTurnConfirm presentation, max iterations).
-    usage = response.get("usage")
-    if usage:
-        prompt_tokens = usage.get("prompt_tokens", 0)
-        completion_tokens = usage.get("completion_tokens", 0)
-        ctx.tokens.total_prompt += prompt_tokens
-        ctx.tokens.total_completion += completion_tokens
-        ctx.tokens.last_prompt = prompt_tokens
-        ctx.composer.last_prompt_tokens_actual = prompt_tokens
-        ctx.composer.last_completion_tokens_actual = completion_tokens
     await ctx.publish("llm_end", iteration=iteration,
                       content=response.get("content"),
                       has_tool_calls=bool(response.get("tool_calls")))
@@ -884,6 +871,7 @@ async def run_agent_turn(ctx, user_message: str, history: list,
         else:
             deferred_msg = None
 
+        prompt_tokens = 0
         empty_retries = 0
         reflection_retries = 0
         last_reflection = None  # last ReflectionResult, for archiving after final response
@@ -919,6 +907,16 @@ async def run_agent_turn(ctx, user_message: str, history: list,
 
             response = await _call_llm_with_events(ctx, config, messages, all_tools,
                                                      **model_override)
+
+            # Track token usage
+            usage = response.get("usage")
+            if usage:
+                prompt_tokens = usage.get("prompt_tokens", 0)
+                completion_tokens = usage.get("completion_tokens", 0)
+                ctx.tokens.total_prompt += prompt_tokens
+                ctx.tokens.total_completion += completion_tokens
+                ctx.tokens.last_prompt = prompt_tokens
+                composer.record_actuals(prompt_tokens, completion_tokens)
 
             tool_calls = response.get("tool_calls")
             if tool_calls:
@@ -1064,6 +1062,8 @@ async def run_agent_turn(ctx, user_message: str, history: list,
                     _archive(ctx, {"role": "reflection", "tool": label,
                                    "content": detail})
 
+            await _maybe_compact(ctx, config, history, prompt_tokens)
+
             # Extract workspace:// refs only for channels that need it
             # (Mattermost strips refs and uploads files; web/terminal render them in-place)
             handler = ctx.media_handler
@@ -1084,22 +1084,10 @@ async def run_agent_turn(ctx, user_message: str, history: list,
         final_msg = {"role": "assistant", "content": msg}
         history.append(final_msg)
         _archive(ctx, final_msg)
+        await _maybe_compact(ctx, config, history, prompt_tokens)
         return ToolResult(text=msg)
 
     finally:
-        # Compaction check runs on every exit path — normal response, end_turn
-        # signal from a tool, max iterations, or exception. Cancellation skips
-        # it since the user is redirecting and shouldn't pay for extra work.
-        # Relies on ctx.tokens.last_prompt tracked in _call_llm_with_events.
-        # Wrapped in try/except to preserve any in-flight exception from the
-        # try body (Python replaces the original if finally raises).
-        cancelled = ctx.cancelled is not None and ctx.cancelled.is_set()
-        if not cancelled:
-            try:
-                await _maybe_compact(ctx, config, history, ctx.tokens.last_prompt)
-            except Exception:
-                log.exception("Compaction check in finally failed")
-
         # Write context diagnostics on any exit path
         if composed is not None and composer is not None and conv_id:
             try:

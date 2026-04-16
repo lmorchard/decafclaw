@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 
-from decafclaw.tools.background_tools import BackgroundJobManager
+from decafclaw.skills.background.tools import BackgroundJobManager
 
 
 @pytest.mark.asyncio

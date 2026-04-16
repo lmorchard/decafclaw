@@ -121,6 +121,7 @@ DELEGATE_TOOLS = {
 DELEGATE_TOOL_DEFINITIONS = [
     {
         "type": "function",
+        "priority": "critical",
         "function": {
             "name": "delegate_task",
             "description": (

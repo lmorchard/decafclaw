@@ -479,6 +479,7 @@ WORKSPACE_TOOLS = {
 WORKSPACE_TOOL_DEFINITIONS = [
     {
         "type": "function",
+        "priority": "critical",
         "function": {
             "name": "workspace_read",
             "description": "Read a file from your workspace filesystem (blog posts, code, configs, scripts, project files). NOT for vault knowledge pages (use vault_read for those). Returns content with line numbers. Optionally read a specific line range with start_line/end_line (1-based, inclusive). Paths are relative to the workspace root — do NOT prefix with 'workspace/'.",
@@ -504,6 +505,7 @@ WORKSPACE_TOOL_DEFINITIONS = [
     },
     {
         "type": "function",
+        "priority": "critical",
         "function": {
             "name": "workspace_write",
             "description": "Write content to a file in your workspace filesystem. Use this for blog posts, code, configs, scripts, and any project files. NOT for vault knowledge pages (use vault_write for those). Creates parent directories as needed. Paths are relative to the workspace root — do NOT prefix with 'workspace/' (use 'blog/post.md' not 'workspace/blog/post.md').",
@@ -525,6 +527,7 @@ WORKSPACE_TOOL_DEFINITIONS = [
     },
     {
         "type": "function",
+        "priority": "normal",
         "function": {
             "name": "workspace_append",
             "description": "Append content to the end of a file in your workspace. Creates the file (and parent directories) if it doesn't exist. Adds a newline separator if the file doesn't end with one.",
@@ -546,6 +549,7 @@ WORKSPACE_TOOL_DEFINITIONS = [
     },
     {
         "type": "function",
+        "priority": "normal",
         "function": {
             "name": "workspace_edit",
             "description": "Edit a file by exact string replacement. Finds old_text and replaces it with new_text. Fails if old_text is not found or matches multiple locations (ambiguous) — provide more surrounding context to make it unique, or set replace_all=true for intentional bulk replacement.",
@@ -575,6 +579,7 @@ WORKSPACE_TOOL_DEFINITIONS = [
     },
     {
         "type": "function",
+        "priority": "normal",
         "function": {
             "name": "workspace_insert",
             "description": "Insert text at a specific line number in a workspace file, pushing existing content down. Line numbers are 1-based. Use workspace_read first to see line numbers.",
@@ -600,6 +605,7 @@ WORKSPACE_TOOL_DEFINITIONS = [
     },
     {
         "type": "function",
+        "priority": "normal",
         "function": {
             "name": "workspace_replace_lines",
             "description": "Replace a range of lines (1-based, inclusive) with new content. Pass empty content to delete lines. Use workspace_read first to see line numbers.",
@@ -629,6 +635,7 @@ WORKSPACE_TOOL_DEFINITIONS = [
     },
     {
         "type": "function",
+        "priority": "normal",
         "function": {
             "name": "workspace_search",
             "description": "Search for a regex pattern across files in the workspace. Returns matching lines with line numbers and surrounding context, grouped by file. Use the glob parameter to filter file types (e.g. '*.py'). Pass a specific file path to search within one file.",
@@ -658,6 +665,7 @@ WORKSPACE_TOOL_DEFINITIONS = [
     },
     {
         "type": "function",
+        "priority": "normal",
         "function": {
             "name": "workspace_glob",
             "description": "Find files by name/glob pattern, recursively. Returns matching file paths relative to workspace root with file sizes. Useful for finding files by extension or name pattern.",
@@ -679,6 +687,7 @@ WORKSPACE_TOOL_DEFINITIONS = [
     },
     {
         "type": "function",
+        "priority": "normal",
         "function": {
             "name": "workspace_move",
             "description": "Move or rename a file within the workspace. Fails if the destination already exists.",
@@ -700,6 +709,7 @@ WORKSPACE_TOOL_DEFINITIONS = [
     },
     {
         "type": "function",
+        "priority": "normal",
         "function": {
             "name": "workspace_delete",
             "description": "Delete a file from the workspace. Cannot delete directories.",
@@ -717,6 +727,7 @@ WORKSPACE_TOOL_DEFINITIONS = [
     },
     {
         "type": "function",
+        "priority": "normal",
         "function": {
             "name": "workspace_diff",
             "description": "Show a unified diff between two workspace files. Useful for comparing versions, checking what changed, or reviewing differences.",
@@ -742,6 +753,7 @@ WORKSPACE_TOOL_DEFINITIONS = [
     },
     {
         "type": "function",
+        "priority": "normal",
         "function": {
             "name": "file_share",
             "description": "Share a file from the workspace as an attachment in the conversation. The file will be uploaded and displayed inline (images) or as a download (other files). Use this to share reports, images, logs, or any workspace file with the user.",
@@ -763,6 +775,7 @@ WORKSPACE_TOOL_DEFINITIONS = [
     },
     {
         "type": "function",
+        "priority": "normal",
         "function": {
             "name": "workspace_list",
             "description": "List files and directories in your workspace. Paths are relative to the workspace root — do NOT prefix with 'workspace/'.",

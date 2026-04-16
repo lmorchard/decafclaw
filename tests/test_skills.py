@@ -138,6 +138,31 @@ def test_parse_command_frontmatter_defaults(tmp_path):
     assert info.context == "inline"
     assert info.argument_hint == ""
     assert info.requires_skills == []
+    assert info.auto_approve is False
+
+
+def test_parse_auto_approve_true(tmp_path):
+    """auto-approve: true parses to auto_approve=True (trust gate is later)."""
+    skill_dir = tmp_path / "auto"
+    _write_skill(
+        skill_dir,
+        'name: auto\ndescription: "Auto-approve skill"\nauto-approve: true',
+    )
+    info = parse_skill_md(skill_dir / "SKILL.md")
+    assert info is not None
+    assert info.auto_approve is True
+
+
+def test_parse_auto_approve_false_explicit(tmp_path):
+    """Explicit auto-approve: false is still False."""
+    skill_dir = tmp_path / "noauto"
+    _write_skill(
+        skill_dir,
+        'name: noauto\ndescription: "Not auto"\nauto-approve: false',
+    )
+    info = parse_skill_md(skill_dir / "SKILL.md")
+    assert info is not None
+    assert info.auto_approve is False
 
 
 def test_parse_required_skills(tmp_path):
@@ -279,6 +304,51 @@ def test_discover_includes_when_requires_met(tmp_path, config, monkeypatch):
     assert any(s.name == "has-var" for s in skills)
 
 
+def test_discover_strips_auto_approve_from_workspace_skill(config, caplog):
+    """auto-approve on a workspace skill is ignored with a warning."""
+    skills_dir = config.workspace_path / "skills"
+    _write_skill(
+        skills_dir / "ws-auto",
+        "name: ws-auto\ndescription: Workspace.\nauto-approve: true",
+    )
+    with caplog.at_level("WARNING"):
+        skills = discover_skills(config)
+    matching = [s for s in skills if s.name == "ws-auto"]
+    assert len(matching) == 1
+    assert matching[0].auto_approve is False
+    assert any("auto-approve" in r.message for r in caplog.records)
+
+
+def test_discover_strips_auto_approve_from_admin_skill(config, caplog):
+    """auto-approve on an admin-level skill is ignored with a warning."""
+    skills_dir = config.agent_path / "skills"
+    _write_skill(
+        skills_dir / "admin-auto",
+        "name: admin-auto\ndescription: Admin.\nauto-approve: true",
+    )
+    with caplog.at_level("WARNING"):
+        skills = discover_skills(config)
+    matching = [s for s in skills if s.name == "admin-auto"]
+    assert len(matching) == 1
+    assert matching[0].auto_approve is False
+
+
+def test_discover_honors_auto_approve_on_bundled(config):
+    """Bundled skills with auto-approve: true keep the flag set — the
+    trust boundary lets bundled skills opt in while admin/workspace
+    skills (tested above) get stripped."""
+    skills = discover_skills(config)
+    auto_approved = [s for s in skills if s.auto_approve]
+    # The new background and mcp bundled skills both declare auto-approve.
+    auto_names = {s.name for s in auto_approved}
+    assert "background" in auto_names, (
+        f"bundled `background` skill lost auto_approve flag; got {auto_names}"
+    )
+    assert "mcp" in auto_names, (
+        f"bundled `mcp` skill lost auto_approve flag; got {auto_names}"
+    )
+
+
 def test_discover_skips_dirs_without_skill_md(tmp_path, config):
     """Directories without SKILL.md are ignored."""
     skills_dir = config.workspace_path / "skills"
@@ -384,6 +454,34 @@ async def test_activate_with_always_permission(ctx, tmp_path):
     result = await tool_activate_skill(ctx, name=skill.name)
     assert "Instructions here." in _text(result)
     assert skill.name in ctx.skills.activated
+
+
+@pytest.mark.asyncio
+async def test_activate_with_auto_approve_skips_confirmation(ctx, tmp_path):
+    """Skill with auto_approve=True activates without a confirmation prompt."""
+    skill = _make_skill_info(tmp_path)
+    skill.auto_approve = True
+    ctx.config.discovered_skills = [skill]
+
+    # If confirmation were requested, this would hang (no handler wired
+    # on this test ctx). Successful activation proves it was skipped.
+    result = await tool_activate_skill(ctx, name=skill.name)
+    assert "Instructions here." in _text(result)
+    assert skill.name in ctx.skills.activated
+
+
+@pytest.mark.asyncio
+async def test_auto_approve_blocked_by_explicit_deny(ctx, tmp_path):
+    """User's explicit 'deny' in permissions overrides auto-approve."""
+    skill = _make_skill_info(tmp_path)
+    skill.auto_approve = True
+    ctx.config.discovered_skills = [skill]
+    _save_permission(ctx.config, skill.name, "deny")
+
+    result = await tool_activate_skill(ctx, name=skill.name)
+    assert "[error:" in _text(result)
+    assert "denied" in _text(result)
+    assert skill.name not in ctx.skills.activated
 
 
 @pytest.mark.asyncio

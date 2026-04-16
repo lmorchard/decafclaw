@@ -5,7 +5,6 @@ import logging
 
 from ..media import ToolResult
 from .attachment_tools import ATTACHMENT_TOOL_DEFINITIONS, ATTACHMENT_TOOLS
-from .background_tools import BACKGROUND_TOOL_DEFINITIONS, BACKGROUND_TOOLS
 from .checklist_tools import CHECKLIST_TOOL_DEFINITIONS, CHECKLIST_TOOLS
 from .conversation_tools import CONVERSATION_TOOL_DEFINITIONS, CONVERSATION_TOOLS
 from .core import CORE_TOOL_DEFINITIONS, CORE_TOOLS
@@ -13,31 +12,26 @@ from .delegate import DELEGATE_TOOL_DEFINITIONS, DELEGATE_TOOLS
 from .health import HEALTH_TOOL_DEFINITIONS, HEALTH_TOOLS
 from .heartbeat_tools import HEARTBEAT_TOOL_DEFINITIONS, HEARTBEAT_TOOLS
 from .http_tools import HTTP_TOOL_DEFINITIONS, HTTP_TOOLS
-from .mcp_tools import (
-    MCP_DEFERRED_TOOL_DEFINITIONS,
-    MCP_DEFERRED_TOOLS,
-    MCP_TOOL_DEFINITIONS,
-    MCP_TOOLS,
-)
 from .shell_tools import SHELL_TOOL_DEFINITIONS, SHELL_TOOLS
 from .skill_tools import SKILL_TOOL_DEFINITIONS, SKILL_TOOLS
 from .workspace_tools import WORKSPACE_TOOL_DEFINITIONS, WORKSPACE_TOOLS
 
 log = logging.getLogger(__name__)
 
-# Combined registry (tabstack via skill, MCP tools via registry)
+# Combined registry. External MCP server tools are registered via
+# decafclaw.mcp_client. The `background` and `mcp` skills carry their
+# own tools — loaded on activation.
 TOOLS = {**CORE_TOOLS, **CHECKLIST_TOOLS,
          **CONVERSATION_TOOLS, **WORKSPACE_TOOLS, **SHELL_TOOLS,
-         **BACKGROUND_TOOLS, **HTTP_TOOLS,
-         **SKILL_TOOLS, **MCP_TOOLS, **MCP_DEFERRED_TOOLS,
+         **HTTP_TOOLS,
+         **SKILL_TOOLS,
          **HEARTBEAT_TOOLS, **HEALTH_TOOLS,
          **DELEGATE_TOOLS, **ATTACHMENT_TOOLS}
 TOOL_DEFINITIONS = (CORE_TOOL_DEFINITIONS
                     + CHECKLIST_TOOL_DEFINITIONS
                     + CONVERSATION_TOOL_DEFINITIONS + WORKSPACE_TOOL_DEFINITIONS
-                    + SHELL_TOOL_DEFINITIONS + BACKGROUND_TOOL_DEFINITIONS
+                    + SHELL_TOOL_DEFINITIONS
                     + HTTP_TOOL_DEFINITIONS + SKILL_TOOL_DEFINITIONS
-                    + MCP_TOOL_DEFINITIONS + MCP_DEFERRED_TOOL_DEFINITIONS
                     + HEARTBEAT_TOOL_DEFINITIONS
                     + HEALTH_TOOL_DEFINITIONS
                     + DELEGATE_TOOL_DEFINITIONS + ATTACHMENT_TOOL_DEFINITIONS)

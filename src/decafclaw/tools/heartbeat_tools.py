@@ -190,6 +190,7 @@ HEARTBEAT_TOOLS = {
 HEARTBEAT_TOOL_DEFINITIONS = [
     {
         "type": "function",
+        "priority": "low",
         "function": {
             "name": "heartbeat_trigger",
             "description": (
