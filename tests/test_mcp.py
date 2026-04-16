@@ -540,7 +540,7 @@ async def test_maybe_reconnect_increments_retry():
 async def test_mcp_status_no_registry(ctx, monkeypatch):
     """Status with no registry returns appropriate message."""
     from decafclaw import mcp_client
-    from decafclaw.tools.mcp_tools import tool_mcp_status
+    from decafclaw.skills.mcp.tools import tool_mcp_status
 
     monkeypatch.setattr(mcp_client, "_registry", None)
     result = await tool_mcp_status(ctx)
@@ -551,7 +551,7 @@ async def test_mcp_status_no_registry(ctx, monkeypatch):
 async def test_mcp_status_shows_servers(ctx, monkeypatch):
     """Status shows connected servers and their tools."""
     from decafclaw import mcp_client
-    from decafclaw.tools.mcp_tools import tool_mcp_status
+    from decafclaw.skills.mcp.tools import tool_mcp_status
 
     registry = MCPRegistry()
     cfg = MCPServerConfig(name="test-server", type="stdio")
@@ -962,7 +962,7 @@ def test_convert_prompt_response_empty():
 async def test_mcp_list_resources_shows_resources(ctx, monkeypatch):
     """mcp_list_resources returns formatted resource list."""
     from decafclaw import mcp_client
-    from decafclaw.tools.mcp_tools import tool_mcp_list_resources
+    from decafclaw.skills.mcp.tools import tool_mcp_list_resources
 
     registry = MCPRegistry()
     res = _make_fake_resource("file:///data.csv", "data.csv", "A CSV file", "text/csv")
@@ -982,7 +982,7 @@ async def test_mcp_list_resources_shows_resources(ctx, monkeypatch):
 async def test_mcp_list_resources_empty(ctx, monkeypatch):
     """mcp_list_resources with no resources returns appropriate message."""
     from decafclaw import mcp_client
-    from decafclaw.tools.mcp_tools import tool_mcp_list_resources
+    from decafclaw.skills.mcp.tools import tool_mcp_list_resources
 
     registry = MCPRegistry()
     cfg = MCPServerConfig(name="empty-srv", type="stdio")
@@ -999,7 +999,7 @@ async def test_mcp_list_resources_empty(ctx, monkeypatch):
 async def test_mcp_read_resource_success(ctx, monkeypatch):
     """mcp_read_resource reads and converts resource content."""
     from decafclaw import mcp_client
-    from decafclaw.tools.mcp_tools import tool_mcp_read_resource
+    from decafclaw.skills.mcp.tools import tool_mcp_read_resource
 
     mock_session = AsyncMock()
     read_result = MagicMock()
@@ -1025,7 +1025,7 @@ async def test_mcp_read_resource_success(ctx, monkeypatch):
 @pytest.mark.asyncio
 async def test_mcp_read_resource_missing_params(ctx, monkeypatch):
     """mcp_read_resource returns error when params missing."""
-    from decafclaw.tools.mcp_tools import tool_mcp_read_resource
+    from decafclaw.skills.mcp.tools import tool_mcp_read_resource
 
     result = await tool_mcp_read_resource(ctx, server="", uri="")
     assert "[error:" in result.text
@@ -1038,7 +1038,7 @@ async def test_mcp_read_resource_missing_params(ctx, monkeypatch):
 async def test_mcp_list_prompts_shows_prompts(ctx, monkeypatch):
     """mcp_list_prompts returns formatted prompt list."""
     from decafclaw import mcp_client
-    from decafclaw.tools.mcp_tools import tool_mcp_list_prompts
+    from decafclaw.skills.mcp.tools import tool_mcp_list_prompts
 
     arg = MagicMock()
     arg.name = "text"
@@ -1064,7 +1064,7 @@ async def test_mcp_list_prompts_shows_prompts(ctx, monkeypatch):
 async def test_mcp_get_prompt_success(ctx, monkeypatch):
     """mcp_get_prompt gets and converts prompt messages."""
     from decafclaw import mcp_client
-    from decafclaw.tools.mcp_tools import tool_mcp_get_prompt
+    from decafclaw.skills.mcp.tools import tool_mcp_get_prompt
 
     mock_session = AsyncMock()
     prompt_result = MagicMock()
@@ -1089,7 +1089,7 @@ async def test_mcp_get_prompt_success(ctx, monkeypatch):
 @pytest.mark.asyncio
 async def test_mcp_get_prompt_missing_params(ctx, monkeypatch):
     """mcp_get_prompt returns error when params missing."""
-    from decafclaw.tools.mcp_tools import tool_mcp_get_prompt
+    from decafclaw.skills.mcp.tools import tool_mcp_get_prompt
 
     result = await tool_mcp_get_prompt(ctx, server="", name="")
     assert "[error:" in result.text
