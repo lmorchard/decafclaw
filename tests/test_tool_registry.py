@@ -233,6 +233,21 @@ class TestClassifyTools:
         active_names = {td["function"]["name"] for td in active}
         assert "norm_7" in active_names
 
+    def test_preempt_matches_treated_critical(self, config):
+        """Names in preempt_matches are promoted to critical regardless of priority."""
+        tools = [
+            _make_tool_def(f"norm_{i}", "x" * 200, priority="normal")
+            for i in range(20)
+        ]
+        config.compaction.max_tokens = 100  # tight
+
+        active, deferred = classify_tools(
+            tools, config, preempt_matches={"norm_3", "norm_9"},
+        )
+        active_names = {td["function"]["name"] for td in active}
+        assert "norm_3" in active_names
+        assert "norm_9" in active_names
+
     def test_input_order_preserved_within_tier(self, config):
         """Within a priority tier, input order is preserved."""
         tools = [

@@ -379,6 +379,151 @@ class TestComposeTools:
             assert "allowed_tool" in active_names
             assert "blocked_tool" not in active_names
 
+    def test_preempt_matches_promoted_to_active(self, ctx, config):
+        """Tools in ctx.tools.preempt_matches are promoted even under budget pressure."""
+        # Tight budget so non-critical tools would otherwise be deferred.
+        config.agent.tool_context_budget_pct = 0.001
+        config.compaction.max_tokens = 100
+        tools = [_make_tool_def(f"tool_{i}", "x" * 200) for i in range(20)]
+        # Simulate a pre-emptive match — tool_7 should survive deferral.
+        ctx.tools.preempt_matches = {"tool_7"}
+        with patch("decafclaw.agent._collect_all_tool_defs", return_value=tools):
+            composer = ContextComposer()
+            active, deferred, text, entry = composer._compose_tools(ctx, config)
+            active_names = {t["function"]["name"] for t in active}
+            assert "tool_7" in active_names
+
+
+# -- Pre-emptive matching ------------------------------------------------------
+
+
+class TestComposePreemptMatches:
+    def test_disabled_returns_none(self, ctx, config):
+        """When pre-emptive search is disabled, no matching happens and no entry is returned."""
+        config.agent.preemptive_search.enabled = False
+        tools = [_make_tool_def("vault_read", "Read a vault page")]
+        with patch("decafclaw.agent._collect_all_tool_defs", return_value=tools):
+            composer = ContextComposer()
+            entry = composer._compose_preempt_matches(
+                ctx, config, "read my vault", [], ComposerMode.INTERACTIVE,
+            )
+            assert entry is None
+            assert ctx.tools.preempt_matches == set()
+
+    def test_empty_user_message_no_match(self, ctx, config):
+        """Empty user message with no prior history yields no matches."""
+        tools = [_make_tool_def("vault_read", "vault page")]
+        with patch("decafclaw.agent._collect_all_tool_defs", return_value=tools):
+            composer = ContextComposer()
+            entry = composer._compose_preempt_matches(
+                ctx, config, "", [], ComposerMode.INTERACTIVE,
+            )
+            assert entry is None
+            assert ctx.tools.preempt_matches == set()
+
+    def test_basic_match_populates_ctx(self, ctx, config):
+        """A matching tool gets added to ctx.tools.preempt_matches and returned in the entry."""
+        tools = [
+            _make_tool_def("vault_backlinks", "List pages linking to a vault page"),
+            _make_tool_def("unrelated_tool", "Totally unrelated"),
+        ]
+        with patch("decafclaw.agent._collect_all_tool_defs", return_value=tools):
+            composer = ContextComposer()
+            entry = composer._compose_preempt_matches(
+                ctx, config, "show my vault backlinks", [], ComposerMode.INTERACTIVE,
+            )
+            assert entry is not None
+            assert entry.source == "preempt_matches"
+            assert "vault_backlinks" in ctx.tools.preempt_matches
+            assert "unrelated_tool" not in ctx.tools.preempt_matches
+            match_names = [m["name"] for m in entry.details["matches"]]
+            assert "vault_backlinks" in match_names
+
+    def test_prior_assistant_carries_topic(self, ctx, config):
+        """Short user message + prior assistant response still matches via union."""
+        tools = [
+            _make_tool_def("vault_backlinks", "List pages linking to a vault page"),
+        ]
+        history = [
+            {"role": "user", "content": "what are the backlinks?"},
+            {"role": "assistant", "content": "Here are the vault backlinks for foo."},
+        ]
+        with patch("decafclaw.agent._collect_all_tool_defs", return_value=tools):
+            composer = ContextComposer()
+            # User message alone is stopword-only; prior assistant carries the topic.
+            entry = composer._compose_preempt_matches(
+                ctx, config, "and for bar?", history, ComposerMode.INTERACTIVE,
+            )
+            assert entry is not None
+            assert "vault_backlinks" in ctx.tools.preempt_matches
+
+    def test_critical_tool_excluded_from_candidates(self, ctx, config):
+        """Tools already declared critical don't get re-promoted — they're in already."""
+        crit = _make_tool_def("shell", "Run a shell command")
+        crit["priority"] = "critical"
+        with patch("decafclaw.agent._collect_all_tool_defs", return_value=[crit]):
+            composer = ContextComposer()
+            entry = composer._compose_preempt_matches(
+                ctx, config, "run a shell command", [], ComposerMode.INTERACTIVE,
+            )
+            # Nothing to promote — the only candidate is already critical.
+            assert entry is None
+            assert ctx.tools.preempt_matches == set()
+
+    def test_fetched_tool_excluded_from_candidates(self, ctx, config):
+        """Already-fetched tools don't get re-promoted."""
+        ctx.skills.data = {"fetched_tools": ["vault_backlinks"]}
+        tools = [_make_tool_def("vault_backlinks", "vault backlinks")]
+        with patch("decafclaw.agent._collect_all_tool_defs", return_value=tools):
+            composer = ContextComposer()
+            entry = composer._compose_preempt_matches(
+                ctx, config, "show me vault backlinks", [], ComposerMode.INTERACTIVE,
+            )
+            # Already fetched — nothing new to promote.
+            assert entry is None
+
+    def test_max_matches_cap(self, ctx, config):
+        """max_matches caps the number of promoted tools."""
+        config.agent.preemptive_search.max_matches = 3
+        tools = [_make_tool_def(f"vault_tool_{i}", "vault operation") for i in range(10)]
+        with patch("decafclaw.agent._collect_all_tool_defs", return_value=tools):
+            composer = ContextComposer()
+            entry = composer._compose_preempt_matches(
+                ctx, config, "vault operation", [], ComposerMode.INTERACTIVE,
+            )
+            assert entry is not None
+            assert len(ctx.tools.preempt_matches) == 3
+            assert entry.items_included == 3
+
+    def test_respects_allowed_tools_filter(self, ctx, config):
+        """ctx.tools.allowed restricts the candidate pool — disallowed tools
+        can't be promoted by keyword matching."""
+        tools = [
+            _make_tool_def("vault_backlinks", "Show vault backlinks"),
+            _make_tool_def("blocked_tool", "Also vault backlinks description"),
+        ]
+        ctx.tools.allowed = {"vault_backlinks"}
+        with patch("decafclaw.agent._collect_all_tool_defs", return_value=tools):
+            composer = ContextComposer()
+            entry = composer._compose_preempt_matches(
+                ctx, config, "show vault backlinks", [], ComposerMode.INTERACTIVE,
+            )
+            assert entry is not None
+            # Only the allowed tool gets promoted, even though both match.
+            assert ctx.tools.preempt_matches == {"vault_backlinks"}
+
+    def test_fresh_per_turn(self, ctx, config):
+        """Calling _compose_preempt_matches resets ctx.tools.preempt_matches."""
+        ctx.tools.preempt_matches = {"stale_tool"}
+        tools = [_make_tool_def("vault_backlinks", "vault backlinks")]
+        with patch("decafclaw.agent._collect_all_tool_defs", return_value=tools):
+            composer = ContextComposer()
+            composer._compose_preempt_matches(
+                ctx, config, "show vault backlinks", [], ComposerMode.INTERACTIVE,
+            )
+            assert "stale_tool" not in ctx.tools.preempt_matches
+            assert "vault_backlinks" in ctx.tools.preempt_matches
+
 
 # -- Full compose() ------------------------------------------------------------
 

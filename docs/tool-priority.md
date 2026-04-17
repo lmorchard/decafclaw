@@ -91,4 +91,5 @@ Every name in the comma-separated list is promoted to `critical`, regardless of 
 ## Related
 
 - [tool-search.md](tool-search.md) — `tool_search` and the deferred catalog
+- [preemptive-tool-search.md](preemptive-tool-search.md) — automatic keyword-based promotion of tools from the current user message
 - [skills.md](skills.md) — skill activation and the `auto-approve` frontmatter for bundled skills

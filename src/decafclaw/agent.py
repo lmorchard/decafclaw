@@ -392,7 +392,12 @@ def _build_tool_list(ctx) -> tuple[list, str | None]:
         td.get("function", {}).get("name", "")
         for td in ctx.tools.extra_definitions
     }
-    active, deferred = classify_tools(all_defs, ctx.config, fetched, skill_tool_names)
+    # Pre-emptive matches populated by ContextComposer at turn start;
+    # reused across iterations so mid-turn reclassification stays consistent.
+    active, deferred = classify_tools(
+        all_defs, ctx.config, fetched, skill_tool_names,
+        preempt_matches=ctx.tools.preempt_matches,
+    )
 
     # Apply allowed_tools filter to the active set only
     allowed = ctx.tools.allowed

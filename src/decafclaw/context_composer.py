@@ -246,6 +246,15 @@ class ContextComposer:
         if wiki_entry:
             sources.append(wiki_entry)
 
+        # -- Pre-emptive tool search (populate ctx.tools.preempt_matches) --
+        # Runs before tool classification so matches promote into the active
+        # set via the existing critical-tier mechanism.
+        preempt_entry = self._compose_preempt_matches(
+            ctx, config, user_message, history, mode,
+        )
+        if preempt_entry is not None:
+            sources.append(preempt_entry)
+
         # -- Tools (compute before budget so we have actual token cost) --
         active_tools, deferred_tools, deferred_text, tools_entry = self._compose_tools(ctx, config)
         sources.append(tools_entry)
@@ -587,6 +596,113 @@ class ContextComposer:
         )
         return messages, entry
 
+    def _compose_preempt_matches(
+        self, ctx, config, user_message: str, history: list,
+        mode: ComposerMode,
+    ) -> SourceEntry | None:
+        """Run pre-emptive keyword match, populate ``ctx.tools.preempt_matches``.
+
+        Matches user message + prior assistant response against tool names +
+        descriptions. Matched tool names get promoted to critical for this
+        turn via ``classify_tools``'s ``preempt_matches`` parameter. See
+        docs/preemptive-tool-search.md.
+
+        Returns a ``SourceEntry`` for the diagnostics sidecar, or None if
+        matching is disabled or produced no results.
+
+        The ``mode`` parameter is accepted for API symmetry with other
+        composer methods and to reserve space for future mode-specific
+        gating. Currently all composer-driven modes apply matching
+        (reflection and compaction bypass the composer entirely).
+        """
+        from .agent import _collect_all_tool_defs
+        from .preempt_search import (
+            extract_last_assistant_text,
+            match_tools,
+            tokenize,
+        )
+        from .tools.tool_registry import get_critical_names, get_fetched_tools
+
+        _ = mode  # reserved for future per-mode gating
+
+        # Reset for this turn. The field lives on ctx.tools (a shared
+        # sub-object on the per-turn context), so it's fresh per turn
+        # but stable across agent iterations within the turn.
+        ctx.tools.preempt_matches = set()
+
+        cfg = config.agent.preemptive_search
+        if not cfg.enabled:
+            return None
+
+        # Assemble match input: user message + last assistant response.
+        prior_text = extract_last_assistant_text(history)
+        input_text = f"{user_message}\n{prior_text}" if prior_text else user_message
+        input_tokens = tokenize(input_text)
+        if not input_tokens:
+            return None
+
+        # Candidate pool: all tools not already force-critical.
+        # Already-force-critical names come from the same sources
+        # classify_tools uses: env override + always-loaded skills (via
+        # get_critical_names), fetched (via get_fetched_tools), and
+        # activated skill tools (from ctx.tools.extra_definitions).
+        # Plus declared priority: "critical" on the tool def itself.
+        already_critical: set[str] = get_critical_names(config)
+        already_critical |= get_fetched_tools(ctx)
+        already_critical |= {
+            td.get("function", {}).get("name", "")
+            for td in ctx.tools.extra_definitions
+        }
+
+        all_defs = _collect_all_tool_defs(ctx)
+        # If the context restricts the usable tool set (eval runner,
+        # restricted child agents), don't surface disallowed tools —
+        # they'd waste the match cap and error at execute_tool.
+        allowed = ctx.tools.allowed
+        candidates: list[dict] = []
+        for td in all_defs:
+            name = td.get("function", {}).get("name", "")
+            if not name or name in already_critical:
+                continue
+            # Respect declared critical priority — those are already in.
+            if td.get("priority") == "critical":
+                continue
+            if allowed is not None and name not in allowed:
+                continue
+            candidates.append(td)
+
+        matches = match_tools(input_tokens, candidates, cfg.max_matches)
+        if not matches:
+            return None
+
+        matched_names = {m["name"] for m in matches}
+        ctx.tools.preempt_matches = matched_names
+
+        log.info(
+            "preemptive match: promoted %d tool(s) for conv %s: %s",
+            len(matches), (ctx.conv_id or ctx.context_id)[:12],
+            ", ".join(f"{m['name']}({m['score']})" for m in matches),
+        )
+
+        # Diagnostics: "tokens_estimated" is the full estimated cost of
+        # the promoted tool defs (not a true delta vs. the no-match
+        # baseline — a true delta would require a second classification
+        # pass, and this approximation is fine for the inspector).
+        from .tools.tool_registry import estimate_tool_tokens
+        promoted_defs = [td for td in all_defs
+                         if td.get("function", {}).get("name", "") in matched_names]
+        tokens_added = estimate_tool_tokens(promoted_defs)
+        return SourceEntry(
+            source="preempt_matches",
+            tokens_estimated=tokens_added,
+            items_included=len(matches),
+            details={
+                "input_tokens": sorted(input_tokens),
+                "matches": matches,
+                "max_matches": cfg.max_matches,
+            },
+        )
+
     def _compose_tools(self, ctx, config) -> tuple[list[dict], list[dict], str | None, SourceEntry]:
         """Classify tools into active and deferred sets.
 
@@ -606,7 +722,15 @@ class ContextComposer:
 
         all_defs = _collect_all_tool_defs(ctx)
         fetched = get_fetched_tools(ctx)
-        active, deferred = classify_tools(all_defs, config, fetched)
+        # Skill tools (from activated skills) should never be deferred
+        skill_tool_names = {
+            td.get("function", {}).get("name", "")
+            for td in ctx.tools.extra_definitions
+        }
+        active, deferred = classify_tools(
+            all_defs, config, fetched, skill_tool_names,
+            preempt_matches=ctx.tools.preempt_matches,
+        )
 
         # Apply allowed_tools filter
         allowed = ctx.tools.allowed
