@@ -93,6 +93,7 @@ An AI agent testbed for exploring agent development patterns. Connects to Matter
 
 ### Workflow
 
+- **Sync with origin/main before starting any significant task.** Run `git fetch origin && git log --oneline main..origin/main` at session start — before branching, and especially before long audit/research work. Auditing against stale local main produces output that contradicts current reality: "ghost" references to features that already exist, missing new docs, wrong convention wording. A reusable workflow bug: every session where this was skipped ended with conflicts or redone work.
 - **Bug fix = test first.** When fixing a bug, first write a test that reproduces it (fails), then fix the code to make it pass. This ensures regressions are caught and documents the bug's trigger condition.
 - **Commit after each logical step.** Lint and test before committing.
 - **Work in a branch for iterative changes.** When making multiple related fixes (especially to UX-sensitive code like streaming/placeholder logic), work in a branch and test the full set before merging to main. Don't push rapid-fire fixes directly to main — regressions compound.
