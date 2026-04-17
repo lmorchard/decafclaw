@@ -1,6 +1,6 @@
 # File Attachments & Rich Media
 
-DecafClaw can send files, images, and rich media through Mattermost messages. This includes MCP tool results with images/audio, workspace files shared by the agent, and inline workspace image references.
+DecafClaw handles files, images, and rich media across all transports — uploaded by the user (web UI, Mattermost) or produced by tools (MCP images/audio, workspace file refs, `file_share`).
 
 ## How it works
 
@@ -83,9 +83,15 @@ For structured rich responses with images from public URLs, Mattermost supports 
 
 The `MediaHandler.format_attachment_card` method builds these structures.
 
-## debug_context with Attachments
+## Web UI uploads
 
-The `debug_context` tool now uploads the full JSON context and system prompt as file attachments in Mattermost, making it easy to inspect the full LLM context without reading workspace files.
+The web UI supports drag-and-drop file uploads in the chat input. Files are sent to `POST /api/upload/{conv_id}` and stored in `data/{agent_id}/workspace/conversations/{conv_id}/uploads/` — see `attachments.py`. Uploaded files appear inline as message attachments, and tools like `list_attachments` and `get_attachment` let the agent read them.
+
+Supported content types include images (shown inline), documents, and arbitrary binaries (linked for download).
+
+## debug_context attachments
+
+The `debug_context` tool uploads the full JSON context and system prompt as file attachments in Mattermost, making it easy to inspect the full LLM context without reading workspace files.
 
 ## Limits
 

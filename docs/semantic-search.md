@@ -19,15 +19,16 @@ Embeddings are stored in `data/{agent_id}/workspace/embeddings.db` — a SQLite 
 
 The `vec0` table handles vector storage and similarity search in native C with SIMD acceleration. The `memory_embeddings` table holds only metadata — no embedding BLOBs in new databases.
 
-Three source types are indexed:
+Four source types are indexed:
 
-| Source | What's indexed | When |
-|--------|---------------|------|
-| `memory` | Memory file entries | On save, or via reindex |
-| `conversation` | User and assistant messages | During conversation (if embedding model configured) |
-| `wiki` | Wiki page content | On save, or via reindex |
+| Source | What's indexed | Boost | When |
+|--------|---------------|-------|------|
+| `page` | Agent vault pages | 1.3x | On `vault_write`, or via reindex |
+| `user` | User's Obsidian pages | 1.2x | Via reindex |
+| `journal` | Agent journal entries | 1.0x | On `vault_journal_append`, or via reindex |
+| `conversation` | User and assistant messages | 1.0x | During conversation (if embedding model configured) |
 
-Wiki entries receive a 1.2x similarity boost so curated knowledge ranks above raw entries at equal semantic distance.
+Agent pages and user pages receive similarity boosts so curated knowledge ranks above raw entries at equal semantic distance.
 
 ## Configuration
 
@@ -41,11 +42,11 @@ Set in `.env` or environment:
 | `EMBEDDING_DIMENSIONS` | `768` | Vector dimensions (must match your embedding model) |
 | `MEMORY_SEARCH_STRATEGY` | `substring` | `substring` or `semantic` for memory search |
 
-When `MEMORY_SEARCH_STRATEGY=semantic`, `memory_search` uses embeddings. Otherwise it falls back to case-insensitive substring matching. Conversation search always uses embeddings when an embedding model is configured.
+When `MEMORY_SEARCH_STRATEGY=semantic`, `vault_search` uses embeddings. Otherwise it falls back to case-insensitive substring matching. Conversation search always uses embeddings when an embedding model is configured.
 
 ## Tools
 
-- **`memory_search`** — searches memories using configured strategy (substring or semantic)
+- **`vault_search`** — searches vault pages, journal entries, and user notes (semantic or substring)
 - **`conversation_search`** — searches past conversation archives using semantic search
 
 ## CLI tools
@@ -56,7 +57,7 @@ decafclaw-search "query"  # Search the embedding index from the command line
 ```
 
 Options for `decafclaw-search`:
-- `--type memory|conversation|all` — filter by source type (default: all)
+- `--type page|journal|user|conversation|all` — filter by source type (default: all)
 - `--top-k N` — number of results (default: 5)
 
 ## Reindexing
@@ -67,8 +68,9 @@ The index is rebuilt automatically if empty when a search is performed. To force
 make reindex
 ```
 
-This deletes the existing database and re-embeds all memory files and conversation archives. Useful after changing the embedding model/dimensions or if the index gets corrupted.
+This deletes the existing database and re-embeds all vault pages, journal entries, and conversation archives. Useful after changing the embedding model/dimensions or if the index gets corrupted. Supports `--vault`, `--journal` flags for subset reindexing and `--concurrency N` for parallel API calls.
 
-## Migration from pre-sqlite-vec databases
+## Related
 
-Existing databases with legacy embedding BLOBs are auto-migrated on first open: vectors are bulk-copied from the `memory_embeddings.embedding` column into the `embeddings_vec` virtual table. This is a fast in-database operation with no API calls. After migration, the legacy BLOB column remains but is no longer written to. A full reindex produces a clean schema without the vestigial column.
+- [Vault](vault.md) — the unified knowledge base indexed by semantic search
+- [Context Composer](context-composer.md#vault-retrieval) — vault retrieval, relevance scoring, token budget
