@@ -157,9 +157,9 @@ Users can switch between these via the web UI dropdown.
 
 | Field | Type | Providers | Description |
 |-------|------|-----------|-------------|
-| `type` | string | all | `"vertex"`, `"openai"`, or `"openai-compat"` (or `"litellm"`) |
-| `api_key` | string | openai, litellm | API key (secret, masked in config show) |
-| `url` | string | openai, litellm | Base URL for the API endpoint |
+| `type` | string | all | `"vertex"`, `"openai"`, or `"openai-compat"` (alias: `"litellm"`) |
+| `api_key` | string | openai, openai-compat | API key (secret, masked in config show) |
+| `url` | string | openai, openai-compat | Base URL for the API endpoint |
 | `project` | string | vertex | GCP project ID |
 | `region` | string | vertex | GCP region (default: `us-central1`) |
 | `service_account_file` | string | vertex | Path to service account JSON key file |
@@ -171,10 +171,10 @@ The provider abstraction lives in `src/decafclaw/llm/`:
 - `types.py` — `Provider` protocol defining `complete()` and `embed()` methods
 - `registry.py` — Named provider registry, initialized from config at startup
 - `providers/openai_compat.py` — OpenAI-compat provider (httpx + SSE)
-- `providers/openai.py` — Direct OpenAI (thin subclass of litellm)
+- `providers/openai.py` — Direct OpenAI (thin subclass of openai-compat)
 - `providers/vertex.py` — Native Gemini REST API with ADC/service account auth
 
-All providers normalize responses to the same internal format (`content`, `tool_calls`, `role`, `usage`). Tool definitions are sent in each provider's native format — OpenAI envelope for litellm/openai, `FunctionDeclaration` for Vertex/Gemini.
+All providers normalize responses to the same internal format (`content`, `tool_calls`, `role`, `usage`). Tool definitions are sent in each provider's native format — OpenAI envelope for openai-compat/openai, `FunctionDeclaration` for Vertex/Gemini.
 
 ## Integration tests
 

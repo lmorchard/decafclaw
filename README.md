@@ -6,110 +6,51 @@ An AI agent testbed in Python. Built to explore agent development patterns — t
 
 Multi-channel AI agent with a shared knowledge vault. Connects to Mattermost as a chat bot, runs in a web UI with WYSIWYG wiki editing, or runs in terminal mode. Multi-provider LLM support (Vertex/Gemini, OpenAI, OpenAI-compatible) with named model configs and per-conversation model selection. Streams responses as they arrive.
 
-**Features:**
-- **[Skills](docs/skills.md)** — portable tool packages following the [Agent Skills](https://agentskills.io) standard
-- **[MCP servers](docs/mcp-servers.md)** — connect external tools via the Model Context Protocol (stdio + HTTP)
-- **[Heartbeat](docs/heartbeat.md)** — periodic agent tasks with threaded Mattermost reporting
-- **[Interactive buttons](docs/http-server.md)** — Mattermost button confirmations with HTTP callback server
-- **[File attachments](docs/file-attachments.md)** — upload images, files, and rich media to Mattermost
-- **[Streaming](docs/streaming.md)** — token-by-token response streaming with throttled edits
-- **[Memory](docs/memory.md)** — persistent file-based memory with semantic search
-- **[Conversations](docs/conversations.md)** — archive, resume, and auto-compaction
-- **[Eval loop](docs/eval-loop.md)** — test prompts and tools with real LLM calls
-- **[Deployment](docs/deployment.md)** — systemd service on a Debian VM
+**Key features:** [Web UI](docs/web-ui.md) | [Skills](docs/skills.md) | [MCP servers](docs/mcp-servers.md) | [Vault & memory](docs/vault.md) | [Conversations](docs/conversations.md) | [Streaming](docs/streaming.md) | [Heartbeat](docs/heartbeat.md) | [Scheduled tasks](docs/schedules.md) | [Sub-agent delegation](docs/delegation.md) | [Eval loop](docs/eval-loop.md) | [Self-reflection](docs/reflection.md)
+
+See [docs/](docs/index.md) for the full feature list.
 
 ## Quick start
 
 ```bash
-# Clone and install
 git clone https://github.com/lmorchard/decafclaw.git
 cd decafclaw
 uv sync
-
-# Configure
-cp .env.example .env
-# Edit .env with optional Mattermost keys
-# Configure LLM providers in data/{agent_id}/config.json — see docs/providers.md
-
-# Run interactively (no Mattermost needed)
-make run
-
-# Or run as a Mattermost bot
-uv run decafclaw
+cp .env.example .env    # then configure LLM provider — see docs/providers.md
+make run                 # interactive terminal mode (no Mattermost needed)
 ```
 
-See [docs/installation.md](docs/installation.md) for full setup and configuration reference.
-
-## Built-in tools
-
-| Tool | What it does |
-|------|-------------|
-| `web_fetch` | Fetch raw HTML from a URL |
-| `current_time` | Get current date and time |
-| `debug_context` | Dump context as JSON file attachments |
-| `context_stats` | Token budget breakdown and diagnostics |
-| `vault_read/write/list` | Read, write, and list vault pages |
-| `vault_journal_append` | Append timestamped journal entry |
-| `vault_search` | Search vault (semantic or substring) |
-| `vault_backlinks` | Find pages linking to a given page |
-| `conversation_search` | Search past conversations (substring) |
-| `conversation_compact` | Manually trigger conversation compaction |
-| `checklist_create/step_done/abort/status` | Step-by-step checklist execution loop |
-| `workspace_read/write/list` | Sandboxed file operations (read supports line ranges) |
-| `workspace_edit` | Exact string replacement in workspace files |
-| `workspace_insert` | Insert text at a specific line number |
-| `workspace_replace_lines` | Replace or delete a range of lines |
-| `workspace_append` | Append content to a file |
-| `workspace_search` | Regex search across workspace files |
-| `workspace_glob` | Find files by name/glob pattern |
-| `workspace_move` | Move or rename a file within the workspace |
-| `workspace_delete` | Delete a file from the workspace |
-| `workspace_diff` | Unified diff between two workspace files |
-| `file_share` | Share workspace files as Mattermost attachments |
-| `shell` | Run shell commands (requires user confirmation) |
-| `activate_skill` | Load a skill's tools into the conversation |
-| `refresh_skills` | Re-scan skill directories |
-| `heartbeat_trigger` | Manually fire a heartbeat cycle |
-| `delegate_task` | Delegate a subtask to a child agent (call multiple times for parallel work) |
-
-Background process management (start/status/stop/list) is available via the bundled `background` skill (auto-activates on use). MCP administration (status/resources/prompts/restart) is available via the bundled `mcp` skill. External MCP server tools (`mcp__server__tool`) appear in the catalog automatically when their servers are connected.
-
-Skills and MCP servers provide additional tools on demand.
+See [Installation & Setup](docs/installation.md) for provider configuration, Mattermost bot setup, and all options.
 
 ## Architecture
 
 ```
-User message → Build prompt (SOUL.md + AGENT.md + skill catalog + history + tools)
-                    ↓
-               Call LLM (streaming or all-at-once)
-                    ↓
-            ┌── Tool calls? ──→ Execute tools → Publish events → Loop back
-            │                         ↑
-            │                    Event bus notifies subscribers
-            │                    (Mattermost edits placeholder,
-            │                     terminal prints progress)
+Mattermost / Web UI / Terminal
+            ↓
+       Agent turn (agent.py)
+            ↓
+  ContextComposer assembles prompt
+  (system prompt + vault context + history + tools)
+            ↓
+       Call LLM ←───────────────────┐
+            ↓                       │
+    Tool calls? ── yes → Execute → Loop back
             │
-            └── Text response → Process media → Send to user
-                                     ↓
-                              Archive + maybe compact
+            no
+            ↓
+    Text response → Archive + maybe compact
 ```
 
-See [docs/](docs/index.md) for detailed documentation on each feature, [docs/data-layout.md](docs/data-layout.md) for file structure, and [docs/context-map.md](docs/context-map.md) for prompt assembly.
+All state is [files on disk](docs/data-layout.md) — markdown, JSONL, SQLite. See [Context Composer](docs/context-composer.md) for prompt assembly details.
 
 ## Development
 
 ```bash
-make dev          # Auto-restart on file changes
-make debug        # With debug logging
-make test         # Run pytest
-make lint         # Ruff linting
-make typecheck    # Pyright type checking
-make check-js     # TypeScript/JSDoc type checking
-make check        # Lint + type check (Python + JS)
-make vendor       # Rebuild web UI vendor bundle
-make lint-fix     # Auto-fix lint issues
-make fmt          # Format with ruff
-make config       # Show resolved config values
+make dev       # Auto-restart on file changes
+make test      # Run pytest
+make check     # Lint + type check (Python + JS)
+make vendor    # Rebuild web UI vendor bundle
+make config    # Show resolved config values
 ```
 
 ## What this is NOT
