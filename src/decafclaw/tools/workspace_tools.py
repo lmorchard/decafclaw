@@ -552,7 +552,24 @@ WORKSPACE_TOOL_DEFINITIONS = [
         "priority": "normal",
         "function": {
             "name": "workspace_edit",
-            "description": "Edit a file by exact string replacement. Finds old_text and replaces it with new_text. Fails if old_text is not found or matches multiple locations (ambiguous) — provide more surrounding context to make it unique, or set replace_all=true for intentional bulk replacement.",
+            "description": (
+                "Replace an exact string with another exact string in a file. "
+                "USE SPARINGLY — prefer workspace_replace_lines for multi-line "
+                "edits, workspace_insert for additions, workspace_write for "
+                "full rewrites.\n\n"
+                "When to use: small, targeted changes (typo fix, URL swap, "
+                "single identifier rename) where you have the exact current "
+                "content fresh from workspace_read. The old_text must match "
+                "CHARACTER-FOR-CHARACTER including every whitespace "
+                "character.\n\n"
+                "Common failure: reconstructing text from memory instead of "
+                "a fresh read — your mental model drifts from the file on "
+                "disk and the match fails. If you don't have the current "
+                "content in front of you, use workspace_replace_lines with "
+                "line numbers instead.\n\n"
+                "Fails if old_text is not found or matches multiple locations. "
+                "Set replace_all=true for intentional bulk replacement."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -562,7 +579,12 @@ WORKSPACE_TOOL_DEFINITIONS = [
                     },
                     "old_text": {
                         "type": "string",
-                        "description": "Exact text to find (must match including whitespace and indentation)",
+                        "description": (
+                            "Exact text currently in the file. Must match "
+                            "character-for-character including every space, "
+                            "tab, and newline. If you can't see the current "
+                            "content, use workspace_replace_lines instead."
+                        ),
                     },
                     "new_text": {
                         "type": "string",
