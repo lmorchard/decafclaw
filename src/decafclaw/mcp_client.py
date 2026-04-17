@@ -140,13 +140,39 @@ def load_mcp_config(config) -> list[MCPServerConfig]:
 # -- Tool namespacing ----------------------------------------------------------
 
 
+def _normalize_server_segment(server_name: str) -> str:
+    """Normalize a server name for use in namespaced tool identifiers.
+
+    Hyphens are replaced with underscores. This is a workaround for
+    Gemini, which normalizes hyphens to underscores at the function-call
+    serialization layer — a tool registered as ``mcp__foo-bar__baz``
+    would be emitted as ``mcp__foo_bar__baz`` and fail to route. By
+    advertising underscored names up-front, every provider can
+    round-trip the identifier.
+
+    The *actual* MCP SDK server name (used for calls via
+    ``session.call_tool``) is preserved separately — this only affects
+    the identifier seen by the LLM.
+    """
+    return server_name.replace("-", "_")
+
+
 def _namespace_tool(server_name: str, tool_name: str) -> str:
-    """Create a namespaced tool name: mcp__<server>__<tool>."""
-    return f"mcp__{server_name}__{tool_name}"
+    """Create a namespaced tool name: mcp__<server>__<tool>.
+
+    The server segment is normalized (hyphens → underscores) for
+    provider-compatibility; see ``_normalize_server_segment``.
+    """
+    return f"mcp__{_normalize_server_segment(server_name)}__{tool_name}"
 
 
 def _parse_namespace(namespaced: str) -> tuple[str, str] | None:
-    """Parse a namespaced MCP tool name into (server_name, tool_name).
+    """Parse a namespaced MCP tool name into (server_segment, tool_name).
+
+    Note: the returned ``server_segment`` is the normalized form
+    (hyphens replaced with underscores). It will not match an original
+    MCP server name if the server had hyphens. Callers that need the
+    original server name should look it up via the registry.
 
     Returns None if the name doesn't match the mcp__<server>__<tool> pattern.
     """

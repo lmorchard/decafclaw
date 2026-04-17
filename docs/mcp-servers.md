@@ -54,7 +54,7 @@ Use `${VAR}` or `${VAR:-default}` in any string value. Variables are expanded fr
 
 ### Server name requirements
 
-Server names must be lowercase alphanumeric with hyphens (e.g., `my-server`). They become part of the tool namespace.
+Server names must be lowercase alphanumeric with hyphens or underscores (e.g., `my-server` or `my_server`). They become part of the tool namespace — **hyphens are normalized to underscores** in the identifier the LLM sees (see [Tool namespacing](#tool-namespacing) below).
 
 ## How it works
 
@@ -67,15 +67,27 @@ Server names must be lowercase alphanumeric with hyphens (e.g., `my-server`). Th
 
 ## Tool namespacing
 
-All MCP tools are prefixed with the server name to prevent collisions:
+All MCP tools are prefixed with the server name to prevent collisions.
+
+**Hyphens in server names are normalized to underscores in the namespaced tool identifier.** For a server configured as `oblique-strategies`, the agent sees:
 
 ```
-mcp__oblique-strategies__get_strategy
-mcp__oblique-strategies__search_strategies
-mcp__oblique-strategies__list_editions
+mcp__oblique_strategies__get_strategy
+mcp__oblique_strategies__search_strategies
+mcp__oblique_strategies__list_editions
 ```
 
-The agent calls them by the full namespaced name. The prefix is stripped before forwarding to the server.
+### Why normalize?
+
+Gemini normalizes hyphens to underscores in tool identifiers at the function-call serialization layer — a tool registered as `mcp__oblique-strategies__get_strategy` gets emitted as `mcp__oblique_strategies__get_strategy` and fails to route. The model literally cannot produce a hyphen inside a tool identifier, even when it knows the correct name. By advertising underscored names up-front, every provider round-trips the identifier reliably.
+
+This is a DecafClaw-layer convention — the actual MCP SDK call preserves the original server name (including hyphens), so protocol interop is unaffected. Only the identifier the LLM sees changes.
+
+### Consequences
+
+- **Config server names can use hyphens or underscores** — e.g., `my-api-server` or `my_api_server`. Both produce the same advertised tool names (`mcp__my_api_server__...`). Collisions would be rare but possible; avoid configuring two servers whose names differ only in separator.
+- **User-invokable prompt commands still use the raw server name** — if you named a server `oblique-strategies` you invoke prompts as `!mcp__oblique-strategies__promptname` (humans can type hyphens fine). This asymmetry is small and targeted; we may unify later.
+- **The agent calls tools by the normalized name.** The prefix is stripped and the *original* server name is used to route to the correct MCP session.
 
 ## Resources
 
