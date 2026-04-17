@@ -13,9 +13,17 @@ user-invocable: true
 
 Fetch recent bookmarks from Linkding, then delegate each bookmark to a child agent for content extraction and vault integration.
 
-## Output Folder
+## Output Folder — READ THIS FIRST
 
-Write all bookmark-derived pages into `agent/pages/bookmarks/`. Use sub-organization by topic when it makes sense (e.g. `agent/pages/bookmarks/programming/`, `agent/pages/bookmarks/tools/`). Include `[[wiki-links]]` back to related pages elsewhere in the vault.
+**All new bookmark-derived pages MUST be created under `agent/pages/bookmarks/`.** Never call `vault_write` with a page path that doesn't start with `agent/pages/bookmarks/`. Example valid paths:
+
+- `agent/pages/bookmarks/Rust Async Runtimes`
+- `agent/pages/bookmarks/tools/ripgrep`
+- `agent/pages/bookmarks/programming/FFI patterns`
+
+Use sub-organization by topic when it makes sense (e.g. `bookmarks/programming/`, `bookmarks/tools/`). Include `[[wiki-links]]` back to related pages elsewhere in the vault.
+
+If `vault_search` finds a relevant page that's already under `agent/pages/` but outside `agent/pages/bookmarks/` (e.g. a page you or another skill put in `agent/pages/topics/foo`), update it in place — don't create a duplicate. If you find a relevant page *outside* `agent/pages/` (e.g. the user's own notes under a different vault root), do NOT modify it — create a new page under `agent/pages/bookmarks/` and optionally link to the user's page with a `[[wiki-link]]`.
 
 ## Configuration
 
@@ -62,15 +70,19 @@ You have these tools available:
 - vault_write(page, content) — create or overwrite a vault page (parameters are "page" and "content")
 - vault_backlinks(page) — find pages linking to a page
 
+PATH RULE: All NEW pages you create MUST have a `page` argument starting with `agent/pages/bookmarks/`. This is not a suggestion — any `vault_write(page=...)` that doesn't start with that prefix is wrong.
+
+If `vault_search` returns an existing page already under `agent/pages/` (anywhere in that tree), update it in place rather than creating a duplicate. If it returns a page OUTSIDE `agent/pages/` (e.g. the user's own notes), do NOT modify it — create a new page under `agent/pages/bookmarks/` and link to the user's page with `[[wiki-link]]` instead.
+
 Instructions:
 1. Use tabstack_extract_markdown(url="{bookmark_url}") to fetch the full content. If it fails (paywall, dead link), work with just the title, tags, and description above.
 2. Analyze the content for key facts, insights, technologies, people, projects, or concepts.
 3. Use vault_search(query="relevant topic") to find existing vault pages.
-4. If a relevant page exists: vault_read(page="Page Name") to get it, revise with new info, vault_write(page="Page Name", content="...") to save.
-5. If no relevant page exists and the topic is substantial: vault_write(page="agent/pages/bookmarks/New Page", content="...") with [[wiki-links]] and a ## Sources section.
+4. If a relevant page exists: vault_read(page="...full existing path...") to get it, revise with new info, vault_write(page="...same existing path...", content="...") to save. Keep the existing path — don't move the page.
+5. If no relevant page exists and the topic is substantial: vault_write(page="agent/pages/bookmarks/New Page", content="...") with [[wiki-links]] and a ## Sources section. The `page` argument MUST start with `agent/pages/bookmarks/`.
 6. Include the original URL and {bookmark_date} in ## Sources.
 7. Extract knowledge — "X uses Y approach for Z problem" is better than "bookmarked an article about X".
-8. Prefer adding to existing vault pages over creating new ones.
+8. Prefer adding to existing vault pages over creating new ones — but if you must create, use the `agent/pages/bookmarks/` prefix.
 9. Do NOT use tool_search — it is not available. Use only the tools listed above.
 ```
 
@@ -85,6 +97,7 @@ If there was nothing interesting to ingest, respond with HEARTBEAT_OK.
 
 ## Rules
 
+- **New pages go under `agent/pages/bookmarks/`** — never create a new page at the vault root. This applies to the parent turn and to every delegate you spawn.
 - **Delegate each bookmark** — don't try to fetch and process articles yourself, your context will fill up
 - **Group related content** — include guidance in the delegate task to add to existing pages when possible
 - Convert relative dates to absolute dates
