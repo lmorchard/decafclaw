@@ -123,7 +123,7 @@ Every event carries enough correlation info (`tool_call_id`, `context_id`) that 
 `run_agent_turn(ctx, user_message, history)` is the loop. Here's what it does:
 
 1. **Setup** — fork the context if needed, resolve the active model, apply task mode
-2. **Compose context** — `ContextComposer.compose()` builds the full message array: system prompt, proactive vault retrieval, referenced pages, history, and classifies tools into active vs deferred. Returns a `ComposedContext`. See [Context Composer](context-composer.md).
+2. **Compose context** — `ContextComposer.compose()` builds the full message array: system prompt, proactive vault retrieval, referenced pages, history, and classifies tools into active vs deferred. Pre-emptive tool search runs a keyword match against the user message to auto-promote relevant deferred tools into the active set for this turn. Returns a `ComposedContext`. See [Context Composer](context-composer.md), [Tool Priority](tool-priority.md), [Pre-emptive Tool Search](preemptive-tool-search.md).
 3. **Iteration loop** — up to `max_tool_iterations` (default 200):
    - Build the per-iteration tool list (fetched tools may change mid-turn as the model calls `tool_search`)
    - Call the LLM via the provider abstraction — streaming tokens are published as events
@@ -199,7 +199,9 @@ MCP servers (`mcp_client.py`) are similar in spirit: they're external tool provi
 ## Dive deeper
 
 - [Context Composer](context-composer.md) — how the prompt is assembled, vault retrieval, relevance scoring
+- [Tool Priority System](tool-priority.md) — critical/normal/low tiers for tool visibility
 - [Tool Search](tool-search.md) — how tool definitions are deferred behind search when over budget
+- [Pre-emptive Tool Search](preemptive-tool-search.md) — keyword-match promotion at turn start
 - [Conversations](conversations.md) — archive format, compaction
 - [Skills System](skills.md) — authoring skills, skill lifecycle
 - [Sub-Agent Delegation](delegation.md) — how child agents work

@@ -79,8 +79,9 @@ Override path: `data/{agent_id}/{SOUL,AGENT,USER}.md` (admin-level, read-only to
 4. Retrieves and injects memory context (semantic search over vault/journal)
 5. Builds the user message and archives it
 6. Filters/remaps history roles for the LLM
-7. Classifies tools into active vs deferred sets
-8. Returns a `ComposedContext` with everything ready to send
+7. Runs pre-emptive tool search — keyword-matches the user message + last assistant response against tool names/descriptions, populating `ctx.tools.preempt_matches` for promotion to critical in tool classification. See [Pre-emptive Tool Search](preemptive-tool-search.md).
+8. Classifies tools into active vs deferred sets using the priority system. See [Tool Priority](tool-priority.md).
+9. Returns a `ComposedContext` with everything ready to send
 
 ### ComposedContext
 
