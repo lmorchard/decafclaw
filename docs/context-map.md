@@ -59,6 +59,11 @@ Override path: `data/{agent_id}/{SOUL,AGENT,USER}.md` (admin, read-only to agent
   `normal`/`low` tools behind `tool_search` when the active set exceeds
   `tool_context_budget_pct × COMPACTION_MAX_TOKENS`. `critical` tools
   are always in the active set regardless of budget.
+- Pre-emptive tool search (see [preemptive-tool-search.md](preemptive-tool-search.md))
+  runs a keyword match on the current user message + previous assistant
+  response at turn start. Matching tools get promoted into the active
+  set for that turn (ephemeral, not persistent). Often removes the
+  need for the agent to call `tool_search` explicitly.
 
 ## Files Involved
 

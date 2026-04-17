@@ -27,6 +27,7 @@
 - [User Commands](commands.md) — User-invokable commands (!command / /command) with argument substitution
 - [Tool Priority System](tool-priority.md) — Declarative critical/normal/low tiers for tool visibility
 - [Tool Search / Deferred Loading](tool-search.md) — Defer tool definitions behind search when context budget exceeded
+- [Pre-emptive Tool Search](preemptive-tool-search.md) — Keyword-match user message at turn start to auto-promote relevant tools
 - [Self-Reflection](reflection.md) — Binary judge + critique + retry before delivering responses (Reflexion pattern)
 - [LLM Providers](providers.md) — Multi-provider LLM support: Vertex/Gemini, OpenAI, LiteLLM-compat, service accounts
 - [Model Selection](model-selection.md) — Named model configs, per-conversation model switching, migration from effort levels

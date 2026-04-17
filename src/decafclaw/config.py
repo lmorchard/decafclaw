@@ -119,8 +119,18 @@ def load_sub_config(
             kwargs[f.name] = _coerce(env_val, field_type)
         elif f.name in json_data:
             json_val = json_data[f.name]
+            # Nested dataclass: recurse to build it from a dict, preserving
+            # systematic env var lookup via a derived prefix.
+            if (hasattr(field_type, "__dataclass_fields__")
+                    and isinstance(json_val, dict)):
+                nested_env_prefix = (
+                    f"{env_prefix}_{f.name.upper()}" if env_prefix else ""
+                )
+                kwargs[f.name] = load_sub_config(
+                    field_type, json_val, nested_env_prefix,
+                )
             # JSON already has correct types for most things
-            if isinstance(json_val, str) and field_type not in (str, "str"):
+            elif isinstance(json_val, str) and field_type not in (str, "str"):
                 kwargs[f.name] = _coerce(json_val, field_type)
             else:
                 kwargs[f.name] = json_val

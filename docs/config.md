@@ -162,6 +162,8 @@ Agent identity, loop limits, tool loading, and delegation.
 | `tool_context_budget_pct` | float | `0.10` | `TOOL_CONTEXT_BUDGET_PCT` |
 | `critical_tools` | list | `[]` | `CRITICAL_TOOLS` |
 | `max_active_tools` | int | `30` | `MAX_ACTIVE_TOOLS` |
+| `preemptive_search.enabled` | bool | `true` | *(no env var)* |
+| `preemptive_search.max_matches` | int | `10` | *(no env var)* |
 | `child_max_tool_iterations` | int | `10` | `CHILD_MAX_TOOL_ITERATIONS` |
 | `child_timeout_sec` | int | `300` | `CHILD_TIMEOUT_SEC` |
 

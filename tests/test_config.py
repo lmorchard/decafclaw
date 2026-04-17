@@ -42,6 +42,8 @@ class TestDefaults:
         assert c.agent.data_home == "./data"
         assert c.agent.id == "decafclaw"
         assert c.agent.critical_tools == []
+        assert c.agent.preemptive_search.enabled is True
+        assert c.agent.preemptive_search.max_matches == 10
         assert c.compaction.max_tokens == 100000
         assert c.embedding.search_strategy == "substring"
 
@@ -83,6 +85,21 @@ class TestJsonFileLoading:
         c = load_config()
         assert c.llm.model == "test-model"
         assert c.mattermost.url == "https://mm.test.com"
+
+    def test_loads_nested_dataclass(self, tmp_path, monkeypatch):
+        """Nested dataclass fields (e.g. agent.preemptive_search) load from JSON."""
+        agent_dir = tmp_path / "decafclaw"
+        agent_dir.mkdir()
+        config_file = agent_dir / "config.json"
+        config_file.write_text(json.dumps({
+            "agent": {
+                "preemptive_search": {"enabled": False, "max_matches": 5},
+            },
+        }))
+        monkeypatch.setenv("DATA_HOME", str(tmp_path))
+        c = load_config()
+        assert c.agent.preemptive_search.enabled is False
+        assert c.agent.preemptive_search.max_matches == 5
 
     def test_missing_file_uses_defaults(self, tmp_path, monkeypatch):
         """Missing config file gracefully falls back to defaults."""
