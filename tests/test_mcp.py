@@ -162,14 +162,25 @@ def test_load_mcp_config_custom_timeout(config):
 # -- namespacing tests --
 
 
-def test_namespace_tool():
-    assert _namespace_tool("my-server", "get_data") == "mcp__my-server__get_data"
+def test_namespace_tool_normalizes_hyphens_to_underscores():
+    """Hyphens in server names are normalized to underscores in the
+    advertised tool name (workaround for Gemini's hyphen-to-underscore
+    serialization of function-call identifiers)."""
+    assert _namespace_tool("my-server", "get_data") == "mcp__my_server__get_data"
 
 
-def test_parse_namespace_roundtrip():
+def test_namespace_tool_underscore_unchanged():
+    """Server names already using underscores round-trip unchanged."""
+    assert _namespace_tool("my_server", "get_data") == "mcp__my_server__get_data"
+
+
+def test_parse_namespace_returns_normalized_segment():
+    """Parsed server segment is the normalized form, not the original MCP
+    server name. Callers that need the original must look it up via the
+    registry."""
     namespaced = _namespace_tool("my-server", "get_data")
     result = _parse_namespace(namespaced)
-    assert result == ("my-server", "get_data")
+    assert result == ("my_server", "get_data")
 
 
 def test_parse_namespace_non_mcp():
@@ -198,7 +209,9 @@ def test_convert_tool_definition_dict():
     }
     result = _convert_tool_definition("weather-server", mcp_tool)
     assert result["type"] == "function"
-    assert result["function"]["name"] == "mcp__weather-server__get_weather"
+    # Server name hyphens are normalized to underscores in the advertised
+    # tool identifier (Gemini function-call compatibility).
+    assert result["function"]["name"] == "mcp__weather_server__get_weather"
     assert result["function"]["description"] == "Get weather for a location"
     assert result["function"]["parameters"]["required"] == ["location"]
 
@@ -211,7 +224,7 @@ def test_convert_tool_definition_object():
         inputSchema = {"type": "object", "properties": {}}
 
     result = _convert_tool_definition("my-server", FakeTool())
-    assert result["function"]["name"] == "mcp__my-server__search"
+    assert result["function"]["name"] == "mcp__my_server__search"
 
 
 # -- response conversion tests --
@@ -383,7 +396,8 @@ async def test_connect_server_success():
 
     state = registry.servers["test-server"]
     assert state.status == "connected"
-    assert "mcp__test-server__get_strategy" in state.tools
+    # Server name hyphens are normalized in the advertised tool name.
+    assert "mcp__test_server__get_strategy" in state.tools
     assert len(state.tool_definitions) == 1
 
 
