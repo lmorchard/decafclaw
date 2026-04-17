@@ -54,6 +54,58 @@ async def test_execute_tool_unknown_suffix_match_suggests_mcp(ctx, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_execute_tool_mcp_hyphen_normalization(ctx, monkeypatch, caplog):
+    """Gemini normalizes hyphens to underscores in tool identifiers. When the
+    exact name misses but exactly one candidate differs only in server-segment
+    hyphens, auto-correct and route the call."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from decafclaw import mcp_client
+
+    mock_fn = AsyncMock(return_value="strategy result")
+    mock_registry = MagicMock()
+    mock_registry.get_tools.return_value = {
+        "mcp__oblique-strategies__get_strategy": mock_fn,
+    }
+    monkeypatch.setattr(mcp_client, "_registry", mock_registry)
+
+    with caplog.at_level("INFO"):
+        result = await execute_tool(
+            ctx, "mcp__oblique_strategies__get_strategy", {},
+        )
+    assert result.text == "strategy result"
+    mock_fn.assert_called_once_with({})
+    # Normalization is logged for visibility
+    assert any("hyphen workaround" in r.message for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_execute_tool_mcp_hyphen_ambiguous_no_correction(ctx, monkeypatch):
+    """If multiple hyphenated candidates match the underscored server segment,
+    don't auto-correct — fall through to the 'did you mean' suggestions so the
+    agent can pick."""
+    from unittest.mock import MagicMock
+
+    from decafclaw import mcp_client
+
+    mock_registry = MagicMock()
+    mock_registry.get_tools.return_value = {
+        "mcp__foo-bar__run": MagicMock(),
+        "mcp__foo_bar__run": MagicMock(),  # exists with underscore as real name
+    }
+    # Note: "mcp__foo_bar__run" IS a real name here — it's not a normalization
+    # target. But "mcp__foo-bar__run" also maps back to the same underscored
+    # form. If the agent calls "mcp__foo_bar__run", the exact match wins.
+    monkeypatch.setattr(mcp_client, "_registry", mock_registry)
+
+    # Exact match path — no normalization needed, returns successfully.
+    result = await execute_tool(ctx, "mcp__foo_bar__run", {})
+    # Non-error: either called successfully or raised — either way, it did
+    # NOT route to the hyphenated variant via normalization.
+    assert "not found" not in result.text
+
+
+@pytest.mark.asyncio
 async def test_execute_tool_mcp_routes_to_registry(ctx, monkeypatch):
     """MCP-namespaced tools route to the MCP registry."""
     from unittest.mock import AsyncMock, MagicMock

@@ -124,6 +124,34 @@ async def execute_tool(ctx, name: str, arguments: dict) -> ToolResult:
         registry = get_registry()
         mcp_tools = registry.get_tools() if registry else {}
         fn = mcp_tools.get(name)
+        # Workaround: Gemini normalizes hyphens to underscores in tool
+        # identifiers at the function-call serialization layer, so
+        # `mcp__oblique-strategies__get_strategy` comes back as
+        # `mcp__oblique_strategies__get_strategy`. The model can't emit
+        # hyphens even when it knows the correct name. When the exact
+        # match misses, try variants with underscores in the server
+        # segment flipped to hyphens. Only auto-correct when exactly one
+        # candidate matches — otherwise fall through to the "did you
+        # mean" suggestions path.
+        if fn is None:
+            parts = name.split("__", 2)
+            if len(parts) == 3 and "_" in parts[1]:
+                server_underscored = parts[1]
+                matches = [
+                    cand for cand in mcp_tools
+                    if cand.startswith("mcp__")
+                    and cand.count("__") >= 2
+                    and cand.split("__", 2)[1].replace("-", "_") == server_underscored
+                    and cand.split("__", 2)[2] == parts[2]
+                ]
+                if len(matches) == 1:
+                    corrected = matches[0]
+                    log.info(
+                        "MCP tool name normalized (hyphen workaround): %s → %s",
+                        name, corrected,
+                    )
+                    name = corrected
+                    fn = mcp_tools[corrected]
         if fn:
             try:
                 cancel_event = ctx.cancelled
