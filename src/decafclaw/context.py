@@ -34,6 +34,12 @@ class ToolState:
     # Tracks which tool names each dynamic provider contributed last turn,
     # so stale entries can be removed when the provider returns fewer tools.
     dynamic_provider_names: dict[str, set[str]] = field(default_factory=dict)
+    # Tool names promoted for this turn by pre-emptive keyword matching
+    # against the current user message + prior assistant response.
+    # Populated once at the start of a turn by ContextComposer; reused
+    # across iterations so classify_tools() stays consistent mid-turn.
+    # See docs/preemptive-tool-search.md.
+    preempt_matches: set[str] = field(default_factory=set)
 
 
 @dataclass

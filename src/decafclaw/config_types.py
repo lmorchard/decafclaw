@@ -97,6 +97,16 @@ class HttpConfig:
 
 
 @dataclass
+class PreemptiveSearchConfig:
+    """Pre-emptive keyword-match against the current user message to
+    promote relevant deferred tools into the active set for the turn.
+    See docs/preemptive-tool-search.md.
+    """
+    enabled: bool = True
+    max_matches: int = 10
+
+
+@dataclass
 class AgentConfig:
     data_home: str = "./data"
     id: str = "decafclaw"
@@ -111,6 +121,7 @@ class AgentConfig:
     child_timeout_sec: int = 300
     turn_on_new_message: str = "queue"  # "queue" or "cancel"
     show_context_status: bool = True
+    preemptive_search: PreemptiveSearchConfig = field(default_factory=PreemptiveSearchConfig)
 
 
 @dataclass

@@ -6,6 +6,7 @@ const SOURCE_COLORS = {
   tools: '#9B59B6',
   wiki: '#27AE60',
   memory: '#E67E22',
+  preempt_matches: '#C0392B',
 };
 
 const SOURCE_LABELS = {
@@ -14,6 +15,7 @@ const SOURCE_LABELS = {
   tools: 'Tools',
   wiki: 'Wiki Pages',
   memory: 'Memory',
+  preempt_matches: 'Pre-emptive matches',
 };
 
 const TYPE_LABELS = {
@@ -196,6 +198,11 @@ export class ContextInspector extends LitElement {
     }
     if (s.source === 'tools' && s.details?.deferred_mode) {
       return 'deferred mode';
+    }
+    if (s.source === 'preempt_matches' && s.details?.matches?.length) {
+      const matches = s.details.matches;
+      const summary = matches.map(m => `${m.name}(${m.score})`).join(', ');
+      return html`<span title="input tokens: ${s.details.input_tokens?.join(', ')}">${summary}</span>`;
     }
     return '';
   }

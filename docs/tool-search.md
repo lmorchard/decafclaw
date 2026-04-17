@@ -2,7 +2,9 @@
 
 When the total token cost of tool definitions exceeds a configurable budget, non-essential tools are deferred behind a `tool_search` tool. The model sees a list of deferred tool names with one-line descriptions and fetches full schemas on demand.
 
-See also [tool-priority.md](tool-priority.md) for the priority system that determines which tools fill the active set.
+See also:
+- [tool-priority.md](tool-priority.md) — the priority system that determines which tools fill the active set.
+- [preemptive-tool-search.md](preemptive-tool-search.md) — automatic promotion based on the current user message, often removes the need for explicit `tool_search`.
 
 ## How It Works
 
