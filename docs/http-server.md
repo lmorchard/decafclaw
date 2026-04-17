@@ -1,6 +1,6 @@
 # HTTP Server & Interactive Buttons
 
-DecafClaw includes an optional HTTP server that enables Mattermost interactive message buttons for tool confirmations. The server also provides a foundation for future features like a web-based gateway UI.
+DecafClaw includes an HTTP server that powers the web UI gateway and Mattermost interactive message buttons for tool confirmations.
 
 ## Setup
 

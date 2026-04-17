@@ -16,12 +16,12 @@ uv run python -m decafclaw.eval evals/ --verbose     # Show full responses
 Tests are YAML files with a list of test cases:
 
 ```yaml
-- name: "saves a memory when asked"
+- name: "saves to journal when asked"
   prompt: "Remember that my favorite color is blue"
-  expect_tool: "memory_save"
+  expect_tool: "vault_journal_append"
   expect_contains: "blue"
 
-- name: "recalls a saved memory"
+- name: "recalls from vault"
   prompt: "What's my favorite color?"
   setup:
     memories:
@@ -50,7 +50,7 @@ Tests are YAML files with a list of test cases:
 - name: "save then recall"
   turns:
     - prompt: "Remember that my cat's name is Sassy"
-      expect_tool: "memory_save"
+      expect_tool: "vault_journal_append"
     - prompt: "What's my cat's name?"
       expect_contains: "Sassy"
 ```
@@ -67,7 +67,7 @@ To test semantic search, provide a pre-built embeddings fixture with distractor 
       - content: "User's cat is named Sassy"
         tags: ["pets"]
     embeddings_fixture: "evals/fixtures/cat-facts-embeddings.db"
-  allowed_tools: ["memory_search"]
+  allowed_tools: ["vault_search"]
   expect_contains: "Sassy"
 ```
 

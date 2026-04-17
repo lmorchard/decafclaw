@@ -6,39 +6,47 @@
 - [Configuration Reference](config.md) — Config file, env vars, CLI tool, all settings
 - [Deployment](deployment.md) — Systemd service on a Debian VM
 
-## Features
+## Interfaces
 
-- [Skills System](skills.md) — Agent Skills standard, portable skill packages, native Python + shell-based tools
-- [MCP Server Support](mcp-servers.md) — Connect external MCP servers as tool providers (stdio + HTTP)
+- [Web UI](web-ui.md) — Browser-based chat, vault editor, conversation management, model picker
+- [Streaming](streaming.md) — Stream LLM tokens as they arrive, configurable throttle
+- [HTTP Server & Interactive Buttons](http-server.md) — Mattermost button confirmations, HTTP callback server
+
+## Knowledge & Memory
+
 - [Vault](vault.md) — Unified knowledge base: curated pages, journal entries, user notes
-- [Proactive Memory Context](memory-context.md) — Automatically surface relevant vault content per turn
-- [Relevance Scoring](relevance-scoring.md) — Three-factor scoring, graph expansion, dynamic budget allocation
+- [Semantic Search](semantic-search.md) — Embedding-based search over vault pages, journal, and conversations
 - [Dream Consolidation](dream-consolidation.md) — Periodic journal review and vault page gardening
 - [Conversations](conversations.md) — Archive, resume, and compaction of conversation history
-- [Semantic Search](semantic-search.md) — Embedding-based search over memories and conversations
-- [Eval Loop](eval-loop.md) — Test prompts and tools with real LLM calls
-- [Heartbeat](heartbeat.md) — Periodic agent wake-up for monitoring and recurring tasks
-- [Scheduled Tasks](schedules.md) — Cron-style per-task scheduling with model, tool, and skill configuration
-- [File Attachments](file-attachments.md) — Upload files, MCP media, workspace image refs, rich cards
-- [Streaming](streaming.md) — Stream LLM tokens as they arrive, configurable throttle
-- [HTTP Server & Interactive Buttons](http-server.md) — Button-based confirmations, HTTP callback server
-- [Sub-Agent Delegation](delegation.md) — Fork child agents for concurrent subtasks
-- [Project Skill](project-skill.md) — Structured workflow: brainstorm → spec → plan → execute for multi-step tasks
-- [User Commands](commands.md) — User-invokable commands (!command / /command) with argument substitution
+
+## Tools & Skills
+
+- [Tools Reference](tools.md) — All built-in tools, grouped by module, with one-line descriptions
+- [Skills System](skills.md) — Agent Skills standard, portable skill packages, native Python + shell-based tools
+- [MCP Server Support](mcp-servers.md) — Connect external MCP servers as tool providers (stdio + HTTP)
 - [Tool Priority System](tool-priority.md) — Declarative critical/normal/low tiers for tool visibility
 - [Tool Search / Deferred Loading](tool-search.md) — Defer tool definitions behind search when context budget exceeded
 - [Pre-emptive Tool Search](preemptive-tool-search.md) — Keyword-match user message at turn start to auto-promote relevant tools
+- [User Commands](commands.md) — User-invokable commands (!command / /command) with argument substitution
+- [Project Skill](project-skill.md) — Structured workflow: brainstorm → spec → plan → execute for multi-step tasks
+- [File Attachments](file-attachments.md) — Upload files, MCP media, workspace image refs, rich cards
+
+## Agent Behavior
+
 - [Self-Reflection](reflection.md) — Binary judge + critique + retry before delivering responses (Reflexion pattern)
+- [Sub-Agent Delegation](delegation.md) — Fork child agents for concurrent subtasks
+- [Heartbeat](heartbeat.md) — Periodic agent wake-up for monitoring and recurring tasks
+- [Scheduled Tasks](schedules.md) — Cron-style per-task scheduling with model, tool, and skill configuration
+- [Eval Loop](eval-loop.md) — Test prompts and tools with real LLM calls
+
+## LLM Configuration
+
 - [LLM Providers](providers.md) — Multi-provider LLM support: Vertex/Gemini, OpenAI, LiteLLM-compat, service accounts
-- [Model Selection](model-selection.md) — Named model configs, per-conversation model switching, migration from effort levels
+- [Model Selection](model-selection.md) — Named model configs, per-conversation model switching
 
 ## Architecture
 
+- [Architecture Overview](architecture.md) — Narrative walkthrough: entry points, Context, EventBus, agent turn lifecycle, tool concurrency
 - [Data Layout](data-layout.md) — File structure, admin vs workspace trust boundary
-- [Context Composer](context-composer.md) — Unified context assembly pipeline for agent turns
-- [Context Map](context-map.md) — System prompt layout, tool definitions, context assembly
+- [Context Composer](context-composer.md) — Context assembly, vault retrieval, relevance scoring, token budget
 - [Original Agent Spec](original-agent-spec.md) — The original design sketch
-
-## Backlogs
-
-- [Backlog Index](backlog/index.md) — Future session ideas organized by layer

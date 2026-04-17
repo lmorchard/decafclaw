@@ -54,7 +54,7 @@ decafclaw config import .env.prod  # from a specific file
 
 ### `llm` (legacy)
 
-Legacy LLM endpoint settings. **Prefer `providers` + `model_configs` for new setups.** The `llm` section is still supported and auto-migrates to a "default" litellm provider when no `providers` section exists.
+Legacy LLM endpoint settings. **Prefer `providers` + `model_configs` for new setups.** The `llm` section is still supported and auto-migrates to a "default" `openai-compat` provider when no `providers` section exists.
 
 | Field | Type | Default | Env Var | Secret |
 |-------|------|---------|---------|--------|
@@ -184,9 +184,9 @@ Named LLM provider connections. See [LLM Providers](providers.md) for full detai
 
 | Field | Type | Providers | Description |
 |-------|------|-----------|-------------|
-| `type` | str | all | `"vertex"`, `"openai"`, or `"litellm"` |
-| `api_key` | str | openai, litellm | API key (secret) |
-| `url` | str | openai, litellm | Base URL for the API endpoint |
+| `type` | str | all | `"vertex"`, `"openai"`, or `"openai-compat"` (alias: `"litellm"`) |
+| `api_key` | str | openai, openai-compat | API key (secret) |
+| `url` | str | openai, openai-compat | Base URL for the API endpoint |
 | `project` | str | vertex | GCP project ID |
 | `region` | str | vertex | GCP region (default: `us-central1`) |
 | `service_account_file` | str | vertex | Path to service account JSON key file |
@@ -217,7 +217,7 @@ Named model configurations referencing a provider. See [Model Selection](model-s
 
 `default_model` (top-level string) sets which model config to use when none is explicitly selected.
 
-**Migration:** If no `providers`/`model_configs` sections exist but the `llm` section is present, a "default" litellm provider and model config are auto-generated from the `llm` values.
+**Migration:** If no `providers`/`model_configs` sections exist but the `llm` section is present, a "default" `openai-compat` provider and model config are auto-generated from the `llm` values.
 
 ### `skills`
 

@@ -28,7 +28,7 @@ The agent waits for the complete LLM response before displaying anything. This i
 
 ### Text streaming
 
-The placeholder message updates every 500ms (configurable) with the text received so far. A typing indicator is shown while streaming is active.
+The placeholder message updates every 200ms (configurable via `MATTERMOST_STREAM_THROTTLE_MS`) with the text received so far. A typing indicator is shown while streaming is active.
 
 ### Tool call visibility
 
@@ -36,7 +36,7 @@ When the LLM decides to call a tool during streaming, a suffix is appended to th
 
 ```
 Here's what I found about cats: they sleep 16 hours a day and
-🔧 Calling memory_search...
+🔧 Calling vault_search...
 ```
 
 When text resumes after tool execution, the tool suffix is replaced with the new text. The text only grows — no flickering.
@@ -54,7 +54,7 @@ Tokens print immediately with `flush=True` for a typewriter effect:
 ```
 you> What do cats eat?
 Cats are obligate carnivores, meaning they require...
-  [calling memory_search...]
+  [calling vault_search...]
 Based on your notes, your cat Sassy prefers wet food.
 ```
 
