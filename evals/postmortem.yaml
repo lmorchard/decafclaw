@@ -1,0 +1,26 @@
+# Evals for the postmortem skill.
+# Tests that /postmortem produces a structured, blameless report with all
+# five required sections and specific proposed patches.
+#
+# Note: response_contains is an OR match — for all-of assertions we use a
+# single (?s)-enabled regex that matches all section headings in order.
+
+- name: "postmortem produces all five sections, blamelessly framed"
+  setup:
+    skills: [postmortem]
+  input: |
+    /postmortem on this pattern: earlier in this conversation the agent
+    made three attempts to search the vault for "quarterly plans" and
+    each attempt failed with an argument-type error on the query
+    parameter. The agent retried the same call each time with the same
+    malformed argument shape rather than diagnosing the error.
+  expect:
+    response_contains:
+      - "re:(?s)##\\s*Anomaly.*##\\s*Root cause.*##\\s*Proposed patches.*##\\s*Systemic.*##\\s*Next steps"
+    response_not_contains:
+      - "I apologize"
+      - "I'm sorry"
+      - "my mistake"
+      - "my fault"
+    max_tool_calls: 5
+    max_tool_errors: 0

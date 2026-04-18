@@ -69,7 +69,7 @@ After producing the report (and only after), write it to the vault so it can be 
 1. Call `current_time` to get the current timestamp.
 2. Derive a short kebab-case slug from the anomaly (3–5 words).
 3. Call `vault_write` with:
-   - **path**: `agent/pages/postmortems/{YYYY-MM-DD-HHMM}-{slug}.md`
+   - **page**: `agent/pages/postmortems/{YYYY-MM-DD-HHMM}-{slug}` (no `.md` extension — the tool adds it)
    - **content**: the report, prefixed with YAML frontmatter:
 
      ```yaml
