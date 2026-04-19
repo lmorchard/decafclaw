@@ -29,6 +29,7 @@
 - [Pre-emptive Tool Search](preemptive-tool-search.md) — Keyword-match user message at turn start to auto-promote relevant tools
 - [User Commands](commands.md) — User-invokable commands (!command / /command) with argument substitution
 - [Project Skill](project-skill.md) — Structured workflow: brainstorm → spec → plan → execute for multi-step tasks
+- [Postmortem Skill](postmortem-skill.md) — User-invokable blameless RCA: structured report on what went wrong, archived to the vault
 - [File Attachments](file-attachments.md) — Upload files, MCP media, workspace image refs, rich cards
 
 ## Agent Behavior

@@ -6,9 +6,11 @@ from datetime import datetime
 from pathlib import Path
 
 from ..agent import run_agent_turn
+from ..commands import dispatch_command
 from ..config import Config
 from ..context import Context
 from ..events import EventBus
+from ..skills import discover_skills as _discover_skills_fn
 
 log = logging.getLogger(__name__)
 
@@ -168,6 +170,10 @@ async def run_test(config: Config, test_case: dict) -> dict:
     Multi-turn tests share history across turns (same conversation).
     All turns must pass for the test to pass.
     """
+    # Populate discovered_skills so dispatch_command can resolve `/foo` triggers.
+    if not getattr(config, "discovered_skills", None):
+        config.discovered_skills = _discover_skills_fn(config)
+
     bus = EventBus()
     ctx = Context(config=config, event_bus=bus)
     ctx.conv_id = "eval"
@@ -226,8 +232,41 @@ async def run_test(config: Config, test_case: dict) -> dict:
         pre_turn_tool_calls = _count_tool_calls(history)
         pre_turn_tool_errors = _count_tool_errors(history)
 
+        # Dispatch user-invokable commands (/foo, !foo) just like real transports
+        # do — this gives us end-to-end coverage for skills with user-invocable: true.
+        turn_input = turn["input"]
+        cmd = await dispatch_command(ctx, turn_input)
+        if cmd.mode == "inline":
+            turn_input = cmd.text
+        elif cmd.mode in ("help", "fork"):
+            # Help/fork responses don't run the agent loop; treat cmd.text as the response.
+            # This keeps assertions working for commands that don't need a turn.
+            start = time.monotonic()
+            response = cmd.text
+            duration = time.monotonic() - start
+            all_responses.append({
+                "turn": turn_idx + 1,
+                "input": turn["input"],
+                "response": response,
+                "duration_sec": round(duration, 1),
+                "tool_calls": 0,
+            })
+            expect = turn.get("expect", {})
+            if expect:
+                passed, reason = _check_assertions(turn, response, 0, 0)
+                if not passed:
+                    overall_passed = False
+                    failure_reason = f"Turn {turn_idx + 1}: {reason}"
+                    break
+            continue
+        elif cmd.mode in ("unknown", "error"):
+            overall_passed = False
+            failure_reason = f"Turn {turn_idx + 1}: command dispatch {cmd.mode}: {cmd.text}"
+            break
+        # mode == "not_command" or "inline": fall through to run_agent_turn with turn_input
+
         start = time.monotonic()
-        result = await run_agent_turn(ctx, turn["input"], history)
+        result = await run_agent_turn(ctx, turn_input, history)
         response = result.text
         duration = time.monotonic() - start
         total_duration += duration
