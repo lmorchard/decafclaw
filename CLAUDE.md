@@ -182,7 +182,7 @@ An AI agent testbed for exploring agent development patterns. Connects to Matter
 ### Skills
 
 - `src/decafclaw/skills/` — Skills system: discovery, parsing, catalog, bundled skills
-- `src/decafclaw/skills/vault/` — Bundled vault skill: unified knowledge base (pages + journal), always-loaded
+- `src/decafclaw/skills/vault/` — Bundled vault skill: unified knowledge base (pages + journal), always-loaded. Includes `vault_show_sections`, `vault_move_lines`, `vault_section` for section-aware markdown editing.
 - `src/decafclaw/skills/tabstack/` — Bundled Tabstack skill (SKILL.md + tools.py)
 - `src/decafclaw/skills/dream/` — Dream consolidation: periodic journal review → vault page updates
 - `src/decafclaw/skills/garden/` — Vault gardening: structural maintenance sweep (weekly scheduled)

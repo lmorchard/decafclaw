@@ -24,6 +24,22 @@ Config options in `config.json`:
 
 `agent_folder` is resolved relative to `vault_path`.
 
+## Configuring the vault root
+
+The default vault root is `workspace/vault/`, with agent content at `workspace/vault/agent/`. To point elsewhere — commonly the user's Obsidian vault — set `vault_path` in `data/<agent-id>/config.json`:
+
+```json
+{
+  "vault": {
+    "vault_path": "/absolute/path/to/obsidian-vault"
+  }
+}
+```
+
+When the vault root is an Obsidian vault, agent content lives at `<obsidian>/agent/` alongside the user's own folders. The agent can read everything in the vault; write tools (`vault_write`, `vault_move_lines`, `vault_section`) are gated to `agent/`.
+
+To move the vault root to a new location, use `scripts/migrate_vault_root.py` to move `<old>/agent/` into the new root and patch `config.json`. Run `make reindex` after to rebuild the embedding index.
+
 ## Folders
 
 The vault supports hierarchical folders. The API and web UI provide folder-aware browsing:
@@ -63,6 +79,9 @@ The vault skill is **always loaded** — its tools are available in every conver
 | `vault_search(query, source_type?, days?, folder?)` | Semantic + substring search across the vault. |
 | `vault_list(folder?, pattern?)` | List pages with last-modified dates. |
 | `vault_backlinks(page)` | Find pages linking to this page via `[[wiki-links]]`. |
+| `vault_show_sections(page, section?)` | Show a page's section outline or a specific section's content with absolute line numbers. |
+| `vault_move_lines(from_page, to_page, lines, to_section?, position?)` | Move specific lines (by line number) from one agent page to another. Both pages must be under `agent/`. |
+| `vault_section(page, action, section?, title?, level?, after?, before?, parent?)` | Section ops: `add`, `remove`, `rename`, or `move`. Page must be under `agent/`. |
 
 ### Ownership
 
