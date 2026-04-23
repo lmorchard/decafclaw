@@ -288,7 +288,7 @@ async def test_concurrent_confirmations_independent(ctx):
         fork = ctx.fork_for_tool_call(tool_call_id)
         r = await request_confirmation(
             fork, tool_name="shell", command=f"cmd-{tool_call_id}",
-            message="Confirm?", timeout=1.0,
+            message="Confirm?", timeout=0.2,
         )
         results[tool_call_id] = r["approved"]
 

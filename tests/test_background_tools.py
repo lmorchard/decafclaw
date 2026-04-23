@@ -29,8 +29,9 @@ async def test_status_after_exit(tmp_path):
     manager = BackgroundJobManager()
     job = await manager.start("echo hello", cwd=str(tmp_path))
 
-    # Wait for process to finish
-    await asyncio.sleep(0.5)
+    # Wait for the reader task to drain + process exit — no fixed sleep.
+    assert job.reader_task is not None
+    await job.reader_task
 
     assert job.status == "completed"
     assert job.exit_code == 0
@@ -46,7 +47,8 @@ async def test_status_error_exit(tmp_path):
     manager = BackgroundJobManager()
     job = await manager.start("exit 1", cwd=str(tmp_path))
 
-    await asyncio.sleep(0.5)
+    assert job.reader_task is not None
+    await job.reader_task
 
     assert job.status == "error"
     assert job.exit_code == 1
@@ -87,7 +89,8 @@ async def test_output_buffering(tmp_path):
         cwd=str(tmp_path),
     )
 
-    await asyncio.sleep(1.0)
+    assert job.reader_task is not None
+    await job.reader_task
 
     assert job.status == "completed"
     stdout = list(job.stdout_buffer)
@@ -107,7 +110,9 @@ async def test_cleanup_expired(tmp_path):
         "sleep 60", cwd=str(tmp_path), max_lifetime=0.1,
     )
 
-    await asyncio.sleep(0.3)
+    # Backdate started_at so the lifetime check trips immediately — no
+    # need to actually sleep out the timer.
+    job.started_at -= 1.0
     expired = await manager.cleanup_expired()
 
     assert len(expired) == 1
@@ -123,7 +128,8 @@ async def test_cleanup_expired_ignores_finished(tmp_path):
     manager = BackgroundJobManager()
     job = await manager.start("echo done", cwd=str(tmp_path), max_lifetime=0.1)
 
-    await asyncio.sleep(0.5)
+    assert job.reader_task is not None
+    await job.reader_task
     assert job.status == "completed"
 
     expired = await manager.cleanup_expired()
@@ -166,7 +172,8 @@ async def test_stderr_captured(tmp_path):
     manager = BackgroundJobManager()
     job = await manager.start("echo error >&2", cwd=str(tmp_path))
 
-    await asyncio.sleep(0.5)
+    assert job.reader_task is not None
+    await job.reader_task
 
     stderr = list(job.stderr_buffer)
     assert any("error" in line for line in stderr)
