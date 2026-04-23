@@ -1,4 +1,5 @@
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -14,7 +15,8 @@ def _setup(tmp_path):
     (old / "agent" / "pages" / "note.md").write_text("content\n")
     new.mkdir()
     config = tmp_path / "config.json"
-    config.write_text(json.dumps({"vault_path": str(old)}))
+    # Use the nested "vault" block that matches the real config.json format
+    config.write_text(json.dumps({"vault": {"vault_path": str(old)}}))
     return old, new, config
 
 
@@ -52,7 +54,7 @@ def test_apply_moves_and_updates_config(tmp_path):
     assert (new / "agent" / "pages" / "note.md").exists()
     assert not (old / "agent").exists()
     updated = json.loads(config.read_text())
-    assert updated["vault_path"] == str(new)
+    assert updated["vault"]["vault_path"] == str(new)
 
 
 def test_apply_refuses_if_target_agent_exists(tmp_path):
@@ -137,3 +139,43 @@ def test_dry_run_prints_what_would_happen(tmp_path):
     output = r.stdout + r.stderr
     assert "dry run" in output.lower()
     assert str(new) in output
+
+
+def test_apply_config_is_readable_by_config_loader(tmp_path, monkeypatch):
+    """Verify the patched config.json is parseable by the real Config loader."""
+    # Place config where load_config() will find it via DATA_HOME / AGENT_ID
+    data_home = tmp_path / "data"
+    agent_id = "testagent"
+    agent_dir = data_home / agent_id
+    agent_dir.mkdir(parents=True)
+
+    old = tmp_path / "old_vault"
+    new = tmp_path / "new_vault"
+    (old / "agent" / "pages").mkdir(parents=True)
+    (old / "agent" / "pages" / "note.md").write_text("content\n")
+    new.mkdir()
+
+    config_path = agent_dir / "config.json"
+    config_path.write_text(json.dumps({"vault": {"vault_path": str(old)}}))
+
+    r = subprocess.run(
+        [
+            sys.executable, str(SCRIPT),
+            "--from", str(old),
+            "--to", str(new),
+            "--config", str(config_path),
+            "--apply",
+        ],
+        capture_output=True, text=True,
+    )
+    assert r.returncode == 0, r.stderr
+
+    # Now verify the Config loader picks up the new vault_path
+    monkeypatch.setenv("DATA_HOME", str(data_home))
+    monkeypatch.setenv("AGENT_ID", agent_id)
+    # Avoid any side effects from an existing .env file
+    monkeypatch.delenv("VAULT_VAULT_PATH", raising=False)
+
+    from decafclaw.config import load_config
+    cfg = load_config()
+    assert cfg.vault_root.resolve() == new.resolve()

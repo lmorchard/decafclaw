@@ -83,9 +83,10 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Moving {src_agent} -> {dst_agent}")
     shutil.move(str(src_agent), str(dst_agent))
 
-    print(f"Updating {config_path}: vault_path = {dst}")
+    print(f"Updating {config_path}: vault.vault_path = {dst}")
     config = json.loads(config_path.read_text())
-    config["vault_path"] = str(dst)
+    config.setdefault("vault", {})
+    config["vault"]["vault_path"] = str(dst)
     config_path.write_text(json.dumps(config, indent=2) + "\n")
 
     print()
