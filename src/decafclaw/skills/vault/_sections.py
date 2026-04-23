@@ -1,16 +1,12 @@
-"""Markdown vault skill — section-aware note reading and editing.
+"""Section-aware markdown parser for vault pages.
 
-Combines the document model (parsing, checklist ops, tag ops, section ops)
-with the tool wrappers that the skill loader exposes to the agent.
+Internal helpers for vault_show_sections, vault_move_lines, vault_section.
+Ported from the retired markdown_vault skill — see #264.
 """
 
-import datetime
-import logging
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-
-from decafclaw.media import ToolResult
 
 # ---------------------------------------------------------------------------
 # Patterns
@@ -30,26 +26,6 @@ WIKILINK_RE = re.compile(r"\[\[(?:[^|\]]*\|)?([^\]]+)\]\]")
 def extract_tags(text: str) -> list[str]:
     """Extract all #tags from a line of text."""
     return TAG_RE.findall(text)
-
-
-def daily_path(date: datetime.date | str | None = None, offset: int = 0) -> str:
-    """Return the relative vault path for a daily journal.
-
-    Args:
-        date: A date object, ISO string (YYYY-MM-DD), or None for today.
-        offset: Days to shift (-1 = yesterday, 1 = tomorrow). Applied after date.
-
-    Returns:
-        Relative path like 'journals/2026/2026-03-17.md'
-    """
-    if date is None:
-        d = datetime.date.today()
-    elif isinstance(date, str):
-        d = datetime.date.fromisoformat(date)
-    else:
-        d = date
-    d += datetime.timedelta(days=offset)
-    return f"journals/{d.year}/{d.isoformat()}.md"
 
 
 def normalize_title(raw: str) -> str:
@@ -115,6 +91,13 @@ class Document:
         self._dirty: bool = False
         self._parse()
         self._dirty = False
+
+    @classmethod
+    def from_text(cls, text: str) -> "Document":
+        return cls(text)
+
+    def to_text(self) -> str:
+        return "".join(self.lines)
 
     @property
     def sections(self) -> list[Section]:
@@ -596,133 +579,8 @@ def _section_path(sec: Section, top_sections: list[Section]) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Cross-file operations
+# List item insertion helpers
 # ---------------------------------------------------------------------------
-
-
-def move_item_across_files(
-    from_doc: Document, from_section_path: str,
-    to_doc: Document, to_section_path: str,
-    match: str | None = None, index: int | None = None,
-) -> bool:
-    from_sec = from_doc.find_section(from_section_path)
-    if not from_sec:
-        return False
-    to_sec = to_doc.find_section(to_section_path)
-    if not to_sec:
-        return False
-    item = from_doc._find_item(from_sec, match, index)
-    if not item:
-        return False
-    raw = from_doc.lines[item.line_index].rstrip("\n")
-    from_doc._delete_lines(item.line_index, 1)
-    to_doc.append(to_sec, raw)
-    return True
-
-
-def bulk_move_items(
-    from_doc: Document, from_section_path: str,
-    to_doc: Document, to_section_path: str,
-    indices: list[int] | None = None,
-    checked_only: bool = False,
-    unchecked_only: bool = False,
-) -> int:
-    from_sec = from_doc.find_section(from_section_path)
-    if not from_sec:
-        return 0
-    to_sec = to_doc.find_section(to_section_path)
-    if not to_sec:
-        return 0
-    items = from_doc.get_items(from_sec)
-    if not items:
-        return 0
-    to_move = []
-    for i, item in enumerate(items):
-        if indices is not None and i not in indices:
-            continue
-        if checked_only and not item.checked:
-            continue
-        if unchecked_only and item.checked:
-            continue
-        to_move.append(item)
-    if not to_move:
-        return 0
-    raw_lines = [from_doc.lines[item.line_index].rstrip("\n") for item in to_move]
-    for item in reversed(to_move):
-        from_doc._delete_lines(item.line_index, 1)
-    from_doc._ensure_parsed()
-    for raw in raw_lines:
-        to_sec = to_doc.find_section(to_section_path)
-        if not to_sec:
-            break
-        to_doc.append(to_sec, raw)
-    return len(raw_lines)
-
-log = logging.getLogger(__name__)
-
-
-# ---------------------------------------------------------------------------
-# Path resolution (workspace-relative, no vault base path)
-# ---------------------------------------------------------------------------
-
-
-def _resolve_workspace(config, path_str: str) -> Path:
-    """Resolve a workspace-relative path with safety check."""
-    workspace = config.workspace_path.resolve()
-    target = (workspace / path_str).resolve()
-    if not target.is_relative_to(workspace):
-        raise ValueError(f"Path escapes workspace: {path_str}")
-    return target
-
-
-# ---------------------------------------------------------------------------
-# Tool implementations (5 tools, down from 29)
-# ---------------------------------------------------------------------------
-
-
-def tool_vault_daily_path(
-    ctx, base_path: str = "", date: str | None = None, offset: int = 0,
-) -> ToolResult:
-    """Get the workspace-relative path for a daily journal file."""
-    log.info(f"[tool:vault_daily_path] base_path={base_path!r} date={date!r} offset={offset}")
-    try:
-        path = daily_path(date=date, offset=offset)
-        if base_path:
-            path = f"{base_path.rstrip('/')}/{path}"
-        return ToolResult(text=path)
-    except Exception as e:
-        return ToolResult(text=f"[error: {e}]")
-
-
-def tool_md_show(ctx, file: str, section: str | None = None) -> ToolResult:
-    """Show a markdown file's section structure or a section's content with line numbers."""
-    log.info(f"[tool:md_show] file={file!r} section={section!r}")
-    try:
-        path = _resolve_workspace(ctx.config, file)
-        if not path.is_file():
-            return ToolResult(text=f"[error: file not found: {file}]")
-
-        doc = Document.from_file(path)
-
-        if section:
-            sec = doc.find_section(section)
-            if not sec:
-                return ToolResult(text=f"[error: section not found: {section}]")
-            # Show section heading + all content with line numbers
-            lines = []
-            lines.append(f"{'#' * sec.level} {sec.title} (line {sec.heading_line + 1})")
-            for i in range(sec.content_start, sec.content_end):
-                line_text = doc.lines[i].rstrip("\n")
-                lines.append(f"{i + 1:4d}: {line_text}")
-            return ToolResult(text="\n".join(lines))
-        else:
-            # Outline mode: show all headings with line numbers
-            lines = []
-            for _, sec in doc.list_sections():
-                lines.append(f"{sec.heading_line + 1:4d}: {'#' * sec.level} {sec.title}")
-            return ToolResult(text="\n".join(lines))
-    except Exception as e:
-        return ToolResult(text=f"[error: {e}]")
 
 
 def _find_first_list_item(lines: list[str], start: int, end: int) -> int | None:
@@ -741,8 +599,12 @@ def _insert_into_doc(
     """Insert lines into a Document at the specified location.
 
     Returns an error string on failure, or None on success.
+
+    ``lines_to_insert`` is a list of strings without trailing newlines.
+    Each element becomes a separate line in the output document.
     """
-    new_lines = _ensure_newlines("".join(lines_to_insert))
+    # Build the list of newline-terminated lines to insert, one per input element.
+    new_lines = [ln.rstrip("\n") + "\n" for ln in lines_to_insert]
 
     if to_section:
         sec = doc.find_section(to_section)
@@ -754,13 +616,17 @@ def _insert_into_doc(
             if target is not None:
                 doc._insert_lines(target, new_lines)
             else:
-                doc.prepend(sec, "".join(ln.rstrip("\n") for ln in lines_to_insert))
+                doc._insert_lines(sec.content_start, new_lines)
         else:
-            for line in lines_to_insert:
-                sec = doc.find_section(to_section)
-                if not sec:
-                    break
-                doc.append(sec, line.rstrip("\n"))
+            sec = doc.find_section(to_section)
+            if not sec:
+                return f"section disappeared during insert: {to_section}"
+            # Append all lines as a block; find insertion point manually so we
+            # don't loop and re-parse the section on every single line.
+            insert_at = sec.content_end
+            while insert_at > sec.content_start and not doc.lines[insert_at - 1].strip():
+                insert_at -= 1
+            doc._insert_lines(insert_at, new_lines)
     else:
         # No section specified — operate on the whole file
         if position == "prepend":
@@ -778,318 +644,3 @@ def _insert_into_doc(
                 insert_at -= 1
             doc._insert_lines(insert_at, new_lines)
     return None
-
-
-def tool_md_move_lines(
-    ctx, from_file: str, to_file: str, lines: str,
-    to_section: str | None = None, position: str = "append",
-) -> ToolResult:
-    """Move specific lines (by number) from one file to another location."""
-    log.info(f"[tool:md_move_lines] {from_file!r} -> {to_file!r}/{to_section!r} lines={lines!r} position={position!r}")
-    try:
-        if position not in ("append", "prepend"):
-            return ToolResult(text=f"[error: position must be 'append' or 'prepend', got '{position}']")
-
-        # Parse line numbers (1-based from user, convert to 0-based), deduplicate
-        parsed = [int(n.strip()) - 1 for n in lines.split(",") if n.strip()]
-        line_nums = sorted(set(parsed), reverse=True)
-        if not line_nums:
-            return ToolResult(text="[error: no line numbers provided]")
-
-        from_path = _resolve_workspace(ctx.config, from_file)
-        to_path = _resolve_workspace(ctx.config, to_file)
-
-        if not from_path.is_file():
-            return ToolResult(text=f"[error: file not found: {from_file}]")
-        if not to_path.is_file():
-            return ToolResult(text=f"[error: file not found: {to_file}]")
-
-        # Read source lines
-        source_lines = from_path.read_text().splitlines(keepends=True)
-
-        # Validate line numbers
-        for ln in line_nums:
-            if ln < 0 or ln >= len(source_lines):
-                return ToolResult(
-                    text=f"[error: line {ln + 1} out of range (file has {len(source_lines)} lines)]"
-                )
-
-        # Collect lines to move (in original order, not reversed)
-        moving = [source_lines[ln] for ln in sorted(line_nums)]
-
-        same_file = from_path == to_path
-
-        if same_file:
-            doc = Document(from_path.read_text())
-            # Delete lines (reverse order), then insert at target
-            for ln in line_nums:  # already sorted reverse
-                doc._delete_lines(ln, 1)
-            err = _insert_into_doc(doc, moving, to_section, position)
-            if err:
-                return ToolResult(text=f"[error: {err} in {to_file}]")
-            doc.save(from_path)
-        else:
-            # Remove from source (reverse order preserves indices)
-            for ln in line_nums:  # already sorted reverse
-                del source_lines[ln]
-
-            to_doc = Document(to_path.read_text())
-            err = _insert_into_doc(to_doc, moving, to_section, position)
-            if err:
-                return ToolResult(text=f"[error: {err} in {to_file}]")
-
-            from_path.write_text("".join(source_lines))
-            to_doc.save(to_path)
-
-        dest = f"{to_file}/{to_section}" if to_section else to_file
-        return ToolResult(text=f"Moved {len(moving)} line(s) from {from_file} to {dest}")
-    except Exception as e:
-        return ToolResult(text=f"[error: {e}]")
-
-
-def tool_md_section(
-    ctx, file: str, action: str,
-    section: str | None = None, title: str | None = None,
-    level: int = 1,
-    after: str | None = None, before: str | None = None, parent: str | None = None,
-) -> ToolResult:
-    """Section operations: add, remove, rename, move."""
-    log.info(f"[tool:md_section] file={file!r} action={action!r} section={section!r}")
-    try:
-        path = _resolve_workspace(ctx.config, file)
-        if not path.is_file():
-            return ToolResult(text=f"[error: file not found: {file}]")
-
-        doc = Document.from_file(path)
-
-        if action == "add":
-            if not title:
-                return ToolResult(text="[error: 'title' required for add]")
-            if doc.add_section(title, level=level, after=after, before=before, parent=parent):
-                doc.save(path)
-                return ToolResult(text=f"Added section: {title}")
-            return ToolResult(text="[error: target section not found]")
-
-        elif action == "remove":
-            if not section:
-                return ToolResult(text="[error: 'section' required for remove]")
-            removed = doc.remove_section(section)
-            if removed is not None:
-                doc.save(path)
-                return ToolResult(text=f"Removed section: {section}")
-            return ToolResult(text=f"[error: section not found: {section}]")
-
-        elif action == "rename":
-            if not section or not title:
-                return ToolResult(text="[error: 'section' and 'title' required for rename]")
-            if doc.rename_section(section, title):
-                doc.save(path)
-                return ToolResult(text=f"Renamed section: {section} → {title}")
-            return ToolResult(text=f"[error: section not found: {section}]")
-
-        elif action == "move":
-            if not section:
-                return ToolResult(text="[error: 'section' required for move]")
-            if doc.move_section(section, after=after, before=before):
-                doc.save(path)
-                return ToolResult(text=f"Moved section: {section}")
-            return ToolResult(text="[error: section or target not found]")
-
-        else:
-            return ToolResult(text=f"[error: unknown action: {action}. Use add/remove/rename/move]")
-    except Exception as e:
-        return ToolResult(text=f"[error: {e}]")
-
-
-def tool_md_create(
-    ctx, file: str, template: str | None = None, content: str = "",
-) -> ToolResult:
-    """Create a new markdown file, optionally from a template."""
-    log.info(f"[tool:md_create] file={file!r} template={template!r}")
-    try:
-        path = _resolve_workspace(ctx.config, file)
-        if path.exists():
-            return ToolResult(text=f"[error: file already exists: {file}]")
-
-        if template:
-            tmpl_path = _resolve_workspace(ctx.config, template)
-            if not tmpl_path.is_file():
-                return ToolResult(text=f"[error: template not found: {template}]")
-            body = tmpl_path.read_text()
-            today = datetime.date.today().isoformat()
-            body = re.sub(r"\{\{date(?::[^}]*)?\}\}", today, body)
-        else:
-            body = content
-
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(body)
-        return ToolResult(text="Done.")
-    except Exception as e:
-        return ToolResult(text=f"[error: {e}]")
-
-
-# ---------------------------------------------------------------------------
-# Tool registry
-# ---------------------------------------------------------------------------
-
-TOOLS = {
-    "vault_daily_path": tool_vault_daily_path,
-    "md_show": tool_md_show,
-    "md_move_lines": tool_md_move_lines,
-    "md_section": tool_md_section,
-    "md_create": tool_md_create,
-}
-
-TOOL_DEFINITIONS = [
-    {
-        "type": "function",
-        "function": {
-            "name": "vault_daily_path",
-            "description": "Get the workspace-relative path for a daily journal file. Returns a path like 'obsidian/main/journals/2026/2026-03-19.md'.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "base_path": {
-                        "type": "string",
-                        "description": "Vault base path within workspace (e.g. 'obsidian/main'). Check memory if unknown.",
-                    },
-                    "date": {
-                        "type": "string",
-                        "description": "ISO date (YYYY-MM-DD). Default: today.",
-                    },
-                    "offset": {
-                        "type": "integer",
-                        "description": "Day offset (-1=yesterday, 1=tomorrow). Default: 0.",
-                    },
-                },
-                "required": [],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "md_show",
-            "description": "Show a markdown file's section structure (headings with line numbers) or a specific section's content with line numbers. Use this to see what's in a file before editing with workspace tools.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "file": {
-                        "type": "string",
-                        "description": "Workspace-relative path to the markdown file",
-                    },
-                    "section": {
-                        "type": "string",
-                        "description": "Section path (e.g. 'today', 'notes/standup'). Omit for document outline.",
-                    },
-                },
-                "required": ["file"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "md_move_lines",
-            "description": "Move specific lines (by line number) from one markdown file to another file. Use md_show first to see line numbers. Good for migrating to-do items between daily notes. When to_section is omitted, targets the whole file (works with sectionless files).",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "from_file": {
-                        "type": "string",
-                        "description": "Source file (workspace-relative path)",
-                    },
-                    "to_file": {
-                        "type": "string",
-                        "description": "Target file (workspace-relative path)",
-                    },
-                    "to_section": {
-                        "type": "string",
-                        "description": "Target section path. Omit to target the whole file (for sectionless files).",
-                    },
-                    "lines": {
-                        "type": "string",
-                        "description": "Comma-separated line numbers to move (e.g. '6,7,11')",
-                    },
-                    "position": {
-                        "type": "string",
-                        "enum": ["append", "prepend"],
-                        "description": "Where to insert: 'append' (default, end of section/file) or 'prepend' (before first list item in section/file).",
-                    },
-                },
-                "required": ["from_file", "to_file", "lines"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "md_section",
-            "description": "Section operations on a markdown file: add, remove, rename, or move a section.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "file": {
-                        "type": "string",
-                        "description": "Workspace-relative path to the markdown file",
-                    },
-                    "action": {
-                        "type": "string",
-                        "description": "Operation: 'add', 'remove', 'rename', or 'move'",
-                    },
-                    "section": {
-                        "type": "string",
-                        "description": "Section path (required for remove/rename/move)",
-                    },
-                    "title": {
-                        "type": "string",
-                        "description": "Heading text (required for add/rename)",
-                    },
-                    "level": {
-                        "type": "integer",
-                        "description": "Heading level 1-6 (for add, default 1)",
-                    },
-                    "after": {
-                        "type": "string",
-                        "description": "Position after this section (for add/move)",
-                    },
-                    "before": {
-                        "type": "string",
-                        "description": "Position before this section (for add/move)",
-                    },
-                    "parent": {
-                        "type": "string",
-                        "description": "Insert as child of this section (for add)",
-                    },
-                },
-                "required": ["file", "action"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "md_create",
-            "description": "Create a new markdown file, optionally from a template. {{date}} in templates is replaced with today's date. Won't overwrite existing files.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "file": {
-                        "type": "string",
-                        "description": "Workspace-relative path for the new file",
-                    },
-                    "template": {
-                        "type": "string",
-                        "description": "Workspace-relative path to template file",
-                    },
-                    "content": {
-                        "type": "string",
-                        "description": "Initial content (if no template)",
-                    },
-                },
-                "required": ["file"],
-            },
-        },
-    },
-]
-

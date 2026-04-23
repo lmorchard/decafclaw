@@ -118,7 +118,7 @@ def test_fork_for_tool_call_copies_all_fields(ctx):
     ctx.media_handler = "fake-handler"
     ctx.tools.extra = {"vault_read": lambda: None}
     ctx.tools.extra_definitions = [{"function": {"name": "vault_read"}}]
-    ctx.skills.activated = {"markdown_vault"}
+    ctx.skills.activated = {"tabstack"}
     ctx.skills.data = {"vault_base_path": "obsidian/main"}
     ctx.tools.allowed = {"shell", "memory_search"}
     ctx.event_context_id = "parent-event-ctx"
