@@ -397,6 +397,56 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> Starlette:
             return JSONResponse({"error": "no context data"}, status_code=404)
         return JSONResponse(data)
 
+    # -- Notification routes ---------------------------------------------------
+    # Phase 1: single-user. Inbox + read-state live in the agent workspace,
+    # not partitioned by authenticated user. All authenticated callers see
+    # the same records. Multi-user partitioning is tracked in docs/notifications.md
+    # "Coming in Phase 2+". Do not expose across tenants until partitioning lands.
+
+    @_authenticated
+    async def list_notifications(request: Request, username: str) -> JSONResponse:
+        """Return inbox records newest first, with a joined ``read`` bool."""
+        from . import notifications as notifs
+        try:
+            limit = int(request.query_params.get("limit", "20"))
+        except (TypeError, ValueError):
+            return JSONResponse({"error": "limit must be an integer"}, status_code=400)
+        if limit <= 0 or limit > 200:
+            return JSONResponse({"error": "limit must be in [1, 200]"}, status_code=400)
+        before = request.query_params.get("before") or None
+        records, has_more = notifs.read_inbox(config, limit=limit, before=before)
+        read_ids = notifs.get_read_ids(config)
+        return JSONResponse({
+            "records": [
+                {**r.to_dict(), "read": r.id in read_ids}
+                for r in records
+            ],
+            "has_more": has_more,
+        })
+
+    @_authenticated
+    async def notifications_unread_count(request: Request, username: str) -> JSONResponse:
+        """Return ``{"count": N}`` — called frequently, stays cheap."""
+        from . import notifications as notifs
+        return JSONResponse({"count": notifs.unread_count(config)})
+
+    @_authenticated
+    async def notifications_mark_read(request: Request, username: str) -> JSONResponse:
+        """Mark a single notification read. Idempotent."""
+        from . import notifications as notifs
+        record_id = request.path_params.get("id", "")
+        if not record_id:
+            return JSONResponse({"error": "id required"}, status_code=400)
+        await notifs.mark_read(config, record_id)
+        return JSONResponse({"ok": True})
+
+    @_authenticated
+    async def notifications_mark_all_read(request: Request, username: str) -> JSONResponse:
+        """Mark all currently-visible notifications read."""
+        from . import notifications as notifs
+        await notifs.mark_all_read(config)
+        return JSONResponse({"ok": True})
+
     @_authenticated
     async def serve_workspace_file(request: Request, username: str):
         """Serve a file from the agent workspace (authenticated, read-only)."""
@@ -1085,6 +1135,10 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> Starlette:
         Route("/api/conversations/{id}", delete_conversation, methods=["DELETE"]),
         Route("/api/conversations/{id}/archive", archive_conversation, methods=["POST"]),
         Route("/api/conversations/{id}/unarchive", unarchive_conversation, methods=["POST"]),
+        Route("/api/notifications", list_notifications, methods=["GET"]),
+        Route("/api/notifications/unread-count", notifications_unread_count, methods=["GET"]),
+        Route("/api/notifications/read-all", notifications_mark_all_read, methods=["POST"]),
+        Route("/api/notifications/{id}/read", notifications_mark_read, methods=["POST"]),
         Route("/api/upload/{conv_id}", handle_upload, methods=["POST"]),
         Route("/api/workspace/{path:path}", serve_workspace_file, methods=["GET"]),
         Route("/api/config/files", config_list_files, methods=["GET"]),

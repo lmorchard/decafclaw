@@ -25,6 +25,7 @@ from .config_types import (
     LlmConfig,
     MattermostConfig,
     ModelConfig,
+    NotificationsConfig,
     ProviderConfig,
     ReflectionConfig,
     RelevanceConfig,
@@ -160,6 +161,7 @@ class Config:
     vault_retrieval: VaultRetrievalConfig = field(default_factory=VaultRetrievalConfig)
     relevance: RelevanceConfig = field(default_factory=RelevanceConfig)
     vault: VaultConfig = field(default_factory=VaultConfig)
+    notifications: NotificationsConfig = field(default_factory=NotificationsConfig)
 
     # Custom environment variables from config.json "env" section
     env: dict[str, str] = field(default_factory=dict)
@@ -415,6 +417,9 @@ def load_config() -> Config:
     vault = load_sub_config(
         VaultConfig, file_data.get("vault", {}), "VAULT")
 
+    notifications = load_sub_config(
+        NotificationsConfig, file_data.get("notifications", {}), "NOTIFICATIONS")
+
     # Providers — named provider connection configs
     providers = _load_providers(file_data.get("providers", {}))
     model_configs = _load_model_configs(file_data.get("model_configs", {}))
@@ -461,6 +466,7 @@ def load_config() -> Config:
         vault_retrieval=vault_retrieval,
         relevance=relevance,
         vault=vault,
+        notifications=notifications,
         env=env_vars,
         system_prompt=system_prompt,
     )

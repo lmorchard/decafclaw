@@ -1,5 +1,6 @@
 import { LitElement, html, nothing } from 'lit';
 import './context-inspector.js';
+import './notification-inbox.js';
 
 export class ConversationSidebar extends LitElement {
   static properties = {
@@ -395,6 +396,26 @@ export class ConversationSidebar extends LitElement {
     }));
   }
 
+  /** @param {CustomEvent} e */
+  #onNotificationNavigate(e) {
+    const convId = e.detail?.convId;
+    if (!convId) return;
+    this.store?.selectConversation(convId);
+    this.closeMobile();
+  }
+
+  /** @param {CustomEvent} e */
+  #onNotificationNavigateVault(e) {
+    const page = e.detail?.page;
+    if (!page) return;
+    this.dispatchEvent(new CustomEvent('wiki-open', {
+      detail: { page },
+      bubbles: true,
+      composed: true,
+    }));
+    this.closeMobile();
+  }
+
   /** @param {Event} e */
   #handleModelChange(e) {
     const model = /** @type {HTMLSelectElement} */ (e.target).value;
@@ -752,6 +773,10 @@ export class ConversationSidebar extends LitElement {
       ` : nothing}
       <div class="sidebar-footer">
         <theme-toggle></theme-toggle>
+        <notification-inbox
+          @navigate-conversation=${(e) => this.#onNotificationNavigate(e)}
+          @navigate-vault=${(e) => this.#onNotificationNavigateVault(e)}
+        ></notification-inbox>
         <button class="config-btn" title="Agent Config" @click=${() => this.#openConfig()}>&#9881;</button>
         <button class="logout-btn" @click=${() => this.authClient?.logout()} title="Sign out">Sign out</button>
       </div>

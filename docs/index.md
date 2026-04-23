@@ -39,6 +39,7 @@
 - [Heartbeat](heartbeat.md) — Periodic agent wake-up for monitoring and recurring tasks
 - [Scheduled Tasks](schedules.md) — Cron-style per-task scheduling with model, tool, and skill configuration
 - [Eval Loop](eval-loop.md) — Test prompts and tools with real LLM calls
+- [Notifications](notifications.md) — Inbox for agent-initiated events: heartbeat, schedule, background-job, compaction, reflection
 
 ## LLM Configuration
 

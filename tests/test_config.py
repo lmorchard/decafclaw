@@ -26,6 +26,7 @@ def _isolate_env(monkeypatch):
             "LLM_", "MATTERMOST_", "COMPACTION_", "EMBEDDING_",
             "HEARTBEAT_", "HTTP_", "TABSTACK_", "CLAUDE_CODE_",
             "SKILLS_", "MEMORY_SEARCH", "SYSTEM_PROMPT",
+            "NOTIFICATIONS_",
         )):
             monkeypatch.delenv(key, raising=False)
 
@@ -46,6 +47,11 @@ class TestDefaults:
         assert c.agent.preemptive_search.max_matches == 10
         assert c.compaction.max_tokens == 100000
         assert c.embedding.search_strategy == "substring"
+
+    def test_notifications_defaults(self):
+        c = Config()
+        assert c.notifications.retention_days == 30
+        assert c.notifications.poll_interval_sec == 30
 
     def test_derived_properties(self):
         c = Config(agent=AgentConfig(data_home="/tmp/test", id="mybot"))
@@ -100,6 +106,19 @@ class TestJsonFileLoading:
         c = load_config()
         assert c.agent.preemptive_search.enabled is False
         assert c.agent.preemptive_search.max_matches == 5
+
+    def test_loads_notifications_from_json(self, tmp_path, monkeypatch):
+        """NotificationsConfig fields load from JSON."""
+        agent_dir = tmp_path / "decafclaw"
+        agent_dir.mkdir()
+        config_file = agent_dir / "config.json"
+        config_file.write_text(json.dumps({
+            "notifications": {"retention_days": 7, "poll_interval_sec": 60},
+        }))
+        monkeypatch.setenv("DATA_HOME", str(tmp_path))
+        c = load_config()
+        assert c.notifications.retention_days == 7
+        assert c.notifications.poll_interval_sec == 60
 
     def test_missing_file_uses_defaults(self, tmp_path, monkeypatch):
         """Missing config file gracefully falls back to defaults."""

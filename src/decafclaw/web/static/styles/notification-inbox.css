@@ -1,0 +1,187 @@
+/* Notification inbox — bell icon + dropdown panel. Light DOM styles. */
+
+notification-inbox {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+notification-inbox .notification-bell {
+  position: relative;
+  background: none;
+  border: 1px solid var(--pico-muted-border-color);
+  border-radius: 4px;
+  padding: 0.2rem 0.45rem;
+  margin: 0;
+  cursor: pointer;
+  font-size: 0.95rem;
+  line-height: 1;
+  color: var(--pico-muted-color);
+}
+
+notification-inbox .notification-bell:hover {
+  background: var(--pico-secondary-hover-background);
+  color: var(--pico-color);
+}
+
+notification-inbox .notification-bell.has-unread {
+  color: var(--pico-color);
+}
+
+notification-inbox .notification-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--pico-del-color, #c0392b);
+  color: #fff;
+  font-size: 0.65rem;
+  font-weight: 600;
+  line-height: 16px;
+  text-align: center;
+  box-sizing: border-box;
+}
+
+notification-inbox .notification-panel {
+  position: fixed;
+  max-height: 70vh;
+  overflow-y: auto;
+  background: var(--pico-card-background-color, #fff);
+  border: 1px solid var(--pico-muted-border-color, #ddd);
+  border-radius: 8px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+  z-index: 1000;
+  font-size: 0.8rem;
+  color: var(--pico-color, #333);
+}
+
+notification-inbox .notification-panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--pico-muted-border-color);
+  font-weight: 600;
+  background: var(--pico-background-color);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+notification-inbox .notification-mark-all {
+  background: none;
+  border: 1px solid var(--pico-muted-border-color);
+  border-radius: 4px;
+  padding: 0.15rem 0.5rem;
+  cursor: pointer;
+  font-size: 0.7rem;
+  color: var(--pico-muted-color);
+  margin: 0;
+}
+
+notification-inbox .notification-mark-all:hover:not([disabled]) {
+  background: var(--pico-secondary-hover-background);
+  color: var(--pico-color);
+}
+
+notification-inbox .notification-mark-all[disabled] {
+  opacity: 0.5;
+  cursor: default;
+}
+
+notification-inbox .notification-empty {
+  padding: 1rem;
+  text-align: center;
+  color: var(--pico-muted-color);
+}
+
+notification-inbox .notification-list {
+  display: flex;
+  flex-direction: column;
+}
+
+notification-inbox .notification-row {
+  all: unset;
+  display: flex;
+  gap: 0.5rem;
+  align-items: flex-start;
+  padding: 0.6rem 0.75rem;
+  border-bottom: 1px solid var(--pico-muted-border-color);
+  cursor: pointer;
+  font-size: 0.8rem;
+  color: var(--pico-color);
+  width: 100%;
+  box-sizing: border-box;
+}
+
+notification-inbox .notification-row:last-child {
+  border-bottom: none;
+}
+
+notification-inbox .notification-row:hover {
+  background: var(--pico-secondary-hover-background);
+}
+
+notification-inbox .notification-row:focus-visible {
+  outline: 2px solid var(--pico-primary, #4A90D9);
+  outline-offset: -2px;
+}
+
+notification-inbox .notification-row.unread {
+  background: var(--pico-card-sectioning-background-color, rgba(0, 0, 0, 0.02));
+}
+
+notification-inbox .notification-dot {
+  min-width: 0.9em;
+  color: var(--pico-primary, #4A90D9);
+  font-size: 0.7rem;
+  line-height: 1.4;
+  padding-top: 0.1rem;
+}
+
+notification-inbox .notification-content {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  flex: 1;
+  min-width: 0;
+}
+
+notification-inbox .notification-title {
+  font-weight: 500;
+  color: var(--pico-color);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+notification-inbox .notification-row.read .notification-title {
+  font-weight: 400;
+  color: var(--pico-muted-color);
+}
+
+notification-inbox .notification-body {
+  font-size: 0.72rem;
+  color: var(--pico-muted-color);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+notification-inbox .notification-meta {
+  display: flex;
+  gap: 0.5rem;
+  font-size: 0.65rem;
+  color: var(--pico-muted-color);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+notification-inbox .notification-category {
+  font-weight: 600;
+}

@@ -5,6 +5,7 @@ import logging
 import time
 from collections import deque
 from dataclasses import dataclass, field
+from typing import Any
 from uuid import uuid4
 
 from decafclaw.media import ToolResult
@@ -30,6 +31,9 @@ class BackgroundJob:
     reader_task: asyncio.Task | None = None
     exit_code: int | None = None
     status: str = "running"  # running, completed, error, expired, stopped
+    # Correlation for the exit-notification (populated by BackgroundJobManager.start).
+    config: Any = None
+    conv_id: str = ""
 
 
 async def _read_stream(stream: asyncio.StreamReader | None, buffer: deque) -> None:
@@ -58,6 +62,30 @@ async def _run_reader(job: BackgroundJob) -> None:
     except Exception as e:
         log.warning(f"Background job {job.job_id} reader error: {e}")
         job.status = "error"
+    else:
+        await _notify_job_exit(job)
+
+
+async def _notify_job_exit(job: BackgroundJob) -> None:
+    """Append an inbox notification for a background-job exit."""
+    if job.config is None:
+        return
+    from decafclaw import notifications
+    title = ("Background job completed" if job.exit_code == 0
+             else "Background job failed")
+    priority = "normal" if job.exit_code == 0 else "high"
+    cmd_preview = job.command[:80] + ("..." if len(job.command) > 80 else "")
+    body = f"{cmd_preview} (exit {job.exit_code})"
+    last_stderr = job.stderr_buffer[-1] if job.stderr_buffer else ""
+    if last_stderr and job.exit_code != 0:
+        body += f" — {last_stderr[:120]}"
+    try:
+        await notifications.notify(
+            job.config, category="background", title=title, body=body,
+            priority=priority, conv_id=job.conv_id or None,
+        )
+    except Exception as e:
+        log.warning(f"Failed to emit background-job notification: {e}")
 
 
 async def _kill_process(process: asyncio.subprocess.Process) -> None:
@@ -87,8 +115,14 @@ class BackgroundJobManager:
         self.jobs: dict[str, BackgroundJob] = {}
 
     async def start(self, command: str, cwd: str,
-                    max_lifetime: float = _DEFAULT_MAX_LIFETIME) -> BackgroundJob:
-        """Start a background process. Returns immediately."""
+                    max_lifetime: float = _DEFAULT_MAX_LIFETIME,
+                    config: Any = None,
+                    conv_id: str = "") -> BackgroundJob:
+        """Start a background process. Returns immediately.
+
+        ``config`` and ``conv_id`` are carried into the job so the reader
+        task can emit an inbox notification when the process exits.
+        """
         process = await asyncio.create_subprocess_shell(
             command, cwd=cwd,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
@@ -102,6 +136,8 @@ class BackgroundJobManager:
             pid=process.pid,
             started_at=time.monotonic(),
             max_lifetime=max_lifetime,
+            config=config,
+            conv_id=conv_id,
         )
         job.reader_task = asyncio.create_task(_run_reader(job))
         self.jobs[job.job_id] = job
@@ -224,7 +260,10 @@ async def tool_shell_background_start(ctx, command: str) -> ToolResult:
     await manager.cleanup_expired()
 
     try:
-        job = await manager.start(command, str(ctx.config.workspace_path))
+        job = await manager.start(
+            command, str(ctx.config.workspace_path),
+            config=ctx.config, conv_id=ctx.conv_id,
+        )
     except Exception as e:
         return ToolResult(
             text=f"[error: failed to start background process: {e}]",
