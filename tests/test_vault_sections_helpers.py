@@ -1,4 +1,4 @@
-from decafclaw.skills.vault._sections import Document, Section
+from decafclaw.skills.vault._sections import Document
 
 
 def test_document_round_trip():
