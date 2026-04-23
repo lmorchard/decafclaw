@@ -48,13 +48,17 @@ dev = [
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-# Run tests in parallel across CPU cores by default. pytest-xdist handles
-# distribution; worksteal rebalances as workers finish. Override with `-n 0`
-# to run serially (useful for debugging with `pdb` or when `-v` output
-# needs to stay readable).
-addopts = "-n auto --dist=worksteal"
+# Default pytest invocation:
+#   - `-n auto --dist=worksteal` runs unit tests in parallel across CPU cores.
+#     Override with `-n 0` for serial runs (debugging with `pdb`, or cleaner
+#     `-v` output).
+#   - `-m "not integration"` excludes real-API integration tests from the
+#     default suite. They cost money, hit rate limits, and aren't run in CI.
+#     Run them explicitly via `make test-integration` (which overrides the
+#     marker filter and disables parallelism to avoid concurrent API calls).
+addopts = "-n auto --dist=worksteal -m 'not integration'"
 markers = [
-    "integration: marks tests that hit real LLM APIs (skip with: -m 'not integration')",
+    "integration: marks tests that hit real LLM APIs (opt in with: -m integration)",
 ]
 
 [tool.ruff]

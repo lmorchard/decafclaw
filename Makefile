@@ -49,17 +49,20 @@ lint-fix:
 fmt:
 	uv run ruff format src/ tests/
 
-# Run tests (pytest, excludes integration tests)
+# Run tests (pytest, excludes integration tests by default — see pyproject.toml addopts)
 test:
-	uv run pytest tests/ -v -m "not integration"
+	uv run pytest tests/
 
-# Run integration tests only (requires provider credentials)
+# Run integration tests only (requires provider credentials).
+# Override the default `-m "not integration"` from addopts, and disable
+# xdist so parallel workers don't hammer the real APIs concurrently.
 test-integration:
-	uv run pytest tests/ -v -m integration
+	uv run pytest tests/ -v -m integration -n 0
 
-# Run all tests including integration
+# Run all tests including integration. Matches parallel + default policy,
+# but opts back in to integration by OR-ing the markers.
 test-all:
-	uv run pytest tests/ -v
+	uv run pytest tests/ -m "integration or not integration"
 
 # Rebuild production embedding index
 reindex:
