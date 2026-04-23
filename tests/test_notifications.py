@@ -36,6 +36,29 @@ def _now() -> str:
     return datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+@pytest.fixture
+def monotonic_now(monkeypatch):
+    """Make ``_now_iso`` return a monotonically increasing timestamp per call.
+
+    ``_now_iso`` has second precision, so two calls in the same wall-clock
+    second produce identical timestamps. Tests that need ordered timestamps
+    would otherwise have to `asyncio.sleep(1.05)` between writes — slow and
+    flaky. This fixture assigns each call a unique timestamp one second
+    apart.
+
+    Base is anchored on real ``datetime.now()`` so the timestamps fall
+    inside the retention window — opportunistic rotation in ``notify()``
+    would otherwise archive our test records the moment they're appended.
+    """
+    base = datetime.now(tz=timezone.utc)
+    counter = iter(range(10_000))
+
+    def _fake_now() -> str:
+        return (base + timedelta(seconds=next(counter))).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    monkeypatch.setattr(notifs, "_now_iso", _fake_now)
+
+
 # -- Record shape -------------------------------------------------------------
 
 
@@ -225,12 +248,10 @@ class TestReadState:
         assert b.id in read_ids
 
     @pytest.mark.asyncio
-    async def test_read_all_does_not_mark_future(self, config):
+    async def test_read_all_does_not_mark_future(self, config, monotonic_now):
         """A read-all event doesn't mark records created after it."""
         a = await notifs.notify(config, category="t", title="A")
         await notifs.mark_all_read(config)
-        # Wait a tiny bit so the new notify timestamp > the read-all timestamp
-        await asyncio.sleep(1.05)
         b = await notifs.notify(config, category="t", title="B")
         read_ids = notifs.get_read_ids(config)
         assert a.id in read_ids
@@ -274,26 +295,23 @@ class TestReadInbox:
         assert has_more is False
 
     @pytest.mark.asyncio
-    async def test_newest_first(self, config):
+    async def test_newest_first(self, config, monotonic_now):
         await notifs.notify(config, category="t", title="A")
-        await asyncio.sleep(1.05)
         await notifs.notify(config, category="t", title="B")
         records, _ = notifs.read_inbox(config)
         assert [r.title for r in records] == ["B", "A"]
 
     @pytest.mark.asyncio
-    async def test_limit_and_has_more(self, config):
+    async def test_limit_and_has_more(self, config, monotonic_now):
         for i in range(5):
             await notifs.notify(config, category="t", title=f"#{i}")
-            await asyncio.sleep(0.01)
         records, has_more = notifs.read_inbox(config, limit=3)
         assert len(records) == 3
         assert has_more is True
 
     @pytest.mark.asyncio
-    async def test_before_cursor(self, config):
+    async def test_before_cursor(self, config, monotonic_now):
         a = await notifs.notify(config, category="t", title="A")
-        await asyncio.sleep(1.05)
         b = await notifs.notify(config, category="t", title="B")
         # Only A should come back when we query "before B's timestamp"
         records, _ = notifs.read_inbox(config, before=b.timestamp)

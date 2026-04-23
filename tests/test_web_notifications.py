@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import asyncio
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -11,6 +11,18 @@ from decafclaw import notifications as notifs
 from decafclaw.events import EventBus
 from decafclaw.http_server import create_app
 from decafclaw.web.auth import create_token
+
+
+@pytest.fixture
+def monotonic_now(monkeypatch):
+    """Monotonically increasing ``_now_iso`` — see ``tests/test_notifications.py``."""
+    base = datetime.now(tz=timezone.utc)
+    counter = iter(range(10_000))
+
+    def _fake_now() -> str:
+        return (base + timedelta(seconds=next(counter))).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    monkeypatch.setattr(notifs, "_now_iso", _fake_now)
 
 
 @pytest.fixture
@@ -108,10 +120,9 @@ async def test_returns_records_with_read_flag(authed_client, http_config):
 
 
 @pytest.mark.asyncio
-async def test_limit_and_has_more(authed_client, http_config):
+async def test_limit_and_has_more(authed_client, http_config, monotonic_now):
     for i in range(5):
         await notifs.notify(http_config, category="t", title=f"#{i}")
-        await asyncio.sleep(0.01)
     resp = await authed_client.get("/api/notifications?limit=3")
     data = resp.json()
     assert len(data["records"]) == 3
@@ -119,9 +130,8 @@ async def test_limit_and_has_more(authed_client, http_config):
 
 
 @pytest.mark.asyncio
-async def test_before_cursor(authed_client, http_config):
+async def test_before_cursor(authed_client, http_config, monotonic_now):
     a = await notifs.notify(http_config, category="t", title="A")
-    await asyncio.sleep(1.05)
     b = await notifs.notify(http_config, category="t", title="B")
     resp = await authed_client.get(f"/api/notifications?before={b.timestamp}")
     data = resp.json()
