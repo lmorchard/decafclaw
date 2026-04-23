@@ -554,6 +554,70 @@ async def tool_vault_show_sections(
     return ToolResult(text="\n".join(numbered))
 
 
+async def tool_vault_section(
+    ctx,
+    page: str,
+    action: str,
+    section: str | None = None,
+    title: str | None = None,
+    level: int = 1,
+    after: str | None = None,
+    before: str | None = None,
+    parent: str | None = None,
+) -> ToolResult:
+    """Section operations on a vault page: add, remove, rename, or move."""
+    log.info(
+        f"[tool:vault_section] page={page!r} action={action!r} "
+        f"section={section!r} title={title!r}"
+    )
+    path = resolve_page(ctx.config, page)
+    if path is None or not path.exists():
+        return ToolResult(text=f"[error: page not found: {page}]")
+    if not _is_in_agent_dir(ctx.config, path):
+        return ToolResult(
+            text=f"[error: cannot modify page outside agent folder: {page}]"
+        )
+    doc = Document.from_text(path.read_text(encoding="utf-8"))
+
+    if action == "add":
+        if not title:
+            return ToolResult(text="[error: 'title' required for add]")
+        if doc.add_section(title, level=level, after=after, before=before, parent=parent):
+            path.write_text(doc.to_text(), encoding="utf-8")
+            return ToolResult(text=f"Added section: {title}")
+        return ToolResult(text="[error: target section not found]")
+
+    elif action == "remove":
+        if not section:
+            return ToolResult(text="[error: 'section' required for remove]")
+        removed = doc.remove_section(section)
+        if removed is not None:
+            path.write_text(doc.to_text(), encoding="utf-8")
+            return ToolResult(text=f"Removed section: {section}")
+        return ToolResult(text=f"[error: section not found: {section}]")
+
+    elif action == "rename":
+        if not section or not title:
+            return ToolResult(text="[error: 'section' and 'title' required for rename]")
+        if doc.rename_section(section, title):
+            path.write_text(doc.to_text(), encoding="utf-8")
+            return ToolResult(text=f"Renamed section: {section} → {title}")
+        return ToolResult(text=f"[error: section not found: {section}]")
+
+    elif action == "move":
+        if not section:
+            return ToolResult(text="[error: 'section' required for move]")
+        if doc.move_section(section, after=after, before=before):
+            path.write_text(doc.to_text(), encoding="utf-8")
+            return ToolResult(text=f"Moved section: {section}")
+        return ToolResult(text="[error: section or target not found]")
+
+    else:
+        return ToolResult(
+            text=f"[error: unknown action: {action}. Use add/remove/rename/move]"
+        )
+
+
 async def tool_vault_move_lines(
     ctx,
     from_page: str,
@@ -628,6 +692,7 @@ TOOLS = {
     "vault_backlinks": tool_vault_backlinks,
     "vault_show_sections": tool_vault_show_sections,
     "vault_move_lines": tool_vault_move_lines,
+    "vault_section": tool_vault_section,
 }
 
 TOOL_DEFINITIONS = [
@@ -968,6 +1033,77 @@ TOOL_DEFINITIONS = [
                     },
                 },
                 "required": ["from_page", "to_page", "lines"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "vault_section",
+            "description": (
+                "Section operations on a vault page: add, remove, rename, or move a "
+                "section. Actions: 'add', 'remove', 'rename', 'move'. Page must be under "
+                "the agent folder."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "page": {
+                        "type": "string",
+                        "description": (
+                            "Page path relative to vault root or bare name "
+                            "(e.g. 'agent/pages/note', 'My Page')."
+                        ),
+                    },
+                    "action": {
+                        "type": "string",
+                        "enum": ["add", "remove", "rename", "move"],
+                        "description": "Operation: 'add', 'remove', 'rename', or 'move'.",
+                    },
+                    "section": {
+                        "type": "string",
+                        "description": (
+                            "Slash-separated section path to operate on "
+                            "(e.g. 'top/sub a'). Required for remove, rename, move."
+                        ),
+                    },
+                    "title": {
+                        "type": "string",
+                        "description": (
+                            "Title for the section. Required for add; "
+                            "used as the new title for rename."
+                        ),
+                    },
+                    "level": {
+                        "type": "integer",
+                        "description": (
+                            "Heading level (1–6) for the new section. "
+                            "Only used by add. Default: 1."
+                        ),
+                    },
+                    "after": {
+                        "type": "string",
+                        "description": (
+                            "Slash-separated section path to insert/move after "
+                            "(e.g. 'top/first'). Used by add and move."
+                        ),
+                    },
+                    "before": {
+                        "type": "string",
+                        "description": (
+                            "Slash-separated section path to insert/move before. "
+                            "Used by add and move."
+                        ),
+                    },
+                    "parent": {
+                        "type": "string",
+                        "description": (
+                            "Slash-separated section path to nest the new section under. "
+                            "Only used by add."
+                        ),
+                    },
+                },
+                "required": ["page", "action"],
             },
         },
     },

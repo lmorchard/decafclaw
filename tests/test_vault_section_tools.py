@@ -1,9 +1,10 @@
-"""Tests for vault_show_sections and vault_move_lines tools."""
+"""Tests for vault_show_sections, vault_move_lines, and vault_section tools."""
 
 import pytest
 
 from decafclaw.skills.vault.tools import (
     tool_vault_move_lines,
+    tool_vault_section,
     tool_vault_show_sections,
 )
 
@@ -122,3 +123,58 @@ async def test_move_lines_leaves_source_untouched_when_insert_fails(vault_ctx):
     # Both files must be unchanged
     assert (agent_pages / "src.md").read_text() == src_text
     assert (agent_pages / "dst.md").read_text() == dst_text
+
+
+@pytest.mark.asyncio
+async def test_section_add(vault_ctx):
+    vault = vault_ctx.config.vault_root
+    agent_pages = vault / "agent" / "pages"
+    agent_pages.mkdir(parents=True)
+    (agent_pages / "note.md").write_text("# Top\n\n## First\n")
+    result = await tool_vault_section(
+        vault_ctx,
+        page="agent/pages/note",
+        action="add",
+        title="Second",
+        level=2,
+        after="top/first",
+    )
+    assert "[error" not in result.text.lower()
+    content = (agent_pages / "note.md").read_text()
+    assert "## Second" in content
+
+
+@pytest.mark.asyncio
+async def test_section_rename(vault_ctx):
+    vault = vault_ctx.config.vault_root
+    agent_pages = vault / "agent" / "pages"
+    agent_pages.mkdir(parents=True)
+    (agent_pages / "note.md").write_text("# Top\n\n## Old\n")
+    result = await tool_vault_section(
+        vault_ctx,
+        page="agent/pages/note",
+        action="rename",
+        section="top/old",
+        title="New",
+    )
+    assert "[error" not in result.text.lower()
+    content = (agent_pages / "note.md").read_text()
+    assert "## New" in content
+    assert "## Old" not in content
+
+
+@pytest.mark.asyncio
+async def test_section_refuses_write_outside_agent(vault_ctx):
+    vault = vault_ctx.config.vault_root
+    (vault / "user_notes").mkdir()
+    (vault / "user_notes" / "x.md").write_text("# U\n")
+    result = await tool_vault_section(
+        vault_ctx,
+        page="user_notes/x",
+        action="add",
+        title="New",
+        level=2,
+    )
+    assert "[error" in result.text.lower()
+    # Unchanged
+    assert (vault / "user_notes" / "x.md").read_text() == "# U\n"
