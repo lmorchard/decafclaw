@@ -194,6 +194,9 @@ export class WikiPage extends LitElement {
         alert(data.error || `Delete failed (${res.status})`);
         return;
       }
+      window.dispatchEvent(new CustomEvent('vault-page-deleted', {
+        detail: { page: this.page },
+      }));
       this._close();
     } catch {
       alert('Delete failed.');
