@@ -196,7 +196,7 @@ class TestExecuteCommand:
     async def test_fork_required_skills_activated(self, ctx):
         """Fork commands pre-activate required-skills before spawning child."""
         dep_skill = SkillInfo(
-            name="markdown_vault", description="Vault", location=Path("."),
+            name="tabstack", description="Tabstack", location=Path("."),
             has_native_tools=True,
         )
         ctx.config.discovered_skills = [dep_skill]
@@ -204,7 +204,7 @@ class TestExecuteCommand:
         skill = SkillInfo(
             name="test-cmd", description="Test", location=Path("."),
             body="Do stuff", context="fork",
-            requires_skills=["markdown_vault"],
+            requires_skills=["tabstack"],
         )
         with patch("decafclaw.tools.skill_tools.activate_skill_internal",
                     new_callable=AsyncMock, return_value="activated") as mock_activate, \
@@ -219,15 +219,15 @@ class TestExecuteCommand:
     async def test_fork_required_skills_already_active(self, ctx):
         """Already-activated skills are not re-activated."""
         dep_skill = SkillInfo(
-            name="markdown_vault", description="Vault", location=Path("."),
+            name="tabstack", description="Tabstack", location=Path("."),
         )
         ctx.config.discovered_skills = [dep_skill]
-        ctx.skills.activated.add("markdown_vault")
+        ctx.skills.activated.add("tabstack")
 
         skill = SkillInfo(
             name="test-cmd", description="Test", location=Path("."),
             body="Do stuff", context="fork",
-            requires_skills=["markdown_vault"],
+            requires_skills=["tabstack"],
         )
         with patch("decafclaw.tools.skill_tools.activate_skill_internal",
                     new_callable=AsyncMock) as mock_activate, \
