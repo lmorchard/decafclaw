@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from decafclaw.media import ToolResult
-from decafclaw.skills.vault._sections import Document
+from decafclaw.skills.vault._sections import Document, _insert_into_doc
 
 log = logging.getLogger(__name__)
 
@@ -554,6 +554,65 @@ async def tool_vault_show_sections(
     return ToolResult(text="\n".join(numbered))
 
 
+async def tool_vault_move_lines(
+    ctx,
+    from_page: str,
+    to_page: str,
+    lines: str,
+    to_section: str | None = None,
+    position: str = "append",
+) -> ToolResult:
+    """Move specific lines (by line number) from one vault page to another."""
+    log.info(
+        f"[tool:vault_move_lines] from={from_page!r} to={to_page!r} "
+        f"lines={lines!r} section={to_section!r} position={position!r}"
+    )
+    # Source must be resolvable and writable (we're removing lines from it)
+    from_path = resolve_page(ctx.config, from_page)
+    if from_path is None or not from_path.exists():
+        return ToolResult(text=f"[error: source page not found: {from_page}]")
+    if not _is_in_agent_dir(ctx.config, from_path):
+        return ToolResult(
+            text=f"[error: cannot modify page outside agent folder: {from_page}]"
+        )
+    # Target must be writable
+    to_path = resolve_page(ctx.config, to_page)
+    if to_path is None or not to_path.exists():
+        return ToolResult(text=f"[error: target page not found: {to_page}]")
+    if not _is_in_agent_dir(ctx.config, to_path):
+        return ToolResult(
+            text=f"[error: cannot write to page outside agent folder: {to_page}]"
+        )
+    # Parse line numbers
+    try:
+        line_nums = sorted({int(s.strip()) for s in lines.split(",") if s.strip()})
+    except ValueError:
+        return ToolResult(text=f"[error: invalid lines argument: {lines!r}]")
+    if not line_nums:
+        return ToolResult(text="[error: no line numbers provided]")
+    from_doc = Document.from_text(from_path.read_text(encoding="utf-8"))
+    to_doc = Document.from_text(to_path.read_text(encoding="utf-8"))
+    # Collect line text in original order, then delete in reverse
+    moved: list[str] = []
+    for n in line_nums:
+        idx = n - 1
+        if idx < 0 or idx >= len(from_doc.lines):
+            return ToolResult(text=f"[error: line {n} out of range in {from_page}]")
+        moved.append(from_doc.lines[idx].rstrip("\n"))
+    for n in sorted(line_nums, reverse=True):
+        from_doc._delete_lines(n - 1, 1)
+    # Insert into target
+    err = _insert_into_doc(to_doc, moved, to_section, position)
+    if err:
+        return ToolResult(text=f"[error: {err}]")
+    from_path.write_text(from_doc.to_text(), encoding="utf-8")
+    to_path.write_text(to_doc.to_text(), encoding="utf-8")
+    return ToolResult(
+        text=f"Moved {len(moved)} line(s) from {from_page} to {to_page}"
+        + (f" section '{to_section}'" if to_section else "")
+    )
+
+
 # ---------------------------------------------------------------------------
 # Tool registration
 # ---------------------------------------------------------------------------
@@ -568,6 +627,7 @@ TOOLS = {
     "vault_list": tool_vault_list,
     "vault_backlinks": tool_vault_backlinks,
     "vault_show_sections": tool_vault_show_sections,
+    "vault_move_lines": tool_vault_move_lines,
 }
 
 TOOL_DEFINITIONS = [
@@ -853,6 +913,61 @@ TOOL_DEFINITIONS = [
                     },
                 },
                 "required": ["page"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "vault_move_lines",
+            "description": (
+                "Move specific lines (by absolute line number) from one vault page to "
+                "another. Use vault_show_sections first to see line numbers. Good for "
+                "migrating to-do items between daily notes. Both pages must be under the "
+                "agent folder. When to_section is omitted, moves into the whole target file."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "from_page": {
+                        "type": "string",
+                        "description": (
+                            "Source page path relative to vault root "
+                            "(e.g. 'agent/pages/yesterday')."
+                        ),
+                    },
+                    "to_page": {
+                        "type": "string",
+                        "description": (
+                            "Target page path relative to vault root "
+                            "(e.g. 'agent/pages/today')."
+                        ),
+                    },
+                    "lines": {
+                        "type": "string",
+                        "description": (
+                            "Comma-separated absolute line numbers to move "
+                            "(e.g. '3,4,7'). Use vault_show_sections to get line numbers."
+                        ),
+                    },
+                    "to_section": {
+                        "type": "string",
+                        "description": (
+                            "Slash-separated section path in the target page "
+                            "(e.g. 'today/inbox'). Omit to append to the whole file."
+                        ),
+                    },
+                    "position": {
+                        "type": "string",
+                        "enum": ["append", "prepend"],
+                        "description": (
+                            "Where to insert within the target section: "
+                            "'append' (default) adds after existing content, "
+                            "'prepend' adds before it."
+                        ),
+                    },
+                },
+                "required": ["from_page", "to_page", "lines"],
             },
         },
     },

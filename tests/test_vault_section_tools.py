@@ -1,8 +1,9 @@
-"""Tests for vault_show_sections tool."""
+"""Tests for vault_show_sections and vault_move_lines tools."""
 
 import pytest
 
 from decafclaw.skills.vault.tools import (
+    tool_vault_move_lines,
     tool_vault_show_sections,
 )
 
@@ -50,3 +51,50 @@ async def test_show_sections_specific(vault_ctx):
 async def test_show_sections_missing_page(vault_ctx):
     result = await tool_vault_show_sections(vault_ctx, page="agent/pages/missing")
     assert "[error" in result.text.lower() or "not found" in result.text.lower()
+
+
+@pytest.mark.asyncio
+async def test_move_lines_basic(vault_ctx):
+    vault = vault_ctx.config.vault_root
+    agent_pages = vault / "agent" / "pages"
+    agent_pages.mkdir(parents=True, exist_ok=True)
+    (agent_pages / "src.md").write_text(
+        "# Top\n\n- [ ] task1\n- [ ] task2\n- [ ] task3\n"
+    )
+    (agent_pages / "dst.md").write_text("# Today\n\n## inbox\n")
+    result = await tool_vault_move_lines(
+        vault_ctx,
+        from_page="agent/pages/src",
+        to_page="agent/pages/dst",
+        lines="3,4",
+        to_section="today/inbox",
+    )
+    assert "[error" not in result.text.lower()
+    src_after = (agent_pages / "src.md").read_text()
+    dst_after = (agent_pages / "dst.md").read_text()
+    assert "task1" not in src_after
+    assert "task2" not in src_after
+    assert "task3" in src_after
+    assert "task1" in dst_after
+    assert "task2" in dst_after
+
+
+@pytest.mark.asyncio
+async def test_move_lines_refuses_write_outside_agent(vault_ctx):
+    vault = vault_ctx.config.vault_root
+    (vault / "agent" / "pages").mkdir(parents=True, exist_ok=True)
+    (vault / "user_notes").mkdir()
+    (vault / "agent" / "pages" / "src.md").write_text(
+        "# Top\n\n- [ ] x\n"
+    )
+    (vault / "user_notes" / "dst.md").write_text("# User\n")
+    # Writing into a user page must be refused
+    result = await tool_vault_move_lines(
+        vault_ctx,
+        from_page="agent/pages/src",
+        to_page="user_notes/dst",
+        lines="3",
+    )
+    assert "[error" in result.text.lower()
+    # user_notes/dst.md must be unchanged
+    assert (vault / "user_notes" / "dst.md").read_text() == "# User\n"
