@@ -29,6 +29,10 @@ class ScheduleTask:
     allowed_tools: list[str] = field(default_factory=list)
     shell_patterns: list[str] = field(default_factory=list)
     required_skills: list[str] = field(default_factory=list)
+    # Per-task overlay for `send_email` — exact addresses or
+    # `@domain.com` suffix patterns that bypass confirmation. Merged
+    # with `config.email.allowed_recipients` at tool-call time.
+    email_recipients: list[str] = field(default_factory=list)
 
 
 def parse_schedule_file(path: Path) -> ScheduleTask | None:
@@ -69,6 +73,10 @@ def parse_schedule_file(path: Path) -> ScheduleTask | None:
     if not isinstance(required_skills, list):
         required_skills = [str(required_skills)] if required_skills else []
 
+    email_recipients = meta.get("email-recipients", [])
+    if not isinstance(email_recipients, list):
+        email_recipients = [str(email_recipients)] if email_recipients else []
+
     return ScheduleTask(
         name=path.stem,
         schedule=schedule,
@@ -81,6 +89,7 @@ def parse_schedule_file(path: Path) -> ScheduleTask | None:
         allowed_tools=allowed_tools,
         shell_patterns=shell_patterns,
         required_skills=[str(s) for s in required_skills],
+        email_recipients=[str(r) for r in email_recipients],
     )
 
 
@@ -241,6 +250,7 @@ async def run_schedule_task(config, event_bus, task: ScheduleTask) -> dict:
         allowed_tools=allowed_tools_set,
         preapproved_tools=preapproved,
         preapproved_shell_patterns=shell_patterns,
+        preapproved_email_recipients=task.email_recipients or None,
     )
 
     # Pre-activate required skills

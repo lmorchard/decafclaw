@@ -41,6 +41,7 @@
 - [Scheduled Tasks](schedules.md) — Cron-style per-task scheduling with model, tool, and skill configuration
 - [Eval Loop](eval-loop.md) — Test prompts and tools with real LLM calls
 - [Notifications](notifications.md) — Inbox for agent-initiated events: heartbeat, schedule, background-job, compaction, reflection
+- [Email](email.md) — Outbound email via SMTP: agent tool (`send_email`) + notification channel, shared SMTP core
 
 ## LLM Configuration
 

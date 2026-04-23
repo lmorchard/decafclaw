@@ -63,7 +63,8 @@ An AI agent testbed for exploring agent development patterns. Connects to Matter
 - **MCP auto-restart.** Crashed stdio servers auto-reconnect on next tool call with exponential backoff (max 3 retries). Use `mcp_status(action="restart")` for manual control.
 - **Scheduled tasks via cron-style files.** Markdown files with YAML frontmatter in `data/{agent_id}/schedules/` (admin) and `workspace/schedules/` (agent-writable). Frontmatter fields: `schedule` (5-field cron), `channel` (Mattermost channel **ID**), `enabled`, `model`, `allowed-tools`, `required-skills`. Independent timer loop (60s poll), per-task last-run tracking in `workspace/.schedule_last_run/`. Uses `croniter` for cron evaluation.
 - **Notification inbox for agent-initiated events.** Heartbeat, scheduled-task, and background-job events append JSONL records under `workspace/notifications/` via `notify()` / `ctx.notify()`. Stored append-only with opportunistic time-based rotation; read-state reconstructed from a companion `read.jsonl`. Web UI renders a bell + badge in the sidebar footer polling `/api/notifications/unread-count`. All producers are fail-open — errors logged, never raised. See [docs/notifications.md](docs/notifications.md).
-- **Notification channel adapters are EventBus subscribers.** After the inbox append, `notify()` publishes a `notification_created` event. Channel adapters (Mattermost DM today, email/vault-page/etc. later) live in `src/decafclaw/notification_channels/`, subscribe in `runner.py` at startup, filter per-event against their own config, and fire-and-forget delivery via `asyncio.create_task` so `notify()` never blocks. Inbox stays authoritative; channels are best-effort. Add new channels by adding a `<name>ChannelConfig` dataclass + `notification_channels/<name>.py` factory + wiring guard in `runner.py`.
+- **Notification channel adapters are EventBus subscribers.** After the inbox append, `notify()` publishes a `notification_created` event. Channel adapters (Mattermost DM, email, vault-page/etc. later) live in `src/decafclaw/notification_channels/`. A single `init_notification_channels(config, event_bus, **deps)` in that package's `__init__.py` handles all startup wiring — each channel's enable-guards + `event_bus.subscribe` call lives there, so adding a new channel touches its own module + `notification_channels/__init__.py` only (not `runner.py`). Adapters filter per-event against their own config and fire-and-forget delivery via `asyncio.create_task` so `notify()` never blocks. Inbox stays authoritative; channels are best-effort.
+- **Email is dual-surface: agent tool + notification channel.** `src/decafclaw/mail.py` is the shared async SMTP core (aiosmtplib, STARTTLS + plain AUTH). The `send_email` tool gates every call via `check_email_approval` (allowlist bypass, otherwise `request_confirmation`); the allowlist is a union of `config.email.allowed_recipients` and per-scheduled-task `email-recipients` frontmatter (threaded through `ctx.tools.preapproved_email_recipients`, mirroring the `shell_patterns` pattern). Attachments resolve under `config.workspace_path` with a summed size cap. The email notification channel bypasses the tool's allowlist — its own `recipient_addresses` config IS the trust boundary. See [docs/email.md](docs/email.md).
 - **LOG_LEVEL env var.** Set `LOG_LEVEL=DEBUG` for verbose logging (default: INFO).
 
 ### Context assembly
@@ -177,6 +178,7 @@ An AI agent testbed for exploring agent development patterns. Connects to Matter
 - `src/decafclaw/tools/confirmation.py` — Shared confirmation request helper (bridges to ConversationManager)
 - `src/decafclaw/tools/health.py` — Health/diagnostic status tool
 - `src/decafclaw/tools/attachment_tools.py` — File attachment tools
+- `src/decafclaw/tools/email_tools.py` — `send_email` tool: confirmation-gated outbound email with allowlist bypass + workspace-sandboxed attachments
 - `src/decafclaw/tools/heartbeat_tools.py` — Heartbeat trigger tool
 
 ### Skills
@@ -202,7 +204,8 @@ An AI agent testbed for exploring agent development patterns. Connects to Matter
 - `src/decafclaw/heartbeat.py` — Heartbeat: periodic wake-up, section parsing, timer, cycle runner
 - `src/decafclaw/schedules.py` — Scheduled tasks: cron-style task files, discovery, execution, timer loop
 - `src/decafclaw/notifications.py` — Notification inbox: append-only JSONL log, rotation, read-state reconstruction, `notify()` API
-- `src/decafclaw/notification_channels/` — Notification channel adapters (Mattermost DM today, email/vault-page/etc. later). Subscribes to the `notification_created` event bus event in `runner.py` at startup.
+- `src/decafclaw/notification_channels/` — Notification channel adapters (Mattermost DM + email; vault-page/etc. later). Subscribes to the `notification_created` event bus event in `runner.py` at startup.
+- `src/decafclaw/mail.py` — Shared async SMTP core (aiosmtplib wrapper). Used by the `send_email` tool and the email notification channel.
 - `src/decafclaw/polling.py` — Shared polling loop and task preamble builder (used by heartbeat + schedules)
 - `src/decafclaw/mcp_client.py` — MCP client: config, registry, server connections, auto-restart
 - `src/decafclaw/media.py` — Media handling: ToolResult, MediaSaveResult, MediaHandler interface

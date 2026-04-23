@@ -183,9 +183,14 @@ Every call to `notify()` that carries an event bus publishes a
 {"type": "notification_created", "record": record.to_dict()}
 ```
 
-Channel adapters are just `EventBus.subscribe(handler)` callables wired
-up at startup in `runner.py`. There's no new Protocol or registry — the
-existing event bus is the abstraction.
+Channel adapters are just `EventBus.subscribe(handler)` callables. All
+startup wiring lives in a single
+`notification_channels.init_notification_channels(config, event_bus, **deps)`
+function; `runner.py` calls it once after the Mattermost client is
+ready. Adding a new channel means editing that function — not
+`runner.py` — along with the new channel module and its
+`<name>ChannelConfig` dataclass. There's no new Protocol or registry,
+just the event bus.
 
 **Inbox stays authoritative.** The JSONL write happens synchronously
 under the per-agent lock; the event publish runs after. A failed inbox
@@ -243,17 +248,54 @@ Delivery failures log at `warning` level with category, priority, and
 conv_id for diagnosis. The inbox record is the source of truth, so the
 DM is best-effort; we don't retry.
 
+### Email adapter
+
+`src/decafclaw/notification_channels/email.py`. Full user-facing guide
+in [email.md](email.md); this section covers the channel-adapter
+specifics only.
+
+Configured under `config.notifications.channels.email`:
+
+- `enabled: bool` — master switch.
+- `recipient_addresses: list[str]` — plain-text addresses the email is
+  sent to (this list IS the trust boundary; the channel does NOT
+  consult the tool's `email.allowed_recipients`).
+- `min_priority: "low" | "normal" | "high"` (default `high`).
+
+**Startup guard** — the adapter is only subscribed when all of:
+
+- `notifications.channels.email.enabled` is true
+- `recipient_addresses` is non-empty
+- `email.enabled` is true (the core SMTP config)
+- `email.smtp_host` is non-empty
+- `email.sender_address` is non-empty
+
+Missing any piece → adapter not wired; no runtime errors.
+
+**Body format:** plain text only. Priority glyph + title on the header
+line, body on the next lines, optional link line at the bottom (same
+shape as the Mattermost DM body, minus the markdown bold since mail
+clients render literal text). Subject is `[<agent_id>] [<category>] <title>` — the agent-id prefix makes it easy to filter in a shared inbox.
+
+**Dispatch:** fire-and-forget via `asyncio.create_task(_deliver(...))`.
+Errors in `_deliver` log at warning level and are swallowed.
+
 ### Adding a new adapter
 
 1. Add a typed channel-config dataclass to
    `config_types.py::NotificationsChannelsConfig`.
 2. Create `src/decafclaw/notification_channels/<name>.py` with a
    `make_<name>_adapter(config, ...deps) -> handler` factory.
-3. Wire the factory in `runner.py` under a guard that checks your
-   channel's enable flag and any transport prerequisites.
+3. Add an `if <name>_cfg.enabled and ...: event_bus.subscribe(...)` block
+   to `init_notification_channels` in
+   `src/decafclaw/notification_channels/__init__.py`. If the adapter
+   needs a runtime dep (e.g. an SMTP client or a bot connection), add a
+   keyword arg to `init_notification_channels` and pass it from
+   `runner.py`.
 4. Follow the established pattern: filter → format → `asyncio.create_task(deliver)` → catch + log in `_deliver`.
 
-The Mattermost DM adapter is ~90 lines and a good template.
+The Mattermost DM and email adapters are ~90 lines each and both are
+good templates.
 
 ## Configuration
 
@@ -271,8 +313,8 @@ See [config.md#notifications](config.md#notifications) for the two tunables:
 
 Still deferred (tracked on [#292](https://github.com/lmorchard/decafclaw/issues/292)):
 
-- **More channel adapters** — email (#231), Mattermost channel post,
-  vault summary page.
+- **More channel adapters** — Mattermost channel post (vs DM), vault
+  summary page.
 - **Periodic newsletters** (#283) — composer layer on top of channels
   that coalesces scheduled-task activity into daily/weekly rollups.
 - **Multi-user inbox partitioning** — currently single-agent,
