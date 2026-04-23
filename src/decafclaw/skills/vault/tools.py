@@ -85,13 +85,24 @@ def resolve_page(config, page: str, from_page: str | None = None) -> Path | None
 def _safe_write_path(config, page: str) -> Path | None:
     """Validate and return a safe write path within the vault root.
 
-    Returns None if the path would escape the vault directory.
+    Returns None for invalid names (empty, trailing slash, path traversal)
+    or paths that would escape the vault directory.
     """
-    if ".." in page or page.startswith("/"):
+    if not isinstance(page, str):
+        return None
+    page = page.strip()
+    if not page:
+        return None
+    if ".." in page or page.startswith("/") or page.endswith("/"):
         return None
     # Strip .md suffix if the caller included it (prevents Foo.md.md)
     if page.endswith(".md"):
         page = page[:-3]
+    # After stripping, the final path component must still be a real name —
+    # reject inputs like "" / "foo/" / ".md" that would resolve to a hidden
+    # ".md" file with an empty stem.
+    if not Path(page).name:
+        return None
     vault = _vault_root(config).resolve()
     path = (vault / f"{page}.md").resolve()
     if not path.is_relative_to(vault):
@@ -178,6 +189,99 @@ async def tool_vault_write(ctx, page: str, content: str) -> str | ToolResult:
         log.warning(f"Failed to index vault page '{page}': {e}")
 
     return f"Vault page '{page}' saved."
+
+
+async def tool_vault_delete(ctx, page: str) -> ToolResult:
+    """Delete a vault page. Agent-owned pages only (under the agent folder)."""
+    log.info(f"[tool:vault_delete] page={page}")
+    path = _safe_write_path(ctx.config, page)
+    if path is None:
+        return ToolResult(
+            text=f"[error: invalid page name '{page}' — must be within vault directory]")
+    if not path.exists():
+        return ToolResult(text=f"[error: vault page '{page}' not found]")
+    if not _is_in_agent_dir(ctx.config, path):
+        return ToolResult(
+            text=f"[error: refusing to delete '{page}' — only pages under the agent folder may be deleted]")
+
+    vault_resolved = _vault_root(ctx.config).resolve()
+    rel_path = str(path.resolve().relative_to(vault_resolved))
+    source_type = _source_type_for_path(ctx.config, path)
+
+    path.unlink()
+
+    # Clean up empty parent directories up to (but not including) the vault root.
+    parent = path.parent
+    while parent.resolve() != vault_resolved:
+        try:
+            parent.rmdir()  # only succeeds if empty
+        except OSError:
+            break
+        parent = parent.parent
+
+    # Remove from embedding index
+    try:
+        from decafclaw.embeddings import delete_entries
+        delete_entries(ctx.config, rel_path, source_type=source_type)
+    except Exception as e:
+        log.warning(f"Failed to remove embeddings for '{page}': {e}")
+
+    return ToolResult(text=f"Vault page '{page}' deleted.")
+
+
+async def tool_vault_rename(ctx, page: str, rename_to: str) -> ToolResult:
+    """Rename or move a vault page. Agent-owned pages only."""
+    log.info(f"[tool:vault_rename] {page} -> {rename_to}")
+    old_path = _safe_write_path(ctx.config, page)
+    if old_path is None:
+        return ToolResult(
+            text=f"[error: invalid page name '{page}' — must be within vault directory]")
+    new_path = _safe_write_path(ctx.config, rename_to)
+    if new_path is None:
+        return ToolResult(
+            text=f"[error: invalid target '{rename_to}' — must be within vault directory]")
+    if not old_path.exists():
+        return ToolResult(text=f"[error: vault page '{page}' not found]")
+    if new_path.exists():
+        return ToolResult(text=f"[error: target '{rename_to}' already exists]")
+    if not _is_in_agent_dir(ctx.config, old_path):
+        return ToolResult(
+            text=f"[error: refusing to rename '{page}' — only pages under the agent folder may be renamed]")
+    if not _is_in_agent_dir(ctx.config, new_path):
+        return ToolResult(
+            text=f"[error: refusing to move '{page}' outside the agent folder]")
+
+    vault_resolved = _vault_root(ctx.config).resolve()
+    old_rel = str(old_path.resolve().relative_to(vault_resolved))
+    old_source_type = _source_type_for_path(ctx.config, old_path)
+
+    new_path.parent.mkdir(parents=True, exist_ok=True)
+    old_path.rename(new_path)
+
+    # Clean up empty parent directories of the old path (up to vault root).
+    parent = old_path.parent
+    while parent.resolve() != vault_resolved:
+        try:
+            parent.rmdir()
+        except OSError:
+            break
+        parent = parent.parent
+
+    # Re-index: drop the old entry and index the new one.
+    try:
+        from decafclaw.embeddings import delete_entries, index_entry
+        from decafclaw.frontmatter import build_composite_text, parse_frontmatter
+        delete_entries(ctx.config, old_rel, source_type=old_source_type)
+        new_rel = str(new_path.resolve().relative_to(vault_resolved))
+        new_source_type = _source_type_for_path(ctx.config, new_path)
+        new_content = new_path.read_text()
+        metadata, body = parse_frontmatter(new_content)
+        embed_text = build_composite_text(metadata, body)
+        await index_entry(ctx.config, new_rel, embed_text, source_type=new_source_type)
+    except Exception as e:
+        log.warning(f"Failed to re-index after rename '{page}' -> '{rename_to}': {e}")
+
+    return ToolResult(text=f"Vault page '{page}' renamed to '{rename_to}'.")
 
 
 async def tool_vault_journal_append(ctx, tags: list[str], content: str) -> str:
@@ -426,6 +530,8 @@ async def tool_vault_backlinks(ctx, page: str) -> str:
 TOOLS = {
     "vault_read": tool_vault_read,
     "vault_write": tool_vault_write,
+    "vault_delete": tool_vault_delete,
+    "vault_rename": tool_vault_rename,
     "vault_journal_append": tool_vault_journal_append,
     "vault_search": tool_vault_search,
     "vault_list": tool_vault_list,
@@ -490,6 +596,68 @@ TOOL_DEFINITIONS = [
                     },
                 },
                 "required": ["page", "content"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "vault_delete",
+            "description": (
+                "DESTRUCTIVE — permanently delete a vault page and its embedding "
+                "entries. Only pages under the agent folder (agent/pages/, "
+                "agent/journal/) may be deleted; admin and user pages are "
+                "off-limits. Prefer vault_write with updated content to retire "
+                "or mark pages superseded; use delete only when the page is "
+                "definitively wrong, duplicate, or no longer reachable."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "page": {
+                        "type": "string",
+                        "description": (
+                            "Page path relative to vault root "
+                            "(e.g. 'agent/pages/Stale Draft')."
+                        ),
+                    },
+                },
+                "required": ["page"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "vault_rename",
+            "description": (
+                "Rename or move a vault page. Updates the embedding index so "
+                "search results stay consistent. Agent-owned pages only (under "
+                "the agent folder); target must also land under the agent "
+                "folder and must not already exist. Use this to reorganize or "
+                "refine page names — prefer it over delete + rewrite when the "
+                "content stays the same."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "page": {
+                        "type": "string",
+                        "description": (
+                            "Current page path relative to vault root "
+                            "(e.g. 'agent/pages/old-name')."
+                        ),
+                    },
+                    "rename_to": {
+                        "type": "string",
+                        "description": (
+                            "New page path relative to vault root "
+                            "(e.g. 'agent/pages/new-name', or "
+                            "'agent/pages/people/Alice' to move into a subfolder)."
+                        ),
+                    },
+                },
+                "required": ["page", "rename_to"],
             },
         },
     },
