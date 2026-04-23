@@ -156,12 +156,104 @@ function directly:
 ```python
 from decafclaw import notifications
 await notifications.notify(
-    config, category="my-category", title="..."
+    config, event_bus, category="my-category", title="..."
 )
 ```
 
+The second positional arg is the event bus. It's optional — without it,
+the record still gets written to the inbox (durable), just nothing fans
+out to channel adapters. Pass it whenever you have it.
+
 Failures inside `notify()` raise normally, so wrap the call in `try/except`
 if the emission is best-effort — see any of the producers for the pattern.
+
+## Channel adapters
+
+Beyond the inbox, notifications can fan out to external delivery channels
+(Mattermost DM, email, vault summary page, etc.). Phase 2 ships one
+adapter — **Mattermost DM** — and establishes the extension point for
+more without any further producer-side changes.
+
+### How dispatch works
+
+Every call to `notify()` that carries an event bus publishes a
+`notification_created` event **after** the durable inbox append:
+
+```python
+{"type": "notification_created", "record": record.to_dict()}
+```
+
+Channel adapters are just `EventBus.subscribe(handler)` callables wired
+up at startup in `runner.py`. There's no new Protocol or registry — the
+existing event bus is the abstraction.
+
+**Inbox stays authoritative.** The JSONL write happens synchronously
+under the per-agent lock; the event publish runs after. A failed inbox
+write raises (source of truth must be durable); a failed adapter is
+caught, logged, and dropped (delivery is best-effort).
+
+**Dispatch is fire-and-forget.** Each adapter's handler inspects the
+event, filters against its own config, and then kicks off its real
+delivery work via `asyncio.create_task(self._deliver(record))`. This
+means a slow Mattermost post or an SMTP timeout **never blocks
+`notify()`** or the producer that called it.
+
+**Filtering is per-adapter.** There's no central router. Each adapter
+reads its own config section (`config.notifications.channels.<name>`)
+and decides whether a given record matches its priority threshold,
+category allow-list, recipient rules, etc. The handler re-reads the
+in-memory `config` object on every event, so any in-process mutation
+(e.g. a future REST config endpoint) takes effect on the next
+notification. **Editing `config.json` on disk still requires an agent
+restart** — there's no file-reload mechanism today.
+
+### Mattermost DM adapter
+
+`src/decafclaw/notification_channels/mattermost_dm.py`.
+
+Subscribed at startup iff:
+- `config.notifications.channels.mattermost_dm.enabled` is `true`
+- `config.notifications.channels.mattermost_dm.recipient_username` is non-empty
+- The Mattermost client is configured and running
+  (`config.mattermost.url` + `config.mattermost.token`)
+
+If any of those are missing, the adapter isn't wired — no `notify()`-
+time errors, no log spam.
+
+Per-event filter: records at or above
+`config.notifications.channels.mattermost_dm.min_priority` (default
+`high`) are delivered; others are dropped silently.
+
+DM body shape:
+
+```
+⚠️ **Heartbeat: 2 alert(s)**
+1 OK, 2 alert(s) across 3 section(s).
+→ <http://agent.local/#conv=heartbeat-20260423-1201-0>
+```
+
+- Priority glyph (`·` low / `🔔` normal / `⚠️` high) plus bolded title.
+- Body on the next line(s) (only when non-empty).
+- Link line at the bottom — present only when either the record has an
+  explicit `http(s)://` link **or** `config.http.base_url` is set and
+  the record carries a `conv_id` (in which case the link is
+  `<base_url>/#conv=<conv_id>`).
+
+Delivery failures log at `warning` level with category, priority, and
+conv_id for diagnosis. The inbox record is the source of truth, so the
+DM is best-effort; we don't retry.
+
+### Adding a new adapter
+
+1. Add a typed channel-config dataclass to
+   `config_types.py::NotificationsChannelsConfig`.
+2. Create `src/decafclaw/notification_channels/<name>.py` with a
+   `make_<name>_adapter(config, ...deps) -> handler` factory.
+3. Wire the factory in `runner.py` under a guard that checks your
+   channel's enable flag and any transport prerequisites.
+4. Follow the established pattern: filter → format → `asyncio.create_task(deliver)` → catch + log in `_deliver`.
+
+The Mattermost DM adapter is ~90 lines and a good template.
 
 ## Configuration
 
@@ -175,16 +267,20 @@ See [config.md#notifications](config.md#notifications) for the two tunables:
   [issue #292](https://github.com/lmorchard/decafclaw/issues/292) for the
   plumbing follow-up.
 
-## Coming in Phase 2+
+## Coming in later phases
 
-Deferred to later phases (tracked on [#292](https://github.com/lmorchard/decafclaw/issues/292)):
+Still deferred (tracked on [#292](https://github.com/lmorchard/decafclaw/issues/292)):
 
-- Priority-based routing (e.g. high-priority → Mattermost DM, normal →
-  inbox only).
-- Delivery channel adapters: Mattermost DM/channel, email, vault summary
-  page.
-- Multi-user inbox partitioning (currently single-agent, single-user).
-- Periodic report composers (daily/hourly) that collect contributions from
-  scheduled tasks into a single delivered summary.
-- WebSocket push so the web UI gets real-time updates without polling.
-- JSON schema for the inbox files, versioning, and migration tooling.
+- **More channel adapters** — email (#231), Mattermost channel post,
+  vault summary page.
+- **Periodic newsletters** (#283) — composer layer on top of channels
+  that coalesces scheduled-task activity into daily/weekly rollups.
+- **Multi-user inbox partitioning** — currently single-agent,
+  single-user.
+- **WebSocket push** so the web UI bell gets real-time updates without
+  the 30s polling loop. The `notification_created` event already exists;
+  a WebSocket subscriber is all that's missing.
+- **`health_status` integration** — aggregated per-adapter last-error
+  counters once 2+ adapters are in play.
+- **JSON schema** for the inbox files, versioning, and migration
+  tooling.

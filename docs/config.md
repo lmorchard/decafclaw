@@ -150,6 +150,25 @@ before opportunistic rotation moves them into monthly archives under
 future web UI unread-count badge polling support; the current web UI uses
 a fixed 30-second polling interval and does not consume this setting yet.
 
+#### `notifications.channels.mattermost_dm`
+
+Fan-out channel that DMs matching notifications to a Mattermost user via
+the already-running bot client. See
+[notifications.md#channel-adapters](notifications.md#channel-adapters).
+
+| Field | Type | Default | Env Var |
+|-------|------|---------|---------|
+| `enabled` | bool | `false` | `NOTIFICATIONS_CHANNELS_MATTERMOST_DM_ENABLED` |
+| `recipient_username` | str | `""` | `NOTIFICATIONS_CHANNELS_MATTERMOST_DM_RECIPIENT_USERNAME` |
+| `min_priority` | str | `high` | `NOTIFICATIONS_CHANNELS_MATTERMOST_DM_MIN_PRIORITY` |
+
+The adapter is only wired at startup when `enabled` is `true`,
+`recipient_username` is non-empty, **and** the Mattermost client is
+running (`mattermost.url` + `mattermost.token` set). Any missing piece →
+the adapter isn't subscribed at all; no errors at `notify()` time.
+`min_priority` accepts `low` / `normal` / `high`; records below the
+threshold are dropped silently.
+
 ### `http`
 
 HTTP server for interactive buttons and web UI.

@@ -66,13 +66,31 @@ async def run_all(app_ctx):
             log.info(f"HTTP server enabled on {config.http.host}:{config.http.port}")
 
         # Start Mattermost client
+        mm_client = None
         if config.mattermost.url and config.mattermost.token:
             from .mattermost import MattermostClient
-            client = MattermostClient(config)
+            mm_client = MattermostClient(config)
             mattermost_task = asyncio.create_task(
-                client.run(app_ctx, shutdown_event, manager=manager)
+                mm_client.run(app_ctx, shutdown_event, manager=manager)
             )
             log.info("Mattermost client starting")
+
+        # Wire notification channel adapters. Each adapter subscribes to
+        # the event bus for `notification_created` events. Skip any
+        # adapter whose config is incomplete or whose transport isn't
+        # running — this is startup-time only; no errors at notify() time.
+        mm_dm_cfg = config.notifications.channels.mattermost_dm
+        if mm_dm_cfg.enabled and mm_dm_cfg.recipient_username and mm_client:
+            from .notification_channels.mattermost_dm import (
+                make_mattermost_dm_adapter,
+            )
+            adapter = make_mattermost_dm_adapter(config, mm_client)
+            app_ctx.event_bus.subscribe(adapter)
+            log.info(
+                "Notifications: Mattermost DM adapter subscribed "
+                "(recipient=%s, min_priority=%s)",
+                mm_dm_cfg.recipient_username, mm_dm_cfg.min_priority,
+            )
 
         # Start heartbeat timer
         if parse_interval(config.heartbeat.interval) is not None:

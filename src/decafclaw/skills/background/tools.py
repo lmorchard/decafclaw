@@ -34,6 +34,7 @@ class BackgroundJob:
     # Correlation for the exit-notification (populated by BackgroundJobManager.start).
     config: Any = None
     conv_id: str = ""
+    event_bus: Any = None
 
 
 async def _read_stream(stream: asyncio.StreamReader | None, buffer: deque) -> None:
@@ -81,7 +82,8 @@ async def _notify_job_exit(job: BackgroundJob) -> None:
         body += f" — {last_stderr[:120]}"
     try:
         await notifications.notify(
-            job.config, category="background", title=title, body=body,
+            job.config, job.event_bus,
+            category="background", title=title, body=body,
             priority=priority, conv_id=job.conv_id or None,
         )
     except Exception as e:
@@ -117,11 +119,13 @@ class BackgroundJobManager:
     async def start(self, command: str, cwd: str,
                     max_lifetime: float = _DEFAULT_MAX_LIFETIME,
                     config: Any = None,
-                    conv_id: str = "") -> BackgroundJob:
+                    conv_id: str = "",
+                    event_bus: Any = None) -> BackgroundJob:
         """Start a background process. Returns immediately.
 
-        ``config`` and ``conv_id`` are carried into the job so the reader
-        task can emit an inbox notification when the process exits.
+        ``config``, ``conv_id``, and ``event_bus`` are carried into the
+        job so the reader task can emit an inbox notification (and fan
+        out to channel adapters) when the process exits.
         """
         process = await asyncio.create_subprocess_shell(
             command, cwd=cwd,
@@ -138,6 +142,7 @@ class BackgroundJobManager:
             max_lifetime=max_lifetime,
             config=config,
             conv_id=conv_id,
+            event_bus=event_bus,
         )
         job.reader_task = asyncio.create_task(_run_reader(job))
         self.jobs[job.job_id] = job
@@ -263,6 +268,7 @@ async def tool_shell_background_start(ctx, command: str) -> ToolResult:
         job = await manager.start(
             command, str(ctx.config.workspace_path),
             config=ctx.config, conv_id=ctx.conv_id,
+            event_bus=ctx.event_bus,
         )
     except Exception as e:
         return ToolResult(

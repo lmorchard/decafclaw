@@ -63,6 +63,7 @@ An AI agent testbed for exploring agent development patterns. Connects to Matter
 - **MCP auto-restart.** Crashed stdio servers auto-reconnect on next tool call with exponential backoff (max 3 retries). Use `mcp_status(action="restart")` for manual control.
 - **Scheduled tasks via cron-style files.** Markdown files with YAML frontmatter in `data/{agent_id}/schedules/` (admin) and `workspace/schedules/` (agent-writable). Frontmatter fields: `schedule` (5-field cron), `channel` (Mattermost channel **ID**), `enabled`, `model`, `allowed-tools`, `required-skills`. Independent timer loop (60s poll), per-task last-run tracking in `workspace/.schedule_last_run/`. Uses `croniter` for cron evaluation.
 - **Notification inbox for agent-initiated events.** Heartbeat, scheduled-task, and background-job events append JSONL records under `workspace/notifications/` via `notify()` / `ctx.notify()`. Stored append-only with opportunistic time-based rotation; read-state reconstructed from a companion `read.jsonl`. Web UI renders a bell + badge in the sidebar footer polling `/api/notifications/unread-count`. All producers are fail-open — errors logged, never raised. See [docs/notifications.md](docs/notifications.md).
+- **Notification channel adapters are EventBus subscribers.** After the inbox append, `notify()` publishes a `notification_created` event. Channel adapters (Mattermost DM today, email/vault-page/etc. later) live in `src/decafclaw/notification_channels/`, subscribe in `runner.py` at startup, filter per-event against their own config, and fire-and-forget delivery via `asyncio.create_task` so `notify()` never blocks. Inbox stays authoritative; channels are best-effort. Add new channels by adding a `<name>ChannelConfig` dataclass + `notification_channels/<name>.py` factory + wiring guard in `runner.py`.
 - **LOG_LEVEL env var.** Set `LOG_LEVEL=DEBUG` for verbose logging (default: INFO).
 
 ### Context assembly
@@ -201,6 +202,7 @@ An AI agent testbed for exploring agent development patterns. Connects to Matter
 - `src/decafclaw/heartbeat.py` — Heartbeat: periodic wake-up, section parsing, timer, cycle runner
 - `src/decafclaw/schedules.py` — Scheduled tasks: cron-style task files, discovery, execution, timer loop
 - `src/decafclaw/notifications.py` — Notification inbox: append-only JSONL log, rotation, read-state reconstruction, `notify()` API
+- `src/decafclaw/notification_channels/` — Notification channel adapters (Mattermost DM today, email/vault-page/etc. later). Subscribes to the `notification_created` event bus event in `runner.py` at startup.
 - `src/decafclaw/polling.py` — Shared polling loop and task preamble builder (used by heartbeat + schedules)
 - `src/decafclaw/mcp_client.py` — MCP client: config, registry, server connections, auto-restart
 - `src/decafclaw/media.py` — Media handling: ToolResult, MediaSaveResult, MediaHandler interface

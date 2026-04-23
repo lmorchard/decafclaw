@@ -149,6 +149,35 @@ class TestNotify:
         ids = {line["id"] for line in lines}
         assert len(ids) == 10
 
+    @pytest.mark.asyncio
+    async def test_publishes_event_when_bus_provided(self, config):
+        """notify() publishes notification_created after the inbox append."""
+        from decafclaw.events import EventBus
+        bus = EventBus()
+        received: list[dict] = []
+        bus.subscribe(lambda e: received.append(e))
+
+        rec = await notifs.notify(
+            config, bus, category="t", title="Hello", priority="high",
+        )
+
+        assert len(received) == 1
+        event = received[0]
+        assert event["type"] == "notification_created"
+        assert event["record"]["id"] == rec.id
+        assert event["record"]["priority"] == "high"
+        # Inbox write still happened
+        lines = _read_jsonl(notifs._inbox_path(config))
+        assert lines[0]["id"] == rec.id
+
+    @pytest.mark.asyncio
+    async def test_no_event_when_bus_omitted(self, config):
+        """Without an event bus, notify() still writes the inbox (back-compat)."""
+        rec = await notifs.notify(config, category="t", title="Hello")
+        lines = _read_jsonl(notifs._inbox_path(config))
+        assert lines[0]["id"] == rec.id
+        # No crash, no partial state — the write is what matters.
+
 
 # -- Rotation -----------------------------------------------------------------
 

@@ -208,9 +208,11 @@ class Context:
         """Convenience wrapper: append a notification carrying this ctx's correlation.
 
         Auto-populates ``conv_id`` from ``self.conv_id`` unless explicitly
-        provided. See :func:`decafclaw.notifications.notify` for the full
-        API. Producers without a ctx should call that function directly.
+        provided, and passes the event bus so channel adapters can fan out.
+        See :func:`decafclaw.notifications.notify` for the full API.
+        Producers without a ctx should call that function directly with
+        an explicit ``event_bus`` argument.
         """
         from .notifications import notify
         kwargs.setdefault("conv_id", self.conv_id or None)
-        await notify(self.config, **kwargs)
+        await notify(self.config, self.event_bus, **kwargs)
