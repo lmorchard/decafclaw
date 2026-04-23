@@ -647,6 +647,13 @@ async def tool_vault_move_lines(
         return ToolResult(
             text=f"[error: cannot write to page outside agent folder: {to_page}]"
         )
+    # Guard: same-file moves silently drop data (second write wins, undoing first)
+    if from_path.resolve() == to_path.resolve():
+        return ToolResult(
+            text="[error: from_page and to_page must be different pages "
+                 "(same-file moves not supported). For intra-page moves, "
+                 "use vault_section with action='move']"
+        )
     # Parse line numbers
     try:
         line_nums = sorted({int(s.strip()) for s in lines.split(",") if s.strip()})

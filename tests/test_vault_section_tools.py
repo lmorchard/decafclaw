@@ -178,3 +178,21 @@ async def test_section_refuses_write_outside_agent(vault_ctx):
     assert "[error" in result.text.lower()
     # Unchanged
     assert (vault / "user_notes" / "x.md").read_text() == "# U\n"
+
+
+@pytest.mark.asyncio
+async def test_move_lines_refuses_same_file(vault_ctx):
+    vault = vault_ctx.config.vault_root
+    agent_pages = vault / "agent" / "pages"
+    agent_pages.mkdir(parents=True)
+    original = "# Top\n\n- [ ] task1\n- [ ] task2\n"
+    (agent_pages / "note.md").write_text(original)
+    result = await tool_vault_move_lines(
+        vault_ctx,
+        from_page="agent/pages/note",
+        to_page="agent/pages/note",
+        lines="3",
+    )
+    assert "[error" in result.text.lower()
+    # File must be byte-for-byte unchanged
+    assert (agent_pages / "note.md").read_text() == original
