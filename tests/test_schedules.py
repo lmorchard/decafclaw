@@ -436,12 +436,23 @@ class TestRunScheduleTimer:
 
     @pytest.mark.asyncio
     async def test_no_tasks_no_crash(self, config):
-        """Timer runs fine with no schedule files."""
+        """Timer runs fine with no schedule files.
+
+        Patches ``run_schedule_task`` so any bundled scheduled skills
+        (``dream``, ``garden``) discovered from disk don't actually fire —
+        on a fresh tmp_path config they'd be treated as "never run → due"
+        and would try to run a real agent turn.
+        """
         shutdown = asyncio.Event()
 
-        async def stop_soon():
-            await asyncio.sleep(0.05)
-            shutdown.set()
-        asyncio.create_task(stop_soon())
-        await run_schedule_timer(config, EventBus(), shutdown,
-                                 poll_interval=0.02)
+        async def fake_run(cfg, bus, task):
+            return {"task_name": task.name, "channel": "", "response": "ok",
+                    "is_ok": True, "context_id": None}
+
+        with patch("decafclaw.schedules.run_schedule_task", side_effect=fake_run):
+            async def stop_soon():
+                await asyncio.sleep(0.05)
+                shutdown.set()
+            asyncio.create_task(stop_soon())
+            await run_schedule_timer(config, EventBus(), shutdown,
+                                     poll_interval=0.02)

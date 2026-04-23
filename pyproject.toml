@@ -41,14 +41,24 @@ dev = [
     "pyright>=1.1.408",
     "pytest>=9.0.2",
     "pytest-asyncio>=1.3.0",
+    "pytest-xdist>=3.6.0",
     "pyyaml>=6.0.3",
     "ruff>=0.11.0",
 ]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+# Default pytest invocation:
+#   - `-n auto --dist=worksteal` runs unit tests in parallel across CPU cores.
+#     Override with `-n 0` for serial runs (debugging with `pdb`, or cleaner
+#     `-v` output).
+#   - `-m "not integration"` excludes real-API integration tests from the
+#     default suite. They cost money, hit rate limits, and aren't run in CI.
+#     Run them explicitly via `make test-integration` (which overrides the
+#     marker filter and disables parallelism to avoid concurrent API calls).
+addopts = "-n auto --dist=worksteal -m 'not integration'"
 markers = [
-    "integration: marks tests that hit real LLM APIs (skip with: -m 'not integration')",
+    "integration: marks tests that hit real LLM APIs (opt in with: -m integration)",
 ]
 
 [tool.ruff]

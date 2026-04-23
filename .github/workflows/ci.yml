@@ -28,4 +28,7 @@ jobs:
         run: uv run pyright
 
       - name: Test
-        run: uv run pytest tests/ -v
+        # Parallelism is configured in pyproject.toml (addopts = "-n auto
+        # --dist=worksteal"). `-v` is omitted because worker output
+        # interleaves and the dots-style progress is more readable.
+        run: uv run pytest tests/

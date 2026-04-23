@@ -99,6 +99,10 @@ An AI agent testbed for exploring agent development patterns. Connects to Matter
 - **Commit after each logical step.** Lint and test before committing.
 - **Work in a branch for iterative changes.** When making multiple related fixes (especially to UX-sensitive code like streaming/placeholder logic), work in a branch and test the full set before merging to main. Don't push rapid-fire fixes directly to main — regressions compound.
 - **Test live in Mattermost and the web UI after merging**, not just lint/pytest. Real agent behavior differs from unit tests.
+- **Test speed discipline.** Tests run in parallel by default (`pytest-xdist -n auto` via `pyproject.toml`), so slow tests block workers for their full duration. Two patterns to avoid:
+  - **Don't `asyncio.sleep(X)` to wait for work to finish.** Wait on the right signal instead: `await job.reader_task` for a subprocess completion, `asyncio.wait_for(event.wait(), timeout=...)` for a flag, or patch the underlying clock (`monkeypatch` `_now_iso` / `time.monotonic`) when you need timestamp ordering. A fixed sleep is both slower *and* flakier than waiting on the actual completion event.
+  - **Anything that runs a real scheduler or timer loop must patch the work function.** `discover_schedules` picks up bundled scheduled skills (`dream`, `garden`) from disk; on a fresh `tmp_path` config they're treated as "never run → due" and fire a real `run_agent_turn`. If your test calls `run_schedule_timer` without patching `run_schedule_task`, the `finally`-block drain will wait for those simulated agent turns to complete (seen: one test taking ~66s). Patch `decafclaw.schedules.run_schedule_task` with a trivial `fake_run` coroutine even for "no tasks" scenarios.
+- **Check `pytest --durations=25` when adding tests.** If a new test lands in the top 25, figure out why before committing — it's usually a missing mock or a fixed sleep masquerading as a synchronization primitive.
 
 ## Key files
 
