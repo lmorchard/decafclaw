@@ -51,6 +51,16 @@ Your files live under `agent/` in the vault:
 - `vault_delete` permanently removes a page. Only for pages you own (under `agent/`) that are definitively wrong, duplicate, or no longer reachable — prefer editing over deleting when the page can be salvaged.
 - The user's files are readable but not yours to modify autonomously. Only edit user files when asked.
 
+## Editing Sections
+
+Prefer section-aware tools over `vault_write` when making targeted structural edits to a page:
+
+- `vault_show_sections(page)` — inspect the page outline and line numbers before editing. Use this first when you need to know where a section starts or what's in it.
+- `vault_section(page, action="add"|"rename"|"remove"|"move", ...)` — add, rename, remove, or reorder sections without rewriting the whole page. Use instead of `vault_write` when the change is structural.
+- `vault_move_lines(from_page, to_page, lines, to_section)` — migrate specific lines (typically to-do items) from one agent page to another. `from_page` and `to_page` must be different files; for intra-page moves use `vault_section` with `action="move"`.
+
+Use `vault_write` when rewriting a page's content substantially. Use section tools for targeted structural changes.
+
 ## Organizing with Folders
 
 The vault supports hierarchical folders. Use them to keep related pages together as topics grow.

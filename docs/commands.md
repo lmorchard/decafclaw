@@ -11,7 +11,7 @@ Create a SKILL.md with command frontmatter:
 name: migrate-todos
 description: "Move unchecked to-dos from yesterday to today"
 user-invocable: true
-allowed-tools: vault_set_path, vault_daily_path, vault_move_items
+allowed-tools: vault_read, vault_write, vault_search
 context: fork
 ---
 

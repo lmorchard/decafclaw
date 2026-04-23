@@ -172,11 +172,11 @@ def test_parse_required_skills(tmp_path):
         skill_dir,
         'name: migrate\ndescription: "Migrate"\n'
         'context: fork\n'
-        'required-skills:\n  - markdown_vault\n  - tabstack',
+        'required-skills:\n  - tabstack\n  - vault',
     )
     info = parse_skill_md(skill_dir / "SKILL.md")
     assert info is not None
-    assert info.requires_skills == ["markdown_vault", "tabstack"]
+    assert info.requires_skills == ["tabstack", "vault"]
 
 
 def test_parse_always_loaded(tmp_path):
