@@ -197,11 +197,11 @@ async def run_heartbeat_cycle(config, event_bus) -> list[dict]:
         result = await run_section_turn(config, event_bus, section, timestamp, i)
         results.append(result)
 
-    await _notify_cycle_complete(config, results)
+    await _notify_cycle_complete(config, event_bus, results)
     return results
 
 
-async def _notify_cycle_complete(config, results: list[dict]) -> None:
+async def _notify_cycle_complete(config, event_bus, results: list[dict]) -> None:
     """Append an inbox notification summarizing the heartbeat cycle."""
     if not results:
         return
@@ -217,7 +217,8 @@ async def _notify_cycle_complete(config, results: list[dict]) -> None:
     body = f"{ok_count} OK, {err_count} alert(s) across {len(results)} section(s)."
     try:
         await notifications.notify(
-            config, category="heartbeat", title=title, body=body, priority=priority,
+            config, event_bus,
+            category="heartbeat", title=title, body=body, priority=priority,
         )
     except Exception as e:
         log.warning(f"Failed to emit heartbeat notification: {e}")

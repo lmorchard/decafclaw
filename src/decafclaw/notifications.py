@@ -256,6 +256,7 @@ def _rotate_read_log_if_needed(config) -> None:
 
 async def notify(
     config,
+    event_bus=None,
     *,
     category: str,
     title: str,
@@ -266,9 +267,12 @@ async def notify(
 ) -> NotificationRecord:
     """Append a notification to the inbox.
 
-    In Phase 1 the inbox is the only consumer. Phase 2+ will dispatch to
-    external channel adapters (Mattermost, email, vault page) after the
-    inbox append. See docs/notifications.md.
+    The inbox is authoritative durable storage and is always written
+    synchronously. If ``event_bus`` is provided, a ``notification_created``
+    event is published after the write so registered channel adapters
+    (Mattermost DM, email, etc.) can fan out delivery. The inbox record
+    is the source of truth — channels are best-effort. See
+    docs/notifications.md.
     """
     record = NotificationRecord(
         id=secrets.token_hex(6),
@@ -290,6 +294,16 @@ async def notify(
         "notification: [%s/%s] %s (conv=%s)",
         category, priority, title, conv_id or "-",
     )
+
+    # Fan out to channel adapters after the durable write. Event bus is
+    # optional: when absent (some tests, ad-hoc callers), dispatch is
+    # simply skipped.
+    if event_bus is not None:
+        await event_bus.publish({
+            "type": "notification_created",
+            "record": record.to_dict(),
+        })
+
     return record
 
 

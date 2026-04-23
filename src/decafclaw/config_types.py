@@ -193,10 +193,29 @@ class ModelConfig:
 
 
 @dataclass
+class MattermostDMChannelConfig:
+    """Mattermost direct-message channel for notifications.
+
+    Delivery is skipped when ``recipient_username`` is empty or when the
+    Mattermost client isn't running. See docs/notifications.md.
+    """
+    enabled: bool = False
+    recipient_username: str = ""
+    min_priority: str = "high"  # "low" | "normal" | "high"
+
+
+@dataclass
+class NotificationsChannelsConfig:
+    """Per-channel adapter configuration for notifications."""
+    mattermost_dm: MattermostDMChannelConfig = field(default_factory=MattermostDMChannelConfig)
+
+
+@dataclass
 class NotificationsConfig:
     """Notification inbox settings. See docs/notifications.md."""
     retention_days: int = 30
     poll_interval_sec: int = 30
+    channels: NotificationsChannelsConfig = field(default_factory=NotificationsChannelsConfig)
 
 
 def is_secret(dc_class: type, field_name: str) -> bool:

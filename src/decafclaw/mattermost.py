@@ -806,6 +806,27 @@ class MattermostClient:
         resp.raise_for_status()
         return resp.json()["id"]
 
+    async def _get_user_id_by_username(self, username: str) -> str | None:
+        """Look up a Mattermost user ID by username. Returns None on 404."""
+        resp = await self._http.get(f"/users/username/{username}")
+        if resp.status_code == 404:
+            return None
+        resp.raise_for_status()
+        return resp.json().get("id")
+
+    async def post_direct_message(self, username: str, text: str) -> str | None:
+        """Post a direct message to a user by username.
+
+        Resolves the username to a user ID, gets or creates the DM channel,
+        and sends the message. Returns the new post ID, or ``None`` if the
+        user can't be found (the caller decides whether to log or raise).
+        """
+        user_id = await self._get_user_id_by_username(username)
+        if user_id is None:
+            return None
+        channel_id = await self._get_dm_channel(user_id)
+        return await self.send(channel_id, text)
+
     async def _resolve_heartbeat_channel(self, config) -> str | None:
         """Determine the channel for heartbeat reporting."""
         if config.heartbeat_channel:

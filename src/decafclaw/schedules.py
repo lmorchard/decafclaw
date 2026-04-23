@@ -269,7 +269,9 @@ async def run_schedule_task(config, event_bus, task: ScheduleTask) -> dict:
         response = result.text or "(no response)"
         from .heartbeat import is_heartbeat_ok
         ok = is_heartbeat_ok(response)
-        await _notify_task_complete(config, task.name, response, ok, ctx.conv_id)
+        await _notify_task_complete(
+            config, event_bus, task.name, response, ok, ctx.conv_id,
+        )
         return {
             "task_name": task.name,
             "channel": task.channel,
@@ -280,7 +282,8 @@ async def run_schedule_task(config, event_bus, task: ScheduleTask) -> dict:
     except Exception as e:
         log.error(f"Scheduled task '{task.name}' failed: {e}", exc_info=True)
         await _notify_task_complete(
-            config, task.name, f"[error: {e}]", ok=False, conv_id=ctx.conv_id,
+            config, event_bus, task.name, f"[error: {e}]",
+            ok=False, conv_id=ctx.conv_id,
         )
         return {
             "task_name": task.name,
@@ -292,7 +295,8 @@ async def run_schedule_task(config, event_bus, task: ScheduleTask) -> dict:
 
 
 async def _notify_task_complete(
-    config, task_name: str, response: str, ok: bool, conv_id: str = "",
+    config, event_bus, task_name: str, response: str, ok: bool,
+    conv_id: str = "",
 ) -> None:
     """Append an inbox notification for a scheduled-task run."""
     from . import notifications
@@ -302,7 +306,8 @@ async def _notify_task_complete(
         body = body[:157] + "..."
     try:
         await notifications.notify(
-            config, category="schedule", title=title, body=body,
+            config, event_bus,
+            category="schedule", title=title, body=body,
             priority="high" if not ok else "normal",
             conv_id=conv_id or None,
         )
