@@ -203,3 +203,14 @@ class Context:
         if self.tools.current_call_id and "tool_call_id" not in kwargs:
             event["tool_call_id"] = self.tools.current_call_id
         await self.event_bus.publish(event)
+
+    async def notify(self, **kwargs) -> None:
+        """Convenience wrapper: append a notification carrying this ctx's correlation.
+
+        Auto-populates ``conv_id`` from ``self.conv_id`` unless explicitly
+        provided. See :func:`decafclaw.notifications.notify` for the full
+        API. Producers without a ctx should call that function directly.
+        """
+        from .notifications import notify
+        kwargs.setdefault("conv_id", self.conv_id or None)
+        await notify(self.config, **kwargs)
