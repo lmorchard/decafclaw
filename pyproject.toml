@@ -41,12 +41,18 @@ dev = [
     "pyright>=1.1.408",
     "pytest>=9.0.2",
     "pytest-asyncio>=1.3.0",
+    "pytest-xdist>=3.6.0",
     "pyyaml>=6.0.3",
     "ruff>=0.11.0",
 ]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+# Run tests in parallel across CPU cores by default. pytest-xdist handles
+# distribution; worksteal rebalances as workers finish. Override with `-n 0`
+# to run serially (useful for debugging with `pdb` or when `-v` output
+# needs to stay readable).
+addopts = "-n auto --dist=worksteal"
 markers = [
     "integration: marks tests that hit real LLM APIs (skip with: -m 'not integration')",
 ]
