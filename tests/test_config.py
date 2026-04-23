@@ -52,6 +52,10 @@ class TestDefaults:
         c = Config()
         assert c.notifications.retention_days == 30
         assert c.notifications.poll_interval_sec == 30
+        # Channel adapters default to disabled with no recipient.
+        assert c.notifications.channels.mattermost_dm.enabled is False
+        assert c.notifications.channels.mattermost_dm.recipient_username == ""
+        assert c.notifications.channels.mattermost_dm.min_priority == "high"
 
     def test_derived_properties(self):
         c = Config(agent=AgentConfig(data_home="/tmp/test", id="mybot"))
@@ -119,6 +123,28 @@ class TestJsonFileLoading:
         c = load_config()
         assert c.notifications.retention_days == 7
         assert c.notifications.poll_interval_sec == 60
+
+    def test_loads_nested_channels_from_json(self, tmp_path, monkeypatch):
+        """Nested channel config loads via the recursion in load_sub_config."""
+        agent_dir = tmp_path / "decafclaw"
+        agent_dir.mkdir()
+        config_file = agent_dir / "config.json"
+        config_file.write_text(json.dumps({
+            "notifications": {
+                "channels": {
+                    "mattermost_dm": {
+                        "enabled": True,
+                        "recipient_username": "les",
+                        "min_priority": "normal",
+                    },
+                },
+            },
+        }))
+        monkeypatch.setenv("DATA_HOME", str(tmp_path))
+        c = load_config()
+        assert c.notifications.channels.mattermost_dm.enabled is True
+        assert c.notifications.channels.mattermost_dm.recipient_username == "les"
+        assert c.notifications.channels.mattermost_dm.min_priority == "normal"
 
     def test_missing_file_uses_defaults(self, tmp_path, monkeypatch):
         """Missing config file gracefully falls back to defaults."""
