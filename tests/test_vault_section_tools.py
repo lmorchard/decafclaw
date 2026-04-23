@@ -196,3 +196,100 @@ async def test_move_lines_refuses_same_file(vault_ctx):
     assert "[error" in result.text.lower()
     # File must be byte-for-byte unchanged
     assert (agent_pages / "note.md").read_text() == original
+
+
+@pytest.mark.asyncio
+async def test_move_lines_multiline_prepend_into_section_preserved(vault_ctx):
+    """Regression: moving 2+ lines must not collapse them into a single line."""
+    vault = vault_ctx.config.vault_root
+    agent_pages = vault / "agent" / "pages"
+    agent_pages.mkdir(parents=True, exist_ok=True)
+    (agent_pages / "src.md").write_text(
+        "# Top\n\n- [ ] alpha\n- [ ] beta\n- [ ] gamma\n"
+    )
+    (agent_pages / "dst.md").write_text("# Today\n\n## inbox\n")
+    result = await tool_vault_move_lines(
+        vault_ctx,
+        from_page="agent/pages/src",
+        to_page="agent/pages/dst",
+        lines="3,4",
+        to_section="today/inbox",
+        position="prepend",
+    )
+    assert "[error" not in result.text.lower()
+    dst_lines = (agent_pages / "dst.md").read_text().splitlines()
+    # Both moved lines must appear as distinct lines in the output
+    assert any("alpha" in line for line in dst_lines), "alpha not found as distinct line"
+    assert any("beta" in line for line in dst_lines), "beta not found as distinct line"
+    # They must NOT be merged on a single line
+    merged = [line for line in dst_lines if "alpha" in line and "beta" in line]
+    assert not merged, f"alpha and beta were merged onto the same line: {merged}"
+
+
+@pytest.mark.asyncio
+async def test_move_lines_multiline_prepend_sectionless_preserved(vault_ctx):
+    """Regression: moving 2+ lines without to_section must not collapse them."""
+    vault = vault_ctx.config.vault_root
+    agent_pages = vault / "agent" / "pages"
+    agent_pages.mkdir(parents=True, exist_ok=True)
+    (agent_pages / "src.md").write_text(
+        "# Top\n\n- [ ] alpha\n- [ ] beta\n- [ ] gamma\n"
+    )
+    (agent_pages / "dst.md").write_text("# Target\n\n")
+    result = await tool_vault_move_lines(
+        vault_ctx,
+        from_page="agent/pages/src",
+        to_page="agent/pages/dst",
+        lines="3,4",
+        # No to_section — sectionless code path
+        position="prepend",
+    )
+    assert "[error" not in result.text.lower()
+    dst_lines = (agent_pages / "dst.md").read_text().splitlines()
+    assert any("alpha" in line for line in dst_lines), "alpha not found as distinct line"
+    assert any("beta" in line for line in dst_lines), "beta not found as distinct line"
+    merged = [line for line in dst_lines if "alpha" in line and "beta" in line]
+    assert not merged, f"alpha and beta were merged onto the same line: {merged}"
+
+
+@pytest.mark.asyncio
+async def test_section_add_level_out_of_range(vault_ctx):
+    """vault_section add must reject level values outside 1-6."""
+    vault = vault_ctx.config.vault_root
+    agent_pages = vault / "agent" / "pages"
+    agent_pages.mkdir(parents=True, exist_ok=True)
+    original = "# Top\n\n## First\n"
+    (agent_pages / "note.md").write_text(original)
+    result = await tool_vault_section(
+        vault_ctx,
+        page="agent/pages/note",
+        action="add",
+        title="Bad",
+        level=7,
+    )
+    assert "[error" in result.text.lower()
+    # File must be unchanged
+    assert (agent_pages / "note.md").read_text() == original
+
+
+@pytest.mark.asyncio
+async def test_move_lines_invalid_position(vault_ctx):
+    """vault_move_lines must reject unknown position values."""
+    vault = vault_ctx.config.vault_root
+    agent_pages = vault / "agent" / "pages"
+    agent_pages.mkdir(parents=True, exist_ok=True)
+    src_text = "# Top\n\n- [ ] task1\n"
+    dst_text = "# Target\n"
+    (agent_pages / "src.md").write_text(src_text)
+    (agent_pages / "dst.md").write_text(dst_text)
+    result = await tool_vault_move_lines(
+        vault_ctx,
+        from_page="agent/pages/src",
+        to_page="agent/pages/dst",
+        lines="3",
+        position="invalid",
+    )
+    assert "[error" in result.text.lower()
+    # Both files must be unchanged
+    assert (agent_pages / "src.md").read_text() == src_text
+    assert (agent_pages / "dst.md").read_text() == dst_text

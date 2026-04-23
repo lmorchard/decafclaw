@@ -599,8 +599,12 @@ def _insert_into_doc(
     """Insert lines into a Document at the specified location.
 
     Returns an error string on failure, or None on success.
+
+    ``lines_to_insert`` is a list of strings without trailing newlines.
+    Each element becomes a separate line in the output document.
     """
-    new_lines = _ensure_newlines("".join(lines_to_insert))
+    # Build the list of newline-terminated lines to insert, one per input element.
+    new_lines = [ln.rstrip("\n") + "\n" for ln in lines_to_insert]
 
     if to_section:
         sec = doc.find_section(to_section)
@@ -612,13 +616,17 @@ def _insert_into_doc(
             if target is not None:
                 doc._insert_lines(target, new_lines)
             else:
-                doc.prepend(sec, "".join(ln.rstrip("\n") for ln in lines_to_insert))
+                doc._insert_lines(sec.content_start, new_lines)
         else:
-            for line in lines_to_insert:
-                sec = doc.find_section(to_section)
-                if not sec:
-                    return f"section disappeared during insert: {to_section}"
-                doc.append(sec, line.rstrip("\n"))
+            sec = doc.find_section(to_section)
+            if not sec:
+                return f"section disappeared during insert: {to_section}"
+            # Append all lines as a block; find insertion point manually so we
+            # don't loop and re-parse the section on every single line.
+            insert_at = sec.content_end
+            while insert_at > sec.content_start and not doc.lines[insert_at - 1].strip():
+                insert_at -= 1
+            doc._insert_lines(insert_at, new_lines)
     else:
         # No section specified — operate on the whole file
         if position == "prepend":

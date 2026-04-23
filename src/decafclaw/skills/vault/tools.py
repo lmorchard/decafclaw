@@ -549,7 +549,7 @@ async def tool_vault_show_sections(
     start = sec.heading_line
     end = sec.content_end  # exclusive
     numbered = [
-        f"{i + 1}: {doc.lines[i].rstrip()}" for i in range(start, end)
+        f"{i + 1}: {doc.lines[i].rstrip('\n')}" for i in range(start, end)
     ]
     return ToolResult(text="\n".join(numbered))
 
@@ -582,6 +582,8 @@ async def tool_vault_section(
     if action == "add":
         if not title:
             return ToolResult(text="[error: 'title' required for add]")
+        if not isinstance(level, int) or level < 1 or level > 6:
+            return ToolResult(text=f"[error: level must be between 1 and 6, got {level}]")
         if doc.add_section(title, level=level, after=after, before=before, parent=parent):
             path.write_text(doc.to_text(), encoding="utf-8")
             return ToolResult(text=f"Added section: {title}")
@@ -661,6 +663,8 @@ async def tool_vault_move_lines(
         return ToolResult(text=f"[error: invalid lines argument: {lines!r}]")
     if not line_nums:
         return ToolResult(text="[error: no line numbers provided]")
+    if position not in ("append", "prepend"):
+        return ToolResult(text=f"[error: position must be 'append' or 'prepend', got {position!r}]")
     from_doc = Document.from_text(from_path.read_text(encoding="utf-8"))
     to_doc = Document.from_text(to_path.read_text(encoding="utf-8"))
     # Collect line text in original order, then delete in reverse
@@ -676,8 +680,12 @@ async def tool_vault_move_lines(
     err = _insert_into_doc(to_doc, moved, to_section, position)
     if err:
         return ToolResult(text=f"[error: {err}]")
-    from_path.write_text(from_doc.to_text(), encoding="utf-8")
+    # Write target first, source second.  If the target write fails, the source
+    # is still intact and the agent can retry cleanly.  If the source write
+    # fails after target succeeded, the lines exist in both places — visible as
+    # duplicates but recoverable — which is strictly better than silent data loss.
     to_path.write_text(to_doc.to_text(), encoding="utf-8")
+    from_path.write_text(from_doc.to_text(), encoding="utf-8")
     return ToolResult(
         text=f"Moved {len(moved)} line(s) from {from_page} to {to_page}"
         + (f" section '{to_section}'" if to_section else "")
@@ -1083,6 +1091,8 @@ TOOL_DEFINITIONS = [
                     },
                     "level": {
                         "type": "integer",
+                        "minimum": 1,
+                        "maximum": 6,
                         "description": (
                             "Heading level (1–6) for the new section. "
                             "Only used by add. Default: 1."
