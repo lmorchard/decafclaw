@@ -100,11 +100,18 @@ export class ConversationSidebar extends LitElement {
         this._chatFolders = this.store?.folders || [];
       }
     };
+    this._onVaultPageDeleted = () => {
+      if (this._sidebarTab !== 'wiki') return;
+      if (this._vaultView === 'recent') this.#fetchRecentPages();
+      else this.#fetchWikiPages();
+    };
+    window.addEventListener('vault-page-deleted', this._onVaultPageDeleted);
   }
 
   disconnectedCallback() {
     super.disconnectedCallback();
     this.store?.removeEventListener('change', this._onStoreChange);
+    window.removeEventListener('vault-page-deleted', this._onVaultPageDeleted);
   }
 
   /** @param {Map} changedProps */
