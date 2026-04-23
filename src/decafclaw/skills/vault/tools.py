@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from decafclaw.media import ToolResult
+from decafclaw.skills.vault._sections import Document
 
 log = logging.getLogger(__name__)
 
@@ -523,6 +524,36 @@ async def tool_vault_backlinks(ctx, page: str) -> str:
     return f"{len(results)} page(s) link to '{page}':\n\n" + "\n".join(results)
 
 
+async def tool_vault_show_sections(
+    ctx, page: str, section: str | None = None
+) -> ToolResult:
+    """Show a vault page's section outline or a specific section with line numbers."""
+    log.info(f"[tool:vault_show_sections] page={page!r} section={section!r}")
+    path = resolve_page(ctx.config, page)
+    if path is None or not path.exists():
+        return ToolResult(text=f"[error: page not found: {page}]")
+    text = path.read_text(encoding="utf-8")
+    doc = Document.from_text(text)
+    if section is None:
+        # Outline: every heading, 1-based line numbered
+        lines = []
+        for _depth, sec in doc.list_sections():
+            line_no = sec.heading_line + 1  # 1-based
+            hashes = "#" * sec.level
+            lines.append(f"{line_no}: {hashes} {sec.title}")
+        return ToolResult(text="\n".join(lines) if lines else "(no sections)")
+    # Specific section: show heading + body with 1-based line numbers
+    sec = doc.find_section(section)
+    if sec is None:
+        return ToolResult(text=f"[error: section not found: {section}]")
+    start = sec.heading_line
+    end = sec.content_end  # exclusive
+    numbered = [
+        f"{i + 1}: {doc.lines[i].rstrip()}" for i in range(start, end)
+    ]
+    return ToolResult(text="\n".join(numbered))
+
+
 # ---------------------------------------------------------------------------
 # Tool registration
 # ---------------------------------------------------------------------------
@@ -536,6 +567,7 @@ TOOLS = {
     "vault_search": tool_vault_search,
     "vault_list": tool_vault_list,
     "vault_backlinks": tool_vault_backlinks,
+    "vault_show_sections": tool_vault_show_sections,
 }
 
 TOOL_DEFINITIONS = [
@@ -785,6 +817,39 @@ TOOL_DEFINITIONS = [
                     "page": {
                         "type": "string",
                         "description": "Page name to find backlinks for",
+                    },
+                },
+                "required": ["page"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "vault_show_sections",
+            "description": (
+                "Show a vault page's section structure (headings with absolute line "
+                "numbers) or a specific section's content with line numbers. Use this "
+                "to see what's in a page before editing with vault_write or "
+                "vault_move_lines."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "page": {
+                        "type": "string",
+                        "description": (
+                            "Page path relative to vault root or bare name "
+                            "(e.g. 'agent/pages/note', 'My Page')."
+                        ),
+                    },
+                    "section": {
+                        "type": "string",
+                        "description": (
+                            "Optional slash-separated section path to show that "
+                            "section's content with line numbers "
+                            "(e.g. 'top/sub a'). Omit to get the full outline."
+                        ),
                     },
                 },
                 "required": ["page"],
