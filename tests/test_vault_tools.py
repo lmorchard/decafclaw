@@ -7,9 +7,11 @@ import pytest
 from decafclaw.skills.vault.tools import (
     resolve_page,
     tool_vault_backlinks,
+    tool_vault_delete,
     tool_vault_journal_append,
     tool_vault_list,
     tool_vault_read,
+    tool_vault_rename,
     tool_vault_search,
     tool_vault_write,
 )
@@ -162,6 +164,172 @@ class TestVaultWrite:
         assert "saved" in result.lower() or "saved" in str(result).lower()
         assert (vault_dir / "agent" / "pages" / "Test.md").exists()
         assert not (vault_dir / "agent" / "pages" / "Test.md.md").exists()
+
+
+class TestVaultDelete:
+    @pytest.mark.asyncio
+    async def test_deletes_agent_page(self, ctx, agent_pages):
+        (agent_pages / "Stale.md").write_text("old")
+        with patch("decafclaw.embeddings.delete_entries") as mock_del:
+            result = await tool_vault_delete(ctx, "agent/pages/Stale")
+        assert "deleted" in result.text.lower()
+        assert not (agent_pages / "Stale.md").exists()
+        mock_del.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_cleans_up_empty_parent_dirs(self, ctx, vault_dir, config):
+        # Nested page with its own folder; folder should go away after delete.
+        pages = config.vault_agent_pages_dir
+        nested = pages / "people" / "obsolete"
+        nested.mkdir(parents=True, exist_ok=True)
+        (nested / "Alice.md").write_text("old")
+        with patch("decafclaw.embeddings.delete_entries"):
+            await tool_vault_delete(ctx, "agent/pages/people/obsolete/Alice")
+        assert not nested.exists()
+        # But the vault root itself must still exist
+        assert vault_dir.exists()
+
+    @pytest.mark.asyncio
+    async def test_rejects_page_outside_agent_dir(self, ctx, vault_dir):
+        # A page directly at the vault root is outside agent/
+        (vault_dir / "User Notes.md").write_text("mine")
+        result = await tool_vault_delete(ctx, "User Notes")
+        assert "error" in result.text.lower()
+        assert "agent folder" in result.text.lower()
+        assert (vault_dir / "User Notes.md").exists()
+
+    @pytest.mark.asyncio
+    async def test_nonexistent_page(self, ctx, vault_dir):
+        result = await tool_vault_delete(ctx, "agent/pages/Never Existed")
+        assert "error" in result.text.lower()
+        assert "not found" in result.text.lower()
+
+    @pytest.mark.asyncio
+    async def test_rejects_path_traversal(self, ctx, vault_dir):
+        result = await tool_vault_delete(ctx, "../../../etc/passwd")
+        assert "error" in result.text.lower()
+
+    @pytest.mark.asyncio
+    async def test_strips_md_suffix(self, ctx, agent_pages):
+        (agent_pages / "Test.md").write_text("x")
+        with patch("decafclaw.embeddings.delete_entries"):
+            result = await tool_vault_delete(ctx, "agent/pages/Test.md")
+        assert "deleted" in result.text.lower()
+        assert not (agent_pages / "Test.md").exists()
+
+    @pytest.mark.asyncio
+    async def test_rejects_empty_page_name(self, ctx, vault_dir):
+        # A bare ".md" file at the vault root must NOT be matched by empty
+        # or trailing-slash inputs.
+        (vault_dir / ".md").write_text("hidden")
+        for bad in ["", "   ", "agent/pages/", ".md", "/"]:
+            result = await tool_vault_delete(ctx, bad)
+            assert "error" in result.text.lower(), f"bad input {bad!r} was accepted"
+        assert (vault_dir / ".md").exists()
+
+
+class TestVaultRename:
+    @pytest.mark.asyncio
+    async def test_renames_agent_page(self, ctx, agent_pages):
+        (agent_pages / "Old Name.md").write_text("body")
+        with patch("decafclaw.embeddings.delete_entries"), \
+             patch("decafclaw.embeddings.index_entry", new_callable=AsyncMock):
+            result = await tool_vault_rename(
+                ctx, "agent/pages/Old Name", "agent/pages/New Name"
+            )
+        assert "renamed" in result.text.lower()
+        assert not (agent_pages / "Old Name.md").exists()
+        assert (agent_pages / "New Name.md").exists()
+        assert (agent_pages / "New Name.md").read_text() == "body"
+
+    @pytest.mark.asyncio
+    async def test_can_move_to_subfolder(self, ctx, agent_pages, config):
+        (agent_pages / "Alice.md").write_text("about alice")
+        with patch("decafclaw.embeddings.delete_entries"), \
+             patch("decafclaw.embeddings.index_entry", new_callable=AsyncMock):
+            await tool_vault_rename(
+                ctx, "agent/pages/Alice", "agent/pages/people/Alice"
+            )
+        assert not (agent_pages / "Alice.md").exists()
+        assert (agent_pages / "people" / "Alice.md").exists()
+
+    @pytest.mark.asyncio
+    async def test_cleans_up_empty_parent_dirs(self, ctx, config):
+        pages = config.vault_agent_pages_dir
+        old_dir = pages / "stale-folder"
+        old_dir.mkdir(parents=True, exist_ok=True)
+        (old_dir / "Doc.md").write_text("x")
+        with patch("decafclaw.embeddings.delete_entries"), \
+             patch("decafclaw.embeddings.index_entry", new_callable=AsyncMock):
+            await tool_vault_rename(
+                ctx, "agent/pages/stale-folder/Doc", "agent/pages/Doc"
+            )
+        assert not old_dir.exists()
+        assert (pages / "Doc.md").exists()
+
+    @pytest.mark.asyncio
+    async def test_refuses_to_clobber_existing(self, ctx, agent_pages):
+        (agent_pages / "A.md").write_text("a")
+        (agent_pages / "B.md").write_text("b")
+        result = await tool_vault_rename(
+            ctx, "agent/pages/A", "agent/pages/B"
+        )
+        assert "error" in result.text.lower()
+        assert "already exists" in result.text.lower()
+        # Neither file should be touched
+        assert (agent_pages / "A.md").read_text() == "a"
+        assert (agent_pages / "B.md").read_text() == "b"
+
+    @pytest.mark.asyncio
+    async def test_rejects_rename_outside_agent_dir(self, ctx, vault_dir, agent_pages):
+        (agent_pages / "Inside.md").write_text("x")
+        result = await tool_vault_rename(
+            ctx, "agent/pages/Inside", "Escaped"
+        )
+        assert "error" in result.text.lower()
+        assert "agent folder" in result.text.lower()
+        assert (agent_pages / "Inside.md").exists()
+        assert not (vault_dir / "Escaped.md").exists()
+
+    @pytest.mark.asyncio
+    async def test_rejects_source_outside_agent_dir(self, ctx, vault_dir, agent_pages):
+        (vault_dir / "User Notes.md").write_text("mine")
+        result = await tool_vault_rename(
+            ctx, "User Notes", "agent/pages/Stolen"
+        )
+        assert "error" in result.text.lower()
+        assert (vault_dir / "User Notes.md").exists()
+        assert not (agent_pages / "Stolen.md").exists()
+
+    @pytest.mark.asyncio
+    async def test_nonexistent_source(self, ctx, vault_dir):
+        result = await tool_vault_rename(
+            ctx, "agent/pages/Never Existed", "agent/pages/New"
+        )
+        assert "error" in result.text.lower()
+        assert "not found" in result.text.lower()
+
+    @pytest.mark.asyncio
+    async def test_rejects_path_traversal(self, ctx, agent_pages):
+        (agent_pages / "Doc.md").write_text("x")
+        result = await tool_vault_rename(
+            ctx, "agent/pages/Doc", "../../../etc/passwd"
+        )
+        assert "error" in result.text.lower()
+
+    @pytest.mark.asyncio
+    async def test_rejects_empty_source_or_target(self, ctx, agent_pages):
+        (agent_pages / "Doc.md").write_text("x")
+        # Empty / trailing-slash / bare-".md" inputs on either side must be
+        # rejected so a rename can't land at a hidden ".md" file.
+        bad_values = ["", "   ", "agent/pages/", ".md"]
+        for bad in bad_values:
+            result = await tool_vault_rename(ctx, bad, "agent/pages/New")
+            assert "error" in result.text.lower(), f"bad source {bad!r} accepted"
+        for bad in bad_values:
+            result = await tool_vault_rename(ctx, "agent/pages/Doc", bad)
+            assert "error" in result.text.lower(), f"bad target {bad!r} accepted"
+        assert (agent_pages / "Doc.md").exists()
 
 
 class TestVaultJournalAppend:

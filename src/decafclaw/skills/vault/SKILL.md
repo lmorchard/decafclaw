@@ -47,6 +47,8 @@ Your files live under `agent/` in the vault:
 
 - `vault_write` modifies files in the vault. Default to writing in `agent/pages/`.
 - Use `vault_read` before `vault_write` when updating existing pages — `vault_write` overwrites the entire page.
+- `vault_rename` renames or moves an existing page (updates the embedding index). Prefer it over delete + rewrite when the content stays the same.
+- `vault_delete` permanently removes a page. Only for pages you own (under `agent/`) that are definitively wrong, duplicate, or no longer reachable — prefer editing over deleting when the page can be salvaged.
 - The user's files are readable but not yours to modify autonomously. Only edit user files when asked.
 
 ## Organizing with Folders
