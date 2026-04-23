@@ -681,7 +681,7 @@ def _insert_into_doc(
             for line in lines_to_insert:
                 sec = doc.find_section(to_section)
                 if not sec:
-                    break
+                    return f"section disappeared during insert: {to_section}"
                 doc.append(sec, line.rstrip("\n"))
     else:
         # No section specified — operate on the whole file

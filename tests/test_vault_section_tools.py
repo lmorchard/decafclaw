@@ -98,3 +98,27 @@ async def test_move_lines_refuses_write_outside_agent(vault_ctx):
     assert "[error" in result.text.lower()
     # user_notes/dst.md must be unchanged
     assert (vault / "user_notes" / "dst.md").read_text() == "# User\n"
+    # Source must also be unchanged when target write is refused
+    assert (vault / "agent" / "pages" / "src.md").read_text() == "# Top\n\n- [ ] x\n"
+
+
+@pytest.mark.asyncio
+async def test_move_lines_leaves_source_untouched_when_insert_fails(vault_ctx):
+    vault = vault_ctx.config.vault_root
+    agent_pages = vault / "agent" / "pages"
+    agent_pages.mkdir(parents=True)
+    src_text = "# Top\n\n- [ ] task1\n- [ ] task2\n"
+    dst_text = "# Target\n\n## known\n"
+    (agent_pages / "src.md").write_text(src_text)
+    (agent_pages / "dst.md").write_text(dst_text)
+    result = await tool_vault_move_lines(
+        vault_ctx,
+        from_page="agent/pages/src",
+        to_page="agent/pages/dst",
+        lines="3,4",
+        to_section="nonexistent/section/path",
+    )
+    assert "[error" in result.text.lower()
+    # Both files must be unchanged
+    assert (agent_pages / "src.md").read_text() == src_text
+    assert (agent_pages / "dst.md").read_text() == dst_text
