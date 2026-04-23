@@ -1,5 +1,7 @@
 """Tests for vault_show_sections, vault_move_lines, and vault_section tools."""
 
+from unittest.mock import AsyncMock, patch
+
 import pytest
 
 from decafclaw.skills.vault.tools import (
@@ -293,3 +295,52 @@ async def test_move_lines_invalid_position(vault_ctx):
     # Both files must be unchanged
     assert (agent_pages / "src.md").read_text() == src_text
     assert (agent_pages / "dst.md").read_text() == dst_text
+
+
+@pytest.mark.asyncio
+async def test_move_lines_reindexes_both_pages(vault_ctx):
+    """vault_move_lines must reindex both source and target after writing."""
+    vault = vault_ctx.config.vault_root
+    agent_pages = vault / "agent" / "pages"
+    agent_pages.mkdir(parents=True, exist_ok=True)
+    (agent_pages / "src.md").write_text("# Top\n\n- [ ] task1\n- [ ] task2\n")
+    (agent_pages / "dst.md").write_text("# Today\n\n## inbox\n")
+    with patch("decafclaw.embeddings.index_entry", new_callable=AsyncMock) as mock_index, \
+         patch("decafclaw.embeddings.delete_entries"):
+        result = await tool_vault_move_lines(
+            vault_ctx,
+            from_page="agent/pages/src",
+            to_page="agent/pages/dst",
+            lines="3",
+            to_section="today/inbox",
+        )
+    assert "[error" not in result.text.lower()
+    # index_entry must be called for both affected pages
+    assert mock_index.call_count == 2
+    called_paths = {call.args[1] for call in mock_index.call_args_list}
+    assert any("src" in p for p in called_paths), f"src not reindexed: {called_paths}"
+    assert any("dst" in p for p in called_paths), f"dst not reindexed: {called_paths}"
+
+
+@pytest.mark.asyncio
+async def test_vault_section_reindexes_after_add(vault_ctx):
+    """vault_section must reindex the page after a successful add."""
+    vault = vault_ctx.config.vault_root
+    agent_pages = vault / "agent" / "pages"
+    agent_pages.mkdir(parents=True, exist_ok=True)
+    (agent_pages / "note.md").write_text("# Top\n\n## First\n")
+    with patch("decafclaw.embeddings.index_entry", new_callable=AsyncMock) as mock_index, \
+         patch("decafclaw.embeddings.delete_entries"):
+        result = await tool_vault_section(
+            vault_ctx,
+            page="agent/pages/note",
+            action="add",
+            title="Second",
+            level=2,
+            after="top/first",
+        )
+    assert "[error" not in result.text.lower()
+    assert mock_index.call_count == 1
+    # The indexed path must correspond to note.md
+    indexed_path = mock_index.call_args.args[1]
+    assert "note" in indexed_path

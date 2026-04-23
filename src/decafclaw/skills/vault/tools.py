@@ -554,6 +554,22 @@ async def tool_vault_show_sections(
     return ToolResult(text="\n".join(numbered))
 
 
+async def _reindex_page(ctx, path: Path) -> None:
+    """Reindex a single vault page in the embedding index (fail-open)."""
+    try:
+        from decafclaw.embeddings import delete_entries, index_entry
+        from decafclaw.frontmatter import build_composite_text, parse_frontmatter
+        rel = str(path.resolve().relative_to(ctx.config.vault_root.resolve()))
+        source_type = _source_type_for_path(ctx.config, path)
+        content = path.read_text(encoding="utf-8")
+        delete_entries(ctx.config, rel, source_type=source_type)
+        metadata, body = parse_frontmatter(content)
+        embed_text = build_composite_text(metadata, body)
+        await index_entry(ctx.config, rel, embed_text, source_type=source_type)
+    except Exception as e:
+        log.warning(f"Failed to reindex vault page '{path}': {e}")
+
+
 async def tool_vault_section(
     ctx,
     page: str,
@@ -586,6 +602,7 @@ async def tool_vault_section(
             return ToolResult(text=f"[error: level must be between 1 and 6, got {level}]")
         if doc.add_section(title, level=level, after=after, before=before, parent=parent):
             path.write_text(doc.to_text(), encoding="utf-8")
+            await _reindex_page(ctx, path)
             return ToolResult(text=f"Added section: {title}")
         return ToolResult(text="[error: target section not found]")
 
@@ -595,6 +612,7 @@ async def tool_vault_section(
         removed = doc.remove_section(section)
         if removed is not None:
             path.write_text(doc.to_text(), encoding="utf-8")
+            await _reindex_page(ctx, path)
             return ToolResult(text=f"Removed section: {section}")
         return ToolResult(text=f"[error: section not found: {section}]")
 
@@ -603,6 +621,7 @@ async def tool_vault_section(
             return ToolResult(text="[error: 'section' and 'title' required for rename]")
         if doc.rename_section(section, title):
             path.write_text(doc.to_text(), encoding="utf-8")
+            await _reindex_page(ctx, path)
             return ToolResult(text=f"Renamed section: {section} → {title}")
         return ToolResult(text=f"[error: section not found: {section}]")
 
@@ -611,6 +630,7 @@ async def tool_vault_section(
             return ToolResult(text="[error: 'section' required for move]")
         if doc.move_section(section, after=after, before=before):
             path.write_text(doc.to_text(), encoding="utf-8")
+            await _reindex_page(ctx, path)
             return ToolResult(text=f"Moved section: {section}")
         return ToolResult(text="[error: section or target not found]")
 
@@ -686,6 +706,11 @@ async def tool_vault_move_lines(
     # duplicates but recoverable — which is strictly better than silent data loss.
     to_path.write_text(to_doc.to_text(), encoding="utf-8")
     from_path.write_text(from_doc.to_text(), encoding="utf-8")
+
+    # Update embedding index for both affected pages (fail-open)
+    await _reindex_page(ctx, to_path)
+    await _reindex_page(ctx, from_path)
+
     return ToolResult(
         text=f"Moved {len(moved)} line(s) from {from_page} to {to_page}"
         + (f" section '{to_section}'" if to_section else "")
