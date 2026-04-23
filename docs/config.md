@@ -169,6 +169,51 @@ the adapter isn't subscribed at all; no errors at `notify()` time.
 `min_priority` accepts `low` / `normal` / `high`; records below the
 threshold are dropped silently.
 
+#### `notifications.channels.email`
+
+Fan-out channel that emails matching notifications to a fixed recipient
+list via the shared SMTP core. See
+[email.md](email.md#notification-channel).
+
+| Field | Type | Default | Env Var |
+|-------|------|---------|---------|
+| `enabled` | bool | `false` | `NOTIFICATIONS_CHANNELS_EMAIL_ENABLED` |
+| `recipient_addresses` | list[str] | `[]` | `NOTIFICATIONS_CHANNELS_EMAIL_RECIPIENT_ADDRESSES` |
+| `min_priority` | str | `high` | `NOTIFICATIONS_CHANNELS_EMAIL_MIN_PRIORITY` |
+
+Startup guard is 4-way: channel `enabled` **and** non-empty
+`recipient_addresses` **and** `email.enabled` **and** non-empty
+`email.smtp_host`. Missing any piece → adapter not wired.
+`recipient_addresses` IS the trust boundary — the channel does NOT
+consult `email.allowed_recipients` (that applies only to the
+`send_email` agent tool).
+
+### `email`
+
+SMTP settings for the `send_email` agent tool and the email
+notification channel. See [email.md](email.md).
+
+| Field | Type | Default | Env Var | Secret |
+|-------|------|---------|---------|--------|
+| `enabled` | bool | `false` | `EMAIL_ENABLED` | |
+| `smtp_host` | str | `""` | `EMAIL_SMTP_HOST` | |
+| `smtp_port` | int | `587` | `EMAIL_SMTP_PORT` | |
+| `smtp_username` | str | `""` | `EMAIL_SMTP_USERNAME` | yes |
+| `smtp_password` | str | `""` | `EMAIL_SMTP_PASSWORD` | yes |
+| `use_tls` | bool | `true` | `EMAIL_USE_TLS` | |
+| `sender_address` | str | `""` | `EMAIL_SENDER_ADDRESS` | |
+| `allowed_recipients` | list[str] | `[]` | `EMAIL_ALLOWED_RECIPIENTS` | |
+| `max_attachment_bytes` | int | `10485760` (10 MB) | `EMAIL_MAX_ATTACHMENT_BYTES` | |
+
+Supports STARTTLS on port 587 with plain SMTP AUTH — the modern
+default. Implicit TLS on port 465 and OAuth2 are out of scope; use
+app-specific passwords with Gmail / M365. `allowed_recipients` accepts
+exact addresses (`alice@example.com`) or `@domain.com` suffix patterns
+(strict — subdomains are not matched). Entries that match bypass
+confirmation for the `send_email` tool; non-matching sends require
+interactive confirmation. Scheduled tasks can add per-task entries via
+the `email-recipients` frontmatter field — see [schedules.md](schedules.md).
+
 ### `http`
 
 HTTP server for interactive buttons and web UI.

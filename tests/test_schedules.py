@@ -88,6 +88,38 @@ class TestParseScheduleFile:
         assert task.model == ""
         assert task.allowed_tools == []
         assert task.required_skills == []
+        assert task.email_recipients == []
+
+    def test_email_recipients_list(self, tmp_path):
+        f = tmp_path / "emailer.md"
+        f.write_text(
+            "---\n"
+            "schedule: '0 9 * * 1'\n"
+            "allowed-tools: send_email\n"
+            "email-recipients:\n"
+            "  - digest@example.com\n"
+            "  - '@team.example.com'\n"
+            "---\n"
+            "Send the weekly digest.\n"
+        )
+        task = parse_schedule_file(f)
+        assert task is not None
+        assert task.email_recipients == [
+            "digest@example.com", "@team.example.com",
+        ]
+
+    def test_email_recipients_scalar_coerced_to_list(self, tmp_path):
+        f = tmp_path / "single.md"
+        f.write_text(
+            "---\n"
+            "schedule: '0 9 * * 1'\n"
+            "email-recipients: lone@example.com\n"
+            "---\n"
+            "One recipient.\n"
+        )
+        task = parse_schedule_file(f)
+        assert task is not None
+        assert task.email_recipients == ["lone@example.com"]
 
 
 # -- Discovery ----------------------------------------------------------------

@@ -19,6 +19,7 @@ from dotenv import load_dotenv
 from .config_types import (
     AgentConfig,
     CompactionConfig,
+    EmailConfig,
     EmbeddingConfig,
     HeartbeatConfig,
     HttpConfig,
@@ -162,6 +163,7 @@ class Config:
     relevance: RelevanceConfig = field(default_factory=RelevanceConfig)
     vault: VaultConfig = field(default_factory=VaultConfig)
     notifications: NotificationsConfig = field(default_factory=NotificationsConfig)
+    email: EmailConfig = field(default_factory=EmailConfig)
 
     # Custom environment variables from config.json "env" section
     env: dict[str, str] = field(default_factory=dict)
@@ -420,6 +422,9 @@ def load_config() -> Config:
     notifications = load_sub_config(
         NotificationsConfig, file_data.get("notifications", {}), "NOTIFICATIONS")
 
+    email = load_sub_config(
+        EmailConfig, file_data.get("email", {}), "EMAIL")
+
     # Providers — named provider connection configs
     providers = _load_providers(file_data.get("providers", {}))
     model_configs = _load_model_configs(file_data.get("model_configs", {}))
@@ -467,6 +472,7 @@ def load_config() -> Config:
         relevance=relevance,
         vault=vault,
         notifications=notifications,
+        email=email,
         env=env_vars,
         system_prompt=system_prompt,
     )

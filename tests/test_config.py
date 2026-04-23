@@ -26,7 +26,7 @@ def _isolate_env(monkeypatch):
             "LLM_", "MATTERMOST_", "COMPACTION_", "EMBEDDING_",
             "HEARTBEAT_", "HTTP_", "TABSTACK_", "CLAUDE_CODE_",
             "SKILLS_", "MEMORY_SEARCH", "SYSTEM_PROMPT",
-            "NOTIFICATIONS_",
+            "NOTIFICATIONS_", "EMAIL_",
         )):
             monkeypatch.delenv(key, raising=False)
 
@@ -56,6 +56,20 @@ class TestDefaults:
         assert c.notifications.channels.mattermost_dm.enabled is False
         assert c.notifications.channels.mattermost_dm.recipient_username == ""
         assert c.notifications.channels.mattermost_dm.min_priority == "high"
+        # Email channel has its own list of recipients as the trust boundary.
+        assert c.notifications.channels.email.enabled is False
+        assert c.notifications.channels.email.recipient_addresses == []
+        assert c.notifications.channels.email.min_priority == "high"
+
+    def test_email_defaults(self):
+        c = Config()
+        assert c.email.enabled is False
+        assert c.email.smtp_host == ""
+        assert c.email.smtp_port == 587
+        assert c.email.use_tls is True
+        assert c.email.sender_address == ""
+        assert c.email.allowed_recipients == []
+        assert c.email.max_attachment_bytes == 10 * 1024 * 1024
 
     def test_derived_properties(self):
         c = Config(agent=AgentConfig(data_home="/tmp/test", id="mybot"))
@@ -123,6 +137,57 @@ class TestJsonFileLoading:
         c = load_config()
         assert c.notifications.retention_days == 7
         assert c.notifications.poll_interval_sec == 60
+
+    def test_loads_email_from_json(self, tmp_path, monkeypatch):
+        """EmailConfig loads from JSON."""
+        agent_dir = tmp_path / "decafclaw"
+        agent_dir.mkdir()
+        config_file = agent_dir / "config.json"
+        config_file.write_text(json.dumps({
+            "email": {
+                "enabled": True,
+                "smtp_host": "smtp.fastmail.com",
+                "smtp_port": 587,
+                "smtp_username": "bot@example.com",
+                "smtp_password": "app-password",
+                "sender_address": "bot@example.com",
+                "allowed_recipients": ["admin@example.com", "@team.example.com"],
+                "max_attachment_bytes": 5000000,
+            },
+        }))
+        monkeypatch.setenv("DATA_HOME", str(tmp_path))
+        c = load_config()
+        assert c.email.enabled is True
+        assert c.email.smtp_host == "smtp.fastmail.com"
+        assert c.email.smtp_port == 587
+        assert c.email.sender_address == "bot@example.com"
+        assert c.email.allowed_recipients == [
+            "admin@example.com", "@team.example.com",
+        ]
+        assert c.email.max_attachment_bytes == 5000000
+
+    def test_loads_email_channel_from_json(self, tmp_path, monkeypatch):
+        """EmailChannelConfig loads via nested channels recursion."""
+        agent_dir = tmp_path / "decafclaw"
+        agent_dir.mkdir()
+        config_file = agent_dir / "config.json"
+        config_file.write_text(json.dumps({
+            "notifications": {
+                "channels": {
+                    "email": {
+                        "enabled": True,
+                        "recipient_addresses": ["ops@example.com"],
+                        "min_priority": "normal",
+                    },
+                },
+            },
+        }))
+        monkeypatch.setenv("DATA_HOME", str(tmp_path))
+        c = load_config()
+        email_ch = c.notifications.channels.email
+        assert email_ch.enabled is True
+        assert email_ch.recipient_addresses == ["ops@example.com"]
+        assert email_ch.min_priority == "normal"
 
     def test_loads_nested_channels_from_json(self, tmp_path, monkeypatch):
         """Nested channel config loads via the recursion in load_sub_config."""
