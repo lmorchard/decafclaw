@@ -74,12 +74,26 @@ PATH RULE: All NEW pages you create MUST have a `page` argument starting with `a
 
 If `vault_search` returns an existing page already under `agent/pages/` (anywhere in that tree), update it in place rather than creating a duplicate. If it returns a page OUTSIDE `agent/pages/` (e.g. the user's own notes), do NOT modify it — create a new page under `agent/pages/bookmarks/` and link to the user's page with `[[wiki-link]]` instead.
 
+FRONTMATTER RULE: Every page you write (new or updated) MUST begin with Obsidian-compatible YAML frontmatter containing a `tags` list. Seed the list from the Tags field above; add more tags if the content reveals clearer categories. When updating an existing page that already has frontmatter, merge the bookmark's tags into the existing `tags` list (preserve existing tags, deduplicate, keep other frontmatter fields intact). Shape:
+
+```
+---
+tags:
+  - topic-one
+  - topic-two
+---
+
+# Page Title
+
+...body...
+```
+
 Instructions:
 1. Use tabstack_extract_markdown(url="{bookmark_url}") to fetch the full content. If it fails (paywall, dead link), work with just the title, tags, and description above.
 2. Analyze the content for key facts, insights, technologies, people, projects, or concepts.
 3. Use vault_search(query="relevant topic") to find existing vault pages.
-4. If a relevant page exists: vault_read(page="...full existing path...") to get it, revise with new info, vault_write(page="...same existing path...", content="...") to save. Keep the existing path — don't move the page.
-5. If no relevant page exists and the topic is substantial: vault_write(page="agent/pages/bookmarks/New Page", content="...") with [[wiki-links]] and a ## Sources section. The `page` argument MUST start with `agent/pages/bookmarks/`.
+4. If a relevant page exists: vault_read(page="...full existing path...") to get it, revise with new info, merge the bookmark's tags into the page's frontmatter `tags` list (dedupe), vault_write(page="...same existing path...", content="...") to save. Keep the existing path — don't move the page.
+5. If no relevant page exists and the topic is substantial: vault_write(page="agent/pages/bookmarks/New Page", content="...") with frontmatter (including `tags:` seeded from the bookmark tags), [[wiki-links]], and a ## Sources section. The `page` argument MUST start with `agent/pages/bookmarks/`.
 6. Include the original URL and {bookmark_date} in ## Sources.
 7. Extract knowledge — "X uses Y approach for Z problem" is better than "bookmarked an article about X".
 8. Prefer adding to existing vault pages over creating new ones — but if you must create, use the `agent/pages/bookmarks/` prefix.
@@ -98,6 +112,7 @@ If there was nothing interesting to ingest, respond with HEARTBEAT_OK.
 ## Rules
 
 - **New pages go under `agent/pages/bookmarks/`** — never create a new page at the vault root. This applies to the parent turn and to every delegate you spawn.
+- **Frontmatter with `tags:` is required on every written page** — seed from the bookmark's tags; merge when updating an existing page. Tags boost semantic search and future tag-based retrieval.
 - **Delegate each bookmark** — don't try to fetch and process articles yourself, your context will fill up
 - **Group related content** — include guidance in the delegate task to add to existing pages when possible
 - Convert relative dates to absolute dates
