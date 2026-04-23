@@ -1,0 +1,36 @@
+# Evals for the ingest skill.
+# Focuses on the workspace-file ingest path — URL fetching is flaky in evals
+# and the attachment flow needs web UI plumbing. Les will test those paths
+# manually.
+
+- name: "ingest workspace file produces primary page + change summary"
+  setup:
+    skills: [ingest]
+    workspace_files:
+      imports/ripgrep-notes.md: |
+        # ripgrep (rg)
+
+        ripgrep is a recursive, line-based search tool written in Rust. It
+        respects `.gitignore` by default and uses SIMD-optimized regex
+        matching via the regex crate.
+
+        Notable technical choices:
+        - Uses memchr for SIMD-accelerated literal scanning.
+        - Parallel directory traversal via the ignore crate.
+        - Per-thread buffered writers to avoid output contention.
+
+        ripgrep is commonly compared to `ag` (The Silver Searcher) and
+        `ack`; benchmarks consistently show rg winning on large trees
+        with gitignore-heavy repos.
+
+        Original author: Andrew Gallant (BurntSushi). License: MIT/Unlicense.
+  input: "/ingest workspace/imports/ripgrep-notes.md"
+  expect:
+    response_contains:
+      - "re:(?is)ingested:.*ripgrep-notes\\.md.*primary page.*\\[\\[.*\\]\\]"
+    response_not_contains:
+      - "I apologize"
+      - "I'm sorry"
+      - "[error"
+    max_tool_calls: 12
+    max_tool_errors: 0

@@ -52,6 +52,21 @@ async def _setup_workspace(config, test_case: dict):
             shutil.copy2(fixture_path, dest)
             log.info(f"Copied embeddings fixture from {fixture_path}")
 
+    # Seed arbitrary workspace files (path → content). Parent dirs created.
+    # Sandbox-check each path — absolute paths and `..` escapes would otherwise
+    # let a test fixture clobber files outside the temp workspace on the runner.
+    workspace_files = setup.get("workspace_files", {})
+    workspace_root = config.workspace_path.resolve()
+    for rel_path, content in workspace_files.items():
+        rel = Path(rel_path)
+        if rel.is_absolute():
+            raise ValueError(f"workspace_files path must be relative: {rel_path}")
+        dest = (config.workspace_path / rel).resolve()
+        if not dest.is_relative_to(workspace_root):
+            raise ValueError(f"workspace_files path escapes workspace: {rel_path}")
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(content, encoding="utf-8")
+
     # Save journal entries (replaces memories)
     memories = setup.get("memories", [])
     if memories:
