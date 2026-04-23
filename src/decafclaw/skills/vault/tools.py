@@ -167,10 +167,10 @@ async def tool_vault_write(ctx, page: str, content: str) -> str | ToolResult:
             text=f"[error: invalid page name '{page}' — must be within vault directory]")
     if not content or not content.strip():
         return ToolResult(text=f"[error: refusing to write empty vault page '{page}']")
-
-    # Log notice if writing outside agent folder
     if not _is_in_agent_dir(ctx.config, path):
-        log.info(f"[tool:vault_write] writing outside agent folder: {page}")
+        return ToolResult(
+            text=f"[error: refusing to write '{page}' — "
+                 f"only pages under the agent folder may be written]")
 
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content)
@@ -576,8 +576,9 @@ TOOL_DEFINITIONS = [
                 "workspace_write for those. ALWAYS vault_read first if "
                 "updating an existing page to preserve content you want to keep. "
                 "Use [[Page Name]] syntax to link to other pages. Include a "
-                "## Sources section. Default to writing in agent/pages/ — only "
-                "write outside the agent folder when the user explicitly asks."
+                "## Sources section. Writes are restricted to the agent folder "
+                "(agent/pages/, agent/journal/); admin and user pages are "
+                "off-limits."
             ),
             "parameters": {
                 "type": "object",

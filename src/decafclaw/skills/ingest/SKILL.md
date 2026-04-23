@@ -48,7 +48,7 @@ Use `vault_search` (and `vault_list` if you need to browse a folder) to find exi
 - Pages on the major entities referenced.
 - Pages on the broader concepts it touches.
 
-**If a page on the exact source or its primary topic already exists, treat it as the primary page and update in place.** Do not create a duplicate at a different path.
+**If a page on the exact source or its primary topic already exists under `agent/pages/`, treat it as the primary page and update in place.** If a strong match exists elsewhere in the vault (e.g. a user note), leave that page alone — Step 4 covers how to handle it.
 
 ## Step 4: Plan the updates
 

@@ -146,6 +146,15 @@ class TestVaultWrite:
         assert "error" in result.text.lower()
 
     @pytest.mark.asyncio
+    async def test_rejects_write_outside_agent_folder(self, ctx, vault_dir):
+        """vault_write must refuse paths outside the agent folder, mirroring
+        vault_delete / vault_rename behavior."""
+        result = await tool_vault_write(ctx, "StrayRootPage", "# Stray")
+        assert "error" in result.text.lower()
+        assert "agent folder" in result.text.lower()
+        assert not (vault_dir / "StrayRootPage.md").exists()
+
+    @pytest.mark.asyncio
     async def test_creates_subdirectory(self, ctx, vault_dir):
         with patch("decafclaw.embeddings.index_entry", new_callable=AsyncMock):
             await tool_vault_write(ctx, "agent/pages/people/Alice", "# Alice")
