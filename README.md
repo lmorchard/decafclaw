@@ -53,6 +53,8 @@ make vendor    # Rebuild web UI vendor bundle
 make config    # Show resolved config values
 ```
 
+Most major features are developed in **dev sessions**, with design artifacts preserved under [`docs/dev-sessions/`](docs/dev-sessions/) — each session directory holds a `spec.md`, `plan.md`, and `notes.md` capturing the thinking behind the change. Browse those for the history of how the project grew.
+
 ## What this is NOT
 
 This is not a framework. It's a learning project — built to understand how tools like OpenClaw, nanobot, and picoclaw work under the hood. The code is intentionally simple, with minimal abstractions.
