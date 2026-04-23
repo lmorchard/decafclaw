@@ -76,21 +76,14 @@ async def run_all(app_ctx):
             log.info("Mattermost client starting")
 
         # Wire notification channel adapters. Each adapter subscribes to
-        # the event bus for `notification_created` events. Skip any
-        # adapter whose config is incomplete or whose transport isn't
-        # running — this is startup-time only; no errors at notify() time.
-        mm_dm_cfg = config.notifications.channels.mattermost_dm
-        if mm_dm_cfg.enabled and mm_dm_cfg.recipient_username and mm_client:
-            from .notification_channels.mattermost_dm import (
-                make_mattermost_dm_adapter,
-            )
-            adapter = make_mattermost_dm_adapter(config, mm_client)
-            app_ctx.event_bus.subscribe(adapter)
-            log.info(
-                "Notifications: Mattermost DM adapter subscribed "
-                "(recipient=%s, min_priority=%s)",
-                mm_dm_cfg.recipient_username, mm_dm_cfg.min_priority,
-            )
+        # the event bus for `notification_created` events. Per-channel
+        # guards + subscribe calls live in the notification_channels
+        # package so adding a new channel doesn't touch this file.
+        from .notification_channels import init_notification_channels
+        init_notification_channels(
+            config, app_ctx.event_bus,
+            mm_client=mm_client,
+        )
 
         # Start heartbeat timer
         if parse_interval(config.heartbeat.interval) is not None:

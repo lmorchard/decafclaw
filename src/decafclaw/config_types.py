@@ -193,6 +193,43 @@ class ModelConfig:
 
 
 @dataclass
+class EmailConfig:
+    """SMTP settings for the send_email tool and the email notification channel.
+
+    Both surfaces share this core config (host / port / auth / sender).
+    ``allowed_recipients`` only affects the tool — the notification
+    channel has its own trust-boundary list in
+    ``NotificationsChannelsConfig.email.recipient_addresses``.
+    """
+    enabled: bool = False
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_username: str = field(default="", metadata={"secret": True})
+    smtp_password: str = field(default="", metadata={"secret": True})
+    use_tls: bool = True                     # STARTTLS on port 587
+    sender_address: str = ""                 # From:
+    # Tool-only allowlist. Entries match exact addresses or `@domain.com`
+    # suffix patterns (case-insensitive). Empty list = every send
+    # requires interactive confirmation.
+    allowed_recipients: list[str] = field(default_factory=list)
+    max_attachment_bytes: int = 10 * 1024 * 1024  # 10 MB — sum across attachments
+
+
+@dataclass
+class EmailChannelConfig:
+    """Email notification channel.
+
+    Each enabled notification at or above ``min_priority`` is emailed to
+    all addresses in ``recipient_addresses``. The channel does NOT
+    consult ``EmailConfig.allowed_recipients`` — these recipients are
+    the trust boundary.
+    """
+    enabled: bool = False
+    recipient_addresses: list[str] = field(default_factory=list)
+    min_priority: str = "high"  # "low" | "normal" | "high"
+
+
+@dataclass
 class MattermostDMChannelConfig:
     """Mattermost direct-message channel for notifications.
 
@@ -208,6 +245,7 @@ class MattermostDMChannelConfig:
 class NotificationsChannelsConfig:
     """Per-channel adapter configuration for notifications."""
     mattermost_dm: MattermostDMChannelConfig = field(default_factory=MattermostDMChannelConfig)
+    email: EmailChannelConfig = field(default_factory=EmailChannelConfig)
 
 
 @dataclass

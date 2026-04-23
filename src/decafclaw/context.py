@@ -27,6 +27,11 @@ class ToolState:
     allowed: set[str] | None = None
     preapproved: set[str] = field(default_factory=set)
     preapproved_shell_patterns: list[str] = field(default_factory=list)
+    # Scheduled-task overlay: addresses + `@domain.com` suffix patterns
+    # that bypass confirmation for the `send_email` tool. Merged with
+    # `config.email.allowed_recipients` at check time. Empty for
+    # interactive runs.
+    preapproved_email_recipients: list[str] = field(default_factory=list)
     current_call_id: str = ""
     # Dynamic tool providers: skill_name → get_tools(ctx) callable.
     # Called each turn to refresh that skill's tools and definitions.
@@ -105,6 +110,7 @@ class Context:
         allowed_tools: set | None = None,
         preapproved_tools: set | None = None,
         preapproved_shell_patterns: list[str] | None = None,
+        preapproved_email_recipients: list[str] | None = None,
     ) -> "Context":
         """Create a context for a background task (heartbeat, scheduled task, etc.).
 
@@ -130,6 +136,8 @@ class Context:
             ctx.tools.preapproved = preapproved_tools
         if preapproved_shell_patterns is not None:
             ctx.tools.preapproved_shell_patterns = preapproved_shell_patterns
+        if preapproved_email_recipients is not None:
+            ctx.tools.preapproved_email_recipients = preapproved_email_recipients
         return ctx
 
     def fork(self, **overrides) -> "Context":

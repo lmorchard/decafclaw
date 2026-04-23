@@ -36,6 +36,7 @@ Report key themes and anything that needs attention.
 | `model` | string | no | — | Named model config for this task. Omit to use `default_model`. |
 | `allowed-tools` | list | no | all | Restrict which tools the task can use |
 | `required-skills` | list | no | — | Skills to pre-activate before running the task |
+| `email-recipients` | list | no | — | Pre-approved email addresses for `send_email` that bypass confirmation for this task only. See [email.md](email.md#scheduled-task-integration). Exact addresses or `@domain.com` suffix patterns. |
 
 ### Cron expressions
 
