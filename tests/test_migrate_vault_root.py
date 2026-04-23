@@ -1,9 +1,8 @@
 import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
-
-import pytest  # noqa: F401 (used for tmp_path fixture)
 
 SCRIPT = Path(__file__).parent.parent / "scripts" / "migrate_vault_root.py"
 
@@ -76,7 +75,6 @@ def test_apply_refuses_if_target_agent_exists(tmp_path):
 def test_refuses_if_source_agent_missing(tmp_path):
     old, new, config = _setup(tmp_path)
     # Remove the agent dir from old
-    import shutil
     shutil.rmtree(old / "agent")
     r = subprocess.run(
         [
