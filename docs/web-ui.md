@@ -80,6 +80,15 @@ Edit admin config files (`SOUL.md`, `AGENT.md`, `HEARTBEAT.md`, etc.) directly i
 
 Light/dark mode toggle.
 
+### Notifications
+
+A bell icon in the sidebar footer polls `/api/notifications/unread-count` and
+renders a red badge when the agent has emitted noteworthy events (heartbeat
+completion, scheduled task finish, background process exit, compaction,
+reflection rejection). Click the bell to see the last 20 records; click a row
+to mark it read and jump to the associated conversation or vault page. See
+[Notifications](notifications.md) for the full model and API.
+
 ## Architecture
 
 ### Frontend
@@ -95,6 +104,7 @@ Lit web components in `src/decafclaw/web/static/`:
 | `wiki-editor` | `components/wiki-editor.js` | WYSIWYG markdown page editor |
 | `wiki-page` | `components/wiki-page.js` | Page viewer/renderer |
 | `context-inspector` | `components/context-inspector.js` | Context diagnostics popover |
+| `notification-inbox` | `components/notification-inbox.js` | Bell icon + dropdown inbox panel |
 | `config-panel` | `components/config-panel.js` | Admin config file editor |
 | `confirm-view` | `components/confirm-view.js` | Confirmation dialog for tool approvals |
 | `login-view` | `components/login-view.js` | Login screen |
@@ -191,6 +201,15 @@ Folder structure is per-user metadata stored in `data/{agent_id}/web/users/{user
 | `GET` | `/api/config/files` | List editable config files |
 | `GET` | `/api/config/files/{path}` | Read a config file |
 | `PUT` | `/api/config/files/{path}` | Write a config file |
+
+### Notifications
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/notifications` | List inbox records (newest first) with joined read-state |
+| `GET` | `/api/notifications/unread-count` | Count of unread records — polled for the bell badge |
+| `POST` | `/api/notifications/{id}/read` | Mark a single record read (idempotent) |
+| `POST` | `/api/notifications/read-all` | Mark all currently-visible records read |
 
 ### Other
 

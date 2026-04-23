@@ -192,6 +192,13 @@ class ModelConfig:
     streaming: bool = True
 
 
+@dataclass
+class NotificationsConfig:
+    """Notification inbox settings. See docs/notifications.md."""
+    retention_days: int = 30
+    poll_interval_sec: int = 30
+
+
 def is_secret(dc_class: type, field_name: str) -> bool:
     """Check if a dataclass field is marked as secret."""
     for f in dc_fields(dc_class):

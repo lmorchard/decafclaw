@@ -19,6 +19,26 @@ export function formatTime(ts) {
 }
 
 /**
+ * Format an ISO timestamp as a short relative time (e.g. "2m ago", "3h ago").
+ * @param {string} ts
+ * @returns {string}
+ */
+export function formatRelativeTime(ts) {
+  if (!ts) return '';
+  const d = new Date(ts);
+  const diffMs = Date.now() - d.getTime();
+  if (isNaN(diffMs)) return '';
+  if (diffMs < 60_000) return 'just now';
+  const minutes = Math.floor(diffMs / 60_000);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days}d ago`;
+  return d.toLocaleDateString();
+}
+
+/**
  * Set up a drag-to-resize handle that adjusts a CSS custom property.
  *
  * Restores the last saved width from localStorage on init, and persists
