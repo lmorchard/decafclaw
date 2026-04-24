@@ -254,16 +254,7 @@ def build_catalog_text(skills: list[SkillInfo]) -> str:
         if s.always_loaded and Path(s.location).resolve().is_relative_to(bundled_dir)
     ]
     always_loaded_names = {s.name for s in always_loaded}
-    # Exclude from catalog:
-    # - always-loaded skills (listed separately above)
-    # - command-only skills (user-invocable without native tools — triggered via !command)
-    # - scheduled-only skills (run automatically, not via activate_skill)
-    on_demand = [
-        s for s in skills
-        if s.name not in always_loaded_names
-        and not (s.user_invocable and not s.has_native_tools)
-        and not (s.schedule and not s.has_native_tools)
-    ]
+    on_demand = [s for s in skills if s.name not in always_loaded_names]
 
     lines = []
 

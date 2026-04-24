@@ -383,6 +383,23 @@ def test_build_catalog_text_empty():
     assert text == ""
 
 
+def test_build_catalog_text_includes_markdown_only_skills(tmp_path):
+    """Markdown-only skills (no tools.py) must appear in the catalog so
+    the agent can activate them to load their instructions — even when
+    they also have a !command trigger or a cron schedule."""
+    skills = [
+        SkillInfo(name="command-only", description="Command skill.",
+                  location=tmp_path / "c", has_native_tools=False,
+                  user_invocable=True),
+        SkillInfo(name="scheduled-only", description="Scheduled skill.",
+                  location=tmp_path / "s", has_native_tools=False,
+                  schedule="0 3 * * *"),
+    ]
+    text = build_catalog_text(skills)
+    assert "- **command-only**: Command skill." in text
+    assert "- **scheduled-only**: Scheduled skill." in text
+
+
 # -- permissions tests --
 
 
