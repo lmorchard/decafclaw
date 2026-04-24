@@ -37,8 +37,8 @@ async def reflect_on_failure(config, test_case: dict, result: dict,
     # Multi-turn tests use "turns" instead of "input"
     if "turns" in test_case:
         input_text = "\n".join(
-            f"[{t.get('role', 'user')}] {t.get('content', '')}"
-            for t in test_case["turns"]
+            f"[turn {i + 1}] {t.get('input', '')}"
+            for i, t in enumerate(test_case["turns"])
         )
     else:
         input_text = test_case.get("input", "")
