@@ -19,5 +19,5 @@
       "codemirror": ["./codemirror-entry.js"]
     }
   },
-  "include": ["app.js", "lib/**/*.js", "components/**/*.js"]
+  "include": ["app.js", "lib/**/*.js", "components/**/*.js", "widgets/**/*.js"]
 }

@@ -214,7 +214,10 @@ An AI agent testbed for exploring agent development patterns. Connects to Matter
 - `src/decafclaw/mail.py` — Shared async SMTP core (aiosmtplib wrapper). Used by the `send_email` tool and the email notification channel.
 - `src/decafclaw/polling.py` — Shared polling loop and task preamble builder (used by heartbeat + schedules)
 - `src/decafclaw/mcp_client.py` — MCP client: config, registry, server connections, auto-restart
-- `src/decafclaw/media.py` — Media handling: ToolResult, MediaSaveResult, MediaHandler interface
+- `src/decafclaw/media.py` — Media handling: ToolResult, MediaSaveResult, MediaHandler interface, WidgetRequest
+- `src/decafclaw/widgets.py` — Widget catalog registry: scans bundled + admin tiers, validates `WidgetRequest.data` against per-widget JSON Schema, serves descriptors via `/api/widgets` and JS via `/widgets/{tier}/{name}/widget.js`. See [docs/widgets.md](docs/widgets.md).
+- `src/decafclaw/web/static/components/widgets/widget-host.js` — Frontend widget host: fetches the catalog, dynamic-imports `<dc-widget-{type}>`, falls back to `<pre>` on unknown types / import failures.
+- `src/decafclaw/web/static/widgets/` — Bundled widget components (each subdir: `widget.json` + `widget.js`). Phase 1 ships `data_table`.
 - `src/decafclaw/util.py` — Shared utilities (estimate_tokens)
 - `src/decafclaw/eval/` — Eval harness (YAML tests, failure reflection)
 
