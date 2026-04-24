@@ -18,6 +18,7 @@ export class ChatMessage extends LitElement {
     timestamp: { type: String },
     attachments: { type: Array, attribute: false },
     record: { type: Object, attribute: false },
+    widget: { type: Object, attribute: false },
   };
 
   createRenderRoot() { return this; }
@@ -41,6 +42,8 @@ export class ChatMessage extends LitElement {
     this.attachments = null;
     /** @type {object|null} */
     this.record = null;
+    /** @type {object|null} */
+    this.widget = null;
   }
 
   render() {
@@ -89,7 +92,7 @@ export class ChatMessage extends LitElement {
     }
 
     if (this.role === 'tool') {
-      return html`<tool-message .tool=${this.tool} .content=${this.content} .display_short_text=${this.display_short_text || ''} .statusHistory=${this.statusHistory} .timestamp=${this.timestamp}></tool-message>`;
+      return html`<tool-message .tool=${this.tool} .content=${this.content} .display_short_text=${this.display_short_text || ''} .statusHistory=${this.statusHistory} .timestamp=${this.timestamp} .widget=${this.widget}></tool-message>`;
     }
 
     if (this.role === 'assistant' && this.toolCalls?.length) {

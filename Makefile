@@ -2,9 +2,11 @@
 run:
 	uv run decafclaw
 
-# Run with auto-restart on source changes
+# Run with auto-restart on source changes. Custom filter also triggers on
+# widget.json / widget.js edits under src/decafclaw/web/static/widgets/
+# so bundled widget iteration doesn't require a manual restart.
 dev:
-	uv run --extra dev watchfiles --filter python --sigint-timeout 10 --sigkill-timeout 15 "decafclaw.main" src/
+	uv run --extra dev watchfiles --filter decafclaw._dev_filter.DevFilter --sigint-timeout 10 --sigkill-timeout 15 "decafclaw.main" src/
 
 # Run with debug logging
 debug:

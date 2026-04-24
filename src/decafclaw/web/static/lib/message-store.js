@@ -227,10 +227,13 @@ export class MessageStore {
           // Look ahead for matching tool result
           let resultContent = '';
           let resultShortText = '';
+          /** @type {object|null} */
+          let resultWidget = null;
           for (let j = i + 1; j < messages.length; j++) {
             if (messages[j].role === 'tool' && messages[j].tool_call_id === tcId) {
               resultContent = messages[j].content || '';
               resultShortText = messages[j].display_short_text || '';
+              resultWidget = messages[j].widget || null;
               messages[j]._merged = true; // mark as consumed
               break;
             }
@@ -240,6 +243,7 @@ export class MessageStore {
             tool: toolName,
             content: resultContent,
             display_short_text: resultShortText,
+            widget: resultWidget,
             timestamp: msg.timestamp,
           });
         }

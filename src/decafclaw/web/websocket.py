@@ -28,6 +28,28 @@ def _legacy_tool_name(action_type: str) -> str:
     return {"run_shell_command": "shell"}.get(action_type, action_type)
 
 
+def _project_tool_end(event: dict, conv_id: str) -> dict:
+    """Project a bus tool_end event into the WebSocket payload shape.
+
+    Fields are included selectively: display_short_text and widget only
+    appear when the upstream event set them, to keep the socket messages
+    compact.
+    """
+    payload = {
+        "type": "tool_end", "conv_id": conv_id,
+        "tool": event.get("tool", ""),
+        "result_text": event.get("result_text", ""),
+        "tool_call_id": event.get("tool_call_id", ""),
+    }
+    short = event.get("display_short_text")
+    if short:
+        payload["display_short_text"] = short
+    widget = event.get("widget")
+    if widget:
+        payload["widget"] = widget
+    return payload
+
+
 def _confirmation_to_dict(req) -> dict:
     """Convert a ConfirmationRequest to the dict shape the client expects."""
     action_data = req.action_data or {}
@@ -415,16 +437,7 @@ def _subscribe_to_conv(state, conv_id):
             })
 
         elif event_type == "tool_end":
-            payload = {
-                "type": "tool_end", "conv_id": event_conv_id,
-                "tool": event.get("tool", ""),
-                "result_text": event.get("result_text", ""),
-                "tool_call_id": event.get("tool_call_id", ""),
-            }
-            short = event.get("display_short_text")
-            if short:
-                payload["display_short_text"] = short
-            await ws_send(payload)
+            await ws_send(_project_tool_end(event, event_conv_id))
 
         elif event_type == "vault_retrieval":
             text = event.get("text", "")

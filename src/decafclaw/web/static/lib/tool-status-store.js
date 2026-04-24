@@ -138,6 +138,7 @@ export class ToolStatusStore {
             content: msg.result_text || '',
             tool: msg.tool,
             display_short_text: msg.display_short_text || '',
+            widget: msg.widget || null,
             timestamp: new Date().toISOString(),
           });
         }

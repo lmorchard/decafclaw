@@ -22,6 +22,7 @@ dependencies = [
     "google-auth>=2.0.0",
     "requests>=2.0.0",
     "aiosmtplib>=3.0.0",
+    "jsonschema>=4.0",
 ]
 
 [project.optional-dependencies]

@@ -1,0 +1,28 @@
+{
+  "name": "data_table",
+  "description": "Display tabular data with sortable columns. Use for structured results like search results, comparison data, or any rows-and-columns output.",
+  "modes": ["inline", "canvas"],
+  "accepts_input": false,
+  "data_schema": {
+    "type": "object",
+    "required": ["columns", "rows"],
+    "properties": {
+      "columns": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["key", "label"],
+          "properties": {
+            "key": { "type": "string" },
+            "label": { "type": "string" }
+          }
+        }
+      },
+      "rows": {
+        "type": "array",
+        "items": { "type": "object" }
+      },
+      "caption": { "type": "string" }
+    }
+  }
+}

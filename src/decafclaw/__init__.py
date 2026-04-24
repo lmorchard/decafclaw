@@ -32,6 +32,12 @@ def main():
     from .llm import init_providers
     init_providers(config)
 
+    # Initialize the widget catalog registry (bundled + admin tiers).
+    # Shared across server and interactive modes; agent loop consults it
+    # when validating widget payloads on tool results.
+    from .widgets import init_widgets
+    init_widgets(config)
+
     # Ensure vault directories exist
     config.vault_root.mkdir(parents=True, exist_ok=True)
     config.vault_agent_pages_dir.mkdir(parents=True, exist_ok=True)

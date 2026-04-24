@@ -6,6 +6,7 @@
 @import './styles/notification-inbox.css';
 @import './styles/chat.css';
 @import './styles/chat-input.css';
+@import './styles/widgets.css';
 @import './styles/wiki.css';
 @import './styles/wiki-editor.css';
 @import './styles/config-panel.css';

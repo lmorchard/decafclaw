@@ -1,5 +1,7 @@
 import { LitElement, html, nothing } from 'lit';
 
+import '../widgets/widget-host.js';
+
 /** Tool result message — collapsible row with tool name and truncated preview. */
 export class ToolMessage extends LitElement {
   static properties = {
@@ -9,6 +11,8 @@ export class ToolMessage extends LitElement {
     display_short_text: { type: String },
     /** Array of {text, timestamp} status history entries from the tool_call phase */
     statusHistory: { type: Array, attribute: false },
+    /** Optional widget payload: {widget_type, target, data} */
+    widget: { type: Object, attribute: false },
     _expanded: { type: Boolean, state: true },
   };
 
@@ -22,6 +26,8 @@ export class ToolMessage extends LitElement {
     this.display_short_text = '';
     /** @type {Array<{text: string, timestamp: string}>|null} */
     this.statusHistory = null;
+    /** @type {{widget_type: string, target: string, data: object}|null} */
+    this.widget = null;
     this._expanded = false;
   }
 
@@ -48,7 +54,8 @@ export class ToolMessage extends LitElement {
   render() {
     const hasContent = this.content && this.content.length > 0;
     const hasHistory = this.statusHistory?.length > 0;
-    const expandable = hasContent || hasHistory;
+    const hasWidget = !!this.widget;
+    const expandable = hasContent || hasHistory || hasWidget;
     return html`
       <div class="message tool">
         <div class="tool-result-header" @click=${expandable ? this.#toggleExpand : nothing}>
@@ -76,7 +83,21 @@ export class ToolMessage extends LitElement {
               `)}
             </div>
           ` : nothing}
-          ${hasContent ? html`
+          ${this.widget ? html`
+            <div class="tool-result-detail">
+              <dc-widget-host
+                .widgetType=${this.widget.widget_type}
+                .data=${this.widget.data}
+                .fallbackText=${this.content}
+              ></dc-widget-host>
+              ${hasContent ? html`
+                <details class="tool-result-raw">
+                  <summary>Show raw result</summary>
+                  <pre>${this.content}</pre>
+                </details>
+              ` : nothing}
+            </div>
+          ` : hasContent ? html`
             <div class="tool-result-detail">
               <pre>${this.content}</pre>
             </div>
