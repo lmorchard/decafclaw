@@ -1,7 +1,7 @@
 ---
 name: dream
 description: Review recent journal entries and conversations, distill insights into vault pages
-schedule: "0 */3 * * *"
+schedule: "0 3 * * *"
 effort: strong
 required-skills:
   - vault
