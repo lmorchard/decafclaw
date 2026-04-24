@@ -147,6 +147,40 @@ def test_is_heartbeat_ok_not_present():
     assert is_heartbeat_ok("Something happened that needs attention.") is False
 
 
+# -- BACKGROUND_WAKE_OK detection tests --
+
+
+def test_is_background_wake_ok_detects_sentinel():
+    from decafclaw.heartbeat import is_background_wake_ok
+    # Sentinel at start — TRUE
+    assert is_background_wake_ok("BACKGROUND_WAKE_OK")
+    assert is_background_wake_ok("background_wake_ok — nothing to report")
+    assert is_background_wake_ok("Background_Wake_OK")  # case-insensitive
+    assert not is_background_wake_ok("Something else")
+    assert not is_background_wake_ok("")
+    assert not is_background_wake_ok(None)
+    # Only check first 300 chars.
+    assert not is_background_wake_ok("x" * 300 + "BACKGROUND_WAKE_OK")
+
+
+def test_is_background_wake_ok_requires_prefix():
+    from decafclaw.heartbeat import is_background_wake_ok
+    # Prefix with leading whitespace — TRUE
+    assert is_background_wake_ok("BACKGROUND_WAKE_OK")
+    assert is_background_wake_ok("  BACKGROUND_WAKE_OK — noted")
+    assert is_background_wake_ok("\n  background_wake_ok trailing text")
+    # Case-insensitive
+    assert is_background_wake_ok("Background_Wake_OK noted")
+    # Mid-text mention — FALSE (this is the stricter behavior)
+    assert not is_background_wake_ok("I could say BACKGROUND_WAKE_OK but I won't")
+    assert not is_background_wake_ok("The agent replied with BACKGROUND_WAKE_OK at the end")
+    # Empty/None — FALSE
+    assert not is_background_wake_ok("")
+    assert not is_background_wake_ok(None)
+    # Word boundary: "BACKGROUND_WAKE_OKAY" must be FALSE
+    assert not is_background_wake_ok("BACKGROUND_WAKE_OKAY")
+
+
 # -- prompt building tests --
 
 
@@ -173,6 +207,7 @@ def test_build_section_prompt_general():
 @pytest.mark.asyncio
 async def test_run_heartbeat_cycle(config):
     """Runs sections and collects results."""
+    from decafclaw.conversation_manager import ConversationManager
     from decafclaw.events import EventBus
 
     # Write a HEARTBEAT.md with two sections
@@ -185,9 +220,10 @@ async def test_run_heartbeat_cycle(config):
         ToolResult(text="HEARTBEAT_OK nothing to report"),
     ])
     bus = EventBus()
+    manager = ConversationManager(config, bus)
 
     with patch("decafclaw.agent.run_agent_turn", mock_agent):
-        results = await run_heartbeat_cycle(config, bus)
+        results = await run_heartbeat_cycle(config, bus, manager)
 
     assert len(results) == 2
     assert results[0]["title"] == "Task one"
@@ -200,14 +236,19 @@ async def test_run_heartbeat_cycle(config):
 @pytest.mark.asyncio
 async def test_run_heartbeat_cycle_empty(config):
     """No HEARTBEAT.md files returns empty list."""
+    from decafclaw.conversation_manager import ConversationManager
     from decafclaw.events import EventBus
-    results = await run_heartbeat_cycle(config, EventBus())
+
+    bus = EventBus()
+    manager = ConversationManager(config, bus)
+    results = await run_heartbeat_cycle(config, bus, manager)
     assert results == []
 
 
 @pytest.mark.asyncio
 async def test_run_heartbeat_cycle_section_failure(config):
     """A failing section doesn't stop subsequent sections."""
+    from decafclaw.conversation_manager import ConversationManager
     from decafclaw.events import EventBus
 
     admin_path = config.agent_path / "HEARTBEAT.md"
@@ -216,15 +257,18 @@ async def test_run_heartbeat_cycle_section_failure(config):
 
     call_count = 0
 
-    async def flaky_agent(ctx, prompt, history):
+    async def flaky_agent(ctx, prompt, history, **kwargs):
         nonlocal call_count
         call_count += 1
         if call_count == 1:
             raise RuntimeError("section exploded")
         return ToolResult(text="HEARTBEAT_OK")
 
+    bus = EventBus()
+    manager = ConversationManager(config, bus)
+
     with patch("decafclaw.agent.run_agent_turn", flaky_agent):
-        results = await run_heartbeat_cycle(config, EventBus())
+        results = await run_heartbeat_cycle(config, bus, manager)
 
     assert len(results) == 2
     assert "[error:" in results[0]["response"]
@@ -234,6 +278,7 @@ async def test_run_heartbeat_cycle_section_failure(config):
 @pytest.mark.asyncio
 async def test_run_heartbeat_cycle_isolated_history(config):
     """Each section gets its own empty history."""
+    from decafclaw.conversation_manager import ConversationManager
     from decafclaw.events import EventBus
 
     admin_path = config.agent_path / "HEARTBEAT.md"
@@ -242,16 +287,56 @@ async def test_run_heartbeat_cycle_isolated_history(config):
 
     histories_seen = []
 
-    async def capture_agent(ctx, prompt, history):
+    async def capture_agent(ctx, prompt, history, **kwargs):
         histories_seen.append(list(history))  # snapshot
         return ToolResult(text="HEARTBEAT_OK")
 
+    bus = EventBus()
+    manager = ConversationManager(config, bus)
+
     with patch("decafclaw.agent.run_agent_turn", capture_agent):
-        await run_heartbeat_cycle(config, EventBus())
+        await run_heartbeat_cycle(config, bus, manager)
 
     assert len(histories_seen) == 2
     assert histories_seen[0] == []
     assert histories_seen[1] == []
+
+
+# -- routing tests --
+
+
+@pytest.mark.asyncio
+async def test_run_section_turn_routes_through_manager(config, monkeypatch):
+    """run_section_turn routes through ConversationManager with the right TurnKind."""
+    from decafclaw.conversation_manager import ConversationManager, TurnKind
+    from decafclaw.events import EventBus
+    from decafclaw.heartbeat import run_section_turn
+
+    bus = EventBus()
+    manager = ConversationManager(config, bus)
+    seen = []
+
+    orig_enqueue = manager.enqueue_turn
+
+    async def spy_enqueue(conv_id, *, kind, prompt, **kwargs):
+        seen.append({"conv_id": conv_id, "kind": kind, "prompt": prompt[:40]})
+        return await orig_enqueue(conv_id, kind=kind, prompt=prompt, **kwargs)
+
+    monkeypatch.setattr(manager, "enqueue_turn", spy_enqueue)
+
+    async def fake_run_agent_turn(ctx, user_message, history, **kwargs):
+        return ToolResult(text="HEARTBEAT_OK")
+
+    monkeypatch.setattr("decafclaw.agent.run_agent_turn", fake_run_agent_turn)
+
+    section = {"title": "General", "body": "Do nothing.", "source": "workspace"}
+    result = await run_section_turn(config, bus, manager, section, "T", 0)
+
+    assert len(seen) == 1
+    assert seen[0]["conv_id"] == "heartbeat-T-0"
+    assert seen[0]["kind"] is TurnKind.HEARTBEAT_SECTION
+    assert result["is_ok"] is True
+    assert result["context_id"] is None
 
 
 # -- timer tests --
@@ -264,7 +349,7 @@ async def test_timer_disabled(config):
     shutdown = asyncio.Event()
     # Should return immediately, not block
     await asyncio.wait_for(
-        run_heartbeat_timer(config, None, shutdown),
+        run_heartbeat_timer(config, None, None, shutdown),
         timeout=1.0,
     )
 
@@ -272,6 +357,7 @@ async def test_timer_disabled(config):
 @pytest.mark.asyncio
 async def test_timer_fires_callback(config):
     """Timer fires on_results callback after interval."""
+    from decafclaw.conversation_manager import ConversationManager
     from decafclaw.events import EventBus
 
     config.heartbeat.interval = "1"  # 1 second
@@ -297,10 +383,13 @@ async def test_timer_fires_callback(config):
     original_poll = hb._POLL_INTERVAL
     hb._POLL_INTERVAL = 0.5  # fast polling for tests
 
+    bus = EventBus()
+    manager = ConversationManager(config, bus)
+
     try:
         with patch("decafclaw.agent.run_agent_turn", AsyncMock(return_value=ToolResult(text="HEARTBEAT_OK"))):
             await asyncio.gather(
-                run_heartbeat_timer(config, EventBus(), shutdown, on_results=capture_results),
+                run_heartbeat_timer(config, bus, manager, shutdown, on_results=capture_results),
                 stop_after_one(),
             )
     finally:
@@ -310,9 +399,30 @@ async def test_timer_fires_callback(config):
     assert results_received[0][0]["is_ok"] is True
 
 
+# -- heartbeat_tools tests --
+
+
+@pytest.mark.asyncio
+async def test_tool_heartbeat_trigger_without_manager_returns_error(config):
+    """heartbeat_trigger returns an error when ctx has no manager."""
+    from decafclaw.context import Context
+    from decafclaw.events import EventBus
+    from decafclaw.tools.heartbeat_tools import tool_heartbeat_trigger
+
+    bus = EventBus()
+    ctx = Context(config=config, event_bus=bus)
+    ctx.manager = None
+
+    result = await tool_heartbeat_trigger(ctx)
+    text = result.text if hasattr(result, "text") else str(result)
+    assert "error" in text.lower()
+    assert "manager" in text.lower()
+
+
 @pytest.mark.asyncio
 async def test_timer_respects_shutdown(config):
     """Timer stops when shutdown event is set."""
+    from decafclaw.conversation_manager import ConversationManager
     from decafclaw.events import EventBus
 
     config.heartbeat.interval = "300"  # 5 minutes — would block without shutdown
@@ -327,9 +437,12 @@ async def test_timer_respects_shutdown(config):
     original_poll = hb._POLL_INTERVAL
     hb._POLL_INTERVAL = 0.5
 
+    bus = EventBus()
+    manager = ConversationManager(config, bus)
+
     try:
         await asyncio.gather(
-            run_heartbeat_timer(config, EventBus(), shutdown),
+            run_heartbeat_timer(config, bus, manager, shutdown),
             signal_shutdown(),
         )
     finally:

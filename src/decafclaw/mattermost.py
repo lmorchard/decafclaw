@@ -602,6 +602,23 @@ class MattermostClient:
                     compaction_post_id = None
 
             elif event_type == "message_complete" and event.get("final"):
+                if event.get("suppress_user_message"):
+                    # WAKE turn ended with BACKGROUND_WAKE_OK — ensure any
+                    # buffered text is dropped so finalize() cannot post it.
+                    if cd:
+                        cd._text_buffer = ""
+                        cd._text_has_content = False
+                    return
+
+                # Use the final message_complete text as the authoritative
+                # user-visible response.  This ensures turns without streamed
+                # chunks (streaming OFF, or WAKE with on_stream_chunk=None)
+                # still render correctly when finalized.
+                final_text = event.get("text")
+                if cd and final_text:
+                    cd._text_buffer = final_text
+                    cd._text_has_content = True
+
                 # Post any response media (workspace image refs, etc.)
                 media = event.get("media") or []
                 if media and channel_id:
@@ -839,11 +856,11 @@ class MattermostClient:
                 return None
         return None
 
-    def _make_heartbeat_cycle(self, _channel_id, event_bus, config):
+    def _make_heartbeat_cycle(self, _channel_id, event_bus, config, manager):
         """Create an on_cycle callback that runs sections and posts results."""
 
         async def on_cycle():
             from .tools.heartbeat_tools import _guarded_heartbeat
-            await _guarded_heartbeat(config, event_bus)
+            await _guarded_heartbeat(config, event_bus, manager)
 
         return on_cycle

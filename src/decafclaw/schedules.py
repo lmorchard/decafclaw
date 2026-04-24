@@ -213,15 +213,15 @@ def is_due(config, task: ScheduleTask) -> bool:
 # -- Task execution -----------------------------------------------------------
 
 
-async def run_schedule_task(config, event_bus, task: ScheduleTask) -> dict:
-    """Run a single scheduled task as an agent turn.
+async def run_schedule_task(config, event_bus, manager, task: ScheduleTask) -> dict:
+    """Run a single scheduled task as an agent turn via ConversationManager.
 
     Returns {"task_name", "channel", "response", "is_ok", "context_id"}.
     """
-    from .agent import run_agent_turn
-    from .context import Context
+    from .conversation_manager import TurnKind
 
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    conv_id = f"schedule-{task.name}-{timestamp}"
     channel = task.channel or f"schedule:{task.name}"
 
     allowed_tools_set = None
@@ -239,65 +239,79 @@ async def run_schedule_task(config, event_bus, task: ScheduleTask) -> dict:
             p.replace("$SKILL_DIR", skill_dir) for p in task.shell_patterns
         ]
 
-    ctx = Context.for_task(
-        config, event_bus,
-        user_id=f"schedule-{task.source}",
-        conv_id=f"schedule-{task.name}-{timestamp}",
-        channel_id=channel,
-        channel_name=channel,
-        active_model=task.model,
-        task_mode="scheduled",
-        allowed_tools=allowed_tools_set,
-        preapproved_tools=preapproved,
-        preapproved_shell_patterns=shell_patterns,
-        preapproved_email_recipients=task.email_recipients or None,
-    )
+    # Per-task settings applied after the manager creates the context
+    required_skills = list(task.required_skills)
+    task_model = task.model
+    email_recipients = task.email_recipients or None
 
-    # Pre-activate required skills
-    if task.required_skills:
-        discovered = getattr(config, "discovered_skills", [])
-        skill_map = {s.name: s for s in discovered}
-        from .tools.skill_tools import activate_skill_internal
-        for skill_name in task.required_skills:
-            skill_info = skill_map.get(skill_name)
-            if skill_info:
-                try:
-                    await activate_skill_internal(ctx, skill_info)
-                except Exception as e:
-                    log.error(f"Failed to activate skill '{skill_name}' "
-                              f"for task '{task.name}': {e}")
+    async def setup_schedule_ctx(ctx) -> None:
+        """Apply per-task settings (model, tools, skills) to the context."""
+        if task_model:
+            ctx.active_model = task_model
+        if allowed_tools_set is not None:
+            ctx.tools.allowed = allowed_tools_set
+            ctx.tools.preapproved = preapproved
+        if shell_patterns:
+            ctx.tools.preapproved_shell_patterns = shell_patterns
+        if email_recipients is not None:
+            ctx.tools.preapproved_email_recipients = email_recipients
+        # Override channel info so events land in the right place
+        ctx.channel_id = channel
+        ctx.channel_name = channel
+        # Pre-activate required skills
+        if required_skills:
+            discovered = getattr(config, "discovered_skills", [])
+            skill_map = {s.name: s for s in discovered}
+            from .tools.skill_tools import activate_skill_internal
+            for skill_name in required_skills:
+                skill_info = skill_map.get(skill_name)
+                if skill_info:
+                    try:
+                        await activate_skill_internal(ctx, skill_info)
+                    except Exception as e:
+                        log.error(f"Failed to activate skill '{skill_name}' "
+                                  f"for task '{task.name}': {e}")
 
+    from .commands import substitute_body
     from .polling import build_task_preamble
 
     preamble = build_task_preamble("scheduled task", task.name)
-    from .commands import substitute_body
     body = substitute_body(task.body, skill_dir=str(task.path.parent.resolve()))
     prompt = preamble + body
 
     try:
-        result = await run_agent_turn(ctx, prompt, history=[])
-        response = result.text or "(no response)"
+        future = await manager.enqueue_turn(
+            conv_id=conv_id,
+            kind=TurnKind.SCHEDULED_TASK,
+            prompt=prompt,
+            history=[],
+            task_mode="scheduled",
+            user_id=f"schedule-{task.source}",
+            context_setup=setup_schedule_ctx,
+            metadata={"task_name": task.name, "channel": channel},
+        )
+        result_text = (await future) or "(no response)"
         from .heartbeat import is_heartbeat_ok
-        ok = is_heartbeat_ok(response)
+        ok = is_heartbeat_ok(result_text)
         await _notify_task_complete(
-            config, event_bus, task.name, response, ok, ctx.conv_id,
+            config, event_bus, task.name, result_text, ok, conv_id,
         )
         return {
             "task_name": task.name,
-            "channel": task.channel,
-            "response": response,
+            "channel": channel,
+            "response": result_text,
             "is_ok": ok,
-            "context_id": ctx.context_id,
+            "context_id": None,
         }
     except Exception as e:
         log.error(f"Scheduled task '{task.name}' failed: {e}", exc_info=True)
         await _notify_task_complete(
             config, event_bus, task.name, f"[error: {e}]",
-            ok=False, conv_id=ctx.conv_id,
+            ok=False, conv_id=conv_id,
         )
         return {
             "task_name": task.name,
-            "channel": task.channel,
+            "channel": channel,
             "response": f"[error: scheduled task failed: {e}]",
             "is_ok": False,
             "context_id": None,
@@ -331,7 +345,7 @@ async def _notify_task_complete(
 _SCHEDULE_POLL_INTERVAL = 60
 
 
-async def run_schedule_timer(config, event_bus, shutdown_event,
+async def run_schedule_timer(config, event_bus, manager, shutdown_event,
                               on_result=None, poll_interval=None):
     """Run the schedule timer loop.
 
@@ -365,7 +379,7 @@ async def run_schedule_timer(config, event_bus, shutdown_event,
             async def _run(t=task):
                 try:
                     write_last_run(config, t.name)
-                    result = await run_schedule_task(config, event_bus, t)
+                    result = await run_schedule_task(config, event_bus, manager, t)
                     if on_result:
                         try:
                             await on_result(result)

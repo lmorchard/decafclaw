@@ -285,6 +285,14 @@ class NotificationsConfig:
     channels: NotificationsChannelsConfig = field(default_factory=NotificationsChannelsConfig)
 
 
+@dataclass
+class BackgroundConfig:
+    """Configuration for background-process tool behavior."""
+    wake_max_per_window: int = 20
+    wake_window_sec: int = 60
+    default_completion_tail_lines: int = 50
+
+
 def is_secret(dc_class: type, field_name: str) -> bool:
     """Check if a dataclass field is marked as secret."""
     for f in dc_fields(dc_class):

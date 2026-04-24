@@ -11,7 +11,7 @@ from decafclaw.confirmations import (
     ConfirmationRequest,
     ConfirmationResponse,
 )
-from decafclaw.conversation_manager import ConversationManager, ConversationState
+from decafclaw.conversation_manager import ConversationManager, ConversationState, TurnKind
 from decafclaw.events import EventBus
 
 
@@ -377,6 +377,63 @@ async def test_startup_scan_empty_archive(manager):
 
 
 @pytest.mark.asyncio
+async def test_drain_pending_resolves_all_queued_futures(
+    manager, config, monkeypatch
+):
+    """Multiple USER messages queued while busy — all callers' futures must
+    resolve when the batch drains. Non-last futures fan out from the head
+    future and receive the same result."""
+    called = []
+
+    async def fake_run_agent_turn(ctx, user_message, history, **kwargs):
+        called.append(user_message)
+        from decafclaw.media import ToolResult
+        return ToolResult(text="combined-result")
+
+    monkeypatch.setattr("decafclaw.agent.run_agent_turn", fake_run_agent_turn)
+
+    state = manager._get_or_create("c1")
+    state.busy = True
+
+    f1 = await manager.enqueue_turn("c1", kind=TurnKind.USER, prompt="one")
+    f2 = await manager.enqueue_turn("c1", kind=TurnKind.USER, prompt="two")
+    f3 = await manager.enqueue_turn("c1", kind=TurnKind.USER, prompt="three")
+    assert len(state.pending_messages) == 3
+
+    # Release busy, drain manually.
+    state.busy = False
+    await manager._drain_pending(state)
+    # Let the spawned turn task run.
+    for fut in (f1, f2, f3):
+        await asyncio.wait_for(fut, timeout=2.0)
+    # All three resolved — non-last are None, last is the agent's response.
+    assert called == ["one\ntwo\nthree"]
+
+
+@pytest.mark.asyncio
+async def test_enqueue_turn_user_kind_runs_same_as_send_message(
+    manager, config, monkeypatch
+):
+    called = []
+
+    async def fake_run_agent_turn(ctx, user_message, history, **kwargs):
+        called.append({"text": user_message, "conv_id": ctx.conv_id})
+        from decafclaw.media import ToolResult
+        return ToolResult(text="ok")
+
+    monkeypatch.setattr("decafclaw.agent.run_agent_turn", fake_run_agent_turn)
+
+    future = await manager.enqueue_turn(
+        conv_id="c1",
+        kind=TurnKind.USER,
+        prompt="hello",
+        user_id="u",
+    )
+    await future
+    assert called == [{"text": "hello", "conv_id": "c1"}]
+
+
+@pytest.mark.asyncio
 async def test_respond_to_recovered_confirmation(manager):
     """Responding to a recovered confirmation (no running loop) dispatches recovery."""
     from decafclaw.archive import append_message
@@ -398,3 +455,542 @@ async def test_respond_to_recovered_confirmation(manager):
     # Pending confirmation should be cleared
     state = manager.get_state(conv_id)
     assert state.pending_confirmation is None
+
+
+# -- Per-kind policy matrix ----------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_enqueue_turn_heartbeat_kind_uses_for_task(
+    manager, config, monkeypatch
+):
+    seen_ctx = {}
+
+    async def fake_run_agent_turn(ctx, user_message, history, **kwargs):
+        seen_ctx["task_mode"] = ctx.task_mode
+        seen_ctx["skip_reflection"] = ctx.skip_reflection
+        seen_ctx["skip_vault_retrieval"] = ctx.skip_vault_retrieval
+        from decafclaw.media import ToolResult
+        return ToolResult(text="ok")
+
+    monkeypatch.setattr("decafclaw.agent.run_agent_turn", fake_run_agent_turn)
+
+    future = await manager.enqueue_turn(
+        conv_id="heartbeat-T-0",
+        kind=TurnKind.HEARTBEAT_SECTION,
+        prompt="do section",
+        history=[],
+        task_mode="heartbeat",
+    )
+    await future
+    assert seen_ctx["task_mode"] == "heartbeat"
+    assert seen_ctx["skip_reflection"] is True
+    assert seen_ctx["skip_vault_retrieval"] is True
+
+
+@pytest.mark.asyncio
+async def test_enqueue_turn_user_kind_has_empty_task_mode(
+    manager, config, monkeypatch
+):
+    seen_ctx = {}
+
+    async def fake_run_agent_turn(ctx, user_message, history, **kwargs):
+        seen_ctx["task_mode"] = ctx.task_mode
+        from decafclaw.media import ToolResult
+        return ToolResult(text="ok")
+
+    monkeypatch.setattr("decafclaw.agent.run_agent_turn", fake_run_agent_turn)
+
+    future = await manager.enqueue_turn(
+        conv_id="c1", kind=TurnKind.USER, prompt="hello",
+    )
+    await future
+    assert seen_ctx["task_mode"] == ""
+
+
+@pytest.mark.asyncio
+async def test_enqueue_turn_wake_kind_defaults_to_background_wake_mode(
+    manager, config, monkeypatch
+):
+    seen_ctx = {}
+
+    async def fake_run_agent_turn(ctx, user_message, history, **kwargs):
+        seen_ctx["task_mode"] = ctx.task_mode
+        from decafclaw.media import ToolResult
+        return ToolResult(text="ok")
+
+    monkeypatch.setattr("decafclaw.agent.run_agent_turn", fake_run_agent_turn)
+
+    future = await manager.enqueue_turn(
+        conv_id="c1", kind=TurnKind.WAKE, prompt="wake nudge", history=[],
+        # no explicit task_mode
+    )
+    await future
+    assert seen_ctx["task_mode"] == "background_wake"
+
+
+@pytest.mark.asyncio
+async def test_enqueue_turn_wake_kind_restores_skill_state(
+    manager, config, monkeypatch
+):
+    """WAKE fires on a persistent conv, so activated skills / preserved
+    flags / active_model must carry forward onto the ctx."""
+    seen_ctx = {}
+
+    async def fake_run_agent_turn(ctx, user_message, history, **kwargs):
+        seen_ctx["extra_tools"] = dict(ctx.tools.extra)
+        seen_ctx["activated"] = set(ctx.skills.activated)
+        seen_ctx["skip_vault_retrieval"] = ctx.skip_vault_retrieval
+        seen_ctx["active_model"] = ctx.active_model
+        from decafclaw.media import ToolResult
+        return ToolResult(text="ok")
+
+    monkeypatch.setattr("decafclaw.agent.run_agent_turn", fake_run_agent_turn)
+
+    state = manager._get_or_create("c1")
+    state.skill_state = {
+        "extra_tools": {"tool_x": lambda ctx: None},
+        "extra_tool_definitions": [{"name": "tool_x"}],
+        "activated_skills": {"skill_x"},
+    }
+    state.skip_vault_retrieval = True
+    state.active_model = "fancy-model"
+
+    future = await manager.enqueue_turn(
+        conv_id="c1",
+        kind=TurnKind.WAKE,
+        prompt="wake",
+        history=[],
+    )
+    await future
+
+    assert "tool_x" in seen_ctx["extra_tools"]
+    assert seen_ctx["activated"] == {"skill_x"}
+    assert seen_ctx["skip_vault_retrieval"] is True
+    assert seen_ctx["active_model"] == "fancy-model"
+
+
+@pytest.mark.asyncio
+async def test_drain_pending_fires_mixed_kinds_one_at_a_time(
+    manager, config, monkeypatch
+):
+    fires = []
+
+    async def fake_run_agent_turn(ctx, user_message, history, **kwargs):
+        fires.append({"text": user_message, "task_mode": ctx.task_mode})
+        from decafclaw.media import ToolResult
+        return ToolResult(text="ok")
+
+    monkeypatch.setattr("decafclaw.agent.run_agent_turn", fake_run_agent_turn)
+
+    # Simulate busy state.
+    state = manager._get_or_create("c1")
+    state.busy = True
+
+    u1 = await manager.enqueue_turn("c1", kind=TurnKind.USER, prompt="hello1")
+    u2 = await manager.enqueue_turn("c1", kind=TurnKind.USER, prompt="hello2")
+    wake = await manager.enqueue_turn("c1", kind=TurnKind.WAKE, prompt="wake",
+                                       history=[])
+
+    assert len(state.pending_messages) == 3
+
+    # Release busy; manually drain.
+    state.busy = False
+    await manager._drain_pending(state)
+
+    # Wait for drain-triggered turns (_start_turn runs as asyncio.Task).
+    for fut in (u1, u2, wake):
+        await asyncio.wait_for(fut, timeout=2.0)
+
+    # Expected: combined USER turn first, then WAKE turn.
+    assert len(fires) == 2
+    assert fires[0]["text"] == "hello1\nhello2"
+    assert fires[0]["task_mode"] == ""
+    assert fires[1]["text"] == "wake"
+
+
+# -- Wake rate limiter ---------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_wake_rate_limiter_drops_after_max(manager, config, monkeypatch):
+    """N+1th wake within the window is dropped; earlier wakes still run."""
+    from decafclaw.config_types import BackgroundConfig
+    config.background = BackgroundConfig(wake_max_per_window=2, wake_window_sec=60)
+    # Refresh rate-limiter params on the manager from updated config.
+    manager._wake_max_per_window = config.background.wake_max_per_window
+    manager._wake_window_sec = config.background.wake_window_sec
+
+    fires = []
+
+    async def fake_run_agent_turn(ctx, user_message, history, **kwargs):
+        fires.append(user_message)
+        from decafclaw.media import ToolResult
+        return ToolResult(text="ok")
+
+    monkeypatch.setattr("decafclaw.agent.run_agent_turn", fake_run_agent_turn)
+
+    # Fire 4 wakes — only 2 should actually run (3rd and 4th are dropped by
+    # the rate limiter).
+    futures = []
+    for i in range(4):
+        fut = await manager.enqueue_turn(
+            "c1", kind=TurnKind.WAKE, prompt=f"wake-{i}", history=[])
+        futures.append(fut)
+
+    # Dropped futures resolve to None immediately.
+    assert futures[2].done() and futures[2].result() is None
+    assert futures[3].done() and futures[3].result() is None
+
+    # Wait for the accepted wakes to complete.
+    results = [await asyncio.wait_for(f, timeout=2.0) for f in futures[:2]]
+
+    assert len(fires) == 2
+    assert "wake-0" in fires
+    assert "wake-1" in fires
+    assert results[0] is not None  # ran, returns text
+    assert results[1] is not None
+
+
+@pytest.mark.asyncio
+async def test_wake_rate_limiter_window_ages_out(manager, config, monkeypatch):
+    """After wake_window_sec elapses, the limiter accepts new wakes again."""
+    from decafclaw.config_types import BackgroundConfig
+    config.background = BackgroundConfig(wake_max_per_window=1, wake_window_sec=60)
+    manager._wake_max_per_window = config.background.wake_max_per_window
+    manager._wake_window_sec = config.background.wake_window_sec
+
+    fires = []
+
+    async def fake_run_agent_turn(ctx, user_message, history, **kwargs):
+        fires.append(user_message)
+        from decafclaw.media import ToolResult
+        return ToolResult(text="ok")
+
+    monkeypatch.setattr("decafclaw.agent.run_agent_turn", fake_run_agent_turn)
+
+    # Pin time so the window moves deterministically.
+    now = [1000.0]
+    monkeypatch.setattr("decafclaw.conversation_manager.time.monotonic",
+                        lambda: now[0])
+
+    # Fire 1: accepted.
+    f1 = await manager.enqueue_turn("c1", kind=TurnKind.WAKE, prompt="w1", history=[])
+    await asyncio.wait_for(f1, timeout=2.0)
+
+    # Fire 2 immediately (same window): dropped.
+    f2 = await manager.enqueue_turn("c1", kind=TurnKind.WAKE, prompt="w2", history=[])
+    assert f2.done() and f2.result() is None
+
+    # Advance past the window.
+    now[0] += 61
+
+    # Fire 3: accepted again (old entry aged out).
+    f3 = await manager.enqueue_turn("c1", kind=TurnKind.WAKE, prompt="w3", history=[])
+    await asyncio.wait_for(f3, timeout=2.0)
+
+    assert "w1" in fires
+    assert "w3" in fires
+    assert "w2" not in fires
+
+
+# -- suppress_user_message on WAKE turns -------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_wake_turn_emits_suppress_user_message_when_ok(
+    manager, config, monkeypatch
+):
+    """WAKE turn ending with BACKGROUND_WAKE_OK triggers suppress_user_message=True."""
+    events = []
+    manager.subscribe("c1", lambda e: events.append(e))
+
+    async def fake_run_agent_turn(ctx, user_message, history, **kwargs):
+        from decafclaw.media import ToolResult
+        return ToolResult(text="BACKGROUND_WAKE_OK — nothing to report.")
+    monkeypatch.setattr("decafclaw.agent.run_agent_turn", fake_run_agent_turn)
+
+    fut = await manager.enqueue_turn(
+        conv_id="c1", kind=TurnKind.WAKE, prompt="wake", history=[])
+    await asyncio.wait_for(fut, timeout=2.0)
+
+    completes = [e for e in events if e.get("type") == "message_complete"]
+    assert completes
+    assert completes[-1].get("suppress_user_message") is True
+
+
+@pytest.mark.asyncio
+async def test_wake_turn_no_suppress_when_agent_responds_normally(
+    manager, config, monkeypatch
+):
+    """WAKE turn with a regular response should NOT suppress."""
+    events = []
+    manager.subscribe("c1", lambda e: events.append(e))
+
+    async def fake_run_agent_turn(ctx, user_message, history, **kwargs):
+        from decafclaw.media import ToolResult
+        return ToolResult(text="Here's what happened with the job.")
+    monkeypatch.setattr("decafclaw.agent.run_agent_turn", fake_run_agent_turn)
+
+    fut = await manager.enqueue_turn(
+        conv_id="c1", kind=TurnKind.WAKE, prompt="wake", history=[])
+    await asyncio.wait_for(fut, timeout=2.0)
+
+    completes = [e for e in events if e.get("type") == "message_complete"]
+    assert completes
+    assert completes[-1].get("suppress_user_message") is False
+
+
+@pytest.mark.asyncio
+async def test_user_turn_never_suppresses_even_with_sentinel(
+    manager, config, monkeypatch
+):
+    """USER turns NEVER get suppress_user_message=True, even if the agent
+    happens to emit the sentinel."""
+    events = []
+    manager.subscribe("c1", lambda e: events.append(e))
+
+    async def fake_run_agent_turn(ctx, user_message, history, **kwargs):
+        from decafclaw.media import ToolResult
+        return ToolResult(text="BACKGROUND_WAKE_OK (agent wrote sentinel incorrectly)")
+    monkeypatch.setattr("decafclaw.agent.run_agent_turn", fake_run_agent_turn)
+
+    fut = await manager.enqueue_turn(
+        conv_id="c1", kind=TurnKind.USER, prompt="hello")
+    await asyncio.wait_for(fut, timeout=2.0)
+
+    completes = [e for e in events if e.get("type") == "message_complete"]
+    assert completes
+    assert completes[-1].get("suppress_user_message") is False
+
+
+@pytest.mark.asyncio
+async def test_transport_subscriber_skips_on_suppress(manager, config, monkeypatch):
+    """When a wake turn emits suppress_user_message=True, a subscriber that
+    treats the flag correctly should NOT process the message for user display."""
+    posted_messages = []
+
+    def subscriber(event):
+        if event.get("type") == "message_complete":
+            if event.get("suppress_user_message"):
+                return  # transport correctly skips suppressed messages
+            posted_messages.append(event.get("text"))
+
+    manager.subscribe("c1", subscriber)
+
+    async def fake_run_agent_turn(ctx, user_message, history, **kwargs):
+        from decafclaw.media import ToolResult
+        return ToolResult(text="BACKGROUND_WAKE_OK")
+    monkeypatch.setattr("decafclaw.agent.run_agent_turn", fake_run_agent_turn)
+
+    fut = await manager.enqueue_turn(
+        conv_id="c1", kind=TurnKind.WAKE, prompt="wake", history=[])
+    await asyncio.wait_for(fut, timeout=2.0)
+
+    assert posted_messages == []  # suppressed — transport didn't post.
+
+
+# ---------------------------------------------------------------------------
+# Item 3: WAKE turns disable the streaming callback
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_wake_turn_disables_streaming_callback(manager, config, monkeypatch):
+    """WAKE turns run with on_stream_chunk disabled — prevents streamed
+    text from reaching the user before BACKGROUND_WAKE_OK suppression."""
+    seen_stream_callback = []
+
+    async def fake_run_agent_turn(ctx, user_message, history, **kwargs):
+        seen_stream_callback.append(ctx.on_stream_chunk)
+        from decafclaw.media import ToolResult
+        return ToolResult(text="ok")
+
+    # Force streaming config on (so the USER case would set the callback).
+    monkeypatch.setattr("decafclaw.config.resolve_streaming", lambda c, m: True)
+    monkeypatch.setattr("decafclaw.agent.run_agent_turn", fake_run_agent_turn)
+
+    fut = await manager.enqueue_turn(
+        conv_id="c1", kind=TurnKind.WAKE, prompt="wake", history=[])
+    await asyncio.wait_for(fut, timeout=2.0)
+
+    assert seen_stream_callback[0] is None  # WAKE: no streaming
+
+
+@pytest.mark.asyncio
+async def test_user_turn_keeps_streaming_callback(manager, config, monkeypatch):
+    """USER turns get the streaming callback when streaming is enabled."""
+    seen_stream_callback = []
+
+    async def fake_run_agent_turn(ctx, user_message, history, **kwargs):
+        seen_stream_callback.append(ctx.on_stream_chunk)
+        from decafclaw.media import ToolResult
+        return ToolResult(text="ok")
+
+    monkeypatch.setattr("decafclaw.config.resolve_streaming", lambda c, m: True)
+    monkeypatch.setattr("decafclaw.agent.run_agent_turn", fake_run_agent_turn)
+
+    fut = await manager.enqueue_turn(
+        conv_id="c1", kind=TurnKind.USER, prompt="hi")
+    await asyncio.wait_for(fut, timeout=2.0)
+
+    assert seen_stream_callback[0] is not None  # USER: streaming active
+
+
+@pytest.mark.asyncio
+async def test_drain_pending_fanout_handles_head_exception(
+    manager, config, monkeypatch
+):
+    """_fanout must not raise if the head future completed with set_result (even
+    if the agent returned an error string).  This also guards against future
+    refactors where the head could receive set_exception — tail futures must
+    still resolve to None rather than hanging."""
+    # run_agent_turn raising causes _start_turn's except-handler to call
+    # future.set_result("[error: ...]") — so we verify the fanout still works
+    # and all three futures resolve without hanging.
+    call_count = []
+
+    async def boom(ctx, user_message, history, **kwargs):
+        call_count.append(1)
+        raise RuntimeError("simulated failure")
+
+    monkeypatch.setattr("decafclaw.agent.run_agent_turn", boom)
+
+    state = manager._get_or_create("c1")
+    state.busy = True
+
+    f1 = await manager.enqueue_turn("c1", kind=TurnKind.USER, prompt="one")
+    f2 = await manager.enqueue_turn("c1", kind=TurnKind.USER, prompt="two")
+    f3 = await manager.enqueue_turn("c1", kind=TurnKind.USER, prompt="three")
+    assert len(state.pending_messages) == 3
+
+    state.busy = False
+    await manager._drain_pending(state)
+
+    # All three must resolve — they must not hang.
+    for fut in (f1, f2, f3):
+        await asyncio.wait_for(fut, timeout=2.0)
+
+    # The head future (f3, last in queue) gets the "[error: ...]" result from
+    # _start_turn's exception handler via set_result (never set_exception).
+    # The _fanout callback propagates that same result to the tail futures so
+    # every waiting caller is unblocked.  The primary invariant is that none
+    # of them hang — the exact value (error string or None) is secondary.
+    assert f3.result() is not None and "error" in f3.result()
+    # Tail futures receive the same result value via _fanout.
+    assert f1.result() == f3.result()
+    assert f2.result() == f3.result()
+
+
+# -- WAKE inherits last USER turn's transport context --------------------------
+
+
+@pytest.mark.asyncio
+async def test_wake_inherits_last_user_turn_context(manager, config, monkeypatch):
+    """WAKE turn without explicit user_id/context_setup inherits from the
+    last USER turn on the same conv."""
+    from decafclaw.media import ToolResult
+
+    seen = []
+
+    def my_setup(ctx):
+        ctx.channel_name = "custom-channel"
+
+    async def fake_run_agent_turn(ctx, user_message, history, **kwargs):
+        seen.append({
+            "user_id": ctx.user_id,
+            "channel_name": getattr(ctx, "channel_name", None),
+            "task_mode": ctx.task_mode,
+        })
+        return ToolResult(text="ok")
+
+    monkeypatch.setattr("decafclaw.agent.run_agent_turn", fake_run_agent_turn)
+
+    # 1. USER turn — sets user_id + context_setup
+    f1 = await manager.enqueue_turn(
+        "c1", kind=TurnKind.USER, prompt="hi",
+        user_id="alice", context_setup=my_setup,
+    )
+    await asyncio.wait_for(f1, timeout=2.0)
+
+    # 2. WAKE turn — no explicit user_id/context_setup — inherits
+    f2 = await manager.enqueue_turn(
+        "c1", kind=TurnKind.WAKE, prompt="wake", history=[],
+    )
+    await asyncio.wait_for(f2, timeout=2.0)
+
+    assert len(seen) == 2
+    # USER turn
+    assert seen[0]["user_id"] == "alice"
+    assert seen[0]["channel_name"] == "custom-channel"
+    # WAKE turn inherits user_id and context_setup
+    assert seen[1]["user_id"] == "alice"
+    assert seen[1]["channel_name"] == "custom-channel"
+    assert seen[1]["task_mode"] == "background_wake"
+
+
+@pytest.mark.asyncio
+async def test_wake_without_prior_user_turn_uses_empty_context(
+    manager, config, monkeypatch
+):
+    """WAKE on a conv with no prior USER turn gets empty user_id / no setup."""
+    from decafclaw.media import ToolResult
+
+    seen = []
+
+    async def fake_run_agent_turn(ctx, user_message, history, **kwargs):
+        seen.append({
+            "user_id": ctx.user_id,
+            "channel_name": getattr(ctx, "channel_name", None),
+        })
+        return ToolResult(text="ok")
+
+    monkeypatch.setattr("decafclaw.agent.run_agent_turn", fake_run_agent_turn)
+
+    # No prior USER turn — fire WAKE directly (like a heartbeat-originated wake)
+    f = await manager.enqueue_turn(
+        "heartbeat-T-0", kind=TurnKind.WAKE, prompt="wake", history=[],
+    )
+    await asyncio.wait_for(f, timeout=2.0)
+
+    assert len(seen) == 1
+    assert seen[0]["user_id"] == ""
+
+
+@pytest.mark.asyncio
+async def test_wake_explicit_context_overrides_inherited(
+    manager, config, monkeypatch
+):
+    """If caller passes explicit user_id/context_setup to WAKE, those win
+    over the inherited values."""
+    from decafclaw.media import ToolResult
+
+    seen = []
+
+    def user_setup(ctx):
+        ctx.channel_name = "user-channel"
+
+    def wake_setup(ctx):
+        ctx.channel_name = "wake-channel"
+
+    async def fake_run_agent_turn(ctx, user_message, history, **kwargs):
+        seen.append({
+            "user_id": ctx.user_id,
+            "channel_name": getattr(ctx, "channel_name", None),
+        })
+        return ToolResult(text="ok")
+
+    monkeypatch.setattr("decafclaw.agent.run_agent_turn", fake_run_agent_turn)
+
+    f1 = await manager.enqueue_turn(
+        "c1", kind=TurnKind.USER, prompt="hi",
+        user_id="alice", context_setup=user_setup,
+    )
+    await asyncio.wait_for(f1, timeout=2.0)
+
+    f2 = await manager.enqueue_turn(
+        "c1", kind=TurnKind.WAKE, prompt="wake", history=[],
+        user_id="explicit-wake-user", context_setup=wake_setup,
+    )
+    await asyncio.wait_for(f2, timeout=2.0)
+
+    assert seen[1]["user_id"] == "explicit-wake-user"
+    assert seen[1]["channel_name"] == "wake-channel"

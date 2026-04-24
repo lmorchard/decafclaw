@@ -17,18 +17,21 @@ from decafclaw.media import ToolResult
 @pytest.mark.asyncio
 async def test_heartbeat_cycle_emits_notification(config):
     """run_heartbeat_cycle appends an inbox notification summarizing the cycle."""
+    from decafclaw.conversation_manager import ConversationManager
     from decafclaw.heartbeat import run_heartbeat_cycle
 
     admin_path = config.agent_path / "HEARTBEAT.md"
     admin_path.parent.mkdir(parents=True, exist_ok=True)
     admin_path.write_text("## A\n\nTask A.\n\n## B\n\nTask B.\n")
 
+    bus = EventBus()
+    manager = ConversationManager(config, bus)
     mock_agent = AsyncMock(side_effect=[
         ToolResult(text="HEARTBEAT_OK"),
         ToolResult(text="Something broke"),  # not OK
     ])
     with patch("decafclaw.agent.run_agent_turn", mock_agent):
-        await run_heartbeat_cycle(config, EventBus())
+        await run_heartbeat_cycle(config, bus, manager)
 
     records, _ = notifs.read_inbox(config)
     assert len(records) == 1
@@ -41,9 +44,12 @@ async def test_heartbeat_cycle_emits_notification(config):
 @pytest.mark.asyncio
 async def test_heartbeat_cycle_empty_no_notification(config):
     """Empty cycle (no sections) does not emit a notification."""
+    from decafclaw.conversation_manager import ConversationManager
     from decafclaw.heartbeat import run_heartbeat_cycle
 
-    await run_heartbeat_cycle(config, EventBus())
+    bus = EventBus()
+    manager = ConversationManager(config, bus)
+    await run_heartbeat_cycle(config, bus, manager)
     records, _ = notifs.read_inbox(config)
     assert records == []
 
@@ -54,6 +60,7 @@ async def test_heartbeat_cycle_empty_no_notification(config):
 @pytest.mark.asyncio
 async def test_scheduled_task_emits_notification(config, tmp_path):
     """run_schedule_task emits an inbox notification on completion."""
+    from decafclaw.conversation_manager import ConversationManager
     from decafclaw.schedules import ScheduleTask, run_schedule_task
 
     skill_dir = tmp_path / "skill"
@@ -67,9 +74,11 @@ async def test_scheduled_task_emits_notification(config, tmp_path):
         model="", allowed_tools=[], required_skills=[], shell_patterns=[],
     )
 
+    bus = EventBus()
+    manager = ConversationManager(config, bus)
     with patch("decafclaw.agent.run_agent_turn",
                AsyncMock(return_value=ToolResult(text="HEARTBEAT_OK: done"))):
-        await run_schedule_task(config, EventBus(), task)
+        await run_schedule_task(config, bus, manager, task)
 
     records, _ = notifs.read_inbox(config)
     assert len(records) == 1
@@ -83,6 +92,7 @@ async def test_scheduled_task_emits_notification(config, tmp_path):
 @pytest.mark.asyncio
 async def test_scheduled_task_failure_emits_high_priority(config, tmp_path):
     """A failing scheduled task emits a high-priority alert."""
+    from decafclaw.conversation_manager import ConversationManager
     from decafclaw.schedules import ScheduleTask, run_schedule_task
 
     skill_dir = tmp_path / "skill"
@@ -96,9 +106,11 @@ async def test_scheduled_task_failure_emits_high_priority(config, tmp_path):
         model="", allowed_tools=[], required_skills=[], shell_patterns=[],
     )
 
+    bus = EventBus()
+    manager = ConversationManager(config, bus)
     with patch("decafclaw.agent.run_agent_turn",
                AsyncMock(side_effect=RuntimeError("boom"))):
-        await run_schedule_task(config, EventBus(), task)
+        await run_schedule_task(config, bus, manager, task)
 
     records, _ = notifs.read_inbox(config)
     assert len(records) == 1
