@@ -20,7 +20,7 @@ Single global default with optional per-tool override. MCP tools are not touched
 
 - New field on `AgentConfig` (in `src/decafclaw/config_types.py`):
   `tool_timeout_sec: int = 180`
-- Resolvable via env var `AGENT_TOOL_TIMEOUT_SEC` and `data/{agent_id}/config.json` per the existing resolution chain.
+- Resolvable via env var `TOOL_TIMEOUT_SEC` and `data/{agent_id}/config.json` per the existing resolution chain.
 - `make config` displays it.
 - `0` or a negative value is treated as "disabled" — no wrapping, equivalent to every tool opting out.
 
