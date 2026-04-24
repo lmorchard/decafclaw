@@ -166,6 +166,10 @@ class TestNotify:
         assert event["type"] == "notification_created"
         assert event["record"]["id"] == rec.id
         assert event["record"]["priority"] == "high"
+        # unread_count is computed at publish time so subscribers don't
+        # need to re-read the inbox.
+        assert event["unread_count"] == notifs.unread_count(config)
+        assert event["unread_count"] == 1
         # Inbox write still happened
         lines = _read_jsonl(notifs._inbox_path(config))
         assert lines[0]["id"] == rec.id
@@ -285,6 +289,92 @@ class TestReadState:
         read_ids = notifs.get_read_ids(config)
         assert a.id in read_ids
         assert b.id not in read_ids
+
+
+class TestReadEvents:
+    """Event-bus publishes from mark_read / mark_all_read (WebSocket push)."""
+
+    @pytest.mark.asyncio
+    async def test_mark_read_publishes_event(self, config):
+        from decafclaw.events import EventBus
+        bus = EventBus()
+        received: list[dict] = []
+        bus.subscribe(lambda e: received.append(e))
+
+        await notifs.notify(config, category="t", title="A")
+        rec = await notifs.notify(config, category="t", title="B")
+        received.clear()  # ignore the notification_created events
+
+        await notifs.mark_read(config, rec.id, event_bus=bus)
+
+        assert len(received) == 1
+        ev = received[0]
+        assert ev["type"] == "notification_read"
+        assert ev["ids"] == [rec.id]
+        assert ev["unread_count"] == 1  # the other record is still unread
+
+    @pytest.mark.asyncio
+    async def test_mark_read_no_bus_no_publish(self, config):
+        """Back-compat: omitting event_bus still persists the read-state."""
+        rec = await notifs.notify(config, category="t", title="A")
+        await notifs.mark_read(config, rec.id)  # no event_bus kwarg
+        assert notifs.unread_count(config) == 0
+
+    @pytest.mark.asyncio
+    async def test_mark_all_read_aggregates_ids(self, config):
+        from decafclaw.events import EventBus
+        bus = EventBus()
+        received: list[dict] = []
+        bus.subscribe(lambda e: received.append(e))
+
+        a = await notifs.notify(config, category="t", title="A")
+        b = await notifs.notify(config, category="t", title="B")
+        c = await notifs.notify(config, category="t", title="C")
+        # Pre-read one; mark_all should only emit ids for the two that
+        # actually transition from unread to read.
+        await notifs.mark_read(config, a.id)
+        received.clear()
+
+        await notifs.mark_all_read(config, event_bus=bus)
+
+        assert len(received) == 1
+        ev = received[0]
+        assert ev["type"] == "notification_read"
+        assert set(ev["ids"]) == {b.id, c.id}
+        assert a.id not in ev["ids"]
+        assert ev["unread_count"] == 0
+
+    @pytest.mark.asyncio
+    async def test_mark_all_read_empty_inbox_skips_publish(self, config):
+        """Nothing to mark → no event (avoids no-op churn)."""
+        from decafclaw.events import EventBus
+        bus = EventBus()
+        received: list[dict] = []
+        bus.subscribe(lambda e: received.append(e))
+
+        await notifs.mark_all_read(config, event_bus=bus)
+        assert received == []
+
+    @pytest.mark.asyncio
+    async def test_mark_all_read_fully_read_inbox_skips_publish(self, config):
+        from decafclaw.events import EventBus
+        bus = EventBus()
+        received: list[dict] = []
+        bus.subscribe(lambda e: received.append(e))
+
+        rec = await notifs.notify(config, category="t", title="A")
+        await notifs.mark_read(config, rec.id)
+        received.clear()
+
+        await notifs.mark_all_read(config, event_bus=bus)
+        assert received == []
+
+    @pytest.mark.asyncio
+    async def test_mark_all_read_no_bus_no_publish(self, config):
+        """Back-compat: omitting event_bus still persists read-all state."""
+        await notifs.notify(config, category="t", title="A")
+        await notifs.mark_all_read(config)
+        assert notifs.unread_count(config) == 0
 
 
 class TestUnreadCount:

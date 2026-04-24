@@ -297,11 +297,15 @@ async def notify(
 
     # Fan out to channel adapters after the durable write. Event bus is
     # optional: when absent (some tests, ad-hoc callers), dispatch is
-    # simply skipped.
+    # simply skipped. `unread_count` is computed once here so every
+    # subscriber (channel adapters, WebSocket bridge) can use it without
+    # re-reading the inbox — see docs/notifications.md for the WebSocket
+    # push architecture.
     if event_bus is not None:
         await event_bus.publish({
             "type": "notification_created",
             "record": record.to_dict(),
+            "unread_count": unread_count(config),
         })
 
     return record
@@ -336,8 +340,13 @@ def read_inbox(
     return [NotificationRecord.from_dict(r) for r in all_records], has_more
 
 
-async def mark_read(config, record_id: str) -> None:
-    """Mark a single notification read. Idempotent."""
+async def mark_read(config, record_id: str, event_bus=None) -> None:
+    """Mark a single notification read. Idempotent.
+
+    When ``event_bus`` is provided, a ``notification_read`` event is
+    published after the persist so the WebSocket bridge can fan the
+    change out to connected clients. See docs/notifications.md.
+    """
     event = {
         "event": "read",
         "id": record_id,
@@ -348,17 +357,52 @@ async def mark_read(config, record_id: str) -> None:
         _rotate_read_log_if_needed(config)
         _append_line(_read_log_path(config), event)
 
+    if event_bus is not None:
+        await event_bus.publish({
+            "type": "notification_read",
+            "ids": [record_id],
+            "unread_count": unread_count(config),
+        })
 
-async def mark_all_read(config) -> None:
-    """Mark all currently-visible notifications read."""
+
+async def mark_all_read(config, event_bus=None) -> None:
+    """Mark all currently-visible notifications read.
+
+    When ``event_bus`` is provided and there was at least one unread
+    record, a single ``notification_read`` event is published carrying
+    every id that transitioned from unread to read. An already-fully-
+    read inbox is a no-op — no event.
+    """
     event = {
         "event": "read-all",
         "timestamp": _now_iso(),
     }
     lock = _get_lock(config)
     async with lock:
+        # Snapshot the set of ids that are about to transition from
+        # unread → read. Captured inside the lock so a concurrent
+        # mark_read can't shrink the snapshot out from under us.
+        read_before = get_read_ids(config)
+        live_ids = [
+            r.get("id", "") for r in _read_lines(_inbox_path(config))
+            if r.get("id", "")
+        ]
+        unread_snapshot = [rid for rid in live_ids if rid not in read_before]
+
         _rotate_read_log_if_needed(config)
         _append_line(_read_log_path(config), event)
+
+    if event_bus is not None and unread_snapshot:
+        # Recompute the count at publish time (not hardcoded to 0): the
+        # lock is released before this publish, so a concurrent notify()
+        # may have appended a new unread record in the interval. Reading
+        # at publish time keeps the event's count consistent with any
+        # notification_created event the same client may interleave.
+        await event_bus.publish({
+            "type": "notification_read",
+            "ids": unread_snapshot,
+            "unread_count": unread_count(config),
+        })
 
 
 def get_read_ids(config) -> set[str]:

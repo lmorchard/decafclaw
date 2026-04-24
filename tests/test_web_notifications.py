@@ -216,3 +216,39 @@ async def test_mark_all_read(authed_client, http_config):
 
     listing = (await authed_client.get("/api/notifications")).json()
     assert all(r["read"] for r in listing["records"])
+
+
+# -- Event-bus publishes from REST mark-read endpoints ------------------------
+
+
+@pytest.mark.asyncio
+async def test_mark_read_endpoint_publishes_event(authed_client, http_config, bus):
+    """POST /api/notifications/{id}/read fires notification_read on the bus."""
+    rec = await notifs.notify(http_config, category="t", title="A")
+
+    received: list[dict] = []
+    bus.subscribe(lambda e: received.append(e))
+
+    resp = await authed_client.post(f"/api/notifications/{rec.id}/read")
+    assert resp.status_code == 200
+    read_events = [e for e in received if e.get("type") == "notification_read"]
+    assert len(read_events) == 1
+    assert read_events[0]["ids"] == [rec.id]
+    assert read_events[0]["unread_count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_mark_all_read_endpoint_publishes_event(authed_client, http_config, bus):
+    """POST /api/notifications/read-all fires one aggregate notification_read."""
+    a = await notifs.notify(http_config, category="t", title="A")
+    b = await notifs.notify(http_config, category="t", title="B")
+
+    received: list[dict] = []
+    bus.subscribe(lambda e: received.append(e))
+
+    resp = await authed_client.post("/api/notifications/read-all")
+    assert resp.status_code == 200
+    read_events = [e for e in received if e.get("type") == "notification_read"]
+    assert len(read_events) == 1
+    assert set(read_events[0]["ids"]) == {a.id, b.id}
+    assert read_events[0]["unread_count"] == 0

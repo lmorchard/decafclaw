@@ -51,7 +51,6 @@ class TestDefaults:
     def test_notifications_defaults(self):
         c = Config()
         assert c.notifications.retention_days == 30
-        assert c.notifications.poll_interval_sec == 30
         # Channel adapters default to disabled with no recipient.
         assert c.notifications.channels.mattermost_dm.enabled is False
         assert c.notifications.channels.mattermost_dm.recipient_username == ""
@@ -136,12 +135,11 @@ class TestJsonFileLoading:
         agent_dir.mkdir()
         config_file = agent_dir / "config.json"
         config_file.write_text(json.dumps({
-            "notifications": {"retention_days": 7, "poll_interval_sec": 60},
+            "notifications": {"retention_days": 7},
         }))
         monkeypatch.setenv("DATA_HOME", str(tmp_path))
         c = load_config()
         assert c.notifications.retention_days == 7
-        assert c.notifications.poll_interval_sec == 60
 
     def test_loads_email_from_json(self, tmp_path, monkeypatch):
         """EmailConfig loads from JSON."""

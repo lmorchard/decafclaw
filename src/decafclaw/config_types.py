@@ -281,7 +281,6 @@ class NotificationsChannelsConfig:
 class NotificationsConfig:
     """Notification inbox settings. See docs/notifications.md."""
     retention_days: int = 30
-    poll_interval_sec: int = 30
     channels: NotificationsChannelsConfig = field(default_factory=NotificationsChannelsConfig)
 
 

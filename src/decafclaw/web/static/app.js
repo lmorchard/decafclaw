@@ -393,6 +393,15 @@ ws.addEventListener('message', (e) => {
       detail: { conv_id: msg.conv_id },
     }));
   }
+  // Notification push events — the bell component listens at the window
+  // level so we don't have to hand it the raw ws instance. Payloads mirror
+  // the event bus shape (see docs/notifications.md).
+  if (msg?.type === 'notification_created') {
+    window.dispatchEvent(new CustomEvent('notification-created', { detail: msg }));
+  }
+  if (msg?.type === 'notification_read') {
+    window.dispatchEvent(new CustomEvent('notification-read', { detail: msg }));
+  }
 });
 
 // -- Connection status --------------------------------------------------------
@@ -403,6 +412,9 @@ ws.addEventListener('close', () => {
 });
 ws.addEventListener('open', () => {
   if (connectionBanner) connectionBanner.classList.add('hidden');
+  // Signal for components that need to re-seed on (re)connect, e.g. the
+  // notification bell fetching the unread count after a WS drop+reconnect.
+  window.dispatchEvent(new CustomEvent('ws-connected'));
 });
 
 // -- Auth state management ----------------------------------------------------

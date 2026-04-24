@@ -487,14 +487,14 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> Starlette:
         record_id = request.path_params.get("id", "")
         if not record_id:
             return JSONResponse({"error": "id required"}, status_code=400)
-        await notifs.mark_read(config, record_id)
+        await notifs.mark_read(config, record_id, event_bus=event_bus)
         return JSONResponse({"ok": True})
 
     @_authenticated
     async def notifications_mark_all_read(request: Request, username: str) -> JSONResponse:
         """Mark all currently-visible notifications read."""
         from . import notifications as notifs
-        await notifs.mark_all_read(config)
+        await notifs.mark_all_read(config, event_bus=event_bus)
         return JSONResponse({"ok": True})
 
     @_authenticated
