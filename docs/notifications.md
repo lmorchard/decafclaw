@@ -14,9 +14,14 @@ tracker for deferred work.
 ## What the bell does
 
 The web UI sidebar footer renders a `<notification-inbox>` component next to
-the config gear. It polls `GET /api/notifications/unread-count` every 30
-seconds (config plumbing for `notifications.poll_interval_sec` is deferred).
-When the count is non-zero it renders a small red badge.
+the config gear. The badge shows the unread count when non-zero.
+
+The bell is **push-driven over the existing authenticated WebSocket**: each
+time `notify()` or a mark-read happens on the server, the WebSocket
+broadcasts a typed event (see [WebSocket push](#websocket-push) below) and
+every connected tab updates its count in place. The bell hits `GET
+/api/notifications/unread-count` once on mount and once on every WebSocket
+reconnect to seed / re-seed its state — no periodic polling.
 
 Clicking the bell opens a dropdown panel with the 20 most recent records,
 newest first. Each row shows the title, a two-line body preview, the
@@ -130,7 +135,9 @@ Response:
 
 ### `GET /api/notifications/unread-count`
 
-Cheap counter for badge polling. Response: `{"count": N}`.
+Cheap counter. The web UI bell calls it once on mount and once on every
+WebSocket reconnect to seed state; steady-state updates arrive via the
+WebSocket push (see below). Response: `{"count": N}`.
 
 ### `POST /api/notifications/{id}/read`
 
@@ -372,31 +379,81 @@ stands as the source of truth.
 The Mattermost DM and email adapters are ~90 lines each and both are
 good templates.
 
+## WebSocket push
+
+The web UI bell is live-updated over the existing per-user WebSocket —
+no polling. Two event types flow:
+
+- **`notification_created`** — published by `notify()` after the inbox
+  write, with the full record **plus a post-write `unread_count`** so
+  subscribers can set the badge without re-reading the inbox. The
+  existing channel adapters (Mattermost DM, email, vault page) ignore
+  the new field; it's additive.
+- **`notification_read`** — published from `notifications.mark_read()`
+  and `notifications.mark_all_read()` when they're called with an
+  `event_bus=` argument (both REST handlers pass it; producers that
+  bypass REST can too). Payload: `{"type": "notification_read",
+  "ids": [...], "unread_count": N}`. A single `mark_read` carries a
+  one-element `ids`; `mark_all_read` aggregates every id that
+  transitioned from unread to read into one event. Empty → no
+  publish (nothing to mark is a legitimate no-op).
+
+`unread_count` is computed **once at publish time** by the function
+making the state change. WebSocket subscribers forward it as-is; they
+do not re-read inbox state per event. Keeps fan-out cheap when many
+tabs are open.
+
+### Server-side bridge
+
+`src/decafclaw/web/websocket.py::websocket_chat` registers one bus
+subscriber for the connection's lifetime via
+`_make_notification_forwarder(ws_send)`. The subscriber filters by
+`event["type"]` and forwards matching events to the socket as typed
+JSON. The subscription id is unsubscribed in the handler's `finally`
+block — no leak across connect/disconnect cycles.
+
+No per-user filtering today: every connected socket receives every
+event. Multi-user routing (recipient field, per-user inbox) is
+deferred; tracked in
+[issue #336](https://github.com/lmorchard/decafclaw/issues/336).
+
+### Client-side wiring
+
+`src/decafclaw/web/static/app.js` bridges inbound WS messages to
+`window` custom events (matching the existing `turn_complete` pattern,
+so component code never needs to reach for the `ws` instance):
+
+- `notification_created` → `window.CustomEvent("notification-created")`
+- `notification_read` → `window.CustomEvent("notification-read")`
+- `ws "open"` → `window.CustomEvent("ws-connected")`
+
+`<notification-inbox>` listens for those events: seeds on mount via
+`GET /api/notifications/unread-count`, re-seeds on every
+`ws-connected` (covers reconnects), and on every notification event
+sets `_count = detail.unread_count` plus re-fetches the list if the
+dropdown is open.
+
 ## Configuration
 
-See [config.md#notifications](config.md#notifications) for the two tunables:
+See [config.md#notifications](config.md#notifications) for the inbox
+tunable:
 
-- `notifications.retention_days` — how long records stay in the live inbox
-  (default 30).
-- `notifications.poll_interval_sec` — web UI poll interval in seconds
-  (default 30). The JS client currently uses a 30s hardcoded value; changing
-  the config only affects Phase 2+ producers that check it directly. See
-  [issue #292](https://github.com/lmorchard/decafclaw/issues/292) for the
-  plumbing follow-up.
+- `notifications.retention_days` — how long records stay in the live
+  inbox (default 30).
 
 ## Coming in later phases
 
-Still deferred (tracked on [#292](https://github.com/lmorchard/decafclaw/issues/292)):
+Deferred follow-ups split out of #292:
 
-- **More channel adapters** — Mattermost channel post (vs DM).
-- **Periodic newsletters** (#283) — composer layer on top of channels
-  that coalesces scheduled-task activity into daily/weekly rollups.
-- **Multi-user inbox partitioning** — currently single-agent,
-  single-user.
-- **WebSocket push** so the web UI bell gets real-time updates without
-  the 30s polling loop. The `notification_created` event already exists;
-  a WebSocket subscriber is all that's missing.
-- **`health_status` integration** — aggregated per-adapter last-error
-  counters once 2+ adapters are in play.
-- **JSON schema** for the inbox files, versioning, and migration
-  tooling.
+- [#330](https://github.com/lmorchard/decafclaw/issues/330) —
+  Mattermost channel adapter (distinct from DM).
+- [#331](https://github.com/lmorchard/decafclaw/issues/331) — per-
+  category routing config.
+- [#334](https://github.com/lmorchard/decafclaw/issues/334) — rate
+  limiting / coalescing.
+- [#335](https://github.com/lmorchard/decafclaw/issues/335) — size-
+  threshold retention rotation.
+- [#336](https://github.com/lmorchard/decafclaw/issues/336) — multi-
+  user inbox partitioning.
+- [#283](https://github.com/lmorchard/decafclaw/issues/283) —
+  periodic newsletters coalescing scheduled-task activity.

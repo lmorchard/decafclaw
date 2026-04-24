@@ -82,12 +82,16 @@ Light/dark mode toggle.
 
 ### Notifications
 
-A bell icon in the sidebar footer polls `/api/notifications/unread-count` and
-renders a red badge when the agent has emitted noteworthy events (heartbeat
-completion, scheduled task finish, background process exit, compaction,
-reflection rejection). Click the bell to see the last 20 records; click a row
-to mark it read and jump to the associated conversation or vault page. See
-[Notifications](notifications.md) for the full model and API.
+A bell icon in the sidebar footer renders a red badge when the agent has
+emitted noteworthy events (heartbeat completion, scheduled task finish,
+background process exit, compaction, reflection rejection). Updates arrive
+in real time over the authenticated WebSocket — no polling — so multiple
+open tabs stay in sync when one of them marks a notification read. The
+bell seeds itself via `GET /api/notifications/unread-count` on mount and on
+every WebSocket reconnect. Click the bell to see the last 20 records;
+click a row to mark it read and jump to the associated conversation or
+vault page. See [Notifications](notifications.md) for the full model, API,
+and WebSocket event shapes.
 
 ## Architecture
 
@@ -207,7 +211,7 @@ Folder structure is per-user metadata stored in `data/{agent_id}/web/users/{user
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `GET` | `/api/notifications` | List inbox records (newest first) with joined read-state |
-| `GET` | `/api/notifications/unread-count` | Count of unread records — polled for the bell badge |
+| `GET` | `/api/notifications/unread-count` | Count of unread records — seed on bell mount + WebSocket reconnect (see [notifications.md](notifications.md#websocket-push)) |
 | `POST` | `/api/notifications/{id}/read` | Mark a single record read (idempotent) |
 | `POST` | `/api/notifications/read-all` | Mark all currently-visible records read |
 

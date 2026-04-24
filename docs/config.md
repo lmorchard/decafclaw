@@ -142,13 +142,12 @@ Inbox settings for the notification system (see [Notifications](notifications.md
 | Field | Type | Default | Env Var |
 |-------|------|---------|---------|
 | `retention_days` | int | `30` | `NOTIFICATIONS_RETENTION_DAYS` |
-| `poll_interval_sec` | int | `30` | `NOTIFICATIONS_POLL_INTERVAL_SEC` |
 
 `retention_days` controls how long inbox records stay in the live inbox
 before opportunistic rotation moves them into monthly archives under
-`workspace/notifications/archive/`. `poll_interval_sec` is reserved for
-future web UI unread-count badge polling support; the current web UI uses
-a fixed 30-second polling interval and does not consume this setting yet.
+`workspace/notifications/archive/`. The web UI bell no longer polls — it
+receives `notification_created` / `notification_read` pushes over the
+WebSocket, so there's no poll-interval tunable.
 
 #### `notifications.channels.mattermost_dm`
 

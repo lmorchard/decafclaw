@@ -558,6 +558,34 @@ _HANDLERS = {
 }
 
 
+# -- Notification event forwarding --------------------------------------------
+
+
+def _make_notification_forwarder(ws_send):
+    """Build an event-bus subscriber that forwards notification events
+    to a single WebSocket's ``ws_send``.
+
+    The bus dispatches every event to every subscriber; this callback
+    filters by ``event["type"]`` and copies the fields the frontend
+    needs. Other event types are ignored.
+    """
+    async def _forward(event: dict):
+        t = event.get("type")
+        if t == "notification_created":
+            await ws_send({
+                "type": "notification_created",
+                "record": event["record"],
+                "unread_count": event["unread_count"],
+            })
+        elif t == "notification_read":
+            await ws_send({
+                "type": "notification_read",
+                "ids": event["ids"],
+                "unread_count": event["unread_count"],
+            })
+    return _forward
+
+
 # -- Main WebSocket handler ----------------------------------------------------
 
 
@@ -600,6 +628,14 @@ async def websocket_chat(websocket: WebSocket, config, event_bus, app_ctx,
         "manager": manager,
     }
 
+    # Forward notification events from the global event bus to this socket.
+    # The bus dispatches every event to every subscriber, so the forwarder
+    # filters by type. Subscribe immediately before entering the try block
+    # so no setup code runs between subscribe() and the finally that
+    # unsubscribes — otherwise a raise during setup could leak the
+    # subscriber. See docs/notifications.md for the push architecture.
+    notif_sub_id = event_bus.subscribe(_make_notification_forwarder(ws_send))
+
     try:
         while True:
             raw = await websocket.receive_text()
@@ -621,4 +657,5 @@ async def websocket_chat(websocket: WebSocket, config, event_bus, app_ctx,
     except Exception as e:
         log.error(f"WebSocket error for {username}: {e}", exc_info=True)
     finally:
+        event_bus.unsubscribe(notif_sub_id)
         _unsubscribe_all(state)

@@ -1,7 +1,6 @@
 import { LitElement, html, nothing } from 'lit';
 import { formatRelativeTime } from '../lib/utils.js';
 
-const POLL_INTERVAL_MS = 30_000;
 const LIST_LIMIT = 20;
 
 /**
@@ -38,23 +37,45 @@ export class NotificationInbox extends LitElement {
     this._loading = false;
     this._error = '';
     this._panelStyle = '';
-    this._pollTimer = null;
+    // Bound listeners; held on the instance so we can remove them on disconnect.
+    this._onWsConnected = () => this.#refreshCount();
+    this._onNotifCreated = (/** @type {Event} */ e) => this.#applyEventUpdate(e);
+    this._onNotifRead = (/** @type {Event} */ e) => this.#applyEventUpdate(e);
   }
 
   connectedCallback() {
     super.connectedCallback();
-    // Initial fetch + poll
+    // Seed once on mount; every subsequent update is pushed over the
+    // WebSocket via app.js-dispatched window events. Reconnects re-seed
+    // via `ws-connected`. See docs/notifications.md.
     this.#refreshCount();
-    this._pollTimer = window.setInterval(() => this.#refreshCount(), POLL_INTERVAL_MS);
+    window.addEventListener('ws-connected', this._onWsConnected);
+    window.addEventListener('notification-created', this._onNotifCreated);
+    window.addEventListener('notification-read', this._onNotifRead);
   }
 
   disconnectedCallback() {
     super.disconnectedCallback();
-    if (this._pollTimer) {
-      clearInterval(this._pollTimer);
-      this._pollTimer = null;
-    }
+    window.removeEventListener('ws-connected', this._onWsConnected);
+    window.removeEventListener('notification-created', this._onNotifCreated);
+    window.removeEventListener('notification-read', this._onNotifRead);
     this.#removeDocClickListener();
+  }
+
+  /**
+   * Handler for both `notification-created` and `notification-read` window
+   * events. Both carry a post-change `unread_count` so the bell badge is
+   * authoritative; when the dropdown happens to be open we also re-fetch
+   * the list so rows appear / flip to read in place.
+   * @param {Event} e
+   */
+  #applyEventUpdate(e) {
+    const ce = /** @type {CustomEvent} */ (e);
+    const detail = ce.detail || {};
+    if (typeof detail.unread_count === 'number') {
+      this._count = detail.unread_count;
+    }
+    if (this._open) this.#refreshList();
   }
 
   async #refreshCount() {
