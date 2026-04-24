@@ -48,7 +48,7 @@ These are loaded into context only when the skill is activated.
 | `name` | Yes | Lowercase alphanumeric + hyphens, max 64 chars |
 | `description` | Yes | What the skill does, max 1024 chars. Shown in catalog. |
 | `requires.env` | No | Env vars that must be set. Skill hidden if unmet. |
-| `user-invocable` | No | Bool, default true. |
+| `user-invocable` | No | Bool, default true. When true, the skill can also be triggered as a command (`!name` / `/name`) in addition to agent activation. Orthogonal to activation — a user-invocable skill still appears in the agent's skill catalog. |
 | `context` | No | `inline` (default) or `fork`. Fork runs the skill as an isolated child turn. |
 | `allowed-tools` | No | Comma-separated tool names pre-approved for this skill. |
 | `model` | No | Named model config for `context: fork` skills. See [Model Selection](model-selection.md). |
