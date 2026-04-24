@@ -236,3 +236,44 @@ class TestExecuteCommand:
             await execute_command(ctx, skill, "")
 
         mock_activate.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_fork_mode_propagates_manager_to_child_turn(self, ctx):
+        """The ctx handed to _run_child_turn MUST carry the manager from the
+        parent ctx — otherwise delegate.py bails and the fork never runs."""
+        sentinel_manager = object()
+        ctx.manager = sentinel_manager
+
+        skill = SkillInfo(
+            name="test-cmd", description="Test", location=Path("."),
+            body="Do $ARGUMENTS", context="fork",
+        )
+        with patch(
+            "decafclaw.tools.delegate._run_child_turn",
+            new_callable=AsyncMock,
+        ) as mock:
+            mock.return_value = "child result"
+            mode, result = await execute_command(ctx, skill, "go")
+
+        assert mode == "fork"
+        # First positional arg to _run_child_turn is parent_ctx
+        called_ctx = mock.call_args.args[0]
+        assert called_ctx.manager is sentinel_manager
+
+    @pytest.mark.asyncio
+    async def test_fork_mode_without_manager_surfaces_clear_error(self, ctx):
+        """If a future transport forgets to attach the manager, the existing
+        error in delegate.py should still fire with a readable message —
+        not a silent KeyError or None-dereference."""
+        ctx.manager = None  # explicit for the test's intent
+
+        skill = SkillInfo(
+            name="test-cmd", description="Test", location=Path("."),
+            body="Do $ARGUMENTS", context="fork",
+        )
+        # Do NOT mock _run_child_turn — let the real function hit its own
+        # bail-out so the error text is the one real users would see.
+        mode, result = await execute_command(ctx, skill, "go")
+
+        assert mode == "fork"
+        assert "ConversationManager" in result
