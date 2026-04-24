@@ -218,6 +218,7 @@ async def _handle_send(ws_send, index, username, msg, state):
     cmd_ctx = Context(config=state["config"], event_bus=state["event_bus"])
     cmd_ctx.user_id = username
     cmd_ctx.conv_id = conv_id
+    cmd_ctx.manager = manager
     cmd_result = await dispatch_command(cmd_ctx, text)
 
     if cmd_result.mode in ("help", "unknown", "error"):

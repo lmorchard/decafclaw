@@ -341,6 +341,7 @@ class MattermostClient:
 
         cmd_ctx = Context(config=app_ctx.config, event_bus=app_ctx.event_bus)
         cmd_ctx.user_id = app_ctx.config.agent.user_id
+        cmd_ctx.manager = manager
         cmd_result = await dispatch_command(cmd_ctx, combined_text, prefixes=["!"])
 
         if cmd_result.mode in ("help", "unknown", "error", "fork"):
