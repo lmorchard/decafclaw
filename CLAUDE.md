@@ -201,6 +201,7 @@ An AI agent testbed for exploring agent development patterns. Connects to Matter
 - `src/decafclaw/skills/ingest/` — Bundled `!ingest` command: one-shot ingest of URL/workspace-file/attachment into vault pages; interactive counterpart to contrib scheduled ingest skills
 - `src/decafclaw/skills/background/` — Background process management skill. Bundled, auto-activates.
 - `src/decafclaw/skills/mcp/` — MCP admin skill (status, resources, prompts, restart). Bundled, auto-activates.
+- `src/decafclaw/skills/newsletter/` — Periodic newsletter publisher: scheduled + `!newsletter` on-demand narrative recap of autonomous activity
 
 ### Other
 

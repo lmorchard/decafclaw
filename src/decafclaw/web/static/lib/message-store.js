@@ -152,10 +152,25 @@ export class MessageStore {
 
       case 'user_message':
         // Multi-tab sync: add user message if not already present
-        // (the originating tab adds it locally before the event arrives)
+        // (the originating tab adds it locally before the event arrives).
+        //
+        // Scan backwards past non-user transport/meta messages
+        // (role: 'command' from command_ack, 'system' from compaction, etc.)
+        // to find the nearest actual user message before deduping. The
+        // previous check only looked at the last message, which doubled
+        // the echo whenever command_ack or similar landed in between
+        // the optimistic add and this event — see !newsletter / any
+        // inline command's double-bubble symptom.
         if (msg.conv_id === currentConvId) {
-          const last = this.#currentMessages[this.#currentMessages.length - 1];
-          if (!last || last.role !== 'user' || last.content !== msg.text) {
+          let foundDupe = false;
+          for (let i = this.#currentMessages.length - 1; i >= 0; i--) {
+            const m = this.#currentMessages[i];
+            if (m.role === 'user') {
+              foundDupe = m.content === msg.text;
+              break;
+            }
+          }
+          if (!foundDupe) {
             this.#currentMessages.push({
               role: 'user',
               content: msg.text,
