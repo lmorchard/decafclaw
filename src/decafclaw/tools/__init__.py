@@ -40,29 +40,103 @@ TOOL_DEFINITIONS = (CORE_TOOL_DEFINITIONS
                     + EMAIL_TOOL_DEFINITIONS)
 
 
-async def _run_with_cancel(coro, cancel_event):
-    """Run a coroutine, cancelling it if cancel_event fires first.
+async def _run_with_cancel(coro, cancel_event, timeout_sec=None, tool_name=""):
+    """Run a coroutine, racing it against optional cancel + timeout signals.
 
-    Returns (task, interrupted) where interrupted is a ToolResult if the
-    turn was cancelled, or None if the coroutine completed normally.
+    Returns (task, terminated) where terminated is a ToolResult if the
+    tool was interrupted or timed out, or None if the coroutine completed
+    normally. On near-simultaneous fire, precedence is cancel > timeout.
+
+    `timeout_sec` of None disables the timer. `<=0` is the caller's
+    responsibility to normalize (see `_resolve_tool_timeout`); we treat
+    anything non-positive here as "no timer" as a defensive guard.
     """
     tool_task = asyncio.create_task(coro)
+    if not cancel_event and (timeout_sec is None or timeout_sec <= 0):
+        await tool_task
+        return tool_task, None
+
+    aux_tasks: list[asyncio.Task] = []
+    cancel_task: asyncio.Task | None = None
+    timer_task: asyncio.Task | None = None
     if cancel_event:
         cancel_task = asyncio.create_task(cancel_event.wait())
-        done, _ = await asyncio.wait(
-            [tool_task, cancel_task], return_when=asyncio.FIRST_COMPLETED
+        aux_tasks.append(cancel_task)
+    if timeout_sec is not None and timeout_sec > 0:
+        timer_task = asyncio.create_task(asyncio.sleep(timeout_sec))
+        aux_tasks.append(timer_task)
+
+    done, _pending = await asyncio.wait(
+        [tool_task, *aux_tasks], return_when=asyncio.FIRST_COMPLETED
+    )
+
+    # Cancel leftover auxiliary tasks regardless of outcome.
+    for t in aux_tasks:
+        if not t.done():
+            t.cancel()
+
+    # Cancel beats timeout on tie. Check cancel first.
+    if cancel_task is not None and cancel_task in done:
+        tool_task.cancel()
+        try:
+            await tool_task
+        except (asyncio.CancelledError, Exception):
+            pass
+        return tool_task, ToolResult(text="[tool interrupted: agent turn cancelled]")
+
+    if timer_task is not None and timer_task in done and tool_task not in done:
+        tool_task.cancel()
+        try:
+            await tool_task
+        except (asyncio.CancelledError, Exception):
+            pass
+        return tool_task, ToolResult(
+            text=f"[error: tool {tool_name} timed out after {timeout_sec}s]"
         )
-        cancel_task.cancel()
-        if tool_task not in done:
-            tool_task.cancel()
-            try:
-                await tool_task
-            except (asyncio.CancelledError, Exception):
-                pass
-            return tool_task, ToolResult(text="[tool interrupted: agent turn cancelled]")
-    else:
-        await tool_task
+
     return tool_task, None
+
+
+_MISSING = object()
+
+
+def _resolve_tool_timeout(ctx, name: str) -> int | None:
+    """Resolve the wall-clock timeout for `name`.
+
+    Walks skill-provided defs first, then the global TOOL_DEFINITIONS,
+    then SEARCH_TOOL_DEFINITIONS. Returns the first explicit `timeout`
+    found (including `None`). Falls back to `config.agent.tool_timeout_sec`.
+    Any resolved value `<= 0` normalizes to None (disabled).
+    """
+    from .search_tools import SEARCH_TOOL_DEFINITIONS
+
+    def _normalize_default() -> int | None:
+        default = ctx.config.agent.tool_timeout_sec
+        if default is None or default <= 0:
+            return None
+        return int(default)
+
+    sources = (
+        ctx.tools.extra_definitions,
+        TOOL_DEFINITIONS,
+        SEARCH_TOOL_DEFINITIONS,
+    )
+    for source in sources:
+        for entry in source:
+            func = entry.get("function") or {}
+            if func.get("name") == name:
+                # First match wins. Skill defs and global defs don't overlap
+                # in practice, so we don't fall through on a missing key.
+                val = entry.get("timeout", _MISSING)
+                if val is _MISSING:
+                    return _normalize_default()
+                if val is None:
+                    return None
+                if isinstance(val, (int, float)) and val > 0:
+                    return int(val)
+                return None  # 0, negative, or unexpected type → disabled
+
+    return _normalize_default()
 
 
 def _to_tool_result(value) -> ToolResult:
@@ -190,9 +264,12 @@ async def execute_tool(ctx, name: str, arguments: dict) -> ToolResult:
                 )
             )
     cancel_event = ctx.cancelled
+    timeout_sec = _resolve_tool_timeout(ctx, name)
     try:
         coro = fn(ctx, **arguments) if asyncio.iscoroutinefunction(fn) else asyncio.to_thread(fn, ctx, **arguments)
-        tool_task, interrupted = await _run_with_cancel(coro, cancel_event)
+        tool_task, interrupted = await _run_with_cancel(
+            coro, cancel_event, timeout_sec=timeout_sec, tool_name=name
+        )
         if interrupted:
             return interrupted
         return _to_tool_result(tool_task.result())
