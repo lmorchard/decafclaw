@@ -242,10 +242,35 @@ class MattermostDMChannelConfig:
 
 
 @dataclass
+class VaultPageChannelConfig:
+    """Vault page notification channel — appends each matching
+    notification to a daily rollup file under the configured folder.
+
+    Complements the push channels (Mattermost DM, email) with a
+    persistent, local audit trail. The channel does NOT embed the
+    resulting pages for semantic search — notifications are a rolling
+    log, not reference material. Vault folder browsing + ``vault_list``
+    provide discoverability.
+
+    The ``folder`` path is vault-root-relative and sandboxed at use
+    time: absolute paths and ``..`` escapes are rejected.
+
+    Enabled by default — the channel is purely local (no external
+    delivery, no credentials, no cost) and an always-on audit trail is
+    useful out of the box. Disable by setting ``enabled: false`` in
+    ``config.json`` if you don't want the vault pages.
+    """
+    enabled: bool = True
+    min_priority: str = "low"  # "low" | "normal" | "high"
+    folder: str = "agent/pages/notifications"
+
+
+@dataclass
 class NotificationsChannelsConfig:
     """Per-channel adapter configuration for notifications."""
     mattermost_dm: MattermostDMChannelConfig = field(default_factory=MattermostDMChannelConfig)
     email: EmailChannelConfig = field(default_factory=EmailChannelConfig)
+    vault_page: VaultPageChannelConfig = field(default_factory=VaultPageChannelConfig)
 
 
 @dataclass

@@ -68,3 +68,17 @@ def init_notification_channels(
             "(recipients=%s, min_priority=%s)",
             email_ch_cfg.recipient_addresses, email_ch_cfg.min_priority,
         )
+
+    # Vault page — pure local file writes; no transport dep to check.
+    # `enabled` is the single user-visible switch; folder validation
+    # happens at use time in `_daily_page_path`, which warns once per
+    # bad folder (empty / absolute / `..` / outside-vault).
+    vp_cfg = config.notifications.channels.vault_page
+    if vp_cfg.enabled:
+        from .vault_page import make_vault_page_adapter
+        event_bus.subscribe(make_vault_page_adapter(config))
+        log.info(
+            "Notifications: vault page adapter subscribed "
+            "(folder=%s, min_priority=%s)",
+            vp_cfg.folder, vp_cfg.min_priority,
+        )

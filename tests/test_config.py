@@ -60,6 +60,11 @@ class TestDefaults:
         assert c.notifications.channels.email.enabled is False
         assert c.notifications.channels.email.recipient_addresses == []
         assert c.notifications.channels.email.min_priority == "high"
+        # Vault page channel — local audit trail, on by default (no
+        # external delivery, no cost, useful out of the box).
+        assert c.notifications.channels.vault_page.enabled is True
+        assert c.notifications.channels.vault_page.min_priority == "low"
+        assert c.notifications.channels.vault_page.folder == "agent/pages/notifications"
 
     def test_email_defaults(self):
         c = Config()
@@ -210,6 +215,29 @@ class TestJsonFileLoading:
         assert c.notifications.channels.mattermost_dm.enabled is True
         assert c.notifications.channels.mattermost_dm.recipient_username == "les"
         assert c.notifications.channels.mattermost_dm.min_priority == "normal"
+
+    def test_loads_vault_page_channel_from_json(self, tmp_path, monkeypatch):
+        """VaultPageChannelConfig loads via nested channels recursion."""
+        agent_dir = tmp_path / "decafclaw"
+        agent_dir.mkdir()
+        config_file = agent_dir / "config.json"
+        config_file.write_text(json.dumps({
+            "notifications": {
+                "channels": {
+                    "vault_page": {
+                        "enabled": True,
+                        "min_priority": "normal",
+                        "folder": "agent/logs/notifications",
+                    },
+                },
+            },
+        }))
+        monkeypatch.setenv("DATA_HOME", str(tmp_path))
+        c = load_config()
+        vp = c.notifications.channels.vault_page
+        assert vp.enabled is True
+        assert vp.min_priority == "normal"
+        assert vp.folder == "agent/logs/notifications"
 
     def test_missing_file_uses_defaults(self, tmp_path, monkeypatch):
         """Missing config file gracefully falls back to defaults."""
