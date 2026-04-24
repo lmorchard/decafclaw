@@ -96,6 +96,9 @@ CONVERSATION_TOOL_DEFINITIONS = [
     {
         "type": "function",
         "priority": "normal",
+        # Triggers an LLM summarization call bounded by its own model timeout
+        # (300s default), which can exceed the default tool wrapper.
+        "timeout": None,
         "function": {
             "name": "conversation_compact",
             "description": "Manually compact the conversation history into a summary. Use when the conversation is getting long or when you want to consolidate context. This triggers the same compaction that happens automatically when the token budget is exceeded.",

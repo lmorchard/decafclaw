@@ -387,6 +387,7 @@ def load_config() -> Config:
             "critical_tools": "CRITICAL_TOOLS",
             "child_max_tool_iterations": "CHILD_MAX_TOOL_ITERATIONS",
             "child_timeout_sec": "CHILD_TIMEOUT_SEC",
+            "tool_timeout_sec": "TOOL_TIMEOUT_SEC",
             "turn_on_new_message": "AGENT_TURN_ON_NEW_MESSAGE",
         })
 
