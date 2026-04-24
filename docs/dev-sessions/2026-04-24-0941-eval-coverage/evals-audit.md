@@ -117,22 +117,22 @@ Already inline-fixed on this branch: **H13** (reflect.py multi-turn input extrac
 
 ## 5. Prioritized issue list (filed)
 
-**16 issues filed** as part of Step 10 of this session, plus 1 standalone bug caught by the audit:
+**16 issues filed** as part of Step 10 of this session, plus 1 standalone bug caught by the audit. Subsequent triage closed 3 as redundant with existing unit-test coverage and narrowed 4 more to LLM-behavior-only scope — see notes column.
 
-### Eval-file issues (10)
+### Eval-file issues (7 open + 3 closed)
 
 | # | Title | Pri | Size | Notes |
 |---|-------|-----|------|-------|
-| #339 | Eval coverage: vault skill (replaces broken memory-semantic.yaml) | P1 | M | Fixes `allowed_tools` rot + adds comprehensive coverage. |
-| #340 | Eval coverage: workspace tools (read/write/edit/search/glob/list/…) | P1 | M | Benefits from but doesn't require harness H6. |
-| #341 | Eval coverage: shell tools (shell, shell_patterns, background) | P2 | M | |
-| #342 | Eval coverage: conversation tools (search + compact) | P2 | M | **Blocked on #353 (conversation history seed).** |
-| #343 | Eval coverage: delegate_task | P2 | S | |
-| #344 | Eval coverage: tool deferral (tool_search + context budget) | P2 | S | **Blocked on #349 (expect_tool).** |
-| #345 | Eval coverage: checklist tools | P2 | S | Replaces the "todo tools" bullet in #240 (todos retired per #234). |
-| #346 | Eval coverage: user-invokable commands | P2 | S | Dispatch layer: unknown command, `$ARGUMENTS`, `context: fork`. |
-| #347 | Eval coverage: health skill | P2 | XS | |
-| #348 | Tighten existing memory evals (bounds, assertion-quality, stale names) | P2 | S | |
+| #339 | Eval coverage: vault skill (replaces broken memory-semantic.yaml) | P1 | M | **Narrowed**: tool implementation already covered by 51+ unit tests; eval scope is now LLM tool-choice + fixing the silently-broken `memory-semantic.yaml`. |
+| #340 | Eval coverage: workspace tools (tool-selection only) | P2 | S | **Narrowed & demoted** from P1/M. 78 unit tests cover tool behavior; eval scope reduced to "does the agent pick the right workspace_* tool for the request?" |
+| #341 | Eval coverage: shell tools (approval-flow focus) | P2 | S | **Narrowed**. 39 unit tests cover execution; eval scope reduced to auto_confirm / denial recovery / allowlist bypass. |
+| #342 | Eval coverage: conversation tools (post-compaction recall) | P2 | S | **Narrowed**. 28 unit tests cover search/compaction mechanics; eval scope reduced to "does LLM-driven summarization preserve salient facts?". Blocked on #353. |
+| #343 | Eval coverage: delegate_task (delegation-decision only) | P2 | S | **Narrowed**. 10 unit tests cover the fork mechanism; eval scope reduced to "does the agent decide to delegate at appropriate times?". |
+| #344 | Eval coverage: tool deferral (tool_search + context budget) | P2 | S | Unchanged — tool-deferral behavior is genuinely LLM-driven and not unit-testable. Blocked on #349. |
+| #348 | Tighten existing memory evals (bounds, assertion-quality, stale names) | P2 | S | Unchanged — this is existing-YAML cleanup. |
+| ~~#345~~ | ~~Eval coverage: checklist tools~~ | — | — | **Closed as redundant** — `test_checklist.py` + `test_checklist_tools.py` (21 tests) cover the state machine; remaining LLM-behavior question is too thin to justify a dedicated file. |
+| ~~#346~~ | ~~Eval coverage: user-invokable commands~~ | — | — | **Closed as redundant** — `test_commands.py` (27 tests) covers the dispatch layer; all proposed test cases are deterministic code paths, not LLM behavior. |
+| ~~#347~~ | ~~Eval coverage: health skill~~ | — | — | **Closed as redundant** — `test_health.py` (9 tests) covers every section; no LLM-specific behavior. |
 
 ### Harness issues (6)
 
