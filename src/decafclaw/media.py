@@ -34,6 +34,21 @@ class EndTurnConfirm:
 
 
 @dataclass
+class WidgetRequest:
+    """Rich-rendering hint attached to a ToolResult.
+
+    Phase 1 only renders inline widgets in the web UI; Mattermost and
+    terminal fall back to ToolResult.text. The on_response and
+    response_message fields are reserved for Phase 2 input widgets.
+    """
+    widget_type: str                           # registered widget name
+    data: dict                                 # conforms to widget.data_schema
+    target: str = "inline"                     # "inline" | "canvas" (Phase 3)
+    on_response: Callable[[dict], Any] | None = None   # Phase 2
+    response_message: str | None = None        # Phase 2
+
+
+@dataclass
 class ToolResult:
     """Result from a tool execution — text plus optional media attachments."""
 
@@ -45,6 +60,7 @@ class ToolResult:
     # end_turn: True = end turn with final no-tools LLM call.
     # EndTurnConfirm = show confirmation buttons; approved → continue, denied → end.
     end_turn: bool | EndTurnConfirm = False
+    widget: WidgetRequest | None = None
 
     @classmethod
     def from_text(cls, text: str) -> "ToolResult":

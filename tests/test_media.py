@@ -12,6 +12,7 @@ from decafclaw.media import (
     MediaHandler,
     MediaSaveResult,
     ToolResult,
+    WidgetRequest,
     extract_workspace_media,
     upload_and_collect,
 )
@@ -45,6 +46,40 @@ def test_tool_result_from_text():
     r = ToolResult.from_text("simple")
     assert r.text == "simple"
     assert r.media == []
+
+
+def test_tool_result_widget_default_none():
+    r = ToolResult(text="no widget here")
+    assert r.widget is None
+
+
+def test_tool_result_with_widget():
+    req = WidgetRequest(widget_type="data_table",
+                        data={"columns": [], "rows": []})
+    r = ToolResult(text="table rendered", widget=req)
+    assert r.widget is req
+    assert r.widget.widget_type == "data_table"
+    assert r.widget.target == "inline"  # default
+    assert r.widget.on_response is None
+    assert r.widget.response_message is None
+
+
+def test_widget_request_canvas_target():
+    req = WidgetRequest(widget_type="markdown_document",
+                        data={"content": "# Summary"},
+                        target="canvas")
+    assert req.target == "canvas"
+
+
+def test_widget_request_with_on_response():
+    def _cb(_payload):
+        return None
+    req = WidgetRequest(widget_type="multiple_choice",
+                        data={"options": []},
+                        on_response=_cb,
+                        response_message="Pick one")
+    assert req.on_response is _cb
+    assert req.response_message == "Pick one"
 
 
 # -- extract_workspace_media tests --

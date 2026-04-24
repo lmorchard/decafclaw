@@ -1,0 +1,134 @@
+/* Widget styles — host container + bundled widgets. */
+
+.widget-host {
+  /* Sit naturally inside the existing tool-result-detail flow. */
+  display: block;
+}
+
+/* When a widget is present, the widget owns its own scroll/sizing — drop
+   the default tool-result-detail max-height + overflow so we don't get
+   nested scrollbars (one inside the table, one around it). */
+chat-message .tool-result-detail:has(dc-widget-host) {
+  max-height: none;
+  overflow: visible;
+}
+
+.widget-host--loading,
+.widget-host--fallback {
+  font-size: 0.85rem;
+}
+
+.widget-host__note {
+  opacity: 0.7;
+  font-style: italic;
+  margin-bottom: 0.25rem;
+}
+
+/* The "Show raw result" details block under a widget. */
+chat-message .tool-result-raw {
+  margin-top: 0.5rem;
+  font-size: 0.8rem;
+}
+
+chat-message .tool-result-raw summary {
+  cursor: pointer;
+  opacity: 0.7;
+  margin-bottom: 0.25rem;
+}
+
+chat-message .tool-result-raw pre {
+  margin: 0;
+  max-height: 240px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* ---- data_table ---- */
+
+.widget-data-table {
+  margin: 0;
+  font-size: 0.85rem;
+}
+
+.widget-data-table figcaption,
+.widget-data-table > figcaption {
+  font-size: 0.8rem;
+  opacity: 0.7;
+  margin-bottom: 0.25rem;
+}
+
+.widget-data-table__scroll {
+  max-height: 360px;
+  overflow: auto;
+  border: 1px solid var(--pico-muted-border-color, #ccc);
+  border-radius: 4px;
+}
+
+.widget-data-table table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0;
+}
+
+.widget-data-table th,
+.widget-data-table td {
+  padding: 0.25rem 0.5rem;
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid var(--pico-muted-border-color, #eee);
+}
+
+.widget-data-table thead th {
+  position: sticky;
+  top: 0;
+  background: var(--pico-card-background-color, #fff);
+  font-weight: 600;
+  padding: 0;
+}
+
+/* The sort button fills the cell so the whole header is clickable, but
+   inherits text styling instead of pico's chunky button look. */
+.widget-data-table__sort-btn {
+  display: flex;
+  align-items: baseline;
+  gap: 0.25rem;
+  width: 100%;
+  padding: 0.25rem 0.5rem;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.widget-data-table__sort-label {
+  flex: 0 1 auto;
+}
+
+/* Indicator slot is always rendered (with a placeholder glyph hidden
+   via --hidden) so column widths don't jump when sort toggles. */
+.widget-data-table__sort-indicator {
+  flex: 0 0 auto;
+  font-size: 0.7rem;
+  opacity: 0.7;
+}
+
+.widget-data-table__sort-indicator--hidden {
+  visibility: hidden;
+}
+
+.widget-data-table__sort-btn:hover,
+.widget-data-table__sort-btn:focus {
+  background: var(--pico-secondary-background, rgba(0, 0, 0, 0.04));
+  outline: none;
+}
+
+.widget-data-table tbody tr:hover {
+  background: var(--pico-secondary-background, rgba(0, 0, 0, 0.03));
+}

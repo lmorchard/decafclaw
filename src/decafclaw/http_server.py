@@ -1508,6 +1508,74 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> Starlette:
             }
         })
 
+    @_authenticated
+    async def list_widgets(request: Request, username: str) -> JSONResponse:
+        """Return the widget catalog for frontend use.
+
+        Entries include a cache-busted js_url the browser can dynamic-import.
+        """
+        from .widgets import get_widget_registry
+        registry = get_widget_registry()
+        if registry is None:
+            return JSONResponse({"widgets": []})
+        out = []
+        for d in registry.list():
+            out.append({
+                "name": d.name,
+                "tier": d.tier,
+                "description": d.description,
+                "modes": d.modes,
+                "accepts_input": d.accepts_input,
+                "data_schema": d.data_schema,
+                "js_url": (f"/widgets/{d.tier}/{d.name}/widget.js"
+                           f"?v={int(d.mtime * 1000)}"),
+            })
+        return JSONResponse({"widgets": out})
+
+    @_authenticated
+    async def serve_widget_js(request: Request, username: str):
+        """Serve widget.js for a registered widget.
+
+        Tier in the URL must match the widget's actual tier, so bundled
+        and admin widgets of the same name don't leak across paths. The
+        resolved js path is also confirmed to live under the expected
+        tier root so a symlinked widget.js can't expose arbitrary
+        files.
+        """
+        from .widgets import get_widget_registry
+        tier = request.path_params.get("tier", "")
+        name = request.path_params.get("name", "")
+        if tier not in ("bundled", "admin"):
+            return JSONResponse({"error": "unknown tier"}, status_code=404)
+        registry = get_widget_registry()
+        if registry is None:
+            return JSONResponse({"error": "registry unavailable"},
+                                status_code=404)
+        desc = registry.get(name)
+        if desc is None or desc.tier != tier:
+            return JSONResponse({"error": "widget not found"},
+                                status_code=404)
+        # Defense against symlinks pointing outside the tier root: the
+        # registry stamped the descriptor with its tier_root at scan time;
+        # confirm the fully-resolved js path is still under it.
+        try:
+            resolved = desc.js_path.resolve(strict=True)
+        except (OSError, RuntimeError):
+            return JSONResponse({"error": "widget not found"},
+                                status_code=404)
+        try:
+            resolved.relative_to(desc.tier_root)
+        except ValueError:
+            log.warning(
+                "widget %r resolves to %s outside tier root %s — refusing",
+                name, resolved, desc.tier_root)
+            return JSONResponse({"error": "widget not found"},
+                                status_code=404)
+        return FileResponse(
+            str(resolved),
+            media_type="application/javascript",
+            headers={"X-Content-Type-Options": "nosniff"})
+
     routes = [
         Route("/health", health, methods=["GET"]),
         Route("/actions/confirm", handle_confirm, methods=["POST"]),
@@ -1558,6 +1626,9 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> Starlette:
         Route("/api/wiki/{page:path}", vault_read, methods=["GET"]),
         Route("/wiki/{page:path}", lambda r: RedirectResponse(
             f"/vault/{r.path_params['page']}", status_code=301), methods=["GET"]),
+        Route("/api/widgets", list_widgets, methods=["GET"]),
+        Route("/widgets/{tier}/{name}/widget.js", serve_widget_js,
+              methods=["GET"]),
         WebSocketRoute("/ws/chat", ws_chat),
     ]
 

@@ -574,12 +574,19 @@ async def _execute_single_tool(call_ctx, tc, semaphore):
             log.error(f"Tool call {fn_name} failed: {e}", exc_info=True)
             result = ToolResult(text=f"[error executing {fn_name}: {e}]")
         finally:
-            await call_ctx.publish("tool_end", tool=fn_name,
-                                   result_text=result.text,
-                                   display_text=getattr(result, "display_text", None),
-                                   display_short_text=getattr(result, "display_short_text", None),
-                                   media=result.media or [],
-                                   tool_call_id=tool_call_id)
+            widget_payload = _resolve_widget(fn_name, result)
+            publish_kwargs = {
+                "tool": fn_name,
+                "result_text": result.text,
+                "display_text": getattr(result, "display_text", None),
+                "display_short_text": getattr(
+                    result, "display_short_text", None),
+                "media": result.media or [],
+                "tool_call_id": tool_call_id,
+            }
+            if widget_payload is not None:
+                publish_kwargs["widget"] = widget_payload
+            await call_ctx.publish("tool_end", **publish_kwargs)
 
     content = result.text
     if result.data is not None:
@@ -595,8 +602,57 @@ async def _execute_single_tool(call_ctx, tc, semaphore):
     }
     if result.display_short_text:
         tool_msg["display_short_text"] = result.display_short_text
+    if widget_payload is not None:
+        tool_msg["widget"] = widget_payload
     _archive(call_ctx, tool_msg)
     return tool_msg, result.end_turn
+
+
+def _resolve_widget(fn_name: str, result: ToolResult) -> dict | None:
+    """Validate result.widget against the registry and return a
+    serializable payload, or None if no widget / validation fails.
+
+    Side effect: on validation failure, clears result.widget so the
+    stripped widget doesn't accidentally surface elsewhere.
+    """
+    widget = getattr(result, "widget", None)
+    if widget is None:
+        return None
+    from .widgets import get_widget_registry
+    registry = get_widget_registry()
+    if registry is None:
+        log.warning(
+            "tool %s returned a widget but widget registry is not "
+            "initialized; stripping", fn_name)
+        result.widget = None
+        return None
+    ok, err = registry.validate(widget.widget_type, widget.data)
+    if not ok:
+        log.warning(
+            "tool %s widget %r failed validation: %s — stripping",
+            fn_name, widget.widget_type, err)
+        result.widget = None
+        return None
+    desc = registry.get(widget.widget_type)
+    target = widget.target
+    if target not in ("inline", "canvas"):
+        log.warning(
+            "tool %s widget %r has unknown target %r — stripping",
+            fn_name, widget.widget_type, target)
+        result.widget = None
+        return None
+    if desc is not None and target not in desc.modes:
+        log.warning(
+            "tool %s widget %r used target %r not in declared modes %r"
+            " — stripping",
+            fn_name, widget.widget_type, target, desc.modes)
+        result.widget = None
+        return None
+    return {
+        "widget_type": widget.widget_type,
+        "target": target,
+        "data": widget.data,
+    }
 
 
 async def _execute_tool_calls(ctx, tool_calls, history, messages):

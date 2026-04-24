@@ -9,7 +9,7 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 
-from decafclaw.media import ToolResult
+from decafclaw.media import ToolResult, WidgetRequest
 from decafclaw.skills.vault._sections import Document, _insert_into_doc
 
 log = logging.getLogger(__name__)
@@ -382,9 +382,11 @@ async def tool_vault_search(ctx, query: str, source_type: str = "",
                         f"--- Result {i+1} [{src}] (relevance: {sim}) ---\n"
                         f"{r['entry_text']}")
                 text = "\n\n".join(lines)
+                widget = _semantic_results_widget(query, results)
                 return ToolResult(
                     text=text,
-                    display_short_text=f"'{query}' — {len(results)} result(s)")
+                    display_short_text=f"'{query}' — {len(results)} result(s)",
+                    widget=widget)
             # Fall through to substring
             log.info("Semantic search returned no results, falling back to substring")
         except Exception as e:
@@ -410,20 +412,26 @@ def _substring_search(config, query: str, days: int = 0,
         from datetime import timedelta
         cutoff = datetime.now(tz=timezone.utc) - timedelta(days=days)
 
-    results: list[str] = []
+    # Structured rows parallel to the markdown lines, for the data_table
+    # widget. Same result set, two views.
+    lines: list[str] = []
+    rows: list[dict] = []
     for path in sorted(search_root.rglob("*.md")):
         if cutoff:
             mtime = datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)
             if mtime < cutoff:
                 continue
 
+        rel = path.relative_to(vault)
+        page = str(rel.with_suffix(""))
+
         if not query_lower:
-            # No query — return recent files (used for memory_recent replacement)
-            rel = path.relative_to(vault)
+            # No query — list recent files.
             mtime_str = datetime.fromtimestamp(
                 path.stat().st_mtime, tz=timezone.utc
             ).strftime("%Y-%m-%d %H:%M")
-            results.append(f"- {rel.with_suffix('')} (modified: {mtime_str})")
+            lines.append(f"- {page} (modified: {mtime_str})")
+            rows.append({"page": page, "modified": mtime_str})
             continue
 
         text = path.read_text()
@@ -434,19 +442,76 @@ def _substring_search(config, query: str, days: int = 0,
                 if query_lower in line.lower():
                     excerpt = line.strip()[:200]
                     break
-            rel = path.relative_to(vault)
-            results.append(
-                f"- **{rel.with_suffix('')}**"
-                + (f": {excerpt}" if excerpt else ""))
+            lines.append(f"- **{page}**" + (f": {excerpt}" if excerpt else ""))
+            rows.append({"page": page, "excerpt": excerpt})
 
-    if not results:
+    if not lines:
         msg = f"No results matching '{query}'." if query else "No files found."
         return ToolResult(text=msg,
                           display_short_text=f"'{query}' — no results")
 
-    text = f"Found {len(results)} result(s):\n\n" + "\n".join(results)
+    text = f"Found {len(lines)} result(s):\n\n" + "\n".join(lines)
+    widget = _substring_results_widget(query, rows)
     return ToolResult(text=text,
-                      display_short_text=f"'{query}' — {len(results)} result(s)")
+                      display_short_text=f"'{query}' — {len(lines)} result(s)",
+                      widget=widget)
+
+
+def _semantic_results_widget(query: str,
+                             results: list[dict]) -> WidgetRequest:
+    """Build a data_table WidgetRequest for semantic vault_search results."""
+    rows = []
+    for r in results:
+        snippet = (r.get("entry_text") or "").strip()
+        if len(snippet) > 160:
+            snippet = snippet[:160].rstrip() + "…"
+        rows.append({
+            "page": r.get("file_path", "").removesuffix(".md"),
+            "similarity": round(float(r.get("similarity", 0.0)), 3),
+            "source": r.get("source_type", "?"),
+            "snippet": snippet,
+        })
+    caption = f'vault_search: "{query}" — {len(results)} result(s)'
+    return WidgetRequest(
+        widget_type="data_table",
+        data={
+            "caption": caption,
+            "columns": [
+                {"key": "page", "label": "Page"},
+                {"key": "similarity", "label": "Similarity"},
+                {"key": "source", "label": "Source"},
+                {"key": "snippet", "label": "Snippet"},
+            ],
+            "rows": rows,
+        },
+    )
+
+
+def _substring_results_widget(query: str,
+                              rows: list[dict]) -> WidgetRequest:
+    """Build a data_table WidgetRequest for substring vault_search results.
+
+    Column set depends on whether a query was provided: without a query,
+    rows have `page` + `modified`; with a query, rows have `page` +
+    `excerpt`. Columns are chosen to match whichever keys the rows carry.
+    """
+    has_query = bool(query)
+    if has_query:
+        columns = [
+            {"key": "page", "label": "Page"},
+            {"key": "excerpt", "label": "Excerpt"},
+        ]
+        caption = f'vault_search: "{query}" — {len(rows)} result(s)'
+    else:
+        columns = [
+            {"key": "page", "label": "Page"},
+            {"key": "modified", "label": "Modified"},
+        ]
+        caption = f"vault_search: {len(rows)} page(s)"
+    return WidgetRequest(
+        widget_type="data_table",
+        data={"caption": caption, "columns": columns, "rows": rows},
+    )
 
 
 async def tool_vault_list(ctx, folder: str = "", pattern: str = "") -> str | ToolResult:
