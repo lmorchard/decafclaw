@@ -1010,6 +1010,10 @@ TOOL_DEFINITIONS = [
     },
     {
         "type": "function",
+        # Streams a Claude Code subprocess session — routinely runs many
+        # minutes. Bounded by the session's idle/budget controls, not a
+        # per-call wall clock.
+        "timeout": None,
         "function": {
             "name": "claude_code_send",
             "description": (
