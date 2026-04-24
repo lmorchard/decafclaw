@@ -284,7 +284,30 @@ class TestGetDescription:
 
 class TestBuildDeferredListText:
     def test_empty(self):
+        """No deferred tools → "" (no dangling wrapper)."""
         assert build_deferred_list_text([]) == ""
+
+    def test_output_wrapped_in_deferred_tools_tag(self):
+        """Non-empty output is bracketed by <deferred_tools> for the
+        WebSocket-adjacent system message — see #304."""
+        tools = [_make_tool_def("workspace_edit", "Edit a file")]
+        text = build_deferred_list_text(tools, core_names={"workspace_edit"})
+        assert text.startswith("<deferred_tools>\n")
+        assert text.endswith("\n</deferred_tools>")
+
+    def test_inner_markdown_preserved(self):
+        """The wrapping is additive: all the existing section headings
+        (## Available tools, ### Core, etc.) remain visible inside."""
+        tools = [
+            _make_tool_def("workspace_edit", "Edit a file"),
+            _make_tool_def("vault_read", "Read a file"),
+            _make_tool_def("mcp__github__issue", "Open an issue"),
+        ]
+        text = build_deferred_list_text(tools, core_names={"workspace_edit"})
+        assert "## Available tools (use tool_search to load)" in text
+        assert "### Core" in text
+        assert "### Skills" in text
+        assert "### Tools from MCP server `github`" in text
 
     def test_core_tools(self):
         core_names = {"workspace_edit", "checklist_create"}
