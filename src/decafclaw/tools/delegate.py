@@ -122,6 +122,8 @@ DELEGATE_TOOL_DEFINITIONS = [
     {
         "type": "function",
         "priority": "critical",
+        # Owns its own child-agent timeout via asyncio.wait_for(child_timeout_sec).
+        "timeout": None,
         "function": {
             "name": "delegate_task",
             "description": (

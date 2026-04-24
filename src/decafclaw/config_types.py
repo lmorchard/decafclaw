@@ -119,6 +119,10 @@ class AgentConfig:
     critical_tools: list[str] = field(default_factory=list)
     child_max_tool_iterations: int = 10
     child_timeout_sec: int = 300
+    # Wall-clock timeout applied to each non-MCP tool call in execute_tool.
+    # `<= 0` disables the wrapper globally. Per-tool overrides live on
+    # TOOL_DEFINITIONS entries via the `timeout` key.
+    tool_timeout_sec: int = 180
     turn_on_new_message: str = "queue"  # "queue" or "cancel"
     show_context_status: bool = True
     preemptive_search: PreemptiveSearchConfig = field(default_factory=PreemptiveSearchConfig)
