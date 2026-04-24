@@ -43,6 +43,7 @@
 - [Scheduled Tasks](schedules.md) — Cron-style per-task scheduling with model, tool, and skill configuration
 - [Eval Loop](eval-loop.md) — Test prompts and tools with real LLM calls
 - [Notifications](notifications.md) — Inbox for agent-initiated events: heartbeat, schedule, background-job, compaction, reflection
+- [Newsletter](newsletter.md) — Periodic narrative recap of autonomous agent activity
 - [Email](email.md) — Outbound email via SMTP: agent tool (`send_email`) + notification channel, shared SMTP core
 - [Background Job Agent Wake](background-wake.md) — Agent wake turns when background processes exit: archive record, tool-result framing, sentinel, rate limiting
 
