@@ -188,6 +188,37 @@ Startup guard is 4-way: channel `enabled` **and** non-empty
 consult `email.allowed_recipients` (that applies only to the
 `send_email` agent tool).
 
+#### `notifications.channels.vault_page`
+
+Fan-out channel that appends each matching notification to a daily
+markdown file under the configured folder in the agent's vault —
+persistent local audit trail. See
+[notifications.md#vault-page-adapter](notifications.md#vault-page-adapter).
+
+| Field | Type | Default | Env Var |
+|-------|------|---------|---------|
+| `enabled` | bool | `true` | `NOTIFICATIONS_CHANNELS_VAULT_PAGE_ENABLED` |
+| `min_priority` | str | `low` | `NOTIFICATIONS_CHANNELS_VAULT_PAGE_MIN_PRIORITY` |
+| `folder` | str | `agent/pages/notifications` | `NOTIFICATIONS_CHANNELS_VAULT_PAGE_FOLDER` |
+
+**Enabled by default** — the channel is purely local (no external
+delivery, no credentials, no cost) and an always-on audit trail is
+useful out of the box. Disable by setting `enabled: false` in
+`config.json` if you don't want the vault pages.
+
+**Startup guard is just `enabled`.** No transport dep to check — pure
+local file writes. All folder validation happens at use time in the
+adapter's `_daily_page_path`, which emits **one warning per bad
+folder** (covers empty, absolute, `..`-containing, and outside-vault
+paths) and then returns silently for the rest of the process.
+Effective outcome: a misconfigured folder disables delivery without
+log spam, and you see the warning exactly once.
+
+Default `min_priority: low` means the channel captures everything;
+raise the threshold if a producer gets chatty. Notification pages are
+NOT added to the embedding index — they're rolling audit log, not
+reference material.
+
 ### `email`
 
 SMTP settings for the `send_email` agent tool and the email

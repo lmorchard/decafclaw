@@ -169,10 +169,12 @@ if the emission is best-effort — see any of the producers for the pattern.
 
 ## Channel adapters
 
-Beyond the inbox, notifications can fan out to external delivery channels
-(Mattermost DM, email, vault summary page, etc.). Phase 2 ships one
-adapter — **Mattermost DM** — and establishes the extension point for
-more without any further producer-side changes.
+Beyond the inbox, notifications can fan out to delivery channels
+external to the web UI. Three ship today: **Mattermost DM**,
+**email**, and **vault page** (a daily rollup file in the agent's
+vault). The extension point is a single `init_notification_channels`
+dispatch in the package's `__init__.py` — adding a new adapter is a
+self-contained module + one `if` block there.
 
 ### How dispatch works
 
@@ -280,6 +282,74 @@ clients render literal text). Subject is `[<agent_id>] [<category>] <title>` —
 **Dispatch:** fire-and-forget via `asyncio.create_task(_deliver(...))`.
 Errors in `_deliver` log at warning level and are swallowed.
 
+### Vault page adapter
+
+`src/decafclaw/notification_channels/vault_page.py`.
+
+Appends each matching notification to a daily rollup page under the
+configured folder (default `<vault_root>/agent/pages/notifications/YYYY-MM-DD.md`).
+Complements the push channels (MM DM, email) with a persistent, local
+audit trail — notifications become part of the vault filesystem and
+are browsable alongside other agent pages.
+
+Configured under `config.notifications.channels.vault_page`:
+
+- `enabled: bool` (default `true`) — on by default. Pure local writes,
+  no external delivery, no cost — useful out of the box as an audit
+  trail. Set to `false` to disable.
+- `min_priority: "low" | "normal" | "high"` (default `low` — channel's
+  job is completeness; no external noise concern).
+- `folder: str` — vault-root-relative (default `agent/pages/notifications`).
+
+**Startup guard is just `enabled`.** No transport dep to check. The
+adapter subscribes whenever `enabled` is true. All folder validation
+happens at use time in `_daily_page_path`, which emits **one warning
+per bad folder** (covers empty, absolute, `..`-containing, and paths
+resolving outside the vault root) and then returns `None` silently
+for the life of the process. Result: a misconfigured folder disables
+the channel effectively without log spam.
+
+**Entry format.** Each notification becomes its own markdown section
+appended to the day's file:
+
+```markdown
+## 14:32 UTC · ⚠️ [heartbeat] Heartbeat: 2 alert(s)
+
+- priority: high
+- conv_id: —
+- link: —
+
+1 OK, 2 alert(s) across 3 section(s).
+
+```
+
+Priority glyphs match the other channels (`·` / `🔔` / `⚠️`). Em-dashes
+fill in for empty `conv_id` / `link` / `body`. Obsidian's document
+outline turns the subheadings into a browsable daily index; each
+section is fragment-linkable (e.g. `[[2026-04-23#14:32 UTC]]`).
+
+**Page initialization.** The first notification of a new day writes a
+small header — YAML frontmatter (`title`, `tags: [notifications,
+system]`) + H1 — before the entry. Subsequent entries append directly.
+
+**No embedding.** Notification pages are deliberately NOT added to the
+semantic search index. They're rolling audit log, not reference
+material; re-embedding a growing day-page on every append would be
+both expensive and low-value for search relevance. Discoverability
+happens via `vault_list` + folder navigation. If a real use case for
+semantic search over past notifications surfaces, adding embedding is
+a small forward change.
+
+**Concurrency.** Per-path `asyncio.Lock` (module-level `_locks` dict
+keyed on resolved path — same pattern as `notifications._locks`)
+serializes concurrent appends to the same day. The lock covers the
+exists-check + create-if-missing + append, so midnight-boundary races
+between two deliveries are handled safely.
+
+**Dispatch:** fire-and-forget `asyncio.create_task`. Delivery failures
+log at warning level and are otherwise swallowed — the inbox record
+stands as the source of truth.
+
 ### Adding a new adapter
 
 1. Add a typed channel-config dataclass to
@@ -313,8 +383,7 @@ See [config.md#notifications](config.md#notifications) for the two tunables:
 
 Still deferred (tracked on [#292](https://github.com/lmorchard/decafclaw/issues/292)):
 
-- **More channel adapters** — Mattermost channel post (vs DM), vault
-  summary page.
+- **More channel adapters** — Mattermost channel post (vs DM).
 - **Periodic newsletters** (#283) — composer layer on top of channels
   that coalesces scheduled-task activity into daily/weekly rollups.
 - **Multi-user inbox partitioning** — currently single-agent,
