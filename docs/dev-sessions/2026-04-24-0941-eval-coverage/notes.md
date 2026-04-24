@@ -469,3 +469,62 @@ H13, H14, H15, H16 are each tiny and borderline between "inline fix on this bran
 
 H18 (tool dispatch "did you mean" bug) is not an eval issue at all — file separately, not part of the eval-coverage umbrella.
 
+---
+
+## Session retrospective
+
+### Recap
+
+Audit session for #240 ("Eval coverage: audit and expand"). Produced:
+
+- **PR #338** — 4 commits on branch `eval-coverage`. Session scaffolding + spec, inline doc/bug fixes (`docs/eval-loop.md` schema rewrite, `reflect.py` multi-turn fix, `make eval` target), the audit doc + plan + notes, and the audit-doc issue-number update.
+- **16 GitHub issues filed** (#339–#354) as children of #240, each on the decafclaw project board with priority + size set.
+- **1 standalone issue filed** (#355) for the tool-registry did-you-mean bug caught by accident during the eval run.
+- **#240 closed** with an umbrella comment linking all children.
+- **9 deferred issues noted** in the audit doc but not filed — all P3 and blocked on P3 harness work.
+
+### Divergences from plan
+
+- **Step 12 reordered.** Plan had "final sync, PR, retro" as the last step. Les asked mid-execute to push the PR before filing issues so the filed issue bodies could point at a visible branch + PR. Executed as push + PR → Step 10 → Step 11 → retro.
+- **Added Commit 4.** Not in the original plan. After filing issues I updated the audit doc's Section 5 with actual issue numbers (#339–#355) so the frozen audit record is self-sufficient, and committed that as a 4th commit. Small cost, useful artifact.
+- **Issue count landed at 17 filed, not 16.** The standalone tool-registry bug (#355) was a side finding, not a #240 child. Filed it anyway as a separate issue since it's a real tool-dispatch bug surfaced by the eval run.
+
+### Key findings (the actual content payoff)
+
+- **`memory-semantic.yaml` was silently broken.** 7/7 runtime pass but testing nothing — allowed_tools referenced removed tool names, but proactive memory retrieval injected the seeded memories directly into context so the agent never reached for a tool. The insight "a test passing doesn't mean it's testing what it claims" was the most important audit finding and drove a docs update in `eval-loop.md` about forcing tool use when you mean to test a tool.
+- **Doc rot in `docs/eval-loop.md`.** Field names (`prompt`/`expect_contains`/`expect_tool` as flat fields) described a schema the runner never had, including an `expect_tool` row documenting an assertion that doesn't exist. Fixed inline.
+- **Two real harness bugs in `reflect.py`.** Multi-turn input extraction used the wrong schema keys (`role`/`content` vs. `input`/`expect`); fixed inline. Judge prompt only interpolates `response_contains` and gives useless advice for `max_tool_calls` / `max_tool_errors` failures; spun out to #354.
+- **Self-contradicting "did you mean" error** in tool dispatch, caught during the eval run — filed as #355, unrelated to #240.
+
+### Insights
+
+- **Audit before solution.** Spending the brainstorm phase on "what's the scope of this session" rather than "how to build N evals" made the whole downstream work sharper. The discovery that `memory-semantic.yaml` silently passes is a good example — would have been invisible if I'd jumped straight to writing new eval files.
+- **Per-eval-file issue granularity was right at this count.** 16 issues is a lot, but each is discrete and has a clear PR shape. Coarser would've muddied priorities; finer would've been annoying to track.
+- **Don't trust a "pass" — check whether the test exercises the path it claims to.** This belongs in `docs/eval-loop.md` (now added) and in every future eval review.
+- **GitHub Project Board filing is scriptable but tedious.** `gh issue create --project "NAME"` gets it on the board; `gh project item-edit` sets the custom fields. Three calls per issue. Fine for 16; would want a helper for 50+.
+- **Reflections have real informational value even for an audit.** The judge model's reflections on the 4 runtime failures mostly matched my manual triage, which was useful as an independent check. Worth keeping `reflections/` generation enabled.
+
+### Efficiency observations
+
+- **Parallelization worked well.** Step 3 (eval run, ~2 min wall-clock) overlapped with Step 9 (gh project probe + field discovery) — saved some minutes. Similarly, writing the 15 issue body files happened in parallel tool calls where possible.
+- **The runner's concurrency default (4) was right.** Zero rate-limit-shaped failures; no need to fall back to sequential. The pre-committed fallback plan was reassuring but unused.
+- **The venv ambiguity was a near-miss.** My initial `ps aux` check showed the eval run was using Homebrew Python, not clearly the worktree venv. Turned out to be fine because main and worktree were on the same commit (no Python changes yet), but a future session with real code changes would need a deliberate `cd` into the worktree or absolute paths.
+- **Writing the audit doc at end was the right shape.** Trying to draft it incrementally while still gathering evidence would have been choppy. Better to accumulate in `notes.md` and synthesize once the picture is complete.
+
+### Process improvements
+
+- **Memory: venv discipline in worktrees.** Every worktree command that invokes Python should use the worktree's venv path explicitly (`$WORKTREE/.venv/bin/python`), OR the session should start with `cd "$WORKTREE" && source .venv/bin/activate` as a preamble. The project CLAUDE.md already says "Worktrees go under `.claude/worktrees/`; each needs its own venv" — could expand that to "and every Python command should reference `$WORKTREE/.venv/bin/python` explicitly."
+- **Helper for bulk issue filing.** The shell loop in Step 10 worked, but worth extracting as a shared utility (maybe a small `scripts/file-project-issue.sh`) since this pattern will repeat for future splits. Field IDs are stable per project, so hardcoded is fine.
+- **Audit doc location principle (applied, keep).** Point-in-time audits live in the session dir; living guidance goes inline in `docs/` — this split worked and is worth keeping as a convention.
+
+### Conversation turns
+
+Roughly 20 back-and-forth exchanges. The brainstorm phase was ~6 turns (one question per turn), plan phase 2 turns, execute phase the bulk (~12 turns including the two intermediate checkpoints).
+
+### Other highlights
+
+- **PR body serves as a mini-retro.** Because the PR summarizes findings + test plan, readers get the audit's bottom-line without reading the full 900-line audit doc. Session doc is the deep record; PR is the elevator pitch.
+- **#240's closing comment doubles as a dashboard.** The checkbox list of 16 children with blocker notes lets Les (or anyone) pick up where this left off without re-reading the audit.
+- **Zero `make dev` conflict.** The parallel eval run didn't interfere with any running dev instance.
+
+
