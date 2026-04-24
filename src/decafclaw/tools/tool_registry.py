@@ -261,7 +261,11 @@ def build_deferred_list_text(
         lines.extend(_render(mcp_tools[server]))
         lines.append("")
 
-    return "\n".join(lines)
+    # Wrap the assembled markdown in a <deferred_tools> block so the
+    # model can distinguish the deferred catalog system message from
+    # the main system prompt. The empty-input early-return above still
+    # yields "" (no dangling wrapper). See docs/context-composer.md.
+    return "<deferred_tools>\n" + "\n".join(lines) + "\n</deferred_tools>"
 
 
 # -- Fetched tools helpers (list↔set for JSON serialization) -----------------

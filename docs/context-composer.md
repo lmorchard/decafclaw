@@ -16,6 +16,31 @@ Assembled from markdown files at startup. Admin-level files override bundled.
 
 Override path: `data/{agent_id}/{SOUL,AGENT,USER}.md` (admin-level, read-only to agent)
 
+#### Section delimiters
+
+Each assembled section is wrapped in an XML tag at assembly time so the
+model can reliably distinguish identity from instructions from per-
+deployment facts from skill metadata from skill bodies. Source files
+stay plain markdown; wrapping happens in `load_system_prompt` (and the
+deferred-tool catalog is wrapped in `build_deferred_list_text`).
+
+| Tag | Source | Gating |
+|-----|--------|--------|
+| `<soul>` | `SOUL.md` | Always present (bundled default or admin override) |
+| `<agent_role>` | `AGENT.md` | Always present (bundled default or admin override) |
+| `<user_context>` | `USER.md` | Only when the file exists in the agent dir and has non-empty content |
+| `<skill_catalog>` | `build_catalog_text` output (listing of Active + Available skills) | Only when at least one skill was discovered |
+| `<loaded_skills>` | Bodies of always-loaded bundled skills, one nested `<skill name="…">` block per body | Only when at least one bundled always-loaded skill exists |
+| `<deferred_tools>` | `build_deferred_list_text` output (separate system message) | Only when at least one deferred tool entry is emitted |
+
+Empty sections emit nothing — no dangling `<tag></tag>` wrappers.
+
+Rationale follows Anthropic's [Effective Context Engineering for AI
+Agents](https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents).
+See #304 for the change history and #357 for the follow-up that
+applies the same convention to the reflection / memory-sweep /
+compaction prompts.
+
 ### Context window layout
 
 ```
