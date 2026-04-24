@@ -41,7 +41,7 @@ Tests are YAML files with a list of test cases. Single-turn form:
 
 | Field | Description |
 |-------|-------------|
-| `setup.skills` | List of skill names to pre-activate before the turn |
+| `setup.skills` | List of skill names to pre-activate before the test case (once, shared across turns) |
 | `setup.memories` | List of `{content, tags}`; seeded as journal entries (and indexed for semantic search if the strategy is `semantic`) |
 | `setup.workspace_files` | Map of `{relative_path: content}` to seed into the test workspace. Paths are sandboxed — no `..` escape |
 | `setup.embeddings_fixture` | Path to a pre-built embeddings.db to copy into the workspace |

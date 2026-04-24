@@ -9,7 +9,7 @@ This is a research/audit session, not feature-building. Most steps produce analy
 - Branch: `eval-coverage` (already created; spec already committed).
 - Commit 1 already landed: session scaffolding + spec.
 - Commit 2: inline doc/comment rot fixes (step 7).
-- Commit 3: audit doc (`docs/evals-audit.md` — see note on location in step 8).
+- Commit 3: audit doc at `docs/dev-sessions/2026-04-24-0941-eval-coverage/evals-audit.md` (see Step 8 for the location decision — point-in-time artifact, not a living doc).
 - No other code changes on this branch.
 - Rebase against origin/main before opening the final PR.
 
