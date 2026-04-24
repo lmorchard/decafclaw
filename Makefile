@@ -86,6 +86,10 @@ vendor:
 config:
 	uv run decafclaw config show
 
+# Run all evals against the default model
+eval:
+	uv run python -m decafclaw.eval evals/
+
 # Rebuild eval embedding fixtures (run when changing embedding models)
 build-eval-fixtures:
 	uv run python scripts/build-eval-fixtures.py

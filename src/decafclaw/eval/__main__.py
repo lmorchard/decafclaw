@@ -24,7 +24,8 @@ def main():
     parser.add_argument("path", help="YAML file or directory of YAML files")
     parser.add_argument("--model", help="Override LLM model")
     parser.add_argument("--judge-model", help="Model for failure reflection (default: same as --model)")
-    parser.add_argument("--verbose", action="store_true", help="Show full responses")
+    parser.add_argument("--verbose", action="store_true",
+                        help="Show a truncated response snippet (first 200 chars) per test")
     parser.add_argument("--concurrency", type=int, default=4, help="Max concurrent tests (default: 4)")
     args = parser.parse_args()
 
