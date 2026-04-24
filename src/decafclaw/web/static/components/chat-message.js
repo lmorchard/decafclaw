@@ -17,6 +17,7 @@ export class ChatMessage extends LitElement {
     usage: { type: Object, attribute: false },
     timestamp: { type: String },
     attachments: { type: Array, attribute: false },
+    record: { type: Object, attribute: false },
   };
 
   createRenderRoot() { return this; }
@@ -38,9 +39,31 @@ export class ChatMessage extends LitElement {
     this.timestamp = '';
     /** @type {Array|null} */
     this.attachments = null;
+    /** @type {object|null} */
+    this.record = null;
   }
 
   render() {
+    if (this.role === 'background_event') {
+      const rec = this.record || {};
+      const status = rec.status || 'completed';
+      const exitCode = rec.exit_code ?? '';
+      const command = rec.command || '';
+      const stdoutTail = rec.stdout_tail || '';
+      const stderrTail = rec.stderr_tail || '';
+      const icon = status === 'completed' ? '✅' : '❌';
+      const exitLabel = exitCode !== '' ? ` (exit ${exitCode})` : '';
+      return html`
+        <div class="chat-event background-event">
+          <span class="icon">${icon}</span>
+          <span class="title">Background job ${status}${exitLabel}</span>
+          ${command ? html`<code class="command">${command}</code>` : ''}
+          ${stdoutTail ? html`<pre class="stdout">${stdoutTail}</pre>` : ''}
+          ${stderrTail ? html`<pre class="stderr">${stderrTail}</pre>` : ''}
+        </div>
+      `;
+    }
+
     if (this.role === 'command') {
       return html`<tool-message .tool=${this.content} .content=${''} .icon=${'\u{2699}\u{fe0f}'}></tool-message>`;
     }

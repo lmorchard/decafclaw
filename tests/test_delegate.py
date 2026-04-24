@@ -5,6 +5,8 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from decafclaw.conversation_manager import ConversationManager, TurnKind
+from decafclaw.events import EventBus
 from decafclaw.media import ToolResult
 from decafclaw.tools.delegate import (
     DEFAULT_CHILD_SYSTEM_PROMPT,
@@ -27,12 +29,25 @@ def _mock_llm_response(content="child result"):
     }
 
 
+@pytest.fixture
+def ctx(config):
+    """ctx fixture with a ConversationManager attached (required for delegation)."""
+    from decafclaw.context import Context
+
+    bus = EventBus()
+    context = Context(config=config, event_bus=bus)
+    context.conv_id = "test-conv"
+    context.channel_id = "test-channel"
+    context.user_id = "testuser"
+    context.manager = ConversationManager(config, bus)
+    return context
+
+
 class TestRunChildTurn:
     @pytest.mark.asyncio
     async def test_basic_child_turn(self, ctx):
         """Child agent runs and returns result text."""
         with patch("decafclaw.agent.run_agent_turn", new_callable=AsyncMock) as mock_run:
-            from decafclaw.media import ToolResult
             mock_run.return_value = ToolResult(text="child says hello")
 
             result = await _run_child_turn(ctx, "say hello")
@@ -40,7 +55,7 @@ class TestRunChildTurn:
         assert result == "child says hello"
         mock_run.assert_called_once()
 
-        # Check the child context
+        # Check the child context passed to run_agent_turn
         call_args = mock_run.call_args
         child_ctx = call_args[0][0]
         assert child_ctx.config.agent.max_tool_iterations == 10
@@ -50,7 +65,6 @@ class TestRunChildTurn:
     async def test_delegate_task_excluded_from_child(self, ctx):
         """The delegate_task tool is excluded from child's allowed tools."""
         with patch("decafclaw.agent.run_agent_turn", new_callable=AsyncMock) as mock_run:
-            from decafclaw.media import ToolResult
             mock_run.return_value = ToolResult(text="ok")
 
             await _run_child_turn(ctx, "task")
@@ -67,7 +81,6 @@ class TestRunChildTurn:
         ctx.skills.data = {"vault_base_path": "obsidian/main"}
 
         with patch("decafclaw.agent.run_agent_turn", new_callable=AsyncMock) as mock_run:
-            from decafclaw.media import ToolResult
             mock_run.return_value = ToolResult(text="ok")
 
             await _run_child_turn(ctx, "task")
@@ -81,7 +94,6 @@ class TestRunChildTurn:
         ctx.tools.extra = {"vault_read": lambda ctx, **kw: "data"}
 
         with patch("decafclaw.agent.run_agent_turn", new_callable=AsyncMock) as mock_run:
-            from decafclaw.media import ToolResult
             mock_run.return_value = ToolResult(text="ok")
 
             await _run_child_turn(ctx, "task")
@@ -105,11 +117,12 @@ class TestRunChildTurn:
 
     @pytest.mark.asyncio
     async def test_child_error(self, ctx):
-        """Child that raises returns error text."""
-        with patch("decafclaw.agent.run_agent_turn", new_callable=AsyncMock, side_effect=Exception("boom")):
+        """Child that raises returns error text containing the exception message."""
+        with patch("decafclaw.agent.run_agent_turn", new_callable=AsyncMock,
+                   side_effect=Exception("boom")):
             result = await _run_child_turn(ctx, "bad task")
 
-        assert "subtask failed" in _text(result)
+        # _start_turn catches the exception and forwards it as [error: boom]
         assert "boom" in _text(result)
 
     @pytest.mark.asyncio
@@ -119,7 +132,6 @@ class TestRunChildTurn:
         ctx.cancelled = cancel
 
         with patch("decafclaw.agent.run_agent_turn", new_callable=AsyncMock) as mock_run:
-            from decafclaw.media import ToolResult
             mock_run.return_value = ToolResult(text="ok")
 
             await _run_child_turn(ctx, "task")
@@ -127,12 +139,41 @@ class TestRunChildTurn:
         child_ctx = mock_run.call_args[0][0]
         assert child_ctx.cancelled is cancel
 
+    @pytest.mark.asyncio
+    async def test_no_manager_returns_error(self, ctx):
+        """Missing manager on parent ctx returns an error."""
+        ctx.manager = None
+
+        result = await _run_child_turn(ctx, "task")
+
+        assert "error" in _text(result)
+        assert "manager" in _text(result).lower()
+
+
+    @pytest.mark.asyncio
+    async def test_threads_parent_user_id(self, ctx):
+        """Child turn inherits parent's user_id."""
+        ctx.user_id = "alice"
+
+        seen = {}
+
+        async def fake_run_agent_turn(child_ctx, user_message, history, **kwargs):
+            seen["user_id"] = child_ctx.user_id
+            return ToolResult(text="done")
+
+        with patch("decafclaw.agent.run_agent_turn", new_callable=AsyncMock,
+                   side_effect=fake_run_agent_turn):
+            await _run_child_turn(ctx, "whatever")
+
+        assert seen["user_id"] == "alice"
+
 
 class TestToolDelegateTask:
     @pytest.mark.asyncio
     async def test_single_task(self, ctx):
         """Single task returns result directly."""
-        with patch("decafclaw.tools.delegate._run_child_turn", new_callable=AsyncMock, return_value="result one"):
+        with patch("decafclaw.tools.delegate._run_child_turn",
+                   new_callable=AsyncMock, return_value="result one"):
             result = await tool_delegate_task(ctx, "do thing")
 
         assert result == "result one"
@@ -148,3 +189,55 @@ class TestToolDelegateTask:
         """Whitespace-only task returns error."""
         result = await tool_delegate_task(ctx, "   ")
         assert "error" in _text(result)
+
+
+class TestDelegateRoutingThroughManager:
+    @pytest.mark.asyncio
+    async def test_delegate_routes_through_manager(self, ctx, monkeypatch):
+        """delegate_task routes child turns through ConversationManager.enqueue_turn."""
+        seen = []
+        orig_enqueue = ctx.manager.enqueue_turn
+
+        async def spy_enqueue(conv_id, *, kind, prompt, **kwargs):
+            seen.append({"conv_id": conv_id, "kind": kind, "prompt": prompt[:40]})
+            return await orig_enqueue(conv_id, kind=kind, prompt=prompt, **kwargs)
+
+        monkeypatch.setattr(ctx.manager, "enqueue_turn", spy_enqueue)
+
+        async def fake_run_agent_turn(child_ctx, user_message, history, **kwargs):
+            return ToolResult(text="done")
+
+        monkeypatch.setattr("decafclaw.agent.run_agent_turn", fake_run_agent_turn)
+
+        result = await tool_delegate_task(ctx, "do a thing")
+
+        assert len(seen) == 1
+        assert seen[0]["kind"] is TurnKind.CHILD_AGENT
+        assert "--child-" in seen[0]["conv_id"]
+        assert "done" in _text(result)
+
+    @pytest.mark.asyncio
+    async def test_child_conv_id_format(self, ctx, monkeypatch):
+        """Child conv_id is based on parent conv_id with a unique suffix."""
+        seen_conv_ids = []
+        orig_enqueue = ctx.manager.enqueue_turn
+
+        async def spy_enqueue(conv_id, *, kind, prompt, **kwargs):
+            seen_conv_ids.append(conv_id)
+            return await orig_enqueue(conv_id, kind=kind, prompt=prompt, **kwargs)
+
+        monkeypatch.setattr(ctx.manager, "enqueue_turn", spy_enqueue)
+        monkeypatch.setattr(
+            "decafclaw.agent.run_agent_turn",
+            AsyncMock(return_value=ToolResult(text="ok")),
+        )
+
+        await tool_delegate_task(ctx, "task one")
+        await tool_delegate_task(ctx, "task two")
+
+        assert len(seen_conv_ids) == 2
+        # Both should start with parent conv_id
+        assert seen_conv_ids[0].startswith("test-conv--child-")
+        assert seen_conv_ids[1].startswith("test-conv--child-")
+        # They should be different (random suffix)
+        assert seen_conv_ids[0] != seen_conv_ids[1]

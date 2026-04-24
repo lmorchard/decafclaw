@@ -119,7 +119,14 @@ export class MessageStore {
           const existing = new Set(this.#currentMessages.map(m => m.timestamp));
           const newMsgs = (msg.messages || []).filter(
             /** @param {ChatMessage} m */ (m) => !existing.has(m.timestamp)
-          );
+              && m.role !== 'wake_trigger'  // synthetic wake prompts are not user messages
+          ).map(/** @param {ChatMessage} m */ (m) => {
+            // Map background_event archive records to a renderable form
+            if (m.role === 'background_event') {
+              return { role: 'background_event', record: m, timestamp: m.timestamp };
+            }
+            return m;
+          });
           this.#currentMessages = [...this.#mergeToolMessages(newMsgs), ...this.#currentMessages];
           this.#hasMore = msg.has_more;
         }
@@ -174,6 +181,18 @@ export class MessageStore {
             role: 'compaction',
             content: `Conversation compacted: ${msg.before_messages} → ${msg.after_messages} messages`,
             timestamp: new Date().toISOString(),
+          });
+        }
+        return true;
+
+      case 'background_event':
+        if (msg.conv_id === currentConvId) {
+          const record = msg.record || {};
+          this.#currentMessages.push({
+            role: 'background_event',
+            record,
+            content: '',
+            timestamp: record.timestamp || new Date().toISOString(),
           });
         }
         return true;

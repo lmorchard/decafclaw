@@ -202,3 +202,60 @@ async def test_finalize_is_idempotent():
 
     await display.finalize()
     client.delete_message.assert_not_called()
+
+
+# -- message_complete buffer-override behaviour (Issue B) ---------------------
+
+
+@pytest.mark.asyncio
+async def test_suppress_clears_buffer_so_finalize_deletes_placeholder():
+    """When suppress_user_message is True (WAKE turn ending with BACKGROUND_WAKE_OK),
+    the message_complete handler must clear _text_buffer and _text_has_content so
+    that finalize() deletes the thinking placeholder rather than posting content."""
+    client = make_mock_client()
+    display = make_display(client, initial_post_id="placeholder-id")
+    await display.on_llm_start(iteration=1)
+
+    # Confirm initial state: thinking placeholder, no content yet
+    assert display._current_type == "thinking"
+    assert display._current_post_id == "placeholder-id"
+    assert not display._text_has_content
+
+    # The message_complete suppress path clears the buffer
+    # (even if some text had accumulated from a streaming partial)
+    display._text_buffer = ""
+    display._text_has_content = False
+
+    await display.finalize()
+
+    # With no content and _current_type="thinking", finalize should
+    # delete the thinking placeholder — not edit it with text.
+    client.delete_message.assert_awaited_once_with("placeholder-id")
+    client.edit_message.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_message_complete_text_enables_finalize_for_wake_no_chunks():
+    """When streaming is ON but on_stream_chunk=None (WAKE turn), no chunks
+    accumulate.  Setting _text_buffer + _text_has_content from message_complete.text
+    before finalize causes finalize to edit the placeholder with the final text
+    rather than deleting it as an empty thinking placeholder."""
+    client = make_mock_client()
+    display = make_display(client, initial_post_id="placeholder-id")
+    await display.on_llm_start(iteration=1)
+
+    # No chunks arrived — buffer is empty, _current_type is still "thinking"
+    assert display._text_buffer == ""
+    assert not display._text_has_content
+    assert display._current_type == "thinking"
+
+    # The message_complete handler sets the buffer from event["text"]
+    final_text = "Background job completed: all tasks done."
+    display._text_buffer = final_text
+    display._text_has_content = True
+
+    await display.finalize()
+
+    # finalize must edit the placeholder with the final text (not delete it)
+    client.edit_message.assert_awaited_with("placeholder-id", final_text)
+    client.delete_message.assert_not_called()

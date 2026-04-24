@@ -5,6 +5,7 @@ import logging
 import time
 from collections import deque
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
@@ -35,6 +36,9 @@ class BackgroundJob:
     config: Any = None
     conv_id: str = ""
     event_bus: Any = None
+    completion_tail_lines: int = 50
+    finalized: bool = False
+    manager: Any = None
 
 
 async def _read_stream(stream: asyncio.StreamReader | None, buffer: deque) -> None:
@@ -50,6 +54,7 @@ async def _read_stream(stream: asyncio.StreamReader | None, buffer: deque) -> No
 
 async def _run_reader(job: BackgroundJob) -> None:
     """Read stdout/stderr until process exits, then capture exit code."""
+    cancelled = False
     try:
         await asyncio.gather(
             _read_stream(job.process.stdout, job.stdout_buffer),
@@ -59,12 +64,16 @@ async def _run_reader(job: BackgroundJob) -> None:
         job.exit_code = job.process.returncode
         job.status = "completed" if job.exit_code == 0 else "error"
     except asyncio.CancelledError:
-        pass
+        cancelled = True
+        raise
     except Exception as e:
         log.warning(f"Background job {job.job_id} reader error: {e}")
         job.status = "error"
-    else:
-        await _notify_job_exit(job)
+        if job.process.returncode is not None:
+            job.exit_code = job.process.returncode
+    finally:
+        if not cancelled:
+            await _finalize_job(job)
 
 
 async def _notify_job_exit(job: BackgroundJob) -> None:
@@ -88,6 +97,159 @@ async def _notify_job_exit(job: BackgroundJob) -> None:
         )
     except Exception as e:
         log.warning(f"Failed to emit background-job notification: {e}")
+
+
+async def _enqueue_wake(job: BackgroundJob) -> None:
+    """Wake the agent via ConversationManager.enqueue_turn(kind=WAKE).
+    Fail-open: a missing manager or a failed enqueue is logged but not raised
+    — the archive record and user-facing inbox notification already landed."""
+    if job.manager is None or not job.conv_id:
+        log.debug("No manager or conv_id for job %s — skipping wake", job.job_id)
+        return
+    # Import here to avoid top-level circular dependency.
+    from decafclaw.conversation_manager import TurnKind
+    nudge = (
+        "A background job you started has completed. Its status and output "
+        "are in your history above. Review the result and take any follow-up "
+        "action (respond to the user, call other tools, or reply with "
+        "BACKGROUND_WAKE_OK to end the turn silently if no action is needed)."
+    )
+    try:
+        await job.manager.enqueue_turn(
+            conv_id=job.conv_id,
+            kind=TurnKind.WAKE,
+            prompt=nudge,
+            metadata={"job_id": job.job_id},
+        )
+    except Exception as e:
+        log.warning(f"Failed to enqueue wake turn for {job.job_id}: {e}")
+
+
+async def _finalize_job(job: BackgroundJob) -> None:
+    """Run the post-exit sequence: append archive record, emit inbox
+    notification, enqueue a wake turn. Called EXACTLY ONCE per job at the
+    moment status transitions out of 'running'.
+    """
+    if job.finalized:
+        return
+    job.finalized = True
+
+    if job.config is None:
+        return  # no config => nothing we can do
+
+    # 1. Append background_event to conversation archive.
+    try:
+        from decafclaw.archive import append_message
+        elapsed_ms = int((time.monotonic() - job.started_at) * 1000)
+        rec = build_background_event_record(
+            job_id=job.job_id,
+            command=job.command,
+            status=job.status,
+            exit_code=job.exit_code,
+            stdout_buffer=job.stdout_buffer,
+            stderr_buffer=job.stderr_buffer,
+            elapsed_ms=elapsed_ms,
+            completion_tail_lines=job.completion_tail_lines,
+        )
+        if job.conv_id:
+            append_message(job.config, job.conv_id, rec)
+            # Emit on the conv event stream so live subscribers (web UI, etc.)
+            # see the completion immediately when the record is appended.
+            if job.manager is not None:
+                try:
+                    await job.manager.emit(job.conv_id, {
+                        "type": "background_event",
+                        "record": rec,
+                    })
+                except Exception as emit_e:
+                    log.warning(f"Failed to emit background_event event for {job.job_id}: {emit_e}")
+    except Exception as e:
+        log.warning(f"Failed to append background_event for {job.job_id}: {e}")
+
+    # 2. User-facing inbox notification.
+    await _notify_job_exit(job)
+
+    # 3. Enqueue wake turn.
+    await _enqueue_wake(job)
+
+
+def _tail_clamped(lines: deque, n: int, max_bytes: int = 4096) -> str:
+    """Take the last n lines; join with \\n; drop oldest lines until under max_bytes."""
+    if n <= 0:
+        return ""
+    tail = list(lines)[-n:]
+    s = "\n".join(tail)
+    # Drop from the oldest end until within byte budget.
+    while len(s.encode("utf-8")) > max_bytes and tail:
+        tail = tail[1:]
+        s = "\n".join(tail)
+    return s
+
+
+def build_background_event_record(
+    *,
+    job_id: str,
+    command: str,
+    status: str,
+    exit_code: int | None,
+    stdout_buffer: deque,
+    stderr_buffer: deque,
+    elapsed_ms: int,
+    completion_tail_lines: int,
+) -> dict:
+    """Build a background_event archive record.
+
+    Tails are each clamped to `completion_tail_lines` lines AND a 4KB byte
+    ceiling (whichever is tighter). The in-memory buffer (_OUTPUT_BUFFER_SIZE
+    lines) remains the authoritative source for richer data via
+    shell_background_status.
+    """
+    n = max(0, min(completion_tail_lines, _OUTPUT_BUFFER_SIZE))
+    return {
+        "role": "background_event",
+        "timestamp": datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "job_id": job_id,
+        "command": command,
+        "status": status,
+        "exit_code": exit_code,
+        "stdout_tail": _tail_clamped(stdout_buffer, n),
+        "stderr_tail": _tail_clamped(stderr_buffer, n),
+        "elapsed_ms": elapsed_ms,
+        "completion_tail_lines": n,
+    }
+
+
+def format_status_text(
+    *,
+    job_id: str,
+    status: str,
+    command: str,
+    pid: int,
+    elapsed_ms: int,
+    remaining_ms: int | None,
+    exit_code: int | None,
+    stdout: str,
+    stderr: str,
+) -> str:
+    """Render a background-job status as markdown text.
+
+    Shared by tool_shell_background_status (when the agent polls) and the
+    ContextComposer's expansion of background_event archive records (so a
+    woken agent sees the same format).
+    """
+    parts = [f"**Job `{job_id}`** — {status}"]
+    parts.append(f"- **Command:** `{command}`")
+    parts.append(f"- **PID:** {pid}")
+    parts.append(f"- **Elapsed:** {elapsed_ms / 1000:.1f}s")
+    if remaining_ms is not None:
+        parts.append(f"- **Remaining:** {remaining_ms / 1000:.1f}s")
+    if exit_code is not None:
+        parts.append(f"- **Exit code:** {exit_code}")
+    if stdout:
+        parts.append(f"**stdout:**\n```\n{stdout}\n```")
+    if stderr:
+        parts.append(f"**stderr:**\n```\n{stderr}\n```")
+    return "\n".join(parts)
 
 
 async def _kill_process(process: asyncio.subprocess.Process) -> None:
@@ -120,12 +282,14 @@ class BackgroundJobManager:
                     max_lifetime: float = _DEFAULT_MAX_LIFETIME,
                     config: Any = None,
                     conv_id: str = "",
-                    event_bus: Any = None) -> BackgroundJob:
+                    event_bus: Any = None,
+                    completion_tail_lines: int = 50,
+                    manager: Any = None) -> BackgroundJob:
         """Start a background process. Returns immediately.
 
-        ``config``, ``conv_id``, and ``event_bus`` are carried into the
-        job so the reader task can emit an inbox notification (and fan
-        out to channel adapters) when the process exits.
+        ``config``, ``conv_id``, ``event_bus``, and ``manager`` are carried
+        into the job so the reader task can emit an inbox notification (and fan
+        out to channel adapters) and enqueue a WAKE turn when the process exits.
         """
         process = await asyncio.create_subprocess_shell(
             command, cwd=cwd,
@@ -143,6 +307,8 @@ class BackgroundJobManager:
             config=config,
             conv_id=conv_id,
             event_bus=event_bus,
+            completion_tail_lines=completion_tail_lines,
+            manager=manager,
         )
         job.reader_task = asyncio.create_task(_run_reader(job))
         self.jobs[job.job_id] = job
@@ -182,6 +348,7 @@ class BackgroundJobManager:
                     job.status = "stopped"
 
         log.info(f"Stopped background job {job.job_id}")
+        await _finalize_job(job)
         return job
 
     def list_jobs(self) -> list[BackgroundJob]:
@@ -205,6 +372,7 @@ class BackgroundJobManager:
                         pass
                 job.exit_code = job.process.returncode
                 job.status = "expired"
+                await _finalize_job(job)
                 expired.append(job)
             elif job.status != "running" and (now - job.started_at) > job.max_lifetime:
                 # Remove stale finished jobs to prevent unbounded growth
@@ -245,7 +413,8 @@ def _get_job_manager(ctx) -> BackgroundJobManager:
 
 # -- Tool functions -----------------------------------------------------------
 
-async def tool_shell_background_start(ctx, command: str) -> ToolResult:
+async def tool_shell_background_start(ctx, command: str,
+                                      completion_tail_lines: int | None = None) -> ToolResult:
     """Start a background process. Returns immediately with a job ID."""
     log.info(f"[tool:shell_background_start] command={command[:80]}")
 
@@ -261,14 +430,24 @@ async def tool_shell_background_start(ctx, command: str) -> ToolResult:
             data={"status": "error"},
         )
 
+    tail_lines: int = (
+        ctx.config.background.default_completion_tail_lines
+        if completion_tail_lines is None
+        else completion_tail_lines
+    )
+    clamped_tail_lines = max(0, min(tail_lines, _OUTPUT_BUFFER_SIZE))
+
     manager = _get_job_manager(ctx)
     await manager.cleanup_expired()
+    conv_manager = ctx.manager
 
     try:
         job = await manager.start(
             command, str(ctx.config.workspace_path),
             config=ctx.config, conv_id=ctx.conv_id,
             event_bus=ctx.event_bus,
+            completion_tail_lines=clamped_tail_lines,
+            manager=conv_manager,
         )
     except Exception as e:
         return ToolResult(
@@ -311,22 +490,20 @@ async def tool_shell_background_status(ctx, job_id: str) -> ToolResult:
     stdout = "\n".join(job.stdout_buffer)
     stderr = "\n".join(job.stderr_buffer)
 
-    # Text summary
-    parts = [f"**Job `{job_id}`** — {job.status}"]
-    parts.append(f"- **Command:** `{job.command}`")
-    parts.append(f"- **PID:** {job.pid}")
-    parts.append(f"- **Elapsed:** {elapsed_ms / 1000:.1f}s")
-    if remaining_ms is not None:
-        parts.append(f"- **Remaining:** {remaining_ms / 1000:.1f}s")
-    if job.exit_code is not None:
-        parts.append(f"- **Exit code:** {job.exit_code}")
-    if stdout:
-        parts.append(f"**stdout:**\n```\n{stdout}\n```")
-    if stderr:
-        parts.append(f"**stderr:**\n```\n{stderr}\n```")
+    text = format_status_text(
+        job_id=job_id,
+        status=job.status,
+        command=job.command,
+        pid=job.pid,
+        elapsed_ms=elapsed_ms,
+        remaining_ms=remaining_ms,
+        exit_code=job.exit_code,
+        stdout=stdout,
+        stderr=stderr,
+    )
 
     return ToolResult(
-        text="\n".join(parts),
+        text=text,
         data={
             "status": job.status,
             "exit_code": job.exit_code,
@@ -433,6 +610,15 @@ TOOL_DEFINITIONS = [
                     "command": {
                         "type": "string",
                         "description": "The shell command to run in the background",
+                    },
+                    "completion_tail_lines": {
+                        "type": "integer",
+                        "description": (
+                            "Number of trailing stdout/stderr lines to capture "
+                            "in the archive record when the job exits. "
+                            "Optional; default from config.background."
+                            "default_completion_tail_lines; clamped to [0, 500]."
+                        ),
                     },
                 },
                 "required": ["command"],

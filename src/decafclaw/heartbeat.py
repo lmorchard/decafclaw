@@ -11,6 +11,10 @@ log = logging.getLogger(__name__)
 # Interval parsing: 30m, 1h, 1h30m, or plain seconds
 _INTERVAL_RE = re.compile(r"^(?:(\d+)h)?(?:(\d+)m)?$")
 
+# BACKGROUND_WAKE_OK sentinel: must appear at start (leading whitespace OK),
+# followed by a word boundary so "BACKGROUND_WAKE_OKAY" doesn't match.
+_BACKGROUND_WAKE_OK_RE = re.compile(r"^\s*background_wake_ok\b", re.IGNORECASE)
+
 
 def parse_interval(value: str) -> int | None:
     """Parse a time interval string into seconds.
@@ -119,6 +123,21 @@ def is_heartbeat_ok(response: str | None) -> bool:
     return "heartbeat_ok" in response[:300].lower()
 
 
+def is_background_wake_ok(response: str | None) -> bool:
+    """Return True if the response starts with the BACKGROUND_WAKE_OK sentinel
+    (allowing only leading whitespace). Case-insensitive. Checks only the first
+    300 characters.
+
+    Parallel to is_heartbeat_ok — the agent uses BACKGROUND_WAKE_OK to signal
+    that a wake turn's result is not worth surfacing to the user. Requiring the
+    sentinel at the start prevents mid-response mentions from accidentally
+    suppressing the message.
+    """
+    if not response:
+        return False
+    return _BACKGROUND_WAKE_OK_RE.match(response[:300]) is not None
+
+
 def build_section_prompt(section: dict) -> str:
     """Build the prompt for a heartbeat section."""
     from .polling import build_task_preamble
@@ -134,41 +153,39 @@ def build_section_prompt(section: dict) -> str:
 
 
 async def run_section_turn(
-    config, event_bus, section: dict, timestamp: str, index: int,
+    config, event_bus, manager, section: dict, timestamp: str, index: int,
 ) -> dict:
-    """Run a single heartbeat section as an agent turn.
+    """Run a single heartbeat section as an agent turn via ConversationManager.
 
     Returns {"title": str, "response": str, "is_ok": bool, "context_id": str | None}.
     Shared by run_heartbeat_cycle and heartbeat_tools._run_heartbeat_to_channel.
     """
-    from .agent import run_agent_turn  # deferred: circular dep
-    from .context import Context
+    from .conversation_manager import TurnKind
 
     title = section["title"]
     log.info(f"Heartbeat section {index + 1}: {title}")
 
+    conv_id = f"heartbeat-{timestamp}-{index}"
+    prompt = build_section_prompt(section)
+
     try:
-        source = section.get("source", "workspace")
-        ctx = Context.for_task(
-            config, event_bus,
-            user_id=f"heartbeat-{source}",
-            conv_id=f"heartbeat-{timestamp}-{index}",
-            channel_id="heartbeat",
-            channel_name="heartbeat",
+        future = await manager.enqueue_turn(
+            conv_id=conv_id,
+            kind=TurnKind.HEARTBEAT_SECTION,
+            prompt=prompt,
+            history=[],
             task_mode="heartbeat",
+            user_id=f"heartbeat-{section.get('source', 'workspace')}",
+            metadata={"source": section.get("source", "workspace")},
         )
-
-        prompt = build_section_prompt(section)
-        result = await run_agent_turn(ctx, prompt, history=[])
-        response = result.text or "(no response)"
-        ok = is_heartbeat_ok(response)
+        result_text = (await future) or "(no response)"
+        ok = is_heartbeat_ok(result_text)
         log.info(f"Heartbeat section '{title}': {'OK' if ok else 'ALERT'}")
-
         return {
             "title": title,
-            "response": response,
+            "response": result_text,
             "is_ok": ok,
-            "context_id": ctx.context_id,
+            "context_id": None,
         }
     except Exception as e:
         log.error(f"Heartbeat section '{title}' failed: {e}", exc_info=True)
@@ -180,7 +197,7 @@ async def run_section_turn(
         }
 
 
-async def run_heartbeat_cycle(config, event_bus) -> list[dict]:
+async def run_heartbeat_cycle(config, event_bus, manager) -> list[dict]:
     """Execute one heartbeat cycle — read sections and run each as an agent turn.
 
     Returns list of {"title": str, "response": str, "is_ok": bool} dicts.
@@ -194,7 +211,7 @@ async def run_heartbeat_cycle(config, event_bus) -> list[dict]:
     results = []
 
     for i, section in enumerate(sections):
-        result = await run_section_turn(config, event_bus, section, timestamp, i)
+        result = await run_section_turn(config, event_bus, manager, section, timestamp, i)
         results.append(result)
 
     await _notify_cycle_complete(config, event_bus, results)
@@ -254,7 +271,7 @@ def _write_last_heartbeat(config):
 _POLL_INTERVAL = 60
 
 
-async def run_heartbeat_timer(config, event_bus, shutdown_event,
+async def run_heartbeat_timer(config, event_bus, manager, shutdown_event,
                               on_cycle=None, on_results=None):
     """Run the heartbeat timer loop.
 
@@ -264,6 +281,7 @@ async def run_heartbeat_timer(config, event_bus, shutdown_event,
     Args:
         config: Agent config with heartbeat_interval
         event_bus: Event bus for agent turns
+        manager: ConversationManager instance for routing turns
         shutdown_event: asyncio.Event to signal shutdown
         on_cycle: optional async callback() that handles the full cycle
                   (running + reporting). If provided, on_results is ignored.
@@ -298,7 +316,7 @@ async def run_heartbeat_timer(config, event_bus, shutdown_event,
         if on_cycle:
             await on_cycle()
         else:
-            results = await run_heartbeat_cycle(config, event_bus)
+            results = await run_heartbeat_cycle(config, event_bus, manager)
             if on_results and results:
                 try:
                     await on_results(results)

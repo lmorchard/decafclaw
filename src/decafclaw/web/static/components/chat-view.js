@@ -147,6 +147,7 @@ export class ChatView extends LitElement {
           .usage=${m.usage || null}
           .timestamp=${m.timestamp || ''}
           .attachments=${m.attachments || null}
+          .record=${m.record || null}
         ></chat-message>
       `)}
 

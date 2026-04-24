@@ -348,66 +348,110 @@ class TestIsDue:
 class TestRunScheduleTask:
     @pytest.mark.asyncio
     async def test_runs_agent_turn(self, config):
+        from decafclaw.conversation_manager import ConversationManager
+        manager = ConversationManager(config, EventBus())
         task = ScheduleTask(
             name="test-task", schedule="* * * * *",
             body="Do the thing.", source="admin", path=Path("/fake"),
             model="fast",
         )
-        mock_response = MagicMock()
-        mock_response.text = "Done."
 
-        with patch("decafclaw.agent.run_agent_turn",
-                    new_callable=AsyncMock, return_value=mock_response):
-            result = await run_schedule_task(config, EventBus(), task)
+        async def fake_run(ctx, user_message, history, **kwargs):
+            from decafclaw.media import ToolResult
+            return ToolResult(text="Done.")
+
+        with patch("decafclaw.agent.run_agent_turn", side_effect=fake_run):
+            result = await run_schedule_task(config, EventBus(), manager, task)
 
         assert result["response"] == "Done."
         assert result["is_ok"] is False
         assert result["task_name"] == "test-task"
-        assert result["channel"] == ""
+        # channel falls back to "schedule:{task.name}" when task.channel is empty
+        assert result["channel"] == "schedule:test-task"
 
     @pytest.mark.asyncio
     async def test_heartbeat_ok_detected(self, config):
+        from decafclaw.conversation_manager import ConversationManager
+        manager = ConversationManager(config, EventBus())
         task = ScheduleTask(
             name="test-task", schedule="* * * * *",
             body="Check.", source="admin", path=Path("/fake"),
         )
-        mock_response = MagicMock()
-        mock_response.text = "HEARTBEAT_OK — nothing to report."
 
-        with patch("decafclaw.agent.run_agent_turn",
-                    new_callable=AsyncMock, return_value=mock_response):
-            result = await run_schedule_task(config, EventBus(), task)
+        async def fake_run(ctx, user_message, history, **kwargs):
+            from decafclaw.media import ToolResult
+            return ToolResult(text="HEARTBEAT_OK — nothing to report.")
+
+        with patch("decafclaw.agent.run_agent_turn", side_effect=fake_run):
+            result = await run_schedule_task(config, EventBus(), manager, task)
 
         assert result["is_ok"] is True
 
     @pytest.mark.asyncio
     async def test_handles_error(self, config):
+        from decafclaw.conversation_manager import ConversationManager
+        manager = ConversationManager(config, EventBus())
         task = ScheduleTask(
             name="failing-task", schedule="* * * * *",
             body="Fail.", source="admin", path=Path("/fake"),
         )
+
         with patch("decafclaw.agent.run_agent_turn",
-                    new_callable=AsyncMock, side_effect=Exception("boom")):
-            result = await run_schedule_task(config, EventBus(), task)
+                   new_callable=AsyncMock, side_effect=Exception("boom")):
+            result = await run_schedule_task(config, EventBus(), manager, task)
 
         assert result["is_ok"] is False
         assert "boom" in result["response"]
 
     @pytest.mark.asyncio
     async def test_channel_in_result(self, config):
+        from decafclaw.conversation_manager import ConversationManager
+        manager = ConversationManager(config, EventBus())
         task = ScheduleTask(
             name="test", schedule="* * * * *",
             body="Report.", source="admin", path=Path("/fake"),
             channel="#reports",
         )
-        mock_response = MagicMock()
-        mock_response.text = "Report done."
 
-        with patch("decafclaw.agent.run_agent_turn",
-                    new_callable=AsyncMock, return_value=mock_response):
-            result = await run_schedule_task(config, EventBus(), task)
+        async def fake_run(ctx, user_message, history, **kwargs):
+            from decafclaw.media import ToolResult
+            return ToolResult(text="Report done.")
+
+        with patch("decafclaw.agent.run_agent_turn", side_effect=fake_run):
+            result = await run_schedule_task(config, EventBus(), manager, task)
 
         assert result["channel"] == "#reports"
+
+    @pytest.mark.asyncio
+    async def test_routes_through_manager(self, config):
+        """run_schedule_task routes turns through ConversationManager.enqueue_turn."""
+        from decafclaw.conversation_manager import ConversationManager, TurnKind
+        manager = ConversationManager(config, EventBus())
+        task = ScheduleTask(
+            name="routed-task", schedule="* * * * *",
+            body="Do it.", source="admin", path=Path("/fake"),
+        )
+
+        seen = []
+        orig_enqueue = manager.enqueue_turn
+
+        async def spy_enqueue(conv_id, *, kind, prompt, **kwargs):
+            seen.append({"conv_id": conv_id, "kind": kind})
+            return await orig_enqueue(conv_id, kind=kind, prompt=prompt, **kwargs)
+
+        manager.enqueue_turn = spy_enqueue
+
+        async def fake_run(ctx, user_message, history, **kwargs):
+            from decafclaw.media import ToolResult
+            return ToolResult(text="done")
+
+        with patch("decafclaw.agent.run_agent_turn", side_effect=fake_run):
+            result = await run_schedule_task(config, EventBus(), manager, task)
+
+        assert len(seen) == 1
+        assert seen[0]["kind"] is TurnKind.SCHEDULED_TASK
+        assert seen[0]["conv_id"].startswith("schedule-routed-task-")
+        assert result["task_name"] == "routed-task"
 
 
 # -- Timer loop ----------------------------------------------------------------
@@ -416,6 +460,8 @@ class TestRunScheduleTask:
 class TestRunScheduleTimer:
     @pytest.mark.asyncio
     async def test_executes_due_task(self, config):
+        from decafclaw.conversation_manager import ConversationManager
+        manager = ConversationManager(config, EventBus())
         admin = config.agent_path / "schedules"
         admin.mkdir(parents=True)
         (admin / "test.md").write_text(
@@ -425,7 +471,7 @@ class TestRunScheduleTimer:
         shutdown = asyncio.Event()
         executed = []
 
-        async def fake_run(cfg, bus, task):
+        async def fake_run(cfg, bus, mgr, task):
             executed.append(task.name)
             return {"task_name": task.name, "channel": "", "response": "ok",
                     "is_ok": True, "context_id": None}
@@ -435,13 +481,15 @@ class TestRunScheduleTimer:
                 await asyncio.sleep(0.05)
                 shutdown.set()
             asyncio.create_task(stop_soon())
-            await run_schedule_timer(config, EventBus(), shutdown,
+            await run_schedule_timer(config, EventBus(), manager, shutdown,
                                      poll_interval=0.02)
 
         assert "test" in executed
 
     @pytest.mark.asyncio
     async def test_skips_disabled_task(self, config):
+        from decafclaw.conversation_manager import ConversationManager
+        manager = ConversationManager(config, EventBus())
         admin = config.agent_path / "schedules"
         admin.mkdir(parents=True)
         (admin / "disabled.md").write_text(
@@ -451,7 +499,7 @@ class TestRunScheduleTimer:
         shutdown = asyncio.Event()
         executed = []
 
-        async def fake_run(cfg, bus, task):
+        async def fake_run(cfg, bus, mgr, task):
             executed.append(task.name)
             return {"task_name": task.name, "channel": "", "response": "ok",
                     "is_ok": True, "context_id": None}
@@ -461,7 +509,7 @@ class TestRunScheduleTimer:
                 await asyncio.sleep(0.05)
                 shutdown.set()
             asyncio.create_task(stop_soon())
-            await run_schedule_timer(config, EventBus(), shutdown,
+            await run_schedule_timer(config, EventBus(), manager, shutdown,
                                      poll_interval=0.02)
 
         assert "disabled" not in executed
@@ -475,9 +523,11 @@ class TestRunScheduleTimer:
         on a fresh tmp_path config they'd be treated as "never run → due"
         and would try to run a real agent turn.
         """
+        from decafclaw.conversation_manager import ConversationManager
+        manager = ConversationManager(config, EventBus())
         shutdown = asyncio.Event()
 
-        async def fake_run(cfg, bus, task):
+        async def fake_run(cfg, bus, mgr, task):
             return {"task_name": task.name, "channel": "", "response": "ok",
                     "is_ok": True, "context_id": None}
 
@@ -486,5 +536,5 @@ class TestRunScheduleTimer:
                 await asyncio.sleep(0.05)
                 shutdown.set()
             asyncio.create_task(stop_soon())
-            await run_schedule_timer(config, EventBus(), shutdown,
+            await run_schedule_timer(config, EventBus(), manager, shutdown,
                                      poll_interval=0.02)
