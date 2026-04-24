@@ -17,6 +17,7 @@ import './components/chat-message.js';
 import './components/chat-input.js';
 import './components/theme-toggle.js';
 import './components/wiki-page.js';
+import './components/file-page.js';
 import './components/config-panel.js';
 
 // -- Services -----------------------------------------------------------------
@@ -102,19 +103,28 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
-// -- Wiki view ----------------------------------------------------------------
+// -- Wiki / file / config side panel -----------------------------------------
+//
+// The #wiki-main element is a shared side-panel area that hosts at most ONE
+// of: <wiki-page>, <file-page>, or <config-panel>. Opening one hides the
+// others (mutual exclusion). The side panel itself is only visible when any
+// of them is shown.
 
-const chatMainEl = document.getElementById('chat-main');
 const wikiMainEl = document.getElementById('wiki-main');
 const wikiResizeHandle = document.getElementById('wiki-resize-handle');
 const wikiPageEl = /** @type {any} */ (document.querySelector('#wiki-main wiki-page'));
+const filePageEl = /** @type {any} */ (document.querySelector('#wiki-main file-page'));
 const configPanelEl = /** @type {any} */ (document.querySelector('#wiki-main config-panel'));
 
 /** Show a wiki page alongside chat. */
 function showWikiPage(page, { replace = false } = {}) {
   if (wikiPageEl) wikiPageEl.page = page;
   wikiPageEl?.classList.remove('hidden');
+  // Mutual exclusion: close any open file-page / config-panel.
+  filePageEl?.classList.add('hidden');
+  if (filePageEl) filePageEl.path = '';
   configPanelEl?.classList.add('hidden');
+  if (sidebar) sidebar.clearOpenFile();
   wikiMainEl?.classList.remove('hidden');
   wikiResizeHandle?.classList.remove('hidden');
   // Switch sidebar to wiki tab and navigate to page's folder
@@ -124,6 +134,8 @@ function showWikiPage(page, { replace = false } = {}) {
   }
   // Update URL for bookmarking — push history so back button works
   const params = new URLSearchParams(location.search);
+  // Dropping ?file= in favor of ?vault= when switching to a wiki page
+  params.delete('file');
   if (params.get('vault') !== page) {
     params.set('vault', page);
     const url = '?' + params.toString();
@@ -132,6 +144,9 @@ function showWikiPage(page, { replace = false } = {}) {
     } else {
       history.pushState(null, '', url);
     }
+  } else {
+    const url = '?' + params.toString();
+    history.replaceState(null, '', url);
   }
 }
 
@@ -157,9 +172,98 @@ function hideWikiView() {
   }
 }
 
+// Kind inference mirrors backend detect_kind's extension-based fast path
+// (src/decafclaw/web/workspace_paths.py). Keep both lists in sync.
+const TEXT_EXTS = new Set([
+  '.md', '.py', '.json', '.yaml', '.yml', '.sh',
+  '.js', '.ts', '.css', '.html', '.txt',
+  '.toml', '.ini', '.cfg', '.conf', '.log', '.csv', '.sql',
+]);
+const IMAGE_EXTS = new Set([
+  '.png', '.jpg', '.jpeg', '.gif', '.svg', '.webp', '.bmp', '.ico',
+]);
+
+/** Infer kind from extension (mirrors backend detect_kind fast path). */
+function inferFileKindFromPath(path) {
+  const lower = String(path || '').toLowerCase();
+  const dotIdx = lower.lastIndexOf('.');
+  if (dotIdx < 0) return 'text'; // no extension → assume text
+  const ext = lower.slice(dotIdx);
+  if (IMAGE_EXTS.has(ext)) return 'image';
+  if (TEXT_EXTS.has(ext)) return 'text';
+  return 'binary';
+}
+
+/**
+ * Show a workspace file in the side panel.
+ * @param {{path: string, kind?: string, readonly?: boolean}} detail
+ * @param {{replace?: boolean}} [opts]
+ */
+function showFilePage(detail, { replace = false } = {}) {
+  if (!detail?.path || !filePageEl) return;
+  // For rename-triggered file-open / popstate / init-from-?file=, kind and
+  // readonly may be omitted. Infer kind from the path (extension) so a
+  // rename across kinds (e.g. foo.txt → foo.png) picks the correct renderer.
+  // Readonly still falls back to the current value; #fetchFile corrects it
+  // from the server response as soon as the text fetch completes.
+  filePageEl.path = detail.path;
+  filePageEl.kind = detail.kind != null ? detail.kind : inferFileKindFromPath(detail.path);
+  filePageEl.readonly = detail.readonly != null ? !!detail.readonly : !!filePageEl.readonly;
+  filePageEl.classList.remove('hidden');
+  // Mutual exclusion: close any open wiki-page / config-panel.
+  wikiPageEl?.classList.add('hidden');
+  if (wikiPageEl) wikiPageEl.page = '';
+  configPanelEl?.classList.add('hidden');
+  if (sidebar) sidebar.clearOpenPage();
+  wikiMainEl?.classList.remove('hidden');
+  wikiResizeHandle?.classList.remove('hidden');
+  // Sync sidebar tab + file highlight
+  if (sidebar) {
+    sidebar.navigateToFileFolder(detail.path);
+  }
+  // Update URL for bookmarking
+  const params = new URLSearchParams(location.search);
+  params.delete('vault');
+  if (params.get('file') !== detail.path) {
+    params.set('file', detail.path);
+    const url = '?' + params.toString();
+    if (replace) {
+      history.replaceState(null, '', url);
+    } else {
+      history.pushState(null, '', url);
+    }
+  } else {
+    const url = '?' + params.toString();
+    history.replaceState(null, '', url);
+  }
+}
+
+/** Hide the file view. */
+function hideFileView() {
+  filePageEl?.classList.add('hidden');
+  if (filePageEl) filePageEl.path = '';
+  // If nothing else is visible in the side panel, hide it entirely.
+  const wikiVisible = wikiPageEl && !wikiPageEl.classList.contains('hidden');
+  const configVisible = configPanelEl && !configPanelEl.classList.contains('hidden');
+  if (!wikiVisible && !configVisible) {
+    wikiMainEl?.classList.add('hidden');
+    wikiResizeHandle?.classList.add('hidden');
+  }
+  if (sidebar) sidebar.clearOpenFile();
+  const params = new URLSearchParams(location.search);
+  if (params.has('file')) {
+    params.delete('file');
+    const qs = params.toString();
+    history.replaceState(null, '', qs ? '?' + qs : location.pathname);
+  }
+}
+
 /** Show the config panel in the wiki/side panel area. */
 function showConfigPanel() {
   wikiPageEl?.classList.add('hidden');
+  filePageEl?.classList.add('hidden');
+  if (filePageEl) filePageEl.path = '';
+  if (sidebar) sidebar.clearOpenFile();
   configPanelEl?.classList.remove('hidden');
   wikiMainEl?.classList.remove('hidden');
   wikiResizeHandle?.classList.remove('hidden');
@@ -213,20 +317,43 @@ wikiMainEl?.addEventListener('wiki-navigate-folder', (e) => {
 // Close wiki pane via X button
 wikiMainEl?.addEventListener('wiki-close', () => hideWikiView());
 
-// Handle browser back/forward for wiki navigation
+// Open a workspace file from the files-sidebar (or file-page rename)
+document.addEventListener('file-open', (e) => {
+  const detail = /** @type {CustomEvent} */ (e).detail;
+  if (detail?.path) showFilePage(detail);
+});
+
+// Close file pane via file-page X button
+wikiMainEl?.addEventListener('file-close', () => hideFileView());
+
+// Navigate files-sidebar to folder from file-page breadcrumbs
+wikiMainEl?.addEventListener('file-navigate-folder', (e) => {
+  const folder = /** @type {CustomEvent} */ (e).detail?.folder ?? '';
+  if (sidebar) sidebar.navigateToFilesFolder(folder);
+});
+
+// Handle browser back/forward for wiki/file navigation
 window.addEventListener('popstate', () => {
-  const wiki = new URLSearchParams(location.search).get('vault');
+  const params = new URLSearchParams(location.search);
+  const wiki = params.get('vault');
+  const file = params.get('file');
   if (wiki) {
     showWikiPage(wiki, { replace: true });
+  } else if (file) {
+    showFilePage({ path: file }, { replace: true });
   } else {
     hideWikiView();
+    hideFileView();
   }
 });
 
 // Switch back to chat when sidebar switches to Chats tab
 document.addEventListener('sidebar-tab-change', (e) => {
   const tab = /** @type {CustomEvent} */ (e).detail?.tab;
-  if (tab === 'conversations') hideWikiView();
+  if (tab === 'conversations') {
+    hideWikiView();
+    hideFileView();
+  }
 });
 
 // Open config panel from sidebar gear button
@@ -258,6 +385,13 @@ ws.addEventListener('message', (e) => {
   const msg = /** @type {CustomEvent} */ (e).detail;
   if (msg?.type === 'error' && msg?.message) {
     showToast(msg.message);
+  }
+  // Fan out turn-complete as a window event so sidebars can silently refresh
+  // (e.g. files-sidebar auto-refetches so agent-written files appear).
+  if (msg?.type === 'turn_complete') {
+    window.dispatchEvent(new CustomEvent('turn-complete', {
+      detail: { conv_id: msg.conv_id },
+    }));
   }
 });
 
@@ -310,6 +444,11 @@ function getWikiFromUrl() {
   return new URLSearchParams(location.search).get('vault') || null;
 }
 
+/** Read ?file= on startup and open that workspace file */
+function getFileFromUrl() {
+  return new URLSearchParams(location.search).get('file') || null;
+}
+
 // -- Init ---------------------------------------------------------------------
 
 async function init() {
@@ -319,7 +458,9 @@ async function init() {
     // Once WebSocket is connected and conversation list is loaded,
     // select the bookmarked conversation if any
     const savedWiki = getWikiFromUrl();
+    const savedFile = getFileFromUrl();
     if (savedWiki) showWikiPage(savedWiki, { replace: true });
+    else if (savedFile) showFilePage({ path: savedFile }, { replace: true });
     const savedConvId = getConvFromUrl();
     if (savedConvId) {
       const onOpen = () => {

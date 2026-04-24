@@ -89,7 +89,7 @@ An AI agent testbed for exploring agent development patterns. Connects to Matter
 ### Mattermost-specific
 
 - **Mattermost concerns stay in `mattermost.py`.** Progress formatting, placeholder management, threading logic — all in `MattermostClient`.
-- **Web UI conversation management is REST-only.** All conversation listing, creation, renaming, archiving, folder management uses REST endpoints. WebSocket is only for real-time chat streaming, conversation selection/history loading, model changes, and turn cancellation. Conversation folders are metadata-only (per-user JSON index file); archive files stay in place.
+- **Web UI conversation management is REST-only.** All conversation listing, creation, renaming, archiving, folder management uses REST endpoints. WebSocket is only for real-time chat streaming, conversation selection/history loading, model changes, and turn cancellation. Conversation folders are metadata-only (per-user JSON index file); archive files stay in place. Workspace file management for the Files tab is also REST-only via `/api/workspace/*` (browse, recent, read-json, write, delete, create, rename) — see [docs/files-tab.md](docs/files-tab.md).
 - **Mattermost PATCH API quirks.** Omitting `props` from a PATCH preserves existing props (including attachments). To strip attachments, you must explicitly send `props: {"attachments": []}`. However, sending a PATCH with only `props` and no `message` field clears the message text, showing "(message deleted)". Always include the message text when patching props — fetch it first if needed.
 - **Mattermost interactive button gotchas.** Button IDs must not contain underscores — Mattermost silently drops callbacks. The `http_callback_base` config must be reachable from the Mattermost server's network (not just the local machine). If buttons render but clicking does nothing and no callback hits the server, check: (1) `http_callback_base` points to an IP/host the MM server can reach, (2) the MM server's `AllowedUntrustedInternalConnections` includes that host, (3) the local IP hasn't changed (common on laptops with DHCP).
 - **Check for running bot instances before starting one.** Only one websocket connection per Mattermost bot account. A second instance silently misses events.
@@ -146,8 +146,13 @@ An AI agent testbed for exploring agent development patterns. Connects to Matter
 - `src/decafclaw/web/conversations.py` — Conversation index: lightweight metadata for web UI
 - `src/decafclaw/web/conversation_folders.py` — Per-user conversation folder index (JSON file, metadata-only)
 - `src/decafclaw/web/websocket.py` — WebSocket handler for web gateway chat
+- `src/decafclaw/web/workspace_paths.py` — Permission helpers + kind detection for the `/api/workspace/*` endpoints (secret/readonly patterns, text/image/binary sniff)
 - `src/decafclaw/web/static/` — Frontend: Lit web components, service layer
 - `src/decafclaw/web/static/components/context-inspector.js` — Context inspection popover: waffle chart, source breakdown
+- `src/decafclaw/web/static/components/vault-sidebar.js` — Vault tab (browse/recent/hidden toggle), extracted from the old inline sidebar code
+- `src/decafclaw/web/static/components/files-sidebar.js` — Files tab: workspace browser (browse/recent), auto-refetch on turn-complete
+- `src/decafclaw/web/static/components/file-page.js` — Workspace file content pane: text/image/binary modes, rename, delete, conflict recovery
+- `src/decafclaw/web/static/components/file-editor.js` — CodeMirror 6 editor for workspace text files with debounced auto-save
 
 ### Data and persistence
 

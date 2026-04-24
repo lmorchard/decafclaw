@@ -15,7 +15,8 @@
       "lit/*": ["./node_modules/lit/*"],
       "marked": ["./node_modules/marked"],
       "dompurify": ["./node_modules/dompurify"],
-      "@milkdown/kit": ["./milkdown-entry.js"]
+      "@milkdown/kit": ["./milkdown-entry.js"],
+      "codemirror": ["./codemirror-entry.js"]
     }
   },
   "include": ["app.js", "lib/**/*.js", "components/**/*.js"]

@@ -1,6 +1,8 @@
 import { LitElement, html, nothing } from 'lit';
 import './context-inspector.js';
 import './notification-inbox.js';
+import './vault-sidebar.js';
+import './files-sidebar.js';
 
 export class ConversationSidebar extends LitElement {
   static properties = {
@@ -19,13 +21,6 @@ export class ConversationSidebar extends LitElement {
     _collapsed: { type: Boolean, state: true },
     _mobileOpen: { type: Boolean, state: true },
     _sidebarTab: { type: String, state: true },
-    _wikiPages: { type: Array, state: true },
-    _wikiLoading: { type: Boolean, state: true },
-    _vaultFolder: { type: String, state: true },
-    _vaultFolders: { type: Array, state: true },
-    _openWikiPage: { type: String, state: true },
-    _vaultView: { type: String, state: true },
-    _recentPages: { type: Array, state: true },
     _contextInspectorOpen: { type: Boolean, state: true },
     _contextVersion: { type: Number, state: true },
   };
@@ -52,17 +47,6 @@ export class ConversationSidebar extends LitElement {
     this._collapsed = localStorage.getItem('sidebar-collapsed') === 'true';
     this._mobileOpen = false;
     this._sidebarTab = 'conversations';
-    /** @type {Array<{title: string, path?: string, folder?: string, modified: number}>} */
-    this._wikiPages = [];
-    this._wikiLoading = false;
-    this._vaultFolder = '';
-    /** @type {Array<{name: string, path: string}>} */
-    this._vaultFolders = [];
-    /** @type {string|null} */
-    this._openWikiPage = null;
-    this._vaultView = 'browse'; // 'browse' | 'recent'
-    /** @type {Array<{title: string, path: string, folder: string, modified: number}>} */
-    this._recentPages = [];
     this._contextInspectorOpen = false;
     this._contextVersion = 0;
   }
@@ -100,18 +84,11 @@ export class ConversationSidebar extends LitElement {
         this._chatFolders = this.store?.folders || [];
       }
     };
-    this._onVaultPageDeleted = () => {
-      if (this._sidebarTab !== 'wiki') return;
-      if (this._vaultView === 'recent') this.#fetchRecentPages();
-      else this.#fetchWikiPages();
-    };
-    window.addEventListener('vault-page-deleted', this._onVaultPageDeleted);
   }
 
   disconnectedCallback() {
     super.disconnectedCallback();
     this.store?.removeEventListener('change', this._onStoreChange);
-    window.removeEventListener('vault-page-deleted', this._onVaultPageDeleted);
   }
 
   /** @param {Map} changedProps */
@@ -131,13 +108,6 @@ export class ConversationSidebar extends LitElement {
   /** @param {string} tab */
   #switchTab(tab) {
     this._sidebarTab = tab;
-    if (tab === 'wiki') {
-      if (this._vaultView === 'recent') {
-        this.#fetchRecentPages();
-      } else {
-        this.#fetchWikiPages();
-      }
-    }
     this.dispatchEvent(new CustomEvent('sidebar-tab-change', {
       detail: { tab },
       bubbles: true,
@@ -149,64 +119,14 @@ export class ConversationSidebar extends LitElement {
   switchToWiki() {
     if (this._sidebarTab !== 'wiki') {
       this._sidebarTab = 'wiki';
-      this.#fetchWikiPages();
     }
   }
 
-  async #fetchWikiPages() {
-    this._wikiLoading = true;
-    try {
-      const url = this._vaultFolder
-        ? `/api/vault?folder=${encodeURIComponent(this._vaultFolder)}`
-        : '/api/vault';
-      const res = await fetch(url);
-      if (res.ok) {
-        const data = await res.json();
-        this._vaultFolders = data.folders || [];
-        this._wikiPages = data.pages || [];
-      } else {
-        this._vaultFolders = [];
-        this._wikiPages = [];
-        if (res.status === 404) this._vaultFolder = '';
-      }
-    } catch (e) {
-      this._vaultFolders = [];
-      this._wikiPages = [];
-    } finally {
-      this._wikiLoading = false;
+  /** Public: switch to files tab. */
+  switchToFiles() {
+    if (this._sidebarTab !== 'files') {
+      this._sidebarTab = 'files';
     }
-  }
-
-  async #fetchRecentPages() {
-    this._wikiLoading = true;
-    try {
-      const res = await fetch('/api/vault/recent');
-      if (res.ok) {
-        const data = await res.json();
-        this._recentPages = data.pages || [];
-      } else {
-        this._recentPages = [];
-      }
-    } catch (e) {
-      this._recentPages = [];
-    } finally {
-      this._wikiLoading = false;
-    }
-  }
-
-  #switchVaultView(view) {
-    this._vaultView = view;
-    if (view === 'recent') {
-      this.#fetchRecentPages();
-    } else {
-      this.#fetchWikiPages();
-    }
-  }
-
-  /** @param {string} folderPath */
-  #navigateToFolder(folderPath) {
-    this._vaultFolder = folderPath;
-    this.#fetchWikiPages();
   }
 
   /**
@@ -214,7 +134,8 @@ export class ConversationSidebar extends LitElement {
    * @param {string} folderPath
    */
   navigateToFolder(folderPath) {
-    this.#navigateToFolder(folderPath);
+    const vs = /** @type {any} */ (this.querySelector('vault-sidebar'));
+    vs?.navigateToFolder(folderPath);
   }
 
   /**
@@ -223,27 +144,55 @@ export class ConversationSidebar extends LitElement {
    * @param {string} pagePath
    */
   navigateToPageFolder(pagePath) {
-    this._openWikiPage = pagePath;
-    const lastSlash = pagePath.lastIndexOf('/');
-    const folder = lastSlash >= 0 ? pagePath.substring(0, lastSlash) : '';
-    if (folder !== this._vaultFolder) {
-      this._vaultFolder = folder;
-      this.#fetchWikiPages();
-    }
+    this._sidebarTab = 'wiki';
+    const vs = /** @type {any} */ (this.querySelector('vault-sidebar'));
+    vs?.navigateToPageFolder(pagePath);
   }
 
   /** Clear the open page highlight (called when wiki pane is closed). */
   clearOpenPage() {
-    this._openWikiPage = null;
+    const vs = /** @type {any} */ (this.querySelector('vault-sidebar'));
+    vs?.clearOpenPage();
   }
 
-  /** @param {string} page */
-  #handleWikiSelect(page) {
-    this.dispatchEvent(new CustomEvent('wiki-open', {
-      detail: { page },
-      bubbles: true,
-      composed: true,
-    }));
+  /**
+   * Public: navigate the files-sidebar to a specific folder.
+   * @param {string} folderPath
+   */
+  navigateToFilesFolder(folderPath) {
+    this._sidebarTab = 'files';
+    const fs = /** @type {any} */ (this.querySelector('files-sidebar'));
+    fs?.navigateToFolder(folderPath);
+  }
+
+  /**
+   * Navigate the files-sidebar to the folder containing a given file path,
+   * and mark that file as open (for row highlighting).
+   * @param {string} filePath
+   */
+  navigateToFileFolder(filePath) {
+    this._sidebarTab = 'files';
+    const fs = /** @type {any} */ (this.querySelector('files-sidebar'));
+    fs?.navigateToFileFolder(filePath);
+  }
+
+  /** Clear the open file highlight (called when file pane is closed). */
+  clearOpenFile() {
+    const fs = /** @type {any} */ (this.querySelector('files-sidebar'));
+    fs?.clearOpenFile();
+  }
+
+  /** @param {CustomEvent} _e */
+  #handleWikiOpen(_e) {
+    // wiki-open bubbles + composed from <vault-sidebar>, so app.js already receives it.
+    // Parent only needs to close the mobile drawer (previously done inside #handleWikiSelect).
+    this.closeMobile();
+  }
+
+  /** @param {CustomEvent} _e */
+  #handleFileOpen(_e) {
+    // file-open bubbles + composed from <files-sidebar>, so app.js already receives it.
+    // Parent only needs to close the mobile drawer.
     this.closeMobile();
   }
 
@@ -498,161 +447,6 @@ export class ConversationSidebar extends LitElement {
     }
   }
 
-  #createWikiPage() {
-    const name = prompt('New page name:');
-    if (!name || !name.trim()) return;
-    const fullName = this._vaultFolder
-      ? `${this._vaultFolder}/${name.trim()}`
-      : name.trim();
-    this.#createPageInFolder(fullName);
-  }
-
-  async #createVaultFolder() {
-    const name = prompt('New folder name:');
-    if (!name || !name.trim()) return;
-    const folderPath = this._vaultFolder
-      ? `${this._vaultFolder}/${name.trim()}`
-      : name.trim();
-    try {
-      const res = await fetch('/api/vault/folders', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ folder: folderPath }),
-      });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        alert(data.error || `Failed to create folder (${res.status})`);
-        return;
-      }
-      this.#navigateToFolder(folderPath);
-    } catch (e) {
-      alert('Failed to create folder.');
-    }
-  }
-
-  /** @param {string} fullName */
-  async #createPageInFolder(fullName) {
-    try {
-      const res = await fetch('/api/vault', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: fullName }),
-      });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        alert(data.error || `Failed to create page (${res.status})`);
-        return;
-      }
-      this.dispatchEvent(new CustomEvent('wiki-open', {
-        detail: { page: fullName, editing: true },
-        bubbles: true,
-        composed: true,
-      }));
-      this.#fetchWikiPages();
-    } catch (e) {
-      alert('Failed to create page.');
-    }
-  }
-
-  #renderVaultBreadcrumbs() {
-    if (!this._vaultFolder) {
-      return html`<span class="vault-breadcrumb-segment active">vault</span>`;
-    }
-    const segments = this._vaultFolder.split('/');
-    return html`
-      <button type="button" class="vault-breadcrumb-segment" @click=${() => this.#navigateToFolder('')}>vault</button>
-      ${segments.map((seg, i) => {
-        const path = segments.slice(0, i + 1).join('/');
-        const isLast = i === segments.length - 1;
-        return html`
-          <span class="vault-breadcrumb-sep">/</span>
-          ${isLast
-            ? html`<span class="vault-breadcrumb-segment active">${seg}</span>`
-            : html`<button type="button" class="vault-breadcrumb-segment" @click=${() => this.#navigateToFolder(path)}>${seg}</button>`
-          }
-        `;
-      })}
-    `;
-  }
-
-  /** Format a timestamp as a relative time string (e.g., "2h ago"). */
-  #formatRelativeTime(mtime) {
-    const seconds = Math.floor((Date.now() / 1000) - mtime);
-    if (seconds < 60) return 'just now';
-    const minutes = Math.floor(seconds / 60);
-    if (minutes < 60) return `${minutes}m ago`;
-    const hours = Math.floor(minutes / 60);
-    if (hours < 24) return `${hours}h ago`;
-    const days = Math.floor(hours / 24);
-    if (days < 30) return `${days}d ago`;
-    return new Date(mtime * 1000).toLocaleDateString();
-  }
-
-  #renderWikiTab() {
-    if (this._wikiLoading) {
-      return html`<div class="conv-list"><p style="padding: 1rem; color: var(--pico-muted-color);">Loading vault pages...</p></div>`;
-    }
-    return html`
-      <div class="conv-list">
-        <div class="vault-view-toggle">
-          <button class="${this._vaultView === 'browse' ? 'active' : ''}"
-            @click=${() => this.#switchVaultView('browse')}>Browse</button>
-          <button class="${this._vaultView === 'recent' ? 'active' : ''}"
-            @click=${() => this.#switchVaultView('recent')}>Recent</button>
-        </div>
-        ${this._vaultView === 'browse' ? this.#renderVaultBrowse() : this.#renderVaultRecent()}
-      </div>
-    `;
-  }
-
-  #renderVaultBrowse() {
-    const hasContent = this._vaultFolders.length > 0 || this._wikiPages.length > 0;
-    return html`
-      <div class="vault-action-btns">
-        <button class="wiki-new-page-btn outline" @click=${() => this.#createWikiPage()}>+ Page</button>
-        <button class="wiki-new-folder-btn outline" @click=${() => this.#createVaultFolder()}>+ Folder</button>
-      </div>
-      <div class="vault-breadcrumbs">${this.#renderVaultBreadcrumbs()}</div>
-      ${this._vaultFolders.map(f => html`
-        <div class="conv-item wiki-item wiki-folder-item" @click=${() => this.#navigateToFolder(f.path)} title=${f.path}>
-          <span class="conv-title">\u{1F4C1} ${f.name}</span>
-        </div>
-      `)}
-      ${this._wikiPages.map(p => {
-        const pagePath = p.path || p.title;
-        const isOpen = pagePath === this._openWikiPage;
-        return html`
-          <div class="conv-item wiki-item ${isOpen ? 'active' : ''}" @click=${() => this.#handleWikiSelect(pagePath)} title=${pagePath}>
-            <span class="conv-title">${p.title}</span>
-          </div>
-        `;
-      })}
-      ${!hasContent
-        ? html`<p style="padding: 1rem; color: var(--pico-muted-color);">Empty folder.</p>`
-        : nothing
-      }
-    `;
-  }
-
-  #renderVaultRecent() {
-    if (!this._recentPages.length) {
-      return html`<p style="padding: 1rem; color: var(--pico-muted-color);">No recent changes.</p>`;
-    }
-    return html`
-      ${this._recentPages.map(p => {
-        const pagePath = p.path || p.title;
-        const isOpen = pagePath === this._openWikiPage;
-        return html`
-          <div class="conv-item wiki-item recent-item ${isOpen ? 'active' : ''}" @click=${() => this.#handleWikiSelect(pagePath)} title=${pagePath}>
-            ${p.folder ? html`<span class="recent-folder">${p.folder}/</span>` : nothing}
-            <span class="conv-title">${p.title}</span>
-            <span class="recent-time">${this.#formatRelativeTime(p.modified)}</span>
-          </div>
-        `;
-      })}
-    `;
-  }
-
   render() {
     if (this._collapsed) {
       return html`
@@ -669,11 +463,22 @@ export class ConversationSidebar extends LitElement {
             @click=${() => this.#switchTab('conversations')}>Chats</button>
           <button class="sidebar-tab ${this._sidebarTab === 'wiki' ? 'active' : ''}"
             @click=${() => this.#switchTab('wiki')}>Vault</button>
+          <button class="sidebar-tab ${this._sidebarTab === 'files' ? 'active' : ''}"
+            @click=${() => this.#switchTab('files')}>Files</button>
         </div>
         <button class="mobile-close-btn" @click=${() => this.closeMobile()} title="Close sidebar">&#10005;</button>
         <button class="collapse-btn" @click=${this.#toggleCollapse} title="Collapse sidebar">‹</button>
       </div>
-      ${this._sidebarTab === 'wiki' ? this.#renderWikiTab() : nothing}
+      <vault-sidebar
+        .active=${this._sidebarTab === 'wiki'}
+        style="${this._sidebarTab !== 'wiki' ? 'display:none' : ''}"
+        @wiki-open=${(e) => this.#handleWikiOpen(e)}
+      ></vault-sidebar>
+      <files-sidebar
+        .active=${this._sidebarTab === 'files'}
+        style="${this._sidebarTab !== 'files' ? 'display:none' : ''}"
+        @file-open=${(e) => this.#handleFileOpen(e)}
+      ></files-sidebar>
       <div class="conv-list" style="${this._sidebarTab !== 'conversations' ? 'display:none' : ''}">
         ${this._chatSection === '' ? html`
           <div class="vault-action-btns">

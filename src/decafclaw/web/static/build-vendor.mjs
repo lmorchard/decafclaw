@@ -47,6 +47,12 @@ const bundles = [
     outfile: join(outdir, 'milkdown.js'),
     external: [],
   },
+  {
+    name: 'codemirror',
+    entry: join(__dirname, 'codemirror-entry.js'),
+    outfile: join(outdir, 'codemirror.js'),
+    external: [],
+  },
 ];
 
 for (const bundle of bundles) {

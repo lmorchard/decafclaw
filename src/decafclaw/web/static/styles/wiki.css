@@ -51,7 +51,10 @@ a.wiki-link:hover {
 .wiki-edit-btn,
 .wiki-delete-btn,
 .wiki-open-tab,
-.wiki-close-btn {
+.wiki-close-btn,
+.file-edit-btn,
+.file-delete-btn,
+.file-close-btn {
   text-decoration: none;
   font-size: 1rem;
   background: none;
@@ -61,18 +64,23 @@ a.wiki-link:hover {
   margin-left: 0.25rem;
   color: var(--pico-muted-color);
 }
-.wiki-close-btn {
+.wiki-close-btn,
+.file-close-btn {
   font-size: 1.2rem;
   line-height: 1;
 }
 .wiki-edit-btn:hover,
 .wiki-delete-btn:hover,
 .wiki-open-tab:hover,
-.wiki-close-btn:hover {
+.wiki-close-btn:hover,
+.file-edit-btn:hover,
+.file-delete-btn:hover,
+.file-close-btn:hover {
   color: var(--pico-primary);
 }
 
-.wiki-page-breadcrumbs {
+.wiki-page-breadcrumbs,
+.file-page-breadcrumbs {
   font-size: 0.8rem;
   color: var(--pico-muted-color);
   white-space: nowrap;
@@ -80,36 +88,43 @@ a.wiki-link:hover {
   text-overflow: ellipsis;
 }
 
-button.wiki-bc-segment {
+button.wiki-bc-segment,
+button.file-bc-segment {
   all: unset;
   cursor: pointer;
   color: inherit;
   font: inherit;
 }
 
-.wiki-bc-segment {
+.wiki-bc-segment,
+.file-bc-segment {
   cursor: pointer;
 }
 
-.wiki-bc-segment:hover {
+.wiki-bc-segment:hover,
+.file-bc-segment:hover {
   color: var(--pico-primary);
   text-decoration: underline;
 }
 
-.wiki-bc-segment:focus-visible {
+.wiki-bc-segment:focus-visible,
+.file-bc-segment:focus-visible {
   outline: 2px solid var(--pico-primary);
   outline-offset: 2px;
 }
 
-.wiki-bc-sep {
+.wiki-bc-sep,
+.file-bc-sep {
   margin: 0 0.2rem;
 }
 
-.wiki-bc-page {
+.wiki-bc-page,
+.file-bc-page {
   color: var(--pico-color);
 }
 
-.wiki-rename-btn {
+.wiki-rename-btn,
+.file-rename-btn {
   background: none;
   border: none;
   cursor: pointer;
@@ -119,17 +134,20 @@ button.wiki-bc-segment {
   margin: 0 0 0 0.25rem;
 }
 
-.wiki-rename-btn:hover {
+.wiki-rename-btn:hover,
+.file-rename-btn:hover {
   color: var(--pico-primary);
 }
 
-.wiki-rename-bar {
+.wiki-rename-bar,
+.file-rename-bar {
   display: flex;
   align-items: center;
   gap: 0.35rem;
 }
 
-.wiki-rename-input {
+.wiki-rename-input,
+.file-rename-input {
   flex: 1;
   font-size: 0.8rem;
   padding: 0.15rem 0.35rem;
@@ -141,7 +159,9 @@ button.wiki-bc-segment {
 }
 
 .wiki-rename-ok,
-.wiki-rename-cancel {
+.wiki-rename-cancel,
+.file-rename-ok,
+.file-rename-cancel {
   background: none;
   border: none;
   cursor: pointer;
@@ -150,15 +170,19 @@ button.wiki-bc-segment {
   margin: 0;
 }
 
-.wiki-rename-ok { color: var(--pico-primary); }
-.wiki-rename-cancel { color: var(--pico-muted-color); }
+.wiki-rename-ok,
+.file-rename-ok { color: var(--pico-primary); }
+.wiki-rename-cancel,
+.file-rename-cancel { color: var(--pico-muted-color); }
 
-.wiki-rename-error {
+.wiki-rename-error,
+.file-rename-error {
   font-size: 0.75rem;
   color: var(--pico-del-color, #c62828);
 }
 
-.wiki-page-body {
+.wiki-page-body,
+.file-page-body {
   line-height: 1.6;
 }
 
@@ -167,14 +191,55 @@ button.wiki-bc-segment {
 .wiki-page-body h3 { font-size: 1rem; }
 
 .wiki-page-loading,
-.wiki-page-error {
+.wiki-page-error,
+.file-page-loading,
+.file-page-error {
   padding: 2rem 1rem;
   text-align: center;
   color: var(--pico-muted-color);
 }
 
-.wiki-page-error {
+.wiki-page-error,
+.file-page-error {
   color: var(--pico-del-color);
+}
+
+/* File-page specific: plain-text view body + image + download modes */
+pre.file-page-body {
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  font-family: var(--pico-font-family-monospace, monospace);
+  font-size: 0.85rem;
+  padding: 0.5rem 0;
+  margin: 0;
+}
+
+.file-page-image img {
+  max-width: 100%;
+  height: auto;
+  display: block;
+}
+
+.file-page-download {
+  padding: 1rem 0;
+}
+
+.file-page-download .file-page-meta {
+  font-size: 0.8rem;
+  color: var(--pico-muted-color);
+  margin: 0 0 0.75rem 0;
+}
+
+.file-download-link {
+  display: inline-block;
+  padding: 0.35rem 0.75rem;
+  border: 1px solid var(--pico-primary);
+  border-radius: 3px;
+  text-decoration: none;
+  color: var(--pico-primary);
+}
+.file-download-link:hover {
+  background: var(--pico-primary-focus);
 }
 
 /* ── Wiki page list ─────────────────────────────────────────────────────── */
