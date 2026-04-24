@@ -9,6 +9,7 @@
 ## Interfaces
 
 - [Web UI](web-ui.md) — Browser-based chat, vault editor, conversation management, model picker
+- [Files tab](files-tab.md) — Web UI workspace browser: browse, view, and edit agent workspace files
 - [Streaming](streaming.md) — Stream LLM tokens as they arrive, configurable throttle
 - [HTTP Server & Interactive Buttons](http-server.md) — Mattermost button confirmations, HTTP callback server
 

@@ -28,6 +28,14 @@ conversation-sidebar .conv-list {
   padding: 0.5rem;
 }
 
+/* vault-sidebar / files-sidebar wrap their content in .conv-list. Make the
+   custom elements layout-transparent so .conv-list is the direct flex child
+   of conversation-sidebar and the existing flex:1 rule above applies. */
+conversation-sidebar vault-sidebar,
+conversation-sidebar files-sidebar {
+  display: contents;
+}
+
 conversation-sidebar .new-conv-btn {
   display: block;
   width: 100%;

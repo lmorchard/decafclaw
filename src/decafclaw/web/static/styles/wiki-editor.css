@@ -6,21 +6,34 @@
   height: 100%;
 }
 
-.wiki-editor-spacer {
+.wiki-editor-spacer,
+.file-editor-spacer {
   flex-grow: 1;
 }
 
-.wiki-editor-status {
+.wiki-editor-status,
+.file-editor-status {
   font-size: 0.75rem;
   color: var(--pico-muted-color);
 }
-.wiki-editor-status.saving { color: var(--pico-primary); }
-.wiki-editor-status.saved { color: var(--pico-ins-color, #2a7); }
+.wiki-editor-status.saving,
+.file-editor-status.saving { color: var(--pico-primary); }
+.wiki-editor-status.saved,
+.file-editor-status.saved { color: var(--pico-ins-color, #2a7); }
 .wiki-editor-status.error,
-.wiki-editor-status.conflict { color: var(--pico-del-color, #c44); }
+.wiki-editor-status.conflict,
+.file-editor-status.error,
+.file-editor-status.conflict { color: var(--pico-del-color, #c44); }
+
+.file-page-date {
+  font-size: 0.75rem;
+  color: var(--pico-muted-color);
+  margin: 0 0.35rem;
+}
 
 .wiki-page-toolbar,
-.wiki-editor-toolbar {
+.wiki-editor-toolbar,
+.file-page-toolbar {
   display: flex;
   align-items: center;
   gap: 2px;
@@ -28,6 +41,30 @@
   border-bottom: 1px solid var(--pico-muted-border-color);
   margin-bottom: 0.5rem;
   flex-wrap: wrap;
+}
+
+.file-page {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.file-editor {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.file-editor-mount {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.file-editor-mount .cm-editor {
+  height: 100%;
 }
 
 .wiki-editor-toolbar-btn {
@@ -57,7 +94,8 @@
   margin: 0 0.3rem;
 }
 
-.wiki-editor-conflict {
+.wiki-editor-conflict,
+.file-editor-conflict {
   background: var(--pico-mark-background-color, #ffeeba);
   color: var(--pico-color);
   padding: 0.5rem 0.75rem;
@@ -68,7 +106,8 @@
   gap: 0.5rem;
   font-size: 0.85rem;
 }
-.wiki-editor-conflict button {
+.wiki-editor-conflict button,
+.file-editor-conflict button {
   padding: 0.2rem 0.5rem;
   font-size: 0.8rem;
   cursor: pointer;
