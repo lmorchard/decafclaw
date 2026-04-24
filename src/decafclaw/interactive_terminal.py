@@ -117,6 +117,8 @@ async def run_interactive(ctx):
             )
 
         elif event_type == "message_complete":
+            if event.get("suppress_user_message"):
+                return  # WAKE turn ended with BACKGROUND_WAKE_OK — silent end
             if event.get("final"):
                 last_response_text["text"] = event.get("text", "")
 
@@ -152,7 +154,7 @@ async def run_interactive(ctx):
 
     heartbeat_task = asyncio.create_task(
         run_heartbeat_timer(
-            config, ctx.event_bus, shutdown_event,
+            config, ctx.event_bus, manager, shutdown_event,
             on_results=interactive_heartbeat_reporter,
         )
     )

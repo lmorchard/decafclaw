@@ -18,6 +18,7 @@
  * @property {boolean} [_merged]
  * @property {Array<{text: string, timestamp: string}>} [statusHistory]
  * @property {{prompt_tokens: number, completion_tokens: number, total_tokens: number}|null} [usage]
+ * @property {object} [record]
  */
 
 /**

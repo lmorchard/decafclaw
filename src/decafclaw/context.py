@@ -91,6 +91,7 @@ class Context:
         self.active_model: str = ""  # named model config from config.model_configs
         self.task_mode: str = ""  # "heartbeat" | "scheduled" | "" (interactive)
         self.request_confirmation: Any = None  # set by ConversationManager
+        self.manager: Any = None  # set by ConversationManager
 
     @classmethod
     def for_task(
@@ -191,6 +192,7 @@ class Context:
         child.wiki_page = self.wiki_page
         child.active_model = self.active_model
         child.request_confirmation = self.request_confirmation
+        child.manager = self.manager
         # Share skills + composer (concurrent tool calls read but don't mutate)
         child.skills = self.skills
         child.composer = self.composer

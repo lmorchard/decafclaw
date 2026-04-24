@@ -806,3 +806,28 @@ async def test_reflection_error_delivers_response(ctx):
 
     assert result.text == "response"
     assert len(history) == 2  # no retry
+
+
+@pytest.mark.asyncio
+async def test_wake_turn_archives_nudge_as_wake_trigger_not_user(ctx, config):
+    """A wake turn (task_mode='background_wake') archives the trigger prompt under
+    'wake_trigger' role, not 'user', so the web UI doesn't render it as a real
+    user message on conversation reload."""
+    from decafclaw.archive import read_archive
+
+    ctx.config.llm.streaming = False
+    ctx.config.system_prompt = "test"
+    ctx.task_mode = "background_wake"
+    ctx.conv_id = "test-wake-trigger-archive"
+
+    with patch("decafclaw.agent.call_llm", new_callable=AsyncMock) as mock_llm:
+        mock_llm.return_value = _mock_llm_response("Noted, job done.")
+        history = []
+        await run_agent_turn(ctx, "A background job you started has completed.", history)
+
+    all_msgs = read_archive(config, "test-wake-trigger-archive")
+    user_msgs = [m for m in all_msgs if m.get("role") == "user"]
+    assert not user_msgs, f"Expected no 'user' role records for wake turn, got: {user_msgs}"
+    wake_trigger_msgs = [m for m in all_msgs if m.get("role") == "wake_trigger"]
+    assert len(wake_trigger_msgs) == 1
+    assert "background job" in wake_trigger_msgs[0]["content"].lower()

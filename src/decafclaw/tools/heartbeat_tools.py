@@ -5,15 +5,23 @@ import logging
 
 import httpx
 
+from ..media import ToolResult
+
 log = logging.getLogger(__name__)
 
 # Prevent concurrent heartbeat runs
 _heartbeat_lock = asyncio.Lock()
 
 
-async def tool_heartbeat_trigger(ctx) -> str:
+async def tool_heartbeat_trigger(ctx) -> str | ToolResult:
     """Manually trigger a heartbeat cycle, posting results to the configured channel."""
     log.info("[tool:heartbeat_trigger]")
+
+    if ctx.manager is None:
+        return ToolResult(
+            text="[error: heartbeat_trigger requires a ConversationManager; "
+                 "no manager on ctx]",
+        )
 
     if _heartbeat_lock.locked():
         return "Heartbeat is already running."
@@ -25,7 +33,7 @@ async def tool_heartbeat_trigger(ctx) -> str:
         return "No HEARTBEAT.md sections found. Nothing to run."
 
     # Fire and forget — run the cycle in the background
-    asyncio.create_task(_guarded_heartbeat(ctx.config, ctx.event_bus))
+    asyncio.create_task(_guarded_heartbeat(ctx.config, ctx.event_bus, ctx.manager))
 
     has_channel = ctx.config.heartbeat.channel or ctx.config.heartbeat.user
     if has_channel:
@@ -33,16 +41,16 @@ async def tool_heartbeat_trigger(ctx) -> str:
     return f"Heartbeat triggered: {len(sections)} section(s) queued. No reporting channel configured — running silently."
 
 
-async def _guarded_heartbeat(config, event_bus) -> None:
+async def _guarded_heartbeat(config, event_bus, manager) -> None:
     """Run heartbeat with concurrency guard. Lock auto-releases on crash."""
     if _heartbeat_lock.locked():
         log.warning("Heartbeat already running, skipping")
         return
     async with _heartbeat_lock:
-        await _run_heartbeat_to_channel(config, event_bus)
+        await _run_heartbeat_to_channel(config, event_bus, manager)
 
 
-async def _run_heartbeat_to_channel(config, event_bus) -> None:
+async def _run_heartbeat_to_channel(config, event_bus, manager) -> None:
     """Run heartbeat sections, optionally posting results to a channel."""
     from datetime import datetime
 
@@ -104,7 +112,7 @@ async def _run_heartbeat_to_channel(config, event_bus) -> None:
         post_id = section_post_ids.get(i)
 
         turn_result = await run_section_turn(
-            config, event_bus, section, timestamp, i,
+            config, event_bus, manager, section, timestamp, i,
         )
         response = turn_result["response"]
         ok = turn_result["is_ok"]

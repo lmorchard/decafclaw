@@ -1,5 +1,6 @@
 """Tests for the context composer module."""
 
+import json
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -10,6 +11,7 @@ from decafclaw.context_composer import (
     ComposerState,
     ContextComposer,
     SourceEntry,
+    _expand_background_event,
 )
 
 # -- Dataclass construction ---------------------------------------------------
@@ -848,3 +850,224 @@ class TestContextStatusInCompose:
             last = result.messages[-1]
             assert last["role"] == "user"
             assert last["content"] == "hello"
+
+
+# -- background_event expansion -----------------------------------------------
+
+
+class TestExpandBackgroundEvent:
+    def test_produces_two_messages(self):
+        rec = {
+            "role": "background_event",
+            "job_id": "abc123",
+            "command": "echo hello",
+            "status": "completed",
+            "exit_code": 0,
+            "stdout_tail": "hello",
+            "stderr_tail": "",
+            "elapsed_ms": 1234,
+            "completion_tail_lines": 50,
+        }
+        messages = _expand_background_event(rec)
+        assert len(messages) == 2
+
+    def test_first_is_assistant_tool_call(self):
+        rec = {
+            "job_id": "abc123",
+            "command": "echo hello",
+            "status": "completed",
+            "exit_code": 0,
+            "stdout_tail": "hello",
+            "stderr_tail": "",
+            "elapsed_ms": 1234,
+        }
+        messages = _expand_background_event(rec)
+        msg = messages[0]
+        assert msg["role"] == "assistant"
+        tool_calls = msg["tool_calls"]
+        assert len(tool_calls) == 1
+        tc = tool_calls[0]
+        assert tc["id"] == "bg-wake-abc123"
+        assert tc["type"] == "function"
+        assert tc["function"]["name"] == "shell_background_status"
+        assert json.loads(tc["function"]["arguments"]) == {"job_id": "abc123"}
+
+    def test_second_is_tool_result(self):
+        rec = {
+            "job_id": "abc123",
+            "command": "echo hello",
+            "status": "completed",
+            "exit_code": 0,
+            "stdout_tail": "hello",
+            "stderr_tail": "",
+            "elapsed_ms": 1234,
+        }
+        messages = _expand_background_event(rec)
+        msg = messages[1]
+        assert msg["role"] == "tool"
+        assert msg["tool_call_id"] == "bg-wake-abc123"
+
+    def test_tool_result_content_includes_job_id(self):
+        rec = {
+            "job_id": "abc123",
+            "command": "echo hello",
+            "status": "completed",
+            "exit_code": 0,
+            "stdout_tail": "hello",
+            "stderr_tail": "",
+            "elapsed_ms": 1234,
+        }
+        messages = _expand_background_event(rec)
+        content = messages[1]["content"]
+        assert "Job `abc123`" in content
+
+    def test_tool_result_content_includes_command(self):
+        rec = {
+            "job_id": "abc123",
+            "command": "echo hello",
+            "status": "completed",
+            "exit_code": 0,
+            "stdout_tail": "hello",
+            "stderr_tail": "",
+            "elapsed_ms": 1234,
+        }
+        messages = _expand_background_event(rec)
+        content = messages[1]["content"]
+        assert "echo hello" in content
+
+    def test_tool_result_content_includes_stdout(self):
+        rec = {
+            "job_id": "abc123",
+            "command": "echo hello",
+            "status": "completed",
+            "exit_code": 0,
+            "stdout_tail": "hello",
+            "stderr_tail": "",
+            "elapsed_ms": 1234,
+        }
+        messages = _expand_background_event(rec)
+        content = messages[1]["content"]
+        assert "hello" in content
+
+    def test_tool_result_content_includes_exit_code(self):
+        rec = {
+            "job_id": "abc123",
+            "command": "echo hello",
+            "status": "completed",
+            "exit_code": 0,
+            "stdout_tail": "hello",
+            "stderr_tail": "",
+            "elapsed_ms": 1234,
+        }
+        messages = _expand_background_event(rec)
+        content = messages[1]["content"]
+        # Format is "- **Exit code:** 0"
+        assert "Exit code:** 0" in content
+
+    def test_namespaced_call_id(self):
+        """Synthetic call IDs use the bg-wake- prefix to avoid collisions."""
+        rec = {"job_id": "xyz789", "command": "ls", "status": "completed",
+               "exit_code": 0, "stdout_tail": "", "stderr_tail": "", "elapsed_ms": 0}
+        messages = _expand_background_event(rec)
+        assert messages[0]["tool_calls"][0]["id"] == "bg-wake-xyz789"
+        assert messages[1]["tool_call_id"] == "bg-wake-xyz789"
+
+    def test_missing_fields_use_defaults(self):
+        """Partial record doesn't crash — missing fields use safe defaults."""
+        messages = _expand_background_event({})
+        assert len(messages) == 2
+        assert messages[0]["role"] == "assistant"
+        assert messages[1]["role"] == "tool"
+
+
+class TestComposeExpandsBackgroundEvent:
+    @pytest.mark.asyncio
+    async def test_background_event_expanded_in_compose(self, ctx, config):
+        """When history contains a background_event record, the composed
+        messages include the expanded tool-call pair."""
+        config.system_prompt = "System."
+        config.agent.tool_context_budget_pct = 1.0
+        config.compaction.max_tokens = 1000000
+        config.agent.show_context_status = False
+
+        history = [
+            {"role": "user", "content": "start a job"},
+            {"role": "assistant", "content": "Started job abc123"},
+            {
+                "role": "background_event",
+                "job_id": "abc123",
+                "command": "echo hello",
+                "status": "completed",
+                "exit_code": 0,
+                "stdout_tail": "hello",
+                "stderr_tail": "",
+                "elapsed_ms": 1234,
+                "completion_tail_lines": 50,
+            },
+        ]
+
+        with (
+            patch("decafclaw.agent._collect_all_tool_defs", return_value=[]),
+            patch("decafclaw.memory_context.retrieve_memory_context",
+                  new_callable=AsyncMock, return_value=[]),
+        ):
+            composer = ContextComposer()
+            result = await composer.compose(
+                ctx, "follow up", history, mode=ComposerMode.INTERACTIVE,
+            )
+
+        # Extract non-system messages for inspection
+        chat_msgs = [m for m in result.messages if m.get("role") != "system"]
+
+        # Assistant tool-call message present
+        asst_with_tc = [
+            m for m in chat_msgs
+            if m.get("role") == "assistant" and m.get("tool_calls")
+        ]
+        assert asst_with_tc, "Expected an assistant tool_calls message"
+        tc_names = [m["tool_calls"][0]["function"]["name"] for m in asst_with_tc]
+        assert "shell_background_status" in tc_names
+
+        # Tool result message present
+        tool_msgs = [
+            m for m in chat_msgs
+            if m.get("role") == "tool"
+            and m.get("tool_call_id", "").startswith("bg-wake-")
+        ]
+        assert tool_msgs, "Expected a bg-wake- tool result message"
+        assert "Job `abc123`" in tool_msgs[0]["content"]
+
+    @pytest.mark.asyncio
+    async def test_background_event_not_in_final_messages(self, ctx, config):
+        """background_event records must not appear as raw messages in the
+        composed output — only the expanded pair should be present."""
+        config.system_prompt = "System."
+        config.agent.tool_context_budget_pct = 1.0
+        config.compaction.max_tokens = 1000000
+
+        history = [
+            {
+                "role": "background_event",
+                "job_id": "xyz",
+                "command": "ls",
+                "status": "completed",
+                "exit_code": 0,
+                "stdout_tail": "",
+                "stderr_tail": "",
+                "elapsed_ms": 100,
+                "completion_tail_lines": 50,
+            },
+        ]
+
+        with (
+            patch("decafclaw.agent._collect_all_tool_defs", return_value=[]),
+            patch("decafclaw.memory_context.retrieve_memory_context",
+                  new_callable=AsyncMock, return_value=[]),
+        ):
+            composer = ContextComposer()
+            result = await composer.compose(
+                ctx, "what happened?", history, mode=ComposerMode.INTERACTIVE,
+            )
+
+        roles = [m.get("role") for m in result.messages]
+        assert "background_event" not in roles

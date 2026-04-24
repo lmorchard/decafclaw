@@ -861,8 +861,16 @@ async def run_agent_turn(ctx, user_message: str, history: list,
         # Archive messages the composer added (wiki, memory, user).
         # For inline commands, swap the user message with the short display version.
         for msg in composed.messages_to_archive:
-            if archive_text and msg.get("role") == "user":
-                archive_msg: dict = {"role": "user", "content": archive_text}
+            if ctx.task_mode == "background_wake" and msg.get("role") == "user":
+                # Wake turn's synthetic trigger prompt — archive under a distinct
+                # role so the UI doesn't render it as a real user message.
+                archive_msg: dict = {
+                    "role": "wake_trigger",
+                    "content": msg.get("content", ""),
+                }
+                _archive(ctx, archive_msg)
+            elif archive_text and msg.get("role") == "user":
+                archive_msg = {"role": "user", "content": archive_text}
                 if msg.get("attachments"):
                     archive_msg["attachments"] = msg["attachments"]
                 _archive(ctx, archive_msg)

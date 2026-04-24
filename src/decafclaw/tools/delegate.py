@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import secrets
 from dataclasses import replace
 
 from ..media import ToolResult
@@ -19,7 +20,8 @@ DEFAULT_CHILD_SYSTEM_PROMPT = (
 
 async def _run_child_turn(parent_ctx, task, model: str = "",
                           max_iterations: int = 0):
-    """Run a single child agent turn, inheriting parent's tools and skills.
+    """Run a child agent turn via ConversationManager, preserving the
+    parent's tools, skills, and event routing.
 
     Args:
         model: Override model for the child. Empty = inherit parent's.
@@ -27,7 +29,7 @@ async def _run_child_turn(parent_ctx, task, model: str = "",
 
     Returns the child's text response, or an error string on failure.
     """
-    from ..agent import run_agent_turn  # deferred: circular dep
+    from ..conversation_manager import TurnKind  # deferred: circular dep
     from . import TOOLS  # deferred: circular dep
 
     config = parent_ctx.config
@@ -40,64 +42,82 @@ async def _run_child_turn(parent_ctx, task, model: str = "",
         skill = skill_map.get(name)
         if skill and skill.body:
             prompt_parts.append(f"\n\n--- Skill: {name} ---\n{skill.body}")
+    child_system_prompt = "\n".join(prompt_parts)
 
-    # Fork context with fresh ID, propagate cancel event
-    parent_conv = getattr(parent_ctx, "conv_id", "") or getattr(parent_ctx, "channel_id", "")
     child_config = replace(
         config,
         agent=replace(config.agent, max_tool_iterations=(
             max_iterations or config.agent.child_max_tool_iterations)),
-        system_prompt="\n".join(prompt_parts),
+        system_prompt=child_system_prompt,
     )
     # Children don't discover or activate skills — they inherit parent's
     child_config.discovered_skills = []
-    child_ctx = parent_ctx.fork(config=child_config)
-    child_ctx.conv_id = f"{parent_conv}--child-{child_ctx.context_id[:8]}"
-    child_ctx.cancelled = getattr(parent_ctx, "cancelled", None)
-    child_ctx.request_confirmation = getattr(parent_ctx, "request_confirmation", None)
 
-    # Route child events to the parent's UI subscriber so confirmations
-    # and tool progress are visible in the parent conversation
+    parent_conv = getattr(parent_ctx, "conv_id", "") or getattr(parent_ctx, "channel_id", "")
+    # Per-call unique conv_id; short random suffix to avoid collisions.
+    child_conv_id = f"{parent_conv}--child-{secrets.token_hex(4)}"
     parent_event_id = getattr(parent_ctx, "event_context_id", "") or parent_ctx.context_id
-    child_ctx.event_context_id = parent_event_id
 
-    # Child inherits parent's tools minus delegation/activation.
-    # If parent has restricted allowed_tools, respect that restriction.
-    excluded = {"delegate_task", "activate_skill", "refresh_skills", "tool_search"}
-    all_tools = set(TOOLS) | set(parent_ctx.tools.extra)
-    parent_allowed = parent_ctx.tools.allowed
-    if parent_allowed is not None:
-        all_tools = all_tools & parent_allowed
-    child_ctx.tools.allowed = all_tools - excluded
+    def setup(child_ctx):
+        # Swap in the child-specific config (smaller iteration budget + child
+        # system prompt). Context was already built with parent's config by
+        # Context.for_task, so we overwrite here.
+        child_ctx.config = child_config
+        child_ctx.cancelled = getattr(parent_ctx, "cancelled", None)
+        child_ctx.request_confirmation = getattr(parent_ctx, "request_confirmation", None)
+        # Route child events to the parent's UI subscriber so confirmations
+        # and tool progress are visible in the parent conversation.
+        child_ctx.event_context_id = parent_event_id
 
-    # Carry over parent's activated skill tools and data
-    child_ctx.tools.extra = parent_ctx.tools.extra
-    child_ctx.tools.extra_definitions = parent_ctx.tools.extra_definitions
-    child_ctx.skills.data = parent_ctx.skills.data
+        # Child inherits parent's tools minus delegation/activation.
+        # If parent has restricted allowed_tools, respect that restriction.
+        excluded = {"delegate_task", "activate_skill", "refresh_skills", "tool_search"}
+        all_tools = set(TOOLS) | set(parent_ctx.tools.extra)
+        parent_allowed = parent_ctx.tools.allowed
+        if parent_allowed is not None:
+            all_tools = all_tools & parent_allowed
+        child_ctx.tools.allowed = all_tools - excluded
 
-    # Clear skill state so children can't activate new skills
-    child_ctx.skills.activated = set()
-    # Propagate command pre-approved tools and scoped shell patterns to child
-    child_ctx.tools.preapproved = parent_ctx.tools.preapproved
-    child_ctx.tools.preapproved_shell_patterns = parent_ctx.tools.preapproved_shell_patterns
+        # Carry over parent's activated skill tools and data
+        child_ctx.tools.extra = parent_ctx.tools.extra
+        child_ctx.tools.extra_definitions = parent_ctx.tools.extra_definitions
+        child_ctx.skills.data = parent_ctx.skills.data
 
-    # No streaming or reflection for child agents
-    child_ctx.on_stream_chunk = None
-    child_ctx.is_child = True
-    child_ctx.skip_reflection = True
-    child_ctx.skip_vault_retrieval = True
+        # Clear skill state so children can't activate new skills
+        child_ctx.skills.activated = set()
+        # Propagate command pre-approved tools and scoped shell patterns to child
+        child_ctx.tools.preapproved = parent_ctx.tools.preapproved
+        child_ctx.tools.preapproved_shell_patterns = parent_ctx.tools.preapproved_shell_patterns
 
-    # Set active model: explicit override > parent's model
-    child_ctx.active_model = model if model else parent_ctx.active_model
+        # No streaming or reflection for child agents
+        child_ctx.on_stream_chunk = None
+        child_ctx.is_child = True
+        child_ctx.skip_reflection = True
+        child_ctx.skip_vault_retrieval = True
+
+        # Set active model: explicit override > parent's model
+        child_ctx.active_model = model if model else parent_ctx.active_model
+
+    manager = parent_ctx.manager
+    if manager is None:
+        return ToolResult(
+            text="[error: delegate_task requires a ConversationManager; "
+                 "no manager on parent ctx]"
+        )
 
     timeout = config.agent.child_timeout_sec
 
     try:
-        result = await asyncio.wait_for(
-            run_agent_turn(child_ctx, task, []),
-            timeout=timeout,
+        future = await manager.enqueue_turn(
+            child_conv_id,
+            kind=TurnKind.CHILD_AGENT,
+            prompt=task,
+            history=[],
+            context_setup=setup,
+            user_id=parent_ctx.user_id,
         )
-        return result.text if hasattr(result, "text") else str(result)
+        result_text = await asyncio.wait_for(future, timeout=timeout)
+        return result_text or ""
     except asyncio.TimeoutError:
         return ToolResult(text=f"[error: subtask timed out after {timeout}s]")
     except Exception as e:

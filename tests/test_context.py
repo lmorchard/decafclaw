@@ -122,6 +122,8 @@ def test_fork_for_tool_call_copies_all_fields(ctx):
     ctx.skills.data = {"vault_base_path": "obsidian/main"}
     ctx.tools.allowed = {"shell", "memory_search"}
     ctx.event_context_id = "parent-event-ctx"
+    ctx.request_confirmation = lambda req: None
+    ctx.manager = object()  # stand-in for ConversationManager instance
 
     forked = ctx.fork_for_tool_call("call_new")
 
@@ -137,7 +139,7 @@ def test_fork_for_tool_call_copies_all_fields(ctx):
     fields_to_check = [
         "user_id", "channel_id", "channel_name", "thread_id", "conv_id",
         "history", "messages", "cancelled", "media_handler",
-        "event_context_id",
+        "event_context_id", "request_confirmation", "manager",
     ]
     for field in fields_to_check:
         parent_val = getattr(ctx, field)

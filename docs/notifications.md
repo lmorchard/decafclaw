@@ -86,6 +86,11 @@ Compaction and reflection are intentionally *not* producers — both are
 mid-turn events visible in-line in the conversation UI, so emitting a
 separate async notification would just be noise.
 
+**Agent-facing wake.** When a background job exits, the inbox record above
+serves the user. Separately, an agent wake-turn fires on the originating
+conversation so the agent can react to its own prior work. See
+[docs/background-wake.md](background-wake.md).
+
 All producers are **fail-open**: any exception during `notify()` is logged
 at warning level and discarded. The producer's primary job finishes regardless
 of inbox state.

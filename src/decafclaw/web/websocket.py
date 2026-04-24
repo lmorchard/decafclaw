@@ -105,7 +105,8 @@ async def _handle_load_history(ws_send, index, username, msg, state):
         limit = 50
     before = msg.get("before", "")
     # Metadata roles that should not be rendered as chat messages
-    _HIDDEN_ROLES = {"effort", "model", "confirmation_request", "confirmation_response"}
+    _HIDDEN_ROLES = {"effort", "model", "confirmation_request", "confirmation_response",
+                     "wake_trigger"}
 
     # Read archive once and reuse for history, token estimation, and model scan
     from ..archive import read_archive as _read_archive
@@ -479,6 +480,8 @@ def _subscribe_to_conv(state, conv_id):
             })
 
         elif event_type == "message_complete":
+            if event.get("suppress_user_message"):
+                return  # WAKE turn ended with BACKGROUND_WAKE_OK — silent end
             if event.get("final"):
                 streaming_buffer["text"] = ""
             await ws_send(event)
@@ -515,6 +518,12 @@ def _subscribe_to_conv(state, conv_id):
                     ),
                     "error": event.get("error", ""),
                 })
+
+        elif event_type == "background_event":
+            await ws_send({
+                "type": "background_event", "conv_id": event_conv_id,
+                "record": event.get("record", {}),
+            })
 
         elif event_type == "compaction_end":
             await ws_send({

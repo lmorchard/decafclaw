@@ -92,18 +92,18 @@ async def run_all(app_ctx):
                 from .tools.heartbeat_tools import _guarded_heartbeat
 
                 async def on_cycle():
-                    await _guarded_heartbeat(config, app_ctx.event_bus)
+                    await _guarded_heartbeat(config, app_ctx.event_bus, manager)
 
                 heartbeat_task = asyncio.create_task(
                     run_heartbeat_timer(
-                        config, app_ctx.event_bus, shutdown_event,
+                        config, app_ctx.event_bus, manager, shutdown_event,
                         on_cycle=on_cycle,
                     )
                 )
             else:
                 heartbeat_task = asyncio.create_task(
                     run_heartbeat_timer(
-                        config, app_ctx.event_bus, shutdown_event,
+                        config, app_ctx.event_bus, manager, shutdown_event,
                     )
                 )
             has_channel = config.heartbeat.channel or config.heartbeat.user
@@ -114,7 +114,7 @@ async def run_all(app_ctx):
         # Start schedule timer
         from .schedules import run_schedule_timer
         schedule_task = asyncio.create_task(
-            run_schedule_timer(config, app_ctx.event_bus, shutdown_event)
+            run_schedule_timer(config, app_ctx.event_bus, manager, shutdown_event)
         )
         log.info("Schedule timer started")
 

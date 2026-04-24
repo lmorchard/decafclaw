@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from decafclaw.conversation_manager import ConversationManager
+from decafclaw.conversation_manager import ConversationManager, TurnKind
 from decafclaw.events import EventBus
 from decafclaw.web.conversations import ConversationIndex
 from decafclaw.web.websocket import _handle_cancel_turn, _handle_send
@@ -113,9 +113,10 @@ class TestQueueDrain:
 
         # Simulate a completed turn with queued messages
         state.pending_messages = [
-            {"text": "queued msg", "user_id": "testuser",
+            {"kind": TurnKind.USER, "text": "queued msg", "user_id": "testuser",
              "context_setup": None, "archive_text": "",
-             "attachments": None, "command_ctx": None, "wiki_page": None},
+             "attachments": None, "command_ctx": None, "wiki_page": None,
+             "task_mode": None, "history": None, "metadata": None, "future": None},
         ]
 
         # Drain should process the queued message

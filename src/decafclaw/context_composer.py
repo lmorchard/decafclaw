@@ -13,6 +13,8 @@ import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from decafclaw.skills.background.tools import format_status_text
+
 log = logging.getLogger(__name__)
 
 
@@ -179,6 +181,44 @@ def _reorder_tool_results(messages: list[dict]) -> list[dict]:
     return result
 
 
+def _expand_background_event(rec: dict) -> list[dict]:
+    """Convert a background_event archive record into a pair of synthetic
+    messages (assistant tool_call + tool result) matching what the agent
+    would have seen if it had polled shell_background_status."""
+    job_id = rec.get("job_id", "")
+    call_id = f"bg-wake-{job_id}"
+    args = json.dumps({"job_id": job_id})
+    tool_text = format_status_text(
+        job_id=job_id,
+        status=rec.get("status", "?"),
+        command=rec.get("command", ""),
+        pid=0,  # not stored in archive; not meaningful for a completed job
+        elapsed_ms=rec.get("elapsed_ms", 0),
+        remaining_ms=None,  # job has exited
+        exit_code=rec.get("exit_code"),
+        stdout=rec.get("stdout_tail", ""),
+        stderr=rec.get("stderr_tail", ""),
+    )
+    return [
+        {
+            "role": "assistant",
+            "tool_calls": [{
+                "id": call_id,
+                "type": "function",
+                "function": {
+                    "name": "shell_background_status",
+                    "arguments": args,
+                },
+            }],
+        },
+        {
+            "role": "tool",
+            "tool_call_id": call_id,
+            "content": tool_text,
+        },
+    ]
+
+
 # -- Composer -----------------------------------------------------------------
 
 
@@ -313,7 +353,12 @@ class ContextComposer:
         llm_history = []
         for m in history:
             role = m.get("role")
-            if role in LLM_ROLES:
+            if role == "background_event":
+                # Expand completion records into a synthetic poll pair so the
+                # agent reads background job output as a tool result (correct
+                # prompt-injection posture), not as a bare system/user message.
+                llm_history.extend(_expand_background_event(m))
+            elif role in LLM_ROLES:
                 llm_history.append(m)
             elif role in role_remap:
                 llm_history.append({**m, "role": role_remap[role]})
