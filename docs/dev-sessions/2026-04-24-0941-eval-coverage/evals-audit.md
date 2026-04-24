@@ -115,35 +115,41 @@ See [notes.md](./notes.md) for minimal-viable test sets per file.
 
 Already inline-fixed on this branch: **H13** (reflect.py multi-turn input extraction bug), **H15** (`make eval` Makefile target), and all of `docs/eval-loop.md` field-name rot.
 
-## 5. Prioritized issue list (for filing)
+## 5. Prioritized issue list (filed)
 
-**16 issues to file now** (P1 + P2, actionable):
+**16 issues filed** as part of Step 10 of this session, plus 1 standalone bug caught by the audit:
 
 ### Eval-file issues (10)
 
-| Title | Pri | Size | Notes |
-|-------|-----|------|-------|
-| Eval coverage: vault skill (replaces broken memory-semantic.yaml) | P1 | M | Fixes `allowed_tools` rot + adds comprehensive coverage. |
-| Eval coverage: workspace tools (read/write/edit/search/glob/list/…) | P1 | M | Benefits from but doesn't require harness H6. |
-| Eval coverage: shell tools (shell, shell_patterns, background) | P2 | M | |
-| Eval coverage: conversation tools (search + compact) | P2 | M | **Blocked on harness H7 (conversation history seed).** |
-| Eval coverage: delegate_task | P2 | S | |
-| Eval coverage: tool deferral (tool_search + context budget) | P2 | S | **Blocked on harness H1 (expect_tool).** |
-| Eval coverage: checklist tools | P2 | S | Replaces the "todo tools" bullet in #240 (todos retired per #234). |
-| Eval coverage: user-invokable commands | P2 | S | Dispatch layer: unknown command, `$ARGUMENTS`, `context: fork`. |
-| Eval coverage: health skill | P2 | XS | |
-| Tighten existing memory evals (bounds, assertion-quality, stale names) | P2 | S | |
+| # | Title | Pri | Size | Notes |
+|---|-------|-----|------|-------|
+| #339 | Eval coverage: vault skill (replaces broken memory-semantic.yaml) | P1 | M | Fixes `allowed_tools` rot + adds comprehensive coverage. |
+| #340 | Eval coverage: workspace tools (read/write/edit/search/glob/list/…) | P1 | M | Benefits from but doesn't require harness H6. |
+| #341 | Eval coverage: shell tools (shell, shell_patterns, background) | P2 | M | |
+| #342 | Eval coverage: conversation tools (search + compact) | P2 | M | **Blocked on #353 (conversation history seed).** |
+| #343 | Eval coverage: delegate_task | P2 | S | |
+| #344 | Eval coverage: tool deferral (tool_search + context budget) | P2 | S | **Blocked on #349 (expect_tool).** |
+| #345 | Eval coverage: checklist tools | P2 | S | Replaces the "todo tools" bullet in #240 (todos retired per #234). |
+| #346 | Eval coverage: user-invokable commands | P2 | S | Dispatch layer: unknown command, `$ARGUMENTS`, `context: fork`. |
+| #347 | Eval coverage: health skill | P2 | XS | |
+| #348 | Tighten existing memory evals (bounds, assertion-quality, stale names) | P2 | S | |
 
 ### Harness issues (6)
 
-| Title | Pri | Size | Notes |
-|-------|-----|------|-------|
-| Eval harness: add `expect_tool` / `expect_no_tool` assertions | P1 | S | Foundation for tool-deferral evals + strengthens most others. |
-| Eval harness: multi-model matrix runner + combined report | P2 | M | Per #240's "run against multiple models" ask. |
-| Eval harness: pass-rate trend tracking across runs | P2 | S | Lets us detect regressions over time. |
-| Eval harness: post-turn workspace-state assertion | P2 | S | Strengthens workspace/vault/ingest evals. |
-| Eval harness: `setup.conversation_history` to seed archives | P2 | S | Unblocks conversation evals. |
-| Eval harness: misc quality (judge-prompt assertion coverage + `response_contains_all`) | P2 | XS | Bundles H14 + H16. |
+| # | Title | Pri | Size | Notes |
+|---|-------|-----|------|-------|
+| #349 | Eval harness: `expect_tool` / `expect_no_tool` / `expect_tool_count_by_name` | P1 | S | Foundation for tool-deferral evals + strengthens most others. |
+| #350 | Eval harness: multi-model matrix runner + combined report | P2 | M | Per #240's "run against multiple models" ask. |
+| #351 | Eval harness: pass-rate trend tracking across runs | P2 | S | Lets us detect regressions over time. |
+| #352 | Eval harness: post-turn workspace-state assertion | P2 | S | Strengthens workspace/vault/ingest evals. |
+| #353 | Eval harness: `setup.conversation_history` to seed archives | P2 | S | Unblocks #342. |
+| #354 | Eval harness: misc quality (judge-prompt assertion coverage + `response_contains_all`) | P2 | XS | Bundles H14 + H16. |
+
+### Standalone (surfaced by audit, not #240 child)
+
+| # | Title | Pri | Size | Notes |
+|---|-------|-----|------|-------|
+| #355 | Tool registry: did-you-mean error suggests the same unknown tool name | P2 | XS | Real tool-dispatch bug caught during the eval run. |
 
 ### Deferred issues (9) — noted here, not filed yet
 
