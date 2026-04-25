@@ -109,17 +109,25 @@ export class FilePage extends LitElement {
           return;
         }
       }
-      // Silent mtime probe — only flash "Loading…" if the file actually
-      // changed on disk, so turns that don't touch this file are invisible.
+      // Capture path/mtime before the await so a mid-probe file switch can't
+      // make us compare file A's returned mtime against file B's current one.
+      const path = this.path;
+      const modified = this._modified;
+      let data;
       try {
-        const res = await fetch('/api/workspace-file/' + encodePagePath(this.path));
+        const res = await fetch('/api/workspace-file/' + encodePagePath(path));
         if (!res.ok) return;
-        const data = await res.json();
-        if ((data.modified ?? 0) === this._modified) return;
+        data = await res.json();
       } catch {
         return;
       }
-      void this.#fetchFile();
+      if (this.path !== path) return; // user switched files during probe
+      if (this._loading) return;      // another load is already in flight
+      if ((data.modified ?? 0) === modified) return; // unchanged — no flash
+      // Reuse the probe's data directly instead of calling #fetchFile again.
+      // The probe already returned full content; a second GET would just
+      // re-download the same bytes.
+      await this.#applyFetchedData(data);
     };
     window.addEventListener('turn-complete', this._onTurnComplete);
   }
@@ -133,8 +141,27 @@ export class FilePage extends LitElement {
 
   /** Public: re-fetch from disk and remount the editor. */
   async reload() {
-    if (!this.path) return;
+    // Non-text bodies are `<img>`/`<a>` served from a stable URL; #fetchFile
+    // hits the text-only endpoint and 415s, which would show a "not a text
+    // file" error. Re-clicking an image/binary is a no-op here — the preview
+    // stays as-is.
+    if (!this.path || this.kind !== 'text') return;
     await this.#fetchFile();
+  }
+
+  /** Apply already-fetched file data and force an editor remount. */
+  async #applyFetchedData(data) {
+    this._loading = true;
+    this._error = '';
+    this._content = '';
+    // Give Lit a render tick so the editor unmounts on `_loading=true`
+    // before we populate the new content and flip it back.
+    await this.updateComplete;
+    this._content = data.content ?? '';
+    this._modified = data.modified ?? 0;
+    if (data.readonly === true) this.readonly = true;
+    this._conflict = false;
+    this._loading = false;
   }
 
   async #fetchFile() {
