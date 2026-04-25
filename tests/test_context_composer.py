@@ -527,6 +527,144 @@ class TestComposePreemptMatches:
             assert "vault_backlinks" in ctx.tools.preempt_matches
 
 
+# -- Pre-emptive skill matching -----------------------------------------------
+
+
+def _make_skill_info(name, description, **kwargs):
+    """Build a SkillInfo for tests without touching the filesystem."""
+    from pathlib import Path
+
+    from decafclaw.skills import SkillInfo
+    return SkillInfo(
+        name=name,
+        description=description,
+        location=Path(f"/fake/skills/{name}"),
+        **kwargs,
+    )
+
+
+class TestComposePreemptSkillMatches:
+    def test_disabled_returns_none(self, ctx, config):
+        """When pre-emptive search is disabled, no skill matching happens."""
+        config.agent.preemptive_search.enabled = False
+        config.discovered_skills = [
+            _make_skill_info("background", "Run things in the background")
+        ]
+        composer = ContextComposer()
+        entry, hint = composer._compose_preempt_skill_matches(
+            ctx, config, "run my server in the background", [],
+            ComposerMode.INTERACTIVE,
+        )
+        assert entry is None
+        assert hint is None
+        assert ctx.skills.preempt_matches == set()
+
+    def test_empty_user_message_no_match(self, ctx, config):
+        """Empty message with no history yields no matches."""
+        config.discovered_skills = [
+            _make_skill_info("background", "Run things in the background")
+        ]
+        composer = ContextComposer()
+        entry, hint = composer._compose_preempt_skill_matches(
+            ctx, config, "", [], ComposerMode.INTERACTIVE,
+        )
+        assert entry is None
+        assert hint is None
+
+    def test_basic_match_populates_ctx_and_hint(self, ctx, config):
+        """A keyword-matching skill lands on ctx.skills.preempt_matches and hint."""
+        config.discovered_skills = [
+            _make_skill_info(
+                "background",
+                "Run things in the background — servers, watchers, builds",
+            ),
+            _make_skill_info("unrelated", "Something else entirely"),
+        ]
+        composer = ContextComposer()
+        entry, hint = composer._compose_preempt_skill_matches(
+            ctx, config, "start my dev server in the background", [],
+            ComposerMode.INTERACTIVE,
+        )
+        assert entry is not None
+        assert hint is not None
+        assert entry.source == "preempt_skill_matches"
+        assert "background" in ctx.skills.preempt_matches
+        assert "unrelated" not in ctx.skills.preempt_matches
+        assert "background" in hint
+        assert "activate_skill" in hint
+
+    def test_activated_skills_excluded(self, ctx, config):
+        """Skills already in ctx.skills.activated aren't surfaced again."""
+        config.discovered_skills = [
+            _make_skill_info("background", "Run things in the background")
+        ]
+        ctx.skills.activated = {"background"}
+        composer = ContextComposer()
+        entry, hint = composer._compose_preempt_skill_matches(
+            ctx, config, "run in background", [], ComposerMode.INTERACTIVE,
+        )
+        assert entry is None
+        assert hint is None
+        assert ctx.skills.preempt_matches == set()
+
+    def test_no_discovered_skills(self, ctx, config):
+        """No skills configured → no matches, no error."""
+        config.discovered_skills = []
+        composer = ContextComposer()
+        entry, hint = composer._compose_preempt_skill_matches(
+            ctx, config, "run something in the background", [],
+            ComposerMode.INTERACTIVE,
+        )
+        assert entry is None
+        assert hint is None
+
+    def test_max_matches_cap(self, ctx, config):
+        """max_matches caps the number of surfaced skills."""
+        config.agent.preemptive_search.max_matches = 2
+        config.discovered_skills = [
+            _make_skill_info(f"skill_{i}", "vault search and retrieval helper")
+            for i in range(5)
+        ]
+        composer = ContextComposer()
+        entry, hint = composer._compose_preempt_skill_matches(
+            ctx, config, "vault search and retrieval", [],
+            ComposerMode.INTERACTIVE,
+        )
+        assert entry is not None
+        assert len(ctx.skills.preempt_matches) == 2
+        assert entry.items_included == 2
+
+    def test_fresh_per_turn(self, ctx, config):
+        """Each call resets ctx.skills.preempt_matches."""
+        ctx.skills.preempt_matches = {"stale_skill"}
+        config.discovered_skills = [
+            _make_skill_info("background", "Run things in the background")
+        ]
+        composer = ContextComposer()
+        composer._compose_preempt_skill_matches(
+            ctx, config, "run dev server in background", [],
+            ComposerMode.INTERACTIVE,
+        )
+        assert "stale_skill" not in ctx.skills.preempt_matches
+        assert "background" in ctx.skills.preempt_matches
+
+    def test_prior_assistant_carries_topic(self, ctx, config):
+        """Short user message + prior assistant response still matches via union."""
+        config.discovered_skills = [
+            _make_skill_info("background", "Run things in the background")
+        ]
+        history = [
+            {"role": "user", "content": "what about the dev server?"},
+            {"role": "assistant", "content": "Started the dev server in the background."},
+        ]
+        composer = ContextComposer()
+        entry, hint = composer._compose_preempt_skill_matches(
+            ctx, config, "and the watcher?", history, ComposerMode.INTERACTIVE,
+        )
+        assert entry is not None
+        assert "background" in ctx.skills.preempt_matches
+
+
 # -- Full compose() ------------------------------------------------------------
 
 

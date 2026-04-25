@@ -52,6 +52,13 @@ class SkillState:
     """Skill activation state for the current conversation."""
     activated: set[str] = field(default_factory=set)
     data: dict[str, Any] = field(default_factory=dict)
+    # Skill names surfaced for this turn by pre-emptive keyword matching
+    # against the current user message + prior assistant response. Skills
+    # already in `activated` (including always-loaded) are excluded.
+    # Populated once at turn start by ContextComposer; rendered as a
+    # short hint system message so the agent considers activate_skill
+    # without needing a failed-tool round-trip.
+    preempt_matches: set[str] = field(default_factory=set)
 
 
 class Context:

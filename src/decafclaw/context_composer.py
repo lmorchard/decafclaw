@@ -295,6 +295,15 @@ class ContextComposer:
         if preempt_entry is not None:
             sources.append(preempt_entry)
 
+        # -- Pre-emptive skill catalog match (populate ctx.skills.preempt_matches) --
+        # Surfaces likely-relevant non-activated skills as a hint message so
+        # the agent considers activate_skill without a failed tool call first.
+        preempt_skill_entry, preempt_skill_text = self._compose_preempt_skill_matches(
+            ctx, config, user_message, history, mode,
+        )
+        if preempt_skill_entry is not None:
+            sources.append(preempt_skill_entry)
+
         # -- Tools (compute before budget so we have actual token cost) --
         active_tools, deferred_tools, deferred_text, tools_entry = self._compose_tools(ctx, config)
         sources.append(tools_entry)
@@ -318,6 +327,8 @@ class ContextComposer:
         fixed_tokens += estimate_tokens(user_message)
         # Tools (actual token cost, not estimate)
         fixed_tokens += tools_entry.tokens_estimated
+        if preempt_skill_entry is not None:
+            fixed_tokens += preempt_skill_entry.tokens_estimated
 
         # Response reserve (leave room for the model's response)
         response_reserve = 4096
@@ -397,6 +408,8 @@ class ContextComposer:
         messages = [{"role": "system", "content": system_text}]
         if deferred_text:
             messages.append({"role": "system", "content": deferred_text})
+        if preempt_skill_text:
+            messages.append({"role": "system", "content": preempt_skill_text})
         messages.extend(llm_history)
 
         # -- Publish memory context event (after user message for UI ordering) --
@@ -747,6 +760,97 @@ class ContextComposer:
                 "max_matches": cfg.max_matches,
             },
         )
+
+    def _compose_preempt_skill_matches(
+        self, ctx, config, user_message: str, history: list,
+        mode: ComposerMode,
+    ) -> tuple[SourceEntry | None, str | None]:
+        """Pre-emptive keyword match against the discovered skill catalog.
+
+        Parallel to ``_compose_preempt_matches`` but for skills instead of
+        tools. Skills already in ``ctx.skills.activated`` (which includes
+        always-loaded bundled skills auto-activated at turn start) are
+        excluded from the candidate pool — surfacing them would just be
+        noise. Matches are rendered as a short system-message hint so the
+        agent considers ``activate_skill`` without first calling a tool
+        that hasn't been loaded yet.
+
+        Returns ``(source_entry, hint_text)``. Both ``None`` if matching
+        is disabled, the message tokenizes to nothing, or no skills match.
+        """
+        from .preempt_search import (
+            extract_last_assistant_text,
+            tokenize,
+        )
+        from .util import estimate_tokens
+
+        _ = mode  # reserved for future per-mode gating
+
+        ctx.skills.preempt_matches = set()
+
+        cfg = config.agent.preemptive_search
+        if not cfg.enabled:
+            return None, None
+
+        prior_text = extract_last_assistant_text(history)
+        input_text = f"{user_message}\n{prior_text}" if prior_text else user_message
+        input_tokens = tokenize(input_text)
+        if not input_tokens:
+            return None, None
+
+        discovered = getattr(config, "discovered_skills", []) or []
+        candidates = [
+            s for s in discovered
+            if s.name and s.name not in ctx.skills.activated
+        ]
+        if not candidates:
+            return None, None
+
+        scored: list[dict] = []
+        for skill in candidates:
+            skill_tokens = tokenize(f"{skill.name} {skill.description}")
+            overlap = input_tokens & skill_tokens
+            if overlap:
+                scored.append({
+                    "name": skill.name,
+                    "score": len(overlap),
+                    "matched_tokens": sorted(overlap),
+                })
+
+        if not scored:
+            return None, None
+
+        scored.sort(key=lambda e: (-e["score"], e["name"]))
+        top = scored[: cfg.max_matches]
+        matched_names = {e["name"] for e in top}
+        ctx.skills.preempt_matches = matched_names
+
+        name_list = ", ".join(sorted(matched_names))
+        hint_text = (
+            "<preempt_skill_hint>\n"
+            f"These skills look relevant to the current message: {name_list}.\n"
+            "Their tools are NOT loaded yet — call activate_skill(name) "
+            "before trying to use any of their tools.\n"
+            "</preempt_skill_hint>"
+        )
+
+        log.info(
+            "preemptive skill match: surfaced %d skill(s) for conv %s: %s",
+            len(top), (ctx.conv_id or ctx.context_id)[:12],
+            ", ".join(f"{e['name']}({e['score']})" for e in top),
+        )
+
+        entry = SourceEntry(
+            source="preempt_skill_matches",
+            tokens_estimated=estimate_tokens(hint_text),
+            items_included=len(top),
+            details={
+                "input_tokens": sorted(input_tokens),
+                "matches": top,
+                "max_matches": cfg.max_matches,
+            },
+        )
+        return entry, hint_text
 
     def _compose_tools(self, ctx, config) -> tuple[list[dict], list[dict], str | None, SourceEntry]:
         """Classify tools into active and deferred sets.
