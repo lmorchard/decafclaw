@@ -136,6 +136,9 @@ export class VaultSidebar extends LitElement {
    */
   navigateToPageFolder(pagePath) {
     this._openWikiPage = pagePath;
+    // Recent view isn't folder-scoped — refetching here would flip
+    // _wikiLoading and replace the list with a placeholder, resetting scroll.
+    if (this._vaultView === 'recent') return;
     const lastSlash = pagePath.lastIndexOf('/');
     const folder = lastSlash >= 0 ? pagePath.substring(0, lastSlash) : '';
     if (folder !== this._vaultFolder) {
@@ -271,7 +274,7 @@ export class VaultSidebar extends LitElement {
         `;
       })}
       ${!hasContent
-        ? html`<p style="padding: 1rem; color: var(--pico-muted-color);">Empty folder.</p>`
+        ? html`<p style="padding: 1rem; color: var(--pico-muted-color);">${this._wikiLoading ? 'Loading vault pages...' : 'Empty folder.'}</p>`
         : nothing
       }
     `;
@@ -279,7 +282,7 @@ export class VaultSidebar extends LitElement {
 
   #renderVaultRecent() {
     if (!this._recentPages.length) {
-      return html`<p style="padding: 1rem; color: var(--pico-muted-color);">No recent changes.</p>`;
+      return html`<p style="padding: 1rem; color: var(--pico-muted-color);">${this._wikiLoading ? 'Loading vault pages...' : 'No recent changes.'}</p>`;
     }
     return html`
       ${this._recentPages.map(p => {
@@ -297,9 +300,10 @@ export class VaultSidebar extends LitElement {
   }
 
   render() {
-    if (this._wikiLoading) {
-      return html`<div class="conv-list"><p style="padding: 1rem; color: var(--pico-muted-color);">Loading vault pages...</p></div>`;
-    }
+    // Don't gate the whole list on _wikiLoading — replacing the list with a
+    // placeholder during refetch destroys the user's scroll position. Render
+    // the list as-is; only the empty-state line swaps to "Loading..." so a
+    // first-load gives feedback. Refetches with existing data update in place.
     return html`
       <div class="conv-list">
         <div class="vault-view-toggle">
