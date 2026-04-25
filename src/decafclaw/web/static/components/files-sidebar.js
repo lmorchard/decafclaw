@@ -174,11 +174,13 @@ export class FilesSidebar extends LitElement {
    */
   navigateToFileFolder(filePath) {
     this._openFilePath = filePath;
+    // Recent view isn't folder-scoped — clicking a recent file shouldn't
+    // refetch the browse list (and thus blank the list / reset scroll).
+    if (this._view === 'recent') return;
     const lastSlash = filePath.lastIndexOf('/');
     const folder = lastSlash >= 0 ? filePath.substring(0, lastSlash) : '';
-    if (folder !== this._currentFolder || this._view !== 'browse') {
+    if (folder !== this._currentFolder) {
       this._currentFolder = folder;
-      this._view = 'browse';
       this.#fetchBrowse();
     }
   }
@@ -290,7 +292,7 @@ export class FilesSidebar extends LitElement {
         `;
       })}
       ${!hasContent
-        ? html`<p style="padding: 1rem; color: var(--pico-muted-color);">Empty folder.</p>`
+        ? html`<p style="padding: 1rem; color: var(--pico-muted-color);">${this._loading ? 'Loading files...' : 'Empty folder.'}</p>`
         : nothing
       }
     `;
@@ -301,7 +303,7 @@ export class FilesSidebar extends LitElement {
       ? this._recentFiles
       : this._recentFiles.filter(f => !this.#isHidden(f.name));
     if (!files.length) {
-      return html`<p style="padding: 1rem; color: var(--pico-muted-color);">No recent changes.</p>`;
+      return html`<p style="padding: 1rem; color: var(--pico-muted-color);">${this._loading ? 'Loading files...' : 'No recent changes.'}</p>`;
     }
     return html`
       ${files.map(f => {
@@ -340,10 +342,7 @@ export class FilesSidebar extends LitElement {
           </label>
           <button class="outline" @click=${() => this.#refresh()} title="Refresh">Refresh</button>
         </div>
-        ${this._loading
-          ? html`<p style="padding: 1rem; color: var(--pico-muted-color);">Loading files...</p>`
-          : (this._view === 'browse' ? this.#renderBrowse() : this.#renderRecent())
-        }
+        ${this._view === 'browse' ? this.#renderBrowse() : this.#renderRecent()}
       </div>
     `;
   }
