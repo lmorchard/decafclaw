@@ -2,6 +2,7 @@
 name: background
 description: Start, monitor, and stop long-running background processes (servers, watchers, builds). Returns immediately with a job ID you can poll for output.
 auto-approve: true
+always-loaded: true
 ---
 
 # Background processes

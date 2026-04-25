@@ -2,6 +2,8 @@
 
 When a user message arrives, DecafClaw runs a cheap keyword match against tool names and descriptions. Matched tools get promoted into the active tool set for that turn — the agent doesn't need to call `tool_search` first to discover them.
 
+The same pass also matches against the **skill catalog**: non-activated skills whose name + description overlap the user's keywords get surfaced as a short hint message ("these skills look relevant — call `activate_skill`"). This shortcuts the painful "call a skill tool → fail with unknown tool → search → activate → call again" round-trip.
+
 This is a partial implementation of [issue #257](https://github.com/lmorchard/decafclaw/issues/257) covering the pre-emptive search signal. The remaining situational signals (scoring layer, tiered visibility, explicit user mention, MCP disconnect penalty, recent-usage boost) are deferred follow-ups.
 
 ## How it works
@@ -15,6 +17,23 @@ At turn start, `ContextComposer._compose_preempt_matches` runs before tool class
 5. **Promote** — matched tool names land on `ctx.tools.preempt_matches`. The tool classifier treats them as critical for this turn, bypassing the normal/low budget split.
 
 The match runs once at turn start. `_build_tool_list` reuses the same set across agent iterations within the turn, so reclassification after a tool call stays consistent.
+
+## Skill catalog match
+
+Right after the tool match, `ContextComposer._compose_preempt_skill_matches` runs the same tokenization against the discovered skill catalog. Skills already in `ctx.skills.activated` (which includes always-loaded bundled skills like `vault`, `background`, `mcp` that auto-activate at turn start) are excluded from the candidate pool — surfacing them again would be noise.
+
+For each remaining skill, score is `|input_tokens ∩ tokenize(name + description)|`. Top matches (capped by the same `max_matches`) land on `ctx.skills.preempt_matches` and a short system message is appended to the prompt:
+
+```
+<preempt_skill_hint>
+These skills look relevant to the current message: project, ingest.
+Their tools are NOT loaded yet — call activate_skill(name) before trying to use any of their tools.
+</preempt_skill_hint>
+```
+
+Unlike the tool match, this is purely a **hint** — no auto-activation. The agent still calls `activate_skill` (which respects the user-confirmation flow for non-`auto-approve` skills). The hint just means the agent doesn't have to call a skill-provided tool, hit "unknown tool", search, then activate. The skill name is right there with a directive to activate it.
+
+Diagnostics surface as a parallel source entry, `preempt_skill_matches`, with the same shape as `preempt_matches` (matched skills with score and matched tokens).
 
 ## Why "user + previous assistant"?
 
