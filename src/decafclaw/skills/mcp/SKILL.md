@@ -2,6 +2,7 @@
 name: mcp
 description: Admin tools for inspecting and restarting connected MCP servers — status, resources, prompts. Does NOT expose tools provided by MCP servers; those appear as mcp__server__tool and are fetched via tool_search.
 auto-approve: true
+always-loaded: true
 ---
 
 # MCP admin
