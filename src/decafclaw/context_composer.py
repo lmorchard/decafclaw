@@ -8,6 +8,7 @@ Tracks per-turn diagnostics (what was included, token estimates, actuals).
 from __future__ import annotations
 
 import enum
+import html
 import json
 import logging
 from dataclasses import dataclass, field
@@ -789,7 +790,7 @@ class ContextComposer:
         ctx.skills.preempt_matches = set()
 
         cfg = config.agent.preemptive_search
-        if not cfg.enabled:
+        if not cfg.enabled or cfg.max_matches <= 0:
             return None, None
 
         prior_text = extract_last_assistant_text(history)
@@ -825,7 +826,12 @@ class ContextComposer:
         matched_names = {e["name"] for e in top}
         ctx.skills.preempt_matches = matched_names
 
-        name_list = ", ".join(sorted(matched_names))
+        # Escape skill names before interpolating — names come from
+        # SKILL.md frontmatter, which workspace/admin skills control.
+        # An unescaped `</preempt_skill_hint>` (or stray newline) in a
+        # name could break out of the wrapper and inject prompt content.
+        safe_names = sorted(html.escape(name, quote=False) for name in matched_names)
+        name_list = ", ".join(safe_names)
         hint_text = (
             "<preempt_skill_hint>\n"
             f"These skills look relevant to the current message: {name_list}.\n"
