@@ -809,6 +809,54 @@ async def test_reflection_error_delivers_response(ctx):
 
 
 @pytest.mark.asyncio
+async def test_reflection_sees_text_emitted_alongside_tool_calls(ctx):
+    """Regression: when the model emits user-visible text alongside tool calls
+    (e.g. the postmortem skill's report + vault_write), reflection should
+    evaluate the full visible response, not just the trailing no-tools message.
+
+    Before the fix, `evaluate_response` saw only the final-iteration trailer
+    ("I have delivered the report"), so the judge failed — it couldn't see the
+    report itself — and burned through reflection retries in a loop.
+    """
+    ctx.config.llm.streaming = False
+    ctx.config.system_prompt = "test"
+    ctx.config.reflection = ReflectionConfig(enabled=True)
+
+    report_text = "Here is the full postmortem report. Anomaly: ..."
+    trailer_text = "I have delivered the report and saved it to the vault."
+
+    report_plus_tool = _mock_llm_response(
+        content=report_text,
+        tool_calls=[{
+            "id": "tc1",
+            "function": {
+                "name": "memory_recent",
+                "arguments": json.dumps({"n": 1}),
+            },
+        }],
+    )
+    trailer_only = _mock_llm_response(trailer_text)
+
+    with patch("decafclaw.agent.call_llm", new_callable=AsyncMock) as mock_llm, \
+         patch("decafclaw.reflection.evaluate_response", new_callable=AsyncMock) as mock_eval:
+        mock_llm.side_effect = [report_plus_tool, trailer_only]
+        mock_eval.return_value = ReflectionResult(passed=True)
+
+        history = []
+        await run_agent_turn(ctx, "/postmortem", history)
+
+    mock_eval.assert_called_once()
+    # agent_response is the 3rd positional arg to evaluate_response
+    # (see agent.py _handle_reflection: evaluate_response(config, judge_user_message, final_text, ...))
+    agent_response_arg = mock_eval.call_args.args[2]
+    assert report_text in agent_response_arg, (
+        "Reflection judge should see text emitted alongside tool calls, "
+        f"but agent_response was: {agent_response_arg!r}"
+    )
+    assert trailer_text in agent_response_arg
+
+
+@pytest.mark.asyncio
 async def test_wake_turn_archives_nudge_as_wake_trigger_not_user(ctx, config):
     """A wake turn (task_mode='background_wake') archives the trigger prompt under
     'wake_trigger' role, not 'user', so the web UI doesn't render it as a real

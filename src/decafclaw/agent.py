@@ -168,6 +168,7 @@ async def _handle_reflection(
     ctx, config, messages, history, final_text,
     user_message, attachments, retrieved_context_text,
     turn_start_index, reflection_retries, last_reflection,
+    accumulated_text_parts=None,
 ) -> tuple[str | None, bool, int, "ReflectionResult | None"]:
     """Run the reflection phase on a candidate final response.
 
@@ -176,6 +177,12 @@ async def _handle_reflection(
     - Reflection failed with retries left: (None, True, retries+1, result)
       — critique has been injected into messages/history before returning
     - Reflection failed, no retries left: (text_with_escalation, False, retries, result)
+
+    `accumulated_text_parts` collects text the model emitted in earlier
+    iterations of this turn alongside tool calls (e.g. a skill that writes
+    a full report and then calls vault_write in the same LLM response). The
+    judge evaluates the concatenation so it sees the full user-visible
+    response, not just the final no-tools trailer.
     """
     if not _should_reflect(ctx, config, final_text, reflection_retries):
         reflection_exhausted = (
@@ -219,8 +226,14 @@ async def _handle_reflection(
             for a in attachments
         )
         judge_user_message += f"\n\n[User attached files: {att_desc}]"
+    # Combine text from tool-call iterations with the current final text so
+    # the judge sees the full visible response, not just the trailer.
+    judge_agent_response = "\n\n".join(
+        part for part in [*(accumulated_text_parts or []), final_text]
+        if part and part.strip()
+    ) or final_text
     result = await evaluate_response(
-        config, judge_user_message, final_text, tool_summary,
+        config, judge_user_message, judge_agent_response, tool_summary,
         prior_turn_summary=prior_turn_summary,
         retrieved_context=retrieved_context_text,
     )
@@ -1103,6 +1116,7 @@ async def run_agent_turn(ctx, user_message: str, history: list,
                     ctx, config, messages, history, content,
                     user_message, attachments, retrieved_context_text,
                     turn_start_index, reflection_retries, last_reflection,
+                    accumulated_text_parts=accumulated_text_parts,
                 )
             )
             if should_retry:
