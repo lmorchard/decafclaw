@@ -133,9 +133,73 @@ make build-eval-fixtures    # Rebuild embedding fixtures from source data
 
 The `cat-facts-embeddings.db` fixture contains ~97 cat facts as a distractor noise floor for semantic search tests.
 
+## Tool-choice disambiguation eval
+
+A separate, lighter-weight eval surface targeted at one specific question: **when two tool descriptions overlap, which one does the model actually pick?** Where the main eval loop runs full agent turns, this one makes a single LLM call per case and intercepts the first `tool_calls` entry — fast enough to run as a pre-flight check while you're editing a tool description.
+
+```bash
+make eval-tools                                            # Run against the default model
+uv run python -m decafclaw.eval.tool_choice evals/tool_choice/  # Same
+uv run python -m decafclaw.eval.tool_choice evals/tool_choice/ --model gemini-2.5-pro
+uv run python -m decafclaw.eval.tool_choice evals/tool_choice/ --models gemini-2.5-flash,gpt-5
+uv run python -m decafclaw.eval.tool_choice evals/tool_choice/ --matrix       # Add full confusion matrix
+uv run python -m decafclaw.eval.tool_choice evals/tool_choice/ --include-mcp  # MCP tools too
+```
+
+### How it works
+
+For each YAML case, the runner:
+
+1. Builds the **fully-loaded** tool schema (every core tool + every discovered skill's `tools.py` exports; MCP off by default). No deferral, no activation gating — the eval measures description overlap under fair conditions.
+2. Sends one chat completion with the production system prompt + the case's user message + the full tool schema.
+3. Captures the first tool name from `tool_calls` (or `<no_tool>` if the model emits text only). No tool execution, no agent loop iteration — the overlap signal we care about lives in the *first* decision.
+4. Aggregates results into a per-pair overlap report: for each declared `(expected, near_miss)` pair, what fraction of cases swapped to the near-miss?
+
+### Case YAML format
+
+Cases live under `evals/tool_choice/`:
+
+```yaml
+- name: vault-vs-conv-decisions
+  scenario: "What did we decide about the auth middleware rewrite last month?"
+  expected: vault_search
+  near_miss: [conversation_search]
+  notes: |
+    Curated decisions live in the vault as pages — that's where past
+    architectural choices get written down. conversation_search is
+    tempting because "we decided" sounds like dialog, but raw chat is
+    rarely the source of truth for resolved questions.
+```
+
+Required fields: `name`, `scenario`, `expected`, `near_miss` (list, ≥1 entry). Optional: `notes` — author's "why this case exists" prose, which matters when a case fails months later and someone wonders what the test is about.
+
+Each case must have **exactly one** correct answer. If two answers are defensible, rephrase the scenario until one is right — cases with multiple valid answers don't measure disambiguation cleanly.
+
+### When to add a case
+
+Whenever you tighten a tool description to disambiguate it from another, add a case for the pair you're adjusting. The seed set ships ~12 canonical cases covering vault/workspace/conversation overlaps, web_fetch vs http_request, delegate_task vs activate_skill, plus a `<no_tool>` negative-control case (purely conversational reply, no tool needed — guards against tool-happy bias inflating pass rates elsewhere).
+
+### Output
+
+Default output prints per-case PASS/FAIL, a summary, and a sorted pair-overlap table. Pairs at ≥50% swap rate are flagged with `← tighten`. `--matrix` adds a confusion matrix surfacing **all** picks (including unexpected confusions outside the declared `near_miss`).
+
+```
+PASS  vault-vs-conv-decisions
+FAIL  vault-read-vs-workspace-read    picked workspace_read; expected vault_read
+
+Summary: 11/12 passed (92%)
+
+Pair overlap (sorted by overlap %):
+  vault_read ↔ workspace_read       1/1 swapped (100%)  ← tighten
+  vault_search ↔ conversation_search 0/2 swapped (0%)
+  ...
+```
+
+A failing case usually means a description-tightening opportunity, not an eval bug — fix the offending description (or the case) and re-run.
+
 ## Tips
 
-- **Tool descriptions are the primary control surface.** Wording changes measurably affect behavior. Use evals to validate.
+- **Tool descriptions are the primary control surface.** Wording changes measurably affect behavior. Use evals to validate. Run `make eval-tools` whenever you edit a tool description.
 - **Bound every test with `max_tool_calls` and `max_tool_errors`.** Unbounded tests pass silently on agent-loop regressions.
 - **If a test targets a specific tool, make sure the agent actually has to call it.** Proactive context injection can make tests pass without exercising the tool they claim to exercise. Consider `allowed_tools: [the_tool]` or distractor-heavy fixtures.
 - **Start with substring search tests**, then add semantic search tests with distractors.

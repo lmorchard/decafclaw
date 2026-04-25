@@ -147,11 +147,17 @@ DELEGATE_TOOL_DEFINITIONS = [
         "function": {
             "name": "delegate_task",
             "description": (
-                "Delegate a subtask to a child agent. The child runs as an "
-                "independent agent turn with access to the same tools and "
-                "skills. Use when a request has an independent part that can "
-                "be handled separately. For parallel work, call delegate_task "
-                "multiple times in the same response."
+                "Delegate a subtask to a child agent (a separate sub-agent / "
+                "fork) that runs as an independent agent turn with access to "
+                "the same tools and skills. **Use this whenever the user asks "
+                "you to spin up, fork off, or hand off a task to a sub-agent, "
+                "child agent, or separate agent**, and whenever a request has "
+                "an independent part that benefits from running in its own "
+                "context (e.g. exploration / summarization that would clutter "
+                "the main conversation). For parallel work, call "
+                "delegate_task multiple times in the same response. "
+                "**Do not just do the work yourself with workspace_read / "
+                "vault_read** when the user explicitly asked for a sub-agent."
             ),
             "parameters": {
                 "type": "object",
