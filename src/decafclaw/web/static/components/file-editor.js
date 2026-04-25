@@ -219,6 +219,13 @@ export class FileEditor extends LitElement {
     await this.#save();
   }
 
+  /** Public: true if the editor has unsaved edits or a debounced save queued. */
+  hasPendingChanges() {
+    if (this.readonly) return false;
+    if (this.#saveTimer != null) return true;
+    return this.#currentContent !== this.#lastSavedContent;
+  }
+
   async #save() {
     this.#saveTimer = null;
     const content = this.#currentContent;
