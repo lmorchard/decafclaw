@@ -60,5 +60,4 @@ For each finding from the gather phase:
 
 ## Finishing Up
 
-- If you made changes, summarize what you consolidated and any new pages created.
-- If there was nothing new to consolidate, respond with HEARTBEAT_OK.
+End with a short narrative summary: what you consolidated this cycle and any new pages created. If the journal was quiet and nothing new came up, begin your summary with `HEARTBEAT_OK` on its own line followed by a brief quiet-cycle note — the leading marker lets the scheduler log a tidy line, and the narrative keeps the archive readable for the newsletter.
