@@ -206,9 +206,16 @@ function showFilePage(detail, { replace = false } = {}) {
   // rename across kinds (e.g. foo.txt → foo.png) picks the correct renderer.
   // Readonly still falls back to the current value; #fetchFile corrects it
   // from the server response as soon as the text fetch completes.
+  const sameFile = filePageEl.path === detail.path
+    && !filePageEl.classList.contains('hidden');
   filePageEl.path = detail.path;
   filePageEl.kind = detail.kind != null ? detail.kind : inferFileKindFromPath(detail.path);
   filePageEl.readonly = detail.readonly != null ? !!detail.readonly : !!filePageEl.readonly;
+  // Re-clicking the currently-open file is a manual refresh: willUpdate
+  // only fires #fetchFile on path *change*, so force it here.
+  if (sameFile && typeof filePageEl.reload === 'function') {
+    void filePageEl.reload();
+  }
   filePageEl.classList.remove('hidden');
   // Mutual exclusion: close any open wiki-page / config-panel.
   wikiPageEl?.classList.add('hidden');

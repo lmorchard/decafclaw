@@ -420,9 +420,7 @@ conversation-sidebar .mobile-close-btn:hover {
   padding: 0.4rem 0.75rem;
   font-size: 0.8rem;
   color: var(--pico-muted-color);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  word-break: break-all;
 }
 
 button.vault-breadcrumb-segment {
