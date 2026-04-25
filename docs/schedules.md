@@ -101,9 +101,13 @@ File-based schedules take precedence over skill schedules when names collide.
 
 If a task is still running from a previous tick, it's skipped. This prevents runaway concurrent executions of slow tasks.
 
-### HEARTBEAT_OK
+### Final summary
 
-Same pattern as heartbeat — if a task has nothing to report, the agent should respond with `HEARTBEAT_OK` (case-insensitive, within the first 300 characters). OK responses are logged but not posted to channels.
+The scheduled-task preamble instructs the agent to end its turn with a short narrative summary of what happened this cycle — always, even when the cycle was quiet. This keeps archived scheduled-task conversations readable and gives retrospective tools (e.g., the `!newsletter` composer) real material to quote.
+
+When the cycle was genuinely quiet (nothing notable happened, no changes made), the agent prefixes its summary with `HEARTBEAT_OK` on a leading line before the quiet-cycle note. The scheduler's `is_heartbeat_ok()` check (case-insensitive, first 300 chars) picks up the marker and logs a tidy `Schedule 'name': HEARTBEAT_OK` line instead of the response preview. The narrative still gets archived in full so the newsletter has material to quote.
+
+Historical note: older runs may end with a bare `HEARTBEAT_OK` token without narrative; the newsletter's `_is_status_token` filter handles those correctly for retrospective windows that reach into pre-change archives. Heartbeat also uses `HEARTBEAT_OK`; see [heartbeat docs](heartbeat.md).
 
 ## Reporting
 
@@ -172,9 +176,10 @@ model: gemini-flash
 ---
 
 Run health_status and check for any issues.
-If everything looks normal, respond with HEARTBEAT_OK.
 If any MCP servers are down or heartbeat is overdue, write a note
-to workspace memories.
+to workspace memories and describe what you saw. If everything
+looks normal, begin your summary with HEARTBEAT_OK on its own line
+and say so briefly — the marker keeps the log line short.
 ```
 
 ### Weekly web check

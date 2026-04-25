@@ -22,7 +22,7 @@ Runs through four phases:
 3. **Consolidate** — update existing vault pages or create new ones, add `[[wiki-links]]`, convert relative dates to absolute
 4. **Prune** — resolve contradictions, note corrections in Sources sections
 
-If nothing new is found, responds with HEARTBEAT_OK. In scheduled runs this is logged only, not posted to any channel.
+Always ends with a short narrative summary — what was consolidated and any new pages created. When the cycle was quiet, the summary is prefixed with `HEARTBEAT_OK` so the scheduler's log-line stays tidy; the narrative still reaches the newsletter via the archive. Scheduled runs are logged only, not posted to any channel.
 
 ### Vault Gardening (`!garden`)
 

@@ -68,8 +68,7 @@ For each interesting post:
 
 ## Step 4: Finish
 
-If you made vault changes, summarize what you added/updated.
-If there was nothing interesting to ingest, respond with HEARTBEAT_OK.
+End with a short narrative summary of what you added or updated in the vault. If there was nothing interesting to ingest this cycle, begin your summary with `HEARTBEAT_OK` on its own line followed by a brief quiet-cycle note — the leading marker lets the scheduler log a tidy line, and the narrative keeps the archive readable for the newsletter.
 
 ## Rules
 
