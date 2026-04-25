@@ -57,5 +57,4 @@ Perform a holistic maintenance pass over your agent pages in the vault. This is 
 
 ## Finishing Up
 
-- Summarize what you tidied: pages merged, links fixed, summaries added, etc.
-- If the vault is already in good shape, respond with HEARTBEAT_OK.
+End with a short narrative summary of what you tidied: pages merged, links fixed, summaries added, etc. If the vault was already in good shape and nothing needed attention, begin your summary with `HEARTBEAT_OK` on its own line followed by a brief quiet-cycle note — the leading marker lets the scheduler log a tidy line, and the narrative keeps the archive readable for the newsletter.

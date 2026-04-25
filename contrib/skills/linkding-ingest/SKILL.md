@@ -106,8 +106,7 @@ Skip obviously low-signal bookmarks (duplicates, ephemeral content) — don't wa
 
 ### 3. Finish
 
-After all delegates complete, summarize what was processed and what wiki pages were updated or created.
-If there was nothing interesting to ingest, respond with HEARTBEAT_OK.
+After all delegates complete, end with a short narrative summary of what was processed and what wiki pages were updated or created. If there was nothing interesting to ingest this cycle, begin your summary with `HEARTBEAT_OK` on its own line followed by a brief quiet-cycle note — the leading marker lets the scheduler log a tidy line, and the narrative keeps the archive readable for the newsletter.
 
 ## Rules
 

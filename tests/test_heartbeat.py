@@ -188,6 +188,10 @@ def test_build_section_prompt_titled():
     section = {"title": "Check status", "body": "Look at the thing."}
     prompt = build_section_prompt(section)
     assert "scheduled heartbeat check" in prompt
+    # Both preamble branches preserve HEARTBEAT_OK (#362). Heartbeat keeps
+    # it as the bare-token "nothing to report" signal; the scheduled-task
+    # branch requires narrative AND keeps it as a leading quiet-cycle
+    # marker. This test covers the heartbeat branch.
     assert "HEARTBEAT_OK" in prompt
     assert "## Check status" in prompt
     assert "Look at the thing." in prompt
@@ -198,6 +202,8 @@ def test_build_section_prompt_general():
     prompt = build_section_prompt(section)
     assert "## General" not in prompt
     assert "Do the checklist." in prompt
+    # Heartbeat path preserves the bare-token "nothing to report" wording.
+    # See #362 for why the scheduled-task path differs (narrative + marker).
     assert "HEARTBEAT_OK" in prompt
 
 
