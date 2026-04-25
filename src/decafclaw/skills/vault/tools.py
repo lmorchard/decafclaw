@@ -960,10 +960,15 @@ TOOL_DEFINITIONS = [
         "function": {
             "name": "vault_search",
             "description": (
-                "Search the vault using semantic or substring matching. ALWAYS try "
-                "this BEFORE web search — the vault may already have the answer.\n\n"
-                "Searches across all vault content: your pages, journal entries, and "
-                "user notes. Use natural language queries.\n\n"
+                "Search the vault — your curated knowledge base of pages, journal "
+                "entries, and user notes — using semantic or substring matching. "
+                "**Use this for resolved knowledge: decisions, conclusions, design "
+                "choices, project facts, and anything you previously wrote down.** "
+                "Prefer this over conversation_search whenever the user is asking "
+                "about a settled question, even when phrased as 'what did we decide' "
+                "or 'we talked about' — decisions live as curated vault pages, not "
+                "in raw chat history. ALWAYS try this BEFORE web search.\n\n"
+                "Use natural language queries.\n\n"
                 "**IMPORTANT:** When this tool returns results, you MUST use them. "
                 "Do NOT ignore results or claim you have no information when results "
                 "were returned. Try at least 3 query variations before giving up."

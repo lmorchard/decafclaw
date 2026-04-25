@@ -1,0 +1,35 @@
+# Meta-tool overlaps + the no-tool negative-control case (#303).
+
+# -- delegate_task vs activate_skill -----------------------------------------
+
+- name: delegate-vs-activate-research
+  scenario: "Spin up a separate sub-agent to dig through the linkding ingest skill source and summarize how the ingest pipeline routes pages."
+  expected: delegate_task
+  near_miss: [activate_skill]
+  notes: |
+    "Spin up a separate sub-agent" is delegate_task — fork a child
+    agent for an isolated task. activate_skill loads a skill's tools
+    into the current conversation; it doesn't run anything by itself.
+    The user is asking for delegated work, not for tool unlocking.
+
+- name: activate-vs-delegate-tool-access
+  scenario: "I want to use the project skill in this conversation."
+  expected: activate_skill
+  near_miss: [delegate_task]
+  notes: |
+    "Use the X skill" → activate_skill loads its tools into this
+    conversation. delegate_task is the wrong primitive — it's for
+    doing work elsewhere, not for unlocking tools here.
+
+# -- Negative-control: no tool needed at all ---------------------------------
+
+- name: no-tool-greeting
+  scenario: "Hi! How are you doing today?"
+  expected: <no_tool>
+  near_miss: [vault_search, conversation_search, current_time]
+  notes: |
+    Pure conversational opener. The eval should reward the model for
+    answering directly instead of reaching for a tool. Without this
+    control case, a tool-happy bias would silently inflate pass rates
+    on the disambiguation cases — failure here means the model is
+    hammering tools regardless of whether a tool is appropriate.

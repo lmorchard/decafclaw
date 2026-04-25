@@ -76,10 +76,15 @@ CONVERSATION_TOOL_DEFINITIONS = [
         "function": {
             "name": "conversation_search",
             "description": (
-                "Search across past conversation history using substring matching. "
-                "Use this to find things discussed in previous conversations. "
+                "Search the **raw chat history** of past conversations using "
+                "substring matching. Use this when the user is asking for a "
+                "verbatim reference — the literal exchange — and only when the "
+                "answer is not better-suited to the vault. **Resolved decisions, "
+                "design choices, and curated knowledge live in the vault — for "
+                "those, prefer vault_search even when the user phrases it as "
+                "'what did we decide' or 'we talked about'.** "
                 "Searches the full uncompacted JSONL archives. "
-                "Useful for: 'when did we discuss X?', 'what did I say about Y?'"
+                "Useful for: pinning down the exact wording of a prior exchange."
             ),
             "parameters": {
                 "type": "object",
