@@ -92,6 +92,10 @@ config:
 eval:
 	uv run python -m decafclaw.eval evals/
 
+# Run the tool-choice disambiguation eval against the default model
+eval-tools:
+	uv run python -m decafclaw.eval.tool_choice evals/tool_choice/
+
 # Rebuild eval embedding fixtures (run when changing embedding models)
 build-eval-fixtures:
 	uv run python scripts/build-eval-fixtures.py

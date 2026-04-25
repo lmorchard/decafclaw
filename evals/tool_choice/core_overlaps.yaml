@@ -1,0 +1,95 @@
+# Core tool-choice ambiguity scenarios (#303).
+# Each case engineers a near-miss between two tools with overlapping
+# descriptions. The model should pick `expected`; the eval reports
+# overlap when it picks something on `near_miss` instead.
+
+# -- vault_search vs conversation_search --------------------------------------
+
+- name: vault-vs-conv-decisions
+  scenario: "What did we decide about the auth middleware rewrite last month?"
+  expected: vault_search
+  near_miss: [conversation_search]
+  notes: |
+    Curated decisions live in the vault as pages — that's where past
+    architectural choices get written down. conversation_search is
+    tempting because "we decided" sounds like dialog, but raw chat is
+    rarely the source of truth for resolved questions.
+
+- name: vault-vs-conv-known-page
+  scenario: "Look up my notes on the linkding ingest skill."
+  expected: vault_search
+  near_miss: [conversation_search]
+  notes: |
+    "Notes" + a topic name almost always means vault content. The
+    only reason to pick conversation_search would be if the user said
+    "what did I tell you about" — present-tense framing that points
+    at chat history.
+
+# -- vault_read vs workspace_read --------------------------------------------
+
+- name: vault-read-vs-workspace-read-known-page
+  scenario: "Read the page about the dream skill so we can update it."
+  expected: vault_read
+  near_miss: [workspace_read]
+  notes: |
+    The vault is where pages live. workspace_read is for raw files
+    (configs, scripts, todos) — files you'd touch with workspace_edit.
+    "Page" is a strong vault signal.
+
+- name: workspace-read-vs-vault-read-config
+  scenario: "Show me the contents of config.json so I can check the smtp_host."
+  expected: workspace_read
+  near_miss: [vault_read]
+  notes: |
+    Config files are workspace files, not vault pages. If the model
+    reaches for vault_read here it's confused — the vault is for
+    knowledge content, not runtime configuration.
+
+# -- web_fetch vs http_request -----------------------------------------------
+
+- name: web-fetch-vs-http-article
+  scenario: "Read this article and summarize it: https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents"
+  expected: web_fetch
+  near_miss: [http_request]
+  notes: |
+    web_fetch is the high-level "give me the readable text of a web
+    page" tool. http_request is for arbitrary methods/headers/bodies
+    when you actually need raw HTTP semantics. "Read this article"
+    is the canonical web_fetch case.
+
+- name: http-vs-fetch-api-call
+  scenario: "POST to http://localhost:8080/api/widgets with {\"name\": \"test\"} and tell me the response."
+  expected: http_request
+  near_miss: [web_fetch]
+  notes: |
+    POST + JSON body + raw API endpoint = http_request. web_fetch
+    only does GET-and-extract for human-readable pages.
+
+# -- vault_search vs vault_read (find vs fetch known) ------------------------
+
+- name: vault-search-vs-read-unknown-topic
+  scenario: "Find anything I've written about prompt caching."
+  expected: vault_search
+  near_miss: [vault_read]
+  notes: |
+    "Find anything about X" with no specific page name → search.
+    vault_read needs a known title; this is open-ended discovery.
+
+- name: vault-read-vs-search-known-title
+  scenario: "Open the page titled 'context-composer' in the vault."
+  expected: vault_read
+  near_miss: [vault_search]
+  notes: |
+    Specific known title → read directly. Searching when the page
+    name is given is wasted indirection.
+
+# -- conversation_search vs conversation_compact -----------------------------
+
+- name: conv-search-vs-compact-find
+  scenario: "Did we already talk about whether to use Vertex or OpenAI for embeddings? Search the convo."
+  expected: conversation_search
+  near_miss: [conversation_compact]
+  notes: |
+    "Search the convo" + specific question → conversation_search.
+    conversation_compact is for proactively shrinking history before
+    context fills up — never invoked because the user has a question.
