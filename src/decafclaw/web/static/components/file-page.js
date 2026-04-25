@@ -89,6 +89,54 @@ export class FilePage extends LitElement {
     }
   }
 
+  connectedCallback() {
+    super.connectedCallback();
+    // Auto-refresh when the agent finishes a turn — it may have edited the
+    // file we're viewing. Skip if the user has unsaved edits; the existing
+    // conflict flow handles that on next save.
+    this._onTurnComplete = async () => {
+      if (!this.path) return;
+      if (this._renaming) return;
+      // Only text files have a #fetchFile-backed editor view to refresh;
+      // image/binary bodies are `<img>`/`<a>` pointing at a stable URL, so
+      // the user can trigger a reload manually by re-clicking the filename.
+      if (this.kind !== 'text') return;
+      if (this._editing) {
+        /** @type {any} */
+        const editor = this.querySelector('file-editor');
+        if (editor && typeof editor.hasPendingChanges === 'function'
+            && editor.hasPendingChanges()) {
+          return;
+        }
+      }
+      // Silent mtime probe — only flash "Loading…" if the file actually
+      // changed on disk, so turns that don't touch this file are invisible.
+      try {
+        const res = await fetch('/api/workspace-file/' + encodePagePath(this.path));
+        if (!res.ok) return;
+        const data = await res.json();
+        if ((data.modified ?? 0) === this._modified) return;
+      } catch {
+        return;
+      }
+      void this.#fetchFile();
+    };
+    window.addEventListener('turn-complete', this._onTurnComplete);
+  }
+
+  disconnectedCallback() {
+    super.disconnectedCallback();
+    if (this._onTurnComplete) {
+      window.removeEventListener('turn-complete', this._onTurnComplete);
+    }
+  }
+
+  /** Public: re-fetch from disk and remount the editor. */
+  async reload() {
+    if (!this.path) return;
+    await this.#fetchFile();
+  }
+
   async #fetchFile() {
     this._loading = true;
     this._error = '';
