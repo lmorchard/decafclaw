@@ -707,8 +707,8 @@ async def websocket_chat(websocket: WebSocket, config, event_bus, app_ctx,
     async def ws_send(msg):
         try:
             await websocket.send_json(msg)
-        except Exception:
-            pass
+        except Exception as exc:
+            log.debug("ws send failed (client likely disconnected): %s", exc)
 
     # Send available models immediately so the picker is visible before
     # any conversation is selected

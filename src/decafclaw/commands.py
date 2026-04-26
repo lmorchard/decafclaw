@@ -319,12 +319,12 @@ async def dispatch_command(ctx, text: str, prefixes: list[str] | None = None,
 
     # Help is special
     if cmd_name == "help":
-        discovered = getattr(ctx.config, "discovered_skills", [])
+        discovered = ctx.config.discovered_skills
         help_text = format_help(discovered, prefix=matched_prefix)
         return CommandResult(mode="help", text=help_text)
 
     # Look up the command
-    discovered = getattr(ctx.config, "discovered_skills", [])
+    discovered = ctx.config.discovered_skills
     skill = find_command(cmd_name, discovered)
     if skill is None:
         # Check if it's an MCP prompt command
@@ -394,7 +394,7 @@ async def execute_command(ctx, skill: SkillInfo, arguments: str) -> tuple[str, s
 
     # Pre-activate required skills (user invoked the command = implicit approval)
     if skill.requires_skills:
-        discovered = getattr(ctx.config, "discovered_skills", [])
+        discovered = ctx.config.discovered_skills
         skill_map = {s.name: s for s in discovered}
         for req_name in skill.requires_skills:
             if req_name in ctx.skills.activated:

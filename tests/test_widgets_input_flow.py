@@ -28,11 +28,18 @@ def _make_manager(config):
 def _make_ctx(manager, conv_id):
     """Build a minimal ctx that has the manager-bound
     request_confirmation closure, mirroring how the ConversationManager
-    wires it in production."""
+    wires it in production — including the ``ctx.manager`` reference
+    that the cancel/cleanup path reads. ``cancelled`` defaults to None
+    to match the real ``Context`` initial state."""
     async def request_confirmation(request):
         return await manager.request_confirmation(conv_id, request)
 
-    return SimpleNamespace(request_confirmation=request_confirmation)
+    return SimpleNamespace(
+        request_confirmation=request_confirmation,
+        cancelled=None,
+        manager=manager,
+        conv_id=conv_id,
+    )
 
 
 @pytest.mark.asyncio
@@ -163,7 +170,7 @@ async def test_ctx_without_request_confirmation_ends_turn(caplog):
     signal = WidgetInputPause(
         tool_call_id="tc-no-mgr",
         widget_payload={})
-    ctx = SimpleNamespace()  # no request_confirmation
+    ctx = SimpleNamespace(request_confirmation=None)  # mirrors Context default
 
     inject = await _handle_widget_input_pause(ctx, signal)
     assert inject is None
@@ -240,6 +247,8 @@ async def test_live_pause_clears_callback_even_on_exception(
                         {"tc-leak": lambda d: "unreached"})
 
     class _FailingCtx:
+        cancelled = None
+
         async def request_confirmation(self, _req):
             raise asyncio.CancelledError()
 

@@ -39,7 +39,7 @@ def get_critical_names(config) -> set[str]:
       first activation)
     """
     extra = set(config.agent.critical_tools)
-    for skill in getattr(config, "discovered_skills", []):
+    for skill in config.discovered_skills:
         if skill.always_loaded and skill.has_native_tools:
             extra |= config.always_loaded_skill_tools
     return extra

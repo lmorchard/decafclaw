@@ -10,12 +10,12 @@ import pytest
 
 from decafclaw import notifications as notifs
 from decafclaw.events import EventBus
+from decafclaw.notification_channels import meets_priority as _meets_priority
 from decafclaw.notification_channels import vault_page as vp_mod
 from decafclaw.notification_channels.vault_page import (
     _daily_page_path,
     _format_entry,
     _format_new_page_header,
-    _meets_priority,
     _resolve_link,
     make_vault_page_adapter,
 )
