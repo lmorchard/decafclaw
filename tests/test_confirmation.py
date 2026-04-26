@@ -1,10 +1,115 @@
 """Tests for the shared confirmation request helper."""
 
 import asyncio
+import dataclasses
 
 import pytest
 
+from decafclaw.confirmations import (
+    ConfirmationAction,
+    ConfirmationRequest,
+    ConfirmationResponse,
+)
 from decafclaw.tools.confirmation import request_confirmation
+
+# -- Archive round-trip -------------------------------------------------------
+
+
+class TestConfirmationRequestArchive:
+    def test_roundtrip_preserves_all_fields(self):
+        req = ConfirmationRequest(
+            action_type=ConfirmationAction.RUN_SHELL_COMMAND,
+            action_data={"command": "ls"},
+            message="Run this?",
+            approve_label="Yes",
+            deny_label="No",
+            tool_call_id="call_123",
+            timeout=60.0,
+            confirmation_id="conf_abc",
+            timestamp="2026-04-25T00:00:00",
+        )
+        roundtripped = ConfirmationRequest.from_archive_message(
+            req.to_archive_message())
+        assert roundtripped == req
+
+    def test_to_archive_emits_all_dataclass_fields(self):
+        """Future fields on ConfirmationRequest must show up in the archive
+        dict automatically. Per CLAUDE.md, serialization iterates fields
+        rather than enumerating them by name."""
+        req = ConfirmationRequest(
+            action_type=ConfirmationAction.RUN_SHELL_COMMAND,
+        )
+        msg = req.to_archive_message()
+        expected = {f.name for f in dataclasses.fields(ConfirmationRequest)}
+        # Plus the non-field "role" tag.
+        assert expected <= set(msg.keys())
+        assert msg["role"] == "confirmation_request"
+
+    def test_action_type_serialized_as_string(self):
+        """JSON serialization stays explicit regardless of encoder."""
+        req = ConfirmationRequest(
+            action_type=ConfirmationAction.ACTIVATE_SKILL,
+        )
+        msg = req.to_archive_message()
+        assert msg["action_type"] == "activate_skill"
+        assert isinstance(msg["action_type"], str)
+
+    def test_from_archive_ignores_unknown_keys(self):
+        """Forward compat: future agent versions may write keys this build
+        doesn't recognize yet."""
+        req = ConfirmationRequest.from_archive_message({
+            "role": "confirmation_request",
+            "action_type": "run_shell_command",
+            "confirmation_id": "x",
+            "future_field": "ignored",
+        })
+        assert req.action_type is ConfirmationAction.RUN_SHELL_COMMAND
+        assert req.confirmation_id == "x"
+
+
+class TestConfirmationResponseArchive:
+    def test_roundtrip_preserves_all_fields(self):
+        resp = ConfirmationResponse(
+            confirmation_id="conf_abc",
+            approved=True,
+            always=True,
+            add_pattern=True,
+            timestamp="2026-04-25T00:00:00",
+        )
+        roundtripped = ConfirmationResponse.from_archive_message(
+            resp.to_archive_message())
+        assert roundtripped == resp
+
+    def test_falsy_optional_flags_dropped_from_archive(self):
+        """Lean archive: omit always/add_pattern when False. Round-trip
+        still works because from_archive falls back to dataclass defaults."""
+        resp = ConfirmationResponse(
+            confirmation_id="conf_abc",
+            approved=False,
+        )
+        msg = resp.to_archive_message()
+        assert "always" not in msg
+        assert "add_pattern" not in msg
+        roundtripped = ConfirmationResponse.from_archive_message(msg)
+        assert roundtripped == resp
+
+    def test_to_archive_emits_all_dataclass_fields_when_truthy(self):
+        """When all optional flags are True the archive contains every
+        declared field. Serves as the iterate-over-fields check —
+        a new dataclass field that to_archive forgets would surface here."""
+        resp = ConfirmationResponse(
+            confirmation_id="conf_abc",
+            approved=True,
+            always=True,
+            add_pattern=True,
+        )
+        msg = resp.to_archive_message()
+        expected = {f.name for f in dataclasses.fields(ConfirmationResponse)}
+        assert expected <= set(msg.keys())
+        assert msg["role"] == "confirmation_response"
+
+
+# -- Helper tests --------------------------------------------------------------
 
 
 @pytest.mark.asyncio

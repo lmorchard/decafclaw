@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -85,6 +86,28 @@ class TestNotificationRecord:
         assert rec.body == ""
         assert rec.link is None
         assert rec.conv_id is None
+
+    def test_to_dict_emits_all_dataclass_fields(self):
+        """Per CLAUDE.md: serialization must iterate dataclass fields, not a
+        hand-maintained list. Future fields added to NotificationRecord
+        must show up in the dict automatically — this test fails loudly if
+        to_dict ever drops a declared field."""
+        rec = notifs.NotificationRecord(
+            id="x", timestamp="t", category="c", title="T",
+        )
+        d = rec.to_dict()
+        expected = {f.name for f in dataclasses.fields(notifs.NotificationRecord)}
+        assert set(d.keys()) == expected
+
+    def test_from_dict_ignores_unknown_keys(self):
+        """Forward compat: extra keys in archived records (e.g. from a
+        newer agent version writing fields this build doesn't know about
+        yet) must not crash on read."""
+        rec = notifs.NotificationRecord.from_dict({
+            "id": "x", "timestamp": "t", "category": "c", "title": "T",
+            "future_field_we_dont_know_yet": "ignored",
+        })
+        assert rec.id == "x"
 
 
 # -- notify() -----------------------------------------------------------------

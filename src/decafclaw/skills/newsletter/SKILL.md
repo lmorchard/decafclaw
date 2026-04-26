@@ -4,7 +4,7 @@ description: Compose and deliver a narrative newsletter summarizing autonomous a
 schedule: "0 7 * * *"
 user-invocable: true
 context: inline
-argument-hint: "[window] e.g. 7d, 48h, 2w (default 24h)"
+argument-hint: "[send] [window] e.g. `7d`, `send`, `send 48h`"
 allowed-tools: newsletter_list_scheduled_activity, newsletter_list_vault_changes, newsletter_publish, current_time
 required-skills: [newsletter]
 ---
@@ -13,19 +13,27 @@ required-skills: [newsletter]
 
 You are composing the periodic newsletter — a narrative recap of what I got up to on my own, without direct user involvement. This is NOT a status report; it's a conversational retelling of the autonomous threads I was pulling on. It gets delivered by email and/or filed into the vault.
 
-## Window
+## Argument parsing
 
-If the user passed an argument (shown below as "Argument: $ARGUMENTS"), it's a compact time-range spec like `7d`, `48h`, or `2w`. Pass it as the `window` parameter to both list tools.
+The argument string (shown below as "Argument: $ARGUMENTS") is a whitespace-separated combination of two optional pieces, in any order:
 
-If no argument was provided, omit `window` and the tools will default to 24 hours.
+1. **`send`** — a literal token requesting that the newsletter actually deliver (archive locally + email + vault page) instead of just being shown inline. Use this for smoke-testing the delivery path.
+2. **A window spec** — a compact time-range like `7d`, `48h`, `2w`. Determines which scheduled-task conversations and vault changes to summarize.
+
+Parse the argument:
+
+- If any token equals `send` (case-insensitive), set `force_delivery = True` for the publish step. Otherwise leave it False.
+- The remaining token (if any) is the window. If empty, omit `window` from the list-tool calls and they'll default to 24 hours.
+
+Examples: `` (empty) → no force, default window. `7d` → no force, window=7d. `send` → force, default window. `send 7d` → force, window=7d.
 
 Argument: $ARGUMENTS
 
 ## How to compose
 
-1. Call `newsletter_list_scheduled_activity` to see what my scheduled tasks did. If the Argument above is non-empty, pass `window="$ARGUMENTS"`; otherwise call with no arguments. Each entry gives you the skill name, when it ran, what it reported at the end, and which vault pages it wrote. Skip entries with empty final messages — they didn't have anything coherent to say.
+1. Call `newsletter_list_scheduled_activity` to see what my scheduled tasks did. If you parsed a window spec out of the argument (i.e. anything other than the `send` token), pass it as `window`. Otherwise omit `window` for the 24-hour default. Each entry gives you the skill name, when it ran, what it reported at the end, and which vault pages it wrote. Skip entries with empty final messages — they didn't have anything coherent to say.
 
-2. Call `newsletter_list_vault_changes` (pass the same `window` if Argument was provided) to see which vault pages moved (new or modified). Use this to enrich the narrative ("while gardening, I noticed X and rewrote [[Some Page]]") and to surface interesting activity the scheduled reports didn't themselves mention.
+2. Call `newsletter_list_vault_changes` with the same `window` value (or omitted if you didn't have one). Use this to enrich the narrative ("while gardening, I noticed X and rewrote [[Some Page]]") and to surface interesting activity the scheduled reports didn't themselves mention.
 
 3. Group related entries into a flowing narrative. A single `dream` cycle plus the pages it touched is ONE story, not two bullet items. Prune things that would be boring to read — "heartbeat OK" class updates don't belong here.
 
@@ -39,15 +47,17 @@ Argument: $ARGUMENTS
 
 ## How to finish
 
-- If the window had real activity worth narrating, call `newsletter_publish(markdown=<your_composed_markdown>, subject_hint=<your_hint>)` — default `has_content=True`.
+- If the window had real activity worth narrating, call `newsletter_publish(markdown=<your_composed_markdown>, subject_hint=<your_hint>)` — default `has_content=True`. Pass `force_delivery=True` if and only if the user included `send` in the argument.
 
-- If the gathered activity is empty or trivial (no final messages worth surfacing, no notable vault changes), call `newsletter_publish(markdown="", has_content=False)`. This records a "ran and found nothing" stub without dispatching delivery.
+- If the gathered activity is empty or trivial (no final messages worth surfacing, no notable vault changes), call `newsletter_publish(markdown="", has_content=False)`. This records a "ran and found nothing" stub without dispatching delivery. (Pass `force_delivery=True` here too if `send` was requested, even though the empty branch never delivers — it keeps the parsing rule consistent.)
 
 - Only ONE `newsletter_publish` call per run. It's the final step.
 
 ## Notes
 
-- When this skill is invoked as `!newsletter` / `/newsletter` (interactive, not scheduled), `newsletter_publish` automatically short-circuits — it just returns your composed markdown as the tool result, with no delivery or archive side effects. The user sees it inline. You still compose the same way; nothing changes in your process.
+- When this skill is invoked as `!newsletter` / `/newsletter` (interactive, not scheduled) **without** the `send` token, `newsletter_publish` short-circuits — it just returns your composed markdown as the tool result, with no delivery or archive side effects. The user sees it inline. You still compose the same way; nothing changes in your process.
+
+- When invoked as `!newsletter send` (interactive WITH `send`), `newsletter_publish` runs the full archive + delivery path so the user can smoke-test that scheduled email/vault delivery is wired correctly. Compose just like a scheduled run.
 
 - Do not include raw tool traces, conversation IDs, or internal plumbing detail. This is a human-facing report.
 

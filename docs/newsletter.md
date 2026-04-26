@@ -41,6 +41,13 @@ Invoke interactively in any chat to peek at what a newsletter *would* look like 
 
 Malformed arguments (e.g., `!newsletter 7days` or `!newsletter yesterday`) return a tool error so the composer can tell the user to retry.
 
+**Force delivery — `!newsletter send`:** include the literal `send` token to smoke-test the full archive + email + vault-page delivery path on demand, instead of the short-circuit. Useful when verifying that scheduled delivery is wired correctly without waiting for the next cron tick. Combine with the window if needed:
+
+- `!newsletter send` — force-deliver, last 24 hours
+- `!newsletter send 7d` — force-deliver, last week (token order doesn't matter; `7d send` works too)
+
+Behind the scenes this passes `force_delivery=True` to `newsletter_publish`, which bypasses the interactive short-circuit so archive + delivery run identically to a scheduled invocation. The newsletter's own `last_run.json` advances; the schedule timer's per-task tracking under `workspace/.schedule_last_run/` is independent and unaffected.
+
 ## Relationship to other subsystems
 
 - **Notifications** are small, typed, per-event records. Newsletters are narrative multi-paragraph recaps. They share nothing in code — different subsystems, different semantics.

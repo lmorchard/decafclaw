@@ -10,6 +10,7 @@ See docs/notifications.md for design rationale.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import json
 import logging
 import os
@@ -38,30 +39,22 @@ class NotificationRecord:
     conv_id: str | None = None
 
     def to_dict(self) -> dict:
-        d: dict[str, Any] = {
-            "id": self.id,
-            "timestamp": self.timestamp,
-            "category": self.category,
-            "priority": self.priority,
-            "title": self.title,
-            "body": self.body,
-            "link": self.link,
-            "conv_id": self.conv_id,
-        }
-        return d
+        return dataclasses.asdict(self)
 
     @classmethod
     def from_dict(cls, d: dict) -> "NotificationRecord":
-        return cls(
-            id=d.get("id", ""),
-            timestamp=d.get("timestamp", ""),
-            category=d.get("category", ""),
-            title=d.get("title", ""),
-            priority=d.get("priority", "normal"),
-            body=d.get("body", ""),
-            link=d.get("link"),
-            conv_id=d.get("conv_id"),
-        )
+        # Forward compat: filter to known fields so unknown keys (e.g. from
+        # a future agent version writing fields this build doesn't recognize
+        # yet) are ignored on read.
+        # Backward compat: missing keys fall back to dataclass defaults, so
+        # older archives written before a new field was added stay readable.
+        field_names = {f.name for f in dataclasses.fields(cls)}
+        kwargs = {k: v for k, v in d.items() if k in field_names}
+        # Required fields without dataclass defaults — preserve previous
+        # lenient behavior of "" rather than raising on malformed records.
+        for required in ("id", "timestamp", "category", "title"):
+            kwargs.setdefault(required, "")
+        return cls(**kwargs)
 
 
 # -- Paths --------------------------------------------------------------------

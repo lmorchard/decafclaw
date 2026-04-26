@@ -297,6 +297,31 @@ async def test_publish_interactive_returns_markdown(ctx, tmp_path):
     assert not (Path(ctx.config.workspace_path) / "newsletter" / "last_run.json").exists()
 
 
+@pytest.mark.asyncio
+async def test_publish_interactive_force_delivery_runs_full_path(ctx, tmp_path):
+    """`!newsletter send` smoke-test: interactive ctx + force_delivery=True
+    bypasses the short-circuit and runs the same archive + delivery path
+    as a scheduled run."""
+    ctx.task_mode = ""  # interactive
+
+    from decafclaw.skills.newsletter import tools as m
+    m._skill_config = SkillConfig(email_enabled=False, vault_page_enabled=False)
+
+    result = await newsletter_publish(
+        ctx, markdown="# smoke\n\nbody", subject_hint="test",
+        force_delivery=True,
+    )
+    assert isinstance(result, ToolResult)
+    # Scheduled-branch tool result, NOT bare markdown.
+    assert "Newsletter archived" in result.text
+
+    workspace = Path(ctx.config.workspace_path)
+    archive_files = list((workspace / "newsletter" / "archive").glob("*.md"))
+    assert len(archive_files) == 1
+    assert archive_files[0].read_text() == "# smoke\n\nbody"
+    assert (workspace / "newsletter" / "last_run.json").exists()
+
+
 # ---------------------------------------------------------------------------
 # newsletter_publish tests — Task 5: scheduled branch
 # ---------------------------------------------------------------------------

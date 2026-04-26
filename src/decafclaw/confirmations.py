@@ -1,5 +1,6 @@
 """Confirmation types, serialization, and handler registry."""
 
+import dataclasses
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -33,31 +34,25 @@ class ConfirmationRequest:
 
     def to_archive_message(self) -> dict:
         """Serialize to a dict suitable for JSONL archive."""
-        return {
-            "role": "confirmation_request",
-            "confirmation_id": self.confirmation_id,
-            "action_type": self.action_type.value,
-            "action_data": self.action_data,
-            "message": self.message,
-            "approve_label": self.approve_label,
-            "deny_label": self.deny_label,
-            "tool_call_id": self.tool_call_id,
-            "timestamp": self.timestamp,
-        }
+        msg = dataclasses.asdict(self)
+        msg["role"] = "confirmation_request"
+        # Convert enum to str so JSON serialization stays explicit, regardless
+        # of which encoder downstream uses.
+        msg["action_type"] = self.action_type.value
+        return msg
 
     @classmethod
     def from_archive_message(cls, msg: dict) -> "ConfirmationRequest":
         """Deserialize from an archive message dict."""
-        return cls(
-            action_type=ConfirmationAction(msg["action_type"]),
-            action_data=msg.get("action_data", {}),
-            message=msg.get("message", ""),
-            approve_label=msg.get("approve_label", "Approve"),
-            deny_label=msg.get("deny_label", "Deny"),
-            tool_call_id=msg.get("tool_call_id", ""),
-            confirmation_id=msg["confirmation_id"],
-            timestamp=msg.get("timestamp", ""),
-        )
+        # Filter to known fields. Drops the "role" tag and provides forward
+        # compat — keys written by a future agent version that this build
+        # doesn't recognize are ignored. Missing keys fall back to dataclass
+        # defaults, so older archives written before a field was added
+        # remain readable (backward compat).
+        field_names = {f.name for f in dataclasses.fields(cls)}
+        kwargs = {k: v for k, v in msg.items() if k in field_names}
+        kwargs["action_type"] = ConfirmationAction(kwargs["action_type"])
+        return cls(**kwargs)
 
 
 @dataclass
@@ -71,28 +66,22 @@ class ConfirmationResponse:
 
     def to_archive_message(self) -> dict:
         """Serialize to a dict suitable for JSONL archive."""
-        msg: dict[str, Any] = {
-            "role": "confirmation_response",
-            "confirmation_id": self.confirmation_id,
-            "approved": self.approved,
-            "timestamp": self.timestamp,
-        }
-        if self.always:
-            msg["always"] = True
-        if self.add_pattern:
-            msg["add_pattern"] = True
+        msg = dataclasses.asdict(self)
+        msg["role"] = "confirmation_response"
+        # Drop falsy optional flags to keep archive output lean; from_archive
+        # tolerates their absence via the dataclass defaults.
+        if not msg["always"]:
+            msg.pop("always")
+        if not msg["add_pattern"]:
+            msg.pop("add_pattern")
         return msg
 
     @classmethod
     def from_archive_message(cls, msg: dict) -> "ConfirmationResponse":
         """Deserialize from an archive message dict."""
-        return cls(
-            confirmation_id=msg["confirmation_id"],
-            approved=msg.get("approved", False),
-            always=msg.get("always", False),
-            add_pattern=msg.get("add_pattern", False),
-            timestamp=msg.get("timestamp", ""),
-        )
+        field_names = {f.name for f in dataclasses.fields(cls)}
+        kwargs = {k: v for k, v in msg.items() if k in field_names}
+        return cls(**kwargs)
 
 
 class ConfirmationHandler(Protocol):

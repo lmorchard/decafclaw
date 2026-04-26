@@ -99,14 +99,17 @@ async def test_forked_context_publishes_independently(ctx):
 # -- fork_for_tool_call --------------------------------------------------------
 
 
-def test_fork_for_tool_call_copies_all_fields(ctx):
-    """fork_for_tool_call should copy all parent fields except the overrides.
+def test_fork_for_tool_call_propagates_all_fields(ctx):
+    """Every flat field on the parent must reach the child fork.
 
-    This test catches the "fragile field list" problem — if a new field is
-    added to Context and not copied by fork_for_tool_call, this test will
-    detect it by comparing all non-default fields.
+    Iterates ``vars(ctx)`` rather than a hand-maintained allowlist, so a new
+    field added to ``Context.__init__`` is automatically covered. Sub-objects
+    that are intentionally fresh or replaced on the child are listed in
+    ``INTENTIONALLY_DIFFERENT`` and verified separately below.
     """
-    # Set every field to a non-default value so we can detect missing copies
+    # Set every public flat field to a non-default value so a missed copy
+    # would surface as a value mismatch rather than a coincidence of
+    # equal defaults.
     ctx.user_id = "test-user"
     ctx.channel_id = "test-channel"
     ctx.channel_name = "test-channel-name"
@@ -116,18 +119,27 @@ def test_fork_for_tool_call_copies_all_fields(ctx):
     ctx.messages = [{"role": "system", "content": "sys"}]
     ctx.cancelled = asyncio.Event()
     ctx.media_handler = "fake-handler"
-    ctx.tools.extra = {"vault_read": lambda: None}
-    ctx.tools.extra_definitions = [{"function": {"name": "vault_read"}}]
-    ctx.skills.activated = {"tabstack"}
-    ctx.skills.data = {"vault_base_path": "obsidian/main"}
-    ctx.tools.allowed = {"shell", "memory_search"}
+    ctx.on_stream_chunk = lambda chunk: None
     ctx.event_context_id = "parent-event-ctx"
+    ctx._current_iteration = 7
+    ctx.is_child = True
+    ctx.skip_reflection = True
+    ctx.skip_vault_retrieval = True
+    ctx.skip_archive = True
+    ctx.wiki_page = "[[Test]]"
+    ctx.active_model = "test-model"
+    ctx.task_mode = "scheduled"
     ctx.request_confirmation = lambda req: None
     ctx.manager = object()  # stand-in for ConversationManager instance
+    ctx.tools.extra = {"vault_read": lambda: None}
+    ctx.tools.extra_definitions = [{"function": {"name": "vault_read"}}]
+    ctx.tools.allowed = {"shell", "memory_search"}
+    ctx.skills.activated = {"tabstack"}
+    ctx.skills.data = {"vault_base_path": "obsidian/main"}
 
     forked = ctx.fork_for_tool_call("call_new")
 
-    # Overridden fields
+    # Overridden field
     assert forked.tools.current_call_id == "call_new"
 
     # Preserved identity
@@ -135,25 +147,44 @@ def test_fork_for_tool_call_copies_all_fields(ctx):
     assert forked.event_bus is ctx.event_bus
     assert forked.config is ctx.config
 
-    # All other fields should match the parent
-    fields_to_check = [
-        "user_id", "channel_id", "channel_name", "thread_id", "conv_id",
-        "history", "messages", "cancelled", "media_handler",
-        "event_context_id", "request_confirmation", "manager",
-    ]
-    for field in fields_to_check:
-        parent_val = getattr(ctx, field)
-        child_val = getattr(forked, field)
+    # Sub-objects with intentionally different state on the child;
+    # checked separately below.
+    INTENTIONALLY_DIFFERENT = {"tokens", "tools"}
+
+    parent_attrs = vars(ctx)
+    child_attrs = vars(forked)
+    assert parent_attrs.keys() == child_attrs.keys(), (
+        "Parent and child have different attribute sets — copy.copy missed something"
+    )
+
+    for name, parent_val in parent_attrs.items():
+        if name in INTENTIONALLY_DIFFERENT:
+            continue
+        child_val = child_attrs[name]
         assert child_val is parent_val or child_val == parent_val, (
-            f"fork_for_tool_call didn't copy '{field}': "
+            f"fork_for_tool_call did not propagate '{name}': "
             f"parent={parent_val!r}, child={child_val!r}"
         )
 
-    # Sub-objects: tools is replaced (new current_call_id), skills is shared
-    assert forked.tools.extra == ctx.tools.extra
-    assert forked.tools.extra_definitions == ctx.tools.extra_definitions
-    assert forked.tools.allowed == ctx.tools.allowed
+    # Sub-objects: explicit checks
+    assert forked.tokens is not ctx.tokens, "tokens must be a fresh instance"
+    assert forked.tokens.total_prompt == 0
+    assert forked.tools is not ctx.tools, "tools must be a fresh ToolState"
+    # Inner containers shared via dataclasses.replace
+    assert forked.tools.extra is ctx.tools.extra
+    assert forked.tools.extra_definitions is ctx.tools.extra_definitions
+    assert forked.tools.allowed is ctx.tools.allowed
     assert forked.skills is ctx.skills
+    assert forked.composer is ctx.composer
+
+
+def test_fork_for_tool_call_propagates_task_mode(ctx):
+    """Regression: task_mode must reach tool calls so newsletter_publish (and
+    any other tool reading ``ctx.task_mode``) takes the scheduled-delivery
+    path during scheduled runs instead of the interactive short-circuit."""
+    ctx.task_mode = "scheduled"
+    forked = ctx.fork_for_tool_call("call_x")
+    assert forked.task_mode == "scheduled"
 
 
 def test_fork_for_tool_call_fresh_token_counters(ctx):
