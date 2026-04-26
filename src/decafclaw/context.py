@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 from dataclasses import dataclass, field, replace
 from typing import Any
 from uuid import uuid4
@@ -169,43 +170,21 @@ class Context:
     def fork_for_tool_call(self, tool_call_id: str) -> "Context":
         """Create a lightweight context fork for a concurrent tool call.
 
-        Shallow-copies all flat fields from the parent. Sub-objects:
-        - tokens: fresh instance (per-call counters, not accumulated)
-        - tools: new ToolState instance via dataclasses.replace, sharing
-          inner containers but with current_call_id overridden
-        - skills: shared reference (concurrent reads, no mutation)
+        Shallow-copies the parent so every flat field propagates by default.
+        New fields added to ``__init__`` are picked up automatically — no
+        per-field copy list to maintain. Sub-objects with intentionally
+        different state on the child are overridden explicitly below.
+
+        Special handling:
+        - ``tokens``: fresh instance (per-call counters, not accumulated)
+        - ``tools``: new ToolState via ``dataclasses.replace`` with
+          ``current_call_id`` overridden; inner containers stay shared
+        - ``skills`` and ``composer``: shared with parent (shallow copy
+          already preserves the reference; concurrent tool calls read
+          but don't mutate)
         """
-        child = Context(
-            config=self.config,
-            event_bus=self.event_bus,
-            context_id=self.context_id,
-        )
-        # Copy flat fields from parent
-        child.user_id = self.user_id
-        child.channel_id = self.channel_id
-        child.channel_name = self.channel_name
-        child.thread_id = self.thread_id
-        child.conv_id = self.conv_id
-        child.history = self.history
-        child.messages = self.messages
-        child.cancelled = self.cancelled
-        child.media_handler = self.media_handler
-        child.on_stream_chunk = self.on_stream_chunk
-        child.event_context_id = self.event_context_id
-        child._current_iteration = self._current_iteration
-        child.is_child = self.is_child
-        child.skip_reflection = self.skip_reflection
-        child.skip_vault_retrieval = self.skip_vault_retrieval
-        child.wiki_page = self.wiki_page
-        child.active_model = self.active_model
-        child.request_confirmation = self.request_confirmation
-        child.manager = self.manager
-        # Share skills + composer (concurrent tool calls read but don't mutate)
-        child.skills = self.skills
-        child.composer = self.composer
-        # Fresh token counters — don't accumulate child usage into parent
+        child = copy.copy(self)
         child.tokens = TokenUsage()
-        # Fork tools with the specific tool call ID (the purpose of this fork)
         child.tools = replace(self.tools, current_call_id=tool_call_id)
         return child
 
