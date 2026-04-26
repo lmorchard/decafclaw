@@ -75,6 +75,7 @@ See [docs/config.md](docs/config.md), [docs/data-layout.md](docs/data-layout.md)
 See [docs/context-composer.md](docs/context-composer.md), [docs/semantic-search.md](docs/semantic-search.md).
 
 - **All context for a turn assembled by `ContextComposer.compose()`** — produces a `ComposedContext` (messages, tools, deferred tools, token estimates, diagnostics). Stateful per-conversation via `ComposerState` on `ctx.composer`. Mode-aware: `INTERACTIVE`, `HEARTBEAT`, `SCHEDULED`, `CHILD_AGENT`. Tool assembly in the iteration loop still uses `_build_tool_list()` since fetched tools change mid-turn.
+- **Tool-result clearing tier.** Before each compaction-threshold check, `clear_old_tool_results` (`context_cleanup.py`) replaces bodies of large, old tool messages in-memory with a short stub (`[tool output cleared: N bytes]`). Originals stay in the JSONL archive — only the in-memory view changes. Cheap (no LLM), runs every iteration. Preserve-tools allowlist + recent-N-turns protected window keep `activate_skill`, `checklist_*`, and the current/prior user turn intact. Tunables on `config.cleanup`. See [docs/context-composer.md#tool-result-clearing-lightweight-tier](docs/context-composer.md#tool-result-clearing-lightweight-tier).
 - **Memory retrieval** uses composite scoring (`w_similarity * sim + w_recency * rec + w_importance * imp`); dynamic budget allocation fills from top until exhausted. Wiki-link graph expansion follows `[[links]]` one hop. Fail-open — embedding errors silently return empty. Skipped for heartbeat/scheduled/child agents. Disabled silently if no embedding model configured.
 - **Vault page frontmatter** (`summary`, `keywords`, `tags`, `importance`) parsed by `frontmatter.py`; LLM-generated, human-editable. Composite embeddings prepend metadata to body.
 - **`@[[PageName]]` mentions** inject pages once per conversation as `vault_references` role messages.
@@ -136,6 +137,7 @@ Full doc index: [docs/index.md](docs/index.md). Hot files for navigation:
 ### Data and persistence
 - `archive.py` — JSONL conversation archive
 - `compaction.py` — Summarization + pre-compaction memory sweep
+- `context_cleanup.py` — Lightweight clear tier: stubs old large tool messages before compaction
 - `persistence.py`, `attachments.py`, `embeddings.py`, `frontmatter.py`, `memory_context.py`, `checklist.py`
 
 ### Tools
