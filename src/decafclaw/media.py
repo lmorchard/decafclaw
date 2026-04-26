@@ -37,15 +37,32 @@ class EndTurnConfirm:
 class WidgetRequest:
     """Rich-rendering hint attached to a ToolResult.
 
-    Phase 1 only renders inline widgets in the web UI; Mattermost and
-    terminal fall back to ToolResult.text. The on_response and
-    response_message fields are reserved for Phase 2 input widgets.
+    Phase 1 renders inline widgets in the web UI; Mattermost and
+    terminal fall back to ToolResult.text. Phase 2 adds the
+    ``on_response`` callback for input widgets (``accepts_input=true``)
+    which returns the synthetic user message to inject after the user
+    submits. ``response_message`` is reserved for future use (e.g., a
+    "waiting" placeholder shown to the user during the pause).
     """
     widget_type: str                           # registered widget name
     data: dict                                 # conforms to widget.data_schema
     target: str = "inline"                     # "inline" | "canvas" (Phase 3)
-    on_response: Callable[[dict], Any] | None = None   # Phase 2
-    response_message: str | None = None        # Phase 2
+    on_response: Callable[[dict], str] | None = None
+    response_message: str | None = None
+
+
+@dataclass
+class WidgetInputPause:
+    """Agent-loop signal for an input-widget pause.
+
+    Returned by the tool-execution path as the ``end_turn`` signal when a
+    tool emits a widget with ``accepts_input=True`` and ``end_turn=True``.
+    The agent loop detects this sentinel and routes to the input-widget
+    pause path (request_confirmation with action_type=WIDGET_RESPONSE).
+    Parallel to ``EndTurnConfirm`` — only one per batch wins.
+    """
+    tool_call_id: str
+    widget_payload: dict  # {widget_type, target, data}
 
 
 @dataclass
@@ -59,7 +76,10 @@ class ToolResult:
     data: dict | None = None
     # end_turn: True = end turn with final no-tools LLM call.
     # EndTurnConfirm = show confirmation buttons; approved → continue, denied → end.
-    end_turn: bool | EndTurnConfirm = False
+    # WidgetInputPause = pause on input widget, resume with user selection.
+    # The agent loop promotes input-widget end_turn=True to WidgetInputPause
+    # inside _resolve_widget.
+    end_turn: bool | EndTurnConfirm | WidgetInputPause = False
     widget: WidgetRequest | None = None
 
     @classmethod

@@ -132,3 +132,84 @@ chat-message .tool-result-raw pre {
 .widget-data-table tbody tr:hover {
   background: var(--pico-secondary-background, rgba(0, 0, 0, 0.03));
 }
+
+/* ---- multiple_choice ---- */
+
+.widget-multiple-choice {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  font-size: 0.9rem;
+}
+
+.widget-multiple-choice__prompt {
+  margin: 0;
+  font-weight: 600;
+}
+
+.widget-multiple-choice__options {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.widget-multiple-choice__option {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-rows: auto auto;
+  column-gap: 0.5rem;
+  align-items: baseline;
+  padding: 0.375rem 0.5rem;
+  border: 1px solid var(--pico-muted-border-color, #ccc);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.widget-multiple-choice__option:hover {
+  background: var(--pico-secondary-background, rgba(0, 0, 0, 0.04));
+}
+
+.widget-multiple-choice__option input {
+  margin: 0;
+  grid-row: 1;
+  grid-column: 1;
+}
+
+.widget-multiple-choice__option .widget-multiple-choice__label {
+  grid-row: 1;
+  grid-column: 2;
+}
+
+.widget-multiple-choice__option .widget-multiple-choice__description {
+  grid-row: 2;
+  grid-column: 2;
+  opacity: 0.7;
+  font-size: 0.8rem;
+}
+
+.widget-multiple-choice__option--winner {
+  border-color: var(--pico-primary, #1a73e8);
+  background: var(--pico-primary-background, rgba(26, 115, 232, 0.08));
+  font-weight: 600;
+}
+
+.widget-multiple-choice__option:has(input:disabled) {
+  cursor: default;
+}
+
+.widget-multiple-choice__option:has(input:disabled):hover {
+  background: inherit;
+}
+
+.widget-multiple-choice__option--winner:has(input:disabled):hover {
+  background: var(--pico-primary-background, rgba(26, 115, 232, 0.08));
+}
+
+.widget-multiple-choice__actions {
+  margin-top: 0.25rem;
+}
+
+.widget-multiple-choice__submit {
+  padding: 0.35rem 0.9rem;
+  font-size: 0.85rem;
+}

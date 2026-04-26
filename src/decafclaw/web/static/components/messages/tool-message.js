@@ -13,6 +13,10 @@ export class ToolMessage extends LitElement {
     statusHistory: { type: Array, attribute: false },
     /** Optional widget payload: {widget_type, target, data} */
     widget: { type: Object, attribute: false },
+    /** True once an input widget has been submitted (live or reloaded) */
+    submitted: { type: Boolean },
+    /** Response data for a submitted input widget: {selected, ...} */
+    response: { type: Object, attribute: false },
     _expanded: { type: Boolean, state: true },
   };
 
@@ -28,7 +32,24 @@ export class ToolMessage extends LitElement {
     this.statusHistory = null;
     /** @type {{widget_type: string, target: string, data: object}|null} */
     this.widget = null;
+    this.submitted = false;
+    /** @type {object|null} */
+    this.response = null;
     this._expanded = false;
+    // Tracks whether we've auto-expanded for this widget yet, so user
+    // collapse choices aren't overridden on re-render.
+    this._autoExpanded = false;
+  }
+
+  /** @param {Map<string, any>} changed */
+  willUpdate(changed) {
+    // Auto-expand on the first render that has a widget present — so
+    // input widgets are visible without requiring a click. User can
+    // still collapse afterward.
+    if (changed.has('widget') && this.widget && !this._autoExpanded) {
+      this._expanded = true;
+      this._autoExpanded = true;
+    }
   }
 
   #toggleExpand() {
@@ -89,6 +110,8 @@ export class ToolMessage extends LitElement {
                 .widgetType=${this.widget.widget_type}
                 .data=${this.widget.data}
                 .fallbackText=${this.content}
+                .submitted=${this.submitted}
+                .response=${this.response}
               ></dc-widget-host>
               ${hasContent ? html`
                 <details class="tool-result-raw">
