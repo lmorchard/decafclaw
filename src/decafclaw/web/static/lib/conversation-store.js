@@ -20,6 +20,9 @@
  * @property {{prompt_tokens: number, completion_tokens: number, total_tokens: number}|null} [usage]
  * @property {object} [record]
  * @property {{widget_type: string, target: string, data: object}|null} [widget]
+ * @property {boolean} [submitted]
+ * @property {object} [response]
+ * @property {string} [source]
  */
 
 /**
@@ -510,6 +513,15 @@ export class ConversationStore extends EventTarget {
    */
   respondToConfirm(contextId, tool, toolCallId = '', approved = false, extra = {}) {
     this.#toolStatusStore.respondToConfirm(contextId, tool, toolCallId, approved, extra);
+  }
+
+  /**
+   * Send a widget_response for an input widget submission.
+   * @param {string} toolCallId
+   * @param {object} data
+   */
+  respondToWidget(toolCallId, data) {
+    this.#toolStatusStore.respondToWidget(toolCallId, data);
   }
 
   // -- WebSocket message handling (chat streaming) ----------------------------

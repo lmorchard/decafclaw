@@ -20,17 +20,34 @@ _PANEL_SCHEMA = {
 
 
 def _make_test_registry(tmp_path):
-    """Build a registry with a single 'data_table' widget for tests."""
+    """Build a registry with a display widget ('data_table') plus an
+    input widget ('pick') so Phase 2 enforcement tests have an
+    accepts_input=True descriptor to point at."""
     bundled = tmp_path / "bundled"
-    d = bundled / "data_table"
-    d.mkdir(parents=True)
-    (d / "widget.json").write_text(json.dumps({
+    dt = bundled / "data_table"
+    dt.mkdir(parents=True)
+    (dt / "widget.json").write_text(json.dumps({
         "name": "data_table",
         "description": "test",
         "modes": ["inline"],
         "data_schema": _PANEL_SCHEMA,
     }))
-    (d / "widget.js").write_text("// stub\n")
+    (dt / "widget.js").write_text("// stub\n")
+
+    pk = bundled / "pick"
+    pk.mkdir(parents=True)
+    (pk / "widget.json").write_text(json.dumps({
+        "name": "pick",
+        "description": "test input widget",
+        "modes": ["inline"],
+        "accepts_input": True,
+        "data_schema": {
+            "type": "object",
+            "required": ["options"],
+            "properties": {"options": {"type": "array"}},
+        },
+    }))
+    (pk / "widget.js").write_text("// stub\n")
 
     class _Cfg:
         agent_path = tmp_path / "agent_home"
@@ -42,6 +59,10 @@ def _make_test_registry(tmp_path):
 def test_registry(tmp_path, monkeypatch):
     registry = _make_test_registry(tmp_path)
     monkeypatch.setattr(widgets_module, "_registry", registry)
+    # Clear the pending_callbacks map before each test — keeps state
+    # from leaking across tests that exercise the input-widget path.
+    from decafclaw import widget_input
+    monkeypatch.setattr(widget_input, "pending_callbacks", {})
     yield registry
 
 
@@ -135,6 +156,90 @@ def test_resolve_widget_no_registry(monkeypatch, caplog):
     assert payload is None
     assert result.widget is None
     assert any("registry is not" in r.message for r in caplog.records)
+
+
+# -------------- Phase 2: input widget enforcement --------------
+
+
+def test_input_widget_with_end_turn_promotes_to_pause(test_registry):
+    """Input widget (accepts_input=True) + end_turn=True → end_turn
+    becomes a WidgetInputPause sentinel; callback registered in the
+    pending_callbacks map."""
+    from decafclaw import widget_input
+    from decafclaw.media import WidgetInputPause
+
+    def on_response(_data):
+        return "picked!"
+
+    result = ToolResult(
+        text="[awaiting]",
+        widget=WidgetRequest(
+            widget_type="pick",
+            data={"options": []},
+            on_response=on_response),
+        end_turn=True,
+    )
+    payload = _resolve_widget("my_tool", result, "tc-input")
+    assert payload is not None
+    assert payload["widget_type"] == "pick"
+    assert isinstance(result.end_turn, WidgetInputPause)
+    assert result.end_turn.tool_call_id == "tc-input"
+    assert result.end_turn.widget_payload == payload
+    assert widget_input.pending_callbacks["tc-input"] is on_response
+
+
+def test_input_widget_without_end_turn_strips(test_registry, caplog):
+    """Input widget with end_turn=False violates the contract — strip
+    the widget and log a warning."""
+    result = ToolResult(
+        text="ok",
+        widget=WidgetRequest(
+            widget_type="pick",
+            data={"options": []}),
+        end_turn=False,
+    )
+    payload = _resolve_widget("my_tool", result, "tc-no-end")
+    assert payload is None
+    assert result.widget is None
+    assert any("without end_turn=True" in r.message for r in caplog.records)
+
+
+def test_input_widget_with_end_turn_confirm_drops_confirm(
+        test_registry, caplog):
+    """Input widget + EndTurnConfirm → widget wins, EndTurnConfirm
+    dropped, end_turn becomes WidgetInputPause."""
+    from decafclaw.media import EndTurnConfirm, WidgetInputPause
+
+    result = ToolResult(
+        text="[awaiting]",
+        widget=WidgetRequest(
+            widget_type="pick",
+            data={"options": []}),
+        end_turn=EndTurnConfirm(message="review?"),
+    )
+    payload = _resolve_widget("my_tool", result, "tc-both")
+    assert payload is not None
+    assert isinstance(result.end_turn, WidgetInputPause)
+    assert any("alongside EndTurnConfirm" in r.message
+               for r in caplog.records)
+
+
+def test_display_widget_unchanged_by_phase2(test_registry):
+    """accepts_input=False widgets keep the Phase 1 behavior — end_turn
+    is passed through verbatim, no callback registration."""
+    from decafclaw import widget_input
+
+    result = ToolResult(
+        text="ok",
+        widget=WidgetRequest(
+            widget_type="data_table",
+            data={"columns": [], "rows": []}),
+        end_turn=False,
+    )
+    payload = _resolve_widget("my_tool", result, "tc-display")
+    assert payload is not None
+    assert result.end_turn is False
+    assert "tc-display" not in widget_input.pending_callbacks
 
 
 # -------------- _execute_tool_calls integration tests --------------

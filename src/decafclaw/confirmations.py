@@ -17,18 +17,23 @@ class ConfirmationAction(str, Enum):
     ACTIVATE_SKILL = "activate_skill"
     CONTINUE_TURN = "continue_turn"
     ADVANCE_PROJECT_PHASE = "advance_project_phase"
+    WIDGET_RESPONSE = "widget_response"
 
 
 @dataclass
 class ConfirmationRequest:
-    """A confirmation request that can be persisted in conversation history."""
+    """A confirmation request that can be persisted in conversation history.
+
+    ``timeout=None`` disables the await deadline — used by widget requests
+    where the user responds when ready.
+    """
     action_type: ConfirmationAction
     action_data: dict = field(default_factory=dict)
     message: str = ""
     approve_label: str = "Approve"
     deny_label: str = "Deny"
     tool_call_id: str = ""
-    timeout: float = 300.0
+    timeout: float | None = 300.0
     confirmation_id: str = field(default_factory=lambda: uuid4().hex[:12])
     timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
 
@@ -57,23 +62,31 @@ class ConfirmationRequest:
 
 @dataclass
 class ConfirmationResponse:
-    """A confirmation response that can be persisted in conversation history."""
+    """A confirmation response that can be persisted in conversation history.
+
+    ``data`` carries free-form response payload for actions that need more
+    than approve/deny — e.g., widget submissions send their selected
+    values here.
+    """
     confirmation_id: str
     approved: bool
     always: bool = False
     add_pattern: bool = False
+    data: dict = field(default_factory=dict)
     timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
 
     def to_archive_message(self) -> dict:
         """Serialize to a dict suitable for JSONL archive."""
         msg = dataclasses.asdict(self)
         msg["role"] = "confirmation_response"
-        # Drop falsy optional flags to keep archive output lean; from_archive
-        # tolerates their absence via the dataclass defaults.
+        # Drop falsy optional flags / containers to keep archive output lean;
+        # from_archive tolerates their absence via the dataclass defaults.
         if not msg["always"]:
             msg.pop("always")
         if not msg["add_pattern"]:
             msg.pop("add_pattern")
+        if not msg["data"]:
+            msg.pop("data")
         return msg
 
     @classmethod

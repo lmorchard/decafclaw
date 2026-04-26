@@ -214,6 +214,103 @@ async def test_confirmation_persisted_to_archive(manager):
     assert "confirmation_response" in roles
 
 
+def test_confirmation_response_data_serialization_roundtrip():
+    """ConfirmationResponse.data is serialized when non-empty and
+    deserialized cleanly, including nested structures."""
+    resp = ConfirmationResponse(
+        confirmation_id="abc",
+        approved=True,
+        data={"selected": ["a", "b"], "meta": {"ts": 123}},
+    )
+    msg = resp.to_archive_message()
+    assert msg["data"] == {"selected": ["a", "b"], "meta": {"ts": 123}}
+
+    restored = ConfirmationResponse.from_archive_message(msg)
+    assert restored.data == resp.data
+    assert restored.approved is True
+
+
+def test_confirmation_response_data_omitted_when_empty():
+    """Empty data dict stays out of the archive message to keep
+    existing confirmations unchanged on the wire."""
+    resp = ConfirmationResponse(confirmation_id="abc", approved=True)
+    msg = resp.to_archive_message()
+    assert "data" not in msg
+
+    restored = ConfirmationResponse.from_archive_message(msg)
+    assert restored.data == {}
+
+
+@pytest.mark.asyncio
+async def test_respond_with_data_field_roundtrips(manager):
+    """Widget-shaped responses carry a `data` dict; verify it surfaces
+    on the response dataclass, the emitted event, and the archive."""
+    from decafclaw.archive import read_archive
+
+    conv_id = "conv-data"
+    manager._get_or_create(conv_id)
+
+    events: list[dict] = []
+
+    async def cb(event):
+        events.append(event)
+
+    manager.subscribe(conv_id, cb)
+
+    request = ConfirmationRequest(
+        action_type=ConfirmationAction.WIDGET_RESPONSE,
+        action_data={"widget_type": "multiple_choice"},
+        message="",
+        timeout=2.0,
+    )
+
+    async def respond():
+        await asyncio.sleep(0.05)
+        await manager.respond_to_confirmation(
+            conv_id, request.confirmation_id, approved=True,
+            data={"selected": "production"})
+
+    asyncio.create_task(respond())
+    response = await manager.request_confirmation(conv_id, request)
+
+    assert response.data == {"selected": "production"}
+
+    resp_events = [e for e in events if e.get("type") == "confirmation_response"]
+    assert resp_events
+    assert resp_events[0]["data"] == {"selected": "production"}
+
+    messages = read_archive(manager.config, conv_id)
+    response_msgs = [m for m in messages if m.get("role") == "confirmation_response"]
+    assert response_msgs
+    assert response_msgs[0]["data"] == {"selected": "production"}
+
+
+@pytest.mark.asyncio
+async def test_request_confirmation_no_timeout(manager):
+    """timeout=None disables the await deadline — used by widget requests."""
+    conv_id = "conv-no-timeout"
+    manager._get_or_create(conv_id)
+
+    request = ConfirmationRequest(
+        action_type=ConfirmationAction.WIDGET_RESPONSE,
+        message="",
+        timeout=None,
+    )
+
+    async def respond_after_delay():
+        # Sleep longer than any reasonable default timeout would be,
+        # to prove that None-timeout doesn't raise TimeoutError.
+        await asyncio.sleep(0.1)
+        await manager.respond_to_confirmation(
+            conv_id, request.confirmation_id, approved=True,
+            data={"selected": "x"})
+
+    asyncio.create_task(respond_after_delay())
+    response = await manager.request_confirmation(conv_id, request)
+    assert response.approved is True
+    assert response.data == {"selected": "x"}
+
+
 @pytest.mark.asyncio
 async def test_respond_wrong_id_ignored(manager):
     conv_id = "conv-1"

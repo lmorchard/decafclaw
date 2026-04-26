@@ -1,11 +1,11 @@
-"""Core tools — web fetch, debug, time, context stats."""
+"""Core tools — web fetch, debug, time, context stats, ask_user."""
 
 import json
 import logging
 
 import httpx
 
-from ..media import ToolResult
+from ..media import ToolResult, WidgetRequest
 from ..util import estimate_tokens
 
 log = logging.getLogger(__name__)
@@ -135,6 +135,96 @@ async def tool_wait(ctx, seconds: int = 30) -> str | ToolResult:
     return f"Waited {seconds} seconds."
 
 
+def _normalize_ask_user_options(options: list) -> list[dict] | None:
+    """Normalize mixed options into the widget's data_schema shape.
+
+    Accepts each option as a bare string (used as both value and label)
+    or as a dict with both ``value`` and ``label`` (description
+    optional). Returns None if the list is empty or contains an
+    unusable entry. The dict form requires both fields to match the
+    tool-definition schema's ``required: ["value", "label"]``.
+    """
+    if not options:
+        return None
+    out: list[dict] = []
+    for opt in options:
+        if isinstance(opt, str):
+            out.append({"value": opt, "label": opt})
+        elif isinstance(opt, dict):
+            value = opt.get("value")
+            label = opt.get("label")
+            if not value or not label:
+                return None
+            entry = {"value": str(value), "label": str(label)}
+            desc = opt.get("description")
+            if desc:
+                entry["description"] = str(desc)
+            out.append(entry)
+        else:
+            return None
+    return out
+
+
+def _ask_user_default_on_response(options: list[dict],
+                                  allow_multiple: bool):
+    """Build the default ``on_response`` callback for ask_user.
+
+    Single: returns ``"User selected: <label>"``; multi: comma-joins
+    the labels of selected values. Looks up labels from the option list
+    so the inject text reads well even when callers use distinct
+    value/label pairs.
+    """
+    by_value = {o["value"]: o["label"] for o in options}
+
+    def _cb(data: dict) -> str:
+        selected = data.get("selected")
+        if allow_multiple:
+            values = selected if isinstance(selected, list) else []
+            labels = [by_value.get(v, v) for v in values]
+            if not labels:
+                return "User selected nothing."
+            return "User selected: " + ", ".join(labels)
+        value = selected if isinstance(selected, str) else ""
+        if not value:
+            return "User did not select an option."
+        return f"User selected: {by_value.get(value, value)}"
+
+    return _cb
+
+
+async def tool_ask_user(ctx, prompt: str, options: list,
+                        allow_multiple: bool = False) -> ToolResult:
+    """Pause the turn and ask the user to pick from a list of options."""
+    log.info(f"[tool:ask_user] prompt={prompt!r} "
+             f"options={len(options)} allow_multiple={allow_multiple}")
+    if not prompt or not prompt.strip():
+        return ToolResult(text="[error: ask_user requires a non-empty prompt]")
+    normalized = _normalize_ask_user_options(options)
+    if normalized is None:
+        return ToolResult(
+            text="[error: ask_user needs at least one option; "
+                 "each must be a string or {value, label} dict]")
+    widget_data = {
+        "prompt": prompt,
+        "options": normalized,
+        "allow_multiple": bool(allow_multiple),
+    }
+    widget = WidgetRequest(
+        widget_type="multiple_choice",
+        data=widget_data,
+        on_response=_ask_user_default_on_response(normalized,
+                                                  bool(allow_multiple)),
+    )
+    short = (f"ask: {len(normalized)} option(s)"
+             + (" (multi)" if allow_multiple else ""))
+    return ToolResult(
+        text=f"[awaiting user response: {prompt}]",
+        display_short_text=short,
+        widget=widget,
+        end_turn=True,
+    )
+
+
 def tool_context_stats(ctx) -> str | ToolResult:
     """Report token budget statistics for the current conversation."""
     log.info("[tool:context_stats]")
@@ -226,6 +316,7 @@ CORE_TOOLS = {
     "context_stats": tool_context_stats,
     "current_time": tool_current_time,
     "wait": tool_wait,
+    "ask_user": tool_ask_user,
 }
 
 CORE_TOOL_DEFINITIONS = [
@@ -306,6 +397,61 @@ CORE_TOOL_DEFINITIONS = [
                     },
                 },
                 "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "priority": "low",
+        "function": {
+            "name": "ask_user",
+            "description": (
+                "Pause the turn and ask the user to pick from a list of "
+                "options. Use ONLY when the right answer is genuinely "
+                "ambiguous from context and you cannot make a reasonable "
+                "choice on your own. Prefer to act on your best judgment; "
+                "calling this tool is costly — it interrupts the user's "
+                "flow. Reserve for decisions the user would want to weigh "
+                "in on (e.g., \"which of these three files should I edit?\", "
+                "\"publish or save as draft?\"). "
+                "Only works in the web UI; Mattermost / terminal render "
+                "the prompt as text and the turn ends without the choice."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "prompt": {
+                        "type": "string",
+                        "description": "Question presented to the user. Should be concise and answerable by picking one of the options.",
+                    },
+                    "options": {
+                        "type": "array",
+                        "description": (
+                            "Options to choose from. Each entry is either a "
+                            "bare string (used as both value and label) or a "
+                            "{value, label, description?} object."
+                        ),
+                        "items": {
+                            "anyOf": [
+                                {"type": "string"},
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "value": {"type": "string"},
+                                        "label": {"type": "string"},
+                                        "description": {"type": "string"},
+                                    },
+                                    "required": ["value", "label"],
+                                },
+                            ],
+                        },
+                    },
+                    "allow_multiple": {
+                        "type": "boolean",
+                        "description": "If true, the user can select multiple options (checkboxes); otherwise a single choice (radios). Default false.",
+                    },
+                },
+                "required": ["prompt", "options"],
             },
         },
     },

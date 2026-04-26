@@ -90,6 +90,36 @@ export class ToolStatusStore {
   }
 
   /**
+   * Send a widget_response for an input widget submission. Looks up
+   * the matching confirmation_id from pendingConfirms (seeded by the
+   * confirmation_request event fired when the agent paused).
+   * @param {string} toolCallId
+   * @param {object} data
+   */
+  respondToWidget(toolCallId = '', data = {}) {
+    const confirm = this.#pendingConfirms.find(
+      c => c.tool_call_id === toolCallId);
+    if (!confirm?.confirmation_id || !confirm?.conv_id) {
+      console.warn(
+        '[widget] respondToWidget: no pending widget confirm for',
+        toolCallId);
+      return;
+    }
+    this.#ws.send({
+      type: 'widget_response',
+      conv_id: confirm.conv_id,
+      confirmation_id: confirm.confirmation_id,
+      tool_call_id: toolCallId,
+      data,
+    });
+    // Remove this confirm from the pending list — the backend will
+    // broadcast confirmation_response which flips the widget UI state.
+    this.#pendingConfirms = this.#pendingConfirms.filter(
+      c => c.confirmation_id !== confirm.confirmation_id);
+    this.#onChange();
+  }
+
+  /**
    * Handle a WebSocket message if it's tool-related.
    * @param {object} msg
    * @param {string|null} currentConvId
@@ -135,6 +165,7 @@ export class ToolStatusStore {
         if (msg.conv_id === currentConvId) {
           this.#messageStore.replaceToolCall(tcId, {
             role: 'tool',
+            tool_call_id: tcId,
             content: msg.result_text || '',
             tool: msg.tool,
             display_short_text: msg.display_short_text || '',
@@ -171,10 +202,24 @@ export class ToolStatusStore {
       }
 
       case 'confirmation_response': {
-        // Multi-tab sync: remove the resolved confirmation widget
+        // Multi-tab sync: remove the resolved confirmation widget.
+        // For widget responses, also flip the matching tool message to
+        // submitted + carry the response data so the widget UI
+        // transitions even on tabs other than the one that submitted.
         const resolvedId = msg.confirmation_id || '';
         if (resolvedId) {
-          this.#pendingConfirms = this.#pendingConfirms.filter(c => c.confirmation_id !== resolvedId);
+          const resolved = this.#pendingConfirms.find(
+            c => c.confirmation_id === resolvedId);
+          if (resolved?.action_type === 'widget_response'
+              && resolved.tool_call_id) {
+            // The response event is the submit signal — empty data
+            // still means the widget was submitted (tabs need to
+            // transition to the post-submit state).
+            this.#messageStore.markToolWidgetSubmitted(
+              resolved.tool_call_id, msg.data || {});
+          }
+          this.#pendingConfirms = this.#pendingConfirms.filter(
+            c => c.confirmation_id !== resolvedId);
         }
         return true;
       }

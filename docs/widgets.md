@@ -120,6 +120,94 @@ The browser dynamic-imports this module the first time the widget is
 needed. Use bare specifiers like `'lit'` — they resolve through the
 existing importmap.
 
+## Input widgets (Phase 2)
+
+Some widgets collect structured input from the user. They pause the
+agent turn until the user submits, then resume with the selection
+injected as a synthetic user message so the next LLM iteration sees
+the answer.
+
+To mark a widget as interactive, set `"accepts_input": true` in its
+`widget.json`. Tools that emit an input widget MUST also set
+`end_turn=True` on the `ToolResult`.
+
+### The `ask_user` core tool
+
+The agent can ask the user to pick from a list via the built-in
+`ask_user` tool:
+
+```python
+# Inside the LLM's tool-calling loop
+await ask_user(
+    prompt="Which deploy target?",
+    options=["production", "staging", "dev"],
+    allow_multiple=False,  # radios; set True for checkboxes
+)
+```
+
+The user sees a `multiple_choice` widget inline in the tool message;
+the agent pauses. When the user submits, the conversation continues
+with a synthetic `role: "user"` message like
+`"User selected: production"`.
+
+### Building your own input widget
+
+Tool-side:
+
+```python
+from decafclaw.media import ToolResult, WidgetRequest
+
+def on_response(data: dict) -> str:
+    # data is {selected: ...} (or whatever the widget sends)
+    return f"The user answered: {data['selected']}"
+
+async def my_input_tool(ctx, ...):
+    return ToolResult(
+        text="[awaiting user response]",
+        widget=WidgetRequest(
+            widget_type="my_prompt",
+            data={"prompt": "pick one", "options": [...]},
+            on_response=on_response,
+        ),
+        end_turn=True,  # REQUIRED for input widgets
+    )
+```
+
+Widget-side, the Lit component gets three props:
+
+- `data` — the widget's data payload.
+- `submitted` — `true` once the user has submitted (live or reloaded).
+- `response` — the response payload after submit; seed your UI to show
+  the selection.
+
+When the user submits, dispatch a `widget-response` CustomEvent that
+bubbles past `dc-widget-host`:
+
+```js
+this.dispatchEvent(new CustomEvent('widget-response', {
+  detail: { selected: chosenValue },
+  bubbles: true,
+  composed: true,
+}));
+```
+
+The response payload (whatever goes in `detail`) reaches the tool's
+`on_response` callback as its single argument. The callback's return
+string is what gets injected as the synthetic user message.
+
+### Restart recovery
+
+Pending input widgets survive server restart. If the server dies
+between the user seeing the widget and submitting it, the next
+startup scan picks up the pending confirmation from the archive. When
+the user submits after restart, the in-memory `on_response` callback
+is gone, so a default handler injects `"User responded with: <data>"`
+as the user message so the loop stays coherent.
+
+Input widgets ride on the existing confirmation infra in
+`src/decafclaw/confirmations.py`: a pause is a `WIDGET_RESPONSE`-typed
+confirmation request + response in the JSONL archive.
+
 ## Dev workflow
 
 `make dev` watches the bundled widgets directory for `.json` / `.js`
@@ -130,21 +218,23 @@ reload the browser — the cache-busting query param
 Admin-tier widgets under `data/{agent_id}/widgets/` are not auto-watched
 — edit or add one and restart `make dev` manually.
 
-## Out-of-scope for Phase 1
+## Out-of-scope
 
-- Input widgets (pause-the-turn + user-submits widgets) — tracked in
-  #256 Phase 2.
 - Canvas panel (persistent sidebar surface with widgets that update
   across turns) — tracked in #256 Phase 3.
-- Additional widget types: `multiple_choice`, `code_block`,
-  `markdown_document` — later phases of #256.
+- Additional widget types: `code_block`, `markdown_document` — later
+  phases of #256.
+- Collapsing `EndTurnConfirm` into a widget with a Mattermost-buttons
+  adapter — filed as a follow-up issue.
 - Agent-authored widget JS (workspace tier + iframe sandbox) — #358.
 - Hot-reload of widget catalog without server restart — future.
 
 ## Related files
 
 - `src/decafclaw/widgets.py` — registry scan + validation
-- `src/decafclaw/media.py` — `WidgetRequest` + `ToolResult.widget`
-- `src/decafclaw/web/static/widgets/` — bundled widgets
+- `src/decafclaw/media.py` — `WidgetRequest`, `WidgetInputPause`, `ToolResult.widget`
+- `src/decafclaw/widget_input.py` — input-widget handler + callback map
+- `src/decafclaw/tools/core.py` — `ask_user` tool
+- `src/decafclaw/web/static/widgets/` — bundled widgets (data_table, multiple_choice)
 - `src/decafclaw/web/static/components/widgets/widget-host.js` — frontend host
 - `src/decafclaw/web/static/lib/widget-catalog.js` — catalog client

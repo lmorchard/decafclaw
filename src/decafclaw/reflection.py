@@ -131,7 +131,13 @@ def _summarize_tool_result(content: str, max_len: int) -> str:
 
 
 def _extract_tool_lines(messages: list, max_result_len: int) -> list[str]:
-    """Extract tool call/result lines from a slice of history messages."""
+    """Extract tool call/result lines from a slice of history messages.
+
+    Also surfaces user replies that came in via input widgets
+    (``source: "widget_response"``) — these sit between a tool result
+    and the next assistant turn and are essential context for the
+    judge: without them, the judge thinks the user never answered.
+    """
     tool_lines: list[str] = []
     for msg in messages:
         if msg.get("role") == "assistant" and msg.get("tool_calls"):
@@ -141,6 +147,9 @@ def _extract_tool_lines(messages: list, max_result_len: int) -> list[str]:
             content = msg.get("content", "")
             content = _summarize_tool_result(content, max_result_len)
             tool_lines.append(f"Result: {content}")
+        if msg.get("role") == "user" and msg.get("source") == "widget_response":
+            content = msg.get("content", "")
+            tool_lines.append(f"User responded to widget: {content}")
     return tool_lines
 
 
@@ -171,10 +180,12 @@ def build_prior_turn_summary(
 
     prior = history[:turn_start_index]
 
-    # Find turn boundaries (indices of real user messages, not reflection critiques)
+    # Find turn boundaries (indices of real user messages, not reflection
+    # critiques and not in-flight synthetic widget responses).
     turn_starts = [
         i for i, msg in enumerate(prior)
         if msg.get("role") == "user"
+        and msg.get("source") != "widget_response"
         and not str(msg.get("content", "")).startswith("[reflection]")
     ]
     if not turn_starts:
