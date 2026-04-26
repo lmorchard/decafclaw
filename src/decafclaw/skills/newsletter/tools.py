@@ -284,16 +284,20 @@ async def newsletter_publish(
     markdown: str,
     subject_hint: str | None = None,
     has_content: bool = True,
+    force_delivery: bool = False,
 ) -> ToolResult:
     """Publish the composed newsletter.
 
-    If invoked interactively (`ctx.task_mode != "scheduled"`), returns the markdown
-    verbatim as the tool result — no archive, no delivery, no state change.
+    If invoked interactively (``ctx.task_mode != "scheduled"``) and
+    ``force_delivery`` is False, returns the markdown verbatim — no
+    archive, no delivery, no state change.
 
-    If invoked under a scheduled run, archives locally, delivers to all enabled
-    targets, and advances `last_run.json`. (Delivery targets added in Tasks 6 & 7.)
+    Under a scheduled run *or* when ``force_delivery`` is True, archives
+    locally, delivers to all enabled targets, and advances
+    ``last_run.json``. ``force_delivery`` exists for smoke-testing the
+    delivery path from ``!newsletter send`` without waiting for cron.
     """
-    if ctx.task_mode != "scheduled":
+    if ctx.task_mode != "scheduled" and not force_delivery:
         return ToolResult(text=markdown)
 
     # Scheduled branch
@@ -484,7 +488,9 @@ TOOL_DEFINITIONS = [
                 "Publish the composed newsletter. Under a scheduled run, archives "
                 "locally, dispatches to configured delivery targets (email, vault page), "
                 "and advances last_run.json. Under interactive invocation "
-                "(`!newsletter`), returns the markdown as-is with no side effects. "
+                "(`!newsletter`), returns the markdown as-is with no side effects — "
+                "unless `force_delivery` is True, which smoke-tests the full "
+                "archive + delivery path on demand (used by `!newsletter send`). "
                 "Call this as the final step."
             ),
             "parameters": {
@@ -507,6 +513,15 @@ TOOL_DEFINITIONS = [
                             "True if the window had real activity to narrate. "
                             "False to record a \"nothing to report\" stub and skip "
                             "delivery. Defaults to True."
+                        ),
+                    },
+                    "force_delivery": {
+                        "type": "boolean",
+                        "description": (
+                            "Set True only when the user explicitly asked to send "
+                            "(`!newsletter send`). Bypasses the interactive "
+                            "short-circuit so archive + email/vault delivery run "
+                            "even outside a scheduled task. Defaults to False."
                         ),
                     },
                 },
