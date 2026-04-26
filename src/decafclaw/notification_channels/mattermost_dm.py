@@ -18,17 +18,9 @@ from typing import Any, Awaitable, Callable
 
 from decafclaw.notifications import NotificationRecord
 
+from . import PRIORITY_GLYPH, meets_priority
+
 log = logging.getLogger(__name__)
-
-
-_PRIORITY_ORDER = {"low": 0, "normal": 1, "high": 2}
-_PRIORITY_GLYPH = {"low": "·", "normal": "🔔", "high": "⚠️"}
-
-
-def _meets_priority(record_priority: str, min_priority: str) -> bool:
-    """True when ``record_priority`` is at or above ``min_priority``."""
-    return (_PRIORITY_ORDER.get(record_priority, 1)
-            >= _PRIORITY_ORDER.get(min_priority, 1))
 
 
 def _format_dm(record: NotificationRecord, base_url: str) -> str:
@@ -38,7 +30,7 @@ def _format_dm(record: NotificationRecord, base_url: str) -> str:
     lines, and an optional link if ``base_url`` is configured and the
     record carries a ``conv_id`` or explicit ``link``.
     """
-    glyph = _PRIORITY_GLYPH.get(record.priority, "🔔")
+    glyph = PRIORITY_GLYPH.get(record.priority, "🔔")
     parts = [f"{glyph} **{record.title}**"]
     if record.body:
         parts.append(record.body)
@@ -104,7 +96,7 @@ def make_mattermost_dm_adapter(
         if not cfg.enabled or not recipient:
             return
         record = NotificationRecord.from_dict(event["record"])
-        if not _meets_priority(record.priority, cfg.min_priority):
+        if not meets_priority(record.priority, cfg.min_priority):
             return
         base_url = config.http.base_url
         # Fire-and-forget — don't make notify() wait on Mattermost I/O.

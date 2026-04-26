@@ -124,8 +124,9 @@ def _resolve(
             mc = config.model_configs[config.default_model]
             provider = get_provider(mc.provider)
             return provider, mc.model, mc.timeout
-        except KeyError:
-            pass
+        except KeyError as exc:
+            log.debug("default model %r not in provider registry: %s; falling through",
+                      config.default_model, exc)
 
     # Fall back to "default" provider in registry
     try:

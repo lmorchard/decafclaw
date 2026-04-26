@@ -36,7 +36,7 @@ async def _run_child_turn(parent_ctx, task, model: str = "",
 
     # Build child system prompt: base + activated skill bodies
     activated = parent_ctx.skills.activated
-    skill_map = {s.name: s for s in getattr(config, "discovered_skills", [])}
+    skill_map = {s.name: s for s in config.discovered_skills}
     prompt_parts = [DEFAULT_CHILD_SYSTEM_PROMPT]
     for name in sorted(activated):
         skill = skill_map.get(name)
@@ -53,18 +53,18 @@ async def _run_child_turn(parent_ctx, task, model: str = "",
     # Children don't discover or activate skills — they inherit parent's
     child_config.discovered_skills = []
 
-    parent_conv = getattr(parent_ctx, "conv_id", "") or getattr(parent_ctx, "channel_id", "")
+    parent_conv = parent_ctx.conv_id or parent_ctx.channel_id
     # Per-call unique conv_id; short random suffix to avoid collisions.
     child_conv_id = f"{parent_conv}--child-{secrets.token_hex(4)}"
-    parent_event_id = getattr(parent_ctx, "event_context_id", "") or parent_ctx.context_id
+    parent_event_id = parent_ctx.event_context_id or parent_ctx.context_id
 
     def setup(child_ctx):
         # Swap in the child-specific config (smaller iteration budget + child
         # system prompt). Context was already built with parent's config by
         # Context.for_task, so we overwrite here.
         child_ctx.config = child_config
-        child_ctx.cancelled = getattr(parent_ctx, "cancelled", None)
-        child_ctx.request_confirmation = getattr(parent_ctx, "request_confirmation", None)
+        child_ctx.cancelled = parent_ctx.cancelled
+        child_ctx.request_confirmation = parent_ctx.request_confirmation
         # Route child events to the parent's UI subscriber so confirmations
         # and tool progress are visible in the parent conversation.
         child_ctx.event_context_id = parent_event_id

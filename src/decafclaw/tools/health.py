@@ -392,7 +392,7 @@ async def tool_health_status(ctx) -> str:
     try:
         sections.extend(_process_section())
         # Add model info (per-conversation state)
-        active_model = getattr(ctx, "active_model", "")
+        active_model = ctx.active_model
         if active_model:
             sections.append(f"- **Active model:** {active_model}")
         elif ctx.config.default_model:

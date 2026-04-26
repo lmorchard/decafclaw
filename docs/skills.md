@@ -264,7 +264,7 @@ Tools: `tabstack_extract_markdown`, `tabstack_extract_json`, `tabstack_generate`
 
 Delegates coding tasks to [Claude Code](https://claude.com/claude-code) as a subagent. The agent can start sessions, send coding tasks, and get results back — all within Mattermost conversations. Requires `ANTHROPIC_API_KEY`.
 
-Tools: `claude_code_start`, `claude_code_send`, `claude_code_stop`, `claude_code_sessions`
+Tools: `claude_code_start`, `claude_code_send`, `claude_code_exec`, `claude_code_push_file`, `claude_code_pull_file`, `claude_code_stop`, `claude_code_sessions`
 
 Features:
 - Persistent sessions via SDK `resume` (one per working directory, 30min idle expiration)

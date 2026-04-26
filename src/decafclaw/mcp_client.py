@@ -576,8 +576,8 @@ class MCPRegistry:
             if state._exit_stack:
                 try:
                     await state._exit_stack.__aexit__(None, None, None)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    log.debug("MCP server %r exit-stack cleanup failed: %s", name, exc)
                 state._exit_stack = None
 
     async def _connect_stdio(self, exit_stack, server_config, message_handler=None):

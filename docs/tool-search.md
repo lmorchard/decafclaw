@@ -45,7 +45,7 @@ Use `CRITICAL_TOOLS` to force-promote additional tools (extends, does not replac
 
 **Keyword search**: case-insensitive substring match on tool name and description.
 
-**Exact selection**: `select:vault_read,vault_show` fetches those specific tools.
+**Exact selection**: `select:vault_read,vault_show_sections` fetches those specific tools.
 
 Returns full JSON schema definitions. Tools become callable on the next LLM iteration.
 

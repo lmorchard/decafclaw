@@ -6,7 +6,7 @@ DecafClaw can periodically "dream" — reviewing recent journal entries and conv
 
 | Command | Schedule | Description |
 |---------|----------|-------------|
-| `!dream` / `/dream` | Hourly (`0 * * * *`) | Review recent journal/conversations, update vault pages |
+| `!dream` / `/dream` | Daily 3am (`0 3 * * *`) | Review recent journal/conversations, update vault pages |
 | `!garden` / `/garden` | Weekly (Sunday 3am: `0 3 * * 0`) | Structural vault maintenance: merge, link, split, tidy |
 
 Both commands can be configured with a specific model for quality page writing. They can be triggered manually or run automatically via [scheduled tasks](schedules.md).

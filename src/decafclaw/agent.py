@@ -329,7 +329,7 @@ async def _handle_widget_input_pause(ctx, signal: WidgetInputPause
         pending_callbacks,
     )
 
-    request_confirmation = getattr(ctx, "request_confirmation", None)
+    request_confirmation = ctx.request_confirmation
     if request_confirmation is None:
         log.warning(
             "WidgetInputPause received but ctx has no request_confirmation "
@@ -349,7 +349,7 @@ async def _handle_widget_input_pause(ctx, signal: WidgetInputPause
     # click while the widget is pending unblocks the loop. The
     # confirmation infra's await on confirmation_event doesn't observe
     # cancel_event natively.
-    cancel_event = getattr(ctx, "cancelled", None)
+    cancel_event = ctx.cancelled
     confirm_task = asyncio.create_task(request_confirmation(request))
     response = None
     cancelled_during_pause = False
@@ -379,8 +379,8 @@ async def _handle_widget_input_pause(ctx, signal: WidgetInputPause
                 confirm_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError, Exception):
                     await confirm_task
-                manager = getattr(ctx, "manager", None)
-                conv_id = getattr(ctx, "conv_id", None)
+                manager = ctx.manager
+                conv_id = ctx.conv_id
                 if manager and conv_id:
                     try:
                         await manager.cancel_pending_confirmation(conv_id)
@@ -494,7 +494,7 @@ def _collect_all_tool_defs(ctx) -> list:
     _cached = _skill_def_cache.get(config_id)
     if _cached is None:
         _cached = []
-        for skill_info in getattr(ctx.config, "discovered_skills", []):
+        for skill_info in ctx.config.discovered_skills:
             if skill_info.has_native_tools:
                 try:
                     from .tools.skill_tools import _load_native_tools
@@ -583,7 +583,7 @@ async def _call_llm_with_events(ctx, config, messages, tools,
     iteration = ctx._current_iteration
     await ctx.publish("llm_start", iteration=iteration)
     from .config import resolve_streaming
-    if resolve_streaming(config, getattr(ctx, "active_model", "")):
+    if resolve_streaming(config, ctx.active_model):
         from .llm import call_llm_streaming
         on_chunk = ctx.on_stream_chunk
         cancel_event = ctx.cancelled
@@ -951,7 +951,7 @@ async def _setup_turn_state(ctx, config, history) -> dict[str, str]:
     # Auto-activate always-loaded skills (bundled only — trust boundary)
     from .skills import _BUNDLED_SKILLS_DIR
     bundled_dir = _BUNDLED_SKILLS_DIR.resolve()
-    discovered = getattr(config, "discovered_skills", [])
+    discovered = config.discovered_skills
     for skill_info in discovered:
         if not skill_info.always_loaded or skill_info.name in ctx.skills.activated:
             continue
@@ -1371,8 +1371,8 @@ async def run_agent_turn(ctx, user_message: str, history: list,
                 from .context_composer import write_context_sidecar
                 diagnostics = composer.build_diagnostics(config, composed)
                 write_context_sidecar(config, conv_id, diagnostics)
-            except Exception:
-                pass
+            except Exception as exc:
+                log.debug("context sidecar write failed for %s: %s", conv_id, exc)
 
         # Persist activated skills and skill_data after every turn
         if conv_id:

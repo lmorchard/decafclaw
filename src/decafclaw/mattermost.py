@@ -114,8 +114,8 @@ class MattermostClient:
             await self._http.post("/users/me/typing", json={
                 "channel_id": channel_id,
             })
-        except Exception:
-            pass  # typing indicators are best-effort
+        except Exception as exc:
+            log.debug("typing indicator failed (best-effort): %s", exc)
 
     async def listen(self, on_message, shutdown_event=None):
         """Listen for posted events via WebSocket. Calls on_message(post, channel_type)
@@ -613,8 +613,8 @@ class MattermostClient:
                             compaction_post_id,
                             f"\U0001f4e6 Conversation compacted ({details})",
                         )
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        log.debug("compaction post edit failed: %s", exc)
                     compaction_post_id = None
 
             elif event_type == "message_complete" and event.get("final"):
@@ -769,8 +769,8 @@ class MattermostClient:
                 resp = await self._http.get(f"/posts/{post_id}")
                 original_text = resp.json().get("message", "") if resp.status_code == 200 else ""
                 await self.edit_message(post_id, f"{original_text}\n\n**Result:** {label}")
-            except Exception:
-                pass
+            except Exception as exc:
+                log.debug("confirmation result edit failed for post %s: %s", post_id, exc)
 
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
@@ -823,8 +823,8 @@ class MattermostClient:
                             log.info(f"Agent turn cancelled by {user_id} via reaction")
                             cancel_event.set()
                             return
-            except Exception:
-                pass
+            except Exception as exc:
+                log.debug("reaction poll failed for post %s: %s", post_id, exc)
             await asyncio.sleep(poll_interval)
 
     async def close(self):

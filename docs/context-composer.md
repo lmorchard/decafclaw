@@ -165,7 +165,7 @@ All settings live under the `vault_retrieval` section in `config.json`:
 | `max_tokens` | int | `500` | Token budget for injected context |
 | `show_in_ui` | bool | `true` | Show retrieval indicator in chat UI |
 
-Environment variable prefix: `VAULT_RETRIEVAL_` (e.g., `VAULT_RETRIEVAL_ENABLED=false`).
+Environment variable prefix: `MEMORY_CONTEXT_` (e.g., `MEMORY_CONTEXT_ENABLED=false`). The config section was renamed from `memory_context` to `vault_retrieval`, but the env-var prefix was left unchanged for backward compatibility.
 
 ### Requirements
 

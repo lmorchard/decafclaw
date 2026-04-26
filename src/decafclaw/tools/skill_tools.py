@@ -96,7 +96,7 @@ async def restore_skills(ctx) -> None:
     skill_names = set(ctx.skills.activated)
     if not skill_names:
         return
-    discovered = getattr(ctx.config, "discovered_skills", [])
+    discovered = ctx.config.discovered_skills
     skill_map = {s.name: s for s in discovered}
     existing_tools = set(ctx.tools.extra.keys())
     for name in skill_names:
@@ -129,7 +129,7 @@ async def tool_activate_skill(ctx, name: str) -> str | ToolResult:
     log.info(f"[tool:activate_skill] name={name}")
 
     # Find the skill in discovered skills
-    discovered = getattr(ctx.config, "discovered_skills", [])
+    discovered = ctx.config.discovered_skills
     skill_info = None
     for s in discovered:
         if s.name == name:
@@ -202,16 +202,11 @@ async def activate_skill_internal(ctx, skill_info) -> str | ToolResult:
             result_parts.append(
                 f"\n\nThe following tools are now available: {', '.join(tool_names)}"
             )
-            shutdown_fn = getattr(module, "shutdown", None)
-            if shutdown_fn:
-                if not hasattr(ctx, "_skill_shutdown_hooks"):
-                    ctx._skill_shutdown_hooks = {}
-                ctx._skill_shutdown_hooks[name] = shutdown_fn
             log.info(f"Activated native skill '{name}' with tools: {tool_names}")
 
             # Cache tool names for always-loaded skills so tool_registry
             # can exempt them from deferral
-            if getattr(skill_info, "always_loaded", False):
+            if skill_info.always_loaded:
                 ctx.config.always_loaded_skill_tools = (
                     ctx.config.always_loaded_skill_tools | set(tool_names)
                 )

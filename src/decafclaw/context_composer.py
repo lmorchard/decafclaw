@@ -804,7 +804,7 @@ class ContextComposer:
         if not input_tokens:
             return None, None
 
-        discovered = getattr(config, "discovered_skills", []) or []
+        discovered = config.discovered_skills or []
         candidates = [
             s for s in discovered
             if s.name and s.name not in ctx.skills.activated

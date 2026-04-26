@@ -75,6 +75,8 @@ The vault skill is **always loaded** — its tools are available in every conver
 |------|-------------|
 | `vault_read(page)` | Read a page by name or path. Searches subdirectories. |
 | `vault_write(page, content)` | Create or overwrite a page. Indexes in semantic search. |
+| `vault_delete(page)` | Delete an agent-owned page. |
+| `vault_rename(from_page, to_page)` | Rename/move an agent-owned page (preserves links). |
 | `vault_journal_append(tags, content)` | Append timestamped entry to today's journal file. |
 | `vault_search(query, source_type?, days?, folder?)` | Semantic + substring search across the vault. |
 | `vault_list(folder?, pattern?)` | List pages with last-modified dates. |

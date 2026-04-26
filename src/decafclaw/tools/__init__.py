@@ -258,8 +258,8 @@ async def execute_tool(ctx, name: str, arguments: dict) -> ToolResult:
                 reg = get_registry()
                 if reg:
                     candidates.update(reg.get_tools().keys())
-            except Exception:
-                pass
+            except Exception as exc:
+                log.debug("MCP registry probe failed while suggesting tools: %s", exc)
             suggestions = _suggest_tool_names(name, candidates)
             hint = _format_suggestions(suggestions)
             return ToolResult(

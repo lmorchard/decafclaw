@@ -14,6 +14,7 @@ delivery.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import mimetypes
 from email.message import EmailMessage
@@ -83,8 +84,7 @@ async def send_mail(
         if ctype is None:
             ctype = "application/octet-stream"
         maintype, subtype = ctype.split("/", 1)
-        with path.open("rb") as f:
-            data = f.read()
+        data = await asyncio.to_thread(path.read_bytes)
         msg.add_attachment(
             data, maintype=maintype, subtype=subtype, filename=path.name,
         )

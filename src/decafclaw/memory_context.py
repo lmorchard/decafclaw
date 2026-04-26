@@ -61,7 +61,7 @@ async def retrieve_memory_context(config, user_message: str) -> list[dict]:
         results = _enrich_results(config, results)
 
         # Expand via wiki-link graph traversal (one hop)
-        relevance = getattr(config, "relevance", None)
+        relevance = config.relevance
         if relevance and relevance.graph_expansion_enabled:
             results = _expand_graph_links(
                 config, results,

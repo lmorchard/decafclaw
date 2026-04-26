@@ -18,6 +18,19 @@ from typing import Any
 log = logging.getLogger(__name__)
 
 
+# Priority comparison shared by every channel adapter. Each channel filters
+# the bus on its own ``min_priority`` threshold, so the ordering and glyph
+# tables live here to keep the channel modules in sync.
+PRIORITY_ORDER = {"low": 0, "normal": 1, "high": 2}
+PRIORITY_GLYPH = {"low": "·", "normal": "🔔", "high": "⚠️"}
+
+
+def meets_priority(record_priority: str, min_priority: str) -> bool:
+    """True when ``record_priority`` is at or above ``min_priority``."""
+    return (PRIORITY_ORDER.get(record_priority, 1)
+            >= PRIORITY_ORDER.get(min_priority, 1))
+
+
 def init_notification_channels(
     config,
     event_bus,

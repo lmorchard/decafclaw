@@ -22,7 +22,7 @@ def _print_banner(config) -> None:
     print("DecafClaw interactive mode. Type 'quit' to exit.")
     print(f"Model: {config.default_model or config.llm.model}")
     print(f"Tools: {', '.join(t['function']['name'] for t in TOOL_DEFINITIONS)}")
-    skills = getattr(config, "discovered_skills", [])
+    skills = config.discovered_skills
     if skills:
         print(f"Skills: {', '.join(s.name for s in skills)} (activate to use)")
     mcp_registry = get_registry()

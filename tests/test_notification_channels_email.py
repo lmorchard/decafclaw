@@ -9,10 +9,10 @@ import pytest
 
 from decafclaw import notifications as notifs
 from decafclaw.events import EventBus
+from decafclaw.notification_channels import meets_priority as _meets_priority
 from decafclaw.notification_channels.email import (
     _format_body,
     _format_subject,
-    _meets_priority,
     make_email_adapter,
 )
 

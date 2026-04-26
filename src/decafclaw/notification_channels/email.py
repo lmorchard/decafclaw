@@ -23,16 +23,9 @@ from typing import Any, Awaitable, Callable
 
 from decafclaw.notifications import NotificationRecord
 
+from . import PRIORITY_GLYPH, meets_priority
+
 log = logging.getLogger(__name__)
-
-
-_PRIORITY_ORDER = {"low": 0, "normal": 1, "high": 2}
-_PRIORITY_GLYPH = {"low": "·", "normal": "🔔", "high": "⚠️"}
-
-
-def _meets_priority(record_priority: str, min_priority: str) -> bool:
-    return (_PRIORITY_ORDER.get(record_priority, 1)
-            >= _PRIORITY_ORDER.get(min_priority, 1))
 
 
 def _format_body(record: NotificationRecord, base_url: str) -> str:
@@ -42,7 +35,7 @@ def _format_body(record: NotificationRecord, base_url: str) -> str:
     body + optional link line — but without any markdown escaping
     since email clients render plain text literally.
     """
-    glyph = _PRIORITY_GLYPH.get(record.priority, "🔔")
+    glyph = PRIORITY_GLYPH.get(record.priority, "🔔")
     parts = [f"{glyph} {record.title}"]
     if record.body:
         parts.append(record.body)
@@ -120,7 +113,7 @@ def make_email_adapter(
                 or not (email_cfg.sender_address or "").strip()):
             return
         record = NotificationRecord.from_dict(event["record"])
-        if not _meets_priority(record.priority, channel_cfg.min_priority):
+        if not meets_priority(record.priority, channel_cfg.min_priority):
             return
         base_url = config.http.base_url
         asyncio.create_task(_deliver(record, recipients, base_url))
