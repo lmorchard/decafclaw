@@ -17,7 +17,7 @@ The judge uses a chain-of-thought-before-verdict prompt (G-Eval pattern): it rea
 The judge receives only the current turn's context, not the full conversation history:
 
 - The user's message that started this turn
-- A condensed summary of tool calls and results (each result truncated to 500 chars)
+- A condensed summary of tool calls and results (each result truncated to `reflection.max_tool_result_len`, default 2000 chars)
 - The agent's final response
 
 This keeps the judge context small and focused.

@@ -4,7 +4,7 @@ DecafClaw uses embedding-based semantic search for finding relevant memories and
 
 ## How it works
 
-1. Text is sent to an embedding API (default: `text-embedding-004` via LiteLLM)
+1. Text is sent to an embedding API. Default model: `text-embedding-004`. The endpoint is resolved either through a named provider (`embedding.provider`, routing through `config.providers`) or, when that's empty, via legacy fallback to the `llm` group's URL/key (with `/chat/completions` rewritten to `/embeddings`).
 2. The resulting vector is stored in a SQLite database using [sqlite-vec](https://github.com/asg017/sqlite-vec)
 3. On search, the query is embedded and compared using SIMD-accelerated cosine distance via sqlite-vec's `vec0` virtual table
 4. Top-K most similar results are returned

@@ -91,7 +91,7 @@ class WidgetResponseHandler:
             content = default_inject_message(response.data)
 
         # Write the synthetic user message so a subsequent turn sees it.
-        if ctx is not None and getattr(ctx, "conv_id", None):
+        if ctx is not None and ctx.conv_id:
             from .archive import append_message
             append_message(ctx.config, ctx.conv_id, {
                 "role": "user",

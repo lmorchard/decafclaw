@@ -9,9 +9,9 @@ import pytest
 
 from decafclaw import notifications as notifs
 from decafclaw.events import EventBus
+from decafclaw.notification_channels import meets_priority as _meets_priority
 from decafclaw.notification_channels.mattermost_dm import (
     _format_dm,
-    _meets_priority,
     _resolve_link,
     make_mattermost_dm_adapter,
 )

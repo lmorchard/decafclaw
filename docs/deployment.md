@@ -32,7 +32,7 @@ vim ~/decafclaw/.env
 ```
 
 Required:
-- `LLM_URL`, `LLM_MODEL`, `LLM_API_KEY`
+- LLM connection — either a `providers` + `model_configs` block in `config.json` (preferred, see [installation.md](installation.md) and [providers.md](providers.md)) or the legacy `LLM_URL` / `LLM_MODEL` / `LLM_API_KEY` env vars
 - `MATTERMOST_URL`, `MATTERMOST_TOKEN`, `MATTERMOST_BOT_USERNAME`
 
 Optional:

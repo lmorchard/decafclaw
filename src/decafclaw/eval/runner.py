@@ -186,7 +186,7 @@ async def run_test(config: Config, test_case: dict) -> dict:
     All turns must pass for the test to pass.
     """
     # Populate discovered_skills so dispatch_command can resolve `/foo` triggers.
-    if not getattr(config, "discovered_skills", None):
+    if not config.discovered_skills:
         config.discovered_skills = _discover_skills_fn(config)
 
     bus = EventBus()

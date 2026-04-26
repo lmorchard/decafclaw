@@ -260,7 +260,7 @@ async def run_schedule_task(config, event_bus, manager, task: ScheduleTask) -> d
         ctx.channel_name = channel
         # Pre-activate required skills
         if required_skills:
-            discovered = getattr(config, "discovered_skills", [])
+            discovered = config.discovered_skills
             skill_map = {s.name: s for s in discovered}
             from .tools.skill_tools import activate_skill_internal
             for skill_name in required_skills:

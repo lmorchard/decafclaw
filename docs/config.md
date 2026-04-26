@@ -120,9 +120,11 @@ Semantic search embedding settings. Empty `url`/`api_key` fall back to `llm` gro
 | Field | Type | Default | Env Var | Secret |
 |-------|------|---------|---------|--------|
 | `model` | str | `text-embedding-004` | `EMBEDDING_MODEL` | |
+| `provider` | str | `""` | `EMBEDDING_PROVIDER` | |
 | `url` | str | (from llm) | `EMBEDDING_URL` | |
 | `api_key` | str | (from llm) | `EMBEDDING_API_KEY` | yes |
 | `search_strategy` | str | `substring` | `MEMORY_SEARCH_STRATEGY` | |
+| `dimensions` | int | `768` | `EMBEDDING_DIMENSIONS` | |
 
 ### `reflection`
 

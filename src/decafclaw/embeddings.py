@@ -59,8 +59,11 @@ def _init_schema(conn, config):
     # Migration: add source_type column to very old DBs
     try:
         conn.execute("ALTER TABLE memory_embeddings ADD COLUMN source_type TEXT NOT NULL DEFAULT 'memory'")
-    except sqlite3.OperationalError:
-        pass  # column already exists
+    except sqlite3.OperationalError as exc:
+        # Already-applied migration on every existing DB; only logged for
+        # parity with other except-paths so a genuine schema problem is
+        # observable instead of swallowed.
+        log.debug("embeddings: source_type migration skipped (already applied?): %s", exc)
     dim = config.embedding.dimensions
     conn.execute(f"""
         CREATE VIRTUAL TABLE IF NOT EXISTS embeddings_vec USING vec0(

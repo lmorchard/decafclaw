@@ -9,13 +9,6 @@ markdown artifacts at each stage.
 Any task involving 3+ steps, research, or work spanning multiple turns.
 Not for quick one-off questions.
 
-## Modes
-
-- **Normal:** Pauses at review gates (spec_review, plan_review) for user feedback.
-- **Express:** Auto-advances through all phases, still generating artifacts.
-
-Switch at any time with `project_set_mode`.
-
 ## State machine
 
 ```
@@ -59,13 +52,14 @@ Sub-steps are indented under parents. Steps can be inserted mid-execution.
 | Tool | Description |
 |------|-------------|
 | `project_create` | Create a new project |
+| `project_next_task` | Get the next instruction for the current phase |
+| `project_task_done` | Mark the current phase's work complete and advance |
 | `project_status` | Check current state and progress |
 | `project_list` | List all projects |
-| `project_set_mode` | Switch normal/express mode |
-| `project_advance` | Move to next phase (or backward) |
+| `project_switch` | Switch the active project |
+| `project_advance` | Move backward to an earlier phase (e.g. replan) |
 | `project_update_spec` | Write/update the spec |
 | `project_update_plan` | Write/update the plan |
-| `project_next` | Get the next actionable step |
 | `project_update_step` | Update a step's status |
 | `project_add_steps` | Insert new steps into the plan |
 | `project_note` | Append a timestamped note |
@@ -79,12 +73,11 @@ Sub-steps are indented under parents. Steps can be inserted mid-execution.
 
 ## Execution loop
 
-The agent follows a tight loop during execution:
+The two driver tools are `project_next_task` (asks "what should I do now?") and `project_task_done` (signals "I finished — advance"). The general loop:
 
-1. `project_next` → get next step
-2. `project_update_step(step, "in_progress")` → mark it started
-3. Do the work
-4. `project_update_step(step, "done", note="...")` → mark it done
-5. Repeat
+1. `project_next_task` → tells you what to do this turn
+2. Do the work — for the executing phase, this means picking a step, marking it in_progress with `project_update_step`, completing it, and marking it done
+3. `project_task_done` → advance the phase (or, in `executing`, finalize when all steps are checked off)
+4. Repeat
 
-For parallel work, use `delegate_task` for independent steps.
+For parallel work within a single step, use `delegate_task` for independent sub-tasks.

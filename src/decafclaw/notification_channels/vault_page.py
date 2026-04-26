@@ -28,11 +28,9 @@ from typing import Any, Awaitable, Callable
 
 from decafclaw.notifications import NotificationRecord, _parse_iso
 
+from . import PRIORITY_GLYPH, meets_priority
+
 log = logging.getLogger(__name__)
-
-
-_PRIORITY_ORDER = {"low": 0, "normal": 1, "high": 2}
-_PRIORITY_GLYPH = {"low": "·", "normal": "🔔", "high": "⚠️"}
 
 
 # Per-path locks so concurrent appends to the same daily page serialize.
@@ -42,11 +40,6 @@ _locks: dict[str, asyncio.Lock] = {}
 # Folder paths we've already warned about, so a misconfigured folder
 # doesn't spam the log once per notification.
 _warned_bad_folders: set[str] = set()
-
-
-def _meets_priority(record_priority: str, min_priority: str) -> bool:
-    return (_PRIORITY_ORDER.get(record_priority, 1)
-            >= _PRIORITY_ORDER.get(min_priority, 1))
 
 
 def _get_lock(path: Path) -> asyncio.Lock:
@@ -134,7 +127,7 @@ def _format_entry(record: NotificationRecord, base_url: str) -> str:
     except (ValueError, TypeError):
         time_str = "??:?? UTC"
 
-    glyph = _PRIORITY_GLYPH.get(record.priority, "🔔")
+    glyph = PRIORITY_GLYPH.get(record.priority, "🔔")
     heading = (
         f"## {time_str} · {glyph} [{record.category}] {record.title}"
     )
@@ -203,7 +196,7 @@ def make_vault_page_adapter(
         if not ch.enabled:
             return
         record = NotificationRecord.from_dict(event["record"])
-        if not _meets_priority(record.priority, ch.min_priority):
+        if not meets_priority(record.priority, ch.min_priority):
             return
         # Folder validity (including emptiness) is checked inside
         # `_daily_page_path`, which emits a one-time warning per bad
