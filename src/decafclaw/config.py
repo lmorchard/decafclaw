@@ -19,6 +19,7 @@ from dotenv import load_dotenv
 from .config_types import (
     AgentConfig,
     BackgroundConfig,
+    CleanupConfig,
     CompactionConfig,
     EmailConfig,
     EmbeddingConfig,
@@ -151,6 +152,7 @@ class Config:
     llm: LlmConfig = field(default_factory=LlmConfig)
     mattermost: MattermostConfig = field(default_factory=MattermostConfig)
     compaction: CompactionConfig = field(default_factory=CompactionConfig)
+    cleanup: CleanupConfig = field(default_factory=CleanupConfig)
     embedding: EmbeddingConfig = field(default_factory=EmbeddingConfig)
     heartbeat: HeartbeatConfig = field(default_factory=HeartbeatConfig)
     http: HttpConfig = field(default_factory=HttpConfig)
@@ -365,6 +367,9 @@ def load_config() -> Config:
             "llm_max_tokens": "COMPACTION_LLM_MAX_TOKENS",
         })
 
+    cleanup = load_sub_config(
+        CleanupConfig, file_data.get("cleanup", {}), "CLEANUP")
+
     embedding = load_sub_config(
         EmbeddingConfig, file_data.get("embedding", {}), "EMBEDDING",
         env_aliases={"search_strategy": "MEMORY_SEARCH_STRATEGY"})
@@ -465,6 +470,7 @@ def load_config() -> Config:
         llm=llm,
         mattermost=mattermost,
         compaction=compaction,
+        cleanup=cleanup,
         embedding=embedding,
         heartbeat=heartbeat,
         http=http,

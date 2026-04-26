@@ -61,6 +61,26 @@ class CompactionConfig:
 
 
 @dataclass
+class CleanupConfig:
+    """Tool-result clearing — a lightweight tier that runs before
+    full compaction. Replaces large old tool-message bodies with a
+    short stub so the agent loop doesn't keep paying attention budget
+    on raw tool output it has already synthesized. See
+    docs/context-composer.md and #298.
+    """
+    enabled: bool = True
+    min_turn_age: int = 2  # tool messages from the last N user turns are protected
+    min_size_bytes: int = 1024  # smaller messages aren't worth clearing
+    preserve_tools: list[str] = field(default_factory=lambda: [
+        "activate_skill",
+        "checklist_create",
+        "checklist_step_done",
+        "checklist_abort",
+        "checklist_status",
+    ])
+
+
+@dataclass
 class EmbeddingConfig:
     model: str = "text-embedding-004"
     provider: str = ""  # named provider from config.providers; empty = legacy resolved()
