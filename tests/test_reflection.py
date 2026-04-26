@@ -46,6 +46,61 @@ class TestBuildToolSummary:
         assert "cats" in result
         assert "cat facts document" in result
 
+    def test_includes_widget_response_user_messages(self):
+        """A synthetic user message from a widget submission should
+        surface in the tool summary so the judge knows the user
+        actually answered the question the agent asked."""
+        history = [
+            {"role": "user", "content": "ask me a question"},
+            {"role": "assistant", "content": None, "tool_calls": [
+                {"id": "tc1", "function": {
+                    "name": "ask_user",
+                    "arguments": json.dumps(
+                        {"prompt": "Pick one", "options": ["a", "b"]}),
+                }},
+            ]},
+            {"role": "tool",
+             "content": "[awaiting user response: Pick one]"},
+            {"role": "user", "source": "widget_response",
+             "content": "User selected: a"},
+            {"role": "assistant", "content": "You picked A."},
+        ]
+        result = build_tool_summary(history, 0)
+        assert "ask_user" in result
+        assert "User responded to widget" in result
+        assert "User selected: a" in result
+
+    def test_widget_response_not_treated_as_turn_boundary(self):
+        """build_prior_turn_summary must skip synthetic widget
+        responses when finding turn starts — they're mid-turn, not
+        new turns."""
+        from decafclaw.reflection import build_prior_turn_summary
+        history = [
+            {"role": "user", "content": "first turn"},
+            {"role": "assistant", "content": None, "tool_calls": [
+                {"id": "tc1", "function": {
+                    "name": "ask_user",
+                    "arguments": json.dumps({"prompt": "x", "options": []}),
+                }},
+            ]},
+            {"role": "tool", "content": "[awaiting]"},
+            {"role": "user", "source": "widget_response",
+             "content": "User selected: a"},
+            {"role": "assistant", "content": "ok"},
+            # Current turn starts here:
+            {"role": "user", "content": "second turn"},
+        ]
+        # turn_start_index is the second-turn user (idx 5); prior is
+        # first turn + synthetic. Synthetic must NOT be a turn boundary.
+        result = build_prior_turn_summary(history, 5, max_turns=3)
+        # Should have exactly one prior turn ("first turn"), with
+        # the ask_user call in its tool lines.
+        assert "ask_user" in result
+        # The synthetic response is included as a tool-line entry;
+        # there's no second "User selected" turn-boundary spawning a
+        # second prior turn.
+        assert result.count("Tools used in prior turns") == 1
+
     def test_truncates_long_results(self):
         long_result = "x" * 3000
         history = [

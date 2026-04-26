@@ -512,6 +512,21 @@ class MattermostClient:
                 suggested_pattern = action_data.get("suggested_pattern", "")
                 action_type = event.get("action_type", "")
 
+                # Widget responses are a web-UI-only interaction. Skip
+                # rendering approve/deny buttons in Mattermost — there's
+                # no widget surface here, and the buttons would resolve
+                # the confirmation with no data, producing an unhelpful
+                # "User responded with: {}" inject. The agent's tool
+                # description for ask_user already discourages calls
+                # outside the web UI.
+                if action_type == "widget_response":
+                    log.info(
+                        "Skipping Mattermost render for widget_response "
+                        "confirmation %s — not a Mattermost-supported "
+                        "widget surface",
+                        confirmation_id)
+                    return
+
                 # Create confirmation post with buttons/emoji (no legacy polling)
                 confirm_post_id = await cd.on_confirm_request(
                     action_type, command, suggested_pattern,

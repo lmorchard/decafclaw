@@ -11,6 +11,7 @@ This is where the interesting stuff happens. The loop:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import functools
 import json
 import logging
@@ -27,7 +28,7 @@ from .compaction import compact_history
 from .context_cleanup import clear_old_tool_results
 from .context_composer import ComposerMode, ContextComposer
 from .llm import call_llm
-from .media import EndTurnConfirm, ToolResult, extract_workspace_media
+from .media import EndTurnConfirm, ToolResult, WidgetInputPause, extract_workspace_media
 from .persistence import read_skill_data, read_skills_state, write_skill_data, write_skills_state
 from .tools import TOOL_DEFINITIONS, execute_tool
 from .tools.search_tools import SEARCH_TOOL_DEFINITIONS
@@ -307,6 +308,106 @@ async def _handle_reflection(
 
     # Reflection passed (or errored out — fail-open)
     return final_text, False, reflection_retries, last_reflection
+
+
+async def _handle_widget_input_pause(ctx, signal: WidgetInputPause
+                                     ) -> str | None:
+    """Pause the agent turn on an input widget and resume with the
+    user's answer formatted as a synthetic user-message string.
+
+    Returns the inject-string to append to history. Returns None if
+    the pause infra isn't available, OR if the user cancels the turn
+    while the widget is pending — both cases route the outer loop to
+    end the turn cleanly without injecting a synthetic answer.
+    """
+    from .confirmations import (
+        ConfirmationAction,
+        ConfirmationRequest,
+    )
+    from .widget_input import (
+        default_inject_message,
+        pending_callbacks,
+    )
+
+    request_confirmation = getattr(ctx, "request_confirmation", None)
+    if request_confirmation is None:
+        log.warning(
+            "WidgetInputPause received but ctx has no request_confirmation "
+            "— cannot pause, ending turn gracefully")
+        # Drop the registered callback so it can't leak across turns.
+        pending_callbacks.pop(signal.tool_call_id, None)
+        return None
+
+    request = ConfirmationRequest(
+        action_type=ConfirmationAction.WIDGET_RESPONSE,
+        action_data=signal.widget_payload,
+        tool_call_id=signal.tool_call_id,
+        timeout=None,  # widget responses have no deadline
+    )
+
+    # Race the confirmation await against ctx.cancelled so a "stop turn"
+    # click while the widget is pending unblocks the loop. The
+    # confirmation infra's await on confirmation_event doesn't observe
+    # cancel_event natively.
+    cancel_event = getattr(ctx, "cancelled", None)
+    confirm_task = asyncio.create_task(request_confirmation(request))
+    response = None
+    cancelled_during_pause = False
+    try:
+        if cancel_event is not None:
+            cancel_task = asyncio.create_task(cancel_event.wait())
+            done, _pending = await asyncio.wait(
+                [confirm_task, cancel_task],
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            cancel_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await cancel_task
+            if confirm_task in done:
+                response = confirm_task.result()
+            else:
+                # Cancel won. Tear down the pause cleanly: cancel the
+                # confirm await and clear the pending confirmation in
+                # the manager so the archive doesn't keep showing a
+                # stale pending widget after the cancelled turn. We
+                # use cancel_pending_confirmation rather than
+                # respond_to_confirmation because the latter would
+                # dispatch the recovery handler and inject a synthetic
+                # "user responded with: ..." message — but the user
+                # didn't respond, they cancelled.
+                cancelled_during_pause = True
+                confirm_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await confirm_task
+                manager = getattr(ctx, "manager", None)
+                conv_id = getattr(ctx, "conv_id", None)
+                if manager and conv_id:
+                    try:
+                        await manager.cancel_pending_confirmation(conv_id)
+                    except Exception as exc:
+                        log.debug(
+                            "Failed to clear pending widget confirmation "
+                            "on cancel for %s: %s", conv_id, exc)
+        else:
+            response = await confirm_task
+    finally:
+        # Always remove the callback entry so a crashed await doesn't
+        # leak it across later turns. pop() with a default is a no-op
+        # if the entry was already consumed.
+        callback = pending_callbacks.pop(signal.tool_call_id, None)
+
+    if cancelled_during_pause or response is None:
+        return None
+
+    if callback is not None:
+        try:
+            return callback(response.data)
+        except Exception as exc:
+            log.warning(
+                "widget on_response callback raised for %s: %s",
+                signal.tool_call_id, exc)
+            return default_inject_message(response.data)
+    return default_inject_message(response.data)
 
 
 async def _handle_end_turn_confirm(ctx, action: EndTurnConfirm) -> bool:
@@ -614,7 +715,7 @@ async def _execute_single_tool(call_ctx, tc, semaphore):
             log.error(f"Tool call {fn_name} failed: {e}", exc_info=True)
             result = ToolResult(text=f"[error executing {fn_name}: {e}]")
         finally:
-            widget_payload = _resolve_widget(fn_name, result)
+            widget_payload = _resolve_widget(fn_name, result, tool_call_id)
             publish_kwargs = {
                 "tool": fn_name,
                 "result_text": result.text,
@@ -648,12 +749,21 @@ async def _execute_single_tool(call_ctx, tc, semaphore):
     return tool_msg, result.end_turn
 
 
-def _resolve_widget(fn_name: str, result: ToolResult) -> dict | None:
+def _resolve_widget(fn_name: str, result: ToolResult,
+                    tool_call_id: str = "") -> dict | None:
     """Validate result.widget against the registry and return a
     serializable payload, or None if no widget / validation fails.
 
-    Side effect: on validation failure, clears result.widget so the
-    stripped widget doesn't accidentally surface elsewhere.
+    Phase-2 side effects for input widgets (``accepts_input=True``):
+
+    - If ``end_turn`` is falsy, strip the widget (input widgets require
+      the turn to pause).
+    - If ``end_turn`` is an ``EndTurnConfirm``, drop the confirm (widget
+      pause wins) and set ``end_turn=True``.
+    - Register the ``on_response`` callback in
+      ``widget_input.pending_callbacks`` keyed by ``tool_call_id``.
+    - Promote ``result.end_turn`` to a ``WidgetInputPause`` sentinel
+      that the agent loop detects and routes to the pause path.
     """
     widget = getattr(result, "widget", None)
     if widget is None:
@@ -688,11 +798,39 @@ def _resolve_widget(fn_name: str, result: ToolResult) -> dict | None:
             fn_name, widget.widget_type, target, desc.modes)
         result.widget = None
         return None
-    return {
+    payload = {
         "widget_type": widget.widget_type,
         "target": target,
         "data": widget.data,
     }
+
+    # Phase 2: input-widget enforcement + pause-signal promotion.
+    if desc is not None and desc.accepts_input:
+        # Rule: input widget requires end_turn truthy (True or
+        # EndTurnConfirm; widget-pause wins over EndTurnConfirm).
+        if not result.end_turn:
+            log.warning(
+                "tool %s emitted input widget %r without end_turn=True "
+                "— stripping (input widgets must pause the turn)",
+                fn_name, widget.widget_type)
+            result.widget = None
+            return None
+        if isinstance(result.end_turn, EndTurnConfirm):
+            log.warning(
+                "tool %s emitted input widget %r alongside EndTurnConfirm "
+                "— dropping EndTurnConfirm (widget-pause takes priority)",
+                fn_name, widget.widget_type)
+        # Register the callback for live-path pickup.
+        if widget.on_response is not None and tool_call_id:
+            from .widget_input import pending_callbacks
+            pending_callbacks[tool_call_id] = widget.on_response
+        # Promote end_turn to the pause sentinel.
+        result.end_turn = WidgetInputPause(
+            tool_call_id=tool_call_id,
+            widget_payload=payload,
+        )
+
+    return payload
 
 
 async def _execute_tool_calls(ctx, tool_calls, history, messages):
@@ -744,9 +882,10 @@ async def _execute_tool_calls(ctx, tool_calls, history, messages):
         return cancelled, False
 
     # Collect results in original call order (gather preserves order).
-    # end_turn_signal: False (no signal), True (simple end), or EndTurnConfirm.
-    # EndTurnConfirm takes priority over True if both appear in a batch.
-    end_turn_signal: bool | EndTurnConfirm = False
+    # Priority among end-turn signals in a single batch:
+    #   WidgetInputPause > EndTurnConfirm > True
+    # Only one pause/end signal wins per batch.
+    end_turn_signal: bool | EndTurnConfirm | WidgetInputPause = False
     for i, result in enumerate(results):
         if isinstance(result, BaseException):
             # Task was cancelled or failed — gather with return_exceptions.
@@ -765,9 +904,13 @@ async def _execute_tool_calls(ctx, tool_calls, history, messages):
             _archive(ctx, tool_msg)
         else:
             tool_msg, end_turn = result
-            if isinstance(end_turn, EndTurnConfirm):
-                end_turn_signal = end_turn  # EndTurnConfirm takes priority
-            elif end_turn and not isinstance(end_turn_signal, EndTurnConfirm):
+            if isinstance(end_turn, WidgetInputPause):
+                end_turn_signal = end_turn  # Widget pause wins over all
+            elif isinstance(end_turn, EndTurnConfirm):
+                if not isinstance(end_turn_signal, WidgetInputPause):
+                    end_turn_signal = end_turn
+            elif end_turn and not isinstance(
+                    end_turn_signal, (EndTurnConfirm, WidgetInputPause)):
                 end_turn_signal = True
             history.append(tool_msg)
             messages.append(tool_msg)
@@ -1049,6 +1192,30 @@ async def run_agent_turn(ctx, user_message: str, history: list,
                 )
                 if cancelled:
                     return cancelled
+
+                if isinstance(end_turn_signal, WidgetInputPause):
+                    # Input-widget pause: route through the confirmation
+                    # infra, await user submit, call the tool's
+                    # on_response callback (if any), inject the returned
+                    # string as a synthetic user message, and continue
+                    # the loop for the next LLM iteration.
+                    inject_content = await _handle_widget_input_pause(
+                        ctx, end_turn_signal)
+                    if inject_content is None:
+                        # request_confirmation not available (unusual —
+                        # no manager wired); strip the pause and end
+                        # the turn gracefully.
+                        end_turn_signal = True
+                    else:
+                        synthetic = {
+                            "role": "user",
+                            "source": "widget_response",
+                            "content": inject_content,
+                        }
+                        history.append(synthetic)
+                        messages.append(synthetic)
+                        _archive(ctx, synthetic)
+                        continue  # next LLM iteration sees the answer
 
                 if isinstance(end_turn_signal, EndTurnConfirm):
                     # Confirmation gate: present the artifact, show buttons, wait.

@@ -67,6 +67,24 @@ export class MessageStore {
     }
   }
 
+  /** Mark a tool message's widget as submitted with the given response
+   * data. Used by live confirmation_response events and multi-tab sync:
+   * the widget flips to its post-submit state once the backend
+   * resolves the pending confirmation.
+   * @param {string} toolCallId
+   * @param {object} response
+   */
+  markToolWidgetSubmitted(toolCallId, response) {
+    if (!toolCallId) return;
+    const msg = this.#currentMessages.find(
+      m => m.role === 'tool' && m.tool_call_id === toolCallId
+    );
+    if (msg) {
+      msg.submitted = true;
+      msg.response = response;
+    }
+  }
+
   /** Replace a tool_call message by tool_call_id with a completed tool result.
    * Carries over statusHistory from the in-progress message so the UI can still show it.
    */
@@ -244,21 +262,29 @@ export class MessageStore {
           let resultShortText = '';
           /** @type {object|null} */
           let resultWidget = null;
+          let resultSubmitted = false;
+          /** @type {object|null} */
+          let resultResponse = null;
           for (let j = i + 1; j < messages.length; j++) {
             if (messages[j].role === 'tool' && messages[j].tool_call_id === tcId) {
               resultContent = messages[j].content || '';
               resultShortText = messages[j].display_short_text || '';
               resultWidget = messages[j].widget || null;
+              resultSubmitted = !!messages[j].submitted;
+              resultResponse = messages[j].response || null;
               messages[j]._merged = true; // mark as consumed
               break;
             }
           }
           merged.push({
             role: 'tool',
+            tool_call_id: tcId,
             tool: toolName,
             content: resultContent,
             display_short_text: resultShortText,
             widget: resultWidget,
+            submitted: resultSubmitted,
+            response: resultResponse,
             timestamp: msg.timestamp,
           });
         }

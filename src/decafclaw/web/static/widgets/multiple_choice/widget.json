@@ -1,0 +1,30 @@
+{
+  "name": "multiple_choice",
+  "description": "Ask the user to choose one (or several) option(s) from a list. Radio buttons for single; checkboxes for multi. Pauses the agent turn until the user submits.",
+  "modes": ["inline"],
+  "accepts_input": true,
+  "data_schema": {
+    "type": "object",
+    "required": ["prompt", "options"],
+    "properties": {
+      "prompt": {
+        "type": "string",
+        "minLength": 1
+      },
+      "options": {
+        "type": "array",
+        "minItems": 1,
+        "items": {
+          "type": "object",
+          "required": ["value", "label"],
+          "properties": {
+            "value": { "type": "string" },
+            "label": { "type": "string" },
+            "description": { "type": "string" }
+          }
+        }
+      },
+      "allow_multiple": { "type": "boolean" }
+    }
+  }
+}

@@ -57,7 +57,9 @@ async def run_interactive(ctx):
     _print_banner(config)
 
     # Create conversation manager
+    from .widget_input import register_widget_handler
     manager = ConversationManager(config, ctx.event_bus)
+    register_widget_handler(manager.confirmation_registry)
 
     # Track turn completion
     turn_done = asyncio.Event()

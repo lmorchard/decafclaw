@@ -284,12 +284,16 @@ class ConversationManager:
         *,
         always: bool = False,
         add_pattern: bool = False,
+        data: dict | None = None,
     ) -> None:
         """Resolve a pending confirmation request.
 
         Persists the response to the archive and wakes the suspended
         agent loop (if still running) or dispatches recovery (if the
         loop died).
+
+        ``data`` carries free-form response payload (widget selections,
+        etc.).
         """
         state = self._conversations.get(conv_id)
         if not state or not state.pending_confirmation:
@@ -306,6 +310,7 @@ class ConversationManager:
             approved=approved,
             always=always,
             add_pattern=add_pattern,
+            data=data or {},
         )
 
         # Persist to archive
@@ -313,11 +318,14 @@ class ConversationManager:
         append_message(self.config, conv_id, response.to_archive_message())
 
         # Emit to subscribers
-        await self.emit(conv_id, {
+        emit_payload: dict[str, Any] = {
             "type": "confirmation_response",
             "confirmation_id": confirmation_id,
             "approved": approved,
-        })
+        }
+        if response.data:
+            emit_payload["data"] = response.data
+        await self.emit(conv_id, emit_payload)
 
         # Wake the waiting agent loop or dispatch recovery
         state.confirmation_response = response
@@ -329,6 +337,32 @@ class ConversationManager:
                      conv_id)
             result = await self.recover_confirmation(conv_id, response)
             log.info("Recovery result for conv %s: %s", conv_id[:8], result)
+
+    async def cancel_pending_confirmation(self, conv_id: str) -> bool:
+        """Drop a pending confirmation without triggering recovery.
+
+        Used when the caller is itself unwinding (e.g., the agent loop
+        racing the confirmation await against a cancel and the cancel
+        won). Persists a denial response to the archive so reload sees
+        the request as resolved, and clears the manager state so a
+        future submission attempt is a no-op rather than reviving the
+        cancelled turn. Returns True if a pending confirmation was
+        cleared, False otherwise.
+        """
+        state = self._conversations.get(conv_id)
+        if not state or not state.pending_confirmation:
+            return False
+        request = state.pending_confirmation
+        response = ConfirmationResponse(
+            confirmation_id=request.confirmation_id,
+            approved=False,
+        )
+        from .archive import append_message
+        append_message(self.config, conv_id, response.to_archive_message())
+        state.pending_confirmation = None
+        state.confirmation_event = None
+        state.confirmation_response = None
+        return True
 
     async def cancel_turn(self, conv_id: str) -> None:
         """Cancel an in-progress agent turn."""
@@ -975,10 +1009,21 @@ class ConversationManager:
             state.pending_confirmation = None
             return {"error": "No confirmation handlers registered"}
 
+        # The handler needs config + conv_id to write back to the archive
+        # (no running loop means no real ctx). Provide a minimal recovery
+        # context that handlers can duck-type against.
+        recovery_ctx = _RecoveryContext(config=self.config, conv_id=conv_id)
         result = await self.confirmation_registry.dispatch(
-            None,  # no ctx available for recovery
-            request, response,
+            recovery_ctx, request, response,
         )
 
         state.pending_confirmation = None
         return result
+
+
+@dataclass
+class _RecoveryContext:
+    """Minimal ctx-shaped object passed to confirmation handlers during
+    recovery, when there's no live agent loop to provide a real ctx."""
+    config: Any
+    conv_id: str

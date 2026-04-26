@@ -34,6 +34,8 @@ export class WidgetHost extends LitElement {
     widgetType: { type: String },
     data: { type: Object },
     fallbackText: { type: String },
+    submitted: { type: Boolean },
+    response: { type: Object, attribute: false },
     _state: { type: String, state: true },  // 'loading' | 'ready' | 'error'
   };
 
@@ -44,21 +46,36 @@ export class WidgetHost extends LitElement {
     this.widgetType = '';
     this.data = null;
     this.fallbackText = '';
+    this.submitted = false;
+    /** @type {object|null} */
+    this.response = null;
     this._state = 'loading';
     /** @type {Element|null} */
     this._child = null;
     this._lastType = null;
     this._lastData = null;
+    this._lastSubmitted = false;
+    this._lastResponse = null;
   }
 
   updated(changed) {
     if (changed.has('widgetType') && this.widgetType !== this._lastType) {
       this._lastType = this.widgetType;
       this._loadAndMount();
-    } else if (changed.has('data') && this._child && this.data !== this._lastData) {
-      this._lastData = this.data;
-      // Update live — widget components re-render on .data change.
-      /** @type {any} */ (this._child).data = this.data;
+    } else if (this._child) {
+      const child = /** @type {any} */ (this._child);
+      if (changed.has('data') && this.data !== this._lastData) {
+        this._lastData = this.data;
+        child.data = this.data;
+      }
+      if (changed.has('submitted') && this.submitted !== this._lastSubmitted) {
+        this._lastSubmitted = this.submitted;
+        child.submitted = this.submitted;
+      }
+      if (changed.has('response') && this.response !== this._lastResponse) {
+        this._lastResponse = this.response;
+        child.response = this.response;
+      }
     }
   }
 
@@ -89,7 +106,11 @@ export class WidgetHost extends LitElement {
     if (this._child) this._child.remove();
     const el = document.createElement(tag);
     /** @type {any} */ (el).data = this.data;
+    /** @type {any} */ (el).submitted = this.submitted;
+    /** @type {any} */ (el).response = this.response;
     this._lastData = this.data;
+    this._lastSubmitted = this.submitted;
+    this._lastResponse = this.response;
     this._child = el;
     // Render() will append it below.
     this._state = 'ready';

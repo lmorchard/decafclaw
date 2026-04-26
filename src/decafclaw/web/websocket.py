@@ -103,6 +103,53 @@ async def _handle_select_conv(ws_send, index, username, msg, state):
                            "message": f"Conversation not found: {conv_id}"})
 
 
+def _annotate_widget_responses(messages: list[dict],
+                               hidden_roles: set[str]) -> list[dict]:
+    """Pair resolved widget confirmations with their tool records.
+
+    Walks the messages looking for a confirmation_request whose
+    action_type is "widget_response" (carries tool_call_id →
+    confirmation_id mapping) and a following confirmation_response
+    (carries selection in `data`). Attaches `submitted=True` +
+    `response=data` to the matching tool record. Hidden roles are
+    stripped from the returned list.
+    """
+    widget_responses_by_tool: dict[str, dict] = {}
+    pending_widget_ids: dict[str, str] = {}  # confirmation_id -> tool_call_id
+    for m in messages:
+        role = m.get("role", "")
+        if role == "confirmation_request" and \
+                m.get("action_type") == "widget_response":
+            cid = m.get("confirmation_id", "")
+            tcid = m.get("tool_call_id", "")
+            if cid and tcid:
+                pending_widget_ids[cid] = tcid
+        elif role == "confirmation_response":
+            cid = m.get("confirmation_id", "")
+            tcid = pending_widget_ids.pop(cid, "")
+            if tcid:
+                # The presence of a confirmation_response is the real
+                # "submitted" signal — data may legitimately be empty
+                # for widgets where the submit itself is the answer.
+                raw = m.get("data")
+                widget_responses_by_tool[tcid] = raw if isinstance(
+                    raw, dict) else {}
+
+    visible: list[dict] = []
+    for m in messages:
+        if m.get("role") in hidden_roles:
+            continue
+        if m.get("role") == "tool":
+            tcid = m.get("tool_call_id", "")
+            resp = widget_responses_by_tool.get(tcid)
+            if resp is not None:
+                m = dict(m)
+                m["submitted"] = True
+                m["response"] = resp
+        visible.append(m)
+    return visible
+
+
 async def _handle_load_history(ws_send, index, username, msg, state):
     config = state["config"]
     conv_id = msg.get("conv_id", "")
@@ -142,7 +189,10 @@ async def _handle_load_history(ws_send, index, username, msg, state):
         filtered = [m for m in all_msgs if m.get("timestamp", "") < before]
     has_more = len(filtered) > limit
     messages = filtered[-limit:] if has_more else filtered
-    messages = [m for m in messages if m.get("role") not in _HIDDEN_ROLES]
+
+    # Pair resolved widget confirmations with their tool records so the
+    # frontend can show submitted input widgets on reload.
+    messages = _annotate_widget_responses(messages, _HIDDEN_ROLES)
 
     estimated_tokens = None
     current_model = None
@@ -328,6 +378,36 @@ async def _handle_set_model(ws_send, index, username, msg, state):
     })
 
 
+async def _handle_widget_response(ws_send, index, username, msg, state):
+    """Route a widget-input submission through the confirmation infra.
+
+    Widget submits are always 'approved=True' in the confirmation sense;
+    the user's selection rides on ``data``. The manager resolves the
+    pending confirmation, which wakes the agent loop's pause-await.
+    """
+    manager = state.get("manager")
+    conv_id = msg.get("conv_id", "")
+    confirmation_id = msg.get("confirmation_id", "")
+    # Defensive: coerce non-dict `data` to {} so on_response callbacks
+    # can assume they're always handed a dict. Clients SHOULD send a
+    # dict; a non-dict here means the client is malformed / malicious.
+    raw_data = msg.get("data")
+    data = raw_data if isinstance(raw_data, dict) else {}
+    if raw_data is not None and not isinstance(raw_data, dict):
+        log.warning(
+            "widget_response data is not a dict (got %s); coercing to {}",
+            type(raw_data).__name__)
+
+    if manager and conv_id and confirmation_id:
+        await manager.respond_to_confirmation(
+            conv_id, confirmation_id,
+            approved=True, data=data)
+    else:
+        log.warning(
+            "widget_response missing manager / conv_id / confirmation_id; "
+            "dropping (msg=%s)", msg)
+
+
 async def _handle_confirm_response(ws_send, index, username, msg, state):
     """Route confirmation response through the manager."""
     manager = state.get("manager")
@@ -487,11 +567,17 @@ def _subscribe_to_conv(state, conv_id):
 
         elif event_type == "confirmation_response":
             # Forward to all tabs so non-originating tabs clear the widget
-            await ws_send({
+            payload = {
                 "type": "confirmation_response", "conv_id": event_conv_id,
                 "confirmation_id": event.get("confirmation_id", ""),
                 "approved": event.get("approved", False),
-            })
+            }
+            data = event.get("data")
+            if data is not None:
+                # Widget responses ride here so other tabs can show the
+                # selection in their post-submit widget state.
+                payload["data"] = data
+            await ws_send(payload)
 
         elif event_type == "message_complete":
             if event.get("suppress_user_message"):
@@ -569,6 +655,7 @@ _HANDLERS = {
     "set_effort": _handle_set_model,  # backward compat for old web UI
     "set_model": _handle_set_model,
     "confirm_response": _handle_confirm_response,
+    "widget_response": _handle_widget_response,
 }
 
 

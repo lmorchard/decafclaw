@@ -19,6 +19,8 @@ export class ChatMessage extends LitElement {
     attachments: { type: Array, attribute: false },
     record: { type: Object, attribute: false },
     widget: { type: Object, attribute: false },
+    submitted: { type: Boolean },
+    response: { type: Object, attribute: false },
   };
 
   createRenderRoot() { return this; }
@@ -44,6 +46,25 @@ export class ChatMessage extends LitElement {
     this.record = null;
     /** @type {object|null} */
     this.widget = null;
+    this.submitted = false;
+    /** @type {object|null} */
+    this.response = null;
+  }
+
+  connectedCallback() {
+    super.connectedCallback();
+    // Input widgets bubble `widget-response` CustomEvents when the user
+    // submits. Forward them to the store with our tool_call_id so the
+    // store can look up the matching confirmation and send the WS.
+    this.addEventListener('widget-response', (ev) => {
+      if (this.role !== 'tool' || !this.toolCallId) return;
+      const detail = /** @type {CustomEvent} */ (ev).detail || {};
+      // Get the store via the chat-view ancestor (keeps chat-message
+      // prop-free of the store reference).
+      const host = /** @type {any} */ (this.closest('chat-view'));
+      const store = host?.store;
+      store?.respondToWidget?.(this.toolCallId, detail);
+    });
   }
 
   render() {
@@ -92,7 +113,7 @@ export class ChatMessage extends LitElement {
     }
 
     if (this.role === 'tool') {
-      return html`<tool-message .tool=${this.tool} .content=${this.content} .display_short_text=${this.display_short_text || ''} .statusHistory=${this.statusHistory} .timestamp=${this.timestamp} .widget=${this.widget}></tool-message>`;
+      return html`<tool-message .tool=${this.tool} .content=${this.content} .display_short_text=${this.display_short_text || ''} .statusHistory=${this.statusHistory} .timestamp=${this.timestamp} .widget=${this.widget} .submitted=${this.submitted} .response=${this.response}></tool-message>`;
     }
 
     if (this.role === 'assistant' && this.toolCalls?.length) {

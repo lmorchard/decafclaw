@@ -53,7 +53,9 @@ async def run_all(app_ctx):
     try:
         # Create conversation manager (shared across web + future transports)
         from .conversation_manager import ConversationManager
+        from .widget_input import register_widget_handler
         manager = ConversationManager(config, app_ctx.event_bus)
+        register_widget_handler(manager.confirmation_registry)
         await manager.startup_scan()
 
         # Start HTTP server (button callbacks + web gateway)

@@ -254,3 +254,26 @@ def test_bundled_data_table_is_registered(fake_config):
     # A missing-rows payload fails.
     ok, err = reg.validate("data_table", {"columns": []})
     assert ok is False
+
+
+def test_bundled_multiple_choice_is_registered(fake_config):
+    """Fresh registry scan finds the bundled multiple_choice widget."""
+    reg = load_widget_registry(fake_config,
+                               admin_dir=Path("/nonexistent/admin"))
+    desc = reg.get("multiple_choice")
+    assert desc is not None
+    assert desc.tier == "bundled"
+    assert desc.accepts_input is True
+    assert "inline" in desc.modes
+    required = desc.data_schema.get("required", [])
+    assert "prompt" in required
+    assert "options" in required
+    ok, err = reg.validate("multiple_choice", {
+        "prompt": "pick one",
+        "options": [{"value": "a", "label": "Alpha"}],
+    })
+    assert ok is True, err
+    # Empty options list violates minItems.
+    ok, _ = reg.validate("multiple_choice",
+                         {"prompt": "x", "options": []})
+    assert ok is False

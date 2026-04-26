@@ -38,7 +38,7 @@ See [docs/tools.md](docs/tools.md), [docs/tool-priority.md](docs/tool-priority.m
 - **Tool descriptions are a control surface.** Wording changes ("MUST", "NEVER", checklists) measurably change LLM behavior. Run `make eval-tools` to validate disambiguation between overlapping tools.
 - **Shell approval via shared `check_shell_approval()`** in `shell_tools.py`. Don't duplicate the approval checks.
 - **Per-tool timeout** wraps every non-MCP tool call (default 180s, env `TOOL_TIMEOUT_SEC`). Override via `timeout` key in `TOOL_DEFINITIONS`; `None` opts out. Current opt-outs: `delegate_task`, `conversation_compact`, `claude_code_send`. MCP tools use their own per-server timeout.
-- **`end_turn=True` on `ToolResult`** mechanically ends the turn (one final no-tools LLM call, then return). For review gates use `end_turn=EndTurnConfirm(message=..., on_approve=..., on_deny=...)`. `EndTurnConfirm` wins over `True` in parallel batches.
+- **`end_turn=True` on `ToolResult`** mechanically ends the turn (one final no-tools LLM call, then return). For review gates use `end_turn=EndTurnConfirm(message=..., on_approve=..., on_deny=...)`. For input widgets (`accepts_input=true`), pair with `end_turn=True` and the loop auto-promotes to a `WidgetInputPause` that pauses via the confirmation infra and resumes with the user's selection injected as a synthetic user message. Priority in one batch: `WidgetInputPause` > `EndTurnConfirm` > `True`.
 - **Checklist tools (`checklist_create/_step_done/_abort/_status`)** are always-loaded. Iteration happens within a single turn: do step → step_done → next.
 - **Events for progress.** Tools publish `tool_status` via `ctx.publish()`.
 
@@ -156,7 +156,7 @@ Full doc index: [docs/index.md](docs/index.md). Hot files for navigation:
 - `heartbeat.py`, `schedules.py`, `polling.py`
 - `notifications.py`, `notification_channels/`, `mail.py`
 - `mcp_client.py`
-- `media.py`, `widgets.py`, `web/static/widgets/`, `web/static/components/widgets/widget-host.js`
+- `media.py`, `widgets.py`, `widget_input.py`, `web/static/widgets/`, `web/static/components/widgets/widget-host.js`
 - `util.py`, `eval/`
 
 ## Running

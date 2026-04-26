@@ -94,14 +94,16 @@ class TestConfirmationResponseArchive:
         assert roundtripped == resp
 
     def test_to_archive_emits_all_dataclass_fields_when_truthy(self):
-        """When all optional flags are True the archive contains every
-        declared field. Serves as the iterate-over-fields check —
-        a new dataclass field that to_archive forgets would surface here."""
+        """When all optional flags / containers are non-empty the archive
+        contains every declared field. Serves as the iterate-over-fields
+        check — a new dataclass field that to_archive forgets would
+        surface here."""
         resp = ConfirmationResponse(
             confirmation_id="conf_abc",
             approved=True,
             always=True,
             add_pattern=True,
+            data={"choice": "option_a"},
         )
         msg = resp.to_archive_message()
         expected = {f.name for f in dataclasses.fields(ConfirmationResponse)}

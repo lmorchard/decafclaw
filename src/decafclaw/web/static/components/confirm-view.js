@@ -33,7 +33,14 @@ export class ConfirmView extends LitElement {
   render() {
     if (!this.confirms?.length) return '';
 
-    return html`${this.confirms.map(c => html`
+    // Widget confirmations render inside their own tool message as the
+    // widget UI (radios, checkboxes, etc.) — don't show approve/deny
+    // buttons for them here.
+    const visible = this.confirms.filter(
+      c => c.action_type !== 'widget_response');
+    if (!visible.length) return '';
+
+    return html`${visible.map(c => html`
       <div class="confirm-card">
         <div class="confirm-header">
           <strong>Confirm ${c.tool}:</strong>
