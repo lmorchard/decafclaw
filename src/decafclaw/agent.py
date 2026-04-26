@@ -24,6 +24,7 @@ if TYPE_CHECKING:
 
 from .archive import append_message
 from .compaction import compact_history
+from .context_cleanup import clear_old_tool_results
 from .context_composer import ComposerMode, ContextComposer
 from .llm import call_llm
 from .media import EndTurnConfirm, ToolResult, extract_workspace_media
@@ -119,7 +120,29 @@ def _archive(ctx, msg) -> None:
 
 
 async def _maybe_compact(ctx, config, history, prompt_tokens) -> None:
-    """Trigger compaction if token budget is exceeded."""
+    """Run the lightweight tool-result clear pass, then trigger
+    full compaction if the token budget is exceeded.
+
+    The clear pass is cheap (in-memory string surgery, no LLM call)
+    so it runs every iteration. Full compaction only fires when
+    history is large enough to justify the LLM summarization cost.
+    """
+    # Lightweight tier first — see #298 and docs/context-composer.md.
+    try:
+        delta = clear_old_tool_results(history, config)
+        ctx.composer.cleanup_cleared_count += delta.cleared_count
+        ctx.composer.cleanup_cleared_bytes += delta.cleared_bytes
+        if delta.cleared_count:
+            log.info(
+                "Tool-result clear: %d message(s), %d bytes reclaimed",
+                delta.cleared_count, delta.cleared_bytes,
+            )
+    except Exception:
+        # Cleanup is fail-open. Use log.exception so the traceback
+        # actually surfaces in logs — without it we lose the diagnostic
+        # signal we'd need to fix recurring failures.
+        log.exception("Tool-result clearing failed")
+
     log.info(f"Compaction check: prompt_tokens={prompt_tokens}, "
              f"threshold={config.compaction.max_tokens}")
     if prompt_tokens and prompt_tokens > config.compaction.max_tokens:
@@ -128,8 +151,12 @@ async def _maybe_compact(ctx, config, history, prompt_tokens) -> None:
         try:
             await compact_history(ctx, history)
             # After compaction, summarized content replaces originals —
-            # allow previously-injected pages to be re-injected if relevant.
+            # allow previously-injected pages to be re-injected if relevant,
+            # and reset cleanup accounting since the new in-memory view
+            # supersedes the previous one.
             ctx.composer.injected_paths.clear()
+            ctx.composer.cleanup_cleared_count = 0
+            ctx.composer.cleanup_cleared_bytes = 0
         except Exception as e:
             log.error(f"Compaction failed: {e}")
 

@@ -85,6 +85,11 @@ class ComposerState:
     last_prompt_tokens_actual: int = 0
     last_completion_tokens_actual: int = 0
     injected_paths: set[str] = field(default_factory=set)  # file_paths already in context; cleared on compaction
+    # Cumulative tool-result clearing stats for this conversation
+    # (#298). Reset on compaction since the surviving summary
+    # represents a fresh in-memory view.
+    cleanup_cleared_count: int = 0
+    cleanup_cleared_bytes: int = 0
 
 
 # -- Sidecar persistence ------------------------------------------------------
@@ -988,4 +993,8 @@ class ContextComposer:
             "compaction_threshold": config.compaction.max_tokens,
             "sources": sources,
             "memory_candidates": candidates,
+            "cleanup": {
+                "cleared_count": self.state.cleanup_cleared_count,
+                "cleared_bytes": self.state.cleanup_cleared_bytes,
+            },
         }

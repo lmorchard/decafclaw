@@ -100,6 +100,19 @@ History compaction settings. Empty `url`/`model`/`api_key` fall back to the `llm
 | `llm_max_tokens` | int | `0` | `COMPACTION_LLM_MAX_TOKENS` | |
 | `preserve_turns` | int | `5` | `COMPACTION_PRESERVE_TURNS` | |
 
+### `cleanup`
+
+Tool-result clearing — a lightweight pre-compaction tier that replaces large old tool-message bodies with a short stub (`[tool output cleared: N chars]`) so the agent loop doesn't keep paying attention budget on raw tool output it has already synthesized. Runs every iteration (cheap, in-memory). The original tool body remains durably written to the per-conversation JSONL archive — only the in-memory copy is edited. See [context-composer.md#tool-result-clearing-lightweight-tier](context-composer.md#tool-result-clearing-lightweight-tier) and #298.
+
+| Field | Type | Default | Env Var |
+|-------|------|---------|---------|
+| `enabled` | bool | `true` | `CLEANUP_ENABLED` |
+| `min_turn_age` | int | `2` | `CLEANUP_MIN_TURN_AGE` |
+| `min_size_bytes` | int | `1024` | `CLEANUP_MIN_SIZE_BYTES` |
+| `preserve_tools` | list[str] | `["activate_skill", "checklist_create", "checklist_step_done", "checklist_abort", "checklist_status"]` | `CLEANUP_PRESERVE_TOOLS` |
+
+`min_turn_age: 2` means tool messages from the current and previous user turn stay intact; older results are eligible for clearing. `min_size_bytes: 1024` is a floor — messages smaller than the stub itself wouldn't be worth clearing. `preserve_tools` is a hard allowlist for tools whose output is fundamentally load-bearing (e.g. `activate_skill` announces the tools the agent will use; `checklist_*` carries the per-conversation execution-loop state).
+
 ### `embedding`
 
 Semantic search embedding settings. Empty `url`/`api_key` fall back to `llm` group via `config.embedding.resolved(config)`.

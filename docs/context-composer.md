@@ -273,9 +273,32 @@ The embedding index stores a composite document (summary + keywords + tags + bod
 
 The agent loop (`run_agent_turn`) creates a `ContextComposer` at the start of each turn and calls `compose()` once. The iteration loop still uses `_build_tool_list()` per-iteration because fetched tools change mid-turn as the model calls `tool_search`. After each LLM response, `record_actuals()` stores the real token counts for future calibration.
 
+## Tool-result clearing (lightweight tier)
+
+Before the compaction threshold check fires, every iteration runs a cheap pass — `clear_old_tool_results` in `src/decafclaw/context_cleanup.py` — that replaces large old tool-message bodies with a short stub (`[tool output cleared: 4213 bytes]`). This is the simplest tier of context management Anthropic's [Effective Context Engineering for AI Agents](https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents) recommends: remove raw tool output the agent has already synthesized and won't re-examine. See #298.
+
+**Eligibility** (all must hold for a tool message to be cleared):
+
+- `role == "tool"`
+- Message is older than `cleanup.min_turn_age` user-turn boundaries (default 2 — the current and immediately prior user turn stay intact).
+- UTF-8 byte length of `content` >= `cleanup.min_size_bytes` (default 1024).
+- The originating tool name is not in `cleanup.preserve_tools` (default: `activate_skill` and the `checklist_*` family).
+- `content` is not already a stub (idempotent re-runs).
+- The stub itself would be strictly smaller than the original (skips the pathological case where `min_size_bytes` is configured below the stub length).
+
+**What's preserved:** `tool_call_id`, `role`, `display_short_text`, `widget` are all untouched — the model still sees the tool call happened, the UI still has the original short-text and widget for display. Only `content` changes.
+
+**Durability:** the original body remains durably written to the per-conversation JSONL archive at the moment it landed. In-memory clearing doesn't touch that, so debugging from the archive is always available.
+
+**Compaction interaction:** when full compaction eventually fires, it sees the stubs as ordinary (small) messages and produces a fine summary. Cleanup stats are reset on compaction since the summarized history supersedes the previous in-memory view.
+
+The clear pass writes per-conversation cumulative stats (`cleanup.cleared_count`, `cleanup.cleared_bytes`) into the context sidecar — see below.
+
+Configuration tunables: `cleanup.enabled`, `min_turn_age`, `min_size_bytes`, `preserve_tools`. See [config.md#cleanup](config.md#cleanup).
+
 ## Context inspection
 
-After each turn, the agent writes a diagnostics sidecar file (`workspace/conversations/{conv_id}.context.json`) with per-source token estimates, scoring details, and memory candidate breakdowns.
+After each turn, the agent writes a diagnostics sidecar file (`workspace/conversations/{conv_id}.context.json`) with per-source token estimates, scoring details, memory candidate breakdowns, and cumulative cleanup stats from the lightweight clear tier (see above).
 
 **REST endpoint:** `GET /api/conversations/{id}/context` returns the sidecar data.
 
@@ -295,4 +318,5 @@ After each turn, the agent writes a diagnostics sidecar file (`workspace/convers
 - `src/decafclaw/agent.py` — agent loop, iteration-level tool list building
 - `src/decafclaw/tools/tool_registry.py` — tool classification and deferral
 - `src/decafclaw/compaction.py` — conversation summary generation
+- `src/decafclaw/context_cleanup.py` — lightweight tool-result clearing tier (#298)
 - `src/decafclaw/frontmatter.py` — YAML frontmatter parsing
