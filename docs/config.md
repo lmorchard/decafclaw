@@ -118,6 +118,22 @@ Tool-result clearing — a lightweight pre-compaction tier that replaces large o
 
 `min_turn_age: 2` means tool messages from the current and previous user turn stay intact; older results are eligible for clearing. `min_size_bytes: 1024` is a floor — messages smaller than the stub itself wouldn't be worth clearing. `preserve_tools` is a hard allowlist for tools whose output is fundamentally load-bearing (e.g. `activate_skill` announces the tools the agent will use; `checklist_*` carries the per-conversation execution-loop state).
 
+### `vault_retrieval`
+
+Controls auto-retrieval injection at turn start. See [context-composer.md#memory-retrieval-modes](context-composer.md#memory-retrieval-modes) and #301.
+
+| Field | Type | Default | Env Var |
+|-------|------|---------|---------|
+| `enabled` | bool | `true` | `VAULT_RETRIEVAL_ENABLED` |
+| `similarity_threshold` | float | `0.3` | `VAULT_RETRIEVAL_SIMILARITY_THRESHOLD` |
+| `max_results` | int | `5` | `VAULT_RETRIEVAL_MAX_RESULTS` |
+| `max_tokens` | int | `500` | `VAULT_RETRIEVAL_MAX_TOKENS` |
+| `show_in_ui` | bool | `true` | `VAULT_RETRIEVAL_SHOW_IN_UI` |
+| `mode` | str | `always` | `VAULT_RETRIEVAL_MODE` |
+| `headline_summary_max_chars` | int | `120` | `VAULT_RETRIEVAL_HEADLINE_SUMMARY_MAX_CHARS` |
+
+`mode` selects retrieval strategy: `always` (full bodies, current default), `headlines` (compact `file_path · summary · score` lines for the agent to scan; pulls bodies via `vault_read` on demand), or `on_demand` (skip auto-retrieval entirely; agent drives via `vault_search` / `vault_read`). `@[[Page]]` mentions inject regardless of mode. Unknown values fall back to `always` with a warning.
+
 ### `embedding`
 
 Semantic search embedding settings. Empty `url`/`api_key` fall back to `llm` group via `config.embedding.resolved(config)`.

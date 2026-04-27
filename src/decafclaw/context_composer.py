@@ -521,6 +521,17 @@ class ContextComposer:
         Retrieval candidates are scored by composite relevance and selected
         by score order within the token budget.
         Fail-open: exceptions log a warning and return empty results.
+
+        Mode-aware (#301): ``config.vault_retrieval.mode`` controls
+        what gets injected:
+          - ``always``    full-body candidates (default, back-compat).
+          - ``headlines`` compact title/summary/score lines only;
+                          agent calls ``vault_read`` for full bodies.
+          - ``on_demand`` no auto-injection; agent drives via
+                          ``vault_search`` / ``vault_read``.
+        Unknown values log a warning and fall back to ``always``.
+        ``@[[Page]]`` mentions inject regardless of mode (handled
+        separately by ``_compose_vault_references``).
         """
         from .util import estimate_tokens
 
@@ -528,12 +539,37 @@ class ContextComposer:
         if ctx.skip_vault_retrieval or mode in skip_modes:
             return [], "", [], None
 
+        # Resolve retrieval mode early so the on_demand path can
+        # short-circuit before any retrieval work runs.
+        retrieval_mode = self._resolve_retrieval_mode(config)
+
+        if retrieval_mode == "on_demand":
+            entry = SourceEntry(
+                source="memory",
+                tokens_estimated=0,
+                items_included=0,
+                items_truncated=0,
+                details={"mode": "on_demand", "injection_skipped": True},
+            )
+            return [], "", [], entry
+
         try:
-            from .memory_context import format_memory_context, retrieve_memory_context
+            from .memory_context import (
+                format_memory_context,
+                format_memory_headlines,
+                retrieve_memory_context,
+            )
 
             results = await retrieve_memory_context(config, user_message)
             if not results:
-                return [], "", [], None
+                entry = SourceEntry(
+                    source="memory",
+                    tokens_estimated=0,
+                    items_included=0,
+                    items_truncated=0,
+                    details={"mode": retrieval_mode, "injection_skipped": True},
+                )
+                return [], "", [], entry
 
             # Filter out candidates already injected in this conversation
             # (they're already in history — re-injecting wastes tokens)
@@ -545,7 +581,14 @@ class ContextComposer:
                     log.debug("Memory context: suppressed %d already-injected candidates", suppressed)
 
             if not results:
-                return [], "", [], None
+                entry = SourceEntry(
+                    source="memory",
+                    tokens_estimated=0,
+                    items_included=0,
+                    items_truncated=0,
+                    details={"mode": retrieval_mode, "injection_skipped": True},
+                )
+                return [], "", [], entry
 
             # Score and rank candidates
             total_candidates = len(results)
@@ -557,9 +600,10 @@ class ContextComposer:
 
             # Select by token budget (score order replaces similarity order)
             budget = token_budget if token_budget is not None else config.vault_retrieval.max_tokens
-            log.debug("Memory context: %d candidates, budget=%d tokens (%s)",
+            log.debug("Memory context: %d candidates, budget=%d tokens (%s, mode=%s)",
                       total_candidates, budget,
-                      "dynamic" if token_budget is not None else "fixed")
+                      "dynamic" if token_budget is not None else "fixed",
+                      retrieval_mode)
             from .memory_context import _trim_to_token_budget
             results = _trim_to_token_budget(results, budget)
             if results:
@@ -572,11 +616,22 @@ class ContextComposer:
             for r in results:
                 r["tokens_estimated"] = estimate_tokens(r.get("entry_text", ""))
 
-            formatted = format_memory_context(results)
+            # Format per mode. In headlines mode the message is much
+            # smaller — the model gets a directory of available pages
+            # and pulls full bodies via vault_read on demand.
+            if retrieval_mode == "headlines":
+                formatted = format_memory_headlines(
+                    results,
+                    max_summary_chars=config.vault_retrieval.headline_summary_max_chars,
+                )
+            else:
+                formatted = format_memory_context(results)
             msg = {"role": "vault_retrieval", "content": formatted}
 
-            # Track injected paths so they're suppressed in future turns
-            # (cleared on compaction when the content is summarized away)
+            # Track injected paths so they're suppressed in future turns.
+            # In headlines mode the model only saw the headline (not the
+            # body), but suppressing repeats still matches user intent —
+            # if the agent wanted the body it had a chance via vault_read.
             for r in results:
                 path = r.get("file_path", "")
                 if path:
@@ -591,6 +646,8 @@ class ContextComposer:
                 items_included=len(results),
                 items_truncated=total_candidates - len(results),
                 details={
+                    "mode": retrieval_mode,
+                    "injection_skipped": not results,
                     "top_score": round(top_score, 3),
                     "min_score": round(min_score, 3),
                     "candidates_considered": total_candidates,
@@ -598,11 +655,23 @@ class ContextComposer:
                     "budget_source": "dynamic" if token_budget is not None else "fixed",
                 },
             )
-            return [msg], formatted, results, entry
+            return [msg] if results else [], formatted, results, entry
 
         except Exception:
             log.warning("Memory context composition failed", exc_info=True)
             return [], "", [], None
+
+    @staticmethod
+    def _resolve_retrieval_mode(config) -> str:
+        """Validate ``vault_retrieval.mode``; unknown values fall back
+        to ``always`` with a single warning per process. See #301."""
+        raw = getattr(config.vault_retrieval, "mode", "always") or "always"
+        if raw in ("always", "headlines", "on_demand"):
+            return raw
+        log.warning(
+            "Unknown vault_retrieval.mode %r; falling back to 'always'", raw,
+        )
+        return "always"
 
     def _compose_vault_references(
         self, ctx, config, user_message: str, history: list, mode: ComposerMode,

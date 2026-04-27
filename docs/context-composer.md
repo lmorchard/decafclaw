@@ -273,6 +273,24 @@ The embedding index stores a composite document (summary + keywords + tags + bod
 
 The agent loop (`run_agent_turn`) creates a `ContextComposer` at the start of each turn and calls `compose()` once. The iteration loop still uses `_build_tool_list()` per-iteration because fetched tools change mid-turn as the model calls `tool_search`. After each LLM response, `record_actuals()` stores the real token counts for future calibration.
 
+## Memory retrieval modes (#301)
+
+By default, every interactive turn auto-injects scored full-body candidates from the vault into a `vault_retrieval` message. That's costly for short turns where the user message doesn't need memory. The `vault_retrieval.mode` config controls the trade-off:
+
+| Mode | What's injected | When to use |
+|---|---|---|
+| `always` (default) | Full bodies of scored candidates | Back-compat; deployments with small vaults or where the cost of a stray `vault_read` round-trip outweighs the inject cost. |
+| `headlines` | One compact line per candidate (`file_path · summary · score`); no full bodies | Larger vaults where most retrieved candidates aren't actually consulted. The agent sees a directory of available pages and pulls full bodies via `vault_read` only when warranted. |
+| `on_demand` | Nothing | Aggressive just-in-time strategy: skip auto-retrieval entirely, let the agent drive via `vault_search` / `vault_read`. |
+
+`@[[Page]]` mentions inject regardless of mode (those are user-driven explicit references, not auto-retrieval).
+
+**Empty result sets** (no candidates, all suppressed because already-injected, or all below `relevance.min_composite_score`) emit a `SourceEntry` with `mode` and `injection_skipped: true` so the context inspector can show retrieval ran but didn't inject.
+
+**Headlines format** uses each result's `summary` frontmatter field when present, falls back to a truncated body excerpt. Configurable cap via `vault_retrieval.headline_summary_max_chars` (default 120).
+
+**Unknown mode values** in config log a warning and fall back to `always`.
+
 ## Tool-result clearing (lightweight tier)
 
 Before the compaction threshold check fires, every iteration runs a cheap pass — `clear_old_tool_results` in `src/decafclaw/context_cleanup.py` — that replaces large old tool-message bodies with a short stub (`[tool output cleared: 4213 bytes]`). This is the simplest tier of context management Anthropic's [Effective Context Engineering for AI Agents](https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents) recommends: remove raw tool output the agent has already synthesized and won't re-examine. See #298.

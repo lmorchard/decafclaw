@@ -188,6 +188,16 @@ class VaultRetrievalConfig:
     max_results: int = 5
     max_tokens: int = 500
     show_in_ui: bool = True
+    # Retrieval injection mode (#301):
+    #   "always"    — current default; inject scored full-body candidates
+    #   "headlines" — inject title + summary + score only; agent calls
+    #                 vault_read for full bodies on demand
+    #   "on_demand" — inject nothing; agent drives retrieval via
+    #                 vault_search / vault_read. @[[Page]] mentions
+    #                 still inject (those are user-driven).
+    # An unknown value logs a warning at compose time and falls back to "always".
+    mode: str = "always"
+    headline_summary_max_chars: int = 120
 
 
 @dataclass

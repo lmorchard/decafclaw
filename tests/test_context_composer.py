@@ -254,11 +254,115 @@ class TestComposeMemoryContext:
                 ctx, config, "hello", ComposerMode.INTERACTIVE,
             )
             assert entry1 is not None
-            # Second turn: suppressed (already in context)
-            _, _, _, entry2 = await composer._compose_vault_retrieval(
+            # Second turn: suppressed (already in context). The entry
+            # is emitted with `injection_skipped: True` so the sidecar
+            # records that retrieval ran but didn't inject anything —
+            # diagnostically valuable. The message list is what callers
+            # actually consume; assert that's empty.
+            msgs2, _, _, entry2 = await composer._compose_vault_retrieval(
                 ctx, config, "hello again", ComposerMode.INTERACTIVE,
             )
-            assert entry2 is None  # no results after suppression
+            assert msgs2 == []
+            assert entry2 is not None
+            assert entry2.tokens_estimated == 0
+            assert entry2.items_included == 0
+            assert entry2.details.get("injection_skipped") is True
+
+
+# -- Retrieval modes (#301) ----------------------------------------------------
+
+
+class TestRetrievalModes:
+    """`vault_retrieval.mode`: always (default) | headlines | on_demand."""
+
+    @pytest.mark.asyncio
+    async def test_always_mode_emits_full_body_message(self, ctx, config):
+        config.vault_retrieval.mode = "always"
+        config.vault_retrieval.max_results = 10
+        config.relevance.min_composite_score = 0.0  # accept anything for the test
+        mock = [
+            {"entry_text": "FULL BODY HERE", "source_type": "page",
+             "similarity": 0.9, "file_path": "p.md", "modified_at": "", "importance": 0.5},
+        ]
+        with patch("decafclaw.memory_context.retrieve_memory_context",
+                   new_callable=AsyncMock, return_value=mock):
+            composer = ContextComposer()
+            msgs, _, _, entry = await composer._compose_vault_retrieval(
+                ctx, config, "hi", ComposerMode.INTERACTIVE,
+            )
+        assert len(msgs) == 1
+        assert "FULL BODY HERE" in msgs[0]["content"]
+        assert entry.details.get("mode") == "always"
+        assert entry.details.get("injection_skipped") is False
+
+    @pytest.mark.asyncio
+    async def test_headlines_mode_emits_compact_lines(self, ctx, config):
+        config.vault_retrieval.mode = "headlines"
+        config.vault_retrieval.max_results = 10
+        config.relevance.min_composite_score = 0.0
+        mock = [
+            {"entry_text": "Long body text not to inject", "source_type": "page",
+             "similarity": 0.9, "file_path": "p.md", "modified_at": "",
+             "importance": 0.5, "summary": "Concise summary"},
+        ]
+        with patch("decafclaw.memory_context.retrieve_memory_context",
+                   new_callable=AsyncMock, return_value=mock):
+            composer = ContextComposer()
+            msgs, _, _, entry = await composer._compose_vault_retrieval(
+                ctx, config, "hi", ComposerMode.INTERACTIVE,
+            )
+        assert len(msgs) == 1
+        # Headlines: summary appears, body does NOT.
+        assert "Concise summary" in msgs[0]["content"]
+        assert "Long body text not to inject" not in msgs[0]["content"]
+        # Header indicates headlines mode.
+        assert "headlines" in msgs[0]["content"]
+        assert entry.details.get("mode") == "headlines"
+
+    @pytest.mark.asyncio
+    async def test_on_demand_mode_skips_retrieval_entirely(self, ctx, config, monkeypatch):
+        """on_demand short-circuits before `retrieve_memory_context`
+        is even called — no LLM/embedding work happens."""
+        config.vault_retrieval.mode = "on_demand"
+        called = []
+
+        async def should_not_be_called(*a, **kw):
+            called.append(True)
+            return []
+
+        monkeypatch.setattr(
+            "decafclaw.memory_context.retrieve_memory_context",
+            should_not_be_called,
+        )
+
+        composer = ContextComposer()
+        msgs, _, _, entry = await composer._compose_vault_retrieval(
+            ctx, config, "hi", ComposerMode.INTERACTIVE,
+        )
+        assert msgs == []
+        assert called == []
+        assert entry is not None
+        assert entry.details.get("mode") == "on_demand"
+        assert entry.details.get("injection_skipped") is True
+
+    @pytest.mark.asyncio
+    async def test_unknown_mode_falls_back_to_always(self, ctx, config, caplog):
+        config.vault_retrieval.mode = "bogus"
+        config.vault_retrieval.max_results = 10
+        config.relevance.min_composite_score = 0.0
+        mock = [
+            {"entry_text": "BODY", "source_type": "page",
+             "similarity": 0.9, "file_path": "p.md", "modified_at": "",
+             "importance": 0.5},
+        ]
+        with patch("decafclaw.memory_context.retrieve_memory_context",
+                   new_callable=AsyncMock, return_value=mock):
+            composer = ContextComposer()
+            msgs, _, _, entry = await composer._compose_vault_retrieval(
+                ctx, config, "hi", ComposerMode.INTERACTIVE,
+            )
+        assert "BODY" in msgs[0]["content"]
+        assert entry.details.get("mode") == "always"
 
 
 # -- Wiki context --------------------------------------------------------------

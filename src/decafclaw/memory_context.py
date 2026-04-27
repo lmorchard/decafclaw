@@ -120,7 +120,9 @@ def _enrich_results(config, results: list[dict]) -> list[dict]:
                     mtime = os.path.getmtime(full_path)
                     result["modified_at"] = datetime.fromtimestamp(mtime).isoformat()
 
-                    # Parse frontmatter for importance (pages/user only, not journal)
+                    # Parse frontmatter for importance + summary (pages/user
+                    # only, not journal). `summary` powers the headlines
+                    # retrieval mode — see #301.
                     if source_type in ("page", "user"):
                         text = full_path.read_text()
                         metadata, _ = parse_frontmatter(text)
@@ -128,6 +130,9 @@ def _enrich_results(config, results: list[dict]) -> list[dict]:
                             result["importance"] = get_frontmatter_field(
                                 metadata, "importance", 0.5,
                             )
+                            summary = get_frontmatter_field(metadata, "summary", "")
+                            if summary:
+                                result["summary"] = str(summary)
         except Exception:
             log.warning("Failed to enrich result %s", result.get("file_path", "?"),
                         exc_info=True)
@@ -242,3 +247,55 @@ def format_memory_context(results: list[dict]) -> str:
         score = r.get("composite_score", r.get("similarity", 0))
         parts.append(f"--- {label} (score: {score:.2f}) ---\n{r['entry_text']}")
     return "\n\n".join(parts)
+
+
+def format_memory_headlines(
+    results: list[dict],
+    *,
+    max_summary_chars: int = 120,
+) -> str:
+    """Render retrieval results as compact headlines for the
+    ``headlines`` retrieval mode (#301).
+
+    One line per candidate: ``- file_path · summary · score``. The
+    summary comes from frontmatter when present; falls back to a
+    truncated body excerpt. Suitable for showing the agent enough
+    to decide whether to pull a full body via ``vault_read``.
+
+    Returns "" on empty input.
+    """
+    if not results:
+        return ""
+    lines = [
+        "[Automatically retrieved headlines — call vault_read to "
+        "pull full bodies for any of these]\n",
+    ]
+    for r in results:
+        label = SOURCE_LABELS.get(r.get("source_type", ""), r.get("source_type", "?"))
+        path = r.get("file_path", "")
+        summary = r.get("summary") or _excerpt_for_headline(
+            r.get("entry_text", ""), max_summary_chars,
+        )
+        if max_summary_chars > 0 and len(summary) > max_summary_chars:
+            summary = summary[:max_summary_chars].rstrip() + "…"
+        score = r.get("composite_score", r.get("similarity", 0))
+        lines.append(
+            f"- [{label}] {path} · {summary} · score {score:.2f}",
+        )
+    return "\n".join(lines)
+
+
+def _excerpt_for_headline(text: str, max_chars: int) -> str:
+    """Compact a body excerpt for headline rendering: collapse
+    whitespace runs, drop frontmatter blocks, take the first
+    ``max_chars`` characters."""
+    if not text:
+        return ""
+    # Drop a leading frontmatter block if present.
+    if text.startswith("---"):
+        end = text.find("\n---", 3)
+        if end > 0:
+            text = text[end + 4:]
+    # Collapse internal whitespace so the headline is one tidy line.
+    cleaned = " ".join(text.split())
+    return cleaned[:max_chars] if max_chars > 0 else cleaned
