@@ -42,6 +42,25 @@ class MattermostConfig:
 
 
 @dataclass
+class NotesConfig:
+    """Per-conversation scratchpad (#299) — always-loaded
+    ``notes_append`` / ``notes_read`` tools backed by an append-only
+    markdown file at ``workspace/conversations/{conv_id}.notes.md``,
+    colocated with the conversation archive and other sidecars. Recent
+    entries auto-inject into context at turn start.
+    """
+    enabled: bool = True
+    max_entry_chars: int = 1024     # silent truncation at this cap
+    context_max_entries: int = 20   # most recent N injected per turn
+    context_max_chars: int = 4096   # body cap on the inject (drops oldest)
+    # File-level cap. ``read_notes`` reads the full file, so we trim
+    # the oldest entries on append once the file exceeds this many
+    # lines — keeps long-running conversations from accumulating
+    # unbounded IO/CPU per turn. 0 = no cap.
+    max_total_entries: int = 1000
+
+
+@dataclass
 class CompactionConfig:
     url: str = ""       # empty = resolve from llm via resolved()
     model: str = ""     # empty = resolve from llm via resolved()

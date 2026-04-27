@@ -292,6 +292,16 @@ class ContextComposer:
         if wiki_entry:
             sources.append(wiki_entry)
 
+        # -- Per-conversation scratchpad notes (#299) --
+        # Auto-inject the recent notes block so the agent doesn't pay a
+        # tool call per turn to read them.
+        notes_msgs, notes_entry = self._compose_notes(ctx, config, mode)
+        for nm in notes_msgs:
+            history.append(nm)
+            to_archive.append(nm)
+        if notes_entry:
+            sources.append(notes_entry)
+
         # -- Pre-emptive tool search (populate ctx.tools.preempt_matches) --
         # Runs before tool classification so matches promote into the active
         # set via the existing critical-tier mechanism.
@@ -315,18 +325,22 @@ class ContextComposer:
         sources.append(tools_entry)
 
         # -- Compute fixed costs for dynamic budget allocation --
-        # Fixed costs: system prompt + wiki refs + tools + existing history
+        # Fixed costs: system prompt + wiki refs + notes + tools + existing history
         fixed_tokens = system_entry.tokens_estimated
         if wiki_entry:
             fixed_tokens += wiki_entry.tokens_estimated
+        if notes_entry:
+            fixed_tokens += notes_entry.tokens_estimated
         # Estimate existing history (before this turn's additions)
-        # Only exclude wiki messages injected THIS turn (wiki_msgs);
-        # prior turns' memory/wiki are already in history and sent to the LLM.
-        injected_wiki_ids = {id(wm) for wm in wiki_msgs}
+        # Exclude messages injected THIS turn (wiki, notes); their tokens
+        # are already counted via their respective SourceEntry. Prior
+        # turns' wiki/notes/memory are already in history and sent to the LLM.
+        injected_ids = {id(wm) for wm in wiki_msgs}
+        injected_ids |= {id(nm) for nm in notes_msgs}
         existing_history_tokens = sum(
             estimate_tokens(str(m.get("content", "")))
             for m in history
-            if id(m) not in injected_wiki_ids
+            if id(m) not in injected_ids
         )
         fixed_tokens += existing_history_tokens
         # User message
@@ -366,7 +380,11 @@ class ContextComposer:
         to_archive.append(user_msg)
 
         # -- Build LLM messages (filter + remap roles) --
-        role_remap = {"vault_retrieval": "user", "vault_references": "user"}
+        role_remap = {
+            "vault_retrieval": "user",
+            "vault_references": "user",
+            "conversation_notes": "user",
+        }
         llm_history = []
         for m in history:
             role = m.get("role")
@@ -728,6 +746,45 @@ class ContextComposer:
             items_truncated=skipped,
         )
         return messages, entry
+
+    def _compose_notes(
+        self, ctx, config, mode: ComposerMode,
+    ) -> tuple[list[dict], SourceEntry | None]:
+        """Auto-inject the per-conversation scratchpad (#299).
+
+        Reads the most recent N notes (capped by char budget) and emits
+        a single ``conversation_notes`` role message that gets remapped
+        to ``user`` for the LLM. Skipped in non-interactive modes
+        (heartbeat / scheduled / child agent) and when notes are
+        disabled.
+        """
+        from .util import estimate_tokens
+
+        if not config.notes.enabled:
+            return [], None
+        skip_modes = {ComposerMode.HEARTBEAT, ComposerMode.SCHEDULED, ComposerMode.CHILD_AGENT}
+        if mode in skip_modes:
+            return [], None
+
+        from .notes import format_notes_for_context, read_notes
+        conv_id = ctx.conv_id or ctx.channel_id or "default"
+        items = read_notes(
+            config, conv_id,
+            limit=config.notes.context_max_entries,
+            max_chars=config.notes.context_max_chars,
+        )
+        if not items:
+            return [], None
+
+        text = format_notes_for_context(items)
+        msg = {"role": "conversation_notes", "content": text}
+        entry = SourceEntry(
+            source="notes",
+            tokens_estimated=estimate_tokens(text),
+            items_included=len(items),
+            items_truncated=0,
+        )
+        return [msg], entry
 
     def _compose_preempt_matches(
         self, ctx, config, user_message: str, history: list,

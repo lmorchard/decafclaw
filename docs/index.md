@@ -21,6 +21,7 @@
 - [Semantic Search](semantic-search.md) — Embedding-based search over vault pages, journal, and conversations
 - [Dream Consolidation](dream-consolidation.md) — Periodic journal review and vault page gardening
 - [Conversations](conversations.md) — Archive, resume, and compaction of conversation history
+- [Notes (Scratchpad)](notes.md) — Per-conversation persistent scratchpad with always-loaded `notes_append` / `notes_read` and auto-inject on turn start
 
 ## Tools & Skills
 
