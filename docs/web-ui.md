@@ -122,9 +122,12 @@ a "📄 Canvas" pill appears in `#chat-main-header` (mirrored to
 lights up on the pill if a `canvas_update` event arrived while the panel
 was hidden.
 
-**Dismiss behavior:** dismissing the panel is in-memory ephemeral — the
-persisted sidecar is unaffected. The dismissed state is cleared on
-`canvas_set` events, conversation-switch, resummon click, and page reload.
+**Dismiss behavior:** dismissing the panel persists to localStorage
+per-conversation (key `canvas-dismissed.{conv_id}`); the canvas sidecar
+itself is unaffected. The dismissed state is cleared on `canvas_set`
+events, `canvas_clear` events, and resummon click. It is preserved
+across page reload and conversation-switch so the user's intent
+sticks.
 
 **`/canvas/{conv_id}` standalone view:** full-screen render of the current
 canvas state. Same web-auth as the main UI. Live-updates via WebSocket.

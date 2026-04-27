@@ -1,8 +1,13 @@
 /**
  * Canvas state — per-conversation canvas tab cache + dismiss flag + unread flag.
  *
- * Memory-only state; reload returns the user to the default visible state
- * (any non-empty canvas is shown by default).
+ * Dismiss flag is persisted to localStorage per-conversation so a page
+ * reload preserves the user's intent. Cleared on:
+ *   - canvas_set events (kind:'set' always reveals)
+ *   - explicit resummon() click
+ *   - canvas_clear (no canvas to dismiss anymore)
+ * NOT cleared on conv-switch or canvas_update — those preserve the
+ * user's dismiss state for the conversation.
  *
  * Subscribers receive `(state)` snapshots after every mutation so the
  * panel and resummon UI re-render. Snapshot shape:
@@ -11,15 +16,40 @@
  *     unreadDot: boolean }
  */
 
+const DISMISS_KEY_PREFIX = 'canvas-dismissed.';
+
 const _state = {
   byConv: new Map(),  // convId -> { tab, dismissed, unreadDot }
   active: null,
   subscribers: new Set(),
 };
 
+function _dismissKey(convId) { return DISMISS_KEY_PREFIX + convId; }
+
+function _loadDismissed(convId) {
+  try {
+    return localStorage.getItem(_dismissKey(convId)) === 'true';
+  } catch {
+    return false;
+  }
+}
+
+function _saveDismissed(convId, value) {
+  try {
+    if (value) localStorage.setItem(_dismissKey(convId), 'true');
+    else localStorage.removeItem(_dismissKey(convId));
+  } catch {
+    // localStorage may be unavailable (private mode); fall through silently.
+  }
+}
+
 function _ensure(convId) {
   if (!_state.byConv.has(convId)) {
-    _state.byConv.set(convId, { tab: null, dismissed: false, unreadDot: false });
+    _state.byConv.set(convId, {
+      tab: null,
+      dismissed: _loadDismissed(convId),
+      unreadDot: false,
+    });
   }
   return _state.byConv.get(convId);
 }
@@ -57,11 +87,10 @@ export function getActiveConvId() {
 export async function setActiveConv(convId) {
   _state.active = convId;
   if (!convId) { _publish(); return; }
-  // Conv-switch always resets dismiss/unread per the spec lifecycle —
-  // do this BEFORE the fetch so a failure (network, 401, 404) doesn't
-  // leave the canvas stuck dismissed when the user returns later.
+  // _ensure picks up the persisted dismiss flag for this conv. Don't
+  // wipe unreadDot here either — a fresh navigate shouldn't surface
+  // stale dot state from before the dismiss persisted.
   const s = _ensure(convId);
-  s.dismissed = false;
   s.unreadDot = false;
   try {
     const resp = await fetch(`/api/canvas/${encodeURIComponent(convId)}`,
@@ -90,10 +119,12 @@ export function applyEvent(evt) {
     s.tab = null;
     s.unreadDot = false;
     s.dismissed = false;
+    _saveDismissed(convId, false);
   } else if (kind === 'set') {
     s.tab = evt.tab || null;
     s.dismissed = false;
     s.unreadDot = false;
+    _saveDismissed(convId, false);
   } else if (kind === 'update') {
     s.tab = evt.tab || s.tab;
     if (s.dismissed) {
@@ -109,6 +140,7 @@ export function dismiss() {
   if (!_state.active) return;
   const s = _ensure(_state.active);
   s.dismissed = true;
+  _saveDismissed(_state.active, true);
   _publish();
 }
 
@@ -117,5 +149,6 @@ export function resummon() {
   const s = _ensure(_state.active);
   s.dismissed = false;
   s.unreadDot = false;
+  _saveDismissed(_state.active, false);
   _publish();
 }

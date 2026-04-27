@@ -153,11 +153,13 @@ When a `canvas_update` event arrives:
   - If panel is visible: swap `.data` on the existing widget instance (no remount), preserve scroll position (clamped).
   - If panel is hidden by user: stay hidden, light up the resummon button's unread dot.
 
-### Dismiss flag (in-memory only)
+### Dismiss flag (persisted per-conv)
 
-- Per conv: `canvasDismissed.set(conv_id, true)` on close-button click.
-- Cleared on: any `kind: "set"` event, conversation switch, user click on resummon button, page reload.
-- Not persisted to localStorage — by design, dismissal is session-ephemeral.
+- Per conv: `localStorage["canvas-dismissed.{conv_id}"] = "true"` on close-button click.
+- Cleared on: any `kind: "set"` event, `kind: "clear"` event, user click on resummon button.
+- Preserved across: page reload, conversation switch, `canvas_update` events. The user's dismiss intent sticks until the agent does something new (a fresh `canvas_set`) or the canvas is cleared.
+
+> _Brainstorm chose A1 (memory-only) initially; revised to A2 during PR review when in-memory dismiss felt too eager — page reload was bringing the panel back uninvited._
 
 ### Resummon UI
 
@@ -353,7 +355,7 @@ Per CLAUDE.md "When changing a feature: update its `docs/` page as part of the s
 3. **Diff visualization / smooth animation** on `canvas_update` (currently full replace, no animation).
 4. **In-browser editing** of canvas content (read-only for both panel and standalone view in Phase 3).
 5. **Public-shareable canvas links** for Mattermost users without web auth (e.g., short-lived signed URLs).
-6. **Persisted dismiss flag** via localStorage (currently in-memory only).
+6. ~~**Persisted dismiss flag** via localStorage~~ — landed during PR review, see Dismiss flag section above.
 7. **Sandbox mode for agent-authored HTML/JS** in canvas — tracked in #358.
 8. **Real-time collaborative editing** of canvas (multi-user write).
 9. **Canvas state injected into agent context** automatically (currently only available via `canvas_read` tool).

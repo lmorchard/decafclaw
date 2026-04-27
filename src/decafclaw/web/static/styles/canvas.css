@@ -84,12 +84,13 @@ canvas-panel {
 
 /* When mounted directly inside #chat-main (desktop), float in the
    upper-right corner so we don't reserve a dead header strip when no
-   canvas state exists. */
+   canvas state exists. The right offset clears chat-view's scrollbar
+   on platforms that use classic (non-overlay) scrollbars. */
 #chat-main { position: relative; }
 #chat-main > .canvas-resummon-pill {
   position: absolute;
   top: 0.5rem;
-  right: 0.75rem;
+  right: 1.5rem;
   z-index: 5;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18);
 }
