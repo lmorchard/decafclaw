@@ -57,7 +57,12 @@ export function getActiveConvId() {
 export async function setActiveConv(convId) {
   _state.active = convId;
   if (!convId) { _publish(); return; }
-  _ensure(convId);
+  // Conv-switch always resets dismiss/unread per the spec lifecycle —
+  // do this BEFORE the fetch so a failure (network, 401, 404) doesn't
+  // leave the canvas stuck dismissed when the user returns later.
+  const s = _ensure(convId);
+  s.dismissed = false;
+  s.unreadDot = false;
   try {
     const resp = await fetch(`/api/canvas/${encodeURIComponent(convId)}`,
                              { credentials: 'same-origin' });
@@ -66,10 +71,7 @@ export async function setActiveConv(convId) {
       const tabs = data.tabs || [];
       const activeId = data.active_tab;
       const tab = tabs.find(t => t.id === activeId) || null;
-      const s = _ensure(convId);
       s.tab = tab;
-      s.dismissed = false;
-      s.unreadDot = false;
     }
   } catch (err) {
     console.warn('canvas state load failed', err);
