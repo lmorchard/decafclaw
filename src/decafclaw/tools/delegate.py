@@ -1,9 +1,12 @@
 """Sub-agent delegation — fork child agents for focused subtasks."""
 
 import asyncio
+import json
 import logging
+import re
 import secrets
 from dataclasses import replace
+from typing import Any
 
 from ..media import ToolResult
 
@@ -39,12 +42,79 @@ _VAULT_WRITE_TOOLS = frozenset({
     "vault_section",
 })
 
+# Structured-return addendum (#395). Appended to the child system
+# prompt when `delegate_task` is called with a `return_schema` hint.
+# The schema is rendered as a JSON example; the child is instructed
+# to emit prose first, then a fenced JSON block matching the shape.
+_STRUCTURED_OUTPUT_INSTRUCTION = """\
+
+You MUST return your output in the following form:
+
+1. Any prose explanation, analysis, or context first.
+2. Then a fenced JSON block matching this exact schema:
+
+```json
+{schema}
+```
+
+Replace placeholder values with actual data; keep the field shape
+exactly as shown. Use `null` for missing values rather than
+omitting fields."""
+
+_FENCED_JSON_RE = re.compile(
+    r"```json\s*\n(?P<body>.+?)\n```",
+    re.DOTALL,
+)
+
+
+def _render_schema_addendum(schema: dict) -> str:
+    """Render a JSON-schema-shaped dict into the structured-output
+    prompt addendum. Returns "" on JSON-encoding failure (defensive
+    — the caller short-circuits if the addendum is empty)."""
+    try:
+        rendered = json.dumps(schema, indent=2)
+    except (TypeError, ValueError) as exc:
+        log.warning(
+            "delegate_task: failed to render return_schema as JSON; "
+            "skipping addendum: %s", exc,
+        )
+        return ""
+    return _STRUCTURED_OUTPUT_INSTRUCTION.format(schema=rendered)
+
+
+def _parse_structured_output(text: str) -> tuple[Any | None, str]:
+    """Extract a fenced ```json block from ``text``.
+
+    Returns ``(parsed, prose)`` where ``parsed`` is the JSON-decoded
+    object (any shape — list/dict/scalar — since the caller's schema
+    is treated as a hint, not enforced). ``prose`` is ``text`` with
+    the JSON block stripped so the tool result's prose half doesn't
+    duplicate the auto-rendered ``ToolResult.data`` block.
+
+    Returns ``(None, text)`` when there's no fenced block, the JSON
+    is malformed, or the input is empty. Lenient — the caller treats
+    None as a silent prose-only fallback.
+    """
+    if not text:
+        return None, text
+    match = _FENCED_JSON_RE.search(text)
+    if not match:
+        return None, text
+    body = match.group("body").strip()
+    try:
+        parsed = json.loads(body)
+    except json.JSONDecodeError:
+        return None, text
+    prose = _FENCED_JSON_RE.sub("", text).strip()
+    return parsed, prose
+
 
 async def _run_child_turn(parent_ctx, task, model: str = "",
                           max_iterations: int = 0,
                           *,
                           allow_vault_retrieval: bool = False,
-                          allow_vault_read: bool = False):
+                          allow_vault_read: bool = False,
+                          return_schema: dict | None = None):
     """Run a child agent turn via ConversationManager, preserving the
     parent's tools, skills, and event routing.
 
@@ -61,6 +131,11 @@ async def _run_child_turn(parent_ctx, task, model: str = "",
             ``vault_list``, ``vault_backlinks``,
             ``vault_show_sections``). Vault WRITE tools are
             categorically blocked regardless.
+        return_schema: Optional JSON-schema-shaped dict (#395). When
+            supplied, the child system prompt gets an addendum
+            instructing it to emit a fenced JSON block matching the
+            shape after any prose. The caller is responsible for
+            parsing the JSON out of the response.
 
     Returns the child's text response, or an error string on failure.
     """
@@ -69,7 +144,8 @@ async def _run_child_turn(parent_ctx, task, model: str = "",
 
     config = parent_ctx.config
 
-    # Build child system prompt: base + activated skill bodies
+    # Build child system prompt: base + activated skill bodies + optional
+    # structured-output addendum.
     activated = parent_ctx.skills.activated
     skill_map = {s.name: s for s in config.discovered_skills}
     prompt_parts = [DEFAULT_CHILD_SYSTEM_PROMPT]
@@ -77,6 +153,10 @@ async def _run_child_turn(parent_ctx, task, model: str = "",
         skill = skill_map.get(name)
         if skill and skill.body:
             prompt_parts.append(f"\n\n--- Skill: {name} ---\n{skill.body}")
+    if return_schema is not None:
+        addendum = _render_schema_addendum(return_schema)
+        if addendum:
+            prompt_parts.append(addendum)
     child_system_prompt = "\n".join(prompt_parts)
 
     child_config = replace(
@@ -172,7 +252,8 @@ async def tool_delegate_task(
     model: str = "",
     allow_vault_retrieval: bool = False,
     allow_vault_read: bool = False,
-) -> str | ToolResult:
+    return_schema: dict | None = None,
+) -> ToolResult:
     """Delegate a subtask to a child agent.
 
     By default the child has NO vault access — no proactive
@@ -181,23 +262,48 @@ async def tool_delegate_task(
     read-side vault tools via ``allow_vault_read=True``. Write
     tools are categorically blocked for children regardless. See
     #396.
+
+    When ``return_schema`` is supplied, the child is instructed to
+    return prose followed by a fenced JSON block matching the shape;
+    the parsed object lands on ``ToolResult.data`` and the prose half
+    on ``ToolResult.text``. Parse failures fall through silently with
+    a debug log — the parent gets the raw response as text. See #395.
     """
     log.info(
-        "[tool:delegate_task] model=%s vault_retrieval=%s vault_read=%s %s...",
+        "[tool:delegate_task] model=%s vault_retrieval=%s vault_read=%s "
+        "schema=%s %s...",
         model or "inherit",
         allow_vault_retrieval,
         allow_vault_read,
+        "yes" if return_schema else "no",
         task[:80],
     )
 
     if not task or not task.strip():
         return ToolResult(text="[error: task description is required]")
 
-    return await _run_child_turn(
+    raw = await _run_child_turn(
         ctx, task, model=model,
         allow_vault_retrieval=allow_vault_retrieval,
         allow_vault_read=allow_vault_read,
+        return_schema=return_schema,
     )
+    # Error paths in _run_child_turn return ToolResult directly; pass through.
+    if isinstance(raw, ToolResult):
+        return raw
+
+    raw_text = raw or ""
+    if return_schema is None:
+        return ToolResult(text=raw_text)
+
+    parsed, prose = _parse_structured_output(raw_text)
+    if parsed is None:
+        log.debug(
+            "delegate_task: child response had no parseable JSON block; "
+            "falling back to prose-only return",
+        )
+        return ToolResult(text=raw_text)
+    return ToolResult(text=prose or raw_text, data=parsed)
 
 
 DELEGATE_TOOLS = {
@@ -266,6 +372,21 @@ DELEGATE_TOOL_DEFINITIONS = [
                             "flag; if the child's work should land in the "
                             "vault, do the write yourself after the child "
                             "returns."
+                        ),
+                    },
+                    "return_schema": {
+                        "type": "object",
+                        "description": (
+                            "Optional JSON-schema-shaped object describing "
+                            "the structured return shape you want from the "
+                            "child. When supplied, the child is instructed "
+                            "to emit prose followed by a fenced JSON block "
+                            "matching this shape; the parsed object arrives "
+                            "on this tool result's structured-data block. "
+                            "Use for subtasks where you need specific fields "
+                            "(counts, lists, scores) rather than just prose. "
+                            "Treat as a hint — no validation is performed; "
+                            "parse failures fall back to prose-only."
                         ),
                     },
                 },
