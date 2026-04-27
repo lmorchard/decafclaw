@@ -28,6 +28,7 @@ from .config_types import (
     LlmConfig,
     MattermostConfig,
     ModelConfig,
+    NotesConfig,
     NotificationsConfig,
     ProviderConfig,
     ReflectionConfig,
@@ -153,6 +154,7 @@ class Config:
     mattermost: MattermostConfig = field(default_factory=MattermostConfig)
     compaction: CompactionConfig = field(default_factory=CompactionConfig)
     cleanup: CleanupConfig = field(default_factory=CleanupConfig)
+    notes: NotesConfig = field(default_factory=NotesConfig)
     embedding: EmbeddingConfig = field(default_factory=EmbeddingConfig)
     heartbeat: HeartbeatConfig = field(default_factory=HeartbeatConfig)
     http: HttpConfig = field(default_factory=HttpConfig)
@@ -370,6 +372,9 @@ def load_config() -> Config:
     cleanup = load_sub_config(
         CleanupConfig, file_data.get("cleanup", {}), "CLEANUP")
 
+    notes = load_sub_config(
+        NotesConfig, file_data.get("notes", {}), "NOTES")
+
     embedding = load_sub_config(
         EmbeddingConfig, file_data.get("embedding", {}), "EMBEDDING",
         env_aliases={"search_strategy": "MEMORY_SEARCH_STRATEGY"})
@@ -471,6 +476,7 @@ def load_config() -> Config:
         mattermost=mattermost,
         compaction=compaction,
         cleanup=cleanup,
+        notes=notes,
         embedding=embedding,
         heartbeat=heartbeat,
         http=http,

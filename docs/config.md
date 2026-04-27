@@ -105,6 +105,20 @@ History compaction settings. Empty `url`/`model`/`api_key` fall back to the `llm
 
 `decisions_*` controls the structured decision slice that's threaded forward through every compaction (see [context-composer.md#decision-slice-through-compaction](context-composer.md#decision-slice-through-compaction) and #302). The slice persists at `{workspace}/conversations/{conv_id}.decisions.json`. `decisions_enabled: false` disables the prompt addendum, parse step, and sidecar write entirely. `decisions_max_per_category: 0` removes the FIFO cap.
 
+### `notes`
+
+Per-conversation scratchpad — always-loaded `notes_append` / `notes_read` tools backed by an append-only markdown file at `workspace/conversations/{conv_id}.notes.md`, colocated with the conversation archive and other sidecars. Recent entries auto-inject into context at turn start. See [notes.md](notes.md) and #299.
+
+| Field | Type | Default | Env Var |
+|-------|------|---------|---------|
+| `enabled` | bool | `true` | `NOTES_ENABLED` |
+| `max_entry_chars` | int | `1024` | `NOTES_MAX_ENTRY_CHARS` |
+| `context_max_entries` | int | `20` | `NOTES_CONTEXT_MAX_ENTRIES` |
+| `context_max_chars` | int | `4096` | `NOTES_CONTEXT_MAX_CHARS` |
+| `max_total_entries` | int | `1000` | `NOTES_MAX_TOTAL_ENTRIES` |
+
+`max_entry_chars` is the silent-truncation cap on individual notes. `context_max_entries` and `context_max_chars` together bound the auto-inject — at most N entries, dropping oldest until the total body fits the char cap. `max_total_entries` is the file-level cap: when an append would push the file over the limit, oldest entries get dropped via an atomic rewrite so long-running conversations don't accumulate unbounded read-cost per turn (the composer reads the file every interactive turn). `0` disables the file cap. `enabled: false` disables both tools and the auto-inject.
+
 ### `cleanup`
 
 Tool-result clearing — a lightweight pre-compaction tier that replaces large old tool-message bodies with a short stub (`[tool output cleared: N chars]`) so the agent loop doesn't keep paying attention budget on raw tool output it has already synthesized. Runs every iteration (cheap, in-memory). The original tool body remains durably written to the per-conversation JSONL archive — only the in-memory copy is edited. See [context-composer.md#tool-result-clearing-lightweight-tier](context-composer.md#tool-result-clearing-lightweight-tier) and #298.
