@@ -173,12 +173,14 @@ class TestRunChildTurn:
 class TestToolDelegateTask:
     @pytest.mark.asyncio
     async def test_single_task(self, ctx):
-        """Single task returns result directly."""
+        """Single task returns result wrapped in ToolResult."""
         with patch("decafclaw.tools.delegate._run_child_turn",
                    new_callable=AsyncMock, return_value="result one"):
             result = await tool_delegate_task(ctx, "do thing")
 
-        assert result == "result one"
+        assert isinstance(result, ToolResult)
+        assert result.text == "result one"
+        assert result.data is None
 
     @pytest.mark.asyncio
     async def test_empty_task(self, ctx):
@@ -191,6 +193,161 @@ class TestToolDelegateTask:
         """Whitespace-only task returns error."""
         result = await tool_delegate_task(ctx, "   ")
         assert "error" in _text(result)
+
+
+# -- Structured return schema (#395) ------------------------------------------
+
+
+class TestParseStructuredOutput:
+    """Unit tests for the JSON-block extraction helper."""
+
+    def test_valid_object_extracts_and_strips(self):
+        from decafclaw.tools.delegate import _parse_structured_output
+
+        text = (
+            "Found 3 issues in the auth module.\n\n"
+            "```json\n"
+            "{\"count\": 3, \"severity\": \"medium\"}\n"
+            "```\n"
+            "Trailing prose."
+        )
+        parsed, prose = _parse_structured_output(text)
+        assert parsed == {"count": 3, "severity": "medium"}
+        # Block is stripped from the prose half so the auto-rendered
+        # ToolResult.data block doesn't get duplicated by the agent loop.
+        assert "```json" not in prose
+        assert "Found 3 issues" in prose
+        assert "Trailing prose" in prose
+
+    def test_no_json_block_returns_none(self):
+        from decafclaw.tools.delegate import _parse_structured_output
+
+        parsed, prose = _parse_structured_output("Just prose, no json.")
+        assert parsed is None
+        assert prose == "Just prose, no json."
+
+    def test_malformed_json_returns_none(self):
+        from decafclaw.tools.delegate import _parse_structured_output
+
+        text = "prose\n```json\n{not valid json,\n```"
+        parsed, prose = _parse_structured_output(text)
+        assert parsed is None
+        # On parse failure, prose is the original text unchanged so the
+        # caller can fall back to text-only return cleanly.
+        assert prose == text
+
+    def test_list_root_is_accepted(self):
+        """Schema is opaque — non-object roots parse fine since we
+        don't enforce the shape."""
+        from decafclaw.tools.delegate import _parse_structured_output
+
+        text = "ok\n```json\n[1, 2, 3]\n```"
+        parsed, prose = _parse_structured_output(text)
+        assert parsed == [1, 2, 3]
+
+    def test_empty_input_returns_none(self):
+        from decafclaw.tools.delegate import _parse_structured_output
+
+        parsed, prose = _parse_structured_output("")
+        assert parsed is None
+        assert prose == ""
+
+
+class TestStructuredReturns:
+    """Behaviour of `tool_delegate_task` with `return_schema`."""
+
+    @pytest.mark.asyncio
+    async def test_no_schema_text_only(self, ctx):
+        """Without schema → text-only ToolResult, no data field
+        (preserves byte-for-byte the existing single-task behaviour)."""
+        with patch("decafclaw.tools.delegate._run_child_turn",
+                   new_callable=AsyncMock, return_value="just prose"):
+            result = await tool_delegate_task(ctx, "do thing")
+        assert result.text == "just prose"
+        assert result.data is None
+
+    @pytest.mark.asyncio
+    async def test_schema_with_valid_json_populates_data(self, ctx):
+        child_response = (
+            "Analyzed the auth module — three issues found.\n\n"
+            "```json\n"
+            "{\"count\": 3, \"items\": [\"x\", \"y\", \"z\"]}\n"
+            "```"
+        )
+        with patch("decafclaw.tools.delegate._run_child_turn",
+                   new_callable=AsyncMock, return_value=child_response):
+            result = await tool_delegate_task(
+                ctx, "audit auth",
+                return_schema={"count": "int", "items": "list[str]"},
+            )
+        assert result.data == {"count": 3, "items": ["x", "y", "z"]}
+        # Prose half is stripped of the JSON block.
+        assert "```json" not in result.text
+        assert "three issues found" in result.text
+
+    @pytest.mark.asyncio
+    async def test_schema_with_no_json_falls_back_to_prose(self, ctx, caplog):
+        """Child forgot to emit JSON → silent fallback, debug log."""
+        with patch("decafclaw.tools.delegate._run_child_turn",
+                   new_callable=AsyncMock, return_value="forgot the json"):
+            result = await tool_delegate_task(
+                ctx, "audit", return_schema={"count": "int"},
+            )
+        assert result.text == "forgot the json"
+        assert result.data is None
+
+    @pytest.mark.asyncio
+    async def test_schema_with_malformed_json_falls_back(self, ctx):
+        """Bad JSON → silent fallback, raw text returned as-is."""
+        bad = "prose\n```json\n{bad json,\n```"
+        with patch("decafclaw.tools.delegate._run_child_turn",
+                   new_callable=AsyncMock, return_value=bad):
+            result = await tool_delegate_task(
+                ctx, "audit", return_schema={"count": "int"},
+            )
+        assert result.text == bad
+        assert result.data is None
+
+    @pytest.mark.asyncio
+    async def test_schema_passes_through_to_child_turn(self, ctx):
+        """Verify the schema reaches `_run_child_turn` so the addendum
+        gets rendered into the child system prompt."""
+        seen = {}
+
+        async def fake_run(parent_ctx, task, model="", max_iterations=0, **kwargs):
+            seen["schema"] = kwargs.get("return_schema")
+            return "ok"
+
+        with patch("decafclaw.tools.delegate._run_child_turn",
+                   side_effect=fake_run):
+            await tool_delegate_task(
+                ctx, "go", return_schema={"foo": "bar"},
+            )
+        assert seen["schema"] == {"foo": "bar"}
+
+    @pytest.mark.asyncio
+    async def test_render_schema_addendum_in_child_prompt(self, ctx, monkeypatch):
+        """End-to-end: schema arrives, child system prompt contains
+        the rendered JSON example."""
+        seen_prompts = []
+
+        async def fake_run_agent_turn(child_ctx, user_message, history, **kwargs):
+            seen_prompts.append(child_ctx.config.system_prompt)
+            return ToolResult(text='ok\n```json\n{"x": 1}\n```')
+
+        monkeypatch.setattr("decafclaw.agent.run_agent_turn", fake_run_agent_turn)
+
+        result = await tool_delegate_task(
+            ctx, "investigate",
+            return_schema={"x": "int", "items": ["a", "b"]},
+        )
+        assert seen_prompts, "child agent never ran"
+        prompt = seen_prompts[0]
+        # Addendum text + the rendered schema both present.
+        assert "fenced JSON block matching this exact schema" in prompt
+        assert "\"x\": \"int\"" in prompt
+        # End-to-end the parsed payload landed.
+        assert result.data == {"x": 1}
 
 
 class TestDelegateRoutingThroughManager:
@@ -342,10 +499,9 @@ class TestVaultAccessPolicy:
         """`tool_delegate_task` parameters reach `_run_child_turn`."""
         seen = {}
 
-        async def fake_run(parent_ctx, task, model="", max_iterations=0,
-                           allow_vault_retrieval=False, allow_vault_read=False):
-            seen["allow_vault_retrieval"] = allow_vault_retrieval
-            seen["allow_vault_read"] = allow_vault_read
+        async def fake_run(parent_ctx, task, model="", max_iterations=0, **kwargs):
+            seen["allow_vault_retrieval"] = kwargs.get("allow_vault_retrieval")
+            seen["allow_vault_read"] = kwargs.get("allow_vault_read")
             return ToolResult(text="ok")
 
         with patch("decafclaw.tools.delegate._run_child_turn", side_effect=fake_run):

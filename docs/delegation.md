@@ -34,6 +34,7 @@ Each call spawns an independent child agent that:
 | `model` | No | Named model config for the subtask. Omit to inherit parent's model. See [Model Selection](model-selection.md). |
 | `allow_vault_retrieval` | No | Opt the child INTO proactive memory retrieval at turn start. Default `false`. See [Vault access](#vault-access). |
 | `allow_vault_read` | No | Opt the child INTO read-side vault tools (`vault_read`, `vault_search`, etc.). Default `false`. See [Vault access](#vault-access). |
+| `return_schema` | No | JSON-schema-shaped object describing the structured return shape. When supplied, the child is instructed to emit prose followed by a fenced JSON block; the parsed object lands on `ToolResult.data`. See [Structured returns](#structured-returns). |
 
 ## Vault access
 
@@ -53,9 +54,37 @@ This is a behavior tightening from earlier versions where children inherited eve
 ## Results
 
 - Returns the child's text response wrapped in a `ToolResult`.
-- When `return_schema` is supplied (#395, separate PR), `ToolResult.data` carries the parsed JSON.
+- When `return_schema` is supplied and the child emits valid JSON, the parsed object also lands on `ToolResult.data` — auto-rendered as a fenced JSON block in the tool result content for the parent agent.
 - Failures returned as error text — one child failing doesn't affect siblings.
 - Timeouts return `[subtask timed out after Ns]`.
+
+## Structured returns
+
+For subtasks where the parent needs specific fields (counts, lists, scores) rather than just a prose summary, supply a `return_schema` hint. The child's system prompt gets an addendum instructing it to emit prose first, then a fenced ```json block matching the shape. After the child completes, `delegate_task` parses the JSON out of the response and populates `ToolResult.data`.
+
+```python
+# Example call (LLM-emitted tool call):
+delegate_task(
+    task="Audit the auth module for security issues. List each issue with severity.",
+    return_schema={
+        "issues": [
+            {"file": "string", "line": "int", "severity": "low|medium|high", "summary": "string"}
+        ],
+        "overall_severity": "low|medium|high"
+    }
+)
+```
+
+The parent receives both halves:
+
+- `ToolResult.text` — the child's prose explanation, with the fenced JSON block stripped so it doesn't duplicate the auto-rendered structured block.
+- `ToolResult.data` — the parsed object, ready for the parent to operate on directly without re-parsing.
+
+**The schema is a hint, not enforced.** No JSON-schema library is involved; the child's emitted JSON is parsed verbatim. If you need strict schema validation, do it on `ToolResult.data` from the parent side.
+
+**Parse failures fall through silently.** If the child forgets the JSON block, emits malformed JSON, or just ignores the instruction, the parent receives `ToolResult(text=raw_response)` with no `data` field — a debug log records the fallback. No retry is attempted (the child has already done the work; the prose half is usually still useful).
+
+See #395 for the design rationale.
 
 ## Configuration
 
