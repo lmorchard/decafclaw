@@ -70,6 +70,10 @@ test-all:
 reindex:
 	uv run decafclaw-reindex
 
+# Drop stale rows from the embedding index (missing source files + legacy types). #305
+prune-embeddings:
+	uv run decafclaw-prune-embeddings
+
 # Migrate wiki/memories to unified vault structure
 migrate-vault:
 	uv run python scripts/migrate_to_vault.py

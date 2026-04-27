@@ -31,6 +31,7 @@ dev = ["watchfiles>=1.0.0"]
 [project.scripts]
 decafclaw = "decafclaw:main"
 decafclaw-reindex = "decafclaw.embeddings:reindex_cli"
+decafclaw-prune-embeddings = "decafclaw.embeddings:prune_embeddings_cli"
 decafclaw-search = "decafclaw.embeddings:search_cli"
 decafclaw-token = "decafclaw.web.auth:token_cli"
 

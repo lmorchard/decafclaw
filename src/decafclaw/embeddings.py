@@ -510,6 +510,128 @@ async def reindex_vault(config, concurrency: int = 4):
     return count
 
 
+def prune_stale_embeddings(config) -> dict[str, int]:
+    """Scan the embedding index and drop rows whose source no longer
+    exists or whose source type is excluded from retrieval.
+
+    Hard delete — no soft TTL. Embeddings are deterministic from
+    source content, so worst case the operator runs ``make reindex``
+    to rebuild from scratch.
+
+    Per source_type:
+      - ``page`` / ``user`` / ``wiki`` (legacy) / ``journal``: the
+        file at ``vault_root / file_path`` must exist; otherwise the
+        row is dropped.
+      - ``conversation`` / ``memory``: dropped unconditionally
+        (excluded from retrieval per #133 and #305).
+      - anything else: kept, with a single warning per unknown type
+        — better to leave unknown rows alone than nuke them.
+
+    Returns a counts dict::
+
+        {
+            "checked": int,           # total rows scanned
+            "dropped_missing": int,   # source file gone
+            "dropped_legacy": int,    # excluded source type
+            "kept": int,              # still pointing at live content
+            "unknown": int,           # unrecognized source_type
+        }
+    """
+    vault_root = config.vault_root
+    legacy_types = {"conversation", "memory"}
+    file_backed_types = {"page", "user", "wiki", "journal"}
+
+    counts = {
+        "checked": 0,
+        "dropped_missing": 0,
+        "dropped_legacy": 0,
+        "kept": 0,
+        "unknown": 0,
+    }
+    unknown_types_logged: set[str] = set()
+
+    with _open_db(config) as conn:
+        rows = conn.execute(
+            "SELECT id, file_path, source_type FROM memory_embeddings"
+        ).fetchall()
+
+    for row_id, file_path, source_type in rows:
+        counts["checked"] += 1
+        if source_type in legacy_types:
+            _delete_one_row(config, row_id)
+            counts["dropped_legacy"] += 1
+            continue
+        if source_type in file_backed_types:
+            try:
+                exists = (vault_root / file_path).exists()
+            except OSError:
+                exists = False
+            if not exists:
+                _delete_one_row(config, row_id)
+                counts["dropped_missing"] += 1
+            else:
+                counts["kept"] += 1
+            continue
+        # Unknown source type — keep, but log once per type.
+        counts["unknown"] += 1
+        if source_type not in unknown_types_logged:
+            log.warning(
+                "prune_stale_embeddings: unknown source_type %r — keeping rows of this type",
+                source_type,
+            )
+            unknown_types_logged.add(source_type)
+
+    return counts
+
+
+def _delete_one_row(config, row_id: int) -> None:
+    """Delete a single ``memory_embeddings`` row + its
+    ``embeddings_vec`` partner. Used by the prune sweep."""
+    with _open_db(config) as conn:
+        conn.execute("DELETE FROM memory_embeddings WHERE id = ?", (row_id,))
+        conn.execute("DELETE FROM embeddings_vec WHERE rowid = ?", (row_id,))
+        conn.commit()
+
+
+def prune_embeddings_cli():
+    """CLI entry point: drop stale rows from the embedding index."""
+    import argparse
+    import logging
+
+    from .config import load_config
+
+    parser = argparse.ArgumentParser(
+        description="Drop stale rows from the DecafClaw embedding index "
+                    "(missing source files + legacy excluded source types). "
+                    "See #305.",
+    )
+    parser.add_argument("--quiet", action="store_true",
+                        help="Print only the summary counts (no per-row logs)")
+    args = parser.parse_args()
+
+    logging.basicConfig(
+        level=logging.WARNING if args.quiet else logging.INFO,
+        format="%(asctime)s %(name)s %(levelname)s: %(message)s",
+    )
+
+    config = load_config()
+    db_path = _db_path(config)
+    if not db_path.exists():
+        print(f"No embedding index at {db_path}; nothing to prune.")
+        return
+
+    print(f"Embedding prune sweep — {db_path}\n")
+    counts = prune_stale_embeddings(config)
+    reclaimed = counts["dropped_missing"] + counts["dropped_legacy"]
+    print(f"Scanned {counts['checked']} rows.")
+    print(f"  kept:            {counts['kept']:>5} (live vault content)")
+    print(f"  dropped_missing: {counts['dropped_missing']:>5} (source files gone)")
+    print(f"  dropped_legacy:  {counts['dropped_legacy']:>5} (conversation / memory legacy)")
+    print(f"  unknown:         {counts['unknown']:>5} (unrecognized source_type, kept)")
+    print()
+    print(f"Reclaimed {reclaimed} row(s).")
+
+
 def reindex_cli():
     """CLI entry point: rebuild the embedding index from all sources (or a specific source)."""
     import argparse

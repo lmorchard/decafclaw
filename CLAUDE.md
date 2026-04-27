@@ -173,6 +173,7 @@ make check        # Lint + typecheck (Python + JS)
 make test         # Pytest
 make vendor       # Rebuild web UI vendor bundle
 make reindex      # Rebuild embedding index
+make prune-embeddings  # Drop stale rows from the embedding index (missing source files + legacy types)
 make build-eval-fixtures
 make config       # Show resolved config
 ```
