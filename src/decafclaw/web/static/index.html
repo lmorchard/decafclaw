@@ -23,6 +23,9 @@
   <div id="app">
     <login-view></login-view>
     <div id="chat-layout" class="hidden">
+      <!-- Hamburger lives outside #chat-main so it stays visible on mobile
+           when #wiki-main replaces #chat-main (see styles/mobile.css). -->
+      <button id="hamburger-btn" class="hamburger-btn" aria-label="Open sidebar">&#9776;</button>
       <div id="sidebar-backdrop"></div>
       <conversation-sidebar></conversation-sidebar>
       <div id="sidebar-resize-handle"></div>
@@ -34,7 +37,6 @@
       <div id="wiki-resize-handle" class="hidden"></div>
       <div id="chat-main">
         <div id="mobile-header">
-          <button id="hamburger-btn" class="hamburger-btn" aria-label="Open sidebar">&#9776;</button>
           <div id="connection-banner" class="hidden">Reconnecting...</div>
         </div>
         <chat-view></chat-view>
