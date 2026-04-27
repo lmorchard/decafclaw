@@ -8,7 +8,14 @@ import { AuthClient } from './lib/auth-client.js';
 import { WebSocketClient } from './lib/websocket-client.js';
 import { ConversationStore } from './lib/conversation-store.js';
 import { setupResizeHandle } from './lib/utils.js';
-import { setActiveConv, applyEvent, subscribe as subscribeCanvas, resummon } from './lib/canvas-state.js';
+import {
+  setActiveConv,
+  applyEvent,
+  subscribe as subscribeCanvas,
+  resummon,
+  dismiss as canvasDismiss,
+  currentSnapshot as canvasSnapshot,
+} from './lib/canvas-state.js';
 
 // Import components (registers custom elements)
 import './components/login-view.js';
@@ -361,12 +368,21 @@ window.addEventListener('popstate', () => {
   }
 });
 
-// Switch back to chat when sidebar switches to Chats tab
+// Switch back to chat when sidebar switches to Chats tab.
+// On mobile, opening wiki/files auto-closes the canvas overlay (mutual
+// exclusion with the canvas full-screen overlay; reverse direction is
+// handled in canvas-panel._reflectVisibility).
 document.addEventListener('sidebar-tab-change', (e) => {
   const tab = /** @type {CustomEvent} */ (e).detail?.tab;
   if (tab === 'conversations') {
     hideWikiView();
     hideFileView();
+  }
+  if ((tab === 'wiki' || tab === 'files')
+      && window.matchMedia('(max-width: 639px)').matches) {
+    if (canvasSnapshot().visible) {
+      canvasDismiss();
+    }
   }
 });
 
