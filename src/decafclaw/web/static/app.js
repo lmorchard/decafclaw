@@ -706,10 +706,32 @@ function setupCanvasResummonPill() {
     host.appendChild(btn);
   };
 
-  subscribeCanvas(snap => {
-    renderTo(desktopHost, snap);
-    if (mobileHost) renderTo(mobileHost, snap);
+  const isMobile = () => window.matchMedia('(max-width: 639px)').matches;
+  const renderForViewport = (snap) => {
+    // Only mount the pill in the visible host. mobile-header uses
+    // `display: contents` on desktop, which would still render its
+    // children inline inside chat-main — producing a duplicate pill.
+    if (isMobile()) {
+      desktopHost.querySelector('.canvas-resummon-pill')?.remove();
+      if (mobileHost) renderTo(mobileHost, snap);
+    } else {
+      mobileHost?.querySelector('.canvas-resummon-pill')?.remove();
+      renderTo(desktopHost, snap);
+    }
+  };
+
+  subscribeCanvas(renderForViewport);
+  // Re-render on viewport-class changes so a desktop ↔ mobile resize
+  // moves the pill to the right host.
+  window.matchMedia('(max-width: 639px)').addEventListener('change', () => {
+    const snap = currentSnapshotForResummon();
+    renderForViewport(snap);
   });
+}
+
+function currentSnapshotForResummon() {
+  // Avoid importing the canvas-state module twice; surface a tiny helper.
+  return canvasSnapshot();
 }
 
 setupCanvasResummonPill();

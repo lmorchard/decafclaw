@@ -6,8 +6,9 @@
   flex: 0 0 auto;
   display: flex;
   flex-direction: column;
-  border-left: 1px solid var(--border, #ddd);
-  background: var(--bg, #fff);
+  border-left: 1px solid var(--pico-muted-border-color);
+  background: var(--pico-background-color);
+  color: var(--pico-color);
   overflow: hidden;
 }
 
@@ -38,9 +39,11 @@ canvas-panel {
   align-items: center;
   gap: 0.5rem;
   padding: 0.5rem 0.75rem;
-  border-bottom: 1px solid var(--border, #ddd);
+  border-bottom: 1px solid var(--pico-muted-border-color);
   font-weight: 600;
 }
+.canvas-btn { color: var(--pico-color); }
+.canvas-btn:hover { color: var(--pico-primary); }
 .canvas-label { flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .canvas-spacer { flex: 1; }
 .canvas-btn {
@@ -59,7 +62,7 @@ canvas-panel {
   min-height: 0;
   overflow: hidden;
 }
-.canvas-empty { padding: 1rem; color: var(--muted, #666); }
+.canvas-empty { padding: 1rem; color: var(--pico-muted-color); }
 
 #chat-main-header {
   display: flex;
@@ -74,8 +77,9 @@ canvas-panel {
   gap: 0.4rem;
   padding: 0.35rem 0.7rem;
   border-radius: 999px;
-  border: 1px solid var(--pico-muted-border-color, #ccc);
-  background: var(--bg, #fff);
+  border: 1px solid var(--pico-muted-border-color);
+  background: var(--pico-card-background-color, var(--pico-background-color));
+  color: var(--pico-color);
   cursor: pointer;
   font-size: 0.85rem;
 }
