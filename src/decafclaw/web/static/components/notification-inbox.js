@@ -1,4 +1,4 @@
-import { LitElement, html, nothing } from 'lit';
+import { LitElement, html, nothing, render } from 'lit';
 import { formatRelativeTime } from '../lib/utils.js';
 
 const LIST_LIMIT = 20;
@@ -52,6 +52,15 @@ export class NotificationInbox extends LitElement {
     window.addEventListener('ws-connected', this._onWsConnected);
     window.addEventListener('notification-created', this._onNotifCreated);
     window.addEventListener('notification-read', this._onNotifRead);
+    // Mount point for the panel at document.body so it escapes any
+    // transformed ancestor (e.g. the mobile sidebar's translateX, which
+    // would otherwise become the containing block for `position: fixed`
+    // and clip the panel). Lit owns the contents via render() in updated().
+    if (!this._panelMount) {
+      this._panelMount = document.createElement('div');
+      this._panelMount.className = 'notification-panel-mount';
+      document.body.appendChild(this._panelMount);
+    }
   }
 
   disconnectedCallback() {
@@ -60,6 +69,22 @@ export class NotificationInbox extends LitElement {
     window.removeEventListener('notification-created', this._onNotifCreated);
     window.removeEventListener('notification-read', this._onNotifRead);
     this.#removeDocClickListener();
+    if (this._panelMount) {
+      // Clear Lit's tree before removing the node so directives clean up.
+      render(nothing, this._panelMount);
+      this._panelMount.remove();
+      this._panelMount = null;
+    }
+  }
+
+  updated(changedProps) {
+    super.updated?.(changedProps);
+    // Render the panel template into the body-level mount on every update,
+    // so Lit reactivity continues to work even though the panel lives
+    // outside the component's normal render root.
+    if (this._panelMount) {
+      render(this.#renderPanel(), this._panelMount);
+    }
   }
 
   /**
@@ -124,7 +149,11 @@ export class NotificationInbox extends LitElement {
     requestAnimationFrame(() => {
       if (!this._open) return;
       this._onDocClick = (e) => {
-        if (!this.contains(e.target)) this.#closePanel();
+        // Panel lives in document.body via the portal mount, so it isn't
+        // inside `this` — check the mount too before deciding to close.
+        if (this.contains(e.target)) return;
+        if (this._panelMount?.contains(e.target)) return;
+        this.#closePanel();
       };
       document.addEventListener('click', this._onDocClick, true);
       this._onWinResize = () => this.#positionPanel();
@@ -297,6 +326,8 @@ export class NotificationInbox extends LitElement {
 
   render() {
     const hasUnread = this._count > 0;
+    // Note: the panel itself is rendered into a body-level mount in
+    // updated(); only the bell lives in the component's normal render tree.
     return html`
       <button
         class="notification-bell ${hasUnread ? 'has-unread' : ''}"
@@ -308,7 +339,6 @@ export class NotificationInbox extends LitElement {
         <span class="notification-bell-icon" aria-hidden="true">🔔</span>
         ${this.#renderBadge()}
       </button>
-      ${this.#renderPanel()}
     `;
   }
 }

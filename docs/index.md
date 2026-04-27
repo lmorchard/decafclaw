@@ -9,6 +9,7 @@
 ## Interfaces
 
 - [Web UI](web-ui.md) — Browser-based chat, vault editor, conversation management, model picker
+- [Web UI on mobile](web-ui-mobile.md) — Conventions for mobile-friendly components: tap targets, hover-only fixes, popover portals, visual viewport
 - [Files tab](files-tab.md) — Web UI workspace browser: browse, view, and edit agent workspace files
 - [Widgets](widgets.md) — Rich tool output in the web UI (Phase 1: `data_table`; extensible via admin tier)
 - [Streaming](streaming.md) — Stream LLM tokens as they arrive, configurable throttle

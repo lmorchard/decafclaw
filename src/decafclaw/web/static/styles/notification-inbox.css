@@ -45,7 +45,7 @@ notification-inbox .notification-badge {
   box-sizing: border-box;
 }
 
-notification-inbox .notification-panel {
+.notification-panel-mount .notification-panel {
   position: fixed;
   max-height: 70vh;
   overflow-y: auto;
@@ -58,7 +58,7 @@ notification-inbox .notification-panel {
   color: var(--pico-color, #333);
 }
 
-notification-inbox .notification-panel-header {
+.notification-panel-mount .notification-panel-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -71,7 +71,7 @@ notification-inbox .notification-panel-header {
   z-index: 1;
 }
 
-notification-inbox .notification-mark-all {
+.notification-panel-mount .notification-mark-all {
   background: none;
   border: 1px solid var(--pico-muted-border-color);
   border-radius: 4px;
@@ -82,28 +82,28 @@ notification-inbox .notification-mark-all {
   margin: 0;
 }
 
-notification-inbox .notification-mark-all:hover:not([disabled]) {
+.notification-panel-mount .notification-mark-all:hover:not([disabled]) {
   background: var(--pico-secondary-hover-background);
   color: var(--pico-color);
 }
 
-notification-inbox .notification-mark-all[disabled] {
+.notification-panel-mount .notification-mark-all[disabled] {
   opacity: 0.5;
   cursor: default;
 }
 
-notification-inbox .notification-empty {
+.notification-panel-mount .notification-empty {
   padding: 1rem;
   text-align: center;
   color: var(--pico-muted-color);
 }
 
-notification-inbox .notification-list {
+.notification-panel-mount .notification-list {
   display: flex;
   flex-direction: column;
 }
 
-notification-inbox .notification-row {
+.notification-panel-mount .notification-row {
   all: unset;
   display: flex;
   gap: 0.5rem;
@@ -117,24 +117,24 @@ notification-inbox .notification-row {
   box-sizing: border-box;
 }
 
-notification-inbox .notification-row:last-child {
+.notification-panel-mount .notification-row:last-child {
   border-bottom: none;
 }
 
-notification-inbox .notification-row:hover {
+.notification-panel-mount .notification-row:hover {
   background: var(--pico-secondary-hover-background);
 }
 
-notification-inbox .notification-row:focus-visible {
+.notification-panel-mount .notification-row:focus-visible {
   outline: 2px solid var(--pico-primary, #4A90D9);
   outline-offset: -2px;
 }
 
-notification-inbox .notification-row.unread {
+.notification-panel-mount .notification-row.unread {
   background: var(--pico-card-sectioning-background-color, rgba(0, 0, 0, 0.02));
 }
 
-notification-inbox .notification-dot {
+.notification-panel-mount .notification-dot {
   min-width: 0.9em;
   color: var(--pico-primary, #4A90D9);
   font-size: 0.7rem;
@@ -142,7 +142,7 @@ notification-inbox .notification-dot {
   padding-top: 0.1rem;
 }
 
-notification-inbox .notification-content {
+.notification-panel-mount .notification-content {
   display: flex;
   flex-direction: column;
   gap: 0.15rem;
@@ -150,7 +150,7 @@ notification-inbox .notification-content {
   min-width: 0;
 }
 
-notification-inbox .notification-title {
+.notification-panel-mount .notification-title {
   font-weight: 500;
   color: var(--pico-color);
   overflow: hidden;
@@ -158,12 +158,12 @@ notification-inbox .notification-title {
   white-space: nowrap;
 }
 
-notification-inbox .notification-row.read .notification-title {
+.notification-panel-mount .notification-row.read .notification-title {
   font-weight: 400;
   color: var(--pico-muted-color);
 }
 
-notification-inbox .notification-body {
+.notification-panel-mount .notification-body {
   font-size: 0.72rem;
   color: var(--pico-muted-color);
   overflow: hidden;
@@ -173,7 +173,7 @@ notification-inbox .notification-body {
   -webkit-box-orient: vertical;
 }
 
-notification-inbox .notification-meta {
+.notification-panel-mount .notification-meta {
   display: flex;
   gap: 0.5rem;
   font-size: 0.65rem;
@@ -182,6 +182,6 @@ notification-inbox .notification-meta {
   letter-spacing: 0.03em;
 }
 
-notification-inbox .notification-category {
+.notification-panel-mount .notification-category {
   font-weight: 600;
 }

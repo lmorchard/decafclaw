@@ -1,0 +1,49 @@
+/* Inline confirmation cards rendered above chat-input.
+   Lives outside chat-message, so the chat.css `.confirm-buttons`
+   rule (which only matches inside chat-message) doesn't apply here. */
+
+.confirm-card {
+  margin: 0.5rem 0;
+  padding: 0.75rem;
+  border: 1px solid var(--pico-muted-border-color);
+  border-radius: 6px;
+  background: var(--pico-card-background-color);
+  font-size: 0.9rem;
+  max-width: 100%;
+}
+
+.confirm-header {
+  margin-bottom: 0.5rem;
+}
+
+.confirm-header strong {
+  display: block;
+  margin-bottom: 0.25rem;
+  font-size: 0.85rem;
+  color: var(--pico-muted-color);
+}
+
+/* Long shell commands must wrap or scroll inside the card so they
+   don't push the layout sideways on mobile (where pinch-zoom is
+   intentionally disabled — see docs/web-ui-mobile.md). */
+.confirm-command {
+  margin: 0;
+  padding: 0.5rem;
+  border-radius: 4px;
+  background: var(--pico-code-background-color, rgba(0,0,0,0.06));
+  font-size: 0.8rem;
+  white-space: pre-wrap;
+  word-break: break-all;
+  overflow-x: auto;
+  max-width: 100%;
+}
+
+.confirm-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.confirm-buttons button {
+  margin: 0;
+}

@@ -8,7 +8,11 @@
 
 body {
   margin: 0;
-  height: 100vh;
+  /* `--vh` tracks the visualViewport height so the layout shrinks when the
+     soft keyboard opens (iOS Safari / Firefox Android). Set in app.js;
+     falls back to 100vh when the variable is unset (older browsers, or
+     before the script has run). */
+  height: var(--vh, 100vh);
   overflow: hidden;
 }
 

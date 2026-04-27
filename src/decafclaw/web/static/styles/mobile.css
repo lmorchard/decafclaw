@@ -19,28 +19,59 @@
     display: none;
   }
 
-  /* Mobile header bar */
+  /* Mobile header bar — only houses the connection banner now. The
+     hamburger lives outside #chat-main so it stays visible when wiki/
+     vault replaces chat-main. */
   #mobile-header {
     display: flex;
     align-items: center;
     gap: 0.5rem;
     padding: 0.35rem 0.75rem;
-    border-bottom: 1px solid var(--pico-muted-border-color);
     background: var(--pico-background-color);
+    position: relative;
+    z-index: 100;
   }
 
-  /* Hamburger button */
+  /* Hide the empty header bar when there's nothing to show. Falls back
+     to always-visible on browsers without :has() (older WebViews). */
+  #mobile-header:not(:has(#connection-banner:not(.hidden))) {
+    display: none;
+  }
+
+  #mobile-header:has(#connection-banner:not(.hidden)) {
+    border-bottom: 1px solid var(--pico-muted-border-color);
+  }
+
+  /* Hamburger floats above whichever content area is showing (chat or
+     wiki/vault) so the user can always summon the sidebar. z-index sits
+     below the sidebar overlay (200) so the sidebar covers it when open.
+     Padding-left on chat-view/wiki-main handled below so content doesn't
+     start under the button. */
   .hamburger-btn {
     display: block;
-    background: none;
-    border: none;
-    font-size: 1.4rem;
+    position: fixed;
+    top: 0.4rem;
+    left: 0.4rem;
+    z-index: 150;
+    background: var(--pico-background-color);
+    border: 1px solid var(--pico-muted-border-color);
+    border-radius: 6px;
+    font-size: 1.3rem;
     line-height: 1;
-    padding: 0.1rem 0.25rem;
+    padding: 0.25rem 0.5rem;
     margin: 0;
     cursor: pointer;
     color: var(--pico-color);
-    flex-shrink: 0;
+    min-width: 44px;
+    min-height: 44px;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.15);
+  }
+
+  /* Reserve top space so content doesn't start hidden under the
+     floating hamburger. */
+  chat-view,
+  #wiki-main {
+    padding-top: 3rem;
   }
 
   /* Connection banner sits in the header row on mobile */
@@ -95,5 +126,37 @@
   #wiki-main {
     border-right: none;
     padding: 1rem;
+  }
+
+  /* Tap-target HEIGHT floor for interactive elements (WCAG 2.5.5 / Apple
+     HIG want 44×44 CSS pixels). The vertical axis is the one that
+     typical button styling actually compresses; horizontal width usually
+     takes care of itself from text + padding. Icon-only buttons that
+     need the full 44×44 floor enforce min-width explicitly (see e.g.
+     `.hamburger-btn` above). See docs/web-ui-mobile.md. */
+  button,
+  [role="button"] {
+    min-height: 44px;
+  }
+
+  /* Exceptions: small inline / overlay buttons where 44px would break
+     the design. Each documented inline. */
+  chat-message .copy-btn,                            /* corner-overlay button on code blocks */
+  chat-input .attachment-remove,                     /* 18px corner X on attachment chip */
+  conversation-sidebar .conv-item .conv-archive,     /* secondary action inside a list row; bumping it stretches the row and mismatches vault/files lists */
+  .vault-breadcrumb-segment,                         /* inline link styled like text */
+  .wiki-bc-segment,
+  .file-bc-segment {
+    min-height: 0;
+  }
+
+  /* Hover-only affordances are unreachable on touch — show them always
+     on mobile. */
+  chat-message pre .copy-btn {
+    opacity: 1;
+  }
+
+  conversation-sidebar .conv-item .conv-archive {
+    display: block;
   }
 }
