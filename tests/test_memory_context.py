@@ -8,9 +8,11 @@ from decafclaw.config_types import VaultRetrievalConfig
 from decafclaw.memory_context import (
     _WIKI_LINK_RE,
     _enrich_results,
+    _excerpt_for_headline,
     _expand_graph_links,
     _trim_to_token_budget,
     format_memory_context,
+    format_memory_headlines,
     retrieve_memory_context,
 )
 
@@ -58,6 +60,95 @@ class TestFormatMemoryContext:
     def test_empty_results(self):
         text = format_memory_context([])
         assert "[Automatically retrieved context" in text
+
+
+class TestFormatMemoryHeadlines:
+    """Compact headline rendering for the `headlines` retrieval mode (#301)."""
+
+    def test_empty_returns_empty_string(self):
+        assert format_memory_headlines([]) == ""
+
+    def test_uses_summary_when_available(self):
+        results = [{
+            "file_path": "agent/pages/decafclaw.md",
+            "source_type": "page",
+            "summary": "An agent testbed for exploring patterns",
+            "entry_text": "Full body unused when summary present",
+            "composite_score": 0.81,
+        }]
+        out = format_memory_headlines(results)
+        assert "[Automatically retrieved headlines" in out
+        assert "agent/pages/decafclaw.md" in out
+        assert "An agent testbed for exploring patterns" in out
+        assert "score 0.81" in out
+        # Body is NOT in the output — only the summary.
+        assert "Full body unused when summary present" not in out
+
+    def test_falls_back_to_body_when_no_summary(self):
+        results = [{
+            "file_path": "x.md",
+            "source_type": "page",
+            "entry_text": "First body sentence. Second sentence we don't need.",
+            "composite_score": 0.5,
+        }]
+        out = format_memory_headlines(results, max_summary_chars=20)
+        # Summary is the body excerpt, truncated to 20 chars (+ ellipsis).
+        assert "First body sentence." in out or "First body sentenc" in out
+        assert "score 0.50" in out
+
+    def test_truncates_long_summary(self):
+        results = [{
+            "file_path": "x.md",
+            "source_type": "page",
+            "summary": "x" * 500,
+            "composite_score": 0.5,
+        }]
+        out = format_memory_headlines(results, max_summary_chars=20)
+        # Body line includes the truncated summary plus an ellipsis.
+        assert "xxxxxxxxxxxxxxxxxxxx…" in out
+
+    def test_falls_back_to_similarity_when_no_composite(self):
+        results = [{
+            "file_path": "x.md",
+            "source_type": "page",
+            "summary": "the summary",
+            "similarity": 0.42,
+        }]
+        out = format_memory_headlines(results)
+        assert "score 0.42" in out
+
+    def test_handles_unknown_source_type(self):
+        results = [{
+            "file_path": "x.md",
+            "source_type": "weird-source",
+            "summary": "anything",
+            "composite_score": 0.5,
+        }]
+        out = format_memory_headlines(results)
+        # Falls back to the source_type itself rather than crashing.
+        assert "weird-source" in out
+
+
+class TestExcerptForHeadline:
+    def test_strips_frontmatter_block(self):
+        text = "---\nsummary: foo\n---\nThe real body."
+        out = _excerpt_for_headline(text, 50)
+        assert "summary:" not in out
+        assert "The real body." in out
+
+    def test_collapses_whitespace(self):
+        text = "many\n\n\nspaces  here\tand   there"
+        out = _excerpt_for_headline(text, 100)
+        assert "  " not in out
+        assert "\n" not in out
+
+    def test_truncates_at_max_chars(self):
+        out = _excerpt_for_headline("x" * 500, 50)
+        assert len(out) == 50
+
+    def test_max_chars_zero_returns_full(self):
+        out = _excerpt_for_headline("hello", 0)
+        assert out == "hello"
 
 
 class TestRetrieveMemoryContext:
