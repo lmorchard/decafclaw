@@ -678,7 +678,10 @@ if (canvasResizeHandle && canvasMainEl) {
 }
 
 function setupCanvasResummonPill() {
-  const desktopHost = document.getElementById('chat-main-header');
+  // Desktop: pill floats absolutely in the upper-right of #chat-main
+  // (no dedicated header strip — keeps the chat area uncluttered when
+  // there's no canvas state). Mobile: lives inside #mobile-header.
+  const desktopHost = document.getElementById('chat-main');
   const mobileHost = document.getElementById('mobile-header');
   if (!desktopHost) return;
 

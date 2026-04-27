@@ -64,16 +64,9 @@ canvas-panel {
 }
 .canvas-empty { padding: 1rem; color: var(--pico-muted-color); }
 
-#chat-main-header {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  padding: 0.25rem 0.75rem;
-  border-bottom: 1px solid var(--pico-muted-border-color, #eee);
-  min-height: 2rem;
-}
 .canvas-resummon-pill {
   display: inline-flex;
+  align-items: center;
   gap: 0.4rem;
   padding: 0.35rem 0.7rem;
   border-radius: 999px;
@@ -87,6 +80,18 @@ canvas-panel {
   content: "•";
   color: var(--pico-primary, #3b82f6);
   font-weight: bold;
+}
+
+/* When mounted directly inside #chat-main (desktop), float in the
+   upper-right corner so we don't reserve a dead header strip when no
+   canvas state exists. */
+#chat-main { position: relative; }
+#chat-main > .canvas-resummon-pill {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.75rem;
+  z-index: 5;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18);
 }
 
 @media (max-width: 639px) {
