@@ -308,6 +308,23 @@ After each turn, the agent writes a diagnostics sidecar file (`workspace/convers
 - Source breakdown table with token counts and item details
 - Memory candidates with composite scores, score breakdowns, and graph expansion provenance
 
+## Canvas tools
+
+Four canvas tools are always-loaded (non-deferrable) so the agent can drive
+the canvas panel from any context without activating a skill:
+
+- `canvas_set(widget_type, data, label?)` — push a widget to the canvas
+  panel (replaces any existing tab); reveals the panel.
+- `canvas_update(data)` — replace the data payload of the current canvas
+  widget in place; preserves panel-hidden state.
+- `canvas_clear()` — remove the canvas widget and hide the panel.
+- `canvas_read()` — return the current canvas tab as
+  `{widget_type, label, data}`, or null if the canvas is empty.
+
+Each successful call emits a `canvas_update` WebSocket event to connected
+clients. The canvas state persists in
+`workspace/conversations/{conv_id}.canvas.json`.
+
 ## Key files
 
 - `src/decafclaw/context_composer.py` — unified context assembly pipeline

@@ -138,12 +138,13 @@ Full doc index: [docs/index.md](docs/index.md). Hot files for navigation:
 - `archive.py` — JSONL conversation archive
 - `compaction.py` — Summarization + pre-compaction memory sweep
 - `context_cleanup.py` — Lightweight clear tier: stubs old large tool messages before compaction
+- `canvas.py` — per-conversation canvas state sidecar + state operations
 - `persistence.py`, `attachments.py`, `embeddings.py`, `frontmatter.py`, `memory_context.py`, `checklist.py`
 
 ### Tools
 - `tools/tool_registry.py` — Priority-based classification, deferred catalog
 - `tools/search_tools.py` — `tool_search`
-- `tools/{core,workspace_tools,conversation_tools,checklist_tools,shell_tools,http_tools,skill_tools,delegate,model_tools,confirmation,health,attachment_tools,email_tools,heartbeat_tools}.py`
+- `tools/{core,workspace_tools,conversation_tools,checklist_tools,shell_tools,http_tools,skill_tools,delegate,model_tools,confirmation,health,attachment_tools,email_tools,heartbeat_tools,canvas_tools}.py`
 - `preempt_search.py` — Keyword-match for pre-emptive tool promotion
 
 ### Skills (bundled)
@@ -157,6 +158,7 @@ Full doc index: [docs/index.md](docs/index.md). Hot files for navigation:
 - `notifications.py`, `notification_channels/`, `mail.py`
 - `mcp_client.py`
 - `media.py`, `widgets.py`, `widget_input.py`, `web/static/widgets/`, `web/static/components/widgets/widget-host.js`
+- `web/static/components/canvas-panel.js`, `web/static/lib/canvas-state.js`
 - `util.py`, `eval/`
 
 ## Running

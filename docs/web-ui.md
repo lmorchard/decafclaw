@@ -93,6 +93,54 @@ click a row to mark it read and jump to the associated conversation or
 vault page. See [Notifications](notifications.md) for the full model, API,
 and WebSocket event shapes.
 
+### Canvas panel
+
+A persistent side panel for living documents. The agent drives it with
+always-loaded canvas tools (`canvas_set`, `canvas_update`, `canvas_clear`,
+`canvas_read`); each tool call emits a `canvas_update` event over WebSocket
+and the panel re-renders without a page reload.
+
+**Layout:** `conversation-sidebar | (wiki-main?) | chat-main | (canvas-main?)`.
+The wiki panel and canvas panel can both be open simultaneously on desktop;
+each occupies a draggable column to the right of chat.
+
+**State:** per-conversation, persisted in
+`workspace/conversations/{conv_id}.canvas.json` (sidecar). Loaded on
+conversation-select via `GET /api/canvas/{conv_id}`.
+
+**Lifecycle:**
+- `canvas_set(widget_type, data, label?)` — push a widget to the canvas;
+  reveals the panel.
+- `canvas_update(data)` — replace data of the current widget in place;
+  preserves panel-hidden state.
+- `canvas_clear()` — remove the canvas widget; hides the panel.
+- `canvas_read()` — return `{widget_type, label, data}` or null.
+
+**Resummon UI:** when canvas state exists but the panel has been dismissed,
+a "📄 Canvas" pill appears in `#chat-main-header` (mirrored to
+`#mobile-header` on mobile). Clicking it re-opens the panel. An unread dot
+lights up on the pill if a `canvas_update` event arrived while the panel
+was hidden.
+
+**Dismiss behavior:** dismissing the panel is in-memory ephemeral — the
+persisted sidecar is unaffected. The dismissed state is cleared on
+`canvas_set` events, conversation-switch, resummon click, and page reload.
+
+**`/canvas/{conv_id}` standalone view:** full-screen render of the current
+canvas state. Same web-auth as the main UI. Live-updates via WebSocket.
+Useful for sharing a persistent link (e.g. to a Mattermost user who has a
+web token).
+
+**Resize:** drag handle on the left edge of `#canvas-main`. Width persists
+to `localStorage["canvas-width"]`.
+
+**Mobile:** full-screen overlay (`position: fixed; inset: 0; z-index: 100`).
+Mutually exclusive with the wiki overlay — most-recent-open wins. See
+[Web UI — mobile conventions](web-ui-mobile.md#canvas-panel) for details.
+
+See [Widgets](widgets.md#phase-3--canvas-panel-and-markdown_document) for
+the widget mode contract and the `markdown_document` widget.
+
 ## Architecture
 
 ### Frontend
@@ -112,9 +160,10 @@ Lit web components in `src/decafclaw/web/static/`:
 | `config-panel` | `components/config-panel.js` | Admin config file editor |
 | `confirm-view` | `components/confirm-view.js` | Confirmation dialog for tool approvals |
 | `login-view` | `components/login-view.js` | Login screen |
+| `canvas-panel` | `components/canvas-panel.js` | Canvas side panel and resummon pill |
 | `theme-toggle` | `components/theme-toggle.js` | Light/dark mode switch |
 
-Service layer: `AuthClient`, `WebSocketClient`, `ConversationStore`, `MessageStore`, `ToolStatusStore`.
+Service layer: `AuthClient`, `WebSocketClient`, `ConversationStore`, `MessageStore`, `ToolStatusStore`, `CanvasState`.
 
 ### Backend
 
@@ -214,6 +263,15 @@ Folder structure is per-user metadata stored in `data/{agent_id}/web/users/{user
 | `GET` | `/api/notifications/unread-count` | Count of unread records — seed on bell mount + WebSocket reconnect (see [notifications.md](notifications.md#websocket-push)) |
 | `POST` | `/api/notifications/{id}/read` | Mark a single record read (idempotent) |
 | `POST` | `/api/notifications/read-all` | Mark all currently-visible records read |
+
+### Canvas
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/canvas/{conv_id}` | Get current canvas state |
+| `POST` | `/api/canvas/{conv_id}/set` | Set canvas widget (widget_type, data, label?) |
+| `POST` | `/api/canvas/{conv_id}/update` | Update canvas widget data in place |
+| `DELETE` | `/api/canvas/{conv_id}` | Clear canvas state |
 
 ### Other
 
