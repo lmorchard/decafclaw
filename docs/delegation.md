@@ -1,6 +1,6 @@
 # Sub-Agent Delegation
 
-The `delegate_task` tool lets the agent fork a child agent to handle a focused subtask. For parallel work, the agent calls `delegate_task` multiple times in the same response — the agent loop runs them concurrently.
+The `delegate_task` tool lets the agent fork a child agent to handle a focused subtask. For batches of similar subtasks, the `delegate_tasks` (plural) tool dispatches them in parallel under one tool call — see [Parallel dispatch](#parallel-dispatch-with-delegate_tasks).
 
 ## Usage
 
@@ -10,14 +10,7 @@ The agent calls `delegate_task` with a task description:
 {"task": "Look up the weather in Portland"}
 ```
 
-For parallel subtasks, the model emits multiple `delegate_task` calls in one response:
-
-```json
-// tool_call 1
-{"task": "Look up the weather in Portland"}
-// tool_call 2
-{"task": "Search my memories for cocktail recipes"}
-```
+For a batch of related subtasks, prefer `delegate_tasks` (plural) — see [Parallel dispatch](#parallel-dispatch-with-delegate_tasks). The agent can also emit multiple singular `delegate_task` calls in one response and they'll execute concurrently via the agent loop's tool semaphore, but the plural tool gives a single aggregated result and a fixed concurrency cap.
 
 Each call spawns an independent child agent that:
 - Gets a fresh, empty conversation history
@@ -86,16 +79,64 @@ The parent receives both halves:
 
 See #395 for the design rationale.
 
+## Parallel dispatch with `delegate_tasks`
+
+`delegate_tasks` (plural) takes a list of task descriptions and runs them as concurrent child agents under a single tool call. Use it when you have a known list of similar investigations — per page, per file, per topic — that don't need to talk to each other.
+
+```python
+# Example call (LLM-emitted tool call):
+delegate_tasks(
+    tasks=[
+        "Summarize the README in repo A",
+        "Summarize the README in repo B",
+        "Summarize the README in repo C",
+    ],
+    return_schema={"summary": "string", "main_topic": "string"},
+)
+```
+
+**Result shape:**
+
+```json
+{
+  "summary": {"total": 3, "ok": 2, "failed": 1},
+  "results": [
+    {"index": 0, "ok": true, "text": "...", "data": {"summary": "...", "main_topic": "..."}},
+    {"index": 1, "ok": true, "text": "...", "data": {"summary": "...", "main_topic": "..."}},
+    {"index": 2, "ok": false, "error": "[error: subtask timed out after 300s]"}
+  ]
+}
+```
+
+- `ToolResult.text` — one-line summary (e.g. `"3 subtasks: 2 succeeded, 1 failed"`).
+- `ToolResult.data.results` — per-task entries in input order, each with `index`, `ok`, and either `text`/`data` (success) or `error` (failure).
+- `ToolResult.data.summary` — total/ok/failed counts.
+
+**Shared params, not per-task.** `model`, `allow_vault_retrieval`, `allow_vault_read`, and `return_schema` all apply to every task in the batch. If you genuinely need per-task overrides, fall back to multiple singular `delegate_task` calls.
+
+**Concurrency cap.** At most `agent.max_parallel_delegates` children run at once (default 3). The remaining queue waits inside the gather. The total batch size is also capped at `agent.max_tasks_per_delegate_call` (default 10) to prevent fan-out blowup — over-cap requests fail fast with a clear error.
+
+**Failure isolation.** One child raising or timing out does not abort siblings. Each per-task entry carries its own `ok` flag and (on failure) an `error` string lifted from the child's `ToolResult.text`.
+
+**Per-child events are suppressed from the parent UI.** Each child publishes its tool-status events to a unique override id rather than the parent's subscriber, so you don't get N concurrent tool streams flooding the parent conversation. The parent emits one aggregate `tool_status` event per child completion (`"2/3 subtasks complete"`).
+
+**Cancellation.** The parent's cancel event flows through the gather — cancelling the parent turn cancels in-flight children too.
+
+See #397 for the design rationale.
+
 ## Configuration
 
 | Env var | Default | Description |
 |---------|---------|-------------|
 | `CHILD_MAX_TOOL_ITERATIONS` | 10 | Max tool call rounds per child agent |
 | `CHILD_TIMEOUT_SEC` | 300 | Timeout in seconds per child agent |
-| `MAX_CONCURRENT_TOOLS` | 5 | Max parallel tool calls (applies to all tools, including concurrent delegate_task calls) |
+| `MAX_PARALLEL_DELEGATES` | 3 | Max children running simultaneously inside one `delegate_tasks` call |
+| `MAX_TASKS_PER_DELEGATE_CALL` | 10 | Max batch size accepted by `delegate_tasks` per call |
+| `MAX_CONCURRENT_TOOLS` | 5 | Max parallel tool calls at the agent loop's outer semaphore (applies to all tools) |
 
 ## Limitations
 
-- No nested delegation — children cannot call `delegate_task`
-- No streaming of child LLM text to the UI (tool progress and confirmations are visible)
+- No nested delegation — children cannot call `delegate_task` or `delegate_tasks`
+- No streaming of child LLM text to the UI (tool progress and confirmations are visible for singular `delegate_task`; suppressed for `delegate_tasks` per the parallel-dispatch event policy)
 - No persistent child conversations — results are ephemeral
+- `delegate_tasks` shares one set of params across the batch; per-task overrides require multiple singular `delegate_task` calls

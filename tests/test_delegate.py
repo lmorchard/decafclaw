@@ -12,6 +12,7 @@ from decafclaw.tools.delegate import (
     DEFAULT_CHILD_SYSTEM_PROMPT,
     _run_child_turn,
     tool_delegate_task,
+    tool_delegate_tasks,
 )
 
 
@@ -515,3 +516,214 @@ class TestVaultAccessPolicy:
             "allow_vault_retrieval": True,
             "allow_vault_read": True,
         }
+
+
+class TestDelegateTasks:
+    """Parallel batch dispatch via `delegate_tasks` (#397).
+
+    These tests patch ``_run_child_turn`` so we can control per-task
+    return values, simulate failures, and observe concurrency without
+    spinning up real child agents.
+    """
+
+    @pytest.mark.asyncio
+    async def test_happy_path_three_tasks(self, ctx):
+        """Three tasks all return prose; result has ok entries in
+        input order, summary counts match, and the parent emits one
+        progress event per child."""
+        published: list[tuple] = []
+
+        async def fake_publish(event_type, payload):
+            published.append((event_type, payload))
+
+        ctx.publish = fake_publish
+
+        async def fake_run(parent_ctx, task, **kwargs):
+            return f"result for {task}"
+
+        with patch(
+            "decafclaw.tools.delegate._run_child_turn", side_effect=fake_run,
+        ):
+            result = await tool_delegate_tasks(ctx, ["a", "b", "c"])
+
+        assert isinstance(result, ToolResult)
+        assert result.data["summary"] == {"total": 3, "ok": 3, "failed": 0}
+        results = result.data["results"]
+        assert [r["index"] for r in results] == [0, 1, 2]
+        assert all(r["ok"] for r in results)
+        assert results[0]["text"] == "result for a"
+        assert results[1]["text"] == "result for b"
+        assert results[2]["text"] == "result for c"
+        assert "3 subtasks" in result.text
+        # One progress event per completion.
+        statuses = [p for p in published if p[0] == "tool_status"]
+        assert len(statuses) == 3
+        assert all(p[1]["tool"] == "delegate_tasks" for p in statuses)
+
+    @pytest.mark.asyncio
+    async def test_mixed_failures(self, ctx):
+        """One child returns an error ToolResult, another raises;
+        siblings still complete and the result reflects per-task
+        status."""
+        async def fake_run(parent_ctx, task, **kwargs):
+            if task == "boom":
+                raise RuntimeError("kaboom")
+            if task == "softfail":
+                return ToolResult(text="[error: subtask timed out]")
+            return f"ok for {task}"
+
+        with patch(
+            "decafclaw.tools.delegate._run_child_turn", side_effect=fake_run,
+        ):
+            result = await tool_delegate_tasks(
+                ctx, ["fine", "softfail", "boom", "alsofine"],
+            )
+
+        assert result.data["summary"] == {
+            "total": 4, "ok": 2, "failed": 2,
+        }
+        results = result.data["results"]
+        assert results[0] == {"index": 0, "ok": True, "text": "ok for fine"}
+        assert results[1]["ok"] is False
+        assert "[error: subtask timed out]" in results[1]["error"]
+        assert results[2]["ok"] is False
+        assert "kaboom" in results[2]["error"]
+        assert results[3] == {
+            "index": 3, "ok": True, "text": "ok for alsofine",
+        }
+
+    @pytest.mark.asyncio
+    async def test_empty_list_errors(self, ctx):
+        result = await tool_delegate_tasks(ctx, [])
+        assert isinstance(result, ToolResult)
+        assert result.text.startswith("[error:")
+        assert "non-empty list" in result.text
+
+    @pytest.mark.asyncio
+    async def test_blank_entry_errors(self, ctx):
+        result = await tool_delegate_tasks(ctx, ["valid", "  "])
+        assert result.text.startswith("[error:")
+        assert "tasks[1]" in result.text
+
+    @pytest.mark.asyncio
+    async def test_non_string_entry_errors(self, ctx):
+        result = await tool_delegate_tasks(ctx, ["valid", 42])  # type: ignore[list-item]
+        assert result.text.startswith("[error:")
+        assert "tasks[1]" in result.text
+
+    @pytest.mark.asyncio
+    async def test_over_cap_errors(self, ctx):
+        ctx.config.agent.max_tasks_per_delegate_call = 2
+        result = await tool_delegate_tasks(ctx, ["a", "b", "c"])
+        assert result.text.startswith("[error:")
+        assert "cap is 2" in result.text
+
+    @pytest.mark.asyncio
+    async def test_concurrency_cap_honored(self, ctx):
+        """With cap=2 and 4 tasks, never more than 2 children are
+        in-flight simultaneously."""
+        ctx.config.agent.max_parallel_delegates = 2
+        ctx.config.agent.max_tasks_per_delegate_call = 10
+
+        state = {"in_flight": 0, "max_observed": 0}
+        state_lock = asyncio.Lock()
+        cap_full = asyncio.Event()
+
+        async def fake_run(parent_ctx, task, **kwargs):
+            async with state_lock:
+                state["in_flight"] += 1
+                if state["in_flight"] > state["max_observed"]:
+                    state["max_observed"] = state["in_flight"]
+                if state["in_flight"] >= 2:
+                    cap_full.set()
+            # Wait until both slots are occupied before any one releases,
+            # so a buggy implementation that allowed 3+ would visibly
+            # exceed the cap.
+            await cap_full.wait()
+            async with state_lock:
+                state["in_flight"] -= 1
+            return f"done {task}"
+
+        with patch(
+            "decafclaw.tools.delegate._run_child_turn", side_effect=fake_run,
+        ):
+            result = await tool_delegate_tasks(
+                ctx, ["a", "b", "c", "d"],
+            )
+
+        assert state["max_observed"] == 2
+        assert result.data["summary"]["ok"] == 4
+
+    @pytest.mark.asyncio
+    async def test_structured_return_parses_per_task(self, ctx):
+        """When return_schema is supplied, each successful entry's
+        data is the parsed JSON and text is the prose."""
+        async def fake_run(parent_ctx, task, **kwargs):
+            return (
+                f"prose for {task}\n\n"
+                "```json\n"
+                f'{{"task": "{task}", "score": 7}}\n'
+                "```\n"
+            )
+
+        with patch(
+            "decafclaw.tools.delegate._run_child_turn", side_effect=fake_run,
+        ):
+            result = await tool_delegate_tasks(
+                ctx, ["x", "y"], return_schema={"task": "string", "score": 0},
+            )
+
+        results = result.data["results"]
+        assert results[0]["data"] == {"task": "x", "score": 7}
+        assert results[0]["text"] == "prose for x"
+        assert results[1]["data"] == {"task": "y", "score": 7}
+        assert results[1]["text"] == "prose for y"
+
+    @pytest.mark.asyncio
+    async def test_event_override_routed_to_child_id(self, ctx):
+        """Each child's _run_child_turn call gets a unique override
+        for `event_context_id`, so parent UI doesn't get flooded."""
+        seen_overrides: list[str | None] = []
+
+        async def fake_run(parent_ctx, task, **kwargs):
+            seen_overrides.append(kwargs.get("event_context_id_override"))
+            return f"ok {task}"
+
+        with patch(
+            "decafclaw.tools.delegate._run_child_turn", side_effect=fake_run,
+        ):
+            await tool_delegate_tasks(ctx, ["a", "b", "c"])
+
+        assert all(o is not None for o in seen_overrides)
+        assert len(set(seen_overrides)) == 3  # all distinct
+        assert all("delegate-tasks-child-" in o for o in seen_overrides)
+
+    @pytest.mark.asyncio
+    async def test_run_child_turn_event_override_kwarg(self, ctx):
+        """The new `event_context_id_override` kwarg on
+        `_run_child_turn` reaches the setup callback that
+        `enqueue_turn` invokes — so the singular path stays unaffected
+        and the plural override actually lands on the child ctx."""
+        with patch("decafclaw.agent.run_agent_turn", new_callable=AsyncMock) as mock_run:
+            mock_run.return_value = ToolResult(text="ok")
+
+            await _run_child_turn(
+                ctx, "task",
+                event_context_id_override="custom-override-id",
+            )
+
+        child_ctx = mock_run.call_args[0][0]
+        assert child_ctx.event_context_id == "custom-override-id"
+
+    @pytest.mark.asyncio
+    async def test_singular_event_routing_unchanged(self, ctx):
+        """When the override is omitted (singular case), the child
+        still routes events to the parent's subscriber id."""
+        ctx.event_context_id = "parent-subscriber-id"
+        with patch("decafclaw.agent.run_agent_turn", new_callable=AsyncMock) as mock_run:
+            mock_run.return_value = ToolResult(text="ok")
+
+            await _run_child_turn(ctx, "task")
+
+        child_ctx = mock_run.call_args[0][0]
+        assert child_ctx.event_context_id == "parent-subscriber-id"

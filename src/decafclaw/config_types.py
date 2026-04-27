@@ -164,6 +164,12 @@ class AgentConfig:
     critical_tools: list[str] = field(default_factory=list)
     child_max_tool_iterations: int = 10
     child_timeout_sec: int = 300
+    # Parallel sub-agent dispatch via `delegate_tasks` (#397). The
+    # plural tool runs up to `max_parallel_delegates` children
+    # concurrently; the total batch size is capped at
+    # `max_tasks_per_delegate_call` to prevent fan-out blowup.
+    max_parallel_delegates: int = 3
+    max_tasks_per_delegate_call: int = 10
     # Wall-clock timeout applied to each non-MCP tool call in execute_tool.
     # `<= 0` disables the wrapper globally. Per-tool overrides live on
     # TOOL_DEFINITIONS entries via the `timeout` key.
