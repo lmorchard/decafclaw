@@ -92,7 +92,7 @@ See [docs/context-composer.md](docs/context-composer.md), [docs/semantic-search.
 
 ### Mattermost-specific
 
-See [docs/conversations.md](docs/conversations.md), [docs/web-ui.md](docs/web-ui.md), [docs/files-tab.md](docs/files-tab.md).
+See [docs/conversations.md](docs/conversations.md), [docs/web-ui.md](docs/web-ui.md), [docs/files-tab.md](docs/files-tab.md), [docs/web-ui-mobile.md](docs/web-ui-mobile.md).
 
 - **Mattermost concerns stay in `mattermost.py`.** Progress formatting, placeholders, threading.
 - **Web UI conversation management is REST-only.** WebSocket only for chat streaming, history loading, model changes, cancellation. Workspace files via `/api/workspace/*`. Conversation folders are metadata-only (per-user JSON index); archive files stay in place.

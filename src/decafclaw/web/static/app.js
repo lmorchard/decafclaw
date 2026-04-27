@@ -501,6 +501,44 @@ async function init() {
 
 init();
 
+// Visual-viewport tracker — keeps a `--vh` CSS variable in sync with the
+// visible viewport height. Without this, on iOS Safari and Firefox Android
+// the soft keyboard pushes `100vh`-sized layout below the keyboard so the
+// chat input goes off-screen. Falls back to window.innerHeight on browsers
+// without the visualViewport API. See docs/web-ui-mobile.md.
+//
+// Throttled via requestAnimationFrame because visualViewport `scroll`
+// fires very frequently during address-bar / keyboard transitions.
+// Skip writing the CSS var when the height hasn't actually changed.
+function setupVisualViewportTracking() {
+  const root = document.documentElement;
+  let lastHeight = null;
+  let frameId = null;
+
+  const applyHeight = () => {
+    frameId = null;
+    const h = window.visualViewport?.height ?? window.innerHeight;
+    if (h !== lastHeight) {
+      lastHeight = h;
+      root.style.setProperty('--vh', `${h}px`);
+    }
+  };
+
+  const scheduleUpdate = () => {
+    if (frameId !== null) return;
+    frameId = window.requestAnimationFrame(applyHeight);
+  };
+
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', scheduleUpdate);
+    window.visualViewport.addEventListener('scroll', scheduleUpdate);
+  } else {
+    window.addEventListener('resize', scheduleUpdate);
+  }
+  applyHeight();
+}
+setupVisualViewportTracking();
+
 // Mobile sidebar open/close
 const hamburgerBtn = document.getElementById('hamburger-btn');
 const sidebarBackdrop = document.getElementById('sidebar-backdrop');
