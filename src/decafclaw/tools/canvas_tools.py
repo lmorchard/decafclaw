@@ -10,6 +10,7 @@ under the standard 180s tool timeout.
 """
 
 import logging
+from urllib.parse import quote
 
 from .. import canvas as canvas_mod
 from ..media import ToolResult
@@ -30,7 +31,9 @@ def _emit_for_ctx(ctx):
 
 
 def _canvas_url(conv_id: str) -> str:
-    return f"/canvas/{conv_id}"
+    # conv_ids are constrained to URL-safe chars by _is_safe_conv_id, but
+    # encode anyway for defense in depth — the result is user-visible text.
+    return f"/canvas/{quote(conv_id, safe='')}"
 
 
 async def tool_canvas_set(ctx,

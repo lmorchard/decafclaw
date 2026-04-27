@@ -125,24 +125,32 @@ def tool_workspace_preview_markdown(ctx, path: str) -> ToolResult:
         return ToolResult(text=f"[error: invalid path '{path}']")
     if not safe.exists() or not safe.is_file():
         return ToolResult(text=f"[error: file not found: '{path}']")
+    # Read line-by-line up to MAX_READ_LINES + 1 so memory/time scale with
+    # the cap rather than file size. The +1 lets us detect overflow without
+    # measuring the whole file.
     try:
-        content = safe.read_text()
+        kept: list[str] = []
+        truncated = False
+        with safe.open("r", encoding="utf-8") as fh:
+            for i, line in enumerate(fh):
+                if i >= MAX_READ_LINES:
+                    truncated = True
+                    break
+                kept.append(line.rstrip("\n"))
     except (OSError, UnicodeDecodeError) as e:
         return _file_error(e, path)
-    lines = content.splitlines()
-    total = len(lines)
-    if total > MAX_READ_LINES:
-        truncated = "\n".join(lines[:MAX_READ_LINES])
+    body = "\n".join(kept)
+    if truncated:
         notice = (
-            f"\n\n_(file has {total} lines; showing first {MAX_READ_LINES}. "
-            f"Use `workspace_read` with `start_line`/`end_line` for specific ranges.)_"
+            f"\n\n_(file has more than {MAX_READ_LINES} lines; showing first "
+            f"{MAX_READ_LINES}. Use `workspace_read` with `start_line`/"
+            f"`end_line` for specific ranges.)_"
         )
-        widget_content = truncated + notice
-        text = (f"[file truncated: {total} lines, showing first {MAX_READ_LINES}]\n"
-                + truncated)
+        widget_content = body + notice
+        text = f"[file truncated: showing first {MAX_READ_LINES} lines]\n" + body
     else:
-        widget_content = content
-        text = content
+        widget_content = body
+        text = body
     return ToolResult(
         text=text,
         widget=WidgetRequest(

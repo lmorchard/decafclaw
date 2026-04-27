@@ -107,8 +107,8 @@ export class MarkdownDocumentWidget extends LitElement {
       <div class="md-doc md-doc-inline ${this.expanded ? 'expanded' : 'collapsed'}">
         <div class="md-doc-body" style=${collapsedStyle} .innerHTML=${rendered}></div>
         <div class="md-doc-actions">
-          <button @click=${this._toggleExpand}>${this.expanded ? 'Collapse' : 'Expand'}</button>
-          <button @click=${this._openInCanvas}>Open in Canvas</button>
+          <button type="button" @click=${this._toggleExpand}>${this.expanded ? 'Collapse' : 'Expand'}</button>
+          <button type="button" @click=${this._openInCanvas}>Open in Canvas</button>
         </div>
       </div>
     `;

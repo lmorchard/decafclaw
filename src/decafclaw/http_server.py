@@ -2,6 +2,7 @@
 
 import asyncio
 import functools
+import json
 import logging
 import os
 import re
@@ -1613,7 +1614,12 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> Starlette:
             return JSONResponse({"error": "invalid conv_id"}, status_code=400)
         if not _user_owns_conv(conv_id, username):
             return JSONResponse({"error": "not found"}, status_code=404)
-        body = await request.json()
+        try:
+            body = await request.json()
+        except json.JSONDecodeError:
+            return JSONResponse({"error": "invalid JSON body"}, status_code=400)
+        if not isinstance(body, dict):
+            return JSONResponse({"error": "body must be a JSON object"}, status_code=400)
         widget_type = body.get("widget_type", "")
         data = body.get("data") or {}
         label = body.get("label")

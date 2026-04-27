@@ -663,7 +663,9 @@ def test_workspace_preview_markdown_happy_path(config, workspace_with_md):
     assert isinstance(result.widget, WidgetRequest)
     assert result.widget.widget_type == "markdown_document"
     assert result.widget.target == "inline"
-    assert result.widget.data == {"content": "# Hello\n\nThis is a test.\n"}
+    # Trailing newline is normalized away by the line-by-line read; both
+    # variants are semantically the same markdown.
+    assert result.widget.data["content"].rstrip("\n") == "# Hello\n\nThis is a test."
 
 
 def test_workspace_preview_markdown_rejects_non_markdown(config, workspace_with_md):

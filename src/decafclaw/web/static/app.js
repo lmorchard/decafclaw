@@ -694,7 +694,14 @@ function setupCanvasResummonPill() {
     btn.className = 'canvas-resummon-pill';
     btn.type = 'button';
     btn.textContent = '📄 Canvas';
-    if (snapshot.unreadDot) btn.dataset.unread = 'true';
+    if (snapshot.unreadDot) {
+      btn.dataset.unread = 'true';
+      // The dot is purely visual (CSS ::after); pair it with an
+      // accessible name so screen readers get the same state signal.
+      btn.setAttribute('aria-label', 'Canvas (unread update)');
+    } else {
+      btn.setAttribute('aria-label', 'Canvas');
+    }
     btn.addEventListener('click', () => resummon());
     host.appendChild(btn);
   };
