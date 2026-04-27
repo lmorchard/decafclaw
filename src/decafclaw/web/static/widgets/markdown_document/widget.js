@@ -1,5 +1,6 @@
 import { LitElement, html } from 'lit';
 import { renderMarkdown } from '../../lib/markdown.js';
+import { getActiveConvId } from '../../lib/canvas-state.js';
 
 const INLINE_MAX_HEIGHT = '8rem';
 
@@ -65,7 +66,7 @@ export class MarkdownDocumentWidget extends LitElement {
   }
 
   async _openInCanvas() {
-    const convId = (window.dc && window.dc.activeConvId) || '';
+    const convId = getActiveConvId() || '';
     if (!convId) return;
     const label = this._firstH1(this.data?.content);
     try {
