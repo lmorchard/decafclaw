@@ -153,7 +153,7 @@ async def test_get_standalone_canvas_html(authed_client):
     resp = await authed_client.get("/canvas/conv1")
     assert resp.status_code == 200
     assert "text/html" in resp.headers.get("content-type", "")
-    assert "<dc-widget-host>" in resp.text
+    assert "<dc-widget-host" in resp.text
 
 
 @pytest.mark.asyncio
