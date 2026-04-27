@@ -61,13 +61,29 @@ def read_canvas_state(config, conv_id: str) -> dict:
         return empty_canvas_state()
 
 
-def write_canvas_state(config, conv_id: str, state: dict) -> None:
-    """Write canvas state via tmp-file-then-rename for atomicity."""
+def write_canvas_state(config, conv_id: str, state: dict) -> bool:
+    """Write canvas state via tmp-file-then-rename for atomicity.
+
+    Returns True on success, False on I/O failure (logged). Callers
+    should propagate the False result so the agent / web UI sees a
+    clear error rather than crashing the loop.
+    """
     path = _canvas_sidecar_path(config, conv_id)
-    path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(state, indent=2) + "\n")
-    tmp.replace(path)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp.write_text(json.dumps(state, indent=2) + "\n")
+        tmp.replace(path)
+        return True
+    except OSError:
+        log.warning("Failed to write canvas state for %s", conv_id, exc_info=True)
+        # Best-effort cleanup of the partial tmp file.
+        try:
+            if tmp.exists():
+                tmp.unlink()
+        except OSError as cleanup_exc:
+            log.debug("canvas tmp cleanup failed: %s", cleanup_exc)
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -189,7 +205,9 @@ async def set_canvas(config,
             "data": data,
         }],
     }
-    write_canvas_state(config, conv_id, state)
+    if not write_canvas_state(config, conv_id, state):
+        return CanvasOpResult(ok=False,
+                              error="failed to write canvas state to disk")
     await _emit_canvas_update(emit, conv_id, "set", state)
     return CanvasOpResult(ok=True, text="canvas updated")
 
@@ -209,7 +227,9 @@ async def update_canvas(config,
     if err:
         return CanvasOpResult(ok=False, error=err)
     tab["data"] = data
-    write_canvas_state(config, conv_id, state)
+    if not write_canvas_state(config, conv_id, state):
+        return CanvasOpResult(ok=False,
+                              error="failed to write canvas state to disk")
     await _emit_canvas_update(emit, conv_id, "update", state)
     return CanvasOpResult(ok=True, text="canvas updated")
 
@@ -222,6 +242,8 @@ async def clear_canvas(config,
     if not state.get("tabs"):
         return CanvasOpResult(ok=True, text="canvas already empty")
     state = empty_canvas_state()
-    write_canvas_state(config, conv_id, state)
+    if not write_canvas_state(config, conv_id, state):
+        return CanvasOpResult(ok=False,
+                              error="failed to write canvas state to disk")
     await _emit_canvas_update(emit, conv_id, "clear", state)
     return CanvasOpResult(ok=True, text="canvas cleared")

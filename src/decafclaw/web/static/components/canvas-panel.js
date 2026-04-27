@@ -72,9 +72,11 @@ export class CanvasPanel extends LitElement {
       <header class="canvas-header">
         <span class="canvas-label">${tab.label || 'Canvas'}</span>
         <span class="canvas-spacer"></span>
-        <button class="canvas-btn" title="Open in new tab"
+        <button class="canvas-btn" type="button"
+                title="Open in new tab" aria-label="Open canvas in new tab"
                 @click=${this._onOpenInTab}>↗</button>
-        <button class="canvas-btn canvas-close" title="Close"
+        <button class="canvas-btn canvas-close" type="button"
+                title="Close" aria-label="Close canvas panel"
                 @click=${this._onClose}>×</button>
       </header>
       <main class="canvas-body">

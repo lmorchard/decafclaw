@@ -8,7 +8,14 @@
 
 const PATH_RE = /^\/canvas\/([^/?#]+)/;
 const m = location.pathname.match(PATH_RE);
-const convId = m ? decodeURIComponent(m[1]) : '';
+let convId = '';
+if (m) {
+  try {
+    convId = decodeURIComponent(m[1]);
+  } catch {
+    convId = '';  // malformed percent-encoding — fall through to error UI
+  }
+}
 if (!convId) {
   document.body.innerHTML = '<p>Invalid canvas URL.</p>';
   throw new Error('no conv_id');

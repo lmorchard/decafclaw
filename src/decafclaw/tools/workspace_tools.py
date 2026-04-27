@@ -127,7 +127,7 @@ def tool_workspace_preview_markdown(ctx, path: str) -> ToolResult:
         return ToolResult(text=f"[error: file not found: '{path}']")
     try:
         content = safe.read_text()
-    except OSError as e:
+    except (OSError, UnicodeDecodeError) as e:
         return _file_error(e, path)
     lines = content.splitlines()
     total = len(lines)
