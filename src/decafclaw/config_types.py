@@ -50,6 +50,12 @@ class CompactionConfig:
     llm_max_tokens: int = 0  # 0 = use max_tokens
     preserve_turns: int = 5
     memory_sweep_enabled: bool = True
+    # Threaded structured slice (#302). When enabled, compaction emits
+    # a JSON block alongside its prose summary listing decisions, open
+    # questions, and artifacts; the slice persists across compactions
+    # so high-signal facts don't decay across iterated summarization.
+    decisions_enabled: bool = True
+    decisions_max_per_category: int = 30  # FIFO cap per category; 0 = no cap
 
     def resolved(self, config) -> CompactionConfig:
         """Return copy with empty fields filled from config.llm."""
