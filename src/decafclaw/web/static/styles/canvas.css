@@ -48,7 +48,17 @@ canvas-panel {
   font-size: 1.1rem; padding: 0.25rem 0.5rem;
   min-width: 2.5rem; min-height: 2.5rem;
 }
-.canvas-body { flex: 1; overflow: hidden; position: relative; }
+.canvas-body { flex: 1; overflow: hidden; position: relative; display: flex; flex-direction: column; min-height: 0; }
+/* Stretch the widget-host chain so canvas-mode widgets get the full canvas-body height. */
+.canvas-body > dc-widget-host,
+.canvas-body > dc-widget-host > .widget-host,
+.canvas-body dc-widget-host > .widget-host > * {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
 .canvas-empty { padding: 1rem; color: var(--muted, #666); }
 
 #chat-main-header {

@@ -62,7 +62,7 @@ async function loadInitial() {
 
 function openWebSocket() {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const ws = new WebSocket(`${proto}//${location.host}/ws`);
+  const ws = new WebSocket(`${proto}//${location.host}/ws/chat`);
   ws.addEventListener('open', () => {
     ws.send(JSON.stringify({ type: 'select_conv', conv_id: convId }));
   });

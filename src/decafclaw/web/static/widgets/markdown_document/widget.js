@@ -1,6 +1,6 @@
 import { LitElement, html } from 'lit';
-import { renderMarkdown } from '../../lib/markdown.js';
-import { getActiveConvId } from '../../lib/canvas-state.js';
+import { renderMarkdown } from '/static/lib/markdown.js';
+import { getActiveConvId } from '/static/lib/canvas-state.js';
 
 const INLINE_MAX_HEIGHT = '8rem';
 

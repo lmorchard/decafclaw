@@ -111,6 +111,7 @@ async def _handle_select_conv(ws_send, index, username, msg, state):
                 response["pending_confirmation"] = _confirmation_to_dict(
                     conv_state.pending_confirmation)
         await ws_send(response)
+        _subscribe_to_conv(state, conv_id)
     else:
         # Check if it's a system conversation (archive exists on disk)
         # Reject other users' web conversations
@@ -122,6 +123,7 @@ async def _handle_select_conv(ws_send, index, username, msg, state):
         if archive_path(state["config"], conv_id).exists():
             await ws_send({"type": "conv_selected", "conv_id": conv_id,
                            "read_only": True})
+            _subscribe_to_conv(state, conv_id)
         else:
             await ws_send({"type": "error",
                            "message": f"Conversation not found: {conv_id}"})
