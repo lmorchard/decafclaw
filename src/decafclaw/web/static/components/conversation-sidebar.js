@@ -545,13 +545,15 @@ export class ConversationSidebar extends LitElement {
       <div class="model-picker">
         <label class="model-picker-label" for="model-select">Model</label>
         <select id="model-select" class="model-select"
-                .value=${this._activeModel || this._defaultModel}
                 @change=${(e) => this.#handleModelChange(e)}>
-          ${this._availableModels.map(m => html`
-            <option value="${m}">
-              ${m}${m === this._defaultModel ? ' (default)' : ''}
-            </option>
-          `)}
+          ${(() => {
+            const target = this._activeModel || this._defaultModel;
+            return this._availableModels.map(m => html`
+              <option value="${m}" ?selected=${m === target}>
+                ${m}${m === this._defaultModel ? ' (default)' : ''}
+              </option>
+            `);
+          })()}
         </select>
       </div>
       ` : nothing}
