@@ -699,3 +699,20 @@ def test_workspace_preview_markdown_accepts_markdown_extension(config, workspace
     result = tool_workspace_preview_markdown(ctx, "longext.markdown")
     assert result.widget is not None
     assert result.widget.widget_type == "markdown_document"
+
+
+def test_workspace_preview_markdown_caps_large_files(config, workspace_with_md):
+    """Files over MAX_READ_LINES get truncated; widget shows notice + first N lines."""
+    from decafclaw.tools.workspace_tools import MAX_READ_LINES
+    workspace = config.workspace_path
+    big_lines = [f"line {i}" for i in range(MAX_READ_LINES * 3)]
+    (workspace / "big.md").write_text("# Big\n" + "\n".join(big_lines) + "\n")
+    ctx = _make_preview_ctx(config)
+    result = tool_workspace_preview_markdown(ctx, "big.md")
+    assert result.widget is not None
+    widget_lines = result.widget.data["content"].splitlines()
+    # First MAX_READ_LINES + a couple of notice lines (blank + italic)
+    assert len(widget_lines) <= MAX_READ_LINES + 4
+    assert "showing first" in result.widget.data["content"]
+    # Tool text starts with truncation notice for the LLM
+    assert result.text.startswith("[file truncated:")

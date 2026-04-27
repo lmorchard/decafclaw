@@ -101,7 +101,7 @@ body.canvas-standalone {
   margin: 0;
   display: flex;
   flex-direction: column;
-  height: 100vh;
+  height: var(--vh, 100vh);
 }
 #canvas-standalone-header {
   display: flex;

@@ -1585,6 +1585,13 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> Starlette:
 
     # -- Canvas routes ------------------------------------------------------------
 
+    def _user_owns_conv(conv_id: str, username: str) -> bool:
+        """Authorization gate for canvas routes — caller must own the conversation."""
+        from .web.conversations import ConversationIndex
+        index = ConversationIndex(config)
+        conv = index.get(conv_id)
+        return bool(conv and conv.user_id == username)
+
     @_authenticated
     async def get_canvas_state(request: Request, username: str) -> JSONResponse:
         """Load current canvas state for a conversation."""
@@ -1592,6 +1599,8 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> Starlette:
         conv_id = request.path_params.get("conv_id", "")
         if not _is_safe_conv_id(conv_id):
             return JSONResponse({"error": "invalid conv_id"}, status_code=400)
+        if not _user_owns_conv(conv_id, username):
+            return JSONResponse({"error": "not found"}, status_code=404)
         state = canvas_mod.read_canvas_state(config, conv_id)
         return JSONResponse(state)
 
@@ -1602,6 +1611,8 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> Starlette:
         conv_id = request.path_params.get("conv_id", "")
         if not _is_safe_conv_id(conv_id):
             return JSONResponse({"error": "invalid conv_id"}, status_code=400)
+        if not _user_owns_conv(conv_id, username):
+            return JSONResponse({"error": "not found"}, status_code=404)
         body = await request.json()
         widget_type = body.get("widget_type", "")
         data = body.get("data") or {}
@@ -1621,6 +1632,8 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> Starlette:
         conv_id = request.path_params.get("conv_id", "")
         if not _is_safe_conv_id(conv_id):
             return Response("Invalid conversation id", status_code=400)
+        if not _user_owns_conv(conv_id, username):
+            return Response("Not found", status_code=404)
         html_path = Path(__file__).parent / "web" / "static" / "canvas-page.html"
         return Response(html_path.read_text(), media_type="text/html")
 

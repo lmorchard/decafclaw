@@ -111,6 +111,9 @@ def tool_workspace_preview_markdown(ctx, path: str) -> ToolResult:
     text. Use this when you want to show the user a formatted preview
     of a markdown file (notes, docs, drafts) rather than dump raw
     markdown into chat.
+
+    Capped at ``MAX_READ_LINES`` lines (same as ``workspace_read``); for
+    larger documents the widget shows the first N lines and a notice.
     """
     config = ctx.config
     if not any(path.lower().endswith(ext) for ext in _MARKDOWN_EXTS):
@@ -126,11 +129,25 @@ def tool_workspace_preview_markdown(ctx, path: str) -> ToolResult:
         content = safe.read_text()
     except OSError as e:
         return _file_error(e, path)
+    lines = content.splitlines()
+    total = len(lines)
+    if total > MAX_READ_LINES:
+        truncated = "\n".join(lines[:MAX_READ_LINES])
+        notice = (
+            f"\n\n_(file has {total} lines; showing first {MAX_READ_LINES}. "
+            f"Use `workspace_read` with `start_line`/`end_line` for specific ranges.)_"
+        )
+        widget_content = truncated + notice
+        text = (f"[file truncated: {total} lines, showing first {MAX_READ_LINES}]\n"
+                + truncated)
+    else:
+        widget_content = content
+        text = content
     return ToolResult(
-        text=content,
+        text=text,
         widget=WidgetRequest(
             widget_type="markdown_document",
-            data={"content": content},
+            data={"content": widget_content},
             target="inline",
         ),
     )

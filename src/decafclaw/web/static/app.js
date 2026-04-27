@@ -667,8 +667,13 @@ if (canvasResizeHandle && canvasMainEl) {
     canvasResizeHandle.classList.remove('dragging');
     document.body.style.cursor = '';
     document.body.style.userSelect = '';
-    const w = getComputedStyle(document.documentElement).getPropertyValue('--canvas-width').trim();
-    localStorage.setItem('canvas-width', String(parseInt(w)));
+    // Persist only on real pixel values. parseInt() of the CSS var can
+    // yield NaN (var unset) or 45 (CSS default '45%'), neither of which
+    // is a valid pixel width to round-trip on next load.
+    const px = canvasMainEl.getBoundingClientRect().width;
+    if (Number.isFinite(px) && px >= CANVAS_MIN_WIDTH) {
+      localStorage.setItem('canvas-width', String(Math.round(px)));
+    }
   });
 }
 

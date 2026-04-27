@@ -270,8 +270,8 @@ Folder structure is per-user metadata stored in `data/{agent_id}/web/users/{user
 |--------|----------|-------------|
 | `GET` | `/api/canvas/{conv_id}` | Get current canvas state |
 | `POST` | `/api/canvas/{conv_id}/set` | Set canvas widget (widget_type, data, label?) |
-| `POST` | `/api/canvas/{conv_id}/update` | Update canvas widget data in place |
-| `DELETE` | `/api/canvas/{conv_id}` | Clear canvas state |
+
+Phase 3 only ships the two endpoints above. The agent mutates canvas state via the `canvas_set` / `canvas_update` / `canvas_clear` tools (which emit the same `canvas_update` WebSocket event as `POST .../set`); a REST surface for `update` and `clear` is unnecessary in v1 and not implemented.
 
 ### Other
 
