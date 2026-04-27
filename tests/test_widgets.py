@@ -277,3 +277,19 @@ def test_bundled_multiple_choice_is_registered(fake_config):
     ok, _ = reg.validate("multiple_choice",
                          {"prompt": "x", "options": []})
     assert ok is False
+
+
+def test_bundled_markdown_document_is_registered(fake_config):
+    """Fresh registry scan finds the bundled markdown_document widget."""
+    reg = load_widget_registry(fake_config,
+                               admin_dir=Path("/nonexistent/admin"))
+    desc = reg.get("markdown_document")
+    assert desc is not None
+    assert desc.tier == "bundled"
+    assert "inline" in desc.modes
+    assert "canvas" in desc.modes
+    assert desc.accepts_input is False
+    ok, err = reg.validate("markdown_document", {"content": "# hi"})
+    assert ok is True, err
+    bad_ok, _ = reg.validate("markdown_document", {"wrong": 1})
+    assert not bad_ok
