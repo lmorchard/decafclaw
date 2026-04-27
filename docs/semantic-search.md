@@ -53,6 +53,7 @@ When `MEMORY_SEARCH_STRATEGY=semantic`, `vault_search` uses embeddings. Otherwis
 
 ```bash
 make reindex              # Rebuild all embeddings from memory files + conversation archives
+make prune-embeddings     # Drop stale rows (missing source files + legacy types)
 decafclaw-search "query"  # Search the embedding index from the command line
 ```
 
@@ -69,6 +70,23 @@ make reindex
 ```
 
 This deletes the existing database and re-embeds all vault pages, journal entries, and conversation archives. Useful after changing the embedding model/dimensions or if the index gets corrupted. Supports `--vault`, `--journal` flags for subset reindexing and `--concurrency N` for parallel API calls.
+
+## Pruning stale entries
+
+Vault writes/deletes/renames already remove their corresponding embedding rows at runtime (see `vault_delete` / `vault_write` / `vault_rename`). But existing deployments accumulate stale rows from periods before those hooks landed, or from legacy source types that retrieval already excludes (`conversation`, `memory` — see #133, #305).
+
+```bash
+make prune-embeddings
+```
+
+The sweep scans `embeddings.db` and drops:
+
+- Rows for source types `page`, `user`, `wiki` (legacy `page` alias), or `journal` whose backing file under `vault_root` no longer exists.
+- Rows of source types `conversation` or `memory` (legacy / excluded from retrieval), unconditionally.
+
+Unknown source types are kept with a single warning per type — better to leave them alone than nuke unfamiliar data. The output prints per-bucket counts so the operator sees what was reclaimed.
+
+This is a hard delete (no soft TTL). Embeddings are deterministic from source content, so the worst case is `make reindex` to rebuild from scratch. Idempotent — running twice on a clean DB is a no-op.
 
 ## Related
 

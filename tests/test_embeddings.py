@@ -12,6 +12,7 @@ from decafclaw.embeddings import (
     delete_by_source_type,
     delete_entries,
     index_entry_sync,
+    prune_stale_embeddings,
     search_similar_sync,
 )
 
@@ -219,3 +220,120 @@ def test_delete_by_source_type_cleans_vec0(config):
     results = search_similar_sync(config, vec_wiki, top_k=5)
     assert len(results) == 1  # only memory entry remains
     assert results[0]["source_type"] == "memory"
+
+
+# -- Prune stale embeddings (#305) ---------------------------------------------
+
+
+def _seed_page(config, rel_path, source_type="page", body=None):
+    """Create a vault file at vault_root/rel_path and index its embedding.
+
+    `body` defaults to a unique-per-path string so the entry_hash unique
+    constraint doesn't collapse multiple rows when tests seed several
+    pages without specifying distinct bodies.
+    """
+    if body is None:
+        body = f"content for {rel_path}"
+    full = config.vault_root / rel_path
+    full.parent.mkdir(parents=True, exist_ok=True)
+    full.write_text(body)
+    dim = config.embedding.dimensions
+    vec = [1.0] + [0.0] * (dim - 1)
+    index_entry_sync(config, rel_path, body, vec, source_type=source_type)
+
+
+def _seed_orphan(config, rel_path, source_type="page"):
+    """Index an embedding whose source file does NOT exist on disk.
+
+    Uses a path-derived body so each call inserts a distinct row even
+    when the caller doesn't otherwise differentiate them.
+    """
+    dim = config.embedding.dimensions
+    vec = [0.5] + [0.0] * (dim - 1)
+    body = f"ghost for {rel_path} ({source_type})"
+    index_entry_sync(config, rel_path, body, vec, source_type=source_type)
+
+
+class TestPruneStaleEmbeddings:
+    def test_drops_missing_files_keeps_live(self, config):
+        config.vault_root.mkdir(parents=True, exist_ok=True)
+        _seed_page(config, "live.md", source_type="page", body="here")
+        _seed_orphan(config, "gone.md", source_type="page")
+        _seed_page(config, "agent/journal/2026-04-27.md", source_type="journal", body="j")
+        _seed_orphan(config, "agent/journal/2026-01-01.md", source_type="journal")
+
+        counts = prune_stale_embeddings(config)
+        assert counts["checked"] == 4
+        assert counts["dropped_missing"] == 2
+        assert counts["kept"] == 2
+        assert counts["dropped_legacy"] == 0
+
+    def test_drops_legacy_source_types_unconditionally(self, config):
+        config.vault_root.mkdir(parents=True, exist_ok=True)
+        _seed_orphan(config, "anything.md", source_type="conversation")
+        _seed_orphan(config, "anything2.md", source_type="memory")
+        # Even with a real backing file, conversation/memory should drop.
+        _seed_page(config, "real.md", source_type="conversation", body="x")
+
+        counts = prune_stale_embeddings(config)
+        assert counts["checked"] == 3
+        assert counts["dropped_legacy"] == 3
+        assert counts["kept"] == 0
+
+    def test_keeps_unknown_source_types(self, config, caplog):
+        config.vault_root.mkdir(parents=True, exist_ok=True)
+        _seed_orphan(config, "x.md", source_type="frobnicate")
+        _seed_orphan(config, "y.md", source_type="frobnicate")
+
+        counts = prune_stale_embeddings(config)
+        assert counts["checked"] == 2
+        assert counts["unknown"] == 2
+        assert counts["kept"] == 0
+        assert counts["dropped_missing"] == 0
+
+    def test_user_and_wiki_legacy_treated_as_file_backed(self, config):
+        config.vault_root.mkdir(parents=True, exist_ok=True)
+        # `wiki` is the legacy alias for `page`; treated like a page.
+        _seed_page(config, "user_page.md", source_type="user", body="u")
+        _seed_orphan(config, "old_wiki.md", source_type="wiki")
+
+        counts = prune_stale_embeddings(config)
+        assert counts["checked"] == 2
+        assert counts["kept"] == 1
+        assert counts["dropped_missing"] == 1
+
+    def test_idempotent_second_run_no_op(self, config):
+        config.vault_root.mkdir(parents=True, exist_ok=True)
+        _seed_orphan(config, "ghost.md", source_type="page")
+
+        first = prune_stale_embeddings(config)
+        assert first["dropped_missing"] == 1
+        # Second run sees no rows to drop.
+        second = prune_stale_embeddings(config)
+        assert second == {
+            "checked": 0, "dropped_missing": 0, "dropped_legacy": 0,
+            "kept": 0, "unknown": 0,
+        }
+
+    def test_empty_db_returns_zeros(self, config):
+        counts = prune_stale_embeddings(config)
+        assert counts == {
+            "checked": 0, "dropped_missing": 0, "dropped_legacy": 0,
+            "kept": 0, "unknown": 0,
+        }
+
+    def test_dropped_rows_remove_from_vec0(self, config):
+        """Pruned rows are removed from the vec0 table too — search
+        should not surface them."""
+        config.vault_root.mkdir(parents=True, exist_ok=True)
+        _seed_page(config, "live.md", source_type="page", body="live")
+        _seed_orphan(config, "gone.md", source_type="page")
+
+        prune_stale_embeddings(config)
+
+        # Search now returns only the live row.
+        dim = config.embedding.dimensions
+        results = search_similar_sync(config, [1.0] + [0.0] * (dim - 1), top_k=10)
+        paths = [r["file_path"] for r in results]
+        assert "live.md" in paths
+        assert "gone.md" not in paths
