@@ -80,7 +80,7 @@ class _FakeRegistry:
         desc = self._descriptors.get(name)
         if desc is None:
             return False, f"unknown widget '{name}'"
-        for r in desc.get("required", []):
+        for r in desc.required:
             if r not in data:
                 return False, f"missing required field '{r}'"
         return True, None
@@ -89,8 +89,8 @@ class _FakeRegistry:
 @pytest.fixture
 def md_doc_registry(monkeypatch):
     reg = _FakeRegistry({
-        "markdown_document": {"modes": ["inline", "canvas"], "required": ["content"]},
-        "data_table": {"modes": ["inline"], "required": []},
+        "markdown_document": SimpleNamespace(modes=["inline", "canvas"], required=["content"]),
+        "data_table": SimpleNamespace(modes=["inline"], required=[]),
     })
     monkeypatch.setattr(canvas, "get_widget_registry", lambda: reg)
     return reg

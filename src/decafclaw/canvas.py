@@ -115,10 +115,7 @@ def _validate_widget_for_canvas(widget_type: str, data: dict) -> str | None:
     descriptor = registry.get(widget_type)
     if descriptor is None:
         return f"widget '{widget_type}' not registered"
-    modes = getattr(descriptor, "modes", None)
-    if modes is None and isinstance(descriptor, dict):
-        modes = descriptor.get("modes", [])
-    if "canvas" not in (modes or []):
+    if "canvas" not in descriptor.modes:
         return f"widget '{widget_type}' does not support canvas mode"
     ok, msg = registry.validate(widget_type, data)
     if not ok:
