@@ -5,6 +5,14 @@ import logging
 from pathlib import Path
 
 from .archive import read_archive, read_compacted_history, write_compacted_history
+from .compaction_decisions import (
+    format_slice,
+    load_slice,
+    merge_slice,
+    parse_slice_from_response,
+    save_slice,
+    strip_json_block,
+)
 from .llm import call_llm
 from .util import estimate_tokens
 
@@ -91,6 +99,39 @@ or failed approaches (and why they failed).
 
 Be concise but don't lose critical details. Format as a brief narrative."""
 
+# Appended to the compaction prompt when decisions_enabled is true.
+# Asks the model to emit a fenced JSON block alongside its prose so a
+# structured slice can be threaded forward through future compactions.
+# See docs/context-composer.md and #302.
+DECISIONS_PROMPT_ADDENDUM = """\
+
+After your prose summary, append a JSON block in this exact shape:
+
+```json
+{
+  "decisions": ["..."],
+  "open_questions": ["..."],
+  "artifacts": ["..."]
+}
+```
+
+Each list contains short strings (≤ 200 chars):
+- decisions: choices made and still in effect (architecture, product,
+  conventions, preferences locked in).
+- open_questions: unresolved questions the agent should remember to
+  follow up on. Drop entries that have been answered.
+- artifacts: concrete things produced (files written, vault pages
+  created, PRs opened, scripts shipped).
+
+If a "Current state slice" is provided in the input, **reuse existing
+entries verbatim** when they still apply — do NOT paraphrase. Add new
+entries for new info. Drop entries that have been obsoleted (e.g. a
+decision was reversed, a question was resolved). The list you emit IS
+the new state slice.
+
+Empty lists are fine for any category. Use `[]` (not omitted) when
+nothing belongs there."""
+
 SUMMARY_PREFIX = "[Conversation summary]: "
 
 
@@ -100,6 +141,14 @@ def _load_compaction_prompt(config) -> str:
     if prompt_path.exists():
         return prompt_path.read_text().strip()
     return DEFAULT_COMPACTION_PROMPT
+
+
+def _with_decisions_addendum(prompt: str, config) -> str:
+    """Append the structured-output addendum to a compaction prompt
+    when ``decisions_enabled`` is true. See #302."""
+    if config.compaction.decisions_enabled:
+        return prompt + DECISIONS_PROMPT_ADDENDUM
+    return prompt
 
 
 def _extract_previous_summary(config, conv_id: str) -> tuple[str | None, str | None]:
@@ -389,14 +438,22 @@ def _rebuild_history(
     recent_messages: list[dict],
     config,
     conv_id: str,
+    *,
+    slice_prefix: str = "",
 ) -> None:
     """Clear history and replace with summary + protected + recent messages.
 
     Also persists the compacted history to the sidecar file.
+
+    ``slice_prefix`` is the rendered structured decision slice (#302),
+    prepended to the prose summary inside the same single user-role
+    summary message. Empty string when the slice is empty or
+    ``decisions_enabled`` is false.
     """
+    body = f"{slice_prefix}{summary}" if slice_prefix else summary
     summary_msg = {
         "role": "user",
-        "content": f"{SUMMARY_PREFIX}{summary}",
+        "content": f"{SUMMARY_PREFIX}{body}",
     }
 
     history.clear()
@@ -472,6 +529,18 @@ async def compact_history(ctx, history: list) -> bool:
     before_messages = len(history)
     compact_start_time = _time.monotonic()
 
+    # Load the existing structured slice (#302). When non-empty,
+    # threaded into the prompt so the LLM sees what's already
+    # captured. After summarization, the LLM's emitted slice replaces
+    # this in the merge step.
+    old_slice = load_slice(config, conv_id) if config.compaction.decisions_enabled else None
+    slice_prefix_input = ""
+    if old_slice and not old_slice.is_empty():
+        slice_prefix_input = (
+            f"Current state slice (preserve verbatim if still applicable):\n"
+            f"{format_slice(old_slice)}\n"
+        )
+
     try:
         await ctx.publish("compaction_start")
 
@@ -480,16 +549,20 @@ async def compact_history(ctx, history: list) -> bool:
             newly_old_flat = flatten_messages(
                 [msg for turn in mode.newly_old_turns for msg in turn])
             combined_input = (
+                f"{slice_prefix_input}"
                 f"Existing summary:\n{mode.prev_summary}\n\n"
                 f"New conversation turns to incorporate:\n{newly_old_flat}"
             )
             estimated = estimate_tokens(combined_input)
             log.info(f"Incremental summarization: ~{estimated} est. tokens")
             summary = await _single_summarize(
-                ctx, config, combined_input, INCREMENTAL_COMPACTION_PROMPT)
+                ctx, config, combined_input,
+                _with_decisions_addendum(INCREMENTAL_COMPACTION_PROMPT, config))
         else:
-            prompt = _load_compaction_prompt(config)
-            flattened = flatten_messages(mode.old_messages)
+            prompt = _with_decisions_addendum(_load_compaction_prompt(config), config)
+            flattened = (slice_prefix_input + flatten_messages(mode.old_messages)
+                         if slice_prefix_input
+                         else flatten_messages(mode.old_messages))
             estimated = estimate_tokens(flattened)
             if estimated > budget:
                 log.info(f"Flattened text ({estimated} est. tokens) exceeds "
@@ -503,9 +576,31 @@ async def compact_history(ctx, history: list) -> bool:
             log.warning("Compaction LLM returned empty summary, skipping")
             return False
 
+        # Parse + merge the structured slice (#302). Best-effort:
+        # parse failures fall through silently with the existing
+        # slice unchanged.
+        slice_prefix = ""
+        clean_summary = summary
+        if config.compaction.decisions_enabled:
+            parsed = parse_slice_from_response(summary)
+            if parsed is not None:
+                merged = merge_slice(
+                    old_slice or load_slice(config, conv_id),
+                    parsed,
+                    max_per_category=config.compaction.decisions_max_per_category,
+                )
+                save_slice(config, conv_id, merged)
+                slice_prefix = format_slice(merged)
+                # Strip the JSON block from the prose so the rebuilt
+                # summary message doesn't carry redundant JSON.
+                clean_summary = strip_json_block(summary)
+            else:
+                log.debug(
+                    "Compaction response had no parseable slice; prose-only fallback")
+
         # Rebuild history with summary + protected + recent
-        _rebuild_history(history, summary, protected_messages, recent_messages,
-                         config, conv_id)
+        _rebuild_history(history, clean_summary, protected_messages, recent_messages,
+                         config, conv_id, slice_prefix=slice_prefix)
         return True
 
     except Exception as e:

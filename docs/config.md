@@ -99,6 +99,11 @@ History compaction settings. Empty `url`/`model`/`api_key` fall back to the `llm
 | `max_tokens` | int | `100000` | `COMPACTION_MAX_TOKENS` | |
 | `llm_max_tokens` | int | `0` | `COMPACTION_LLM_MAX_TOKENS` | |
 | `preserve_turns` | int | `5` | `COMPACTION_PRESERVE_TURNS` | |
+| `memory_sweep_enabled` | bool | `true` | `COMPACTION_MEMORY_SWEEP_ENABLED` | |
+| `decisions_enabled` | bool | `true` | `COMPACTION_DECISIONS_ENABLED` | |
+| `decisions_max_per_category` | int | `30` | `COMPACTION_DECISIONS_MAX_PER_CATEGORY` | |
+
+`decisions_*` controls the structured decision slice that's threaded forward through every compaction (see [context-composer.md#decision-slice-through-compaction](context-composer.md#decision-slice-through-compaction) and #302). The slice persists at `{workspace}/conversations/{conv_id}.decisions.json`. `decisions_enabled: false` disables the prompt addendum, parse step, and sidecar write entirely. `decisions_max_per_category: 0` removes the FIFO cap.
 
 ### `cleanup`
 

@@ -296,6 +296,48 @@ The clear pass writes per-conversation cumulative stats (`cleanup.cleared_count`
 
 Configuration tunables: `cleanup.enabled`, `min_turn_age`, `min_size_bytes`, `preserve_tools`. See [config.md#cleanup](config.md#cleanup).
 
+## Decision slice through compaction
+
+Compaction's prose summary is lossy for high-signal facts — architectural decisions, unresolved questions, artifacts produced — and that loss compounds across iterated compactions. Alongside the prose, compaction emits a **structured slice** that's threaded forward into every subsequent compaction so once an entry lands it's not re-derived from prose each cycle. See `src/decafclaw/compaction_decisions.py` and #302.
+
+**Three lists**, each holding short string entries with creation timestamps:
+
+- `decisions` — choices made and still in effect (architecture, product, conventions, preferences locked in).
+- `open_questions` — unresolved questions the agent should remember to follow up on.
+- `artifacts` — concrete things produced (files written, vault pages created, PRs opened).
+
+**Flow on each compaction:**
+
+1. Load the existing slice from `{workspace}/conversations/{conv_id}.decisions.json` (empty when missing).
+2. If non-empty, prepend `Current state slice:\n<formatted>` to the prompt input so the LLM sees what's already captured.
+3. The LLM emits its prose summary plus a fenced ```json block with the new state of the three lists. The prompt instructs it to **reuse existing entries verbatim** when they still apply (so timestamps survive), add new entries, and drop entries that have been obsoleted.
+4. `parse_slice_from_response` extracts the JSON; `merge_slice` reconciles old + new (preserve verbatim entries' `created_at`, add new entries with `now`, drop missing entries, FIFO cap per category).
+5. The merged slice persists to the sidecar and renders as a `<decision_slice>` block prepended to the prose summary in the rebuilt history's first message. The XML envelope mirrors the system-prompt section convention from #304 — outer XML, markdown sub-headings inside — so the model can distinguish the structured slice from the prose summary that follows it within the same message.
+
+**Failure modes are silent.** If the LLM forgets the JSON block or emits invalid JSON, parse returns `None` and the prose-only path runs unchanged — the existing slice persists untouched.
+
+**Disable** via `compaction.decisions_enabled = false` (config). The prompt addendum is skipped, no parse, no slice persist. Useful for A/B testing or debugging.
+
+**Cap** via `compaction.decisions_max_per_category` (default 30; `0` = no cap). FIFO drop by `created_at` when a category exceeds the cap.
+
+The rebuilt history's summary message looks like:
+
+```
+[Conversation summary]: <decision_slice>
+### Decisions
+- use vertex by default
+- skip openai for now
+
+### Open Questions
+- when to add openai support?
+
+### Artifacts
+- vault://decisions/llm
+</decision_slice>
+
+Earlier turns covered ... (prose summary)
+```
+
 ## Context inspection
 
 After each turn, the agent writes a diagnostics sidecar file (`workspace/conversations/{conv_id}.context.json`) with per-source token estimates, scoring details, memory candidate breakdowns, and cumulative cleanup stats from the lightweight clear tier (see above).
@@ -319,4 +361,5 @@ After each turn, the agent writes a diagnostics sidecar file (`workspace/convers
 - `src/decafclaw/tools/tool_registry.py` — tool classification and deferral
 - `src/decafclaw/compaction.py` — conversation summary generation
 - `src/decafclaw/context_cleanup.py` — lightweight tool-result clearing tier (#298)
+- `src/decafclaw/compaction_decisions.py` — structured decision slice threaded through compaction (#302)
 - `src/decafclaw/frontmatter.py` — YAML frontmatter parsing
