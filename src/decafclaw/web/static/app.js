@@ -8,7 +8,7 @@ import { AuthClient } from './lib/auth-client.js';
 import { WebSocketClient } from './lib/websocket-client.js';
 import { ConversationStore } from './lib/conversation-store.js';
 import { setupResizeHandle } from './lib/utils.js';
-import { setActiveConv, applyEvent } from './lib/canvas-state.js';
+import { setActiveConv, applyEvent, subscribe as subscribeCanvas, resummon } from './lib/canvas-state.js';
 
 // Import components (registers custom elements)
 import './components/login-view.js';
@@ -655,3 +655,33 @@ if (canvasResizeHandle && canvasMainEl) {
     localStorage.setItem('canvas-width', String(parseInt(w)));
   });
 }
+
+function setupCanvasResummonPill() {
+  const desktopHost = document.getElementById('chat-main-header');
+  const mobileHost = document.getElementById('mobile-header');
+  if (!desktopHost) return;
+
+  /**
+   * @param {HTMLElement} host
+   * @param {{tab: any, visible: boolean, unreadDot: boolean}} snapshot
+   */
+  const renderTo = (host, snapshot) => {
+    host.querySelector('.canvas-resummon-pill')?.remove();
+    if (!snapshot.tab) return;
+    if (snapshot.visible) return;
+    const btn = document.createElement('button');
+    btn.className = 'canvas-resummon-pill';
+    btn.type = 'button';
+    btn.textContent = '📄 Canvas';
+    if (snapshot.unreadDot) btn.dataset.unread = 'true';
+    btn.addEventListener('click', () => resummon());
+    host.appendChild(btn);
+  };
+
+  subscribeCanvas(snap => {
+    renderTo(desktopHost, snap);
+    if (mobileHost) renderTo(mobileHost, snap);
+  });
+}
+
+setupCanvasResummonPill();
