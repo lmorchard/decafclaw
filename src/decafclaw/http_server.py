@@ -1295,7 +1295,7 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> Starlette:
 
         # Delete files on disk (with path sandboxing)
         conv_dir = config.workspace_path / "conversations"
-        for suffix in [".jsonl", ".compacted.jsonl", ".context.json", ".decisions.json"]:
+        for suffix in [".jsonl", ".compacted.jsonl", ".context.json", ".decisions.json", ".notes.md"]:
             path = (conv_dir / f"{conv_id}{suffix}").resolve()
             if not path.is_relative_to(conv_dir.resolve()):
                 continue  # path traversal guard
