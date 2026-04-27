@@ -8,6 +8,14 @@ import { AuthClient } from './lib/auth-client.js';
 import { WebSocketClient } from './lib/websocket-client.js';
 import { ConversationStore } from './lib/conversation-store.js';
 import { setupResizeHandle } from './lib/utils.js';
+import {
+  setActiveConv,
+  applyEvent,
+  subscribe as subscribeCanvas,
+  resummon,
+  dismiss as canvasDismiss,
+  currentSnapshot as canvasSnapshot,
+} from './lib/canvas-state.js';
 
 // Import components (registers custom elements)
 import './components/login-view.js';
@@ -51,6 +59,7 @@ if (chatView) chatView.store = store;
 
 // Update chat-input disabled/busy state from store, auto-focus when ready
 let wasBusy = false;
+let lastConvId = null;
 store.addEventListener('change', () => {
   if (chatInput) {
     chatInput.busy = store.isBusy;
@@ -62,6 +71,11 @@ store.addEventListener('change', () => {
       requestAnimationFrame(() => chatInput.focus());
     }
     wasBusy = store.isBusy;
+  }
+  const cur = store.currentConvId || null;
+  if (cur !== lastConvId) {
+    lastConvId = cur;
+    setActiveConv(cur);
   }
 });
 
@@ -354,12 +368,21 @@ window.addEventListener('popstate', () => {
   }
 });
 
-// Switch back to chat when sidebar switches to Chats tab
+// Switch back to chat when sidebar switches to Chats tab.
+// On mobile, opening wiki/files auto-closes the canvas overlay (mutual
+// exclusion with the canvas full-screen overlay; reverse direction is
+// handled in canvas-panel._reflectVisibility).
 document.addEventListener('sidebar-tab-change', (e) => {
   const tab = /** @type {CustomEvent} */ (e).detail?.tab;
   if (tab === 'conversations') {
     hideWikiView();
     hideFileView();
+  }
+  if ((tab === 'wiki' || tab === 'files')
+      && window.matchMedia('(max-width: 639px)').matches) {
+    if (canvasSnapshot().visible) {
+      canvasDismiss();
+    }
   }
 });
 
@@ -408,6 +431,9 @@ ws.addEventListener('message', (e) => {
   }
   if (msg?.type === 'notification_read') {
     window.dispatchEvent(new CustomEvent('notification-read', { detail: msg }));
+  }
+  if (msg?.type === 'canvas_update') {
+    applyEvent(msg);
   }
 });
 
@@ -607,3 +633,108 @@ if (sidebarResizeHandle) {
     cssVar: '--sidebar-width',
   });
 }
+
+// Canvas drag resize (right-side panel: handle is to the left of the panel,
+// so dragging left grows the canvas — compute from right edge of layout).
+const canvasResizeHandle = document.getElementById('canvas-resize-handle');
+const canvasMainEl = document.getElementById('canvas-main');
+
+const savedCanvasWidth = localStorage.getItem('canvas-width');
+if (savedCanvasWidth) document.documentElement.style.setProperty('--canvas-width', savedCanvasWidth + 'px');
+
+if (canvasResizeHandle && canvasMainEl) {
+  const CANVAS_MIN_WIDTH = 280;
+  const CANVAS_MAX_WIDTH_PCT = 0.7;
+  let canvasDragging = false;
+  canvasResizeHandle.addEventListener('mousedown', (e) => {
+    canvasDragging = true;
+    canvasResizeHandle.classList.add('dragging');
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    e.preventDefault();
+  });
+  document.addEventListener('mousemove', (e) => {
+    if (!canvasDragging) return;
+    if (!chatLayout) return;
+    const layoutRect = chatLayout.getBoundingClientRect();
+    const maxWidth = layoutRect.width * CANVAS_MAX_WIDTH_PCT;
+    const newWidth = Math.min(maxWidth, Math.max(CANVAS_MIN_WIDTH, layoutRect.right - e.clientX));
+    document.documentElement.style.setProperty('--canvas-width', newWidth + 'px');
+  });
+  document.addEventListener('mouseup', () => {
+    if (!canvasDragging) return;
+    canvasDragging = false;
+    canvasResizeHandle.classList.remove('dragging');
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+    // Persist only on real pixel values. parseInt() of the CSS var can
+    // yield NaN (var unset) or 45 (CSS default '45%'), neither of which
+    // is a valid pixel width to round-trip on next load.
+    const px = canvasMainEl.getBoundingClientRect().width;
+    if (Number.isFinite(px) && px >= CANVAS_MIN_WIDTH) {
+      localStorage.setItem('canvas-width', String(Math.round(px)));
+    }
+  });
+}
+
+function setupCanvasResummonPill() {
+  // Desktop: pill floats absolutely in the upper-right of #chat-main
+  // (no dedicated header strip — keeps the chat area uncluttered when
+  // there's no canvas state). Mobile: lives inside #mobile-header.
+  const desktopHost = document.getElementById('chat-main');
+  const mobileHost = document.getElementById('mobile-header');
+  if (!desktopHost) return;
+
+  /**
+   * @param {HTMLElement} host
+   * @param {{tab: any, visible: boolean, unreadDot: boolean}} snapshot
+   */
+  const renderTo = (host, snapshot) => {
+    host.querySelector('.canvas-resummon-pill')?.remove();
+    if (!snapshot.tab) return;
+    if (snapshot.visible) return;
+    const btn = document.createElement('button');
+    btn.className = 'canvas-resummon-pill';
+    btn.type = 'button';
+    btn.textContent = '📄 Canvas';
+    if (snapshot.unreadDot) {
+      btn.dataset.unread = 'true';
+      // The dot is purely visual (CSS ::after); pair it with an
+      // accessible name so screen readers get the same state signal.
+      btn.setAttribute('aria-label', 'Canvas (unread update)');
+    } else {
+      btn.setAttribute('aria-label', 'Canvas');
+    }
+    btn.addEventListener('click', () => resummon());
+    host.appendChild(btn);
+  };
+
+  const isMobile = () => window.matchMedia('(max-width: 639px)').matches;
+  const renderForViewport = (snap) => {
+    // Only mount the pill in the visible host. mobile-header uses
+    // `display: contents` on desktop, which would still render its
+    // children inline inside chat-main — producing a duplicate pill.
+    if (isMobile()) {
+      desktopHost.querySelector('.canvas-resummon-pill')?.remove();
+      if (mobileHost) renderTo(mobileHost, snap);
+    } else {
+      mobileHost?.querySelector('.canvas-resummon-pill')?.remove();
+      renderTo(desktopHost, snap);
+    }
+  };
+
+  subscribeCanvas(renderForViewport);
+  // Re-render on viewport-class changes so a desktop ↔ mobile resize
+  // moves the pill to the right host.
+  window.matchMedia('(max-width: 639px)').addEventListener('change', () => {
+    const snap = currentSnapshotForResummon();
+    renderForViewport(snap);
+  });
+}
+
+function currentSnapshotForResummon() {
+  // Avoid importing the canvas-state module twice; surface a tiny helper.
+  return canvasSnapshot();
+}
+
+setupCanvasResummonPill();

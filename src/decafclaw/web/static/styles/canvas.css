@@ -1,0 +1,130 @@
+/* Canvas panel — desktop + mobile. */
+
+#canvas-main {
+  width: var(--canvas-width, 45%);
+  min-width: 280px;
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid var(--pico-muted-border-color);
+  background: var(--pico-background-color);
+  color: var(--pico-color);
+  overflow: hidden;
+}
+
+#canvas-resize-handle {
+  width: 4px;
+  cursor: col-resize;
+  background: transparent;
+  flex-shrink: 0;
+}
+
+#canvas-resize-handle:hover,
+#canvas-resize-handle.dragging {
+  background: var(--pico-primary);
+}
+
+#canvas-resize-handle.hidden {
+  display: none !important;
+}
+
+canvas-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.canvas-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--pico-muted-border-color);
+  font-weight: 600;
+}
+.canvas-btn { color: var(--pico-color); }
+.canvas-btn:hover { color: var(--pico-primary); }
+.canvas-label { flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.canvas-spacer { flex: 1; }
+.canvas-btn {
+  background: none; border: 0; cursor: pointer;
+  font-size: 1.1rem; padding: 0.25rem 0.5rem;
+  min-width: 2.5rem; min-height: 2.5rem;
+}
+.canvas-body { flex: 1; overflow: hidden; position: relative; display: flex; flex-direction: column; min-height: 0; }
+/* Stretch the widget-host chain so canvas-mode widgets get the full canvas-body height. */
+.canvas-body > dc-widget-host,
+.canvas-body > dc-widget-host > .widget-host,
+.canvas-body dc-widget-host > .widget-host > * {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+.canvas-empty { padding: 1rem; color: var(--pico-muted-color); }
+
+.canvas-resummon-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.35rem 0.7rem;
+  border-radius: 999px;
+  border: 1px solid var(--pico-muted-border-color);
+  background: var(--pico-card-background-color, var(--pico-background-color));
+  color: var(--pico-color);
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+.canvas-resummon-pill[data-unread="true"]::after {
+  content: "•";
+  color: var(--pico-primary, #3b82f6);
+  font-weight: bold;
+}
+
+/* When mounted directly inside #chat-main (desktop), float in the
+   upper-right corner so we don't reserve a dead header strip when no
+   canvas state exists. The right offset clears chat-view's scrollbar
+   on platforms that use classic (non-overlay) scrollbars. */
+#chat-main { position: relative; }
+#chat-main > .canvas-resummon-pill {
+  position: absolute;
+  top: 0.5rem;
+  right: 1.5rem;
+  z-index: 5;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18);
+}
+
+@media (max-width: 639px) {
+  #canvas-main {
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    z-index: 100;
+    border-left: 0;
+  }
+  #canvas-resize-handle { display: none !important; }
+  .canvas-btn { min-width: 44px; min-height: 44px; }
+}
+
+body.canvas-standalone {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  height: var(--vh, 100vh);
+}
+#canvas-standalone-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem;
+  border-bottom: 1px solid var(--pico-muted-border-color, #ddd);
+}
+#canvas-standalone-header h1 { font-size: 1rem; margin: 0; }
+#canvas-standalone-body {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+}
+#canvas-standalone-body > * { flex: 1; }
+.back-link { margin-left: auto; }

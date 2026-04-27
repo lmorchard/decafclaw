@@ -135,7 +135,17 @@ export class ChatView extends LitElement {
         <div class="load-more"><small>Loading...</small></div>
       ` : nothing}
 
-      ${this._messages.map(m => html`
+      ${this._messages.filter(m => {
+        // Suppress empty assistant bubbles — happens when the LLM returns
+        // 0 output tokens with no tool calls (rare; Anthropic and Gemini
+        // both occasionally do this on confusing input). The agent loop
+        // logs a warning and records the empty turn for context fidelity,
+        // but there's nothing for the UI to show.
+        if (m.role !== 'assistant') return true;
+        const hasContent = (m.content || '').trim().length > 0;
+        const hasToolCalls = Array.isArray(m.tool_calls) && m.tool_calls.length > 0;
+        return hasContent || hasToolCalls;
+      }).map(m => html`
         <chat-message
           .role=${m.role}
           .content=${m.content || ''}

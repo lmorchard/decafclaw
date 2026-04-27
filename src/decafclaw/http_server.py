@@ -2,6 +2,7 @@
 
 import asyncio
 import functools
+import json
 import logging
 import os
 import re
@@ -23,6 +24,13 @@ from .web.workspace_paths import (
 )
 
 log = logging.getLogger(__name__)
+
+_SAFE_CONV_ID_RE = re.compile(r"^[a-zA-Z0-9._-]+$")
+
+
+def _is_safe_conv_id(conv_id: str) -> bool:
+    return bool(conv_id and _SAFE_CONV_ID_RE.match(conv_id))
+
 
 _CONFIG_FILES = [
     {"name": "SOUL.md", "path": "SOUL.md", "description": "Core identity prompt", "scope": "admin"},
@@ -1576,6 +1584,65 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> Starlette:
             media_type="application/javascript",
             headers={"X-Content-Type-Options": "nosniff"})
 
+    # -- Canvas routes ------------------------------------------------------------
+
+    def _user_owns_conv(conv_id: str, username: str) -> bool:
+        """Authorization gate for canvas routes — caller must own the conversation."""
+        from .web.conversations import ConversationIndex
+        index = ConversationIndex(config)
+        conv = index.get(conv_id)
+        return bool(conv and conv.user_id == username)
+
+    @_authenticated
+    async def get_canvas_state(request: Request, username: str) -> JSONResponse:
+        """Load current canvas state for a conversation."""
+        from . import canvas as canvas_mod
+        conv_id = request.path_params.get("conv_id", "")
+        if not _is_safe_conv_id(conv_id):
+            return JSONResponse({"error": "invalid conv_id"}, status_code=400)
+        if not _user_owns_conv(conv_id, username):
+            return JSONResponse({"error": "not found"}, status_code=404)
+        state = canvas_mod.read_canvas_state(config, conv_id)
+        return JSONResponse(state)
+
+    @_authenticated
+    async def post_canvas_set(request: Request, username: str) -> JSONResponse:
+        """Push a widget to the canvas (used by 'Open in Canvas' button)."""
+        from . import canvas as canvas_mod
+        conv_id = request.path_params.get("conv_id", "")
+        if not _is_safe_conv_id(conv_id):
+            return JSONResponse({"error": "invalid conv_id"}, status_code=400)
+        if not _user_owns_conv(conv_id, username):
+            return JSONResponse({"error": "not found"}, status_code=404)
+        try:
+            body = await request.json()
+        except json.JSONDecodeError:
+            return JSONResponse({"error": "invalid JSON body"}, status_code=400)
+        if not isinstance(body, dict):
+            return JSONResponse({"error": "body must be a JSON object"}, status_code=400)
+        widget_type = body.get("widget_type", "")
+        data = body.get("data") or {}
+        label = body.get("label")
+        emit = manager.emit if manager else None
+        result = await canvas_mod.set_canvas(
+            config, conv_id, widget_type, data, label=label, emit=emit,
+        )
+        if not result.ok:
+            return JSONResponse({"error": result.error}, status_code=400)
+        return JSONResponse({"ok": True, "text": result.text})
+
+    @_authenticated
+    async def get_canvas_page(request: Request, username: str):
+        """Serve the standalone canvas HTML page."""
+        from starlette.responses import Response
+        conv_id = request.path_params.get("conv_id", "")
+        if not _is_safe_conv_id(conv_id):
+            return Response("Invalid conversation id", status_code=400)
+        if not _user_owns_conv(conv_id, username):
+            return Response("Not found", status_code=404)
+        html_path = Path(__file__).parent / "web" / "static" / "canvas-page.html"
+        return Response(html_path.read_text(), media_type="text/html")
+
     routes = [
         Route("/health", health, methods=["GET"]),
         Route("/actions/confirm", handle_confirm, methods=["POST"]),
@@ -1629,6 +1696,9 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> Starlette:
         Route("/api/widgets", list_widgets, methods=["GET"]),
         Route("/widgets/{tier}/{name}/widget.js", serve_widget_js,
               methods=["GET"]),
+        Route("/api/canvas/{conv_id}", get_canvas_state, methods=["GET"]),
+        Route("/api/canvas/{conv_id}/set", post_canvas_set, methods=["POST"]),
+        Route("/canvas/{conv_id}", get_canvas_page, methods=["GET"]),
         WebSocketRoute("/ws/chat", ws_chat),
     ]
 

@@ -218,12 +218,54 @@ reload the browser — the cache-busting query param
 Admin-tier widgets under `data/{agent_id}/widgets/` are not auto-watched
 — edit or add one and restart `make dev` manually.
 
+## Phase 3 — Canvas panel and `markdown_document`
+
+Phase 3 ships the canvas panel UI surface and the first canvas-aware
+widget, `markdown_document`. See [Canvas panel](web-ui.md#canvas-panel)
+for the full UI description.
+
+### The `target` / mode contract
+
+A widget descriptor's `modes` field enumerates the rendering contexts it
+supports: `"inline"` (inside a tool-result message bubble) and/or
+`"canvas"` (in the detached canvas panel). The host (`<dc-widget-host>`)
+sets `el.mode = 'inline'` or `'canvas'` on the mounted widget element.
+Widgets inspect `this.mode` and render accordingly — e.g. truncated vs
+full layout.
+
+### `markdown_document` widget
+
+Bundled at `src/decafclaw/web/static/widgets/markdown_document/`.
+Supports both `"inline"` and `"canvas"` modes.
+
+**Inline mode:** content collapsed via `max-height: 8rem` with a fade
+gradient at the bottom. Two buttons appear below the fade:
+
+- **Expand** — toggles full inline render (removes `max-height` cap).
+- **Open in Canvas** — POSTs to `/api/canvas/{conv_id}/set` to push
+  the widget to the canvas panel. The panel opens (or updates) on the
+  right side of the layout.
+
+**Canvas mode:** full content rendered with no truncation. Scroll
+position is preserved across `canvas_update` events (clamped to current
+scrollable extent so it doesn't leave the viewport).
+
+**Data shape:** `{ content: string }` (raw markdown string).
+
+### Canvas tools (always-loaded)
+
+Four canvas tools are always-loaded so the agent can drive the panel
+without activating a skill. See
+[Context Composer](context-composer.md#canvas-tools) for descriptions.
+
+- `canvas_set(widget_type, data, label?)` — push a widget to the canvas
+- `canvas_update(data)` — replace data on the current widget in place
+- `canvas_clear()` — remove the canvas widget and hide the panel
+- `canvas_read()` — return current canvas state or null
+
 ## Out-of-scope
 
-- Canvas panel (persistent sidebar surface with widgets that update
-  across turns) — tracked in #256 Phase 3.
-- Additional widget types: `code_block`, `markdown_document` — later
-  phases of #256.
+- Additional widget types: `code_block` — later phases.
 - Collapsing `EndTurnConfirm` into a widget with a Mattermost-buttons
   adapter — filed as a follow-up issue.
 - Agent-authored widget JS (workspace tier + iframe sandbox) — #358.
@@ -235,6 +277,11 @@ Admin-tier widgets under `data/{agent_id}/widgets/` are not auto-watched
 - `src/decafclaw/media.py` — `WidgetRequest`, `WidgetInputPause`, `ToolResult.widget`
 - `src/decafclaw/widget_input.py` — input-widget handler + callback map
 - `src/decafclaw/tools/core.py` — `ask_user` tool
-- `src/decafclaw/web/static/widgets/` — bundled widgets (data_table, multiple_choice)
+- `src/decafclaw/canvas.py` — canvas state operations
+- `src/decafclaw/tools/canvas_tools.py` — canvas tools
+- `src/decafclaw/web/static/lib/canvas-state.js` — frontend state
+- `src/decafclaw/web/static/components/canvas-panel.js` — panel component
+- `src/decafclaw/web/static/widgets/` — bundled widgets (data_table, multiple_choice, markdown_document)
+- `src/decafclaw/web/static/widgets/markdown_document/` — markdown_document widget descriptor + Lit component
 - `src/decafclaw/web/static/components/widgets/widget-host.js` — frontend host
 - `src/decafclaw/web/static/lib/widget-catalog.js` — catalog client

@@ -213,3 +213,35 @@ chat-message .tool-result-raw pre {
   padding: 0.35rem 0.9rem;
   font-size: 0.85rem;
 }
+
+/* ---- markdown_document ---- */
+
+.md-doc-inline.collapsed .md-doc-body {
+  position: relative;
+}
+
+.md-doc-inline.collapsed .md-doc-body::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 0 0;
+  height: 2rem;
+  background: linear-gradient(transparent, var(--pico-card-background-color, var(--pico-background-color, #fff)));
+  pointer-events: none;
+}
+
+.md-doc-actions {
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.5rem 0;
+}
+
+.md-doc-canvas {
+  height: 100%;
+  display: flex;
+}
+
+.md-doc-canvas .md-doc-scroll {
+  flex: 1;
+  overflow: auto;
+  padding: 1rem 1.25rem;
+}
