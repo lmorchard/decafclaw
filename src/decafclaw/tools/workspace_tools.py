@@ -8,7 +8,7 @@ import logging
 import re
 from pathlib import Path
 
-from ..media import ToolResult
+from ..media import ToolResult, WidgetRequest
 
 log = logging.getLogger(__name__)
 
@@ -98,6 +98,42 @@ def tool_workspace_read(ctx, path: str, start_line: int | None = None,
         header = f"Lines {start}-{end} of {total}:\n"
         return header + "\n".join(numbered)
     return "\n".join(numbered)
+
+
+_MARKDOWN_EXTS = (".md", ".markdown")
+
+
+def tool_workspace_preview_markdown(ctx, path: str) -> ToolResult:
+    """Read a workspace markdown file and return it as an inline markdown widget.
+
+    The web UI renders the content as rich markdown via the
+    ``markdown_document`` widget; non-web channels see the raw markdown
+    text. Use this when you want to show the user a formatted preview
+    of a markdown file (notes, docs, drafts) rather than dump raw
+    markdown into chat.
+    """
+    config = ctx.config
+    if not any(path.lower().endswith(ext) for ext in _MARKDOWN_EXTS):
+        return ToolResult(
+            text=f"[error: workspace_preview_markdown requires a .md or .markdown file; got '{path}']"
+        )
+    safe = _resolve_safe(config, path)
+    if safe is None:
+        return ToolResult(text=f"[error: invalid path '{path}']")
+    if not safe.exists() or not safe.is_file():
+        return ToolResult(text=f"[error: file not found: '{path}']")
+    try:
+        content = safe.read_text()
+    except OSError as e:
+        return _file_error(e, path)
+    return ToolResult(
+        text=content,
+        widget=WidgetRequest(
+            widget_type="markdown_document",
+            data={"content": content},
+            target="inline",
+        ),
+    )
 
 
 def tool_workspace_write(ctx, path: str, content: str) -> str | ToolResult:
@@ -462,6 +498,7 @@ def tool_workspace_glob(ctx, pattern: str, path: str = ".") -> str | ToolResult:
 
 WORKSPACE_TOOLS = {
     "workspace_read": tool_workspace_read,
+    "workspace_preview_markdown": tool_workspace_preview_markdown,
     "workspace_write": tool_workspace_write,
     "workspace_list": tool_workspace_list,
     "file_share": tool_file_share,
@@ -497,6 +534,31 @@ WORKSPACE_TOOL_DEFINITIONS = [
                     "end_line": {
                         "type": "integer",
                         "description": "Last line to read (1-based, inclusive). Omit to read to end of file.",
+                    },
+                },
+                "required": ["path"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "priority": "normal",
+        "function": {
+            "name": "workspace_preview_markdown",
+            "description": (
+                "Read a workspace markdown file (.md or .markdown) and "
+                "show it to the user as a rendered preview. The agent and "
+                "non-web channels see the raw markdown text; the web UI "
+                "renders it richly via the markdown_document widget. Use "
+                "for showing formatted notes, docs, or drafts rather than "
+                "dumping raw markdown into chat."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Workspace-relative path to a markdown file.",
                     },
                 },
                 "required": ["path"],

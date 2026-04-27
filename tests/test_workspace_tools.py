@@ -1,6 +1,10 @@
 """Tests for workspace file tools — path sandboxing and file sharing."""
 
-from decafclaw.media import ToolResult
+from unittest.mock import MagicMock
+
+import pytest
+
+from decafclaw.media import ToolResult, WidgetRequest
 from decafclaw.tools.workspace_tools import (
     MAX_READ_LINES,
     _resolve_safe,
@@ -13,6 +17,7 @@ from decafclaw.tools.workspace_tools import (
     tool_workspace_insert,
     tool_workspace_list,
     tool_workspace_move,
+    tool_workspace_preview_markdown,
     tool_workspace_read,
     tool_workspace_replace_lines,
     tool_workspace_search,
@@ -626,3 +631,71 @@ def test_file_share_not_found(ctx):
     result = tool_file_share(ctx, "nonexistent.txt")
     assert "not found" in _text(result).lower()
     assert result.media == []
+
+
+# ---------------------------------------------------------------------------
+# workspace_preview_markdown tests
+# ---------------------------------------------------------------------------
+
+def _make_preview_ctx(config):
+    ctx = MagicMock()
+    ctx.config = config
+    return ctx
+
+
+@pytest.fixture
+def workspace_with_md(config):
+    """Create a workspace dir with a sample markdown file."""
+    workspace = config.workspace_path
+    workspace.mkdir(parents=True, exist_ok=True)
+    md_file = workspace / "sample.md"
+    md_file.write_text("# Hello\n\nThis is a test.\n")
+    nonmd_file = workspace / "data.txt"
+    nonmd_file.write_text("plain text\n")
+    return workspace
+
+
+def test_workspace_preview_markdown_happy_path(config, workspace_with_md):
+    ctx = _make_preview_ctx(config)
+    result = tool_workspace_preview_markdown(ctx, "sample.md")
+    assert isinstance(result, ToolResult)
+    assert "# Hello" in result.text
+    assert isinstance(result.widget, WidgetRequest)
+    assert result.widget.widget_type == "markdown_document"
+    assert result.widget.target == "inline"
+    assert result.widget.data == {"content": "# Hello\n\nThis is a test.\n"}
+
+
+def test_workspace_preview_markdown_rejects_non_markdown(config, workspace_with_md):
+    ctx = _make_preview_ctx(config)
+    result = tool_workspace_preview_markdown(ctx, "data.txt")
+    assert isinstance(result, ToolResult)
+    assert result.text.startswith("[error: ")
+    assert "markdown" in result.text.lower()
+    assert result.widget is None
+
+
+def test_workspace_preview_markdown_missing_file(config, workspace_with_md):
+    ctx = _make_preview_ctx(config)
+    result = tool_workspace_preview_markdown(ctx, "nope.md")
+    assert isinstance(result, ToolResult)
+    assert result.text.startswith("[error: ")
+    assert result.widget is None
+
+
+def test_workspace_preview_markdown_path_traversal(config, workspace_with_md):
+    ctx = _make_preview_ctx(config)
+    result = tool_workspace_preview_markdown(ctx, "../etc/passwd.md")
+    assert isinstance(result, ToolResult)
+    assert result.text.startswith("[error: ")
+    assert result.widget is None
+
+
+def test_workspace_preview_markdown_accepts_markdown_extension(config, workspace_with_md):
+    """Both .md and .markdown should work."""
+    workspace = config.workspace_path
+    (workspace / "longext.markdown").write_text("# Long ext\n")
+    ctx = _make_preview_ctx(config)
+    result = tool_workspace_preview_markdown(ctx, "longext.markdown")
+    assert result.widget is not None
+    assert result.widget.widget_type == "markdown_document"
