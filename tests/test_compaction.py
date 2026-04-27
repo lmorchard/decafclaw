@@ -483,3 +483,197 @@ class TestMemorySweep:
                     side_effect=Exception("LLM exploded")):
             # Should not raise
             await _run_memory_sweep(ctx, messages)
+
+
+# -- Decision-slice integration (#302) ----------------------------------------
+
+
+class TestDecisionSliceIntegration:
+    """End-to-end exercise of the structured slice through compact_history."""
+
+    @pytest.fixture
+    def populated_archive(self, config):
+        # Use the same conv_id the ctx fixture exposes so compact_history
+        # finds this archive when called with the standard ctx.
+        conv_id = "test-conv"
+        for i in range(8):
+            append_message(config, conv_id, {"role": "user", "content": f"u{i}"})
+            append_message(config, conv_id, {"role": "assistant", "content": f"a{i}"})
+        return conv_id
+
+    @pytest.mark.asyncio
+    async def test_first_compaction_persists_slice_and_renders_prefix(
+        self, ctx, populated_archive,
+    ):
+        """A successful parse persists the slice to the sidecar and
+        prepends the rendered slice to the prose summary."""
+        from decafclaw.compaction_decisions import load_slice
+
+        ctx.config.compaction.preserve_turns = 5
+        ctx.config.compaction.decisions_enabled = True
+        history = [{"role": "user", "content": "u0"}]
+
+        prose = "Earlier turns covered some setup work."
+        json_block = (
+            "```json\n"
+            "{\n"
+            '  "decisions": ["use vertex by default"],\n'
+            '  "open_questions": ["when to add openai?"],\n'
+            '  "artifacts": ["vault://decisions/llm"]\n'
+            "}\n"
+            "```"
+        )
+        mock_response = {
+            "content": f"{prose}\n\n{json_block}",
+            "tool_calls": None,
+            "role": "assistant",
+            "usage": None,
+        }
+
+        with patch("decafclaw.compaction.call_llm", new_callable=AsyncMock,
+                   return_value=mock_response):
+            result = await compact_history(ctx, history)
+
+        assert result is True
+        # Slice persisted to sidecar — verify via load_slice (the
+        # _slice_path helper is internal; load_slice is the public API).
+        loaded = load_slice(ctx.config, ctx.conv_id or "test-conv")
+        assert [e.text for e in loaded.decisions] == ["use vertex by default"]
+        assert [e.text for e in loaded.open_questions] == ["when to add openai?"]
+        assert [e.text for e in loaded.artifacts] == ["vault://decisions/llm"]
+        # Summary message has the slice prefix above the prose.
+        summary = history[0]["content"]
+        assert "<decision_slice>" in summary
+        assert "</decision_slice>" in summary
+        assert "### Decisions" in summary
+        assert "use vertex by default" in summary
+        assert prose in summary
+        # JSON block stripped from prose half (we still see the slice
+        # heading, but no fenced ```json).
+        assert "```json" not in summary
+
+    @pytest.mark.asyncio
+    async def test_second_compaction_carries_existing_entries_verbatim(
+        self, ctx, populated_archive,
+    ):
+        """If the LLM emits a partially-overlapping slice, the merge
+        keeps existing entries' created_at and adds new ones with the
+        current time."""
+        from decafclaw.compaction_decisions import (
+            DecisionEntry,
+            DecisionSlice,
+            load_slice,
+            save_slice,
+        )
+
+        ctx.config.compaction.preserve_turns = 5
+        ctx.config.compaction.decisions_enabled = True
+
+        # Seed an existing slice on disk first.
+        existing = DecisionSlice(
+            decisions=[DecisionEntry(text="use vertex", created_at="2026-01-01T00:00:00Z")],
+            open_questions=[DecisionEntry(text="prune skills?", created_at="2026-01-02T00:00:00Z")],
+        )
+        save_slice(ctx.config, ctx.conv_id or "test-conv", existing)
+
+        history = [{"role": "user", "content": "u0"}]
+
+        # LLM emits the existing decision verbatim + a new artifact;
+        # drops the open_question (signaling it's resolved).
+        mock_response = {
+            "content": (
+                "More work happened.\n\n"
+                "```json\n"
+                "{\n"
+                '  "decisions": ["use vertex"],\n'
+                '  "open_questions": [],\n'
+                '  "artifacts": ["docs/llm.md"]\n'
+                "}\n"
+                "```"
+            ),
+            "tool_calls": None,
+            "role": "assistant",
+            "usage": None,
+        }
+
+        with patch("decafclaw.compaction.call_llm", new_callable=AsyncMock,
+                   return_value=mock_response):
+            await compact_history(ctx, history)
+
+        merged = load_slice(ctx.config, ctx.conv_id or "test-conv")
+        # Existing entry kept verbatim with its original timestamp.
+        assert len(merged.decisions) == 1
+        assert merged.decisions[0].text == "use vertex"
+        assert merged.decisions[0].created_at == "2026-01-01T00:00:00Z"
+        # Open question dropped.
+        assert merged.open_questions == []
+        # New artifact added.
+        assert [e.text for e in merged.artifacts] == ["docs/llm.md"]
+
+    @pytest.mark.asyncio
+    async def test_missing_json_block_falls_through(
+        self, ctx, populated_archive,
+    ):
+        """When the LLM forgets the JSON block, prose-only fallback
+        still works — slice file is not touched."""
+        from decafclaw.compaction_decisions import _slice_path
+
+        ctx.config.compaction.preserve_turns = 5
+        ctx.config.compaction.decisions_enabled = True
+        history = [{"role": "user", "content": "u0"}]
+
+        mock_response = {
+            "content": "Just a prose summary, no json.",
+            "tool_calls": None,
+            "role": "assistant",
+            "usage": None,
+        }
+
+        with patch("decafclaw.compaction.call_llm", new_callable=AsyncMock,
+                   return_value=mock_response):
+            result = await compact_history(ctx, history)
+
+        assert result is True
+        # No sidecar created (would have been empty anyway).
+        path = _slice_path(ctx.config, ctx.conv_id or "test-conv")
+        assert not path.exists()
+        # Summary message is just the prose, no slice block.
+        summary = history[0]["content"]
+        assert "Just a prose summary" in summary
+        assert "<decision_slice>" not in summary
+
+    @pytest.mark.asyncio
+    async def test_disabled_skips_feature_entirely(
+        self, ctx, populated_archive,
+    ):
+        """With decisions_enabled=False, no slice operations even if
+        the LLM happens to emit a JSON block."""
+        from decafclaw.compaction_decisions import _slice_path
+
+        ctx.config.compaction.preserve_turns = 5
+        ctx.config.compaction.decisions_enabled = False
+        history = [{"role": "user", "content": "u0"}]
+
+        mock_response = {
+            "content": (
+                "Prose.\n\n```json\n"
+                '{"decisions": ["x"], "open_questions": [], "artifacts": []}\n'
+                "```"
+            ),
+            "tool_calls": None,
+            "role": "assistant",
+            "usage": None,
+        }
+
+        with patch("decafclaw.compaction.call_llm", new_callable=AsyncMock,
+                   return_value=mock_response):
+            await compact_history(ctx, history)
+
+        # Sidecar untouched.
+        path = _slice_path(ctx.config, ctx.conv_id or "test-conv")
+        assert not path.exists()
+        # Summary message keeps the JSON block (no stripping when
+        # feature is off — we don't post-process the response at all).
+        summary = history[0]["content"]
+        assert "```json" in summary
+        assert "<decision_slice>" not in summary
