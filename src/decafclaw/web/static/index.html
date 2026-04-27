@@ -36,15 +36,21 @@
       </div>
       <div id="wiki-resize-handle" class="hidden"></div>
       <div id="chat-main">
+        <div id="chat-main-header"></div>
         <div id="mobile-header">
           <div id="connection-banner" class="hidden">Reconnecting...</div>
         </div>
         <chat-view></chat-view>
         <chat-input></chat-input>
       </div>
+      <div id="canvas-resize-handle" class="hidden"></div>
+      <div id="canvas-main" class="hidden">
+        <canvas-panel></canvas-panel>
+      </div>
     </div>
   </div>
   <div id="toast-container"></div>
+  <script type="module" src="/static/components/canvas-panel.js"></script>
   <script type="module" src="/static/app.js"></script>
 </body>
 </html>

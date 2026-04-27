@@ -8,6 +8,7 @@ import { AuthClient } from './lib/auth-client.js';
 import { WebSocketClient } from './lib/websocket-client.js';
 import { ConversationStore } from './lib/conversation-store.js';
 import { setupResizeHandle } from './lib/utils.js';
+import { setActiveConv, applyEvent } from './lib/canvas-state.js';
 
 // Import components (registers custom elements)
 import './components/login-view.js';
@@ -51,6 +52,7 @@ if (chatView) chatView.store = store;
 
 // Update chat-input disabled/busy state from store, auto-focus when ready
 let wasBusy = false;
+let lastConvId = null;
 store.addEventListener('change', () => {
   if (chatInput) {
     chatInput.busy = store.isBusy;
@@ -62,6 +64,11 @@ store.addEventListener('change', () => {
       requestAnimationFrame(() => chatInput.focus());
     }
     wasBusy = store.isBusy;
+  }
+  const cur = store.currentConvId || null;
+  if (cur !== lastConvId) {
+    lastConvId = cur;
+    setActiveConv(cur);
   }
 });
 
@@ -409,6 +416,9 @@ ws.addEventListener('message', (e) => {
   if (msg?.type === 'notification_read') {
     window.dispatchEvent(new CustomEvent('notification-read', { detail: msg }));
   }
+  if (msg?.type === 'canvas_update') {
+    applyEvent(msg);
+  }
 });
 
 // -- Connection status --------------------------------------------------------
@@ -605,5 +615,43 @@ if (sidebarResizeHandle) {
     maxWidth: 480,
     storageKey: 'sidebar-width',
     cssVar: '--sidebar-width',
+  });
+}
+
+// Canvas drag resize (right-side panel: handle is to the left of the panel,
+// so dragging left grows the canvas — compute from right edge of layout).
+const canvasResizeHandle = document.getElementById('canvas-resize-handle');
+const canvasMainEl = document.getElementById('canvas-main');
+
+const savedCanvasWidth = localStorage.getItem('canvas-width');
+if (savedCanvasWidth) document.documentElement.style.setProperty('--canvas-width', savedCanvasWidth + 'px');
+
+if (canvasResizeHandle && canvasMainEl) {
+  const CANVAS_MIN_WIDTH = 280;
+  const CANVAS_MAX_WIDTH_PCT = 0.7;
+  let canvasDragging = false;
+  canvasResizeHandle.addEventListener('mousedown', (e) => {
+    canvasDragging = true;
+    canvasResizeHandle.classList.add('dragging');
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    e.preventDefault();
+  });
+  document.addEventListener('mousemove', (e) => {
+    if (!canvasDragging) return;
+    if (!chatLayout) return;
+    const layoutRect = chatLayout.getBoundingClientRect();
+    const maxWidth = layoutRect.width * CANVAS_MAX_WIDTH_PCT;
+    const newWidth = Math.min(maxWidth, Math.max(CANVAS_MIN_WIDTH, layoutRect.right - e.clientX));
+    document.documentElement.style.setProperty('--canvas-width', newWidth + 'px');
+  });
+  document.addEventListener('mouseup', () => {
+    if (!canvasDragging) return;
+    canvasDragging = false;
+    canvasResizeHandle.classList.remove('dragging');
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+    const w = getComputedStyle(document.documentElement).getPropertyValue('--canvas-width').trim();
+    localStorage.setItem('canvas-width', String(parseInt(w)));
   });
 }
