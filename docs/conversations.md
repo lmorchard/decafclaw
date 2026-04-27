@@ -82,7 +82,11 @@ The web UI provides conversation management with folders, archiving, and a REST 
 data/{agent_id}/workspace/
   conversations/
     {conv_id}.jsonl          # Append-only archive per conversation
+    {conv_id}.context.json   # Context diagnostics sidecar (written each turn)
+    {conv_id}.canvas.json    # Canvas widget state sidecar (written on canvas ops)
   embeddings.db              # Semantic search index (includes conversation messages)
 ```
+
+**Canvas sidecar shape:** `{schema_version: 1, active_tab: "canvas_1" | null, tabs: [{id, label, widget_type, data}]}`. Phase 3 only ever has a single tab; the tab-aware shape is preserved for Phase 4 multi-tab support.
 
 All files are human-readable (JSON/JSONL) and crash-recoverable (append-only writes, atomic folder index updates).

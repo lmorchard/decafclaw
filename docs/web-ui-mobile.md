@@ -96,6 +96,20 @@ Then layout CSS uses `var(--vh, 100vh)` instead of raw `100vh` for any full-heig
 
 If you add a new full-height surface, use `var(--vh, 100vh)` not `100vh`.
 
+## Canvas panel
+
+On mobile (≤639px) the canvas panel renders as a full-screen overlay
+(`position: fixed; inset: 0; z-index: 100`). It is mutually exclusive with
+the vault wiki overlay — opening one closes the other (most-recent-open
+wins). The resize handle on the panel's left edge is hidden on mobile (no
+drag-to-resize). The close button meets the 44×44px tap-target floor. When
+the user opens the vault editor or the files tab via the sidebar, the canvas
+panel auto-closes.
+
+The resummon pill in `#mobile-header` mirrors the pill in
+`#chat-main-header` so it remains reachable even when the sidebar is
+collapsed.
+
 ## Quick checklist before merging a UI change
 
 - Does every new interactive element have a 44×44 tap area on mobile? If smaller, is there a comment explaining why?

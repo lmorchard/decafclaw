@@ -6,6 +6,7 @@ import logging
 
 from ..media import ToolResult
 from .attachment_tools import ATTACHMENT_TOOL_DEFINITIONS, ATTACHMENT_TOOLS
+from .canvas_tools import CANVAS_TOOL_DEFINITIONS, CANVAS_TOOLS
 from .checklist_tools import CHECKLIST_TOOL_DEFINITIONS, CHECKLIST_TOOLS
 from .conversation_tools import CONVERSATION_TOOL_DEFINITIONS, CONVERSATION_TOOLS
 from .core import CORE_TOOL_DEFINITIONS, CORE_TOOLS
@@ -33,7 +34,7 @@ TOOLS = {**CORE_TOOLS, **CHECKLIST_TOOLS,
          **SKILL_TOOLS,
          **HEARTBEAT_TOOLS, **HEALTH_TOOLS,
          **DELEGATE_TOOLS, **ATTACHMENT_TOOLS, **EMAIL_TOOLS,
-         **NOTIFICATION_TOOLS}
+         **NOTIFICATION_TOOLS, **CANVAS_TOOLS}
 TOOL_DEFINITIONS = (CORE_TOOL_DEFINITIONS
                     + CHECKLIST_TOOL_DEFINITIONS
                     + CONVERSATION_TOOL_DEFINITIONS + WORKSPACE_TOOL_DEFINITIONS
@@ -43,7 +44,8 @@ TOOL_DEFINITIONS = (CORE_TOOL_DEFINITIONS
                     + HEALTH_TOOL_DEFINITIONS
                     + DELEGATE_TOOL_DEFINITIONS + ATTACHMENT_TOOL_DEFINITIONS
                     + EMAIL_TOOL_DEFINITIONS
-                    + NOTIFICATION_TOOL_DEFINITIONS)
+                    + NOTIFICATION_TOOL_DEFINITIONS
+                    + CANVAS_TOOL_DEFINITIONS)
 
 
 async def _run_with_cancel(coro, cancel_event, timeout_sec=None, tool_name=""):

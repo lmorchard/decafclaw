@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+  <title>Canvas</title>
+  <link rel="stylesheet" href="/static/vendor/bundle/pico.min.css">
+  <link rel="stylesheet" href="/static/style.css">
+  <script type="importmap">
+  {
+    "imports": {
+      "lit": "/static/vendor/bundle/lit.js",
+      "lit/directives/unsafe-html.js": "/static/vendor/bundle/lit-unsafe-html.js",
+      "marked": "/static/vendor/bundle/marked.js",
+      "dompurify": "/static/vendor/bundle/dompurify.js",
+      "@milkdown/kit": "/static/vendor/bundle/milkdown.js",
+      "codemirror": "/static/vendor/bundle/codemirror.js"
+    }
+  }
+  </script>
+  <script type="module" src="/static/components/widgets/widget-host.js"></script>
+  <script type="module" src="/static/canvas-page.js"></script>
+</head>
+<body class="canvas-standalone">
+  <header id="canvas-standalone-header">
+    <h1 id="canvas-label">Canvas</h1>
+    <span class="canvas-spacer"></span>
+    <a id="canvas-back-link" class="back-link" href="/">← Back to chat</a>
+  </header>
+  <main id="canvas-standalone-body">
+    <div id="canvas-empty-state" class="canvas-empty">No canvas content yet.</div>
+    <dc-widget-host id="canvas-standalone-host" hidden></dc-widget-host>
+  </main>
+</body>
+</html>

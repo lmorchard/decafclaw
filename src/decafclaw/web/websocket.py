@@ -50,6 +50,30 @@ def _project_tool_end(event: dict, conv_id: str) -> dict:
     return payload
 
 
+def _make_canvas_update_forwarder(state, conv_id):
+    """Build a coroutine that forwards canvas_update events to ws_send.
+
+    Used in unit tests; production code uses the inline branch in
+    on_conv_event for performance.
+    """
+    ws_send = state["ws_send"]
+
+    async def _forward(event):
+        if event.get("type") != "canvas_update":
+            return
+        if event.get("conv_id") != conv_id:
+            return
+        await ws_send({
+            "type": "canvas_update",
+            "conv_id": conv_id,
+            "kind": event.get("kind", "set"),
+            "active_tab": event.get("active_tab"),
+            "tab": event.get("tab"),
+        })
+
+    return _forward
+
+
 def _confirmation_to_dict(req) -> dict:
     """Convert a ConfirmationRequest to the dict shape the client expects."""
     action_data = req.action_data or {}
@@ -87,6 +111,7 @@ async def _handle_select_conv(ws_send, index, username, msg, state):
                 response["pending_confirmation"] = _confirmation_to_dict(
                     conv_state.pending_confirmation)
         await ws_send(response)
+        _subscribe_to_conv(state, conv_id)
     else:
         # Check if it's a system conversation (archive exists on disk)
         # Reject other users' web conversations
@@ -98,6 +123,7 @@ async def _handle_select_conv(ws_send, index, username, msg, state):
         if archive_path(state["config"], conv_id).exists():
             await ws_send({"type": "conv_selected", "conv_id": conv_id,
                            "read_only": True})
+            _subscribe_to_conv(state, conv_id)
         else:
             await ws_send({"type": "error",
                            "message": f"Conversation not found: {conv_id}"})
@@ -519,6 +545,16 @@ def _subscribe_to_conv(state, conv_id):
 
         elif event_type == "tool_end":
             await ws_send(_project_tool_end(event, event_conv_id))
+
+        elif event_type == "canvas_update":
+            if event_conv_id == conv_id:
+                await ws_send({
+                    "type": "canvas_update",
+                    "conv_id": event_conv_id,
+                    "kind": event.get("kind", "set"),
+                    "active_tab": event.get("active_tab"),
+                    "tab": event.get("tab"),
+                })
 
         elif event_type == "vault_retrieval":
             text = event.get("text", "")

@@ -16,7 +16,8 @@
       "marked": ["./node_modules/marked"],
       "dompurify": ["./node_modules/dompurify"],
       "@milkdown/kit": ["./milkdown-entry.js"],
-      "codemirror": ["./codemirror-entry.js"]
+      "codemirror": ["./codemirror-entry.js"],
+      "/static/*": ["./*"]
     }
   },
   "include": ["app.js", "lib/**/*.js", "components/**/*.js", "widgets/**/*.js"]

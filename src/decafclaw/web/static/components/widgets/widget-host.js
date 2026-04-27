@@ -36,6 +36,7 @@ export class WidgetHost extends LitElement {
     fallbackText: { type: String },
     submitted: { type: Boolean },
     response: { type: Object, attribute: false },
+    mode: { type: String },
     _state: { type: String, state: true },  // 'loading' | 'ready' | 'error'
   };
 
@@ -49,6 +50,8 @@ export class WidgetHost extends LitElement {
     this.submitted = false;
     /** @type {object|null} */
     this.response = null;
+    this.mode = 'inline';
+    this._lastMode = 'inline';
     this._state = 'loading';
     /** @type {Element|null} */
     this._child = null;
@@ -75,6 +78,10 @@ export class WidgetHost extends LitElement {
       if (changed.has('response') && this.response !== this._lastResponse) {
         this._lastResponse = this.response;
         child.response = this.response;
+      }
+      if (changed.has('mode') && this.mode !== this._lastMode) {
+        this._lastMode = this.mode;
+        child.mode = this.mode;
       }
     }
   }
@@ -111,6 +118,8 @@ export class WidgetHost extends LitElement {
     this._lastData = this.data;
     this._lastSubmitted = this.submitted;
     this._lastResponse = this.response;
+    /** @type {any} */ (el).mode = this.mode;
+    this._lastMode = this.mode;
     this._child = el;
     // Render() will append it below.
     this._state = 'ready';
