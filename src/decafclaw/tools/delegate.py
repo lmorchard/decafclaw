@@ -17,15 +17,50 @@ DEFAULT_CHILD_SYSTEM_PROMPT = (
     "When a skill below shows bash/curl commands, run them with the shell tool."
 )
 
+# Vault-access policy for child agents (#396). Default is no-access;
+# the parent opts the child in via flags on ``delegate_task``. Vault
+# WRITE tools are categorically blocked — if a child's work should
+# land in the vault, the parent does the write itself after the child
+# returns. New vault tools should update these sets when added.
+_VAULT_READ_TOOLS = frozenset({
+    "vault_read",
+    "vault_search",
+    "vault_list",
+    "vault_backlinks",
+    "vault_show_sections",
+})
+
+_VAULT_WRITE_TOOLS = frozenset({
+    "vault_write",
+    "vault_delete",
+    "vault_rename",
+    "vault_journal_append",
+    "vault_move_lines",
+    "vault_section",
+})
+
 
 async def _run_child_turn(parent_ctx, task, model: str = "",
-                          max_iterations: int = 0):
+                          max_iterations: int = 0,
+                          *,
+                          allow_vault_retrieval: bool = False,
+                          allow_vault_read: bool = False):
     """Run a child agent turn via ConversationManager, preserving the
     parent's tools, skills, and event routing.
 
     Args:
         model: Override model for the child. Empty = inherit parent's.
         max_iterations: Override max tool iterations. 0 = use child_max_tool_iterations.
+        allow_vault_retrieval: When False (default), the child runs
+            with ``skip_vault_retrieval=True`` — no proactive memory
+            injection. Set True to opt the child INTO the parent's
+            retrieval pipeline. See #396.
+        allow_vault_read: When False (default), the child has no
+            access to vault read tools. Set True to opt INTO the
+            read set (``vault_read``, ``vault_search``,
+            ``vault_list``, ``vault_backlinks``,
+            ``vault_show_sections``). Vault WRITE tools are
+            categorically blocked regardless.
 
     Returns the child's text response, or an error string on failure.
     """
@@ -72,6 +107,11 @@ async def _run_child_turn(parent_ctx, task, model: str = "",
         # Child inherits parent's tools minus delegation/activation.
         # If parent has restricted allowed_tools, respect that restriction.
         excluded = {"delegate_task", "activate_skill", "refresh_skills", "tool_search"}
+        # Vault policy (#396): writes are categorically blocked for
+        # children regardless of flags; reads require explicit opt-in.
+        excluded |= _VAULT_WRITE_TOOLS
+        if not allow_vault_read:
+            excluded |= _VAULT_READ_TOOLS
         all_tools = set(TOOLS) | set(parent_ctx.tools.extra)
         parent_allowed = parent_ctx.tools.allowed
         if parent_allowed is not None:
@@ -93,7 +133,9 @@ async def _run_child_turn(parent_ctx, task, model: str = "",
         child_ctx.on_stream_chunk = None
         child_ctx.is_child = True
         child_ctx.skip_reflection = True
-        child_ctx.skip_vault_retrieval = True
+        # Default-deny vault retrieval (#396); the parent opts in via
+        # `allow_vault_retrieval=True` on `delegate_task`.
+        child_ctx.skip_vault_retrieval = not allow_vault_retrieval
 
         # Set active model: explicit override > parent's model
         child_ctx.active_model = model if model else parent_ctx.active_model
@@ -124,14 +166,38 @@ async def _run_child_turn(parent_ctx, task, model: str = "",
         return ToolResult(text=f"[error: subtask failed: {e}]")
 
 
-async def tool_delegate_task(ctx, task: str, model: str = "") -> str | ToolResult:
-    """Delegate a subtask to a child agent."""
-    log.info("[tool:delegate_task] model=%s %s...", model or "inherit", task[:80])
+async def tool_delegate_task(
+    ctx,
+    task: str,
+    model: str = "",
+    allow_vault_retrieval: bool = False,
+    allow_vault_read: bool = False,
+) -> str | ToolResult:
+    """Delegate a subtask to a child agent.
+
+    By default the child has NO vault access — no proactive
+    retrieval, no read tools, no write tools. Opt the child into
+    retrieval via ``allow_vault_retrieval=True`` and into the
+    read-side vault tools via ``allow_vault_read=True``. Write
+    tools are categorically blocked for children regardless. See
+    #396.
+    """
+    log.info(
+        "[tool:delegate_task] model=%s vault_retrieval=%s vault_read=%s %s...",
+        model or "inherit",
+        allow_vault_retrieval,
+        allow_vault_read,
+        task[:80],
+    )
 
     if not task or not task.strip():
         return ToolResult(text="[error: task description is required]")
 
-    return await _run_child_turn(ctx, task, model=model)
+    return await _run_child_turn(
+        ctx, task, model=model,
+        allow_vault_retrieval=allow_vault_retrieval,
+        allow_vault_read=allow_vault_read,
+    )
 
 
 DELEGATE_TOOLS = {
@@ -174,6 +240,32 @@ DELEGATE_TOOL_DEFINITIONS = [
                         "description": (
                             "Named model config for the subtask. "
                             "Omit to inherit parent's model."
+                        ),
+                    },
+                    "allow_vault_retrieval": {
+                        "type": "boolean",
+                        "description": (
+                            "When true, the child runs the proactive memory "
+                            "retrieval at turn start. Default false — the "
+                            "child has no auto-injected memory context "
+                            "unless you opt in. Use when the child needs "
+                            "to draw on past conversations or vault "
+                            "knowledge to do its task."
+                        ),
+                    },
+                    "allow_vault_read": {
+                        "type": "boolean",
+                        "description": (
+                            "When true, the child can call read-side vault "
+                            "tools (vault_read, vault_search, vault_list, "
+                            "vault_backlinks, vault_show_sections). Default "
+                            "false — the child can't read the vault unless "
+                            "you opt in. Vault WRITE tools (vault_write, "
+                            "vault_journal_append, vault_delete, etc.) are "
+                            "NEVER available to children regardless of this "
+                            "flag; if the child's work should land in the "
+                            "vault, do the write yourself after the child "
+                            "returns."
                         ),
                     },
                 },

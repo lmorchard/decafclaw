@@ -90,8 +90,10 @@ class TestRunChildTurn:
 
     @pytest.mark.asyncio
     async def test_inherits_parent_extra_tools(self, ctx):
-        """Child inherits parent's extra_tools from activated skills."""
-        ctx.tools.extra = {"vault_read": lambda ctx, **kw: "data"}
+        """Child inherits parent's extra_tools from activated skills.
+        Uses a non-vault example since vault tools have their own
+        allowlist policy (see TestVaultAccessPolicy)."""
+        ctx.tools.extra = {"some_skill_tool": lambda ctx, **kw: "data"}
 
         with patch("decafclaw.agent.run_agent_turn", new_callable=AsyncMock) as mock_run:
             mock_run.return_value = ToolResult(text="ok")
@@ -99,8 +101,8 @@ class TestRunChildTurn:
             await _run_child_turn(ctx, "task")
 
         child_ctx = mock_run.call_args[0][0]
-        assert "vault_read" in child_ctx.tools.extra
-        assert "vault_read" in child_ctx.tools.allowed
+        assert "some_skill_tool" in child_ctx.tools.extra
+        assert "some_skill_tool" in child_ctx.tools.allowed
 
     @pytest.mark.asyncio
     async def test_timeout(self, ctx):
@@ -241,3 +243,119 @@ class TestDelegateRoutingThroughManager:
         assert seen_conv_ids[1].startswith("test-conv--child-")
         # They should be different (random suffix)
         assert seen_conv_ids[0] != seen_conv_ids[1]
+
+
+# -- Vault access policy (#396) -----------------------------------------------
+
+
+class TestVaultAccessPolicy:
+    """Children get NO vault access by default; parent opts in via flags."""
+
+    @pytest.mark.asyncio
+    async def test_default_blocks_all_vault_tools(self, ctx):
+        """No flags → child can't call any vault tool, read or write."""
+        from decafclaw.tools.delegate import (
+            _VAULT_READ_TOOLS,
+            _VAULT_WRITE_TOOLS,
+        )
+
+        with patch("decafclaw.agent.run_agent_turn", new_callable=AsyncMock) as mock_run:
+            mock_run.return_value = ToolResult(text="ok")
+            await _run_child_turn(ctx, "task")
+
+        child_ctx = mock_run.call_args[0][0]
+        for tool in _VAULT_READ_TOOLS:
+            assert tool not in child_ctx.tools.allowed, (
+                f"{tool} should be excluded by default"
+            )
+        for tool in _VAULT_WRITE_TOOLS:
+            assert tool not in child_ctx.tools.allowed, (
+                f"{tool} should always be excluded for children"
+            )
+        # Default also disables proactive retrieval.
+        assert child_ctx.skip_vault_retrieval is True
+
+    @pytest.mark.asyncio
+    async def test_allow_vault_read_lets_in_read_set_only(self, ctx):
+        """Opt-in for read tools; writes still excluded."""
+        from decafclaw.tools.delegate import (
+            _VAULT_READ_TOOLS,
+            _VAULT_WRITE_TOOLS,
+        )
+        # Seed parent with the vault tools as activated-skill tools so
+        # the inheritance path actually has something to keep/exclude.
+        ctx.tools.extra = {
+            tool: (lambda ctx, **kw: "x") for tool in _VAULT_READ_TOOLS | _VAULT_WRITE_TOOLS
+        }
+
+        with patch("decafclaw.agent.run_agent_turn", new_callable=AsyncMock) as mock_run:
+            mock_run.return_value = ToolResult(text="ok")
+            await _run_child_turn(ctx, "task", allow_vault_read=True)
+
+        child_ctx = mock_run.call_args[0][0]
+        for tool in _VAULT_READ_TOOLS:
+            assert tool in child_ctx.tools.allowed, (
+                f"{tool} should be allowed when allow_vault_read=True"
+            )
+        for tool in _VAULT_WRITE_TOOLS:
+            assert tool not in child_ctx.tools.allowed, (
+                f"{tool} should never be allowed for children"
+            )
+
+    @pytest.mark.asyncio
+    async def test_allow_vault_retrieval_enables_proactive_retrieval(self, ctx):
+        """Opt-in for proactive retrieval flips skip_vault_retrieval off."""
+        with patch("decafclaw.agent.run_agent_turn", new_callable=AsyncMock) as mock_run:
+            mock_run.return_value = ToolResult(text="ok")
+            await _run_child_turn(ctx, "task", allow_vault_retrieval=True)
+
+        child_ctx = mock_run.call_args[0][0]
+        assert child_ctx.skip_vault_retrieval is False
+
+    @pytest.mark.asyncio
+    async def test_flags_combine(self, ctx):
+        """Both flags can be set together."""
+        from decafclaw.tools.delegate import (
+            _VAULT_READ_TOOLS,
+            _VAULT_WRITE_TOOLS,
+        )
+        ctx.tools.extra = {
+            tool: (lambda ctx, **kw: "x") for tool in _VAULT_READ_TOOLS | _VAULT_WRITE_TOOLS
+        }
+
+        with patch("decafclaw.agent.run_agent_turn", new_callable=AsyncMock) as mock_run:
+            mock_run.return_value = ToolResult(text="ok")
+            await _run_child_turn(
+                ctx, "task",
+                allow_vault_retrieval=True, allow_vault_read=True,
+            )
+
+        child_ctx = mock_run.call_args[0][0]
+        assert child_ctx.skip_vault_retrieval is False
+        for tool in _VAULT_READ_TOOLS:
+            assert tool in child_ctx.tools.allowed
+        for tool in _VAULT_WRITE_TOOLS:
+            assert tool not in child_ctx.tools.allowed
+
+    @pytest.mark.asyncio
+    async def test_tool_wrapper_threads_flags_through(self, ctx):
+        """`tool_delegate_task` parameters reach `_run_child_turn`."""
+        seen = {}
+
+        async def fake_run(parent_ctx, task, model="", max_iterations=0,
+                           allow_vault_retrieval=False, allow_vault_read=False):
+            seen["allow_vault_retrieval"] = allow_vault_retrieval
+            seen["allow_vault_read"] = allow_vault_read
+            return ToolResult(text="ok")
+
+        with patch("decafclaw.tools.delegate._run_child_turn", side_effect=fake_run):
+            await tool_delegate_task(
+                ctx, "task",
+                allow_vault_retrieval=True,
+                allow_vault_read=True,
+            )
+
+        assert seen == {
+            "allow_vault_retrieval": True,
+            "allow_vault_read": True,
+        }
