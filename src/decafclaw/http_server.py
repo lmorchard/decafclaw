@@ -1385,299 +1385,328 @@ async def serve_vault_page(request: Request):
     return FileResponse(str(vault_html))
 
 
-def create_app(config, event_bus, app_ctx=None, manager=None) -> Starlette:
-    """Create the Starlette ASGI app with routes."""
+# -- Upload route -------------------------------------------------------------
 
-    # -- Upload route -------------------------------------------------------------
 
-    @_authenticated
-    async def handle_upload(request: Request, username: str) -> JSONResponse:
-        """Handle file upload for a conversation."""
-        conv_id = request.path_params["conv_id"]
-        # Verify conversation belongs to user
-        from .web.conversations import ConversationIndex
-        index = ConversationIndex(config)
-        conv = index.get(conv_id)
-        if not conv or conv.user_id != username:
-            return JSONResponse({"error": "not found"}, status_code=404)
-        # Early size check via Content-Length header
-        content_length = request.headers.get("content-length")
-        if content_length:
-            try:
-                if int(content_length) > config.http.max_upload_bytes:
-                    return JSONResponse({"error": "file too large"}, status_code=413)
-            except ValueError:
-                return JSONResponse({"error": "invalid content-length"}, status_code=400)
-        # Parse multipart form
+@_authenticated
+async def handle_upload(request: Request, username: str) -> JSONResponse:
+    """Handle file upload for a conversation."""
+    from .attachments import save_attachment
+    from .web.conversations import ConversationIndex
+    config = request.app.state.config
+    conv_id = request.path_params["conv_id"]
+    index = ConversationIndex(config)
+    conv = index.get(conv_id)
+    if not conv or conv.user_id != username:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    # Early size check via Content-Length header
+    content_length = request.headers.get("content-length")
+    if content_length:
         try:
-            form = await request.form()
-        except RuntimeError:
-            # python-multipart not installed or request is not multipart
-            return JSONResponse({"error": "multipart form parsing unavailable"}, status_code=400)
+            if int(content_length) > config.http.max_upload_bytes:
+                return JSONResponse({"error": "file too large"}, status_code=413)
         except ValueError:
-            return JSONResponse({"error": "invalid form data"}, status_code=400)
-        upload = form.get("file")
-        if upload is None or isinstance(upload, str):
-            return JSONResponse({"error": "no file in request"}, status_code=400)
-        data = await upload.read()
-        if len(data) > config.http.max_upload_bytes:
-            return JSONResponse({"error": "file too large"}, status_code=413)
-        content_type = upload.content_type or "application/octet-stream"
-        filename = upload.filename or "upload"
-        from .attachments import save_attachment
-        result = save_attachment(config, conv_id, filename, data, content_type)
-        return JSONResponse(result, status_code=201)
+            return JSONResponse({"error": "invalid content-length"}, status_code=400)
+    try:
+        form = await request.form()
+    except RuntimeError:
+        return JSONResponse({"error": "multipart form parsing unavailable"},
+                            status_code=400)
+    except ValueError:
+        return JSONResponse({"error": "invalid form data"}, status_code=400)
+    upload = form.get("file")
+    if upload is None or isinstance(upload, str):
+        return JSONResponse({"error": "no file in request"}, status_code=400)
+    data = await upload.read()
+    if len(data) > config.http.max_upload_bytes:
+        return JSONResponse({"error": "file too large"}, status_code=413)
+    content_type = upload.content_type or "application/octet-stream"
+    filename = upload.filename or "upload"
+    result = save_attachment(config, conv_id, filename, data, content_type)
+    return JSONResponse(result, status_code=201)
 
-    # -- Config file routes ----------------------------------------------------
 
-    def _resolve_config_path(path_str: str) -> tuple:
-        """Resolve a config file path to (filesystem_path, scope).
-        Returns (None, None) if invalid."""
-        # Check static config files
-        for f in _CONFIG_FILES:
-            if f["path"] == path_str:
-                if path_str.startswith("workspace/"):
-                    return config.workspace_path / path_str.removeprefix("workspace/"), f["scope"]
-                return config.agent_path / path_str, f["scope"]
-        # Check schedules pattern
-        if re.match(r"^schedules/[^/]+\.md$", path_str):
-            return config.agent_path / path_str, "admin"
-        if re.match(r"^workspace/schedules/[^/]+\.md$", path_str):
-            return config.workspace_path / path_str.removeprefix("workspace/"), "workspace"
-        return None, None
+# -- Config file routes -------------------------------------------------------
 
-    @_authenticated
-    async def config_list_files(request: Request, username: str) -> JSONResponse:
-        """List editable config files."""
-        result = []
-        for f in _CONFIG_FILES:
-            if f["path"].startswith("workspace/"):
-                fpath = config.workspace_path / f["path"].removeprefix("workspace/")
-            else:
-                fpath = config.agent_path / f["path"]
-            exists = fpath.exists()
-            modified = fpath.stat().st_mtime if exists else None
-            result.append({
-                "name": f["name"],
-                "path": f["path"],
-                "description": f["description"],
-                "scope": f["scope"],
-                "modified": modified,
-                "exists": exists,
-            })
-        # Discover schedule files
-        for scope, base, prefix in [
-            ("admin", config.agent_path, "schedules"),
-            ("workspace", config.workspace_path, "workspace/schedules"),
-        ]:
-            sched_dir = base / "schedules"
-            if sched_dir.is_dir():
-                for p in sorted(sched_dir.glob("*.md")):
-                    stat = p.stat()
-                    result.append({
-                        "name": p.name,
-                        "path": f"{prefix}/{p.name}",
-                        "description": "Scheduled task",
-                        "scope": scope,
-                        "modified": stat.st_mtime,
-                        "exists": True,
-                    })
-        return JSONResponse(result)
 
-    @_authenticated
-    async def config_read_file(request: Request, username: str) -> JSONResponse:
-        """Read a config file."""
-        path_str = request.path_params.get("path", "")
-        fpath, scope = _resolve_config_path(path_str)
-        if fpath is None:
-            return JSONResponse({"error": "invalid config path"}, status_code=400)
-        is_default = False
-        if fpath.exists():
-            content = fpath.read_text(encoding="utf-8")
-            modified = fpath.stat().st_mtime
+def _resolve_config_path(config, path_str: str) -> tuple:
+    """Resolve a config-file relative path to (filesystem_path, scope).
+
+    Returns ``(None, None)`` when the path doesn't match a known editable
+    config file or schedules pattern.
+    """
+    for f in _CONFIG_FILES:
+        if f["path"] == path_str:
+            if path_str.startswith("workspace/"):
+                return (config.workspace_path / path_str.removeprefix("workspace/"),
+                        f["scope"])
+            return config.agent_path / path_str, f["scope"]
+    if re.match(r"^schedules/[^/]+\.md$", path_str):
+        return config.agent_path / path_str, "admin"
+    if re.match(r"^workspace/schedules/[^/]+\.md$", path_str):
+        return (config.workspace_path / path_str.removeprefix("workspace/"),
+                "workspace")
+    return None, None
+
+
+@_authenticated
+async def config_list_files(request: Request, username: str) -> JSONResponse:
+    """List editable config files (admin + workspace scopes + schedules)."""
+    config = request.app.state.config
+    result = []
+    for f in _CONFIG_FILES:
+        if f["path"].startswith("workspace/"):
+            fpath = config.workspace_path / f["path"].removeprefix("workspace/")
         else:
-            # Check for bundled default in prompts directory
-            prompts_dir = Path(__file__).parent / "prompts"
-            bundled = prompts_dir / Path(path_str).name
-            if bundled.exists():
-                content = bundled.read_text(encoding="utf-8")
-                modified = None
-                is_default = True
-            else:
-                # File doesn't exist yet — return empty so editor can create it
-                content = ""
-                modified = None
-                is_default = True
-        return JSONResponse({
-            "content": content,
+            fpath = config.agent_path / f["path"]
+        exists = fpath.exists()
+        modified = fpath.stat().st_mtime if exists else None
+        result.append({
+            "name": f["name"],
+            "path": f["path"],
+            "description": f["description"],
+            "scope": f["scope"],
             "modified": modified,
-            "name": Path(path_str).name,
-            "default": is_default,
+            "exists": exists,
         })
+    for scope, base, prefix in [
+        ("admin", config.agent_path, "schedules"),
+        ("workspace", config.workspace_path, "workspace/schedules"),
+    ]:
+        sched_dir = base / "schedules"
+        if sched_dir.is_dir():
+            for p in sorted(sched_dir.glob("*.md")):
+                stat = p.stat()
+                result.append({
+                    "name": p.name,
+                    "path": f"{prefix}/{p.name}",
+                    "description": "Scheduled task",
+                    "scope": scope,
+                    "modified": stat.st_mtime,
+                    "exists": True,
+                })
+    return JSONResponse(result)
 
-    @_authenticated
-    async def config_write_file(request: Request, username: str) -> JSONResponse:
-        """Write a config file."""
-        path_str = request.path_params.get("path", "")
-        fpath, scope = _resolve_config_path(path_str)
-        if fpath is None:
-            return JSONResponse({"error": "invalid config path"}, status_code=400)
+
+@_authenticated
+async def config_read_file(request: Request, username: str) -> JSONResponse:
+    """Read a config file (falls through to bundled default if missing)."""
+    config = request.app.state.config
+    path_str = request.path_params.get("path", "")
+    fpath, _scope = _resolve_config_path(config, path_str)
+    if fpath is None:
+        return JSONResponse({"error": "invalid config path"}, status_code=400)
+    is_default = False
+    if fpath.exists():
+        content = fpath.read_text(encoding="utf-8")
+        modified = fpath.stat().st_mtime
+    else:
+        # Fall through to bundled default in `prompts/` if present.
+        prompts_dir = Path(__file__).parent / "prompts"
+        bundled = prompts_dir / Path(path_str).name
+        if bundled.exists():
+            content = bundled.read_text(encoding="utf-8")
+            modified = None
+            is_default = True
+        else:
+            content = ""
+            modified = None
+            is_default = True
+    return JSONResponse({
+        "content": content,
+        "modified": modified,
+        "name": Path(path_str).name,
+        "default": is_default,
+    })
+
+
+@_authenticated
+async def config_write_file(request: Request, username: str) -> JSONResponse:
+    """Write a config file with optimistic-concurrency mtime check."""
+    config = request.app.state.config
+    path_str = request.path_params.get("path", "")
+    fpath, _scope = _resolve_config_path(config, path_str)
+    if fpath is None:
+        return JSONResponse({"error": "invalid config path"}, status_code=400)
+    body = await request.json()
+    content = body.get("content")
+    if content is None or not isinstance(content, str):
+        return JSONResponse({"error": "content (string) required"}, status_code=400)
+    modified = body.get("modified")
+    if modified is not None:
+        try:
+            modified = float(modified)
+        except (TypeError, ValueError):
+            return JSONResponse({"error": "modified must be a number"}, status_code=400)
+        if fpath.exists():
+            file_mtime = fpath.stat().st_mtime
+            if file_mtime > modified + 1.0:
+                return JSONResponse(
+                    {"error": "conflict", "server_modified": file_mtime},
+                    status_code=409,
+                )
+    fpath.parent.mkdir(parents=True, exist_ok=True)
+    fpath.write_text(content, encoding="utf-8")
+    return JSONResponse({"ok": True, "modified": fpath.stat().st_mtime})
+
+
+# -- WebSocket adapter --------------------------------------------------------
+
+
+async def ws_chat(websocket):
+    """WebSocket entry point — defers to the gateway in `web/websocket.py`."""
+    from .web.websocket import websocket_chat
+    state = websocket.app.state
+    await websocket_chat(
+        websocket, state.config, state.event_bus, state.app_ctx,
+        manager=state.manager,
+    )
+
+
+# -- Widget routes ------------------------------------------------------------
+
+
+@_authenticated
+async def list_widgets(request: Request, username: str) -> JSONResponse:
+    """Return the widget catalog with cache-busted js URLs."""
+    from .widgets import get_widget_registry
+    registry = get_widget_registry()
+    if registry is None:
+        return JSONResponse({"widgets": []})
+    out = []
+    for d in registry.list():
+        out.append({
+            "name": d.name,
+            "tier": d.tier,
+            "description": d.description,
+            "modes": d.modes,
+            "accepts_input": d.accepts_input,
+            "data_schema": d.data_schema,
+            "js_url": (f"/widgets/{d.tier}/{d.name}/widget.js"
+                       f"?v={int(d.mtime * 1000)}"),
+        })
+    return JSONResponse({"widgets": out})
+
+
+@_authenticated
+async def serve_widget_js(request: Request, username: str):
+    """Serve widget.js for a registered widget.
+
+    Tier in the URL must match the widget's actual tier so bundled and
+    admin widgets of the same name don't leak across paths. The resolved
+    js path is also confirmed to live under the expected tier root so a
+    symlinked widget.js can't expose arbitrary files.
+    """
+    from .widgets import get_widget_registry
+    tier = request.path_params.get("tier", "")
+    name = request.path_params.get("name", "")
+    if tier not in ("bundled", "admin"):
+        return JSONResponse({"error": "unknown tier"}, status_code=404)
+    registry = get_widget_registry()
+    if registry is None:
+        return JSONResponse({"error": "registry unavailable"}, status_code=404)
+    desc = registry.get(name)
+    if desc is None or desc.tier != tier:
+        return JSONResponse({"error": "widget not found"}, status_code=404)
+    try:
+        resolved = desc.js_path.resolve(strict=True)
+    except (OSError, RuntimeError):
+        return JSONResponse({"error": "widget not found"}, status_code=404)
+    try:
+        resolved.relative_to(desc.tier_root)
+    except ValueError:
+        log.warning(
+            "widget %r resolves to %s outside tier root %s — refusing",
+            name, resolved, desc.tier_root)
+        return JSONResponse({"error": "widget not found"}, status_code=404)
+    return FileResponse(
+        str(resolved),
+        media_type="application/javascript",
+        headers={"X-Content-Type-Options": "nosniff"})
+
+
+# -- Canvas routes ------------------------------------------------------------
+
+
+def _user_owns_conv(config, conv_id: str, username: str) -> bool:
+    """Authorization gate for canvas routes — caller must own the conv."""
+    from .web.conversations import ConversationIndex
+    index = ConversationIndex(config)
+    conv = index.get(conv_id)
+    return bool(conv and conv.user_id == username)
+
+
+@_authenticated
+async def get_canvas_state(request: Request, username: str) -> JSONResponse:
+    """Load current canvas state for a conversation."""
+    from . import canvas as canvas_mod
+    config = request.app.state.config
+    conv_id = request.path_params.get("conv_id", "")
+    if not _is_safe_conv_id(conv_id):
+        return JSONResponse({"error": "invalid conv_id"}, status_code=400)
+    if not _user_owns_conv(config, conv_id, username):
+        return JSONResponse({"error": "not found"}, status_code=404)
+    state = canvas_mod.read_canvas_state(config, conv_id)
+    return JSONResponse(state)
+
+
+@_authenticated
+async def post_canvas_set(request: Request, username: str) -> JSONResponse:
+    """Push a widget to the canvas (used by 'Open in Canvas' button)."""
+    from . import canvas as canvas_mod
+    config = request.app.state.config
+    manager = request.app.state.manager
+    conv_id = request.path_params.get("conv_id", "")
+    if not _is_safe_conv_id(conv_id):
+        return JSONResponse({"error": "invalid conv_id"}, status_code=400)
+    if not _user_owns_conv(config, conv_id, username):
+        return JSONResponse({"error": "not found"}, status_code=404)
+    try:
         body = await request.json()
-        content = body.get("content")
-        if content is None or not isinstance(content, str):
-            return JSONResponse({"error": "content (string) required"}, status_code=400)
-        # Conflict detection
-        modified = body.get("modified")
-        if modified is not None:
-            try:
-                modified = float(modified)
-            except (TypeError, ValueError):
-                return JSONResponse({"error": "modified must be a number"}, status_code=400)
-            if fpath.exists():
-                file_mtime = fpath.stat().st_mtime
-                if file_mtime > modified + 1.0:
-                    return JSONResponse(
-                        {"error": "conflict", "server_modified": file_mtime},
-                        status_code=409,
-                    )
-        fpath.parent.mkdir(parents=True, exist_ok=True)
-        fpath.write_text(content, encoding="utf-8")
-        new_mtime = fpath.stat().st_mtime
-        return JSONResponse({"ok": True, "modified": new_mtime})
+    except json.JSONDecodeError:
+        return JSONResponse({"error": "invalid JSON body"}, status_code=400)
+    if not isinstance(body, dict):
+        return JSONResponse({"error": "body must be a JSON object"}, status_code=400)
+    widget_type = body.get("widget_type", "")
+    data = body.get("data") or {}
+    label = body.get("label")
+    emit = manager.emit if manager else None
+    result = await canvas_mod.set_canvas(
+        config, conv_id, widget_type, data, label=label, emit=emit,
+    )
+    if not result.ok:
+        return JSONResponse({"error": result.error}, status_code=400)
+    return JSONResponse({"ok": True, "text": result.text})
 
-    # -- WebSocket route -------------------------------------------------------
 
-    async def ws_chat(websocket):
-        from .web.websocket import websocket_chat
-        await websocket_chat(websocket, config, event_bus, app_ctx,
-                             manager=manager)
+@_authenticated
+async def get_canvas_page(request: Request, username: str):
+    """Serve the standalone canvas HTML page."""
+    from starlette.responses import Response
+    config = request.app.state.config
+    conv_id = request.path_params.get("conv_id", "")
+    if not _is_safe_conv_id(conv_id):
+        return Response("Invalid conversation id", status_code=400)
+    if not _user_owns_conv(config, conv_id, username):
+        return Response("Not found", status_code=404)
+    html_path = Path(__file__).parent / "web" / "static" / "canvas-page.html"
+    return Response(html_path.read_text(), media_type="text/html")
 
-    @_authenticated
-    async def list_widgets(request: Request, username: str) -> JSONResponse:
-        """Return the widget catalog for frontend use.
 
-        Entries include a cache-busted js_url the browser can dynamic-import.
-        """
-        from .widgets import get_widget_registry
-        registry = get_widget_registry()
-        if registry is None:
-            return JSONResponse({"widgets": []})
-        out = []
-        for d in registry.list():
-            out.append({
-                "name": d.name,
-                "tier": d.tier,
-                "description": d.description,
-                "modes": d.modes,
-                "accepts_input": d.accepts_input,
-                "data_schema": d.data_schema,
-                "js_url": (f"/widgets/{d.tier}/{d.name}/widget.js"
-                           f"?v={int(d.mtime * 1000)}"),
-            })
-        return JSONResponse({"widgets": out})
+# -- Wiki redirect ------------------------------------------------------------
 
-    @_authenticated
-    async def serve_widget_js(request: Request, username: str):
-        """Serve widget.js for a registered widget.
 
-        Tier in the URL must match the widget's actual tier, so bundled
-        and admin widgets of the same name don't leak across paths. The
-        resolved js path is also confirmed to live under the expected
-        tier root so a symlinked widget.js can't expose arbitrary
-        files.
-        """
-        from .widgets import get_widget_registry
-        tier = request.path_params.get("tier", "")
-        name = request.path_params.get("name", "")
-        if tier not in ("bundled", "admin"):
-            return JSONResponse({"error": "unknown tier"}, status_code=404)
-        registry = get_widget_registry()
-        if registry is None:
-            return JSONResponse({"error": "registry unavailable"},
-                                status_code=404)
-        desc = registry.get(name)
-        if desc is None or desc.tier != tier:
-            return JSONResponse({"error": "widget not found"},
-                                status_code=404)
-        # Defense against symlinks pointing outside the tier root: the
-        # registry stamped the descriptor with its tier_root at scan time;
-        # confirm the fully-resolved js path is still under it.
-        try:
-            resolved = desc.js_path.resolve(strict=True)
-        except (OSError, RuntimeError):
-            return JSONResponse({"error": "widget not found"},
-                                status_code=404)
-        try:
-            resolved.relative_to(desc.tier_root)
-        except ValueError:
-            log.warning(
-                "widget %r resolves to %s outside tier root %s — refusing",
-                name, resolved, desc.tier_root)
-            return JSONResponse({"error": "widget not found"},
-                                status_code=404)
-        return FileResponse(
-            str(resolved),
-            media_type="application/javascript",
-            headers={"X-Content-Type-Options": "nosniff"})
+def _redirect_wiki_to_vault(request: Request) -> RedirectResponse:
+    """Legacy /wiki/* → /vault/* redirect."""
+    return RedirectResponse(
+        f"/vault/{request.path_params['page']}", status_code=301,
+    )
 
-    # -- Canvas routes ------------------------------------------------------------
 
-    def _user_owns_conv(conv_id: str, username: str) -> bool:
-        """Authorization gate for canvas routes — caller must own the conversation."""
-        from .web.conversations import ConversationIndex
-        index = ConversationIndex(config)
-        conv = index.get(conv_id)
-        return bool(conv and conv.user_id == username)
-
-    @_authenticated
-    async def get_canvas_state(request: Request, username: str) -> JSONResponse:
-        """Load current canvas state for a conversation."""
-        from . import canvas as canvas_mod
-        conv_id = request.path_params.get("conv_id", "")
-        if not _is_safe_conv_id(conv_id):
-            return JSONResponse({"error": "invalid conv_id"}, status_code=400)
-        if not _user_owns_conv(conv_id, username):
-            return JSONResponse({"error": "not found"}, status_code=404)
-        state = canvas_mod.read_canvas_state(config, conv_id)
-        return JSONResponse(state)
-
-    @_authenticated
-    async def post_canvas_set(request: Request, username: str) -> JSONResponse:
-        """Push a widget to the canvas (used by 'Open in Canvas' button)."""
-        from . import canvas as canvas_mod
-        conv_id = request.path_params.get("conv_id", "")
-        if not _is_safe_conv_id(conv_id):
-            return JSONResponse({"error": "invalid conv_id"}, status_code=400)
-        if not _user_owns_conv(conv_id, username):
-            return JSONResponse({"error": "not found"}, status_code=404)
-        try:
-            body = await request.json()
-        except json.JSONDecodeError:
-            return JSONResponse({"error": "invalid JSON body"}, status_code=400)
-        if not isinstance(body, dict):
-            return JSONResponse({"error": "body must be a JSON object"}, status_code=400)
-        widget_type = body.get("widget_type", "")
-        data = body.get("data") or {}
-        label = body.get("label")
-        emit = manager.emit if manager else None
-        result = await canvas_mod.set_canvas(
-            config, conv_id, widget_type, data, label=label, emit=emit,
-        )
-        if not result.ok:
-            return JSONResponse({"error": result.error}, status_code=400)
-        return JSONResponse({"ok": True, "text": result.text})
-
-    @_authenticated
-    async def get_canvas_page(request: Request, username: str):
-        """Serve the standalone canvas HTML page."""
-        from starlette.responses import Response
-        conv_id = request.path_params.get("conv_id", "")
-        if not _is_safe_conv_id(conv_id):
-            return Response("Invalid conversation id", status_code=400)
-        if not _user_owns_conv(conv_id, username):
-            return Response("Not found", status_code=404)
-        html_path = Path(__file__).parent / "web" / "static" / "canvas-page.html"
-        return Response(html_path.read_text(), media_type="text/html")
+def create_app(config, event_bus, app_ctx=None, manager=None) -> Starlette:
+    """Wire up the Starlette ASGI app — handlers live at module level
+    and read deps off ``request.app.state`` (populated below).
+    """
 
     routes = [
         Route("/health", health, methods=["GET"]),
@@ -1727,8 +1756,7 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> Starlette:
         # Legacy wiki routes (redirect to vault)
         Route("/api/wiki", vault_list, methods=["GET"]),
         Route("/api/wiki/{page:path}", vault_read, methods=["GET"]),
-        Route("/wiki/{page:path}", lambda r: RedirectResponse(
-            f"/vault/{r.path_params['page']}", status_code=301), methods=["GET"]),
+        Route("/wiki/{page:path}", _redirect_wiki_to_vault, methods=["GET"]),
         Route("/api/widgets", list_widgets, methods=["GET"]),
         Route("/widgets/{tier}/{name}/widget.js", serve_widget_js,
               methods=["GET"]),
