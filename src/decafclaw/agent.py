@@ -16,11 +16,12 @@ import functools
 import json
 import logging
 import re as _re
-from dataclasses import replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from .context_composer import ComposedContext
     from .reflection import ReflectionResult
 
 from .archive import append_message
@@ -177,6 +178,23 @@ def _check_cancelled(ctx, history):
     return None
 
 
+@dataclass(frozen=True)
+class ReflectionOutcome:
+    """Result of evaluating a candidate final response.
+
+    Replaces the 4-tuple return shape of the old _handle_reflection.
+    `text` is None when the caller should retry (critique already
+    injected into history/messages by the helper). When `should_retry`
+    is False, `text` is the response to deliver (with optional
+    exhaustion-escalation suffix appended in the skip path).
+
+    `reflection_retries` and `last_reflection` are mutated on the call
+    sites' state directly — they don't appear in this return type.
+    """
+    text: str | None
+    should_retry: bool
+
+
 def _should_reflect(ctx, config, content: str, reflection_retries: int) -> bool:
     """Check whether reflection should run on this response."""
     if not config.reflection.enabled:
@@ -190,124 +208,6 @@ def _should_reflect(ctx, config, content: str, reflection_retries: int) -> bool:
     if ctx.cancelled and ctx.cancelled.is_set():
         return False
     return True
-
-
-async def _handle_reflection(
-    ctx, config, messages, history, final_text,
-    user_message, attachments, retrieved_context_text,
-    turn_start_index, reflection_retries, last_reflection,
-    accumulated_text_parts=None,
-) -> tuple[str | None, bool, int, "ReflectionResult | None"]:
-    """Run the reflection phase on a candidate final response.
-
-    Returns (text, should_retry, reflection_retries, last_reflection):
-    - Reflection skipped or passed: (final_text, False, retries, result)
-    - Reflection failed with retries left: (None, True, retries+1, result)
-      — critique has been injected into messages/history before returning
-    - Reflection failed, no retries left: (text_with_escalation, False, retries, result)
-
-    `accumulated_text_parts` collects text the model emitted in earlier
-    iterations of this turn alongside tool calls (e.g. a skill that writes
-    a full report and then calls vault_write in the same LLM response). The
-    judge evaluates the concatenation so it sees the full user-visible
-    response, not just the final no-tools trailer.
-    """
-    if not _should_reflect(ctx, config, final_text, reflection_retries):
-        reflection_exhausted = (
-            reflection_retries >= config.reflection.max_retries
-            and last_reflection is not None
-            and not last_reflection.passed
-        )
-        last_reflection = None  # clear stale result from prior retry
-
-        # Suggest model escalation if reflection retries exhausted
-        if reflection_exhausted:
-            final_text += (
-                "\n\n---\n*I'm not confident in this answer. "
-                "Try switching to a more capable model in the web UI model picker.*"
-            )
-        return final_text, False, reflection_retries, last_reflection
-
-    from .reflection import (
-        build_prior_turn_summary,
-        build_tool_summary,
-        evaluate_response,
-    )
-
-    tool_summary = build_tool_summary(
-        history, turn_start_index,
-        max_result_len=config.reflection.max_tool_result_len,
-    )
-    # turn_start_index points past the current user message;
-    # use turn_start_index - 1 to exclude it from prior turns
-    prior_turn_summary = build_prior_turn_summary(
-        history, turn_start_index - 1,
-        max_turns=3,
-        max_result_len=200,
-    )
-    # Annotate user message with attachment info for the judge —
-    # it can't see the actual files but needs to know they exist
-    judge_user_message = user_message
-    if attachments:
-        att_desc = ", ".join(
-            f"{a.get('filename', '?')} ({a.get('mime_type', '?')})"
-            for a in attachments
-        )
-        judge_user_message += f"\n\n[User attached files: {att_desc}]"
-    # Combine text from tool-call iterations with the current final text so
-    # the judge sees the full visible response, not just the trailer.
-    judge_agent_response = "\n\n".join(
-        part for part in [*(accumulated_text_parts or []), final_text]
-        if part and part.strip()
-    ) or final_text
-    result = await evaluate_response(
-        config, judge_user_message, judge_agent_response, tool_summary,
-        prior_turn_summary=prior_turn_summary,
-        retrieved_context=retrieved_context_text,
-    )
-
-    last_reflection = result
-    log.info("Reflection result: passed=%s, critique=%s, error=%s",
-             result.passed, result.critique[:200] if result.critique else "",
-             result.error[:100] if result.error else "")
-
-    await ctx.publish("reflection_result",
-        passed=result.passed,
-        critique=result.critique,
-        raw_response=result.raw_response,
-        retry_number=reflection_retries + 1,
-        error=result.error)
-
-    if not result.passed and not result.error:
-        log.info("Reflection failed (retry %d/%d): %s",
-                 reflection_retries + 1,
-                 config.reflection.max_retries,
-                 result.critique[:200])
-        # Add the failed response to history
-        failed_msg = {"role": "assistant", "content": final_text}
-        history.append(failed_msg)
-        messages.append(failed_msg)
-        _archive(ctx, failed_msg)
-
-        # Add critique as user message for retry
-        critique_msg = {
-            "role": "user",
-            "content": (
-                "[reflection] Your previous response may not fully "
-                "address the user's request.\n"
-                f"Feedback: {result.critique}\n"
-                "Please try again, addressing the feedback above."
-            ),
-        }
-        history.append(critique_msg)
-        messages.append(critique_msg)
-        _archive(ctx, critique_msg)
-
-        reflection_retries += 1
-        return None, True, reflection_retries, last_reflection
-
-    # Reflection passed (or errored out — fail-open)
-    return final_text, False, reflection_retries, last_reflection
 
 
 async def _handle_widget_input_pause(ctx, signal: WidgetInputPause
@@ -1047,7 +947,487 @@ def _get_already_injected_pages(history: list) -> set[str]:
     return pages
 
 
+class IterationOutcome:
+    """Tagged-union return type from TurnRunner._run_iteration.
+
+    Two variants: _Continue (loop again) and _Final (return this
+    ToolResult from the turn). Cancellation collapses into _Final
+    since the outer loop treats it identically.
+    """
+
+
+@dataclass(frozen=True)
+class _Continue(IterationOutcome):
+    """Loop again — used for tool-call iterations, retries, widget
+    injection, EndTurnConfirm-approved continuation."""
+
+
+@dataclass(frozen=True)
+class _Final(IterationOutcome):
+    """Turn is done; return this ToolResult."""
+    result: "ToolResult"
+
+
 # -- Main agent turn -----------------------------------------------------------
+
+
+@dataclass
+class TurnRunner:
+    """Owns the mutable state of a single agent turn.
+
+    State that was local variables in the original run_agent_turn
+    becomes fields here. State written through ctx helpers
+    (ctx.tokens, ctx.skills, ctx.history) stays on ctx.
+
+    Single-use: do not call run() twice on the same instance.
+    """
+    ctx: Any
+    config: Any
+    history: list
+    user_message: str
+    archive_text: str
+    attachments: list[dict] | None
+
+    messages: list = field(default_factory=list)
+    deferred_msg: dict | None = None
+    prompt_tokens: int = 0
+    empty_retries: int = 0
+    reflection_retries: int = 0
+    last_reflection: "ReflectionResult | None" = None
+    turn_start_index: int = 0
+    accumulated_text_parts: list[str] = field(default_factory=list)
+    model_override: dict[str, str] = field(default_factory=dict)
+    retrieved_context_text: str = ""
+    composed: "ComposedContext | None" = None
+    composer: "ContextComposer | None" = None
+
+    async def run(self) -> "ToolResult":
+        """Process a single user message through the agent loop."""
+        self.ctx.history = self.history
+
+        self.model_override = await _setup_turn_state(self.ctx, self.config, self.history)
+
+        try:
+            await self._compose()
+
+            self.prompt_tokens = 0
+            self.empty_retries = 0
+            self.reflection_retries = 0
+            self.last_reflection = None  # last ReflectionResult, for archiving after final response
+
+            self.accumulated_text_parts = []  # text from iterations that also had tool calls
+
+            for iteration in range(self.config.agent.max_tool_iterations):
+                outcome = await self._run_iteration(iteration)
+                if isinstance(outcome, _Final):
+                    return outcome.result
+            return await self._finalize_max_iterations()
+
+        finally:
+            await self._write_diagnostics()
+
+    async def _compose(self) -> None:
+        """Build the composed context, archive composer-added messages,
+        initialize message-tracking state on self.
+
+        Note: ``skip_vault_retrieval`` is handled directly by the composer,
+        not via mode — HEARTBEAT/SCHEDULED skip wiki too, which isn't
+        always desired when only memory should be skipped.
+        """
+        if self.ctx.is_child:
+            composer_mode = ComposerMode.CHILD_AGENT
+        elif self.ctx.task_mode in _TASK_MODE_TO_COMPOSER:
+            composer_mode = _TASK_MODE_TO_COMPOSER[self.ctx.task_mode]
+        else:
+            composer_mode = ComposerMode.INTERACTIVE
+
+        self.composer = ContextComposer(state=self.ctx.composer)
+        self.composed = await self.composer.compose(
+            self.ctx, self.user_message, self.history,
+            mode=composer_mode, attachments=self.attachments,
+        )
+        self.messages = self.composed.messages
+        self.ctx.messages = self.messages
+        self.retrieved_context_text = self.composed.retrieved_context_text
+
+        for msg in self.composed.messages_to_archive:
+            if self.ctx.task_mode == "background_wake" and msg.get("role") == "user":
+                archive_msg: dict = {
+                    "role": "wake_trigger",
+                    "content": msg.get("content", ""),
+                }
+                _archive(self.ctx, archive_msg)
+            elif self.archive_text and msg.get("role") == "user":
+                archive_msg = {"role": "user", "content": self.archive_text}
+                if msg.get("attachments"):
+                    archive_msg["attachments"] = msg["attachments"]
+                _archive(self.ctx, archive_msg)
+            else:
+                _archive(self.ctx, msg)
+
+        if (len(self.messages) > 1
+                and self.messages[1].get("role") == "system"
+                and self.composed.deferred_tools):
+            self.deferred_msg = self.messages[1]
+        else:
+            self.deferred_msg = None
+
+        self.turn_start_index = len(self.history)
+
+    async def _run_iteration(self, iteration: int) -> IterationOutcome:
+        """Run one LLM iteration: cancel-check, tool refresh, deferred-list
+        injection, the LLM call, and dispatch to tool-calls or no-tool-calls
+        handler. Returns _Continue or _Final."""
+        cancelled = _check_cancelled(self.ctx, self.history)
+        if cancelled:
+            return _Final(result=cancelled)
+
+        log.debug(f"Agent iteration {iteration + 1}")
+        self.ctx._current_iteration = iteration + 1
+
+        _refresh_dynamic_tools(self.ctx)
+        all_tools, deferred_text = _build_tool_list(self.ctx)
+
+        if deferred_text:
+            new_msg = {"role": "system", "content": deferred_text}
+            if self.deferred_msg is not None and self.deferred_msg in self.messages:
+                idx = self.messages.index(self.deferred_msg)
+                self.messages[idx] = new_msg
+            else:
+                self.messages.insert(1, new_msg)
+            self.deferred_msg = new_msg
+        elif self.deferred_msg is not None and self.deferred_msg in self.messages:
+            self.messages.remove(self.deferred_msg)
+            self.deferred_msg = None
+
+        response = await _call_llm_with_events(
+            self.ctx, self.config, self.messages, all_tools,
+            **self.model_override,
+        )
+
+        usage = response.get("usage")
+        if usage:
+            prompt_tokens = usage.get("prompt_tokens", 0)
+            completion_tokens = usage.get("completion_tokens", 0)
+            self.ctx.tokens.total_prompt += prompt_tokens
+            self.ctx.tokens.total_completion += completion_tokens
+            self.ctx.tokens.last_prompt = prompt_tokens
+            self.prompt_tokens = prompt_tokens
+            # composer is set by _compose() before the loop; guard is for the type checker
+            if self.composer is not None:
+                self.composer.record_actuals(prompt_tokens, completion_tokens)
+
+        tool_calls = response.get("tool_calls")
+        if tool_calls:
+            return await self._handle_tool_calls(response, tool_calls)
+
+        return await self._handle_no_tool_calls(response)
+
+    async def _handle_tool_calls(
+        self, response: dict, tool_calls: list,
+    ) -> IterationOutcome:
+        """Append assistant tool-call message, execute tools, dispatch
+        on end-turn signals (widget pause, EndTurnConfirm, end_turn=True).
+
+        Returns _Continue to loop again, or _Final(result) to end the turn.
+        """
+        iter_content = response.get("content")
+        assistant_msg = {"role": "assistant", "content": iter_content}
+        assistant_msg["tool_calls"] = tool_calls
+        self.history.append(assistant_msg)
+        self.messages.append(assistant_msg)
+        _archive(self.ctx, assistant_msg)
+
+        if iter_content:
+            self.accumulated_text_parts.append(iter_content)
+            await self.ctx.publish("text_before_tools", text=iter_content)
+
+        cancelled, end_turn_signal = await _execute_tool_calls(
+            self.ctx, tool_calls, self.history, self.messages,
+        )
+        if cancelled:
+            return _Final(result=cancelled)
+
+        if isinstance(end_turn_signal, WidgetInputPause):
+            inject_content = await _handle_widget_input_pause(
+                self.ctx, end_turn_signal,
+            )
+            if inject_content is None:
+                end_turn_signal = True
+            else:
+                synthetic = {
+                    "role": "user",
+                    "source": "widget_response",
+                    "content": inject_content,
+                }
+                self.history.append(synthetic)
+                self.messages.append(synthetic)
+                _archive(self.ctx, synthetic)
+                return _Continue()
+
+        if isinstance(end_turn_signal, EndTurnConfirm):
+            log.info("EndTurnConfirm — making presentation LLM call before confirmation")
+            present_response = await _call_llm_with_events(
+                self.ctx, self.config, self.messages, [],
+                **self.model_override,
+            )
+            present_content = present_response.get("content") or ""
+            present_msg = {"role": "assistant", "content": present_content}
+            self.history.append(present_msg)
+            self.messages.append(present_msg)
+            _archive(self.ctx, present_msg)
+
+            log.info("EndTurnConfirm — requesting confirmation")
+            approved = await _handle_end_turn_confirm(self.ctx, end_turn_signal)
+            if approved:
+                log.info("EndTurnConfirm approved — continuing agent loop")
+                if end_turn_signal.on_approve:
+                    if asyncio.iscoroutinefunction(end_turn_signal.on_approve):
+                        await end_turn_signal.on_approve()
+                    else:
+                        end_turn_signal.on_approve()
+                note = f"[User approved: {end_turn_signal.message or 'review'}]"
+                self.history.append({"role": "user", "content": note})
+                self.messages.append({"role": "user", "content": note})
+                return _Continue()
+            else:
+                log.info("EndTurnConfirm denied — ending turn")
+                if end_turn_signal.on_deny:
+                    if asyncio.iscoroutinefunction(end_turn_signal.on_deny):
+                        await end_turn_signal.on_deny()
+                    else:
+                        end_turn_signal.on_deny()
+                deny_label = end_turn_signal.deny_label or "denied"
+                note = f"[User selected '{deny_label}'. Ask what they'd like changed.]"
+                self.history.append({"role": "user", "content": note})
+                self.messages.append({"role": "user", "content": note})
+                end_turn_signal = True
+
+        if end_turn_signal:
+            log.info("Tool signalled end_turn — making final no-tools LLM call")
+            final_response = await _call_llm_with_events(
+                self.ctx, self.config, self.messages, [],
+                **self.model_override,
+            )
+            content = final_response.get("content") or ""
+            final_msg = {"role": "assistant", "content": content}
+            self.history.append(final_msg)
+            _archive(self.ctx, final_msg)
+
+            return _Final(result=self._extract_workspace_media(content))
+
+        return _Continue()
+
+    async def _handle_no_tool_calls(self, response: dict) -> IterationOutcome:
+        """Process a no-tool-calls LLM response. Handles empty-retry,
+        reflection, archive of last_reflection, and compaction trigger.
+        Returns _Continue (retry) or _Final(result) (deliver response)."""
+        content = response.get("content") or ""
+        if not content:
+            if self.empty_retries < 1:
+                self.empty_retries += 1
+                log.warning("LLM returned empty response, retrying")
+                return _Continue()
+            log.warning("LLM returned empty content with no tool calls (after retry)")
+
+        log.debug("Reflection check: enabled=%s, retries=%d/%d, skip=%s, has_content=%s",
+                   self.config.reflection.enabled, self.reflection_retries,
+                   self.config.reflection.max_retries, self.ctx.skip_reflection, bool(content))
+        outcome = await self._handle_reflection(content)
+        if outcome.should_retry:
+            return _Continue()
+        assert outcome.text is not None  # invariant: should_retry=False implies text is not None
+        content = outcome.text
+
+        final_msg = {"role": "assistant", "content": content}
+        self.history.append(final_msg)
+        _archive(self.ctx, final_msg)
+
+        if self.last_reflection is not None:
+            visibility = self.config.reflection.visibility
+            r = self.last_reflection
+            should_archive = (
+                visibility == "debug"
+                or (visibility == "visible" and not r.passed)
+            )
+            if should_archive:
+                detail = r.raw_response or r.critique or (
+                    "Response passed evaluation" if r.passed else "No details")
+                label = ("reflection: PASS" if r.passed
+                         else f"reflection: retry {self.reflection_retries}")
+                _archive(self.ctx, {"role": "reflection", "tool": label,
+                                    "content": detail})
+
+        await _maybe_compact(self.ctx, self.config, self.history, self.prompt_tokens)
+        return _Final(result=self._extract_workspace_media(content))
+
+    async def _handle_reflection(self, content: str) -> ReflectionOutcome:
+        """Thin orchestrator. Mutates self.reflection_retries and
+        self.last_reflection; returns ReflectionOutcome."""
+        if not _should_reflect(
+            self.ctx, self.config, content, self.reflection_retries,
+        ):
+            return self._reflection_skip(content)
+        result = await self._reflection_evaluate(content)
+        self.last_reflection = result
+        return self._reflection_apply_verdict(content, result)
+
+    def _reflection_skip(self, content: str) -> ReflectionOutcome:
+        """Reflection-did-not-run branch. Appends escalation suffix
+        on exhaustion; clears self.last_reflection."""
+        reflection_exhausted = (
+            self.reflection_retries >= self.config.reflection.max_retries
+            and self.last_reflection is not None
+            and not self.last_reflection.passed
+        )
+        self.last_reflection = None
+        if reflection_exhausted:
+            content += (
+                "\n\n---\n*I'm not confident in this answer. "
+                "Try switching to a more capable model in the web UI model picker.*"
+            )
+        return ReflectionOutcome(text=content, should_retry=False)
+
+    async def _reflection_evaluate(self, content: str) -> "ReflectionResult":
+        """Build summaries + attachment annotation + accumulated-text
+        concat, call evaluate_response, publish reflection_result event."""
+        from .reflection import (
+            build_prior_turn_summary,
+            build_tool_summary,
+            evaluate_response,
+        )
+
+        tool_summary = build_tool_summary(
+            self.history, self.turn_start_index,
+            max_result_len=self.config.reflection.max_tool_result_len,
+        )
+        prior_turn_summary = build_prior_turn_summary(
+            self.history, self.turn_start_index - 1,
+            max_turns=3,
+            max_result_len=200,
+        )
+        judge_user_message = self.user_message
+        if self.attachments:
+            att_desc = ", ".join(
+                f"{a.get('filename', '?')} ({a.get('mime_type', '?')})"
+                for a in self.attachments
+            )
+            judge_user_message += f"\n\n[User attached files: {att_desc}]"
+        judge_agent_response = "\n\n".join(
+            part for part in [*self.accumulated_text_parts, content]
+            if part and part.strip()
+        ) or content
+        result = await evaluate_response(
+            self.config, judge_user_message, judge_agent_response, tool_summary,
+            prior_turn_summary=prior_turn_summary,
+            retrieved_context=self.retrieved_context_text,
+        )
+
+        log.info("Reflection result: passed=%s, critique=%s, error=%s",
+                 result.passed, result.critique[:200] if result.critique else "",
+                 result.error[:100] if result.error else "")
+        await self.ctx.publish("reflection_result",
+            passed=result.passed,
+            critique=result.critique,
+            raw_response=result.raw_response,
+            retry_number=self.reflection_retries + 1,
+            error=result.error)
+        return result
+
+    def _reflection_apply_verdict(
+        self, content: str, result: "ReflectionResult",
+    ) -> ReflectionOutcome:
+        """Apply the judge's verdict. On fail-with-real-critique,
+        append failed_msg + critique_msg, archive, bump retries.
+        Fail-open errors treated as PASS."""
+        if not result.passed and not result.error:
+            log.info("Reflection failed (retry %d/%d): %s",
+                     self.reflection_retries + 1,
+                     self.config.reflection.max_retries,
+                     result.critique[:200])
+            failed_msg = {"role": "assistant", "content": content}
+            self.history.append(failed_msg)
+            self.messages.append(failed_msg)
+            _archive(self.ctx, failed_msg)
+
+            critique_msg = {
+                "role": "user",
+                "content": (
+                    "[reflection] Your previous response may not fully "
+                    "address the user's request.\n"
+                    f"Feedback: {result.critique}\n"
+                    "Please try again, addressing the feedback above."
+                ),
+            }
+            self.history.append(critique_msg)
+            self.messages.append(critique_msg)
+            _archive(self.ctx, critique_msg)
+
+            self.reflection_retries += 1
+            return ReflectionOutcome(text=None, should_retry=True)
+
+        return ReflectionOutcome(text=content, should_retry=False)
+
+    async def _finalize_max_iterations(self) -> "ToolResult":
+        """Hit max iterations without a final response. Preserve any
+        accumulated text from tool-call iterations and append a notice."""
+        limit_note = (
+            f"\n\n[Agent reached max tool iterations "
+            f"({self.config.agent.max_tool_iterations}) without a final response]"
+        )
+        accumulated = "\n\n".join(self.accumulated_text_parts)
+        msg = accumulated + limit_note if accumulated else limit_note.strip()
+        final_msg = {"role": "assistant", "content": msg}
+        self.history.append(final_msg)
+        _archive(self.ctx, final_msg)
+        await _maybe_compact(
+            self.ctx, self.config, self.history, self.prompt_tokens,
+        )
+        return ToolResult(text=msg)
+
+    def _extract_workspace_media(self, content: str) -> "ToolResult":
+        """Extract workspace:// refs only for channels that need it.
+
+        Mattermost strips refs and uploads files; web/terminal render them
+        in-place. Returns ToolResult with media when extraction applies,
+        otherwise just text.
+        """
+        handler = self.ctx.media_handler
+        should_extract = (handler is None or handler.strips_workspace_refs)
+        if should_extract:
+            cleaned_text, workspace_media = extract_workspace_media(
+                content or "", self.config.workspace_path,
+            )
+            if workspace_media:
+                return ToolResult(text=cleaned_text, media=workspace_media)
+        return ToolResult(text=content or "")
+
+    async def _write_diagnostics(self) -> None:
+        """Persist context diagnostics + skill state on any turn-exit path.
+
+        Fail-open: any failure logs at DEBUG and is swallowed so the
+        finally block never raises through to callers.
+        """
+        conv_id = self.ctx.conv_id or self.ctx.channel_id
+
+        if self.composed is not None and self.composer is not None and conv_id:
+            try:
+                from .context_composer import write_context_sidecar
+                diagnostics = self.composer.build_diagnostics(self.config, self.composed)
+                write_context_sidecar(self.config, conv_id, diagnostics)
+            except Exception as exc:
+                log.debug("context sidecar write failed for %s: %s", conv_id, exc)
+
+        if conv_id:
+            try:
+                activated = self.ctx.skills.activated
+                if activated:
+                    write_skills_state(self.config, conv_id, activated)
+                skill_data = self.ctx.skills.data
+                if skill_data:
+                    write_skill_data(self.config, conv_id, skill_data)
+            except Exception as exc:
+                log.debug("skill state persistence failed for %s: %s", conv_id, exc)
 
 
 async def run_agent_turn(ctx, user_message: str, history: list,
@@ -1055,331 +1435,12 @@ async def run_agent_turn(ctx, user_message: str, history: list,
                          attachments: list[dict] | None = None) -> "ToolResult":
     """Process a single user message through the agent loop.
 
-    Args:
-        ctx: Runtime context (carries config, event bus, etc.)
-        user_message: The user's message text
-        archive_text: If set, archive this instead of user_message (for inline
-                      commands where the full body is the LLM prompt but the
-                      archive should show the short command)
-        history: Conversation history (list of message dicts, mutated in place)
-
-    Returns:
-        ToolResult with the agent's text response and any accumulated media.
+    Public entry point. Constructs a TurnRunner and runs it.
     """
-    config = ctx.config
-    ctx.history = history
-
-    model_override = await _setup_turn_state(ctx, config, history)
-
-    conv_id = ctx.conv_id or ctx.channel_id
-
-    composed = None
-    composer = None
-
-    try:
-        # Determine composer mode from context flags.
-        # Note: skip_vault_retrieval is handled directly by the composer,
-        # not via mode — HEARTBEAT/SCHEDULED skip wiki too, which isn't
-        # always desired when only memory should be skipped.
-        if ctx.is_child:
-            composer_mode = ComposerMode.CHILD_AGENT
-        elif ctx.task_mode in _TASK_MODE_TO_COMPOSER:
-            composer_mode = _TASK_MODE_TO_COMPOSER[ctx.task_mode]
-        else:
-            composer_mode = ComposerMode.INTERACTIVE
-
-        composer = ContextComposer(state=ctx.composer)
-        composed = await composer.compose(
-            ctx, user_message, history,
-            mode=composer_mode, attachments=attachments,
-        )
-        messages = composed.messages
-        ctx.messages = messages
-        retrieved_context_text = composed.retrieved_context_text
-
-        # Archive messages the composer added (wiki, memory, user).
-        # For inline commands, swap the user message with the short display version.
-        for msg in composed.messages_to_archive:
-            if ctx.task_mode == "background_wake" and msg.get("role") == "user":
-                # Wake turn's synthetic trigger prompt — archive under a distinct
-                # role so the UI doesn't render it as a real user message.
-                archive_msg: dict = {
-                    "role": "wake_trigger",
-                    "content": msg.get("content", ""),
-                }
-                _archive(ctx, archive_msg)
-            elif archive_text and msg.get("role") == "user":
-                archive_msg = {"role": "user", "content": archive_text}
-                if msg.get("attachments"):
-                    archive_msg["attachments"] = msg["attachments"]
-                _archive(ctx, archive_msg)
-            else:
-                _archive(ctx, msg)
-
-        # Track the deferred tools system message (replaced each iteration).
-        # If compose() already inserted one, reference it so the loop can update it.
-        if len(messages) > 1 and messages[1].get("role") == "system" and composed.deferred_tools:
-            deferred_msg: dict | None = messages[1]
-        else:
-            deferred_msg = None
-
-        prompt_tokens = 0
-        empty_retries = 0
-        reflection_retries = 0
-        last_reflection = None  # last ReflectionResult, for archiving after final response
-        turn_start_index = len(history)  # start of this turn's tool/assistant activity (after user message)
-
-        accumulated_text_parts = []  # text from iterations that also had tool calls
-
-        for iteration in range(config.agent.max_tool_iterations):
-            cancelled = _check_cancelled(ctx, history)
-            if cancelled:
-                return cancelled
-
-            log.debug(f"Agent iteration {iteration + 1}")
-            ctx._current_iteration = iteration + 1
-
-            _refresh_dynamic_tools(ctx)
-            all_tools, deferred_text = _build_tool_list(ctx)
-
-            # Inject/update deferred tool list in messages
-            if deferred_text:
-                new_msg = {"role": "system", "content": deferred_text}
-                if deferred_msg is not None and deferred_msg in messages:
-                    idx = messages.index(deferred_msg)
-                    messages[idx] = new_msg
-                else:
-                    # Insert after the first system message
-                    messages.insert(1, new_msg)
-                deferred_msg = new_msg
-            elif deferred_msg is not None and deferred_msg in messages:
-                # No longer in deferred mode — remove the block
-                messages.remove(deferred_msg)
-                deferred_msg = None
-
-            response = await _call_llm_with_events(ctx, config, messages, all_tools,
-                                                     **model_override)
-
-            # Track token usage
-            usage = response.get("usage")
-            if usage:
-                prompt_tokens = usage.get("prompt_tokens", 0)
-                completion_tokens = usage.get("completion_tokens", 0)
-                ctx.tokens.total_prompt += prompt_tokens
-                ctx.tokens.total_completion += completion_tokens
-                ctx.tokens.last_prompt = prompt_tokens
-                composer.record_actuals(prompt_tokens, completion_tokens)
-
-            tool_calls = response.get("tool_calls")
-            if tool_calls:
-                # Add the assistant's tool-call message to history
-                iter_content = response.get("content")
-                assistant_msg = {"role": "assistant", "content": iter_content}
-                assistant_msg["tool_calls"] = tool_calls
-                history.append(assistant_msg)
-                messages.append(assistant_msg)
-                _archive(ctx, assistant_msg)
-
-                # Flush any text content to the UI before starting tool execution.
-                # Without this, text like "Let me check the weather..." appears
-                # after tool results instead of before.
-                if iter_content:
-                    accumulated_text_parts.append(iter_content)
-                    await ctx.publish("text_before_tools", text=iter_content)
-
-                cancelled, end_turn_signal = await _execute_tool_calls(
-                    ctx, tool_calls, history, messages
-                )
-                if cancelled:
-                    return cancelled
-
-                if isinstance(end_turn_signal, WidgetInputPause):
-                    # Input-widget pause: route through the confirmation
-                    # infra, await user submit, call the tool's
-                    # on_response callback (if any), inject the returned
-                    # string as a synthetic user message, and continue
-                    # the loop for the next LLM iteration.
-                    inject_content = await _handle_widget_input_pause(
-                        ctx, end_turn_signal)
-                    if inject_content is None:
-                        # request_confirmation not available (unusual —
-                        # no manager wired); strip the pause and end
-                        # the turn gracefully.
-                        end_turn_signal = True
-                    else:
-                        synthetic = {
-                            "role": "user",
-                            "source": "widget_response",
-                            "content": inject_content,
-                        }
-                        history.append(synthetic)
-                        messages.append(synthetic)
-                        _archive(ctx, synthetic)
-                        continue  # next LLM iteration sees the answer
-
-                if isinstance(end_turn_signal, EndTurnConfirm):
-                    # Confirmation gate: present the artifact, show buttons, wait.
-                    # 1. No-tools LLM call so model presents the artifact
-                    # 2. Show confirmation buttons
-                    # 3. Approved → continue loop. Denied → fall through to
-                    #    end_turn handler which makes another LLM call for
-                    #    the feedback-request message (two messages total on
-                    #    denial: presentation + "what would you like changed?").
-                    log.info("EndTurnConfirm — making presentation LLM call before confirmation")
-                    present_response = await _call_llm_with_events(
-                        ctx, config, messages, [],  # no tools
-                        **model_override
-                    )
-                    present_content = present_response.get("content") or ""
-                    present_msg = {"role": "assistant", "content": present_content}
-                    history.append(present_msg)
-                    messages.append(present_msg)
-                    _archive(ctx, present_msg)
-
-                    log.info("EndTurnConfirm — requesting confirmation")
-                    approved = await _handle_end_turn_confirm(
-                        ctx, end_turn_signal
-                    )
-                    if approved:
-                        log.info("EndTurnConfirm approved — continuing agent loop")
-                        if end_turn_signal.on_approve:
-                            if asyncio.iscoroutinefunction(end_turn_signal.on_approve):
-                                await end_turn_signal.on_approve()
-                            else:
-                                end_turn_signal.on_approve()
-                        note = f"[User approved: {end_turn_signal.message or 'review'}]"
-                        history.append({"role": "user", "content": note})
-                        messages.append({"role": "user", "content": note})
-                        continue  # Next iteration — model sees approval and continues
-                    else:
-                        log.info("EndTurnConfirm denied — ending turn")
-                        if end_turn_signal.on_deny:
-                            if asyncio.iscoroutinefunction(end_turn_signal.on_deny):
-                                await end_turn_signal.on_deny()
-                            else:
-                                end_turn_signal.on_deny()
-                        # Inject denial note and make one more LLM call for feedback request
-                        deny_label = end_turn_signal.deny_label or "denied"
-                        note = f"[User selected '{deny_label}'. Ask what they'd like changed.]"
-                        history.append({"role": "user", "content": note})
-                        messages.append({"role": "user", "content": note})
-                        end_turn_signal = True  # Fall through to end-turn handling
-
-                if end_turn_signal:
-                    # end_turn=True: make one final LLM call with no tools
-                    # to produce a text response, then return.
-                    log.info("Tool signalled end_turn — making final no-tools LLM call")
-                    final_response = await _call_llm_with_events(
-                        ctx, config, messages, [],  # empty tool list
-                        **model_override
-                    )
-                    content = final_response.get("content") or ""
-                    final_msg = {"role": "assistant", "content": content}
-                    history.append(final_msg)
-                    _archive(ctx, final_msg)
-
-                    handler = ctx.media_handler
-                    should_extract = (handler is None or handler.strips_workspace_refs)
-                    if should_extract:
-                        cleaned_text, workspace_media = extract_workspace_media(
-                            content or "", config.workspace_path
-                        )
-                        if workspace_media:
-                            return ToolResult(text=cleaned_text, media=workspace_media)
-                    return ToolResult(text=content or "")
-
-                continue
-
-            # No tool calls — final response
-            content = response.get("content") or ""
-            if not content:
-                # Retry once on empty response — Gemini sometimes returns
-                # 0 completion tokens, especially after tool list changes.
-                if empty_retries < 1:
-                    empty_retries += 1
-                    log.warning("LLM returned empty response, retrying")
-                    continue
-                log.warning("LLM returned empty content with no tool calls (after retry)")
-
-            # Reflection check — evaluate before delivering
-            log.debug("Reflection check: enabled=%s, retries=%d/%d, skip=%s, has_content=%s",
-                       config.reflection.enabled, reflection_retries,
-                       config.reflection.max_retries, ctx.skip_reflection, bool(content))
-            content, should_retry, reflection_retries, last_reflection = (
-                await _handle_reflection(
-                    ctx, config, messages, history, content,
-                    user_message, attachments, retrieved_context_text,
-                    turn_start_index, reflection_retries, last_reflection,
-                    accumulated_text_parts=accumulated_text_parts,
-                )
-            )
-            if should_retry:
-                continue
-
-            final_msg = {"role": "assistant", "content": content}
-            history.append(final_msg)
-            _archive(ctx, final_msg)
-
-            # Archive reflection result after the final response (correct ordering)
-            # Only archive if reflection ran for this specific response
-            # (last_reflection is cleared when reflection is skipped)
-            if last_reflection is not None:
-                visibility = config.reflection.visibility
-                r = last_reflection
-                # Match visibility filtering: hidden=none, visible=failures, debug=all
-                should_archive = (
-                    visibility == "debug"
-                    or (visibility == "visible" and not r.passed)
-                )
-                if should_archive:
-                    detail = r.raw_response or r.critique or (
-                        "Response passed evaluation" if r.passed else "No details")
-                    label = ("reflection: PASS" if r.passed
-                             else f"reflection: retry {reflection_retries}")
-                    _archive(ctx, {"role": "reflection", "tool": label,
-                                   "content": detail})
-
-            await _maybe_compact(ctx, config, history, prompt_tokens)
-
-            # Extract workspace:// refs only for channels that need it
-            # (Mattermost strips refs and uploads files; web/terminal render them in-place)
-            handler = ctx.media_handler
-            should_extract = (handler is None or handler.strips_workspace_refs)
-            if should_extract:
-                cleaned_text, workspace_media = extract_workspace_media(
-                    content or "", config.workspace_path
-                )
-                if workspace_media:
-                    return ToolResult(text=cleaned_text, media=workspace_media)
-            return ToolResult(text=content or "")
-
-        # Hit max iterations — preserve accumulated text from tool-call iterations
-        limit_note = (f"\n\n[Agent reached max tool iterations "
-                      f"({config.agent.max_tool_iterations}) without a final response]")
-        accumulated = "\n\n".join(accumulated_text_parts)
-        msg = accumulated + limit_note if accumulated else limit_note.strip()
-        final_msg = {"role": "assistant", "content": msg}
-        history.append(final_msg)
-        _archive(ctx, final_msg)
-        await _maybe_compact(ctx, config, history, prompt_tokens)
-        return ToolResult(text=msg)
-
-    finally:
-        # Write context diagnostics on any exit path
-        if composed is not None and composer is not None and conv_id:
-            try:
-                from .context_composer import write_context_sidecar
-                diagnostics = composer.build_diagnostics(config, composed)
-                write_context_sidecar(config, conv_id, diagnostics)
-            except Exception as exc:
-                log.debug("context sidecar write failed for %s: %s", conv_id, exc)
-
-        # Persist activated skills and skill_data after every turn
-        if conv_id:
-            activated = ctx.skills.activated
-            if activated:
-                write_skills_state(config, conv_id, activated)
-            skill_data = ctx.skills.data
-            if skill_data:
-                write_skill_data(config, conv_id, skill_data)
+    runner = TurnRunner(
+        ctx=ctx, config=ctx.config, history=history,
+        user_message=user_message, archive_text=archive_text,
+        attachments=attachments,
+    )
+    return await runner.run()
 

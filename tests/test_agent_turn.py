@@ -879,3 +879,25 @@ async def test_wake_turn_archives_nudge_as_wake_trigger_not_user(ctx, config):
     wake_trigger_msgs = [m for m in all_msgs if m.get("role") == "wake_trigger"]
     assert len(wake_trigger_msgs) == 1
     assert "background job" in wake_trigger_msgs[0]["content"].lower()
+
+
+# -- Public surface contract test ----------------------------------------------
+
+
+def test_run_agent_turn_public_surface_unchanged():
+    """Lock the public signature so future refactors don't drift the
+    contract callers depend on (conversation_manager.py, eval/runner,
+    etc.)."""
+    import inspect
+    sig = inspect.signature(run_agent_turn)
+    params = sig.parameters
+
+    assert list(params.keys()) == [
+        "ctx", "user_message", "history", "archive_text", "attachments",
+    ], "Positional/keyword arg order changed"
+    assert params["archive_text"].default == "", \
+        "archive_text default changed"
+    assert params["attachments"].default is None, \
+        "attachments default changed"
+    assert inspect.iscoroutinefunction(run_agent_turn), \
+        "run_agent_turn must remain async"
