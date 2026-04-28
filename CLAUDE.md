@@ -98,6 +98,7 @@ See [docs/conversations.md](docs/conversations.md), [docs/web-ui.md](docs/web-ui
 
 - **Mattermost concerns stay in `mattermost.py`.** Progress formatting, placeholders, threading.
 - **Web UI conversation management is REST-only.** WebSocket only for chat streaming, history loading, model changes, cancellation. Workspace files via `/api/workspace/*`. Conversation folders are metadata-only (per-user JSON index); archive files stay in place.
+- **WebSocket message types are centralized.** Add new wire types in `src/decafclaw/web/message_types.json` and run `make gen-message-types`. Code references `WSMessageType.X` in Python and `MESSAGE_TYPES.X` in JS — never bare string literals. The drift check (`make check-message-types`, wired into `make check`) catches manual edits to the generated files. See [docs/websocket-messages.md](docs/websocket-messages.md).
 - **Mattermost PATCH quirks.** Omitting `props` preserves existing props (including attachments) — to strip, send `props: {"attachments": []}`. Sending only `props` without `message` clears the text (shows "(message deleted)"). Always include the message text when patching props.
 - **Interactive button gotchas.** Button IDs must not contain underscores (callbacks silently dropped). `http_callback_base` must be reachable from MM server's network. Check `AllowedUntrustedInternalConnections` and laptop DHCP IP changes.
 - **One bot instance per Mattermost account.** A second silently misses websocket events.

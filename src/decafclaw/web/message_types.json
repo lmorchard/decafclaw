@@ -1,0 +1,157 @@
+{
+  "$schema_version": 1,
+  "_doc_header": "WebSocket message types exchanged between the decafclaw server (`src/decafclaw/web/websocket.py`) and the in-browser client. This page is generated from `src/decafclaw/web/message_types.json` — edit the manifest and run `make gen-message-types` to regenerate.",
+  "messages": {
+    "background_event": {
+      "direction": "server_to_client",
+      "description": "Background-task lifecycle event surfaced into a conversation timeline (e.g. delegated task started/finished).",
+      "fields": {"conv_id": "string", "event": "object"}
+    },
+    "canvas_update": {
+      "direction": "server_to_client",
+      "description": "The conversation's canvas state changed; client should re-render the canvas panel.",
+      "fields": {"conv_id": "string", "state": "object"}
+    },
+    "chunk": {
+      "direction": "server_to_client",
+      "description": "Streaming text fragment of an in-flight assistant message.",
+      "fields": {"conv_id": "string", "text": "string"}
+    },
+    "command_ack": {
+      "direction": "server_to_client",
+      "description": "Acknowledgement that a slash-style user command was received and dispatched.",
+      "fields": {"conv_id": "string", "command": "string"}
+    },
+    "compaction_done": {
+      "direction": "server_to_client",
+      "description": "Conversation history compaction completed; client should reload history.",
+      "fields": {"conv_id": "string"}
+    },
+    "confirm_request": {
+      "direction": "server_to_client",
+      "description": "Server is asking the user to approve or deny a pending action (tool call, end-of-turn gate, widget input).",
+      "fields": {"conv_id": "string", "request_id": "string", "kind": "string", "payload": "object"}
+    },
+    "confirmation_response": {
+      "direction": "server_to_client",
+      "description": "Replay of a prior confirmation response, surfaced when reloading conversation history.",
+      "fields": {"conv_id": "string", "request_id": "string", "decision": "string"}
+    },
+    "conv_history": {
+      "direction": "server_to_client",
+      "description": "Page of historical messages for a conversation.",
+      "fields": {"conv_id": "string", "messages": "array of object", "before": "string | null"}
+    },
+    "conv_selected": {
+      "direction": "server_to_client",
+      "description": "Confirmation that a select_conv subscribed this socket to the named conversation. May include initial conversation state.",
+      "fields": {"conv_id": "string", "model": "string | null"}
+    },
+    "error": {
+      "direction": "server_to_client",
+      "description": "Generic error surfaced to the client (bad request, unknown conversation, internal error).",
+      "fields": {"message": "string", "conv_id": "string | null"}
+    },
+    "message_complete": {
+      "direction": "server_to_client",
+      "description": "Final form of an assistant message after streaming completed (or when replayed from history).",
+      "fields": {"conv_id": "string", "message": "object"}
+    },
+    "model_changed": {
+      "direction": "server_to_client",
+      "description": "The active model for a conversation changed (echoed back to all subscribers of that conversation).",
+      "fields": {"conv_id": "string", "model": "string"}
+    },
+    "models_available": {
+      "direction": "server_to_client",
+      "description": "List of model identifiers the user can select in the UI.",
+      "fields": {"models": "array of string"}
+    },
+    "notification_created": {
+      "direction": "server_to_client",
+      "description": "A new notification was added to the user's inbox (push from notification subsystem).",
+      "fields": {"notification": "object"}
+    },
+    "notification_read": {
+      "direction": "server_to_client",
+      "description": "A notification was marked read (push from notification subsystem).",
+      "fields": {"id": "string"}
+    },
+    "reflection_result": {
+      "direction": "server_to_client",
+      "description": "Output of the post-turn reflection step for a conversation.",
+      "fields": {"conv_id": "string", "result": "object"}
+    },
+    "tool_end": {
+      "direction": "server_to_client",
+      "description": "Final result of a tool call. Replaces the in-flight tool_status with terminal state.",
+      "fields": {"conv_id": "string", "tool_call_id": "string", "name": "string", "ok": "boolean", "result": "string | object"}
+    },
+    "tool_start": {
+      "direction": "server_to_client",
+      "description": "Tool call has begun execution.",
+      "fields": {"conv_id": "string", "tool_call_id": "string", "name": "string", "input": "object"}
+    },
+    "tool_status": {
+      "direction": "server_to_client",
+      "description": "Mid-flight progress update from a running tool.",
+      "fields": {"conv_id": "string", "tool_call_id": "string", "status": "string"}
+    },
+    "turn_complete": {
+      "direction": "server_to_client",
+      "description": "An agent turn finished (success, error, or cancellation).",
+      "fields": {"conv_id": "string"}
+    },
+    "turn_start": {
+      "direction": "server_to_client",
+      "description": "An agent turn has started; clients should clear any draft and show in-flight UI.",
+      "fields": {"conv_id": "string"}
+    },
+    "user_message": {
+      "direction": "server_to_client",
+      "description": "Echo of a user-authored message to all subscribers of the conversation (used for multi-tab sync).",
+      "fields": {"conv_id": "string", "message": "object"}
+    },
+
+    "cancel_turn": {
+      "direction": "client_to_server",
+      "description": "Request cancellation of the conversation's in-flight agent turn.",
+      "fields": {"conv_id": "string"}
+    },
+    "confirm_response": {
+      "direction": "client_to_server",
+      "description": "User's decision on a pending confirm_request.",
+      "fields": {"conv_id": "string", "request_id": "string", "decision": "string", "extras": "object"}
+    },
+    "load_history": {
+      "direction": "client_to_server",
+      "description": "Request a page of historical messages for a conversation.",
+      "fields": {"conv_id": "string", "limit": "number", "before": "string | null"}
+    },
+    "select_conv": {
+      "direction": "client_to_server",
+      "description": "Subscribe this socket to a conversation's event stream.",
+      "fields": {"conv_id": "string"}
+    },
+    "send": {
+      "direction": "client_to_server",
+      "description": "Send a user message (and/or attachments) to the conversation.",
+      "fields": {"conv_id": "string", "text": "string", "attachments": "array of object"}
+    },
+    "set_effort": {
+      "direction": "client_to_server",
+      "description": "Deprecated backward-compat alias for set_model used by older web clients.",
+      "fields": {"conv_id": "string", "model": "string"}
+    },
+    "set_model": {
+      "direction": "client_to_server",
+      "description": "Change the active model for a conversation.",
+      "fields": {"conv_id": "string", "model": "string"}
+    },
+    "widget_response": {
+      "direction": "client_to_server",
+      "description": "Submission of an interactive widget input.",
+      "fields": {"conv_id": "string", "request_id": "string", "value": "object"}
+    }
+  }
+}

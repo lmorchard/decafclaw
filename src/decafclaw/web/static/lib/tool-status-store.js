@@ -5,6 +5,8 @@
  * @typedef {import('./message-store.js').MessageStore} MessageStore
  */
 
+import { MESSAGE_TYPES } from './message-types.js';
+
 /**
  * Sub-store managing tool execution status and confirmation requests.
  */
@@ -68,7 +70,7 @@ export class ToolStatusStore {
     });
 
     this.#ws.send({
-      type: 'confirm_response',
+      type: MESSAGE_TYPES.CONFIRM_RESPONSE,
       context_id: contextId,
       tool,
       approved,
@@ -106,7 +108,7 @@ export class ToolStatusStore {
       return;
     }
     this.#ws.send({
-      type: 'widget_response',
+      type: MESSAGE_TYPES.WIDGET_RESPONSE,
       conv_id: confirm.conv_id,
       confirmation_id: confirm.confirmation_id,
       tool_call_id: toolCallId,
@@ -127,7 +129,7 @@ export class ToolStatusStore {
    */
   handleMessage(msg, currentConvId) {
     switch (msg.type) {
-      case 'tool_start': {
+      case MESSAGE_TYPES.TOOL_START: {
         const tcId = msg.tool_call_id || '';
         this.#activeTools.set(tcId, `Running ${msg.tool}...`);
         if (msg.conv_id === currentConvId) {
@@ -142,7 +144,7 @@ export class ToolStatusStore {
         return true;
       }
 
-      case 'tool_status': {
+      case MESSAGE_TYPES.TOOL_STATUS: {
         const tcId = msg.tool_call_id || '';
         this.#activeTools.set(tcId, `${msg.tool}: ${msg.message}`);
         if (msg.conv_id === currentConvId) {
@@ -159,7 +161,7 @@ export class ToolStatusStore {
         return true;
       }
 
-      case 'tool_end': {
+      case MESSAGE_TYPES.TOOL_END: {
         const tcId = msg.tool_call_id || '';
         this.#activeTools.delete(tcId);
         if (msg.conv_id === currentConvId) {
@@ -176,7 +178,7 @@ export class ToolStatusStore {
         return true;
       }
 
-      case 'confirm_request': {
+      case MESSAGE_TYPES.CONFIRM_REQUEST: {
         // Only show confirmations for the active conversation (#235)
         if (msg.conv_id && msg.conv_id !== currentConvId) return true;
         // Deduplicate by confirmation_id (can arrive via both conv_history and live event)
@@ -201,7 +203,7 @@ export class ToolStatusStore {
         return true;
       }
 
-      case 'confirmation_response': {
+      case MESSAGE_TYPES.CONFIRMATION_RESPONSE: {
         // Multi-tab sync: remove the resolved confirmation widget.
         // For widget responses, also flip the matching tool message to
         // submitted + carry the response data so the widget UI
@@ -224,7 +226,7 @@ export class ToolStatusStore {
         return true;
       }
 
-      case 'reflection_result':
+      case MESSAGE_TYPES.REFLECTION_RESULT:
         if (msg.conv_id === currentConvId) {
           const passed = msg.passed;
           const critique = msg.critique || '';
