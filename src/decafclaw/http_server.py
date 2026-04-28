@@ -187,119 +187,164 @@ def _collect_recent_workspace_files(
     return collected[:50]
 
 
-def create_app(config, event_bus, app_ctx=None, manager=None) -> Starlette:
-    """Create the Starlette ASGI app with routes."""
+# -- Health + confirmation callback handlers ---------------------------------
 
-    async def health(request: Request) -> JSONResponse:
-        from .tools.health import get_health_data
-        return JSONResponse(get_health_data(config))
 
-    async def handle_confirm(request: Request) -> JSONResponse:
-        """Handle Mattermost interactive button callbacks for tool confirmation."""
-        # Verify token (single-use, per-confirmation)
-        token = request.query_params.get("token", "")
-        token_data = get_token_registry().consume(token)
+async def health(request: Request) -> JSONResponse:
+    """Liveness probe — returns the static health snapshot."""
+    from .tools.health import get_health_data
+    return JSONResponse(get_health_data(request.app.state.config))
 
-        # Also check static secret as fallback (defense in depth)
-        secret = request.query_params.get("secret", "")
-        has_valid_secret = config.http.secret and secret == config.http.secret
 
-        if not token_data and not has_valid_secret:
-            log.warning("Confirm callback rejected: invalid token and no valid secret")
-            return JSONResponse({"error": "unauthorized"}, status_code=403)
+async def handle_confirm(request: Request) -> JSONResponse:
+    """Handle Mattermost interactive button callbacks for tool confirmation."""
+    config = request.app.state.config
+    event_bus = request.app.state.event_bus
+    manager = request.app.state.manager
 
-        body = await request.json()
-        context = body.get("context", {})
+    # Verify token (single-use, per-confirmation)
+    token = request.query_params.get("token", "")
+    token_data = get_token_registry().consume(token)
 
-        # Use token data if available, fall back to POST body context
-        if token_data:
-            action = token_data.get("action", "") or context.get("action", "")
-            context_id = token_data["context_id"]
-            tool_name = token_data["tool"]
-            original_message = token_data["original_message"]
-            tool_call_id = token_data.get("tool_call_id", "")
-        else:
-            action = context.get("action", "")
-            context_id = context.get("context_id", "")
-            tool_name = context.get("tool", "")
-            original_message = context.get("original_message", "")
-            tool_call_id = context.get("tool_call_id", "")
+    # Also check static secret as fallback (defense in depth)
+    secret = request.query_params.get("secret", "")
+    has_valid_secret = config.http.secret and secret == config.http.secret
 
-        # Extract manager-routing fields from token data
-        conv_id = (token_data or {}).get("conv_id", "") or context.get("conv_id", "")
-        confirmation_id = (token_data or {}).get("confirmation_id", "") or context.get("confirmation_id", "")
+    if not token_data and not has_valid_secret:
+        log.warning("Confirm callback rejected: invalid token and no valid secret")
+        return JSONResponse({"error": "unauthorized"}, status_code=403)
 
-        log.info(f"Confirm callback: action={action} tool={tool_name} context={context_id[:8]}")
+    body = await request.json()
+    context = body.get("context", {})
 
-        # Map action to event fields
-        approved = action in ("approve", "always", "add_pattern")
-        always = action == "always"
-        add_pattern = action == "add_pattern"
+    # Use token data if available, fall back to POST body context
+    if token_data:
+        action = token_data.get("action", "") or context.get("action", "")
+        context_id = token_data["context_id"]
+        tool_name = token_data["tool"]
+        original_message = token_data["original_message"]
+        tool_call_id = token_data.get("tool_call_id", "")
+    else:
+        action = context.get("action", "")
+        context_id = context.get("context_id", "")
+        tool_name = context.get("tool", "")
+        original_message = context.get("original_message", "")
+        tool_call_id = context.get("tool_call_id", "")
 
-        # Route through manager if available, fall back to event bus
-        if manager and conv_id and confirmation_id:
-            await manager.respond_to_confirmation(
-                conv_id, confirmation_id,
-                approved=approved, always=always, add_pattern=add_pattern,
-            )
-        else:
-            await event_bus.publish({
-                "type": "tool_confirm_response",
-                "context_id": context_id,
-                "tool": tool_name,
-                "approved": approved,
-                **({"tool_call_id": tool_call_id} if tool_call_id else {}),
-                **({"always": True} if always else {}),
-                **({"add_pattern": True} if add_pattern else {}),
-            })
+    # Extract manager-routing fields from token data
+    conv_id = (token_data or {}).get("conv_id", "") or context.get("conv_id", "")
+    confirmation_id = (token_data or {}).get("confirmation_id", "") or context.get("confirmation_id", "")
 
-        # Determine result label
-        labels = {
-            "approve": "\u2705 Approved",
-            "always": "\u2705 Always approved",
-            "add_pattern": "\U0001f4d3 Approved + pattern added",
-            "deny": "\U0001f44e Denied",
-        }
-        label = labels.get(action, f"\u2753 Unknown action: {action}")
+    log.info(f"Confirm callback: action={action} tool={tool_name} context={context_id[:8]}")
 
-        # Return update response — removes buttons, shows result
-        return JSONResponse({
-            "update": {
-                "message": f"{original_message}\n\n**Result:** {label}",
-                "props": {"attachments": []},
-            }
+    # Map action to event fields
+    approved = action in ("approve", "always", "add_pattern")
+    always = action == "always"
+    add_pattern = action == "add_pattern"
+
+    # Route through manager if available, fall back to event bus
+    if manager and conv_id and confirmation_id:
+        await manager.respond_to_confirmation(
+            conv_id, confirmation_id,
+            approved=approved, always=always, add_pattern=add_pattern,
+        )
+    else:
+        await event_bus.publish({
+            "type": "tool_confirm_response",
+            "context_id": context_id,
+            "tool": tool_name,
+            "approved": approved,
+            **({"tool_call_id": tool_call_id} if tool_call_id else {}),
+            **({"always": True} if always else {}),
+            **({"add_pattern": True} if add_pattern else {}),
         })
 
-    # -- Auth routes -----------------------------------------------------------
+    # Determine result label
+    labels = {
+        "approve": "\u2705 Approved",
+        "always": "\u2705 Always approved",
+        "add_pattern": "\U0001f4d3 Approved + pattern added",
+        "deny": "\U0001f44e Denied",
+    }
+    label = labels.get(action, f"\u2753 Unknown action: {action}")
 
-    async def auth_login(request: Request) -> JSONResponse:
-        """Validate token, set session cookie."""
-        from .web.auth import validate_token
-        body = await request.json()
-        token = body.get("token", "")
-        username = validate_token(config, token)
-        if not username:
-            return JSONResponse({"error": "invalid token"}, status_code=401)
-        response = JSONResponse({"username": username})
-        response.set_cookie(
-            "decafclaw_session", token,
-            httponly=True, samesite="lax", max_age=30 * 24 * 3600,
-        )
-        return response
+    # Return update response — removes buttons, shows result
+    return JSONResponse({
+        "update": {
+            "message": f"{original_message}\n\n**Result:** {label}",
+            "props": {"attachments": []},
+        }
+    })
 
-    async def auth_logout(request: Request) -> JSONResponse:
-        """Clear session cookie."""
-        response = JSONResponse({"ok": True})
-        response.delete_cookie("decafclaw_session")
-        return response
 
-    async def auth_me(request: Request) -> JSONResponse:
-        """Return current authenticated user."""
-        from .web.auth import get_current_user
-        username = get_current_user(request, config)
-        if not username:
-            return JSONResponse({"error": "not authenticated"}, status_code=401)
-        return JSONResponse({"username": username})
+async def handle_cancel(request: Request) -> JSONResponse:
+    """Handle Mattermost interactive button callback for stop/cancel."""
+    event_bus = request.app.state.event_bus
+    manager = request.app.state.manager
+
+    token = request.query_params.get("token", "")
+    token_data = get_token_registry().consume(token)
+
+    if not token_data:
+        log.warning("Cancel callback rejected: invalid or expired token")
+        return JSONResponse({"error": "unauthorized"}, status_code=403)
+
+    conv_id = token_data.get("conv_id", "") or token_data.get("context_id", "")
+    log.info(f"Cancel button pressed for conversation {conv_id[:8]}")
+
+    if manager and conv_id:
+        await manager.cancel_turn(conv_id)
+    else:
+        await event_bus.publish({
+            "type": "cancel_turn",
+            "conv_id": conv_id,
+        })
+
+    return JSONResponse({
+        "update": {
+            "message": "\u23f9\ufe0f Stopped",
+            "props": {"attachments": []},
+        }
+    })
+
+
+# -- Auth routes -------------------------------------------------------------
+
+
+async def auth_login(request: Request) -> JSONResponse:
+    """Validate a one-time login token, then set the session cookie."""
+    from .web.auth import validate_token
+    config = request.app.state.config
+    body = await request.json()
+    token = body.get("token", "")
+    username = validate_token(config, token)
+    if not username:
+        return JSONResponse({"error": "invalid token"}, status_code=401)
+    response = JSONResponse({"username": username})
+    response.set_cookie(
+        "decafclaw_session", token,
+        httponly=True, samesite="lax", max_age=30 * 24 * 3600,
+    )
+    return response
+
+
+async def auth_logout(request: Request) -> JSONResponse:
+    """Clear the session cookie."""
+    response = JSONResponse({"ok": True})
+    response.delete_cookie("decafclaw_session")
+    return response
+
+
+async def auth_me(request: Request) -> JSONResponse:
+    """Return the current authenticated user."""
+    username = _get_username_or_401(request)
+    if not username:
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    return JSONResponse({"username": username})
+
+
+def create_app(config, event_bus, app_ctx=None, manager=None) -> Starlette:
+    """Create the Starlette ASGI app with routes."""
 
     # -- Conversation routes ---------------------------------------------------
 
@@ -1512,33 +1557,6 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> Starlette:
         from .web.websocket import websocket_chat
         await websocket_chat(websocket, config, event_bus, app_ctx,
                              manager=manager)
-
-    async def handle_cancel(request: Request) -> JSONResponse:
-        """Handle Mattermost interactive button callback for stop/cancel."""
-        token = request.query_params.get("token", "")
-        token_data = get_token_registry().consume(token)
-
-        if not token_data:
-            log.warning("Cancel callback rejected: invalid or expired token")
-            return JSONResponse({"error": "unauthorized"}, status_code=403)
-
-        conv_id = token_data.get("conv_id", "") or token_data.get("context_id", "")
-        log.info(f"Cancel button pressed for conversation {conv_id[:8]}")
-
-        if manager and conv_id:
-            await manager.cancel_turn(conv_id)
-        else:
-            await event_bus.publish({
-                "type": "cancel_turn",
-                "conv_id": conv_id,
-            })
-
-        return JSONResponse({
-            "update": {
-                "message": "\u23f9\ufe0f Stopped",
-                "props": {"attachments": []},
-            }
-        })
 
     @_authenticated
     async def list_widgets(request: Request, username: str) -> JSONResponse:
