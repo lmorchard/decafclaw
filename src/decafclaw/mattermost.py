@@ -447,7 +447,7 @@ class MattermostClient:
         def is_streaming():
             """Resolve streaming for the conversation's active model."""
             conv_state = manager.get_state(conv_id)
-            model = conv_state.active_model if conv_state else ""
+            model = conv_state.persisted.active_model if conv_state else ""
             return resolve_streaming(config, model)
         compaction_post_id = None
 
