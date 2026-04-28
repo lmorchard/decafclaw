@@ -343,241 +343,348 @@ async def auth_me(request: Request) -> JSONResponse:
     return JSONResponse({"username": username})
 
 
-def create_app(config, event_bus, app_ctx=None, manager=None) -> Starlette:
-    """Create the Starlette ASGI app with routes."""
+# -- Conversation routes ------------------------------------------------------
 
-    # -- Conversation routes ---------------------------------------------------
 
-    @_authenticated
-    async def list_conversations(request: Request, username: str) -> JSONResponse:
-        """List conversations and subfolders for a specific folder.
+@_authenticated
+async def list_conversations(request: Request, username: str) -> JSONResponse:
+    """List conversations and subfolders for a specific folder.
 
-        Query params:
-            folder — folder path (default: top-level)
+    Query params:
+        folder — folder path (default: top-level)
 
-        Returns ``{folder, folders, conversations}`` mirroring vault_list pattern.
-        """
-        from .web.conversation_folders import ConversationFolderIndex
-        from .web.conversations import ConversationIndex
-        folder_param = request.query_params.get("folder", "").strip()
-        err = _validate_folder_param(folder_param)
-        if err:
-            return JSONResponse({"error": err}, status_code=400)
-        index = ConversationIndex(config)
-        folder_index = ConversationFolderIndex(config, username)
-        convs = index.list_for_user(username)
-        assignments = await folder_index.get_all_assignments()
-        # Filter conversations to requested folder
-        filtered = [
-            c for c in convs
-            if assignments.get(c.conv_id, "") == folder_param
-        ]
-        # Get child folders
-        child_names = await folder_index.list_folders(folder_param)
-        folders: list[dict] = [
-            {"name": name, "path": f"{folder_param}/{name}" if folder_param else name}
-            for name in child_names
-        ]
-        # At top level, append virtual folders
-        if not folder_param:
-            folders.append({"name": "Archived", "path": "_archived", "virtual": True})
-            folders.append({"name": "System", "path": "_system", "virtual": True})
-        return JSONResponse({
-            "folder": folder_param,
-            "folders": folders,
-            "conversations": [c.to_dict() for c in filtered],
-        })
+    Returns ``{folder, folders, conversations}`` mirroring vault_list pattern.
+    """
+    from .web.conversation_folders import ConversationFolderIndex
+    from .web.conversations import ConversationIndex
+    config = request.app.state.config
+    folder_param = request.query_params.get("folder", "").strip()
+    err = _validate_folder_param(folder_param)
+    if err:
+        return JSONResponse({"error": err}, status_code=400)
+    index = ConversationIndex(config)
+    folder_index = ConversationFolderIndex(config, username)
+    convs = index.list_for_user(username)
+    assignments = await folder_index.get_all_assignments()
+    filtered = [
+        c for c in convs
+        if assignments.get(c.conv_id, "") == folder_param
+    ]
+    child_names = await folder_index.list_folders(folder_param)
+    folders: list[dict] = [
+        {"name": name, "path": f"{folder_param}/{name}" if folder_param else name}
+        for name in child_names
+    ]
+    if not folder_param:
+        folders.append({"name": "Archived", "path": "_archived", "virtual": True})
+        folders.append({"name": "System", "path": "_system", "virtual": True})
+    return JSONResponse({
+        "folder": folder_param,
+        "folders": folders,
+        "conversations": [c.to_dict() for c in filtered],
+    })
 
-    @_authenticated
-    async def list_archived_conversations(request: Request, username: str) -> JSONResponse:
-        """List archived conversations, optionally filtered by folder.
 
-        Query params:
-            folder — folder path (default: top-level)
-        """
-        from .web.conversation_folders import ConversationFolderIndex
-        from .web.conversations import ConversationIndex
-        folder_param = request.query_params.get("folder", "").strip()
-        err = _validate_folder_param(folder_param)
-        if err:
-            return JSONResponse({"error": err}, status_code=400)
-        index = ConversationIndex(config)
-        folder_index = ConversationFolderIndex(config, username)
-        convs = index.list_for_user(username, include_archived=True)
-        archived = [c for c in convs if c.archived]
-        assignments = await folder_index.get_all_assignments()
-        # Filter to requested folder
-        filtered = [
-            c for c in archived
-            if assignments.get(c.conv_id, "") == folder_param
-        ]
-        # Derive child folders from archived conversation assignments.
-        # Extract the immediate child segment — e.g. if folder_param="" and a
-        # conversation is in "projects/bot-redesign", emit "projects".
-        prefix = f"{folder_param}/" if folder_param else ""
-        child_names = set()
-        for c in archived:
-            folder = assignments.get(c.conv_id, "")
-            if not folder:
-                continue
-            if folder_param == "":
-                # Top level: extract first segment
-                child_names.add(folder.split("/")[0])
-            elif folder.startswith(prefix):
-                rest = folder[len(prefix):]
-                if rest:
-                    child_names.add(rest.split("/")[0])
+@_authenticated
+async def list_archived_conversations(request: Request, username: str) -> JSONResponse:
+    """List archived conversations, optionally filtered by folder."""
+    from .web.conversation_folders import ConversationFolderIndex
+    from .web.conversations import ConversationIndex
+    config = request.app.state.config
+    folder_param = request.query_params.get("folder", "").strip()
+    err = _validate_folder_param(folder_param)
+    if err:
+        return JSONResponse({"error": err}, status_code=400)
+    index = ConversationIndex(config)
+    folder_index = ConversationFolderIndex(config, username)
+    convs = index.list_for_user(username, include_archived=True)
+    archived = [c for c in convs if c.archived]
+    assignments = await folder_index.get_all_assignments()
+    filtered = [
+        c for c in archived
+        if assignments.get(c.conv_id, "") == folder_param
+    ]
+    # Derive child folders from archived conversation assignments — extract
+    # immediate child segment of nested folder paths.
+    prefix = f"{folder_param}/" if folder_param else ""
+    child_names = set()
+    for c in archived:
+        folder = assignments.get(c.conv_id, "")
+        if not folder:
+            continue
+        if folder_param == "":
+            child_names.add(folder.split("/")[0])
+        elif folder.startswith(prefix):
+            rest = folder[len(prefix):]
+            if rest:
+                child_names.add(rest.split("/")[0])
+    folders = [
+        {"name": name, "path": f"{folder_param}/{name}" if folder_param else name}
+        for name in sorted(child_names)
+    ]
+    return JSONResponse({
+        "folder": folder_param,
+        "folders": folders,
+        "conversations": [c.to_dict() for c in filtered],
+    })
+
+
+@_authenticated
+async def list_system_conversations(request: Request, username: str) -> JSONResponse:
+    """List system conversations, grouped by type sub-folders."""
+    from .web.conversations import list_system_conversations as list_sys
+    config = request.app.state.config
+    folder_param = request.query_params.get("folder", "").strip()
+    all_sys = list_sys(config, username=username)
+    if not folder_param:
         folders = [
-            {"name": name, "path": f"{folder_param}/{name}" if folder_param else name}
-            for name in sorted(child_names)
+            {"name": "Heartbeat", "path": "heartbeat"},
+            {"name": "Schedule", "path": "schedule"},
+            {"name": "Delegated", "path": "delegated"},
         ]
         return JSONResponse({
-            "folder": folder_param,
+            "folder": "",
             "folders": folders,
-            "conversations": [c.to_dict() for c in filtered],
+            "conversations": [],
         })
+    valid_types = {"heartbeat", "schedule", "delegated"}
+    if folder_param not in valid_types:
+        return JSONResponse({"error": "invalid system folder"}, status_code=400)
+    filtered = [c for c in all_sys if c.get("conv_type") == folder_param]
+    return JSONResponse({
+        "folder": folder_param,
+        "folders": [],
+        "conversations": filtered,
+    })
 
-    @_authenticated
-    async def list_system_conversations(request: Request, username: str) -> JSONResponse:
-        """List system conversations, grouped by type sub-folders.
 
-        Query params:
-            folder — sub-folder type: heartbeat, schedule, delegated (default: top-level)
-        """
-        from .web.conversations import list_system_conversations as list_sys
-        folder_param = request.query_params.get("folder", "").strip()
-        all_sys = list_sys(config, username=username)
-        if not folder_param:
-            # Top level: show type sub-folders, no conversations
-            folders = [
-                {"name": "Heartbeat", "path": "heartbeat"},
-                {"name": "Schedule", "path": "schedule"},
-                {"name": "Delegated", "path": "delegated"},
-            ]
-            return JSONResponse({
-                "folder": "",
-                "folders": folders,
-                "conversations": [],
-            })
-        # Filter by conv_type
-        valid_types = {"heartbeat", "schedule", "delegated"}
-        if folder_param not in valid_types:
-            return JSONResponse({"error": "invalid system folder"}, status_code=400)
-        filtered = [c for c in all_sys if c.get("conv_type") == folder_param]
-        return JSONResponse({
-            "folder": folder_param,
-            "folders": [],
-            "conversations": filtered,
-        })
+@_authenticated
+async def create_conversation(request: Request, username: str) -> JSONResponse:
+    """Create a new conversation, optionally in a folder with a model."""
+    config = request.app.state.config
+    body = await request.json()
+    folder = str(body.get("folder", "")).strip()
+    model_name = str(body.get("model", body.get("effort", ""))).strip()
+    if model_name and model_name not in config.model_configs:
+        return JSONResponse({"error": f"Unknown model: {model_name}"}, status_code=400)
+    if folder:
+        from .web.conversation_folders import ConversationFolderIndex
+        folder_index = ConversationFolderIndex(config, username)
+        if not await folder_index.folder_exists(folder):
+            return JSONResponse({"error": "Folder does not exist"}, status_code=400)
+    from .web.conversations import ConversationIndex
+    index = ConversationIndex(config)
+    conv = index.create(username, title=body.get("title", ""))
+    if folder:
+        await folder_index.set_folder(conv.conv_id, folder)
+    if model_name:
+        from .archive import append_message
+        append_message(config, conv.conv_id,
+                       {"role": "model", "content": model_name})
+    result = conv.to_dict()
+    if folder:
+        result["folder"] = folder
+    if model_name:
+        result["model"] = model_name
+    return JSONResponse(result, status_code=201)
 
-    @_authenticated
-    async def create_conversation(request: Request, username: str) -> JSONResponse:
-        """Create a new conversation, optionally in a folder with a model."""
-        body = await request.json()
-        folder = str(body.get("folder", "")).strip()
-        model_name = str(body.get("model", body.get("effort", ""))).strip()
-        # Validate model name
-        if model_name and model_name not in config.model_configs:
-            return JSONResponse({"error": f"Unknown model: {model_name}"}, status_code=400)
-        # Validate folder exists before creating conversation
-        if folder:
-            from .web.conversation_folders import ConversationFolderIndex
-            folder_index = ConversationFolderIndex(config, username)
+
+@_authenticated
+async def get_conversation(request: Request, username: str) -> JSONResponse:
+    """Get conversation metadata."""
+    from .web.conversations import ConversationIndex
+    config = request.app.state.config
+    conv_id = request.path_params["id"]
+    index = ConversationIndex(config)
+    conv = index.get(conv_id)
+    if not conv or conv.user_id != username:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    return JSONResponse(conv.to_dict())
+
+
+@_authenticated
+async def rename_conversation(request: Request, username: str) -> JSONResponse:
+    """Rename and/or move a conversation to a different folder."""
+    from .web.conversations import ConversationIndex
+    config = request.app.state.config
+    conv_id = request.path_params["id"]
+    body = await request.json()
+    index = ConversationIndex(config)
+    conv = index.get(conv_id)
+    if not conv or conv.user_id != username:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    folder = body.get("folder")
+    if folder is not None:
+        folder = str(folder).strip()
+        from .web.conversation_folders import ConversationFolderIndex
+        folder_index = ConversationFolderIndex(config, username)
+        if folder != "":
             if not await folder_index.folder_exists(folder):
                 return JSONResponse({"error": "Folder does not exist"}, status_code=400)
-        from .web.conversations import ConversationIndex
-        index = ConversationIndex(config)
-        conv = index.create(username, title=body.get("title", ""))
-        # Assign to folder
-        if folder:
-            await folder_index.set_folder(conv.conv_id, folder)
-        # Record initial model selection
-        if model_name:
-            from .archive import append_message
-            append_message(config, conv.conv_id,
-                           {"role": "model", "content": model_name})
-        result = conv.to_dict()
-        if folder:
-            result["folder"] = folder
-        if model_name:
-            result["model"] = model_name
-        return JSONResponse(result, status_code=201)
-
-    @_authenticated
-    async def get_conversation(request: Request, username: str) -> JSONResponse:
-        """Get conversation metadata."""
-        conv_id = request.path_params["id"]
-        from .web.conversations import ConversationIndex
-        index = ConversationIndex(config)
-        conv = index.get(conv_id)
-        if not conv or conv.user_id != username:
+    title = body.get("title")
+    if title is not None:
+        updated = index.rename(conv_id, title)
+        if not updated:
             return JSONResponse({"error": "not found"}, status_code=404)
-        return JSONResponse(conv.to_dict())
+        conv = updated
+    if folder is not None:
+        ok, err = await folder_index.set_folder(conv_id, folder)
+        if not ok:
+            return JSONResponse({"error": err}, status_code=400)
+    result = conv.to_dict()
+    if folder is not None:
+        result["folder"] = folder
+    return JSONResponse(result)
 
-    @_authenticated
-    async def rename_conversation(request: Request, username: str) -> JSONResponse:
-        """Rename and/or move a conversation to a different folder."""
-        conv_id = request.path_params["id"]
-        body = await request.json()
-        from .web.conversations import ConversationIndex
-        index = ConversationIndex(config)
-        conv = index.get(conv_id)
-        if not conv or conv.user_id != username:
-            return JSONResponse({"error": "not found"}, status_code=404)
-        # Validate folder before applying any changes
-        folder = body.get("folder")
-        if folder is not None:
-            folder = str(folder).strip()
-            from .web.conversation_folders import ConversationFolderIndex
-            folder_index = ConversationFolderIndex(config, username)
-            if folder != "":
-                if not await folder_index.folder_exists(folder):
-                    return JSONResponse({"error": "Folder does not exist"}, status_code=400)
-        # Rename title if provided
-        title = body.get("title")
-        if title is not None:
-            updated = index.rename(conv_id, title)
-            if not updated:
-                return JSONResponse({"error": "not found"}, status_code=404)
-            conv = updated
-        # Move to folder if provided (already validated above)
-        if folder is not None:
-            ok, err = await folder_index.set_folder(conv_id, folder)
-            if not ok:
-                return JSONResponse({"error": err}, status_code=400)
-        result = conv.to_dict()
-        if folder is not None:
-            result["folder"] = folder
-        return JSONResponse(result)
 
-    @_authenticated
-    async def get_conversation_history(request: Request, username: str) -> JSONResponse:
-        """Load paginated conversation history."""
-        conv_id = request.path_params["id"]
-        from .web.conversations import ConversationIndex
-        index = ConversationIndex(config)
-        conv = index.get(conv_id)
-        if not conv or conv.user_id != username:
-            return JSONResponse({"error": "not found"}, status_code=404)
-        limit = int(request.query_params.get("limit", "50"))
-        before = request.query_params.get("before", "")
-        messages, has_more = index.load_history(conv_id, limit=limit, before=before)
-        return JSONResponse({"messages": messages, "has_more": has_more})
+@_authenticated
+async def get_conversation_history(request: Request, username: str) -> JSONResponse:
+    """Load paginated conversation history."""
+    from .web.conversations import ConversationIndex
+    config = request.app.state.config
+    conv_id = request.path_params["id"]
+    index = ConversationIndex(config)
+    conv = index.get(conv_id)
+    if not conv or conv.user_id != username:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    limit = int(request.query_params.get("limit", "50"))
+    before = request.query_params.get("before", "")
+    messages, has_more = index.load_history(conv_id, limit=limit, before=before)
+    return JSONResponse({"messages": messages, "has_more": has_more})
 
-    @_authenticated
-    async def get_context_diagnostics(request: Request, username: str) -> JSONResponse:
-        """Return context composer diagnostics for a conversation."""
-        conv_id = request.path_params["id"]
-        from .web.conversations import ConversationIndex
-        index = ConversationIndex(config)
-        conv = index.get(conv_id)
-        if not conv or conv.user_id != username:
-            return JSONResponse({"error": "not found"}, status_code=404)
-        from .context_composer import read_context_sidecar
-        data = read_context_sidecar(config, conv_id)
-        if data is None:
-            return JSONResponse({"error": "no context data"}, status_code=404)
-        return JSONResponse(data)
+
+@_authenticated
+async def get_context_diagnostics(request: Request, username: str) -> JSONResponse:
+    """Return context composer diagnostics for a conversation."""
+    from .context_composer import read_context_sidecar
+    from .web.conversations import ConversationIndex
+    config = request.app.state.config
+    conv_id = request.path_params["id"]
+    index = ConversationIndex(config)
+    conv = index.get(conv_id)
+    if not conv or conv.user_id != username:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    data = read_context_sidecar(config, conv_id)
+    if data is None:
+        return JSONResponse({"error": "no context data"}, status_code=404)
+    return JSONResponse(data)
+
+
+@_authenticated
+async def archive_conversation(request: Request, username: str) -> JSONResponse:
+    """Archive a conversation (hide from list, keep data)."""
+    from .web.conversations import ConversationIndex
+    config = request.app.state.config
+    conv_id = request.path_params["id"]
+    index = ConversationIndex(config)
+    conv = index.get(conv_id)
+    if not conv or conv.user_id != username:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    index.archive(conv_id)
+    return JSONResponse({"ok": True})
+
+
+@_authenticated
+async def unarchive_conversation(request: Request, username: str) -> JSONResponse:
+    """Unarchive a conversation (restore to active list)."""
+    from .web.conversations import ConversationIndex
+    config = request.app.state.config
+    conv_id = request.path_params["id"]
+    index = ConversationIndex(config)
+    conv = index.get(conv_id)
+    if not conv or conv.user_id != username:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    index.unarchive(conv_id)
+    return JSONResponse({"ok": True})
+
+
+@_authenticated
+async def delete_conversation(request: Request, username: str) -> JSONResponse:
+    """Permanently delete a conversation and all associated files."""
+    from .attachments import delete_conversation_uploads
+    from .web.conversation_folders import ConversationFolderIndex
+    from .web.conversations import ConversationIndex
+    config = request.app.state.config
+    conv_id = request.path_params["id"]
+    index = ConversationIndex(config)
+    conv = index.get(conv_id)
+    if not conv or conv.user_id != username:
+        return JSONResponse({"error": "not found"}, status_code=404)
+
+    # Delete sidecar files on disk (with path sandboxing).
+    conv_dir = config.workspace_path / "conversations"
+    for suffix in [".jsonl", ".compacted.jsonl", ".context.json", ".decisions.json", ".notes.md"]:
+        path = (conv_dir / f"{conv_id}{suffix}").resolve()
+        if not path.is_relative_to(conv_dir.resolve()):
+            continue  # path traversal guard
+        if path.exists():
+            path.unlink()
+
+    delete_conversation_uploads(config, conv_id)
+    index.delete(conv_id)
+    folder_index = ConversationFolderIndex(config, username)
+    await folder_index.remove_assignment(conv_id)
+    return JSONResponse({"ok": True})
+
+
+# -- Conversation folder routes ----------------------------------------------
+
+
+@_authenticated
+async def create_conv_folder(request: Request, username: str) -> JSONResponse:
+    """Create a conversation folder."""
+    from .web.conversation_folders import ConversationFolderIndex
+    config = request.app.state.config
+    body = await request.json()
+    path = body.get("path", "")
+    if not path or not isinstance(path, str):
+        return JSONResponse({"error": "path (string) required"}, status_code=400)
+    folder_index = ConversationFolderIndex(config, username)
+    ok, err = await folder_index.create_folder(path.strip())
+    if not ok:
+        status = 409 if "already exists" in err else 400
+        return JSONResponse({"error": err}, status_code=status)
+    return JSONResponse({"ok": True, "path": path.strip()})
+
+
+@_authenticated
+async def delete_conv_folder(request: Request, username: str) -> JSONResponse:
+    """Delete an empty conversation folder."""
+    from .web.conversation_folders import ConversationFolderIndex
+    config = request.app.state.config
+    path = request.path_params.get("path", "")
+    if not path:
+        return JSONResponse({"error": "path required"}, status_code=400)
+    folder_index = ConversationFolderIndex(config, username)
+    ok, err = await folder_index.delete_folder(path)
+    if not ok:
+        status = 409 if "contains" in err else 404
+        return JSONResponse({"error": err}, status_code=status)
+    return JSONResponse({"ok": True})
+
+
+@_authenticated
+async def rename_conv_folder(request: Request, username: str) -> JSONResponse:
+    """Rename/move a conversation folder. Merges if target exists."""
+    from .web.conversation_folders import ConversationFolderIndex
+    config = request.app.state.config
+    old_path = request.path_params.get("path", "")
+    if not old_path:
+        return JSONResponse({"error": "path required"}, status_code=400)
+    body = await request.json()
+    new_path = body.get("path", "")
+    if not new_path or not isinstance(new_path, str):
+        return JSONResponse({"error": "path (string) required in body"}, status_code=400)
+    folder_index = ConversationFolderIndex(config, username)
+    ok, err = await folder_index.rename_folder(old_path, new_path.strip())
+    if not ok:
+        status = 404 if "not found" in err else 400
+        return JSONResponse({"error": err}, status_code=status)
+    return JSONResponse({"ok": True})
+
+
+def create_app(config, event_bus, app_ctx=None, manager=None) -> Starlette:
+    """Create the Starlette ASGI app with routes."""
 
     # -- Notification routes ---------------------------------------------------
     # Phase 1: single-user. Inbox + read-state live in the agent workspace,
@@ -1327,112 +1434,6 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> Starlette:
         from .attachments import save_attachment
         result = save_attachment(config, conv_id, filename, data, content_type)
         return JSONResponse(result, status_code=201)
-
-    @_authenticated
-    async def archive_conversation(request: Request, username: str) -> JSONResponse:
-        """Archive a conversation (hide from list, keep data)."""
-        conv_id = request.path_params["id"]
-        from .web.conversations import ConversationIndex
-        index = ConversationIndex(config)
-        conv = index.get(conv_id)
-        if not conv or conv.user_id != username:
-            return JSONResponse({"error": "not found"}, status_code=404)
-        index.archive(conv_id)
-        return JSONResponse({"ok": True})
-
-    @_authenticated
-    async def unarchive_conversation(request: Request, username: str) -> JSONResponse:
-        """Unarchive a conversation (restore to active list)."""
-        conv_id = request.path_params["id"]
-        from .web.conversations import ConversationIndex
-        index = ConversationIndex(config)
-        conv = index.get(conv_id)
-        if not conv or conv.user_id != username:
-            return JSONResponse({"error": "not found"}, status_code=404)
-        index.unarchive(conv_id)
-        return JSONResponse({"ok": True})
-
-    @_authenticated
-    async def delete_conversation(request: Request, username: str) -> JSONResponse:
-        """Permanently delete a conversation and all associated files."""
-        conv_id = request.path_params["id"]
-        from .web.conversations import ConversationIndex
-        index = ConversationIndex(config)
-        conv = index.get(conv_id)
-        if not conv or conv.user_id != username:
-            return JSONResponse({"error": "not found"}, status_code=404)
-
-        # Delete files on disk (with path sandboxing)
-        conv_dir = config.workspace_path / "conversations"
-        for suffix in [".jsonl", ".compacted.jsonl", ".context.json", ".decisions.json", ".notes.md"]:
-            path = (conv_dir / f"{conv_id}{suffix}").resolve()
-            if not path.is_relative_to(conv_dir.resolve()):
-                continue  # path traversal guard
-            if path.exists():
-                path.unlink()
-
-        # Delete uploads directory
-        from .attachments import delete_conversation_uploads
-        delete_conversation_uploads(config, conv_id)
-
-        # Remove from conversation index
-        index.delete(conv_id)
-
-        # Remove from folder index
-        from .web.conversation_folders import ConversationFolderIndex
-        folder_index = ConversationFolderIndex(config, username)
-        await folder_index.remove_assignment(conv_id)
-
-        return JSONResponse({"ok": True})
-
-    # -- Conversation folder routes -----------------------------------------------
-
-    @_authenticated
-    async def create_conv_folder(request: Request, username: str) -> JSONResponse:
-        """Create a conversation folder."""
-        body = await request.json()
-        path = body.get("path", "")
-        if not path or not isinstance(path, str):
-            return JSONResponse({"error": "path (string) required"}, status_code=400)
-        from .web.conversation_folders import ConversationFolderIndex
-        folder_index = ConversationFolderIndex(config, username)
-        ok, err = await folder_index.create_folder(path.strip())
-        if not ok:
-            status = 409 if "already exists" in err else 400
-            return JSONResponse({"error": err}, status_code=status)
-        return JSONResponse({"ok": True, "path": path.strip()})
-
-    @_authenticated
-    async def delete_conv_folder(request: Request, username: str) -> JSONResponse:
-        """Delete an empty conversation folder."""
-        path = request.path_params.get("path", "")
-        if not path:
-            return JSONResponse({"error": "path required"}, status_code=400)
-        from .web.conversation_folders import ConversationFolderIndex
-        folder_index = ConversationFolderIndex(config, username)
-        ok, err = await folder_index.delete_folder(path)
-        if not ok:
-            status = 409 if "contains" in err else 404
-            return JSONResponse({"error": err}, status_code=status)
-        return JSONResponse({"ok": True})
-
-    @_authenticated
-    async def rename_conv_folder(request: Request, username: str) -> JSONResponse:
-        """Rename/move a conversation folder. Merges if target exists."""
-        old_path = request.path_params.get("path", "")
-        if not old_path:
-            return JSONResponse({"error": "path required"}, status_code=400)
-        body = await request.json()
-        new_path = body.get("path", "")
-        if not new_path or not isinstance(new_path, str):
-            return JSONResponse({"error": "path (string) required in body"}, status_code=400)
-        from .web.conversation_folders import ConversationFolderIndex
-        folder_index = ConversationFolderIndex(config, username)
-        ok, err = await folder_index.rename_folder(old_path, new_path.strip())
-        if not ok:
-            status = 404 if "not found" in err else 400
-            return JSONResponse({"error": err}, status_code=status)
-        return JSONResponse({"ok": True})
 
     # -- Config file routes ----------------------------------------------------
 
