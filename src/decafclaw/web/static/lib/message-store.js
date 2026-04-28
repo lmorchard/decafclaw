@@ -2,6 +2,8 @@
  * @typedef {import('./conversation-store.js').ChatMessage} ChatMessage
  */
 
+import { MESSAGE_TYPES } from './message-types.js';
+
 /**
  * Sub-store managing message state: history, streaming text, pagination.
  */
@@ -132,7 +134,7 @@ export class MessageStore {
    */
   handleMessage(msg, currentConvId) {
     switch (msg.type) {
-      case 'conv_history':
+      case MESSAGE_TYPES.CONV_HISTORY:
         if (msg.conv_id === currentConvId) {
           const existing = new Set(this.#currentMessages.map(m => m.timestamp));
           const newMsgs = (msg.messages || []).filter(
@@ -150,13 +152,13 @@ export class MessageStore {
         }
         return true;
 
-      case 'chunk':
+      case MESSAGE_TYPES.CHUNK:
         if (msg.conv_id === currentConvId) {
           this.#streamingText += msg.text;
         }
         return true;
 
-      case 'message_complete':
+      case MESSAGE_TYPES.MESSAGE_COMPLETE:
         if (msg.conv_id === currentConvId) {
           this.#currentMessages.push({
             role: msg.role || 'assistant',
@@ -168,7 +170,7 @@ export class MessageStore {
         }
         return true;
 
-      case 'user_message':
+      case MESSAGE_TYPES.USER_MESSAGE:
         // Multi-tab sync: add user message if not already present
         // (the originating tab adds it locally before the event arrives).
         //
@@ -198,7 +200,7 @@ export class MessageStore {
         }
         return true;
 
-      case 'command_ack':
+      case MESSAGE_TYPES.COMMAND_ACK:
         if (msg.conv_id === currentConvId) {
           this.#currentMessages.push({
             role: 'command',
@@ -208,7 +210,7 @@ export class MessageStore {
         }
         return true;
 
-      case 'compaction_done':
+      case MESSAGE_TYPES.COMPACTION_DONE:
         if (msg.conv_id === currentConvId) {
           this.#currentMessages.push({
             role: 'compaction',
@@ -218,7 +220,7 @@ export class MessageStore {
         }
         return true;
 
-      case 'background_event':
+      case MESSAGE_TYPES.BACKGROUND_EVENT:
         if (msg.conv_id === currentConvId) {
           const record = msg.record || {};
           this.#currentMessages.push({

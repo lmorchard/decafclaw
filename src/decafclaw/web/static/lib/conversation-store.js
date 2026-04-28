@@ -1,3 +1,5 @@
+import { MESSAGE_TYPES } from './message-types.js';
+
 /**
  * @typedef {object} ConversationMeta
  * @property {string} conv_id
@@ -427,8 +429,8 @@ export class ConversationStore extends EventTarget {
     this.#contextLimit = 0;
     this.#activeModel = '';
     this.#readOnly = false;
-    this.#ws.send({ type: 'select_conv', conv_id: convId });
-    this.#ws.send({ type: 'load_history', conv_id: convId, limit: 50 });
+    this.#ws.send({ type: MESSAGE_TYPES.SELECT_CONV, conv_id: convId });
+    this.#ws.send({ type: MESSAGE_TYPES.LOAD_HISTORY, conv_id: convId, limit: 50 });
     this.#emitChange();
   }
 
@@ -452,7 +454,7 @@ export class ConversationStore extends EventTarget {
     this.#busy = true;
     this.#messageStore.clearStreamingText();
     this.#toolStatusStore.clearToolStatus();
-    const wsMsg = { type: 'send', conv_id: this.#currentConvId, text };
+    const wsMsg = { type: MESSAGE_TYPES.SEND, conv_id: this.#currentConvId, text };
     if (attachments.length) wsMsg.attachments = attachments;
     const wikiPage = /** @type {any} */ (window).getOpenWikiPage?.();
     if (wikiPage) wsMsg.wiki_page = wikiPage;
@@ -487,21 +489,21 @@ export class ConversationStore extends EventTarget {
   setModel(model) {
     this.#activeModel = model;
     if (this.#currentConvId) {
-      this.#ws.send({ type: 'set_model', conv_id: this.#currentConvId, model });
+      this.#ws.send({ type: MESSAGE_TYPES.SET_MODEL, conv_id: this.#currentConvId, model });
     }
     this.#emitChange();
   }
 
   cancelTurn() {
     if (!this.#currentConvId) return;
-    this.#ws.send({ type: 'cancel_turn', conv_id: this.#currentConvId });
+    this.#ws.send({ type: MESSAGE_TYPES.CANCEL_TURN, conv_id: this.#currentConvId });
   }
 
   /** @param {string} [before] timestamp cursor */
   loadMoreHistory(before = '') {
     if (!this.#currentConvId) return;
     const cursor = before || (this.#messageStore.currentMessages[0]?.timestamp || '');
-    this.#ws.send({ type: 'load_history', conv_id: this.#currentConvId, limit: 50, before: cursor });
+    this.#ws.send({ type: MESSAGE_TYPES.LOAD_HISTORY, conv_id: this.#currentConvId, limit: 50, before: cursor });
   }
 
   /**
@@ -531,7 +533,7 @@ export class ConversationStore extends EventTarget {
     // Delegate to sub-stores first
     if (this.#messageStore.handleMessage(msg, this.#currentConvId)) {
       // Handle side effects that live in ConversationStore
-      if (msg.type === 'conv_history' && msg.conv_id === this.#currentConvId) {
+      if (msg.type === MESSAGE_TYPES.CONV_HISTORY && msg.conv_id === this.#currentConvId) {
         if (msg.context_limit) this.#contextLimit = msg.context_limit;
         if (msg.estimated_tokens) this.#contextUsage = msg.estimated_tokens;
         if (msg.active_model) this.#activeModel = msg.active_model;
@@ -542,13 +544,13 @@ export class ConversationStore extends EventTarget {
         // Restore pending confirmation from server state (survives reload)
         if (msg.pending_confirmation) {
           this.#toolStatusStore.handleMessage({
-            type: 'confirm_request',
+            type: MESSAGE_TYPES.CONFIRM_REQUEST,
             conv_id: this.#currentConvId,
             ...msg.pending_confirmation,
           }, this.#currentConvId);
         }
       }
-      if (msg.type === 'message_complete' && msg.conv_id === this.#currentConvId) {
+      if (msg.type === MESSAGE_TYPES.MESSAGE_COMPLETE && msg.conv_id === this.#currentConvId) {
         this.#toolStatusStore.clearToolStatus();
         if (msg.final) {
           this.#busy = false;
@@ -568,19 +570,19 @@ export class ConversationStore extends EventTarget {
 
     // Messages handled directly by ConversationStore
     switch (msg.type) {
-      case 'conv_selected':
+      case MESSAGE_TYPES.CONV_SELECTED:
         if (msg.read_only) this.#readOnly = true;
         // Restore pending confirmation from server state (survives reload)
         if (msg.pending_confirmation) {
           this.#toolStatusStore.handleMessage({
-            type: 'confirm_request',
+            type: MESSAGE_TYPES.CONFIRM_REQUEST,
             conv_id: msg.conv_id || this.#currentConvId,
             ...msg.pending_confirmation,
           }, this.#currentConvId);
         }
         break;
 
-      case 'turn_start':
+      case MESSAGE_TYPES.TURN_START:
         if (!msg.conv_id || msg.conv_id === this.#currentConvId) {
           this.#busy = true;
           this.#messageStore.clearStreamingText();
@@ -588,18 +590,18 @@ export class ConversationStore extends EventTarget {
         }
         break;
 
-      case 'model_changed':
+      case MESSAGE_TYPES.MODEL_CHANGED:
         if (msg.conv_id === this.#currentConvId) {
           this.#activeModel = msg.model || '';
         }
         break;
 
-      case 'models_available':
+      case MESSAGE_TYPES.MODELS_AVAILABLE:
         if (msg.available_models) this.#availableModels = msg.available_models;
         if (msg.default_model) this.#defaultModel = msg.default_model;
         break;
 
-      case 'error':
+      case MESSAGE_TYPES.ERROR:
         console.error('Server error:', msg.message);
         if (!msg.conv_id || msg.conv_id === this.#currentConvId) {
           this.#busy = false;

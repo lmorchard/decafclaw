@@ -14,6 +14,7 @@
 - [Widgets](widgets.md) — Rich tool output in the web UI (Phase 1: `data_table`; extensible via admin tier)
 - [Streaming](streaming.md) — Stream LLM tokens as they arrive, configurable throttle
 - [HTTP Server & Interactive Buttons](http-server.md) — Mattermost button confirmations, HTTP callback server
+- [WebSocket Message Types](websocket-messages.md) — Generated wire-protocol reference for messages exchanged between server and browser
 
 ## Knowledge & Memory
 

@@ -12,6 +12,8 @@ import re
 
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
+from decafclaw.web.message_types import WSMessageType
+
 log = logging.getLogger(__name__)
 
 # conv_id must be safe for use as a filename — alphanumeric, hyphens, dots, underscores only
@@ -36,7 +38,7 @@ def _project_tool_end(event: dict, conv_id: str) -> dict:
     compact.
     """
     payload = {
-        "type": "tool_end", "conv_id": conv_id,
+        "type": WSMessageType.TOOL_END, "conv_id": conv_id,
         "tool": event.get("tool", ""),
         "result_text": event.get("result_text", ""),
         "tool_call_id": event.get("tool_call_id", ""),
@@ -64,7 +66,7 @@ def _make_canvas_update_forwarder(state, conv_id):
         if event.get("conv_id") != conv_id:
             return
         await ws_send({
-            "type": "canvas_update",
+            "type": WSMessageType.CANVAS_UPDATE,
             "conv_id": conv_id,
             "kind": event.get("kind", "set"),
             "active_tab": event.get("active_tab"),
@@ -98,11 +100,11 @@ def _confirmation_to_dict(req) -> dict:
 async def _handle_select_conv(ws_send, index, username, msg, state):
     conv_id = msg.get("conv_id", "")
     if not _is_safe_conv_id(conv_id):
-        await ws_send({"type": "error", "message": "Invalid conversation ID"})
+        await ws_send({"type": WSMessageType.ERROR, "message": "Invalid conversation ID"})
         return
     conv = index.get(conv_id)
     if conv and conv.user_id == username:
-        response = {"type": "conv_selected", "conv_id": conv_id}
+        response = {"type": WSMessageType.CONV_SELECTED, "conv_id": conv_id}
         # Check for pending confirmation via the manager
         manager = state.get("manager")
         if manager:
@@ -116,16 +118,16 @@ async def _handle_select_conv(ws_send, index, username, msg, state):
         # Check if it's a system conversation (archive exists on disk)
         # Reject other users' web conversations
         if conv_id.startswith("web-") and "--child-" not in conv_id:
-            await ws_send({"type": "error",
+            await ws_send({"type": WSMessageType.ERROR,
                            "message": f"Conversation not found: {conv_id}"})
             return
         from ..archive import archive_path
         if archive_path(state["config"], conv_id).exists():
-            await ws_send({"type": "conv_selected", "conv_id": conv_id,
+            await ws_send({"type": WSMessageType.CONV_SELECTED, "conv_id": conv_id,
                            "read_only": True})
             _subscribe_to_conv(state, conv_id)
         else:
-            await ws_send({"type": "error",
+            await ws_send({"type": WSMessageType.ERROR,
                            "message": f"Conversation not found: {conv_id}"})
 
 
@@ -180,19 +182,19 @@ async def _handle_load_history(ws_send, index, username, msg, state):
     config = state["config"]
     conv_id = msg.get("conv_id", "")
     if not _is_safe_conv_id(conv_id):
-        await ws_send({"type": "error", "message": "Invalid conversation ID"})
+        await ws_send({"type": WSMessageType.ERROR, "message": "Invalid conversation ID"})
         return
     conv = index.get(conv_id)
     is_owner = conv and conv.user_id == username
     if not is_owner:
         # Reject other users' web conversations
         if conv_id.startswith("web-") and "--child-" not in conv_id:
-            await ws_send({"type": "error", "message": "Conversation not found"})
+            await ws_send({"type": WSMessageType.ERROR, "message": "Conversation not found"})
             return
         # Allow read-only access if archive exists on disk (system conversations)
         from ..archive import archive_path
         if not archive_path(config, conv_id).exists():
-            await ws_send({"type": "error", "message": "Conversation not found"})
+            await ws_send({"type": WSMessageType.ERROR, "message": "Conversation not found"})
             return
     try:
         limit = min(max(1, int(msg.get("limit", 50))), 500)
@@ -237,7 +239,7 @@ async def _handle_load_history(ws_send, index, username, msg, state):
                     break
 
     response = {
-        "type": "conv_history", "conv_id": conv_id,
+        "type": WSMessageType.CONV_HISTORY, "conv_id": conv_id,
         "messages": messages, "has_more": has_more,
         "context_limit": config.compaction.max_tokens,
     }
@@ -275,16 +277,16 @@ async def _handle_send(ws_send, index, username, msg, state):
     attachments = msg.get("attachments") or None
     wiki_page = msg.get("wiki_page") or None
     if not conv_id or (not text and not attachments):
-        await ws_send({"type": "error", "message": "conv_id and text (or attachments) required"})
+        await ws_send({"type": WSMessageType.ERROR, "message": "conv_id and text (or attachments) required"})
         return
     conv = index.get(conv_id)
     if not conv or conv.user_id != username:
-        await ws_send({"type": "error", "message": "Conversation not found"})
+        await ws_send({"type": WSMessageType.ERROR, "message": "Conversation not found"})
         return
 
     manager = state.get("manager")
     if not manager:
-        await ws_send({"type": "error", "message": "Chat service unavailable"})
+        await ws_send({"type": WSMessageType.ERROR, "message": "Chat service unavailable"})
         return
 
     # -- Command dispatch (centralized in commands.py) --
@@ -299,14 +301,14 @@ async def _handle_send(ws_send, index, username, msg, state):
 
     if cmd_result.mode in ("help", "unknown", "error"):
         await ws_send({
-            "type": "message_complete", "conv_id": conv_id,
+            "type": WSMessageType.MESSAGE_COMPLETE, "conv_id": conv_id,
             "role": "assistant", "text": cmd_result.text, "final": True,
         })
         return
 
     if cmd_result.mode == "fork":
         await ws_send({
-            "type": "message_complete", "conv_id": conv_id,
+            "type": WSMessageType.MESSAGE_COMPLETE, "conv_id": conv_id,
             "role": "assistant", "text": cmd_result.text, "final": True,
         })
         return
@@ -324,7 +326,7 @@ async def _handle_send(ws_send, index, username, msg, state):
         # Acknowledge the command so the user sees it was recognized
         skill_name = cmd_result.skill.name if cmd_result.skill else "unknown"
         await ws_send({
-            "type": "command_ack", "conv_id": conv_id,
+            "type": WSMessageType.COMMAND_ACK, "conv_id": conv_id,
             "command": cmd_result.display_text,
             "skill": skill_name,
         })
@@ -378,15 +380,15 @@ async def _handle_set_model(ws_send, index, username, msg, state):
     model_name = msg.get("model", msg.get("level", ""))
     conv = index.get(conv_id)
     if not conv or conv.user_id != username:
-        await ws_send({"type": "error", "message": "Conversation not found"})
+        await ws_send({"type": WSMessageType.ERROR, "message": "Conversation not found"})
         return
 
     config = state["config"]
     if not model_name:
-        await ws_send({"type": "error", "message": "No model specified"})
+        await ws_send({"type": WSMessageType.ERROR, "message": "No model specified"})
         return
     if model_name not in config.model_configs:
-        await ws_send({"type": "error", "message": f"Unknown model: {model_name}"})
+        await ws_send({"type": WSMessageType.ERROR, "message": f"Unknown model: {model_name}"})
         return
 
     # Record model change in archive
@@ -399,7 +401,7 @@ async def _handle_set_model(ws_send, index, username, msg, state):
         manager.set_flag(conv_id, "active_model", model_name)
 
     await ws_send({
-        "type": "model_changed", "conv_id": conv_id,
+        "type": WSMessageType.MODEL_CHANGED, "conv_id": conv_id,
         "model": model_name,
     })
 
@@ -496,14 +498,14 @@ def _subscribe_to_conv(state, conv_id):
             # Sent as distinct type so the client can deduplicate
             # (the originating tab already has the message locally).
             await ws_send({
-                "type": "user_message", "conv_id": event_conv_id,
+                "type": WSMessageType.USER_MESSAGE, "conv_id": event_conv_id,
                 "text": event.get("text", ""),
             })
 
         elif event_type == "chunk":
             streaming_buffer["text"] += event.get("text", "")
             await ws_send({
-                "type": "chunk", "conv_id": event_conv_id,
+                "type": WSMessageType.CHUNK, "conv_id": event_conv_id,
                 "text": event.get("text", ""),
             })
 
@@ -514,7 +516,7 @@ def _subscribe_to_conv(state, conv_id):
             iteration = event.get("iteration", 1)
             if iteration > 1 and streaming_buffer["text"]:
                 await ws_send({
-                    "type": "message_complete", "conv_id": event_conv_id,
+                    "type": WSMessageType.MESSAGE_COMPLETE, "conv_id": event_conv_id,
                     "role": "assistant", "text": streaming_buffer["text"],
                 })
                 streaming_buffer["text"] = ""
@@ -523,21 +525,21 @@ def _subscribe_to_conv(state, conv_id):
             text = streaming_buffer["text"] or event.get("text", "")
             if text:
                 await ws_send({
-                    "type": "message_complete", "conv_id": event_conv_id,
+                    "type": WSMessageType.MESSAGE_COMPLETE, "conv_id": event_conv_id,
                     "role": "assistant", "text": text,
                 })
                 streaming_buffer["text"] = ""
 
         elif event_type == "tool_start":
             await ws_send({
-                "type": "tool_start", "conv_id": event_conv_id,
+                "type": WSMessageType.TOOL_START, "conv_id": event_conv_id,
                 "tool": event.get("tool", ""),
                 "tool_call_id": event.get("tool_call_id", ""),
             })
 
         elif event_type == "tool_status":
             await ws_send({
-                "type": "tool_status", "conv_id": event_conv_id,
+                "type": WSMessageType.TOOL_STATUS, "conv_id": event_conv_id,
                 "tool": event.get("tool", ""),
                 "message": event.get("message", ""),
                 "tool_call_id": event.get("tool_call_id", ""),
@@ -549,7 +551,7 @@ def _subscribe_to_conv(state, conv_id):
         elif event_type == "canvas_update":
             if event_conv_id == conv_id:
                 await ws_send({
-                    "type": "canvas_update",
+                    "type": WSMessageType.CANVAS_UPDATE,
                     "conv_id": event_conv_id,
                     "kind": event.get("kind", "set"),
                     "active_tab": event.get("active_tab"),
@@ -560,7 +562,7 @@ def _subscribe_to_conv(state, conv_id):
             text = event.get("text", "")
             if text:
                 await ws_send({
-                    "type": "tool_status", "conv_id": event_conv_id,
+                    "type": WSMessageType.TOOL_STATUS, "conv_id": event_conv_id,
                     "tool": "vault_retrieval",
                     "message": text, "tool_call_id": "",
                 })
@@ -569,7 +571,7 @@ def _subscribe_to_conv(state, conv_id):
             text = event.get("text", "")
             if text:
                 await ws_send({
-                    "type": "tool_status", "conv_id": event_conv_id,
+                    "type": WSMessageType.TOOL_STATUS, "conv_id": event_conv_id,
                     "tool": "vault_references",
                     "message": text, "tool_call_id": "",
                 })
@@ -578,7 +580,7 @@ def _subscribe_to_conv(state, conv_id):
             # Flush any pending streamed text
             if streaming_buffer["text"]:
                 await ws_send({
-                    "type": "message_complete", "conv_id": event_conv_id,
+                    "type": WSMessageType.MESSAGE_COMPLETE, "conv_id": event_conv_id,
                     "role": "assistant", "text": streaming_buffer["text"],
                 })
                 streaming_buffer["text"] = ""
@@ -587,7 +589,7 @@ def _subscribe_to_conv(state, conv_id):
             log.info("Forwarding confirm request to web UI: %s",
                      action_type)
             await ws_send({
-                "type": "confirm_request", "conv_id": event_conv_id,
+                "type": WSMessageType.CONFIRM_REQUEST, "conv_id": event_conv_id,
                 "confirmation_id": event.get("confirmation_id", ""),
                 "action_type": action_type,
                 # Provide tool/command for backward compat with confirm-view
@@ -604,7 +606,7 @@ def _subscribe_to_conv(state, conv_id):
         elif event_type == "confirmation_response":
             # Forward to all tabs so non-originating tabs clear the widget
             payload = {
-                "type": "confirmation_response", "conv_id": event_conv_id,
+                "type": WSMessageType.CONFIRMATION_RESPONSE, "conv_id": event_conv_id,
                 "confirmation_id": event.get("confirmation_id", ""),
                 "approved": event.get("approved", False),
             }
@@ -623,15 +625,15 @@ def _subscribe_to_conv(state, conv_id):
             await ws_send(event)
 
         elif event_type == "turn_start":
-            await ws_send({"type": "turn_start", "conv_id": event_conv_id})
+            await ws_send({"type": WSMessageType.TURN_START, "conv_id": event_conv_id})
 
         elif event_type == "turn_complete":
             streaming_buffer["text"] = ""
-            await ws_send({"type": "turn_complete", "conv_id": event_conv_id})
+            await ws_send({"type": WSMessageType.TURN_COMPLETE, "conv_id": event_conv_id})
 
         elif event_type == "error":
             await ws_send({
-                "type": "error", "conv_id": event_conv_id,
+                "type": WSMessageType.ERROR, "conv_id": event_conv_id,
                 "message": event.get("message", ""),
             })
 
@@ -644,7 +646,7 @@ def _subscribe_to_conv(state, conv_id):
                 pass
             else:
                 await ws_send({
-                    "type": "reflection_result", "conv_id": event_conv_id,
+                    "type": WSMessageType.REFLECTION_RESULT, "conv_id": event_conv_id,
                     "passed": passed,
                     "critique": event.get("critique", ""),
                     "retry_number": event.get("retry_number", 0),
@@ -657,13 +659,13 @@ def _subscribe_to_conv(state, conv_id):
 
         elif event_type == "background_event":
             await ws_send({
-                "type": "background_event", "conv_id": event_conv_id,
+                "type": WSMessageType.BACKGROUND_EVENT, "conv_id": event_conv_id,
                 "record": event.get("record", {}),
             })
 
         elif event_type == "compaction_end":
             await ws_send({
-                "type": "compaction_done", "conv_id": event_conv_id,
+                "type": WSMessageType.COMPACTION_DONE, "conv_id": event_conv_id,
                 "before_messages": event.get("before_messages", 0),
                 "after_messages": event.get("after_messages", 0),
             })
@@ -684,14 +686,14 @@ def _unsubscribe_all(state):
 
 
 _HANDLERS = {
-    "select_conv": _handle_select_conv,
-    "load_history": _handle_load_history,
-    "send": _handle_send,
-    "cancel_turn": _handle_cancel_turn,
-    "set_effort": _handle_set_model,  # backward compat for old web UI
-    "set_model": _handle_set_model,
-    "confirm_response": _handle_confirm_response,
-    "widget_response": _handle_widget_response,
+    WSMessageType.SELECT_CONV: _handle_select_conv,
+    WSMessageType.LOAD_HISTORY: _handle_load_history,
+    WSMessageType.SEND: _handle_send,
+    WSMessageType.CANCEL_TURN: _handle_cancel_turn,
+    WSMessageType.SET_EFFORT: _handle_set_model,  # backward compat for old web UI
+    WSMessageType.SET_MODEL: _handle_set_model,
+    WSMessageType.CONFIRM_RESPONSE: _handle_confirm_response,
+    WSMessageType.WIDGET_RESPONSE: _handle_widget_response,
 }
 
 
@@ -710,13 +712,13 @@ def _make_notification_forwarder(ws_send):
         t = event.get("type")
         if t == "notification_created":
             await ws_send({
-                "type": "notification_created",
+                "type": WSMessageType.NOTIFICATION_CREATED,
                 "record": event["record"],
                 "unread_count": event["unread_count"],
             })
         elif t == "notification_read":
             await ws_send({
-                "type": "notification_read",
+                "type": WSMessageType.NOTIFICATION_READ,
                 "ids": event["ids"],
                 "unread_count": event["unread_count"],
             })
@@ -750,7 +752,7 @@ async def websocket_chat(websocket: WebSocket, config, event_bus, app_ctx,
     # any conversation is selected
     if config.model_configs:
         await ws_send({
-            "type": "models_available",
+            "type": WSMessageType.MODELS_AVAILABLE,
             "available_models": sorted(config.model_configs.keys()),
             "default_model": config.default_model,
         })
@@ -779,7 +781,7 @@ async def websocket_chat(websocket: WebSocket, config, event_bus, app_ctx,
             try:
                 msg = json.loads(raw)
             except json.JSONDecodeError:
-                await ws_send({"type": "error", "message": "Invalid JSON"})
+                await ws_send({"type": WSMessageType.ERROR, "message": "Invalid JSON"})
                 continue
 
             msg_type = msg.get("type", "")
@@ -787,7 +789,8 @@ async def websocket_chat(websocket: WebSocket, config, event_bus, app_ctx,
             if handler:
                 await handler(ws_send, index, username, msg, state)
             else:
-                await ws_send({"type": "error", "message": f"Unknown message type: {msg_type}"})
+                log.warning("ws: unknown inbound message type from %s: %r", username, msg_type)
+                await ws_send({"type": WSMessageType.ERROR, "message": f"Unknown message type: {msg_type}"})
 
     except WebSocketDisconnect:
         log.info(f"WebSocket disconnected: {username}")

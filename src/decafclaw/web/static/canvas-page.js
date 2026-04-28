@@ -6,6 +6,8 @@
  * canvas_update events over WebSocket for live updates.
  */
 
+import { MESSAGE_TYPES } from './lib/message-types.js';
+
 const PATH_RE = /^\/canvas\/([^/?#]+)/;
 const m = location.pathname.match(PATH_RE);
 let convId = '';
@@ -71,12 +73,12 @@ function openWebSocket() {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
   const ws = new WebSocket(`${proto}//${location.host}/ws/chat`);
   ws.addEventListener('open', () => {
-    ws.send(JSON.stringify({ type: 'select_conv', conv_id: convId }));
+    ws.send(JSON.stringify({ type: MESSAGE_TYPES.SELECT_CONV, conv_id: convId }));
   });
   ws.addEventListener('message', (ev) => {
     let msg;
     try { msg = JSON.parse(ev.data); } catch { return; }
-    if (msg.type !== 'canvas_update') return;
+    if (msg.type !== MESSAGE_TYPES.CANVAS_UPDATE) return;
     if (msg.conv_id && msg.conv_id !== convId) return;
     applyTab(msg.tab);
   });

@@ -38,10 +38,19 @@ check-js: install-js
 	cd src/decafclaw/web/static && npx tsc --noEmit
 
 # Lint + type check (Python + JS)
-check: install-js
+check: install-js check-message-types
 	uv run ruff check src/ tests/
 	uv run pyright
 	cd src/decafclaw/web/static && npx tsc --noEmit
+
+# Regenerate the WebSocket message-type enum/JS/docs from the manifest
+gen-message-types:
+	uv run python scripts/gen_message_types.py
+
+# Verify generated WebSocket message-type files are in sync with the manifest
+check-message-types:
+	uv run python scripts/gen_message_types.py
+	git diff --exit-code -- src/decafclaw/web/message_types.py src/decafclaw/web/static/lib/message-types.js docs/websocket-messages.md
 
 # Auto-fix lint issues
 lint-fix:
