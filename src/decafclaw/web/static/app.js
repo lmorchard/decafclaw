@@ -7,6 +7,7 @@
 import { AuthClient } from './lib/auth-client.js';
 import { WebSocketClient } from './lib/websocket-client.js';
 import { ConversationStore } from './lib/conversation-store.js';
+import { MESSAGE_TYPES, KNOWN_MESSAGE_TYPES } from './lib/message-types.js';
 import { setupResizeHandle } from './lib/utils.js';
 import {
   setActiveConv,
@@ -413,12 +414,15 @@ store.addEventListener('change', () => {
 // Listen for WebSocket error messages directly
 ws.addEventListener('message', (e) => {
   const msg = /** @type {CustomEvent} */ (e).detail;
-  if (msg?.type === 'error' && msg?.message) {
+  if (msg && typeof msg.type === 'string' && !KNOWN_MESSAGE_TYPES.has(msg.type)) {
+    console.warn('[ws] unknown message type from server:', msg.type, msg);
+  }
+  if (msg?.type === MESSAGE_TYPES.ERROR && msg?.message) {
     showToast(msg.message);
   }
   // Fan out turn-complete as a window event so sidebars can silently refresh
   // (e.g. files-sidebar auto-refetches so agent-written files appear).
-  if (msg?.type === 'turn_complete') {
+  if (msg?.type === MESSAGE_TYPES.TURN_COMPLETE) {
     window.dispatchEvent(new CustomEvent('turn-complete', {
       detail: { conv_id: msg.conv_id },
     }));
@@ -426,13 +430,13 @@ ws.addEventListener('message', (e) => {
   // Notification push events — the bell component listens at the window
   // level so we don't have to hand it the raw ws instance. Payloads mirror
   // the event bus shape (see docs/notifications.md).
-  if (msg?.type === 'notification_created') {
+  if (msg?.type === MESSAGE_TYPES.NOTIFICATION_CREATED) {
     window.dispatchEvent(new CustomEvent('notification-created', { detail: msg }));
   }
-  if (msg?.type === 'notification_read') {
+  if (msg?.type === MESSAGE_TYPES.NOTIFICATION_READ) {
     window.dispatchEvent(new CustomEvent('notification-read', { detail: msg }));
   }
-  if (msg?.type === 'canvas_update') {
+  if (msg?.type === MESSAGE_TYPES.CANVAS_UPDATE) {
     applyEvent(msg);
   }
 });
