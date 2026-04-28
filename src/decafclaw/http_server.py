@@ -1047,342 +1047,346 @@ async def workspace_recent(request: Request, username: str) -> JSONResponse:
     return JSONResponse({"files": files})
 
 
+# -- Vault routes -------------------------------------------------------------
+
+
+@_authenticated
+async def vault_list(request: Request, username: str) -> JSONResponse:
+    """List vault pages and subfolders for a specific folder.
+
+    Returns ``{folder, folders, pages}`` where *folders* are immediate
+    child directories that contain at least one ``.md`` file and *pages*
+    are ``.md`` files directly in the requested folder.
+    """
+    config = request.app.state.config
+    vault = _vault_root(config)
+    if not vault.is_dir():
+        return JSONResponse({"folder": "", "folders": [], "pages": []})
+
+    folder_param = request.query_params.get("folder", "").strip()
+    if folder_param:
+        if ".." in folder_param or folder_param.startswith("/"):
+            return JSONResponse({"error": "invalid folder path"}, status_code=400)
+        target_dir = (vault / folder_param).resolve()
+        if not target_dir.is_relative_to(vault.resolve()):
+            return JSONResponse({"error": "path outside vault"}, status_code=403)
+        if not target_dir.is_dir():
+            return JSONResponse({"error": "folder not found"}, status_code=404)
+    else:
+        target_dir = vault.resolve()
+
+    vault_resolved = vault.resolve()
+    pages = []
+    for child in target_dir.iterdir():
+        if child.is_file() and child.suffix == ".md":
+            if not child.resolve().is_relative_to(vault_resolved):
+                continue
+            stat = child.stat()
+            rel = child.relative_to(vault_resolved)
+            pages.append({
+                "title": child.stem,
+                "path": str(rel.with_suffix("")),
+                "folder": folder_param,
+                "modified": stat.st_mtime,
+            })
+    pages.sort(key=lambda p: p["title"].lower())
+
+    folders = []
+    for child in sorted(target_dir.iterdir(), key=lambda c: c.name.lower()):
+        if child.is_dir() and not child.name.startswith('.'):
+            rel = child.relative_to(vault_resolved)
+            folders.append({"name": child.name, "path": str(rel)})
+
+    return JSONResponse({
+        "folder": folder_param,
+        "folders": folders,
+        "pages": pages,
+    })
+
+
+@_authenticated
+async def vault_recent(request: Request, username: str) -> JSONResponse:
+    """List recently modified agent vault pages sorted by mtime descending.
+
+    Only scans the agent's folder within the vault — pages and journal,
+    not the user's personal vault files.
+    """
+    config = request.app.state.config
+    agent_dir = config.vault_agent_dir
+    if not agent_dir.is_dir():
+        return JSONResponse({"pages": []})
+
+    vault_resolved = _vault_root(config).resolve()
+    agent_resolved = agent_dir.resolve()
+    if not agent_resolved.is_relative_to(vault_resolved):
+        log.warning("vault_agent_dir is outside vault_root, skipping recent changes")
+        return JSONResponse({"pages": []})
+    limit = config.vault.recent_changes_limit
+    try:
+        limit = int(request.query_params.get("limit", limit))
+    except (ValueError, TypeError):
+        pass
+    limit = max(0, limit)
+
+    pages = []
+    for md_file in agent_resolved.rglob("*.md"):
+        if not md_file.is_file():
+            continue
+        if not md_file.resolve().is_relative_to(agent_resolved):
+            continue
+        # Skip hidden directories (.obsidian, .git, .trash, etc.)
+        if any(part.startswith('.')
+               for part in md_file.relative_to(agent_resolved).parts[:-1]):
+            continue
+        rel = md_file.relative_to(vault_resolved)
+        pages.append({
+            "title": md_file.stem,
+            "path": str(rel.with_suffix("")),
+            "folder": str(rel.parent) if str(rel.parent) != "." else "",
+            "modified": md_file.stat().st_mtime,
+        })
+
+    pages.sort(key=lambda p: p["modified"], reverse=True)
+    return JSONResponse({"pages": pages[:limit]})
+
+
+@_authenticated
+async def vault_read(request: Request, username: str) -> JSONResponse:
+    """Read a single vault page as JSON."""
+    config = request.app.state.config
+    page_name = request.path_params.get("page", "")
+    if not page_name:
+        return JSONResponse({"error": "page name required"}, status_code=400)
+    resolved = _resolve_vault_page(config, page_name)
+    if not resolved:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    content = resolved.read_text(encoding="utf-8")
+    stat = resolved.stat()
+    vault = _vault_root(config).resolve()
+    rel = resolved.relative_to(vault)
+    return JSONResponse({
+        "title": resolved.stem,
+        "path": str(rel.with_suffix("")),
+        "content": content,
+        "modified": stat.st_mtime,
+    })
+
+
+async def _vault_rename(
+    config, vault: Path, old_file: Path, old_name: str, rename_to: str,
+) -> JSONResponse:
+    """Rename/move a vault page; re-indexes embeddings on success."""
+    if not isinstance(rename_to, str) or not rename_to.strip():
+        return JSONResponse({"error": "rename_to must be a non-empty string"},
+                            status_code=400)
+    rename_to = rename_to.strip()
+    if ".." in rename_to or rename_to.startswith("/"):
+        return JSONResponse({"error": "invalid rename path"}, status_code=400)
+    rename_path = Path(rename_to)
+    if not rename_path.name:
+        return JSONResponse({"error": "invalid rename path"}, status_code=400)
+    if rename_path.suffix.lower() == ".md":
+        rename_path = rename_path.with_suffix("")
+    new_file = (vault / f"{rename_path}.md").resolve()
+    if not new_file.is_relative_to(vault.resolve()):
+        return JSONResponse({"error": "path outside vault directory"}, status_code=403)
+    if not old_file.exists():
+        return JSONResponse({"error": "not found"}, status_code=404)
+    if new_file.exists():
+        return JSONResponse({"error": "target already exists"}, status_code=409)
+    new_file.parent.mkdir(parents=True, exist_ok=True)
+    old_file.rename(new_file)
+    # Clean up empty parent directories from old location
+    old_dir = old_file.parent
+    vault_resolved = vault.resolve()
+    while old_dir.resolve() != vault_resolved:
+        try:
+            old_dir.rmdir()
+        except OSError:
+            break
+        old_dir = old_dir.parent
+    try:
+        from .embeddings import delete_entries, index_entry
+        old_rel = f"{old_name}.md"
+        old_source_type = _vault_source_type(config, old_file)
+        delete_entries(config, old_rel, source_type=old_source_type)
+        new_rel = str(new_file.relative_to(vault_resolved))
+        new_content = new_file.read_text(encoding="utf-8")
+        new_source_type = _vault_source_type(config, new_file)
+        await index_entry(config, new_rel, new_content, source_type=new_source_type)
+    except Exception as e:
+        log.warning(f"Failed to re-index after rename '{old_name}' -> '{rename_to}': {e}")
+    stat = new_file.stat()
+    rel = new_file.relative_to(vault_resolved)
+    folder = str(rel.parent) if rel.parent != Path(".") else ""
+    return JSONResponse({
+        "ok": True,
+        "title": new_file.stem,
+        "path": str(rel.with_suffix("")),
+        "folder": folder,
+        "modified": stat.st_mtime,
+    })
+
+
+@_authenticated
+async def vault_write(request: Request, username: str) -> JSONResponse:
+    """Create or update a vault page, or rename/move it."""
+    config = request.app.state.config
+    page_name = request.path_params.get("page", "")
+    if not page_name:
+        return JSONResponse({"error": "page name required"}, status_code=400)
+    if ".." in page_name or page_name.startswith("/"):
+        return JSONResponse({"error": "invalid page path"}, status_code=400)
+    vault = _vault_root(config)
+    vault.mkdir(parents=True, exist_ok=True)
+    target = (vault / f"{page_name}.md").resolve()
+    if not target.is_relative_to(vault.resolve()):
+        return JSONResponse({"error": "path outside vault directory"}, status_code=403)
+    body = await request.json()
+
+    rename_to = body.get("rename_to")
+    if rename_to is not None:
+        if "content" in body:
+            return JSONResponse(
+                {"error": "cannot combine rename_to with content"},
+                status_code=400,
+            )
+        return await _vault_rename(config, vault, target, page_name, rename_to)
+
+    content = body.get("content")
+    if content is None or not isinstance(content, str):
+        return JSONResponse({"error": "content (string) required"}, status_code=400)
+    modified = body.get("modified")
+    if modified is not None:
+        try:
+            modified = float(modified)
+        except (TypeError, ValueError):
+            return JSONResponse({"error": "modified must be a number"}, status_code=400)
+        if target.exists():
+            file_mtime = target.stat().st_mtime
+            if file_mtime > modified + 1.0:
+                return JSONResponse(
+                    {"error": "conflict", "server_modified": file_mtime},
+                    status_code=409,
+                )
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(content, encoding="utf-8")
+    source_type = _vault_source_type(config, target)
+    try:
+        from .embeddings import delete_entries, index_entry
+        rel_path = str(target.relative_to(vault.resolve()))
+        delete_entries(config, rel_path, source_type=source_type)
+        await index_entry(config, rel_path, content, source_type=source_type)
+    except Exception as e:
+        log.warning(f"Failed to index vault page '{page_name}': {e}")
+    return JSONResponse({"ok": True, "modified": target.stat().st_mtime})
+
+
+@_authenticated
+async def vault_create(request: Request, username: str) -> JSONResponse:
+    """Create a new vault page."""
+    config = request.app.state.config
+    body = await request.json()
+    name = body.get("name")
+    if not name or not isinstance(name, str):
+        return JSONResponse({"error": "name (string) required"}, status_code=400)
+    name = name.strip()
+    if not name:
+        return JSONResponse({"error": "name (string) required"}, status_code=400)
+    if ".." in name or name.startswith("/"):
+        return JSONResponse({"error": "invalid page name"}, status_code=400)
+    vault = _vault_root(config)
+    vault.mkdir(parents=True, exist_ok=True)
+    target = (vault / f"{name}.md").resolve()
+    if not target.is_relative_to(vault.resolve()):
+        return JSONResponse({"error": "path outside vault directory"}, status_code=403)
+    if target.exists():
+        return JSONResponse({"error": "page already exists"}, status_code=409)
+    content = body.get("content")
+    if content is None or not isinstance(content, str):
+        content = f"# {Path(name).stem}\n"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(content, encoding="utf-8")
+    source_type = _vault_source_type(config, target)
+    try:
+        from .embeddings import index_entry
+        rel_path = str(target.relative_to(vault.resolve()))
+        await index_entry(config, rel_path, content, source_type=source_type)
+    except Exception as e:
+        log.warning(f"Failed to index new vault page '{name}': {e}")
+    return JSONResponse({"ok": True, "page": name, "modified": target.stat().st_mtime})
+
+
+@_authenticated
+async def vault_create_folder(request: Request, username: str) -> JSONResponse:
+    """Create a new empty folder in the vault."""
+    config = request.app.state.config
+    body = await request.json()
+    folder = body.get("folder")
+    if not folder or not isinstance(folder, str):
+        return JSONResponse({"error": "folder (string) required"}, status_code=400)
+    folder = folder.strip()
+    if not folder:
+        return JSONResponse({"error": "folder (string) required"}, status_code=400)
+    if ".." in folder or folder.startswith("/"):
+        return JSONResponse({"error": "invalid folder path"}, status_code=400)
+    vault = _vault_root(config)
+    target = (vault / folder).resolve()
+    if not target.is_relative_to(vault.resolve()):
+        return JSONResponse({"error": "path outside vault directory"}, status_code=403)
+    if target.exists():
+        return JSONResponse({"error": "folder already exists"}, status_code=409)
+    target.mkdir(parents=True, exist_ok=True)
+    return JSONResponse({"ok": True, "folder": folder})
+
+
+@_authenticated
+async def vault_delete(request: Request, username: str) -> JSONResponse:
+    """Delete a vault page."""
+    config = request.app.state.config
+    page_name = request.path_params.get("page", "")
+    if not page_name:
+        return JSONResponse({"error": "page name required"}, status_code=400)
+    if ".." in page_name or page_name.startswith("/"):
+        return JSONResponse({"error": "invalid page path"}, status_code=400)
+    vault = _vault_root(config)
+    target = (vault / f"{page_name}.md").resolve()
+    if not target.is_relative_to(vault.resolve()):
+        return JSONResponse({"error": "path outside vault directory"}, status_code=403)
+    if not target.exists():
+        return JSONResponse({"error": "not found"}, status_code=404)
+    target.unlink()
+    parent = target.parent
+    vault_resolved = vault.resolve()
+    while parent.resolve() != vault_resolved:
+        try:
+            parent.rmdir()
+        except OSError:
+            break
+        parent = parent.parent
+    try:
+        from .embeddings import delete_entries
+        rel_path = f"{page_name}.md"
+        source_type = _vault_source_type(config, target)
+        delete_entries(config, rel_path, source_type=source_type)
+    except Exception as e:
+        log.warning(f"Failed to remove embeddings for '{page_name}': {e}")
+    return JSONResponse({"ok": True})
+
+
+async def serve_vault_page(request: Request):
+    """Serve the vault page HTML shell."""
+    username = _get_username_or_401(request)
+    if not username:
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    vault_html = Path(__file__).parent / "web" / "static" / "vault.html"
+    if not vault_html.exists():
+        return JSONResponse({"error": "vault page not found"}, status_code=404)
+    return FileResponse(str(vault_html))
+
+
 def create_app(config, event_bus, app_ctx=None, manager=None) -> Starlette:
     """Create the Starlette ASGI app with routes."""
-
-    # -- Vault routes --------------------------------------------------------------
-
-    @_authenticated
-    async def vault_list(request: Request, username: str) -> JSONResponse:
-        """List vault pages and subfolders for a specific folder.
-
-        Query params:
-            folder — relative path within vault (default: root)
-
-        Returns ``{folder, folders, pages}`` where *folders* are immediate
-        child directories that contain at least one ``.md`` file and *pages*
-        are ``.md`` files directly in the requested folder.
-        """
-        vault = _vault_root(config)
-        if not vault.is_dir():
-            return JSONResponse({"folder": "", "folders": [], "pages": []})
-
-        folder_param = request.query_params.get("folder", "").strip()
-        # Validate folder path
-        if folder_param:
-            if ".." in folder_param or folder_param.startswith("/"):
-                return JSONResponse({"error": "invalid folder path"}, status_code=400)
-            target_dir = (vault / folder_param).resolve()
-            if not target_dir.is_relative_to(vault.resolve()):
-                return JSONResponse({"error": "path outside vault"}, status_code=403)
-            if not target_dir.is_dir():
-                return JSONResponse({"error": "folder not found"}, status_code=404)
-        else:
-            target_dir = vault.resolve()
-
-        # Collect .md files directly in the target folder (not recursive)
-        vault_resolved = vault.resolve()
-        pages = []
-        for child in target_dir.iterdir():
-            if child.is_file() and child.suffix == ".md":
-                if not child.resolve().is_relative_to(vault_resolved):
-                    continue
-                stat = child.stat()
-                rel = child.relative_to(vault_resolved)
-                pages.append({
-                    "title": child.stem,
-                    "path": str(rel.with_suffix("")),
-                    "folder": folder_param,
-                    "modified": stat.st_mtime,
-                })
-        pages.sort(key=lambda p: p["title"].lower())
-
-        # Build folder list from all child directories
-        folders = []
-        for child in sorted(target_dir.iterdir(), key=lambda c: c.name.lower()):
-            if child.is_dir() and not child.name.startswith('.'):
-                rel = child.relative_to(vault_resolved)
-                folders.append({"name": child.name, "path": str(rel)})
-
-        return JSONResponse({
-            "folder": folder_param,
-            "folders": folders,
-            "pages": pages,
-        })
-
-    @_authenticated
-    async def vault_recent(request: Request, username: str) -> JSONResponse:
-        """List recently modified agent vault pages sorted by mtime descending.
-
-        Only scans the agent's folder within the vault (pages + journal),
-        not the user's personal vault files.
-        """
-        agent_dir = config.vault_agent_dir
-        if not agent_dir.is_dir():
-            return JSONResponse({"pages": []})
-
-        vault_resolved = _vault_root(config).resolve()
-        agent_resolved = agent_dir.resolve()
-        if not agent_resolved.is_relative_to(vault_resolved):
-            log.warning("vault_agent_dir is outside vault_root, skipping recent changes")
-            return JSONResponse({"pages": []})
-        limit = config.vault.recent_changes_limit
-        try:
-            limit = int(request.query_params.get("limit", limit))
-        except (ValueError, TypeError):
-            pass
-        limit = max(0, limit)
-
-        pages = []
-        for md_file in agent_resolved.rglob("*.md"):
-            if not md_file.is_file():
-                continue
-            if not md_file.resolve().is_relative_to(agent_resolved):
-                continue
-            # Skip hidden directories (.obsidian, .git, .trash, etc.)
-            if any(part.startswith('.') for part in md_file.relative_to(agent_resolved).parts[:-1]):
-                continue
-            rel = md_file.relative_to(vault_resolved)
-            pages.append({
-                "title": md_file.stem,
-                "path": str(rel.with_suffix("")),
-                "folder": str(rel.parent) if str(rel.parent) != "." else "",
-                "modified": md_file.stat().st_mtime,
-            })
-
-        pages.sort(key=lambda p: p["modified"], reverse=True)
-        return JSONResponse({"pages": pages[:limit]})
-
-    @_authenticated
-    async def vault_read(request: Request, username: str) -> JSONResponse:
-        """Read a single vault page as JSON."""
-        page_name = request.path_params.get("page", "")
-        if not page_name:
-            return JSONResponse({"error": "page name required"}, status_code=400)
-        resolved = _resolve_vault_page(config, page_name)
-        if not resolved:
-            return JSONResponse({"error": "not found"}, status_code=404)
-        content = resolved.read_text(encoding="utf-8")
-        stat = resolved.stat()
-        vault = _vault_root(config).resolve()
-        rel = resolved.relative_to(vault)
-        return JSONResponse({
-            "title": resolved.stem,
-            "path": str(rel.with_suffix("")),
-            "content": content,
-            "modified": stat.st_mtime,
-        })
-
-    @_authenticated
-    async def vault_write(request: Request, username: str) -> JSONResponse:
-        """Create or update a vault page, or rename/move it."""
-        page_name = request.path_params.get("page", "")
-        if not page_name:
-            return JSONResponse({"error": "page name required"}, status_code=400)
-        if ".." in page_name or page_name.startswith("/"):
-            return JSONResponse({"error": "invalid page path"}, status_code=400)
-        vault = _vault_root(config)
-        vault.mkdir(parents=True, exist_ok=True)
-        target = (vault / f"{page_name}.md").resolve()
-        if not target.is_relative_to(vault.resolve()):
-            return JSONResponse({"error": "path outside vault directory"}, status_code=403)
-        body = await request.json()
-
-        # --- Rename/move operation ---
-        rename_to = body.get("rename_to")
-        if rename_to is not None:
-            if "content" in body:
-                return JSONResponse(
-                    {"error": "cannot combine rename_to with content"},
-                    status_code=400,
-                )
-            return await _vault_rename(vault, target, page_name, rename_to)
-
-        # --- Content write ---
-        content = body.get("content")
-        if content is None or not isinstance(content, str):
-            return JSONResponse({"error": "content (string) required"}, status_code=400)
-        # Conflict detection
-        modified = body.get("modified")
-        if modified is not None:
-            try:
-                modified = float(modified)
-            except (TypeError, ValueError):
-                return JSONResponse({"error": "modified must be a number"}, status_code=400)
-            if target.exists():
-                file_mtime = target.stat().st_mtime
-                if file_mtime > modified + 1.0:
-                    return JSONResponse(
-                        {"error": "conflict", "server_modified": file_mtime},
-                        status_code=409,
-                    )
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(content, encoding="utf-8")
-        # Update semantic search index
-        source_type = _vault_source_type(config, target)
-        try:
-            from .embeddings import delete_entries, index_entry
-            rel_path = str(target.relative_to(vault.resolve()))
-            delete_entries(config, rel_path, source_type=source_type)
-            await index_entry(config, rel_path, content, source_type=source_type)
-        except Exception as e:
-            log.warning(f"Failed to index vault page '{page_name}': {e}")
-        new_mtime = target.stat().st_mtime
-        return JSONResponse({"ok": True, "modified": new_mtime})
-
-    async def _vault_rename(vault: Path, old_file: Path, old_name: str, rename_to: str) -> JSONResponse:
-        """Rename/move a vault page."""
-        if not isinstance(rename_to, str) or not rename_to.strip():
-            return JSONResponse({"error": "rename_to must be a non-empty string"}, status_code=400)
-        rename_to = rename_to.strip()
-        if ".." in rename_to or rename_to.startswith("/"):
-            return JSONResponse({"error": "invalid rename path"}, status_code=400)
-        rename_path = Path(rename_to)
-        if not rename_path.name:
-            return JSONResponse({"error": "invalid rename path"}, status_code=400)
-        if rename_path.suffix.lower() == ".md":
-            rename_path = rename_path.with_suffix("")
-        new_file = (vault / f"{rename_path}.md").resolve()
-        if not new_file.is_relative_to(vault.resolve()):
-            return JSONResponse({"error": "path outside vault directory"}, status_code=403)
-        if not old_file.exists():
-            return JSONResponse({"error": "not found"}, status_code=404)
-        if new_file.exists():
-            return JSONResponse({"error": "target already exists"}, status_code=409)
-        # Move the file
-        new_file.parent.mkdir(parents=True, exist_ok=True)
-        old_file.rename(new_file)
-        # Clean up empty parent directories from old location
-        old_dir = old_file.parent
-        vault_resolved = vault.resolve()
-        while old_dir.resolve() != vault_resolved:
-            try:
-                old_dir.rmdir()  # only succeeds if empty
-            except OSError:
-                break
-            old_dir = old_dir.parent
-        # Update embedding index
-        try:
-            from .embeddings import delete_entries, index_entry
-            old_rel = f"{old_name}.md"
-            old_source_type = _vault_source_type(config, old_file)
-            delete_entries(config, old_rel, source_type=old_source_type)
-            new_rel = str(new_file.relative_to(vault_resolved))
-            new_content = new_file.read_text(encoding="utf-8")
-            new_source_type = _vault_source_type(config, new_file)
-            await index_entry(config, new_rel, new_content, source_type=new_source_type)
-        except Exception as e:
-            log.warning(f"Failed to re-index after rename '{old_name}' -> '{rename_to}': {e}")
-        stat = new_file.stat()
-        rel = new_file.relative_to(vault_resolved)
-        folder = str(rel.parent) if rel.parent != Path(".") else ""
-        return JSONResponse({
-            "ok": True,
-            "title": new_file.stem,
-            "path": str(rel.with_suffix("")),
-            "folder": folder,
-            "modified": stat.st_mtime,
-        })
-
-    @_authenticated
-    async def vault_create(request: Request, username: str) -> JSONResponse:
-        """Create a new vault page."""
-        body = await request.json()
-        name = body.get("name")
-        if not name or not isinstance(name, str):
-            return JSONResponse({"error": "name (string) required"}, status_code=400)
-        name = name.strip()
-        if not name:
-            return JSONResponse({"error": "name (string) required"}, status_code=400)
-        if ".." in name or name.startswith("/"):
-            return JSONResponse({"error": "invalid page name"}, status_code=400)
-        vault = _vault_root(config)
-        vault.mkdir(parents=True, exist_ok=True)
-        target = (vault / f"{name}.md").resolve()
-        if not target.is_relative_to(vault.resolve()):
-            return JSONResponse({"error": "path outside vault directory"}, status_code=403)
-        if target.exists():
-            return JSONResponse({"error": "page already exists"}, status_code=409)
-        content = body.get("content")
-        if content is None or not isinstance(content, str):
-            content = f"# {Path(name).stem}\n"
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(content, encoding="utf-8")
-        # Update semantic search index
-        source_type = _vault_source_type(config, target)
-        try:
-            from .embeddings import delete_entries, index_entry
-            rel_path = str(target.relative_to(vault.resolve()))
-            await index_entry(config, rel_path, content, source_type=source_type)
-        except Exception as e:
-            log.warning(f"Failed to index new vault page '{name}': {e}")
-        new_mtime = target.stat().st_mtime
-        return JSONResponse({"ok": True, "page": name, "modified": new_mtime})
-
-    @_authenticated
-    async def vault_create_folder(request: Request, username: str) -> JSONResponse:
-        """Create a new empty folder in the vault."""
-        body = await request.json()
-        folder = body.get("folder")
-        if not folder or not isinstance(folder, str):
-            return JSONResponse({"error": "folder (string) required"}, status_code=400)
-        folder = folder.strip()
-        if not folder:
-            return JSONResponse({"error": "folder (string) required"}, status_code=400)
-        if ".." in folder or folder.startswith("/"):
-            return JSONResponse({"error": "invalid folder path"}, status_code=400)
-        vault = _vault_root(config)
-        target = (vault / folder).resolve()
-        if not target.is_relative_to(vault.resolve()):
-            return JSONResponse({"error": "path outside vault directory"}, status_code=403)
-        if target.exists():
-            return JSONResponse({"error": "folder already exists"}, status_code=409)
-        target.mkdir(parents=True, exist_ok=True)
-        return JSONResponse({"ok": True, "folder": folder})
-
-    @_authenticated
-    async def vault_delete(request: Request, username: str) -> JSONResponse:
-        """Delete a vault page."""
-        page_name = request.path_params.get("page", "")
-        if not page_name:
-            return JSONResponse({"error": "page name required"}, status_code=400)
-        if ".." in page_name or page_name.startswith("/"):
-            return JSONResponse({"error": "invalid page path"}, status_code=400)
-        vault = _vault_root(config)
-        target = (vault / f"{page_name}.md").resolve()
-        if not target.is_relative_to(vault.resolve()):
-            return JSONResponse({"error": "path outside vault directory"}, status_code=403)
-        if not target.exists():
-            return JSONResponse({"error": "not found"}, status_code=404)
-        target.unlink()
-        # Clean up empty parent directories
-        parent = target.parent
-        vault_resolved = vault.resolve()
-        while parent.resolve() != vault_resolved:
-            try:
-                parent.rmdir()
-            except OSError:
-                break
-            parent = parent.parent
-        # Remove from embedding index
-        try:
-            from .embeddings import delete_entries
-            rel_path = f"{page_name}.md"
-            source_type = _vault_source_type(config, target)
-            delete_entries(config, rel_path, source_type=source_type)
-        except Exception as e:
-            log.warning(f"Failed to remove embeddings for '{page_name}': {e}")
-        return JSONResponse({"ok": True})
-
-    async def serve_vault_page(request: Request):
-        """Serve the vault page HTML shell."""
-        username = _get_username_or_401(request)
-        if not username:
-            return JSONResponse({"error": "not authenticated"}, status_code=401)
-        vault_html = Path(__file__).parent / "web" / "static" / "vault.html"
-        if not vault_html.exists():
-            return JSONResponse({"error": "vault page not found"}, status_code=404)
-        return FileResponse(str(vault_html))
 
     # -- Upload route -------------------------------------------------------------
 
