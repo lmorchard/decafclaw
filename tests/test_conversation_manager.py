@@ -11,7 +11,14 @@ from decafclaw.confirmations import (
     ConfirmationRequest,
     ConfirmationResponse,
 )
-from decafclaw.conversation_manager import ConversationManager, ConversationState, TurnKind
+from decafclaw.conversation_manager import (
+    _CTX_DRIVEN_FIELDS,
+    _PERSISTED_BINDINGS,
+    ConversationManager,
+    ConversationState,
+    PersistedTurnState,
+    TurnKind,
+)
 from decafclaw.events import EventBus
 
 
@@ -645,13 +652,11 @@ async def test_enqueue_turn_wake_kind_restores_skill_state(
     monkeypatch.setattr("decafclaw.agent.run_agent_turn", fake_run_agent_turn)
 
     state = manager._get_or_create("c1")
-    state.skill_state = {
-        "extra_tools": {"tool_x": lambda ctx: None},
-        "extra_tool_definitions": [{"name": "tool_x"}],
-        "activated_skills": {"skill_x"},
-    }
-    state.skip_vault_retrieval = True
-    state.active_model = "fancy-model"
+    state.persisted.extra_tools = {"tool_x": lambda ctx: None}
+    state.persisted.extra_tool_definitions = [{"name": "tool_x"}]
+    state.persisted.activated_skills = {"skill_x"}
+    state.persisted.skip_vault_retrieval = True
+    state.persisted.active_model = "fancy-model"
 
     future = await manager.enqueue_turn(
         conv_id="c1",
@@ -1091,3 +1096,102 @@ async def test_wake_explicit_context_overrides_inherited(
 
     assert seen[1]["user_id"] == "explicit-wake-user"
     assert seen[1]["channel_name"] == "wake-channel"
+
+
+# -- PersistedTurnState — single source of truth (#378) -----------------------
+
+def test_persisted_field_bindings_exhaustive():
+    """Every PersistedTurnState field must have a binding entry — adding
+    a field without a binding would silently drop it from save/restore."""
+    from dataclasses import fields as dc_fields
+    declared = {f.name for f in dc_fields(PersistedTurnState)}
+    bound = set(_PERSISTED_BINDINGS.keys())
+    assert declared == bound, (
+        f"PersistedTurnState fields and _PERSISTED_BINDINGS keys disagree: "
+        f"declared-only={declared - bound}, bound-only={bound - declared}"
+    )
+
+
+def test_ctx_driven_fields_subset_of_persisted():
+    """_CTX_DRIVEN_FIELDS must reference only declared persisted fields —
+    catches typos that would otherwise silently misclassify a field."""
+    from dataclasses import fields as dc_fields
+    declared = {f.name for f in dc_fields(PersistedTurnState)}
+    assert _CTX_DRIVEN_FIELDS <= declared, (
+        f"_CTX_DRIVEN_FIELDS contains unknown field(s): "
+        f"{_CTX_DRIVEN_FIELDS - declared}"
+    )
+
+
+def test_save_restore_round_trip(manager, config):
+    """End-to-end: populate every persisted field, save from a ctx,
+    restore onto a fresh ctx, assert all values flow through."""
+    from decafclaw.context import Context
+
+    state = manager._get_or_create("rt-conv")
+
+    # Populate ctx with non-default sentinel values for every
+    # persisted field. Using `set_flag` for the externally-driven
+    # fields and direct ctx writes for the ctx-driven ones — same
+    # paths the real code uses.
+    save_ctx = Context(config=config, event_bus=manager.event_bus)
+    save_ctx.tools.extra = {"sentinel_tool": lambda c: None}
+    save_ctx.tools.extra_definitions = [{"name": "sentinel_tool"}]
+    save_ctx.skills.activated = {"sentinel_skill"}
+    save_ctx.skip_vault_retrieval = True
+    manager.set_flag("rt-conv", "active_model", "sentinel-model")
+
+    manager._save_conversation_state(state, save_ctx)
+
+    # Round-trip: a fresh ctx should pick up every field on restore.
+    restore_ctx = Context(config=config, event_bus=manager.event_bus)
+    manager._restore_per_conv_state(state, restore_ctx)
+
+    assert restore_ctx.tools.extra == {"sentinel_tool": save_ctx.tools.extra["sentinel_tool"]}
+    assert restore_ctx.tools.extra_definitions == [{"name": "sentinel_tool"}]
+    assert restore_ctx.skills.activated == {"sentinel_skill"}
+    assert restore_ctx.skip_vault_retrieval is True
+    assert restore_ctx.active_model == "sentinel-model"
+
+
+def test_save_does_not_overwrite_externally_driven_fields(manager, config):
+    """``active_model`` is set via ``set_flag`` from the web UI; save
+    runs at turn end and must not clobber it with whatever ctx happens
+    to carry."""
+    from decafclaw.context import Context
+
+    state = manager._get_or_create("ext-conv")
+    manager.set_flag("ext-conv", "active_model", "user-pinned-model")
+
+    # ctx happens to carry a different (or empty) active_model — save
+    # should leave the persisted value alone.
+    ctx = Context(config=config, event_bus=manager.event_bus)
+    ctx.active_model = "some-different-value"
+    manager._save_conversation_state(state, ctx)
+
+    assert state.persisted.active_model == "user-pinned-model"
+
+
+def test_set_flag_writes_through_to_persisted(manager):
+    """Persisted-state flags should land on ``state.persisted``, not on
+    ``ConversationState`` itself — confirms the new write-through."""
+    manager.set_flag("flag-conv", "active_model", "m1")
+    manager.set_flag("flag-conv", "skip_vault_retrieval", True)
+    state = manager.get_state("flag-conv")
+    assert state.persisted.active_model == "m1"
+    assert state.persisted.skip_vault_retrieval is True
+
+
+def test_save_truthy_only_preserves_sticky_semantics(manager, config):
+    """Once a ctx-driven flag is True in persisted state, a later save
+    with a False ctx value must not clobber it back to False."""
+    from decafclaw.context import Context
+
+    state = manager._get_or_create("sticky-conv")
+    state.persisted.skip_vault_retrieval = True
+
+    ctx = Context(config=config, event_bus=manager.event_bus)
+    ctx.skip_vault_retrieval = False  # ctx happens to be False this turn
+    manager._save_conversation_state(state, ctx)
+
+    assert state.persisted.skip_vault_retrieval is True

@@ -9,6 +9,7 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
+from dataclasses import fields as dc_fields
 from enum import Enum
 from typing import Any, Callable
 from uuid import uuid4
@@ -60,6 +61,83 @@ STATE_PERSIST_KINDS = {TurnKind.USER, TurnKind.WAKE}
 
 
 @dataclass
+class PersistedTurnState:
+    """Per-conversation state that persists across agent turns (#378).
+
+    Replaces the parallel save/restore field lists that used to live
+    inline on `ConversationState` (`skill_state` dict + ad-hoc
+    booleans/strings). Two field categories live here:
+
+    - **Ctx-driven** (listed in ``_CTX_DRIVEN_FIELDS`` below): written
+      by ``_save_conversation_state`` from the live ctx at turn end,
+      read by ``_restore_per_conv_state`` onto the next turn's ctx.
+    - **Externally-driven** (everything else in this dataclass): set
+      by ``ConversationManager.set_flag`` from web / transport
+      handlers; restore reads them onto ctx but save never touches
+      them.
+
+    Adding a field requires a matching entry in ``_PERSISTED_BINDINGS``
+    (the unit test ``test_persisted_field_bindings_exhaustive``
+    enforces this) and an explicit decision about which category it
+    belongs to.
+    """
+    extra_tools: dict = field(default_factory=dict)
+    extra_tool_definitions: list = field(default_factory=list)
+    activated_skills: set = field(default_factory=set)
+    skip_vault_retrieval: bool = False
+    active_model: str = ""
+
+
+# Per-field reader/writer bindings between PersistedTurnState and the
+# live Context. Exhaustive over PersistedTurnState fields — readers
+# fetch the current ctx value; writers apply a state value back onto
+# ctx. Save and restore both walk this table so adding a field can't
+# silently drop out of either side. The exhaustiveness check lives in
+# ``test_persisted_field_bindings_exhaustive``.
+_PERSISTED_BINDINGS: dict[str, tuple[Callable[[Any], Any], Callable[[Any, Any], None]]] = {
+    "extra_tools": (
+        lambda ctx: ctx.tools.extra,
+        lambda ctx, v: setattr(ctx.tools, "extra", v),
+    ),
+    "extra_tool_definitions": (
+        lambda ctx: ctx.tools.extra_definitions,
+        lambda ctx, v: setattr(ctx.tools, "extra_definitions", v),
+    ),
+    "activated_skills": (
+        lambda ctx: ctx.skills.activated,
+        lambda ctx, v: setattr(ctx.skills, "activated", v),
+    ),
+    "skip_vault_retrieval": (
+        lambda ctx: ctx.skip_vault_retrieval,
+        lambda ctx, v: setattr(ctx, "skip_vault_retrieval", v),
+    ),
+    "active_model": (
+        lambda ctx: ctx.active_model,
+        lambda ctx, v: setattr(ctx, "active_model", v),
+    ),
+}
+
+
+# Subset of PersistedTurnState fields whose value flows
+# ctx → state on save. Other fields are externally-driven (e.g. by
+# `set_flag` from a transport handler) and never overwritten by save.
+_CTX_DRIVEN_FIELDS: frozenset[str] = frozenset({
+    "extra_tools",
+    "extra_tool_definitions",
+    "activated_skills",
+    "skip_vault_retrieval",
+})
+
+
+# All declared PersistedTurnState field names — precomputed once at
+# module load so hot paths like ``set_flag`` don't reflect on every
+# call. Stays in sync with the dataclass automatically.
+_PERSISTED_FIELD_NAMES: frozenset[str] = frozenset(
+    f.name for f in dc_fields(PersistedTurnState)
+)
+
+
+@dataclass
 class ConversationState:
     """Per-conversation state managed by the ConversationManager."""
     conv_id: str = ""
@@ -74,10 +152,10 @@ class ConversationState:
     confirmation_event: asyncio.Event | None = None
     confirmation_response: ConfirmationResponse | None = None
 
-    # Per-conversation persistent state (survives across turns)
-    skill_state: dict | None = None
-    skip_vault_retrieval: bool = False
-    active_model: str = ""
+    # Per-conversation persistent state (survives across turns).
+    # See PersistedTurnState for what lives here and how save/restore
+    # interact with it.
+    persisted: PersistedTurnState = field(default_factory=PersistedTurnState)
 
     # Circuit breaker state (rate-limiting turns per conversation)
     turn_times: list = field(default_factory=list)
@@ -410,12 +488,20 @@ class ConversationManager:
             state.history = history
 
     def set_flag(self, conv_id: str, key: str, value) -> None:
-        """Set a per-conversation flag (e.g., skip_vault_retrieval, active_model)."""
+        """Set a per-conversation flag (e.g., skip_vault_retrieval, active_model).
+
+        Persisted-state fields (those declared on ``PersistedTurnState``)
+        are written through to ``state.persisted.<key>``; other keys
+        fall through to direct ``ConversationState`` attributes.
+        """
         state = self._get_or_create(conv_id)
+        if key in _PERSISTED_FIELD_NAMES:
+            setattr(state.persisted, key, value)
+            return
         if hasattr(state, key):
             setattr(state, key, value)
-        else:
-            log.warning("Unknown conversation flag: %s", key)
+            return
+        log.warning("Unknown conversation flag: %s", key)
 
     def subscribe(self, conv_id: str, callback: Callable) -> str:
         """Subscribe to a conversation's event stream. Returns subscription ID."""
@@ -763,31 +849,47 @@ class ConversationManager:
         state.agent_task = asyncio.create_task(run())
 
     def _restore_per_conv_state(self, state: ConversationState, ctx) -> None:
-        """Restore per-conversation state (skill activations, model, flags) onto ctx.
+        """Restore persisted per-conversation state onto ctx.
 
-        Called for USER and WAKE turns, which share the same live conversation.
+        Walks every ``PersistedTurnState`` field through
+        ``_PERSISTED_BINDINGS`` so adding a new persisted field can't
+        silently drop out of restore. Falsy persisted values are
+        skipped — preserves the sticky-once-set semantics that ctx
+        defaults rely on (e.g. a fresh ctx born with
+        ``skip_vault_retrieval=False`` shouldn't be clobbered by a
+        default-False persisted value).
+
+        Called for USER and WAKE turns — the kinds that share a live
+        conversation across turns.
         """
-        if state.skill_state:
-            ctx.tools.extra = state.skill_state.get("extra_tools", {})
-            ctx.tools.extra_definitions = state.skill_state.get(
-                "extra_tool_definitions", [])
-            ctx.skills.activated = state.skill_state.get(
-                "activated_skills", set())
-        if state.skip_vault_retrieval:
-            ctx.skip_vault_retrieval = True
-        if state.active_model:
-            ctx.active_model = state.active_model
+        persisted = state.persisted
+        for f in dc_fields(PersistedTurnState):
+            _, writer = _PERSISTED_BINDINGS[f.name]
+            value = getattr(persisted, f.name)
+            if not value:
+                continue
+            writer(ctx, value)
 
     def _save_conversation_state(self, state: ConversationState, ctx) -> None:
-        """Persist relevant context state back to conversation state."""
-        if ctx.skills.activated:
-            state.skill_state = {
-                "extra_tools": ctx.tools.extra,
-                "extra_tool_definitions": ctx.tools.extra_definitions,
-                "activated_skills": ctx.skills.activated,
-            }
-        if ctx.skip_vault_retrieval:
-            state.skip_vault_retrieval = True
+        """Persist ctx-driven state into ``state.persisted``.
+
+        Only fields listed in ``_CTX_DRIVEN_FIELDS`` flow this way —
+        externally-driven fields (e.g. ``active_model``, set via
+        ``set_flag`` from the web UI) are owned by their setters and
+        save never overwrites them.
+
+        Truthy-only writes preserve the sticky semantics that the
+        previous inline save logic had: once a ctx-driven flag becomes
+        True for a conversation, save never flips it back to False.
+        """
+        persisted = state.persisted
+        for f in dc_fields(PersistedTurnState):
+            if f.name not in _CTX_DRIVEN_FIELDS:
+                continue
+            reader, _ = _PERSISTED_BINDINGS[f.name]
+            value = reader(ctx)
+            if value:
+                setattr(persisted, f.name, value)
 
     async def _drain_pending(self, state: ConversationState) -> None:
         """Process queued entries one batch at a time.
