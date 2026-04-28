@@ -16,7 +16,7 @@ import functools
 import json
 import logging
 import re as _re
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -177,6 +177,23 @@ def _check_cancelled(ctx, history):
     return None
 
 
+@dataclass(frozen=True)
+class ReflectionOutcome:
+    """Result of evaluating a candidate final response.
+
+    Replaces the 4-tuple return shape of the old _handle_reflection.
+    `text` is None when the caller should retry (critique already
+    injected into history/messages by the helper). When `should_retry`
+    is False, `text` is the response to deliver (with optional
+    exhaustion-escalation suffix appended in the skip path).
+
+    `reflection_retries` and `last_reflection` are mutated on the call
+    sites' state directly — they don't appear in this return type.
+    """
+    text: str | None
+    should_retry: bool
+
+
 def _should_reflect(ctx, config, content: str, reflection_retries: int) -> bool:
     """Check whether reflection should run on this response."""
     if not config.reflection.enabled:
@@ -192,42 +209,45 @@ def _should_reflect(ctx, config, content: str, reflection_retries: int) -> bool:
     return True
 
 
-async def _handle_reflection(
-    ctx, config, messages, history, final_text,
-    user_message, attachments, retrieved_context_text,
-    turn_start_index, reflection_retries, last_reflection,
-    accumulated_text_parts=None,
-) -> tuple[str | None, bool, int, "ReflectionResult | None"]:
-    """Run the reflection phase on a candidate final response.
+def _reflection_skip(
+    config, final_text: str,
+    reflection_retries: int,
+    last_reflection: "ReflectionResult | None",
+) -> tuple[str, "ReflectionResult | None"]:
+    """The 'reflection did not run' branch. Returns (final_text_maybe_with_escalation,
+    cleared_last_reflection).
 
-    Returns (text, should_retry, reflection_retries, last_reflection):
-    - Reflection skipped or passed: (final_text, False, retries, result)
-    - Reflection failed with retries left: (None, True, retries+1, result)
-      — critique has been injected into messages/history before returning
-    - Reflection failed, no retries left: (text_with_escalation, False, retries, result)
-
-    `accumulated_text_parts` collects text the model emitted in earlier
-    iterations of this turn alongside tool calls (e.g. a skill that writes
-    a full report and then calls vault_write in the same LLM response). The
-    judge evaluates the concatenation so it sees the full user-visible
-    response, not just the final no-tools trailer.
+    Appends the 'I'm not confident' suffix when retries are exhausted; clears
+    last_reflection so it won't get archived against this new response.
     """
-    if not _should_reflect(ctx, config, final_text, reflection_retries):
-        reflection_exhausted = (
-            reflection_retries >= config.reflection.max_retries
-            and last_reflection is not None
-            and not last_reflection.passed
+    reflection_exhausted = (
+        reflection_retries >= config.reflection.max_retries
+        and last_reflection is not None
+        and not last_reflection.passed
+    )
+    if reflection_exhausted:
+        final_text += (
+            "\n\n---\n*I'm not confident in this answer. "
+            "Try switching to a more capable model in the web UI model picker.*"
         )
-        last_reflection = None  # clear stale result from prior retry
+    return final_text, None
 
-        # Suggest model escalation if reflection retries exhausted
-        if reflection_exhausted:
-            final_text += (
-                "\n\n---\n*I'm not confident in this answer. "
-                "Try switching to a more capable model in the web UI model picker.*"
-            )
-        return final_text, False, reflection_retries, last_reflection
 
+async def _reflection_evaluate(
+    ctx, config, history: list,
+    final_text: str, user_message: str,
+    attachments: list[dict] | None,
+    retrieved_context_text: str,
+    turn_start_index: int,
+    reflection_retries: int,
+    accumulated_text_parts: list[str] | None,
+) -> "ReflectionResult":
+    """Build summaries, annotate user message, call evaluate_response,
+    publish reflection_result event.
+
+    Returns the ReflectionResult; caller stores it on its own state
+    and decides what to do with the verdict.
+    """
     from .reflection import (
         build_prior_turn_summary,
         build_tool_summary,
@@ -238,15 +258,11 @@ async def _handle_reflection(
         history, turn_start_index,
         max_result_len=config.reflection.max_tool_result_len,
     )
-    # turn_start_index points past the current user message;
-    # use turn_start_index - 1 to exclude it from prior turns
     prior_turn_summary = build_prior_turn_summary(
         history, turn_start_index - 1,
         max_turns=3,
         max_result_len=200,
     )
-    # Annotate user message with attachment info for the judge —
-    # it can't see the actual files but needs to know they exist
     judge_user_message = user_message
     if attachments:
         att_desc = ", ".join(
@@ -254,8 +270,6 @@ async def _handle_reflection(
             for a in attachments
         )
         judge_user_message += f"\n\n[User attached files: {att_desc}]"
-    # Combine text from tool-call iterations with the current final text so
-    # the judge sees the full visible response, not just the trailer.
     judge_agent_response = "\n\n".join(
         part for part in [*(accumulated_text_parts or []), final_text]
         if part and part.strip()
@@ -266,30 +280,41 @@ async def _handle_reflection(
         retrieved_context=retrieved_context_text,
     )
 
-    last_reflection = result
     log.info("Reflection result: passed=%s, critique=%s, error=%s",
              result.passed, result.critique[:200] if result.critique else "",
              result.error[:100] if result.error else "")
-
     await ctx.publish("reflection_result",
         passed=result.passed,
         critique=result.critique,
         raw_response=result.raw_response,
         retry_number=reflection_retries + 1,
         error=result.error)
+    return result
 
+
+def _reflection_apply_verdict(
+    ctx, history: list, messages: list,
+    final_text: str, result: "ReflectionResult",
+    reflection_retries: int,
+    config,
+) -> tuple[ReflectionOutcome, int]:
+    """Apply the judge's verdict. On fail-with-real-critique, append
+    failed_msg + critique_msg to history/messages, archive both, and
+    bump retries. Returns (outcome, new_retries).
+
+    The fail-open path (result.error set) is treated as PASS so the user
+    still gets a response when the judge LLM itself fails.
+    """
     if not result.passed and not result.error:
         log.info("Reflection failed (retry %d/%d): %s",
                  reflection_retries + 1,
                  config.reflection.max_retries,
                  result.critique[:200])
-        # Add the failed response to history
         failed_msg = {"role": "assistant", "content": final_text}
         history.append(failed_msg)
         messages.append(failed_msg)
         _archive(ctx, failed_msg)
 
-        # Add critique as user message for retry
         critique_msg = {
             "role": "user",
             "content": (
@@ -303,11 +328,47 @@ async def _handle_reflection(
         messages.append(critique_msg)
         _archive(ctx, critique_msg)
 
-        reflection_retries += 1
-        return None, True, reflection_retries, last_reflection
+        return ReflectionOutcome(text=None, should_retry=True), reflection_retries + 1
 
-    # Reflection passed (or errored out — fail-open)
-    return final_text, False, reflection_retries, last_reflection
+    return ReflectionOutcome(text=final_text, should_retry=False), reflection_retries
+
+
+async def _handle_reflection(
+    ctx, config, messages, history, final_text,
+    user_message, attachments, retrieved_context_text,
+    turn_start_index, reflection_retries, last_reflection,
+    accumulated_text_parts=None,
+) -> tuple[ReflectionOutcome, int, "ReflectionResult | None"]:
+    """Run the reflection phase on a candidate final response.
+
+    Returns (outcome, new_reflection_retries, new_last_reflection):
+    - Skipped: outcome wraps possibly-suffixed text; last_reflection cleared
+    - Evaluated and passed: outcome wraps text; last_reflection set to result
+    - Evaluated and failed (retries left): outcome.should_retry=True;
+      critique already injected into messages/history
+    - Evaluated and failed (no retries left, fail-open error): treated as pass
+
+    `accumulated_text_parts` collects text from earlier iterations of
+    this turn (skill-style "report + tool call" patterns) so the judge
+    sees the full visible response, not just the trailer.
+    """
+    if not _should_reflect(ctx, config, final_text, reflection_retries):
+        text, cleared = _reflection_skip(
+            config, final_text, reflection_retries, last_reflection,
+        )
+        return ReflectionOutcome(text=text, should_retry=False), reflection_retries, cleared
+
+    result = await _reflection_evaluate(
+        ctx, config, history, final_text, user_message, attachments,
+        retrieved_context_text, turn_start_index, reflection_retries,
+        accumulated_text_parts,
+    )
+    last_reflection = result
+
+    outcome, new_retries = _reflection_apply_verdict(
+        ctx, history, messages, final_text, result, reflection_retries, config,
+    )
+    return outcome, new_retries, last_reflection
 
 
 async def _handle_widget_input_pause(ctx, signal: WidgetInputPause
@@ -1305,16 +1366,15 @@ async def run_agent_turn(ctx, user_message: str, history: list,
             log.debug("Reflection check: enabled=%s, retries=%d/%d, skip=%s, has_content=%s",
                        config.reflection.enabled, reflection_retries,
                        config.reflection.max_retries, ctx.skip_reflection, bool(content))
-            content, should_retry, reflection_retries, last_reflection = (
-                await _handle_reflection(
-                    ctx, config, messages, history, content,
-                    user_message, attachments, retrieved_context_text,
-                    turn_start_index, reflection_retries, last_reflection,
-                    accumulated_text_parts=accumulated_text_parts,
-                )
+            outcome, reflection_retries, last_reflection = await _handle_reflection(
+                ctx, config, messages, history, content,
+                user_message, attachments, retrieved_context_text,
+                turn_start_index, reflection_retries, last_reflection,
+                accumulated_text_parts=accumulated_text_parts,
             )
-            if should_retry:
+            if outcome.should_retry:
                 continue
+            content = outcome.text
 
             final_msg = {"role": "assistant", "content": content}
             history.append(final_msg)
