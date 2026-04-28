@@ -49,6 +49,111 @@ _WORKSPACE_RECENT_PRUNE_DIRS = frozenset({
 })
 
 
+def _get_username_or_401(request: Request) -> str | None:
+    """Resolve the authenticated username from cookies, or None.
+
+    Used by handlers that need the username outside the
+    ``_authenticated`` decorator (e.g. the WebSocket entry point and
+    raw-vault page serving). Returning ``None`` means "no valid
+    session"; callers decide whether to 401 or return a redirect.
+    """
+    from .web.auth import get_current_user
+    return get_current_user(request, request.app.state.config)
+
+
+def _authenticated(handler):
+    """Decorator: extracts the authenticated username, 401 if missing.
+
+    Forwards to ``handler(request, username)``. Reads the active
+    ``Config`` off ``request.app.state``, set up by ``create_app``.
+    """
+    @functools.wraps(handler)
+    async def wrapper(request):
+        username = _get_username_or_401(request)
+        if not username:
+            return JSONResponse({"error": "not authenticated"},
+                                status_code=401)
+        return await handler(request, username)
+    return wrapper
+
+
+def _validate_folder_param(folder_param: str) -> str | None:
+    """Validate a folder query parameter. Returns error message or None.
+
+    Empty input is OK (means "root"). Reject leading slashes and any
+    segment that's empty or ``..``.
+    """
+    if not folder_param:
+        return None
+    if folder_param.startswith("/"):
+        return "invalid folder path"
+    segments = folder_param.split("/")
+    if any(not seg or seg == ".." for seg in segments):
+        return "invalid folder path"
+    return None
+
+
+def _prune_empty_parents(start: Path, stop_at: Path) -> None:
+    """Remove empty parent directories starting at ``start``, bounded by ``stop_at``.
+
+    Stops on the first non-empty parent or when it reaches ``stop_at``. Safe
+    to call on a freshly-deleted file's parent chain.
+    """
+    stop_resolved = stop_at.resolve()
+    cur = start
+    while cur.resolve() != stop_resolved:
+        try:
+            cur.rmdir()
+        except OSError:
+            break
+        cur = cur.parent
+
+
+def _workspace_file_entry(resolved_path: Path, rel_path: str) -> dict:
+    """Build the per-file response payload used by both list and recent."""
+    stat = resolved_path.stat()
+    return {
+        "name": resolved_path.name,
+        "path": rel_path,
+        "size": stat.st_size,
+        "modified": stat.st_mtime,
+        "kind": detect_kind(resolved_path),
+        "readonly": is_readonly(rel_path),
+        "secret": is_secret(rel_path),
+    }
+
+
+def _can_write_as_text(path: Path) -> bool:
+    """Return True if this path may be written as text by the Files-tab editor.
+
+    For existing files: defers to ``detect_kind`` (rejects image/binary).
+    For new files: rejects known image extensions; accepts known text and
+    unknown extensions (the editor only produces text).
+    """
+    if path.exists():
+        return detect_kind(path) == "text"
+    ext = path.suffix.lower()
+    if ext in IMAGE_EXTENSIONS:
+        return False
+    return True
+
+
+def _vault_root(config) -> Path:
+    return config.vault_root
+
+
+def _resolve_vault_page(config, page_name: str):
+    """Resolve a vault page name to a file path."""
+    from .skills.vault.tools import resolve_page
+    return resolve_page(config, page_name)
+
+
+def _vault_source_type(config, filepath: Path) -> str:
+    """Determine source type for a vault file."""
+    from .skills.vault.tools import _source_type_for_path
+    return _source_type_for_path(config, filepath)
+
+
 def _collect_recent_workspace_files(
     workspace_root: Path,
 ) -> list[tuple[float, Path, str]]:
@@ -197,32 +302,6 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> Starlette:
         return JSONResponse({"username": username})
 
     # -- Conversation routes ---------------------------------------------------
-
-    def _validate_folder_param(folder_param: str) -> str | None:
-        """Validate a folder query parameter. Returns error message or None."""
-        if not folder_param:
-            return None
-        if folder_param.startswith("/"):
-            return "invalid folder path"
-        segments = folder_param.split("/")
-        if any(not seg or seg == ".." for seg in segments):
-            return "invalid folder path"
-        return None
-
-    def _require_auth(request):
-        """Helper: get username from cookie or None."""
-        from .web.auth import get_current_user
-        return get_current_user(request, config)
-
-    def _authenticated(handler):
-        """Decorator that extracts username from auth, returns 401 if not authenticated."""
-        @functools.wraps(handler)
-        async def wrapper(request):
-            username = _require_auth(request)
-            if not username:
-                return JSONResponse({"error": "not authenticated"}, status_code=401)
-            return await handler(request, username)
-        return wrapper
 
     @_authenticated
     async def list_conversations(request: Request, username: str) -> JSONResponse:
@@ -532,34 +611,6 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> Starlette:
 
     # -- Workspace listing routes -------------------------------------------------
 
-    def _prune_empty_parents(start: Path, stop_at: Path) -> None:
-        """Remove empty parent directories starting at ``start``, bounded by ``stop_at``.
-
-        Stops on the first non-empty parent or when it reaches ``stop_at``. Safe
-        to call on a freshly-deleted file's parent chain.
-        """
-        stop_resolved = stop_at.resolve()
-        cur = start
-        while cur.resolve() != stop_resolved:
-            try:
-                cur.rmdir()
-            except OSError:
-                break
-            cur = cur.parent
-
-    def _workspace_file_entry(resolved_path: Path, rel_path: str) -> dict:
-        """Build the per-file response payload used by both list and recent."""
-        stat = resolved_path.stat()
-        return {
-            "name": resolved_path.name,
-            "path": rel_path,
-            "size": stat.st_size,
-            "modified": stat.st_mtime,
-            "kind": detect_kind(resolved_path),
-            "readonly": is_readonly(rel_path),
-            "secret": is_secret(rel_path),
-        }
-
     @_authenticated
     async def workspace_list(request: Request, username: str) -> JSONResponse:
         """List workspace files and subfolders for a given folder.
@@ -637,20 +688,6 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> Starlette:
             "modified": stat.st_mtime,
             "readonly": is_readonly(file_path),
         })
-
-    def _can_write_as_text(path: Path) -> bool:
-        """Return True if this path may be written as text by the Files-tab editor.
-
-        For existing files: defers to detect_kind (rejects image/binary).
-        For new files: rejects known image extensions; accepts known text and
-        unknown extensions (the editor only produces text).
-        """
-        if path.exists():
-            return detect_kind(path) == "text"
-        ext = path.suffix.lower()
-        if ext in IMAGE_EXTENSIONS:
-            return False
-        return True
 
     @_authenticated
     async def workspace_write(request: Request, username: str) -> JSONResponse:
@@ -874,19 +911,6 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> Starlette:
 
     # -- Vault routes --------------------------------------------------------------
 
-    def _vault_root():
-        return config.vault_root
-
-    def _resolve_vault_page(page_name: str):
-        """Resolve a vault page name to a file path."""
-        from .skills.vault.tools import resolve_page
-        return resolve_page(config, page_name)
-
-    def _vault_source_type(filepath):
-        """Determine source type for a vault file."""
-        from .skills.vault.tools import _source_type_for_path
-        return _source_type_for_path(config, filepath)
-
     @_authenticated
     async def vault_list(request: Request, username: str) -> JSONResponse:
         """List vault pages and subfolders for a specific folder.
@@ -898,7 +922,7 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> Starlette:
         child directories that contain at least one ``.md`` file and *pages*
         are ``.md`` files directly in the requested folder.
         """
-        vault = _vault_root()
+        vault = _vault_root(config)
         if not vault.is_dir():
             return JSONResponse({"folder": "", "folders": [], "pages": []})
 
@@ -956,7 +980,7 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> Starlette:
         if not agent_dir.is_dir():
             return JSONResponse({"pages": []})
 
-        vault_resolved = _vault_root().resolve()
+        vault_resolved = _vault_root(config).resolve()
         agent_resolved = agent_dir.resolve()
         if not agent_resolved.is_relative_to(vault_resolved):
             log.warning("vault_agent_dir is outside vault_root, skipping recent changes")
@@ -994,12 +1018,12 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> Starlette:
         page_name = request.path_params.get("page", "")
         if not page_name:
             return JSONResponse({"error": "page name required"}, status_code=400)
-        resolved = _resolve_vault_page(page_name)
+        resolved = _resolve_vault_page(config, page_name)
         if not resolved:
             return JSONResponse({"error": "not found"}, status_code=404)
         content = resolved.read_text(encoding="utf-8")
         stat = resolved.stat()
-        vault = _vault_root().resolve()
+        vault = _vault_root(config).resolve()
         rel = resolved.relative_to(vault)
         return JSONResponse({
             "title": resolved.stem,
@@ -1016,7 +1040,7 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> Starlette:
             return JSONResponse({"error": "page name required"}, status_code=400)
         if ".." in page_name or page_name.startswith("/"):
             return JSONResponse({"error": "invalid page path"}, status_code=400)
-        vault = _vault_root()
+        vault = _vault_root(config)
         vault.mkdir(parents=True, exist_ok=True)
         target = (vault / f"{page_name}.md").resolve()
         if not target.is_relative_to(vault.resolve()):
@@ -1054,7 +1078,7 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> Starlette:
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content, encoding="utf-8")
         # Update semantic search index
-        source_type = _vault_source_type(target)
+        source_type = _vault_source_type(config, target)
         try:
             from .embeddings import delete_entries, index_entry
             rel_path = str(target.relative_to(vault.resolve()))
@@ -1100,11 +1124,11 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> Starlette:
         try:
             from .embeddings import delete_entries, index_entry
             old_rel = f"{old_name}.md"
-            old_source_type = _vault_source_type(old_file)
+            old_source_type = _vault_source_type(config, old_file)
             delete_entries(config, old_rel, source_type=old_source_type)
             new_rel = str(new_file.relative_to(vault_resolved))
             new_content = new_file.read_text(encoding="utf-8")
-            new_source_type = _vault_source_type(new_file)
+            new_source_type = _vault_source_type(config, new_file)
             await index_entry(config, new_rel, new_content, source_type=new_source_type)
         except Exception as e:
             log.warning(f"Failed to re-index after rename '{old_name}' -> '{rename_to}': {e}")
@@ -1131,7 +1155,7 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> Starlette:
             return JSONResponse({"error": "name (string) required"}, status_code=400)
         if ".." in name or name.startswith("/"):
             return JSONResponse({"error": "invalid page name"}, status_code=400)
-        vault = _vault_root()
+        vault = _vault_root(config)
         vault.mkdir(parents=True, exist_ok=True)
         target = (vault / f"{name}.md").resolve()
         if not target.is_relative_to(vault.resolve()):
@@ -1144,7 +1168,7 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> Starlette:
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content, encoding="utf-8")
         # Update semantic search index
-        source_type = _vault_source_type(target)
+        source_type = _vault_source_type(config, target)
         try:
             from .embeddings import delete_entries, index_entry
             rel_path = str(target.relative_to(vault.resolve()))
@@ -1166,7 +1190,7 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> Starlette:
             return JSONResponse({"error": "folder (string) required"}, status_code=400)
         if ".." in folder or folder.startswith("/"):
             return JSONResponse({"error": "invalid folder path"}, status_code=400)
-        vault = _vault_root()
+        vault = _vault_root(config)
         target = (vault / folder).resolve()
         if not target.is_relative_to(vault.resolve()):
             return JSONResponse({"error": "path outside vault directory"}, status_code=403)
@@ -1183,7 +1207,7 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> Starlette:
             return JSONResponse({"error": "page name required"}, status_code=400)
         if ".." in page_name or page_name.startswith("/"):
             return JSONResponse({"error": "invalid page path"}, status_code=400)
-        vault = _vault_root()
+        vault = _vault_root(config)
         target = (vault / f"{page_name}.md").resolve()
         if not target.is_relative_to(vault.resolve()):
             return JSONResponse({"error": "path outside vault directory"}, status_code=403)
@@ -1203,7 +1227,7 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> Starlette:
         try:
             from .embeddings import delete_entries
             rel_path = f"{page_name}.md"
-            source_type = _vault_source_type(target)
+            source_type = _vault_source_type(config, target)
             delete_entries(config, rel_path, source_type=source_type)
         except Exception as e:
             log.warning(f"Failed to remove embeddings for '{page_name}': {e}")
@@ -1211,7 +1235,7 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> Starlette:
 
     async def serve_vault_page(request: Request):
         """Serve the vault page HTML shell."""
-        username = _require_auth(request)
+        username = _get_username_or_401(request)
         if not username:
             return JSONResponse({"error": "not authenticated"}, status_code=401)
         vault_html = Path(__file__).parent / "web" / "static" / "vault.html"
@@ -1711,7 +1735,15 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> Starlette:
         routes.append(Route("/", serve_index, methods=["GET"]))
         routes.append(Mount("/static", StaticFiles(directory=str(static_dir)), name="static"))
 
-    return Starlette(routes=routes)
+    app = Starlette(routes=routes)
+    # Module-level handlers read deps off ``request.app.state``. Closures
+    # currently capture them via the enclosing scope; as handlers migrate
+    # out of `create_app` they switch to the state-based lookup.
+    app.state.config = config
+    app.state.event_bus = event_bus
+    app.state.manager = manager
+    app.state.app_ctx = app_ctx
+    return app
 
 
 _http_server = None  # uvicorn.Server instance, set by run_http_server
