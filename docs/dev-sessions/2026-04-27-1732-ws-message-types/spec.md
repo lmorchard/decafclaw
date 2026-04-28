@@ -4,7 +4,7 @@ Closes [#384](https://github.com/lmorchard/decafclaw/issues/384).
 
 ## Background
 
-WebSocket message-type strings (`"chunk"`, `"tool_end"`, `"select_conv"`, …) are scattered as ~50 string literals across `src/decafclaw/web/websocket.py`, `src/decafclaw/http_server.py`, and the JS client (`web/static/lib/*.js`, `web/static/app.js`, `web/static/canvas-page.js`). Risks:
+WebSocket message-type strings (`"chunk"`, `"tool_end"`, `"select_conv"`, …) are scattered as ~50 string literals across `src/decafclaw/web/websocket.py` and the JS client (`web/static/lib/*.js`, `web/static/app.js`, `web/static/canvas-page.js`). (Note: `http_server.py` contains a couple of `event_bus.publish(...)` calls that share names with WS wire types — `tool_confirm_response`, `cancel_turn` — but those are internal EventBus events, not wire messages, and stay as plain strings.) Risks:
 
 - Typos don't fail at compile time on either side.
 - Renames require grepping two languages.
@@ -123,11 +123,12 @@ Generated outputs:
 
 ### Migration of call sites
 
-**Server side** — `web/websocket.py` + `http_server.py`:
+**Server side** — `web/websocket.py`:
 
 - `from decafclaw.web.message_types import WSMessageType`.
-- Every `"type": "..."` literal becomes `"type": WSMessageType.X`. Works because `StrEnum` is a `str` subclass.
+- Every `"type": "..."` literal in WS-send paths becomes `"type": WSMessageType.X`. Works because `StrEnum` is a `str` subclass.
 - `_HANDLERS` dict keys become `WSMessageType.X`. Inbound dispatch keeps the existing `msg.get("type", "")` pattern (string lookup against StrEnum keys hashes correctly).
+- `http_server.py` is **not** modified: its two `event_bus.publish(...)` calls with `tool_confirm_response`/`cancel_turn` are internal pub/sub events, not WS wire messages.
 
 **Client side** — `web/static/`:
 
@@ -148,7 +149,7 @@ Generated outputs:
 
 1. **Manifest + audit** — add `web/message_types.json` populated from a complete grep of every `"type": "..."` literal on both sides. Data only; no imports yet.
 2. **Generator + Make targets + first generated outputs** — `scripts/gen_message_types.py`, `make gen-message-types`, `make check-message-types`, wired into `make check`. First run emits `web/message_types.py`, `web/static/lib/message-types.js`, `docs/websocket-messages.md`. Nothing imports the generated files yet.
-3. **Server flip + server-side warning hardening** — migrate `web/websocket.py` and the two sites in `http_server.py` to `WSMessageType.X`. Add `log.warning(...)` for inbound unknown types.
+3. **Server flip + server-side warning hardening** — migrate `web/websocket.py` to `WSMessageType.X`. Add `log.warning(...)` for inbound unknown types.
 4. **Client flip + client-side warning** — migrate dispatch and outbound sites in `lib/conversation-store.js`, `lib/message-store.js`, `lib/tool-status-store.js`, `app.js`, `canvas-page.js`. Add the `console.warn` for unknown inbound types.
 5. **Docs index + CLAUDE.md note** — link `docs/websocket-messages.md` from `docs/index.md`, add a one-line bullet to CLAUDE.md's web-UI section pointing future contributors at the manifest.
 
