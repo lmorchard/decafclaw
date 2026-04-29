@@ -70,7 +70,7 @@ export class MarkdownDocumentWidget extends LitElement {
     if (!convId) return;
     const label = this._firstH1(this.data?.content);
     try {
-      const resp = await fetch(`/api/canvas/${encodeURIComponent(convId)}/set`, {
+      const resp = await fetch(`/api/canvas/${encodeURIComponent(convId)}/new_tab`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'same-origin',
@@ -81,10 +81,10 @@ export class MarkdownDocumentWidget extends LitElement {
         }),
       });
       if (!resp.ok) {
-        console.error('canvas set failed', resp.status, await resp.text());
+        console.error('canvas new_tab failed', resp.status, await resp.text());
       }
     } catch (err) {
-      console.error('canvas set error', err);
+      console.error('canvas new_tab error', err);
     }
   }
 

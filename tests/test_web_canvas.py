@@ -133,15 +133,16 @@ async def test_get_canvas_state_other_user_conv_404(authed_client, other_user_co
 
 
 @pytest.mark.asyncio
-async def test_post_canvas_set_writes_state_and_emits(
+async def test_post_canvas_new_tab_writes_state_and_emits(
     authed_client, manager_mock, owned_conv,
 ):
     resp = await authed_client.post(
-        f"/api/canvas/{owned_conv}/set",
+        f"/api/canvas/{owned_conv}/new_tab",
         json={"widget_type": "markdown_document",
               "data": {"content": "# Doc\n\nbody"}},
     )
     assert resp.status_code == 200, resp.text
+    assert resp.json()["tab_id"] == "canvas_1"
     follow = await authed_client.get(f"/api/canvas/{owned_conv}")
     assert follow.status_code == 200
     state = follow.json()
@@ -151,12 +152,13 @@ async def test_post_canvas_set_writes_state_and_emits(
     args = manager_mock.emit.await_args
     assert args.args[0] == owned_conv
     assert args.args[1]["type"] == "canvas_update"
+    assert args.args[1]["kind"] == "new_tab"
 
 
 @pytest.mark.asyncio
-async def test_post_canvas_set_rejects_unknown_widget(authed_client, owned_conv):
+async def test_post_canvas_new_tab_rejects_unknown_widget(authed_client, owned_conv):
     resp = await authed_client.post(
-        f"/api/canvas/{owned_conv}/set",
+        f"/api/canvas/{owned_conv}/new_tab",
         json={"widget_type": "no_such", "data": {}},
     )
     assert resp.status_code == 400
@@ -164,10 +166,9 @@ async def test_post_canvas_set_rejects_unknown_widget(authed_client, owned_conv)
 
 
 @pytest.mark.asyncio
-async def test_post_canvas_set_other_user_conv_404(authed_client, other_user_conv):
-    """Cannot overwrite another user's canvas via POST."""
+async def test_post_canvas_new_tab_other_user_conv_404(authed_client, other_user_conv):
     resp = await authed_client.post(
-        f"/api/canvas/{other_user_conv}/set",
+        f"/api/canvas/{other_user_conv}/new_tab",
         json={"widget_type": "markdown_document",
               "data": {"content": "# pwn"}},
     )
@@ -175,12 +176,160 @@ async def test_post_canvas_set_other_user_conv_404(authed_client, other_user_con
 
 
 @pytest.mark.asyncio
-async def test_post_canvas_set_requires_auth(unauthed_client, owned_conv):
+async def test_post_canvas_new_tab_requires_auth(unauthed_client, owned_conv):
     resp = await unauthed_client.post(
-        f"/api/canvas/{owned_conv}/set",
+        f"/api/canvas/{owned_conv}/new_tab",
         json={"widget_type": "markdown_document", "data": {"content": "x"}},
     )
     assert resp.status_code in (401, 302, 403)
+
+
+@pytest.mark.asyncio
+async def test_post_active_tab_changes_active(authed_client, manager_mock, owned_conv):
+    # Seed: create two tabs
+    await authed_client.post(
+        f"/api/canvas/{owned_conv}/new_tab",
+        json={"widget_type": "markdown_document", "data": {"content": "a"}},
+    )
+    await authed_client.post(
+        f"/api/canvas/{owned_conv}/new_tab",
+        json={"widget_type": "markdown_document", "data": {"content": "b"}},
+    )
+    # Switch active back to canvas_1
+    resp = await authed_client.post(
+        f"/api/canvas/{owned_conv}/active_tab",
+        json={"tab_id": "canvas_1"},
+    )
+    assert resp.status_code == 200
+    follow = await authed_client.get(f"/api/canvas/{owned_conv}")
+    assert follow.json()["active_tab"] == "canvas_1"
+
+
+@pytest.mark.asyncio
+async def test_post_active_tab_unknown_id_400(authed_client, owned_conv):
+    resp = await authed_client.post(
+        f"/api/canvas/{owned_conv}/active_tab",
+        json={"tab_id": "canvas_99"},
+    )
+    assert resp.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_post_active_tab_other_user_conv_404(authed_client, other_user_conv):
+    resp = await authed_client.post(
+        f"/api/canvas/{other_user_conv}/active_tab",
+        json={"tab_id": "canvas_1"},
+    )
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_post_close_tab(authed_client, manager_mock, owned_conv):
+    await authed_client.post(
+        f"/api/canvas/{owned_conv}/new_tab",
+        json={"widget_type": "markdown_document", "data": {"content": "a"}},
+    )
+    await authed_client.post(
+        f"/api/canvas/{owned_conv}/new_tab",
+        json={"widget_type": "markdown_document", "data": {"content": "b"}},
+    )
+    resp = await authed_client.post(
+        f"/api/canvas/{owned_conv}/close_tab",
+        json={"tab_id": "canvas_2"},
+    )
+    assert resp.status_code == 200
+    follow = await authed_client.get(f"/api/canvas/{owned_conv}")
+    state = follow.json()
+    assert state["active_tab"] == "canvas_1"
+    assert len(state["tabs"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_post_close_tab_unknown_id_400(authed_client, owned_conv):
+    resp = await authed_client.post(
+        f"/api/canvas/{owned_conv}/close_tab",
+        json={"tab_id": "canvas_99"},
+    )
+    assert resp.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_post_close_tab_other_user_conv_404(authed_client, other_user_conv):
+    resp = await authed_client.post(
+        f"/api/canvas/{other_user_conv}/close_tab",
+        json={"tab_id": "canvas_1"},
+    )
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_get_standalone_canvas_with_tab_id(authed_client, owned_conv):
+    resp = await authed_client.get(f"/canvas/{owned_conv}/canvas_2")
+    assert resp.status_code == 200
+    assert "text/html" in resp.headers.get("content-type", "")
+    assert "<dc-widget-host" in resp.text
+
+
+@pytest.mark.asyncio
+async def test_get_standalone_canvas_with_tab_id_other_user_404(
+    authed_client, other_user_conv,
+):
+    resp = await authed_client.get(f"/canvas/{other_user_conv}/canvas_1")
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_canvas_update_event_kind_new_tab():
+    """The forwarder passes through kind=new_tab."""
+    sent = []
+
+    async def ws_send(payload):
+        sent.append(payload)
+
+    state = {"ws_send": ws_send, "config": None}
+    callback = ws_mod._make_canvas_update_forwarder(state, conv_id="conv-x")
+    await callback({
+        "type": "canvas_update", "conv_id": "conv-x",
+        "kind": "new_tab", "active_tab": "canvas_3",
+        "tab": {"id": "canvas_3", "label": "L", "widget_type": "code_block", "data": {"code": "x"}},
+    })
+    assert sent[0]["kind"] == "new_tab"
+    assert sent[0]["tab"]["id"] == "canvas_3"
+
+
+@pytest.mark.asyncio
+async def test_canvas_update_event_kind_close_tab():
+    sent = []
+
+    async def ws_send(payload):
+        sent.append(payload)
+
+    state = {"ws_send": ws_send, "config": None}
+    callback = ws_mod._make_canvas_update_forwarder(state, conv_id="conv-x")
+    await callback({
+        "type": "canvas_update", "conv_id": "conv-x",
+        "kind": "close_tab", "active_tab": "canvas_2",
+        "tab": None, "closed_tab_id": "canvas_3",
+    })
+    assert sent[0]["kind"] == "close_tab"
+    assert sent[0]["closed_tab_id"] == "canvas_3"
+
+
+@pytest.mark.asyncio
+async def test_canvas_update_event_kind_set_active():
+    sent = []
+
+    async def ws_send(payload):
+        sent.append(payload)
+
+    state = {"ws_send": ws_send, "config": None}
+    callback = ws_mod._make_canvas_update_forwarder(state, conv_id="conv-x")
+    await callback({
+        "type": "canvas_update", "conv_id": "conv-x",
+        "kind": "set_active", "active_tab": "canvas_1", "tab": None,
+    })
+    assert sent[0]["kind"] == "set_active"
+    assert sent[0]["active_tab"] == "canvas_1"
 
 
 @pytest.mark.asyncio
