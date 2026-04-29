@@ -177,6 +177,79 @@ def test_tool_definitions_translation():
     assert decls[0]["parameters"]["type"] == "object"
 
 
+def test_tool_schema_strips_propertynames_and_pattern_keywords():
+    """MCP-provided schemas often use JSON-Schema keywords Vertex rejects
+    (propertyNames, patternProperties, $defs, dependencies, etc.). They
+    must be scrubbed from tool parameter schemas before the request goes
+    out — otherwise Vertex returns HTTP 400 ``Unknown name "X"``.
+
+    This test was written in response to a real failure: a Playwright
+    MCP tool's input schema used ``propertyNames``, and the agent turn
+    failed mid-execution.
+    """
+    tools = [{
+        "type": "function",
+        "function": {
+            "name": "browser_evaluate_legacy_shape",
+            "description": "Imaginary tool exercising rejected keywords",
+            "parameters": {
+                "type": "object",
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "$defs": {"Foo": {"type": "string"}},
+                "properties": {
+                    "kw": {
+                        "type": "object",
+                        "propertyNames": {"pattern": "^[a-z]+$"},
+                        "patternProperties": {"^x_": {"type": "string"}},
+                    },
+                    "n": {"type": "number", "multipleOf": 5},
+                    "branches": {
+                        "type": "object",
+                        "if": {"required": ["a"]},
+                        "then": {"properties": {"b": {"type": "string"}}},
+                        "else": {"properties": {"c": {"type": "string"}}},
+                    },
+                    "deps": {
+                        "type": "object",
+                        "dependentRequired": {"a": ["b"]},
+                        "dependencies": {"x": ["y"]},
+                    },
+                },
+                "required": ["kw"],
+            },
+        },
+    }]
+    body = _build_request_body([], tools=tools)
+    decls = body["tools"][0]["functionDeclarations"]
+    params = decls[0]["parameters"]
+
+    # Top-level metadata keys removed.
+    assert "$schema" not in params
+    assert "$defs" not in params
+
+    # Stripped from nested object schemas.
+    kw = params["properties"]["kw"]
+    assert "propertyNames" not in kw
+    assert "patternProperties" not in kw
+
+    n = params["properties"]["n"]
+    assert "multipleOf" not in n
+    assert n["type"] == "number"  # legitimate keys preserved
+
+    branches = params["properties"]["branches"]
+    assert "if" not in branches
+    assert "then" not in branches
+    assert "else" not in branches
+
+    deps = params["properties"]["deps"]
+    assert "dependentRequired" not in deps
+    assert "dependencies" not in deps
+
+    # Sanity: legitimate constraints survive the scrub.
+    assert params["properties"]["kw"]["type"] == "object"
+    assert params["required"] == ["kw"]
+
+
 def test_multiple_system_messages_concatenated():
     messages = [
         {"role": "system", "content": "Rule 1."},

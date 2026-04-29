@@ -340,9 +340,35 @@ class _VertexStreamState:
 # Message format translation
 # ---------------------------------------------------------------------------
 
+_VERTEX_UNSUPPORTED_KEYS = frozenset({
+    # Schema metadata Vertex doesn't process.
+    "$schema", "$id", "$defs", "definitions", "$ref",
+    # JSON Schema keywords for property-name / pattern-shape constraints —
+    # not in the OpenAPI 3 subset Vertex accepts.
+    "propertyNames", "patternProperties", "dependencies", "dependentRequired",
+    "dependentSchemas",
+    # Conditional schema branches.
+    "if", "then", "else",
+    # Numeric constraint Vertex rejects on some schema versions.
+    "multipleOf",
+})
+
+
 def _clean_schema(schema: dict) -> dict:
-    """Remove keys that Vertex/Gemini doesn't accept in JSON Schema (e.g. $schema)."""
-    cleaned = {k: v for k, v in schema.items() if k != "$schema"}
+    """Strip JSON-Schema keywords Vertex/Gemini doesn't accept.
+
+    Vertex's tool-parameter schema is a restricted subset of OpenAPI 3.
+    MCP-provided tool schemas (e.g. Playwright) frequently use full
+    JSON-Schema features like ``propertyNames`` or ``patternProperties``
+    that the Vertex API rejects with HTTP 400 ``Unknown name "X"``.
+
+    The set of stripped keys is a denylist (see ``_VERTEX_UNSUPPORTED_KEYS``)
+    rather than an allowlist so we don't accidentally drop legitimate
+    constraints (``minLength``, ``enum``, etc.) that Vertex accepts. Add
+    keys here as new rejection cases surface.
+    """
+    cleaned = {k: v for k, v in schema.items()
+               if k not in _VERTEX_UNSUPPORTED_KEYS}
     # Recurse into nested schemas (properties, items, etc.)
     if "properties" in cleaned:
         cleaned["properties"] = {
@@ -352,6 +378,15 @@ def _clean_schema(schema: dict) -> dict:
     for key in ("items", "additionalProperties"):
         if key in cleaned and isinstance(cleaned[key], dict):
             cleaned[key] = _clean_schema(cleaned[key])
+    # Recurse into combinator branches if present (Vertex supports oneOf/
+    # anyOf/allOf in some versions, so we keep them but still scrub their
+    # contents).
+    for key in ("oneOf", "anyOf", "allOf"):
+        if key in cleaned and isinstance(cleaned[key], list):
+            cleaned[key] = [
+                _clean_schema(s) if isinstance(s, dict) else s
+                for s in cleaned[key]
+            ]
     return cleaned
 
 
