@@ -109,6 +109,7 @@ See [docs/conversations.md](docs/conversations.md), [docs/web-ui.md](docs/web-ui
 - **Bug fix = test first.** Reproduce with a failing test, then fix.
 - **Commit after each logical step.** Lint and test before committing.
 - **Iterative changes go in a branch.** Don't push rapid-fire fixes directly to main — regressions compound (especially in UX-sensitive code like streaming/placeholder logic).
+- **Worktree setup.** Worktrees go under `.claude/worktrees/{branch}/`. Each needs its own venv — run `uv sync` (or `make install`) inside the worktree to create one. Copy `.env` from the main clone — it points at the main clone's `data/` directory, so the worktree shares conversations / vault / config without duplicating state. Run `make test` once for a clean baseline before starting work.
 - **Test live in Mattermost and the web UI after merging** — real behavior differs from unit tests.
 - **Test speed discipline.** Tests run in parallel via `pytest-xdist -n auto`:
   - **Don't `asyncio.sleep(X)` to wait for work.** Wait on the right signal: `await job.reader_task`, `asyncio.wait_for(event.wait(), ...)`, or patch the clock (`_now_iso`/`time.monotonic`). Fixed sleeps are slower *and* flakier.
