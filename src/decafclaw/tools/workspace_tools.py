@@ -595,7 +595,7 @@ WORKSPACE_TOOL_DEFINITIONS = [
         "priority": "critical",
         "function": {
             "name": "workspace_write",
-            "description": "Write content to a file in your workspace filesystem. Use this for blog posts, code, configs, scripts, and any project files. NOT for vault knowledge pages (use vault_write for those). Creates parent directories as needed. Paths are relative to the workspace root — do NOT prefix with 'workspace/' (use 'blog/post.md' not 'workspace/blog/post.md').",
+            "description": "Write content to a file in your workspace filesystem. Use this for blog posts, code, configs, scripts, and any project files. NOT for vault knowledge pages (use vault_write for those). NOT for HTML/CSS/JS demos the user wants to SEE — when the user asks you to 'show', 'display', 'render', or 'demo' interactive web content, use canvas_new_tab with widget_type='iframe_sandbox' so it renders directly in their UI instead of forcing them to open a saved file. Creates parent directories as needed. Paths are relative to the workspace root — do NOT prefix with 'workspace/' (use 'blog/post.md' not 'workspace/blog/post.md').",
             "parameters": {
                 "type": "object",
                 "properties": {
