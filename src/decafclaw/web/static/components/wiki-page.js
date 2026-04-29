@@ -244,12 +244,12 @@ export class WikiPage extends LitElement {
     const modeIcon = this._editing ? '\u{1f441}' : '\u{270e}';
     const modeTitle = this._editing ? 'Switch to view mode' : 'Switch to edit mode';
     const closeBtn = this.standalone ? nothing : html`
-      <button class="wiki-close-btn" @click=${() => this._close()} title="Close wiki pane">&times;</button>
+      <button class="wiki-close-btn dc-icon-btn" @click=${() => this._close()} title="Close wiki pane" aria-label="Close wiki pane">&times;</button>
     `;
     const rightButtons = html`
-      <button class="wiki-edit-btn" @click=${() => this._toggleMode()} title=${modeTitle}>${modeIcon}</button>
-      <button class="wiki-delete-btn" @click=${() => this.#deletePage()} title="Delete page" aria-label="Delete page">\u{1F5D1}</button>
-      <a href=${newTabUrl} target="_blank" rel="noopener" class="wiki-open-tab" title="Open in new tab">&#8599;</a>
+      <button class="wiki-edit-btn dc-icon-btn" @click=${() => this._toggleMode()} title=${modeTitle}>${modeIcon}</button>
+      <button class="wiki-delete-btn dc-icon-btn" @click=${() => this.#deletePage()} title="Delete page" aria-label="Delete page">\u{1F5D1}</button>
+      <a href=${newTabUrl} target="_blank" rel="noopener" class="wiki-open-tab dc-icon-btn" title="Open in new tab">&#8599;</a>
       ${closeBtn}
     `;
 
@@ -282,7 +282,7 @@ export class WikiPage extends LitElement {
             `;
           })}
           <span class="wiki-bc-page">${pageName}</span>
-          <button class="wiki-rename-btn" @click=${() => this.#startRename()} title="Rename / move page" aria-label="Rename / move page">\u{270e}</button>
+          <button class="wiki-rename-btn dc-icon-btn" @click=${() => this.#startRename()} title="Rename / move page" aria-label="Rename / move page">\u{270e}</button>
         </span>
       `;
 

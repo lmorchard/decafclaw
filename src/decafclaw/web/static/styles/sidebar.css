@@ -304,25 +304,17 @@ conversation-sidebar[collapsed] .sidebar-header {
   padding: 0.75rem 0;
 }
 
+/* Structural rules from .dc-icon-btn in primitives.css. Per-site
+   overrides: tighter padding than primitive default, larger font. */
 conversation-sidebar .collapse-btn {
-  background: none;
-  border: none;
-  cursor: pointer;
   padding: 0.15rem 0.3rem;
-  margin: 0;
   font-size: 1.1rem;
-  line-height: 1;
-  color: var(--pico-muted-color);
-}
-
-conversation-sidebar .collapse-btn:hover {
-  color: var(--pico-color);
 }
 
 /* Mobile-only close button — hamburger handles toggle, but a tap-target
    inside the open sidebar gives users an explicit dismiss. Visual
    styling comes from the shared `.dc-overlay-close-x` class
-   (variables.css) so the canvas overlay's close-X stays in sync. */
+   (primitives.css) so the canvas overlay's close-X stays in sync. */
 conversation-sidebar .mobile-close-btn {
   display: none;
 }
