@@ -55,8 +55,13 @@ Tests are YAML files with a list of test cases. Single-turn form:
 | `response_not_contains` | str / list[str] | **AND semantics.** Fails if any listed string is in the response. Case-insensitive. |
 | `max_tool_calls` | int | Fail if tool calls in this turn exceed the bound |
 | `max_tool_errors` | int | Fail if tool results containing `[error` in this turn exceed the bound |
+| `expect_tool` | str / list[str] | **OR semantics.** Fail if none of the listed tools were called this turn. |
+| `expect_no_tool` | str / list[str] | **AND semantics.** Fail if any of the listed tools were called this turn. |
+| `expect_tool_count_by_name` | dict[str, int] | Fail if any listed tool's call count this turn does not equal the mapped int. Tools not listed are unconstrained. Count `0` is allowed (overlaps `expect_no_tool`). |
 
 Note that `response_contains` with a list uses OR semantics — to require several strings, use a single `re:(?s).*foo.*bar.*` regex, or use multiple assertions by splitting into separate test cases.
+
+Tool-name assertions see only parent-agent tool calls; tools invoked inside child agents (via `delegate_task`) are not visible.
 
 ### Multi-turn tests
 
