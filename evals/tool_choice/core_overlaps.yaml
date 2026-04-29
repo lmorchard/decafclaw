@@ -93,3 +93,35 @@
     "Search the convo" + specific question → conversation_search.
     conversation_compact is for proactively shrinking history before
     context fills up — never invoked because the user has a question.
+
+# -- canvas_new_tab vs workspace_write ---------------------------------------
+
+- name: canvas-vs-workspace-write-show-html-demo
+  scenario: "Show me a rotating 3D cube in HTML — keep it simple."
+  expected: canvas_new_tab
+  near_miss: [workspace_write]
+  notes: |
+    "Show me" + interactive HTML content → canvas_new_tab with
+    widget_type='iframe_sandbox', which renders the page directly in
+    the user's UI. workspace_write would force them to open a saved
+    file. Real-session miss (postmortem 2026-04-29): the agent reached
+    for workspace_write and produced an .html artifact instead of
+    rendering inline.
+
+- name: canvas-vs-workspace-write-display-chart
+  scenario: "Display a quick interactive bar chart of [10, 20, 35, 14]."
+  expected: canvas_new_tab
+  near_miss: [workspace_write]
+  notes: |
+    "Display" + interactive viz → iframe_sandbox in the canvas. The
+    user wants to see it now, not get a path to an HTML file.
+
+- name: workspace-write-vs-canvas-save-blog-post
+  scenario: "Write a draft blog post about my weekend project to blog/weekend.md."
+  expected: workspace_write
+  near_miss: [canvas_new_tab]
+  notes: |
+    Negative case for the canvas redirect: a markdown blog post the
+    user explicitly asks to save to a file path is workspace_write.
+    The "PREFER canvas_new_tab" guidance applies to interactive web
+    content the user wants displayed, not to authoring file artifacts.
