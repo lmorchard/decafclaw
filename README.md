@@ -1,14 +1,12 @@
 # DecafClaw
 
-An AI agent exploration in Python. This is not a coherent product or framework. This is a laboratory in the shape of a Rube Goldberg machine. Built to explore agent development patterns. Increasingly focused on personal knowledge management and writing tools, with an Obsidian-like shared vault where user and agent collaborate on markdown documents.
+An AI agent exploration. This is not a coherent product or framework. This is a laboratory in the shape of a Rube Goldberg machine. Built to explore agent development patterns. Increasingly focused on personal knowledge management and writing tools, with an Obsidian-like shared vault where user and agent collaborate on markdown documents.
 
 ![Screenshot](./docs/screenshot.png)
 
 ## What it does
 
 Multi-channel AI agent with a shared knowledge vault. Connects to Mattermost as a chat bot, runs in a web UI with WYSIWYG wiki editing, or runs in terminal mode. Multi-provider LLM support (Vertex/Gemini, OpenAI, OpenAI-compatible) with named model configs and per-conversation model selection. Streams responses as they arrive.
-
-**Key features:** [Web UI](docs/web-ui.md) | [Canvas panel](docs/web-ui.md#canvas-panel) | [Skills](docs/skills.md) | [MCP servers](docs/mcp-servers.md) | [Vault & memory](docs/vault.md) | [Files tab](docs/files-tab.md) | [Widgets](docs/widgets.md) | [Conversations](docs/conversations.md) | [Streaming](docs/streaming.md) | [Heartbeat](docs/heartbeat.md) | [Scheduled tasks](docs/schedules.md) | [Sub-agent delegation](docs/delegation.md) | [Eval loop](docs/eval-loop.md) | [Self-reflection](docs/reflection.md) | [Notifications](docs/notifications.md)
 
 See [docs/](docs/index.md) for the full feature list.
 
