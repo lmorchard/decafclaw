@@ -114,8 +114,13 @@ export class ToolStatusStore {
       tool_call_id: toolCallId,
       data,
     });
-    // Remove this confirm from the pending list — the backend will
-    // broadcast confirmation_response which flips the widget UI state.
+    // Flip the local widget to its post-submit state immediately. The
+    // backend will broadcast confirmation_response which the
+    // CONFIRMATION_RESPONSE handler uses to flip OTHER tabs (their
+    // pendingConfirms still has this entry). On this tab the broadcast
+    // lookup misses (we pop below), so without this direct call the
+    // submitting widget would stay live until reload.
+    this.#messageStore.markToolWidgetSubmitted(toolCallId, data);
     this.#pendingConfirms = this.#pendingConfirms.filter(
       c => c.confirmation_id !== confirm.confirmation_id);
     this.#onChange();

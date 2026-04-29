@@ -214,6 +214,44 @@ chat-message .tool-result-raw pre {
   font-size: 0.85rem;
 }
 
+/* ---- text_input ---- */
+
+.widget-text-input {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.widget-text-input__prompt {
+  margin: 0 0 0.25rem 0;
+}
+
+.widget-text-input__fields {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.widget-text-input__field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.widget-text-input__label {
+  font-size: 0.85rem;
+  opacity: 0.85;
+}
+
+.widget-text-input__actions {
+  margin-top: 0.25rem;
+}
+
+.widget-text-input__submit {
+  padding: 0.35rem 0.9rem;
+  font-size: 0.85rem;
+}
+
 /* ---- markdown_document ---- */
 
 .md-doc-inline.collapsed .md-doc-body {

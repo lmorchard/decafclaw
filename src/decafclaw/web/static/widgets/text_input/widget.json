@@ -1,0 +1,31 @@
+{
+  "name": "text_input",
+  "description": "Ask the user a free-form text question — single-line, multiline, or a small multi-field form. Pauses the agent turn until the user submits.",
+  "modes": ["inline"],
+  "accepts_input": true,
+  "data_schema": {
+    "type": "object",
+    "required": ["prompt", "fields"],
+    "properties": {
+      "prompt": { "type": "string", "minLength": 1 },
+      "fields": {
+        "type": "array",
+        "minItems": 1,
+        "items": {
+          "type": "object",
+          "required": ["key", "label"],
+          "properties": {
+            "key": { "type": "string", "minLength": 1 },
+            "label": { "type": "string", "minLength": 1 },
+            "placeholder": { "type": "string" },
+            "default": { "type": "string" },
+            "multiline": { "type": "boolean" },
+            "required": { "type": "boolean" },
+            "max_length": { "type": "integer", "minimum": 1 }
+          }
+        }
+      },
+      "submit_label": { "type": "string", "minLength": 1 }
+    }
+  }
+}

@@ -120,7 +120,7 @@ def test_annotate_pairs_widget_response_to_tool():
     archive = [
         {"role": "assistant", "content": "",
          "tool_calls": [{"id": "tc-1",
-                         "function": {"name": "ask_user", "arguments": "{}"}}]},
+                         "function": {"name": "ask_user_multiple_choice", "arguments": "{}"}}]},
         {"role": "tool", "tool_call_id": "tc-1", "content": "[awaiting]",
          "widget": {"widget_type": "multiple_choice",
                     "target": "inline", "data": {}}},
