@@ -177,6 +177,158 @@ def test_tool_definitions_translation():
     assert decls[0]["parameters"]["type"] == "object"
 
 
+def test_tool_schema_strips_all_unsupported_keywords():
+    """Every keyword in ``_VERTEX_UNSUPPORTED_KEYS`` must be stripped from
+    tool parameter schemas before the request goes out — otherwise Vertex
+    returns HTTP 400 ``Unknown name "X"`` and the agent turn dies.
+
+    This test was written in response to a real failure: a Playwright
+    MCP tool's input schema used ``propertyNames``. Coverage spans every
+    member of ``_VERTEX_UNSUPPORTED_KEYS`` so a regression that re-adds
+    one to the kept set (or that drops one from the strip list) gets
+    caught locally instead of in production.
+    """
+    from decafclaw.llm.providers.vertex import _VERTEX_UNSUPPORTED_KEYS
+
+    tools = [{
+        "type": "function",
+        "function": {
+            "name": "exhaustive_unsupported_keys",
+            "description": "Exercises every key in _VERTEX_UNSUPPORTED_KEYS",
+            "parameters": {
+                "type": "object",
+                # Schema-metadata family.
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "$id": "https://example.com/schemas/foo",
+                "$defs": {"Foo": {"type": "string"}},
+                "definitions": {"Bar": {"type": "string"}},
+                "$ref": "#/$defs/Foo",
+                "properties": {
+                    "kw": {
+                        "type": "object",
+                        "propertyNames": {"pattern": "^[a-z]+$"},
+                        "patternProperties": {"^x_": {"type": "string"}},
+                    },
+                    "n": {"type": "number", "multipleOf": 5},
+                    "branches": {
+                        "type": "object",
+                        "if": {"required": ["a"]},
+                        "then": {"properties": {"b": {"type": "string"}}},
+                        "else": {"properties": {"c": {"type": "string"}}},
+                    },
+                    "deps": {
+                        "type": "object",
+                        "dependentRequired": {"a": ["b"]},
+                        "dependentSchemas": {"a": {"required": ["b"]}},
+                        "dependencies": {"x": ["y"]},
+                    },
+                },
+                "required": ["kw"],
+            },
+        },
+    }]
+    body = _build_request_body([], tools=tools)
+    decls = body["tools"][0]["functionDeclarations"]
+    params = decls[0]["parameters"]
+
+    # Top-level metadata family — none should survive at the root.
+    for key in ("$schema", "$id", "$defs", "definitions", "$ref"):
+        assert key not in params, f"top-level {key!r} should be stripped"
+
+    # Stripped from nested object schemas.
+    kw = params["properties"]["kw"]
+    assert "propertyNames" not in kw
+    assert "patternProperties" not in kw
+
+    n = params["properties"]["n"]
+    assert "multipleOf" not in n
+    assert n["type"] == "number"  # legitimate keys preserved
+
+    branches = params["properties"]["branches"]
+    for key in ("if", "then", "else"):
+        assert key not in branches, f"branch keyword {key!r} should be stripped"
+
+    deps = params["properties"]["deps"]
+    for key in ("dependentRequired", "dependentSchemas", "dependencies"):
+        assert key not in deps, f"dep keyword {key!r} should be stripped"
+
+    # Sanity: legitimate constraints survive the scrub.
+    assert params["properties"]["kw"]["type"] == "object"
+    assert params["required"] == ["kw"]
+
+    # Defense-in-depth: if a new key is added to the denylist later, this
+    # test should remind the maintainer to add coverage for it. We assert
+    # the test schema mentions every current denylist key somewhere.
+    schema_str = json.dumps(tools[0]["function"]["parameters"])
+    for key in _VERTEX_UNSUPPORTED_KEYS:
+        assert key in schema_str, (
+            f"_VERTEX_UNSUPPORTED_KEYS contains {key!r} but the test "
+            f"schema does not exercise it — extend the schema and add an "
+            f"assertion so the strip is verified end-to-end."
+        )
+
+
+def test_tool_schema_scrubs_unsupported_keys_inside_combinator_branches():
+    """``oneOf`` / ``anyOf`` / ``allOf`` branches contain full subschemas;
+    unsupported keywords inside them must also be scrubbed, since Vertex
+    walks the tree and rejects on the first match. Specific guarantee for
+    the combinator-recursion path added alongside the strip list.
+    """
+    tools = [{
+        "type": "function",
+        "function": {
+            "name": "combinator_branches",
+            "description": "Tool whose schema buries unsupported keys in combinator branches",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "value": {
+                        "oneOf": [
+                            # Branch A: propertyNames inside oneOf
+                            {
+                                "type": "object",
+                                "propertyNames": {"pattern": "^a_"},
+                            },
+                            # Branch B: anyOf nested inside oneOf, with
+                            # patternProperties at one more level down.
+                            {
+                                "anyOf": [
+                                    {"type": "string"},
+                                    {
+                                        "type": "object",
+                                        "patternProperties": {"^b_": {"type": "string"}},
+                                    },
+                                ],
+                            },
+                            # Branch C: allOf carrying $defs (metadata key)
+                            {
+                                "allOf": [
+                                    {"$defs": {"Z": {"type": "string"}}, "type": "object"},
+                                ],
+                            },
+                        ],
+                    },
+                },
+            },
+        },
+    }]
+    body = _build_request_body([], tools=tools)
+    one_of = body["tools"][0]["functionDeclarations"][0]["parameters"]["properties"]["value"]["oneOf"]
+
+    # Branch A — propertyNames stripped, but type preserved.
+    assert "propertyNames" not in one_of[0]
+    assert one_of[0]["type"] == "object"
+
+    # Branch B — patternProperties stripped two levels deep.
+    nested_object = one_of[1]["anyOf"][1]
+    assert "patternProperties" not in nested_object
+    assert nested_object["type"] == "object"
+
+    # Branch C — $defs stripped from inside the allOf entry.
+    assert "$defs" not in one_of[2]["allOf"][0]
+    assert one_of[2]["allOf"][0]["type"] == "object"
+
+
 def test_multiple_system_messages_concatenated():
     messages = [
         {"role": "system", "content": "Rule 1."},
