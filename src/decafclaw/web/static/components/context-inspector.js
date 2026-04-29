@@ -262,7 +262,7 @@ export class ContextInspector extends LitElement {
       <div class="inspector">
         <div class="inspector-header">
           <h3>Context Inspector</h3>
-          <button class="close-btn" @click=${() => this.dispatchEvent(new Event('close'))}>&times;</button>
+          <button class="close-btn dc-icon-btn" @click=${() => this.dispatchEvent(new Event('close'))} title="Close context inspector" aria-label="Close context inspector">&times;</button>
         </div>
         ${content}
       </div>

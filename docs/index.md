@@ -12,6 +12,7 @@ These docs are as much for me as they are for agents working on this project. Th
 
 - [Web UI](web-ui.md) — Browser-based chat, vault editor, conversation management, model picker
 - [Web UI on mobile](web-ui-mobile.md) — Conventions for mobile-friendly components: tap targets, hover-only fixes, popover portals, visual viewport
+- [Web UI design system](web-ui-design.md) — Shared primitives, Pico-in-context conventions, cascade rules, token vocabulary
 - [Files tab](files-tab.md) — Web UI workspace browser: browse, view, and edit agent workspace files
 - [Widgets](widgets.md) — Rich tool output in the web UI (Phase 1: `data_table`; extensible via admin tier)
 - [Streaming](streaming.md) — Stream LLM tokens as they arrive, configurable throttle

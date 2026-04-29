@@ -20,21 +20,14 @@
   flex: 1;
 }
 
-.config-back-btn,
-.config-close-btn {
-  background: none;
-  border: none;
-  cursor: pointer;
+/* Structural rules (border, bg, color, padding, margin, line-height,
+   cursor) come from .dc-icon-btn in primitives.css. Hover defaults
+   from primitive (muted → --pico-color) — no per-site override.
+   Tag-qualified to tie the primitive's 0,1,1 specificity per the
+   documented convention (see docs/web-ui-design.md cascade rule §1). */
+button.config-back-btn,
+button.config-close-btn {
   font-size: 1rem;
-  color: var(--pico-muted-color);
-  padding: 0.25rem 0.5rem;
-  margin: 0;
-  line-height: 1;
-}
-
-.config-back-btn:hover,
-.config-close-btn:hover {
-  color: var(--pico-color);
 }
 
 .config-file-list {
