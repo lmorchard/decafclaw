@@ -164,6 +164,7 @@ class Config:
     providers: dict[str, ProviderConfig] = field(default_factory=dict)
     model_configs: dict[str, ModelConfig] = field(default_factory=dict)
     default_model: str = ""
+    extra_skill_paths: list[str] = field(default_factory=list)
     vault_retrieval: VaultRetrievalConfig = field(default_factory=VaultRetrievalConfig)
     relevance: RelevanceConfig = field(default_factory=RelevanceConfig)
     vault: VaultConfig = field(default_factory=VaultConfig)
@@ -446,6 +447,15 @@ def load_config() -> Config:
     model_configs = _load_model_configs(file_data.get("model_configs", {}))
     default_model = file_data.get("default_model", "")
 
+    env_extra = os.getenv("EXTRA_SKILL_PATHS", "")
+    if env_extra:
+        extra_skill_paths = _parse_list(env_extra)
+    else:
+        raw_extra = file_data.get("extra_skill_paths", [])
+        extra_skill_paths = (
+            [str(p) for p in raw_extra] if isinstance(raw_extra, list) else []
+        )
+
     # Migration: if no providers/model_configs but old-style llm config exists,
     # auto-generate a "default" openai-compat provider + model config
     from .llm.types import PROVIDER_OPENAI_COMPAT
@@ -486,6 +496,7 @@ def load_config() -> Config:
         providers=providers,
         model_configs=model_configs,
         default_model=default_model,
+        extra_skill_paths=extra_skill_paths,
         vault_retrieval=vault_retrieval,
         relevance=relevance,
         vault=vault,
