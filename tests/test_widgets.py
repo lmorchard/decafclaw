@@ -295,6 +295,129 @@ def test_bundled_markdown_document_is_registered(fake_config):
     assert not bad_ok
 
 
+def test_bundled_iframe_sandbox_is_registered(fake_config):
+    """Fresh registry scan finds the bundled iframe_sandbox widget descriptor."""
+    reg = load_widget_registry(fake_config,
+                               admin_dir=Path("/nonexistent/admin"))
+    desc = reg.get("iframe_sandbox")
+    assert desc is not None
+    assert desc.tier == "bundled"
+    assert "inline" in desc.modes
+    assert "canvas" in desc.modes
+    assert desc.accepts_input is False
+
+    # body alone is valid
+    ok, err = reg.validate("iframe_sandbox", {"body": "<h1>Hi</h1>"})
+    assert ok is True, err
+    # body + title is valid
+    ok, err = reg.validate("iframe_sandbox",
+                           {"body": "<p>x</p>", "title": "demo"})
+    assert ok is True, err
+    # missing body rejected
+    bad, _ = reg.validate("iframe_sandbox", {"title": "no body"})
+    assert not bad
+    # body must be string, not other types
+    bad, _ = reg.validate("iframe_sandbox", {"body": 42})
+    assert not bad
+    # additionalProperties: false rejects unknown keys (safety against
+    # agent confusion). The server-injected `html` key is in `properties`,
+    # so it's allowed for round-trips.
+    bad, _ = reg.validate("iframe_sandbox",
+                          {"body": "x", "unexpected": "no"})
+    assert not bad
+    # Round-trip with html field is permitted (allowed on input so
+    # canvas_read → canvas_update doesn't fail; normalization regenerates).
+    ok, _ = reg.validate("iframe_sandbox",
+                         {"body": "x", "html": "<stale-doc>"})
+    assert ok is True
+    # Oversized body rejected (256 KB cap)
+    big = "a" * (262144 + 1)
+    bad, err = reg.validate("iframe_sandbox", {"body": big})
+    assert not bad
+
+
+def test_iframe_sandbox_normalize_injects_csp(fake_config):
+    """Normalization wraps body into a CSP-locked HTML document."""
+    reg = load_widget_registry(fake_config,
+                               admin_dir=Path("/nonexistent/admin"))
+    out = reg.normalize("iframe_sandbox",
+                        {"body": "<h1>Hello</h1>", "title": "Demo"})
+    assert "html" in out
+    wrapped = out["html"]
+    # Doctype first
+    assert wrapped.startswith("<!doctype html>")
+    # CSP meta with the exact policy
+    assert 'http-equiv="Content-Security-Policy"' in wrapped
+    assert "default-src 'none'" in wrapped
+    assert "script-src 'unsafe-inline'" in wrapped
+    assert "style-src 'unsafe-inline'" in wrapped
+    # No allow-* network sources
+    assert "fetch-src" not in wrapped
+    assert "https:" not in wrapped or "https://" not in wrapped  # no remote scheme allowance
+    # Title is escaped and present
+    assert "<title>Demo</title>" in wrapped
+    # Body content is present verbatim
+    assert "<h1>Hello</h1>" in wrapped
+    # Original body and title preserved alongside html
+    assert out["body"] == "<h1>Hello</h1>"
+    assert out["title"] == "Demo"
+
+
+def test_iframe_sandbox_normalize_no_title(fake_config):
+    """Normalization works without title — no <title> tag emitted."""
+    reg = load_widget_registry(fake_config,
+                               admin_dir=Path("/nonexistent/admin"))
+    out = reg.normalize("iframe_sandbox", {"body": "<p>x</p>"})
+    assert "<title>" not in out["html"]
+    assert "title" not in out
+
+
+def test_iframe_sandbox_normalize_escapes_title(fake_config):
+    """Adversarial title can't break out of the <title> element."""
+    reg = load_widget_registry(fake_config,
+                               admin_dir=Path("/nonexistent/admin"))
+    out = reg.normalize("iframe_sandbox", {
+        "body": "<p>safe</p>",
+        "title": "</title><script>alert(1)</script>",
+    })
+    wrapped = out["html"]
+    # Literal `</title>` must not appear unescaped — html.escape converts
+    # `<` and `>` to entities, so the dangerous closing tag is neutralized.
+    # The escaped form contains `&lt;/title&gt;`.
+    assert "&lt;/title&gt;" in wrapped
+    # There's still exactly one literal closing </title> — the one we emit
+    # to close the element we opened.
+    assert wrapped.count("</title>") == 1
+
+
+def test_iframe_sandbox_normalize_idempotent(fake_config):
+    """Normalize regenerates html from body — re-normalizing same input
+    produces identical output, and a stale html field gets overwritten."""
+    reg = load_widget_registry(fake_config,
+                               admin_dir=Path("/nonexistent/admin"))
+    once = reg.normalize("iframe_sandbox",
+                         {"body": "<p>same</p>", "title": "T"})
+    twice = reg.normalize("iframe_sandbox", once)
+    assert once == twice
+
+    # Stale html in input must not survive — should be regenerated from body.
+    poisoned = reg.normalize("iframe_sandbox", {
+        "body": "<p>fresh</p>",
+        "html": "<!doctype html><html>STALE</html>",
+    })
+    assert "STALE" not in poisoned["html"]
+    assert "<p>fresh</p>" in poisoned["html"]
+
+
+def test_normalize_passes_through_for_non_iframe_widgets(fake_config):
+    """Widgets without a registered normalizer get their data unchanged."""
+    reg = load_widget_registry(fake_config,
+                               admin_dir=Path("/nonexistent/admin"))
+    data = {"content": "# hi"}
+    out = reg.normalize("markdown_document", data)
+    assert out is data  # exact same object — no copy, no mutation
+
+
 def test_bundled_code_block_is_registered(fake_config):
     """Fresh registry scan finds the bundled code_block widget descriptor."""
     reg = load_widget_registry(fake_config,

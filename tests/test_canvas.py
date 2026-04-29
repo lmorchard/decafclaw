@@ -86,6 +86,10 @@ class _FakeRegistry:
                 return False, f"missing required field '{r}'"
         return True, None
 
+    def normalize(self, name, data):
+        # No registered normalizers in tests — pass through.
+        return data
+
 
 @pytest.fixture
 def md_doc_registry(monkeypatch):
@@ -291,6 +295,86 @@ async def test_update_tab_invalid_data(config, md_doc_registry, emit_recorder):
     )
     assert not result.ok
     assert "schema validation failed" in result.error
+
+
+# ---------------------------------------------------------------------------
+# Per-widget normalization (e.g. iframe_sandbox CSP wrapping)
+# ---------------------------------------------------------------------------
+
+class _NormalizingFakeRegistry(_FakeRegistry):
+    """Fake registry that runs a normalize hook by widget name."""
+
+    def __init__(self, descriptors, normalizers):
+        super().__init__(descriptors)
+        self._normalizers = normalizers
+
+    def normalize(self, name, data):
+        fn = self._normalizers.get(name)
+        return fn(data) if fn else data
+
+
+@pytest.mark.asyncio
+async def test_new_tab_runs_normalize(config, monkeypatch, emit_recorder):
+    """new_tab should invoke registry.normalize after validate, so widgets
+    like iframe_sandbox get their server-controlled fields injected before
+    state is persisted or events are emitted."""
+    def normalize_iframe(data):
+        return {**data, "html": f"WRAPPED:{data.get('body', '')}"}
+
+    reg = _NormalizingFakeRegistry(
+        descriptors={
+            "iframe_sandbox": SimpleNamespace(modes=["inline", "canvas"],
+                                              required=["body"]),
+        },
+        normalizers={"iframe_sandbox": normalize_iframe},
+    )
+    monkeypatch.setattr(canvas, "get_widget_registry", lambda: reg)
+
+    result = await canvas.new_tab(
+        config, "c", "iframe_sandbox",
+        {"body": "<p>hi</p>"}, emit=emit_recorder,
+    )
+    assert result.ok
+    state = canvas.read_canvas_state(config, "c")
+    stored = state["tabs"][0]["data"]
+    # Normalized form: original body preserved, html field added.
+    assert stored["body"] == "<p>hi</p>"
+    assert stored["html"] == "WRAPPED:<p>hi</p>"
+    # Emitted event also carries the normalized data.
+    _, event = emit_recorder.events[0]
+    assert event["tab"]["data"]["html"] == "WRAPPED:<p>hi</p>"
+
+
+@pytest.mark.asyncio
+async def test_update_tab_runs_normalize(config, monkeypatch, emit_recorder):
+    """update_tab must re-run normalize so a stale html field can't survive
+    a round-trip."""
+    def normalize_iframe(data):
+        return {**data, "html": f"WRAPPED:{data.get('body', '')}"}
+
+    reg = _NormalizingFakeRegistry(
+        descriptors={
+            "iframe_sandbox": SimpleNamespace(modes=["inline", "canvas"],
+                                              required=["body"]),
+        },
+        normalizers={"iframe_sandbox": normalize_iframe},
+    )
+    monkeypatch.setattr(canvas, "get_widget_registry", lambda: reg)
+
+    r = await canvas.new_tab(config, "c", "iframe_sandbox",
+                             {"body": "v1"}, emit=emit_recorder)
+    emit_recorder.events.clear()
+    result = await canvas.update_tab(
+        config, "c", r.tab_id,
+        # Agent passes a stale html alongside fresh body — normalize should overwrite it.
+        {"body": "v2", "html": "STALE"},
+        emit=emit_recorder,
+    )
+    assert result.ok
+    state = canvas.read_canvas_state(config, "c")
+    stored = state["tabs"][0]["data"]
+    assert stored["body"] == "v2"
+    assert stored["html"] == "WRAPPED:v2"
 
 
 @pytest.mark.asyncio

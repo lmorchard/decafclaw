@@ -62,6 +62,10 @@ Phase 4:
 
 - **`code_block`** — syntax-highlighted code; inline (collapsed) + canvas modes. Data shape: `{code: string, language?, filename?}`. See [Phase 4](#phase-4--code_block-and-canvas-tabs).
 
+Post-Phase 4 (#358 part B):
+
+- **`iframe_sandbox`** — agent-authored HTML/CSS/JS rendered in a CSP-locked sandboxed iframe; inline + canvas modes. Data shape (input): `{body: string, title?: string}`. See [iframe_sandbox](#iframe_sandbox-widget).
+
 ## Adding a new widget
 
 Widgets are extensible by admins without changing DecafClaw's core. Each
@@ -316,6 +320,97 @@ tools — the implicit active-tab model from Phase 3 is gone. See
 - `canvas_read()` — return `{active_tab, tabs: [{id, label,
   widget_type, data}, ...]}` via `ToolResult.data`.
 
+## `iframe_sandbox` widget
+
+Bundled at `src/decafclaw/web/static/widgets/iframe_sandbox/`. Renders
+agent-authored HTML/CSS/JS in a sandboxed iframe with **no network
+access**. Use for interactive demos, charts, small visualizations, or
+anywhere text alone won't do.
+
+### Trust model
+
+Two layers of defense, applied independently:
+
+**1. iframe `sandbox` attribute** (set by `widget.js`):
+`sandbox="allow-scripts"`. Critically NOT `allow-same-origin` — that
+combination would defeat the sandbox by letting iframe scripts touch
+the parent's storage and origin. Without it, the iframe runs in the
+"null" origin: scripts can run, but they cannot reach parent cookies,
+localStorage, or same-origin XHR. We also omit `allow-forms`,
+`allow-top-navigation`, `allow-popups`, `allow-modals`.
+
+**2. CSP `<meta>` tag** (injected backend-side during normalization):
+
+```
+default-src 'none';
+style-src 'unsafe-inline';
+script-src 'unsafe-inline';
+img-src data:;
+font-src data:;
+```
+
+Blocks all network — no `fetch`, no remote scripts, no remote images
+or fonts. Permits inline `<style>` and `<script>` so demos can be
+self-contained. Permits data-URI images and fonts so demos can embed
+small assets.
+
+The CSP is injected in Python (`widgets.py::_normalize_iframe_sandbox`)
+before the wrapped HTML reaches the browser. The frontend just sets
+the wrapped string as `iframe.srcdoc`. Even a buggy or malicious
+admin/workspace-tier `widget.js` cannot drop the CSP, because by the
+time wrapped HTML reaches the iframe the meta is already in the
+document.
+
+### Data shape
+
+**Input** (what tools and the agent provide):
+
+- `body` (required, string, max 256 KB) — HTML body content. Inline
+  `<style>` and `<script>` allowed.
+- `title` (optional, string, max 200 chars) — populates `<title>`;
+  HTML-escaped before injection.
+
+**Stored / transmitted** (post-normalization):
+
+- `body`, `title` preserved (so `canvas_read` round-trips meaningfully).
+- `html` — server-generated wrapped document with CSP meta + base
+  styles + body content. The Lit widget consumes only `html` for the
+  iframe's `srcdoc`.
+
+Normalization is idempotent: a stale `html` field in the input is
+overwritten by re-wrapping from `body`, so a `canvas_read` →
+`canvas_update` round-trip can't compound or replay a poisoned
+document.
+
+### Usage
+
+Any tool can emit one:
+
+```python
+return ToolResult(
+    text="Rendered demo on canvas",
+    widget=WidgetRequest(
+        widget_type="iframe_sandbox",
+        data={
+            "body": "<h1>Live demo</h1><script>document.body.style.background='lime'</script>",
+            "title": "Lime demo",
+        },
+        target="canvas",
+    ),
+)
+```
+
+Or the agent can use `canvas_new_tab(widget_type="iframe_sandbox", data={"body": "..."})`
+to drop a demo straight into the canvas with no tool plumbing.
+
+### Future: input widgets
+
+`accepts_input: false` for v1. To support widget-response from inside
+the iframe, add a `postMessage` handler in `widget.js` that validates
+`event.source === iframe.contentWindow` (origin will be `null` for
+sandboxed-without-same-origin iframes, so source-equality is the trust
+check). Filed as a follow-up if/when needed.
+
 ## Out-of-scope
 
 - Diff view, line numbers/highlighting for `code_block` — follow-on issues.
@@ -324,7 +419,11 @@ tools — the implicit active-tab model from Phase 3 is gone. See
 - Multi-tab in standalone view — current standalone is single-tab focus by design.
 - Collapsing `EndTurnConfirm` into a widget with a Mattermost-buttons
   adapter — filed as a follow-up issue.
-- Agent-authored widget JS (workspace tier + iframe sandbox) — #358.
+- Workspace-tier widget catalog (`workspace/widgets/` with first-use
+  approval) — #358 part A, still deferred. Agent-writable widget JS is
+  a privilege-escalation surface; iframe_sandbox covers the
+  agent-authored-content case without that risk.
+- postMessage→widget-response from inside iframe_sandbox — future.
 - Hot-reload of widget catalog without server restart — future.
 
 ## Related files
@@ -340,6 +439,7 @@ tools — the implicit active-tab model from Phase 3 is gone. See
 - `src/decafclaw/web/static/widgets/` — bundled widgets (data_table, multiple_choice, markdown_document, code_block)
 - `src/decafclaw/web/static/widgets/markdown_document/` — markdown_document widget descriptor + Lit component
 - `src/decafclaw/web/static/widgets/code_block/` — code_block widget descriptor + Lit component
+- `src/decafclaw/web/static/widgets/iframe_sandbox/` — iframe_sandbox widget descriptor + Lit component
 - `vendor/bundle/highlight.js` — bundled hljs core + ~20 languages + dual themes
 - `src/decafclaw/web/static/components/widgets/widget-host.js` — frontend host
 - `src/decafclaw/web/static/lib/widget-catalog.js` — catalog client
