@@ -45,23 +45,30 @@ export class IframeSandboxWidget extends LitElement {
       ? this.data.html
       : '';
     const isCanvas = this.mode === 'canvas';
-    const heightStyle = isCanvas
-      ? 'height: 100%; min-height: 12rem;'
-      : `height: ${INLINE_HEIGHT};`;
+    // Canvas mode: iframe flexes to fill remaining height after the title
+    // header (if any), so it always reaches the bottom of whatever surface
+    // hosts it (embedded canvas panel or standalone /canvas/{id} page).
+    // Inline mode: fixed height — keeps the widget compact in chat bubbles.
+    const iframeStyle = isCanvas
+      ? 'flex: 1 1 auto; min-height: 12rem; width: 100%; border: 1px solid var(--border-color, #ccc); border-radius: 4px; background: white;'
+      : `height: ${INLINE_HEIGHT}; width: 100%; border: 1px solid var(--border-color, #ccc); border-radius: 4px; background: white;`;
     const wrapperClass = isCanvas
       ? 'iframe-sandbox iframe-sandbox-canvas'
       : 'iframe-sandbox iframe-sandbox-inline';
+    const wrapperStyle = isCanvas
+      ? 'display:flex; flex-direction:column; flex:1 1 auto; min-height:0; height:100%;'
+      : 'display:flex; flex-direction:column;';
     const title = this.data?.title;
     return html`
-      <div class=${wrapperClass} style=${`display:flex; flex-direction:column; ${isCanvas ? 'height:100%;' : ''}`}>
-        ${title ? html`<header class="iframe-sandbox-header"><span class="iframe-sandbox-title">${title}</span></header>` : ''}
+      <div class=${wrapperClass} style=${wrapperStyle}>
+        ${title ? html`<header class="iframe-sandbox-header" style="flex: 0 0 auto;"><span class="iframe-sandbox-title">${title}</span></header>` : ''}
         <iframe
           class="iframe-sandbox-frame"
           sandbox="allow-scripts"
           referrerpolicy="no-referrer"
           loading="lazy"
           .srcdoc=${srcdoc}
-          style=${`${heightStyle} width: 100%; border: 1px solid var(--border-color, #ccc); border-radius: 4px; background: white;`}
+          style=${iframeStyle}
           title=${title || 'sandboxed widget'}>
         </iframe>
       </div>
