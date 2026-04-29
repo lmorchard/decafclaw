@@ -1,0 +1,28 @@
+{
+  "name": "iframe_sandbox",
+  "description": "Renders agent-authored HTML/CSS/JS inside a sandboxed iframe with no network access. Use for interactive demos, charts, small visualizations, or any UI where text alone won't do. The agent supplies HTML body content; the backend wraps it in a CSP-locked document. Inline `<style>` and `<script>` are permitted; external scripts, fetch, and remote images/fonts are blocked. Sandbox attributes deny same-origin access, top-navigation, forms, popups, and modals.",
+  "modes": ["inline", "canvas"],
+  "accepts_input": false,
+  "data_schema": {
+    "type": "object",
+    "required": ["body"],
+    "properties": {
+      "body": {
+        "type": "string",
+        "maxLength": 262144,
+        "description": "HTML body content. Inline <style> and <script> tags are allowed."
+      },
+      "title": {
+        "type": "string",
+        "maxLength": 200,
+        "description": "Optional title; populates <title>."
+      },
+      "html": {
+        "type": "string",
+        "maxLength": 524288,
+        "description": "Server-controlled wrapped document. Set by backend normalization; agent should not provide this. Capped at 512 KB (2x body cap) to bound payload size when round-tripped — normalize regenerates from body anyway."
+      }
+    },
+    "additionalProperties": false
+  }
+}

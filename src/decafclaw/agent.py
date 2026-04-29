@@ -698,10 +698,15 @@ def _resolve_widget(fn_name: str, result: ToolResult,
             fn_name, widget.widget_type, target, desc.modes)
         result.widget = None
         return None
+    # Apply per-widget server-side normalization (e.g. iframe_sandbox CSP
+    # wrapping). Mutate widget.data so downstream consumers — archive,
+    # canvas state, WS event — all see the same normalized shape.
+    normalized = registry.normalize(widget.widget_type, widget.data)
+    widget.data = normalized
     payload = {
         "widget_type": widget.widget_type,
         "target": target,
-        "data": widget.data,
+        "data": normalized,
     }
 
     # Phase 2: input-widget enforcement + pause-signal promotion.

@@ -131,8 +131,12 @@ CANVAS_TOOL_DEFINITIONS = [
                 "you intend to revise across multiple turns. Returns a tab_id "
                 "you MUST keep to target this tab in subsequent canvas_update "
                 "or canvas_close_tab calls. Currently supports widget_type='markdown_document' "
-                "with data={content: <markdown>} and widget_type='code_block' "
-                "with data={code: <string>, language?: <string>, filename?: <string>}."
+                "with data={content: <markdown>}, widget_type='code_block' "
+                "with data={code: <string>, language?: <string>, filename?: <string>}, "
+                "and widget_type='iframe_sandbox' with data={body: <html>, title?: <string>} "
+                "for arbitrary HTML/CSS/JS demos in a CSP-locked sandboxed iframe "
+                "(no network access — fetch, external scripts, remote images/fonts all blocked; "
+                "inline <style> and <script> are allowed)."
             ),
             "parameters": {
                 "type": "object",

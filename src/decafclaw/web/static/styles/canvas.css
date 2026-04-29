@@ -68,10 +68,17 @@ canvas-panel {
   min-width: 2.5rem; min-height: 2.5rem;
 }
 .canvas-body { flex: 1; overflow: hidden; position: relative; display: flex; flex-direction: column; min-height: 0; }
-/* Stretch the widget-host chain so canvas-mode widgets get the full canvas-body height. */
+/* Stretch the widget-host chain so canvas-mode widgets get the full
+   surrounding height. Applied to both the embedded panel (`.canvas-body`)
+   and the standalone canvas page (`#canvas-standalone-body`) so any
+   canvas-mode widget fills the available space the same way in both
+   surfaces. */
 .canvas-body > dc-widget-host,
 .canvas-body > dc-widget-host > .widget-host,
-.canvas-body dc-widget-host > .widget-host > * {
+.canvas-body dc-widget-host > .widget-host > *,
+#canvas-standalone-body > dc-widget-host,
+#canvas-standalone-body > dc-widget-host > .widget-host,
+#canvas-standalone-body dc-widget-host > .widget-host > * {
   flex: 1;
   display: flex;
   flex-direction: column;
