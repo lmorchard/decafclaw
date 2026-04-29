@@ -54,7 +54,7 @@ class TestBuildToolSummary:
             {"role": "user", "content": "ask me a question"},
             {"role": "assistant", "content": None, "tool_calls": [
                 {"id": "tc1", "function": {
-                    "name": "ask_user",
+                    "name": "ask_user_multiple_choice",
                     "arguments": json.dumps(
                         {"prompt": "Pick one", "options": ["a", "b"]}),
                 }},
@@ -66,7 +66,7 @@ class TestBuildToolSummary:
             {"role": "assistant", "content": "You picked A."},
         ]
         result = build_tool_summary(history, 0)
-        assert "ask_user" in result
+        assert "ask_user_multiple_choice" in result
         assert "User responded to widget" in result
         assert "User selected: a" in result
 
@@ -79,7 +79,7 @@ class TestBuildToolSummary:
             {"role": "user", "content": "first turn"},
             {"role": "assistant", "content": None, "tool_calls": [
                 {"id": "tc1", "function": {
-                    "name": "ask_user",
+                    "name": "ask_user_multiple_choice",
                     "arguments": json.dumps({"prompt": "x", "options": []}),
                 }},
             ]},
@@ -94,8 +94,8 @@ class TestBuildToolSummary:
         # first turn + synthetic. Synthetic must NOT be a turn boundary.
         result = build_prior_turn_summary(history, 5, max_turns=3)
         # Should have exactly one prior turn ("first turn"), with
-        # the ask_user call in its tool lines.
-        assert "ask_user" in result
+        # the ask_user_multiple_choice call in its tool lines.
+        assert "ask_user_multiple_choice" in result
         # The synthetic response is included as a tool-line entry;
         # there's no second "User selected" turn-boundary spawning a
         # second prior turn.

@@ -517,7 +517,7 @@ class MattermostClient:
                 # no widget surface here, and the buttons would resolve
                 # the confirmation with no data, producing an unhelpful
                 # "User responded with: {}" inject. The agent's tool
-                # description for ask_user already discourages calls
+                # description for ask_user_multiple_choice already discourages calls
                 # outside the web UI.
                 if action_type == "widget_response":
                     log.info(

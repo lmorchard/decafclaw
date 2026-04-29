@@ -147,24 +147,55 @@ To mark a widget as interactive, set `"accepts_input": true` in its
 `widget.json`. Tools that emit an input widget MUST also set
 `end_turn=True` on the `ToolResult`.
 
-### The `ask_user` core tool
+### Asking the user — `ask_user_multiple_choice` vs `ask_user_text`
 
-The agent can ask the user to pick from a list via the built-in
-`ask_user` tool:
+Two core tools wrap the input-widget infrastructure. Both pause the
+turn until the user submits and only work in the web UI.
+
+**`ask_user_multiple_choice(prompt, options, allow_multiple=False)`** —
+pick one (or several) from a fixed list. Renders the `multiple_choice`
+widget. Inject string: `"User selected: <label>"`.
 
 ```python
-# Inside the LLM's tool-calling loop
-await ask_user(
+await ask_user_multiple_choice(
     prompt="Which deploy target?",
     options=["production", "staging", "dev"],
     allow_multiple=False,  # radios; set True for checkboxes
 )
 ```
 
-The user sees a `multiple_choice` widget inline in the tool message;
-the agent pauses. When the user submits, the conversation continues
-with a synthetic `role: "user"` message like
-`"User selected: production"`.
+**`ask_user_text(prompt, fields=None, submit_label="Submit")`** —
+free-form text answer. Single-field by default (`fields` omitted), or
+pass `fields=[...]` for a small multi-field form. Renders the
+`text_input` widget. Inject string: bare value for a single field,
+JSON object for multi-field.
+
+```python
+# Single-field common case (keyed 'value'):
+await ask_user_text(prompt="What name would you like?")
+# → "User responded: Hello"
+
+# Multi-field form:
+await ask_user_text(
+    prompt="Contact info?",
+    fields=[
+        {"key": "name", "label": "Name"},
+        {"key": "email", "label": "Email", "required": False},
+        {"key": "bio", "label": "Bio", "multiline": True, "max_length": 500},
+    ],
+    submit_label="Send",
+)
+# → 'User responded: {"name": "Les", "email": "x@y", "bio": "..."}'
+```
+
+Per-field options on the dict form: `placeholder`, `default`,
+`multiline` (renders a `<textarea>`), `required` (default `true`),
+`max_length` (HTML `maxlength` attribute). Bare-string fields get
+title-cased labels (`"email_address"` → `"Email Address"`). Keys must
+be unique. Enter submits only when there's exactly one non-multiline
+field; otherwise Enter won't submit and the user must click the button
+(or use Cmd/Ctrl+Enter). Inside a multiline field, plain Enter inserts
+a newline as usual.
 
 ### Building your own input widget
 
@@ -431,12 +462,12 @@ check). Filed as a follow-up if/when needed.
 - `src/decafclaw/widgets.py` — registry scan + validation
 - `src/decafclaw/media.py` — `WidgetRequest`, `WidgetInputPause`, `ToolResult.widget`
 - `src/decafclaw/widget_input.py` — input-widget handler + callback map
-- `src/decafclaw/tools/core.py` — `ask_user` tool
+- `src/decafclaw/tools/core.py` — `ask_user_multiple_choice` tool
 - `src/decafclaw/canvas.py` — canvas state operations
 - `src/decafclaw/tools/canvas_tools.py` — canvas tools
 - `src/decafclaw/web/static/lib/canvas-state.js` — frontend state
 - `src/decafclaw/web/static/components/canvas-panel.js` — panel component
-- `src/decafclaw/web/static/widgets/` — bundled widgets (data_table, multiple_choice, markdown_document, code_block)
+- `src/decafclaw/web/static/widgets/` — bundled widgets (data_table, multiple_choice, text_input, markdown_document, code_block, iframe_sandbox)
 - `src/decafclaw/web/static/widgets/markdown_document/` — markdown_document widget descriptor + Lit component
 - `src/decafclaw/web/static/widgets/code_block/` — code_block widget descriptor + Lit component
 - `src/decafclaw/web/static/widgets/iframe_sandbox/` — iframe_sandbox widget descriptor + Lit component

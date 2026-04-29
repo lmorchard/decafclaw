@@ -1,4 +1,4 @@
-"""Core tools — web fetch, debug, time, context stats, ask_user."""
+"""Core tools — web fetch, debug, time, context stats, ask_user_multiple_choice."""
 
 import json
 import logging
@@ -135,7 +135,7 @@ async def tool_wait(ctx, seconds: int = 30) -> str | ToolResult:
     return f"Waited {seconds} seconds."
 
 
-def _normalize_ask_user_options(options: list) -> list[dict] | None:
+def _normalize_multiple_choice_options(options: list) -> list[dict] | None:
     """Normalize mixed options into the widget's data_schema shape.
 
     Accepts each option as a bare string (used as both value and label)
@@ -165,9 +165,9 @@ def _normalize_ask_user_options(options: list) -> list[dict] | None:
     return out
 
 
-def _ask_user_default_on_response(options: list[dict],
-                                  allow_multiple: bool):
-    """Build the default ``on_response`` callback for ask_user.
+def _default_multiple_choice_callback(options: list[dict],
+                                       allow_multiple: bool):
+    """Build the default ``on_response`` callback for ask_user_multiple_choice.
 
     Single: returns ``"User selected: <label>"``; multi: comma-joins
     the labels of selected values. Looks up labels from the option list
@@ -192,17 +192,18 @@ def _ask_user_default_on_response(options: list[dict],
     return _cb
 
 
-async def tool_ask_user(ctx, prompt: str, options: list,
-                        allow_multiple: bool = False) -> ToolResult:
-    """Pause the turn and ask the user to pick from a list of options."""
-    log.info(f"[tool:ask_user] prompt={prompt!r} "
+async def tool_ask_user_multiple_choice(ctx, prompt: str, options: list,
+                                        allow_multiple: bool = False) -> ToolResult:
+    """Pause the turn and ask the user to pick from a fixed list of options."""
+    log.info(f"[tool:ask_user_multiple_choice] prompt={prompt!r} "
              f"options={len(options)} allow_multiple={allow_multiple}")
     if not prompt or not prompt.strip():
-        return ToolResult(text="[error: ask_user requires a non-empty prompt]")
-    normalized = _normalize_ask_user_options(options)
+        return ToolResult(
+            text="[error: ask_user_multiple_choice requires a non-empty prompt]")
+    normalized = _normalize_multiple_choice_options(options)
     if normalized is None:
         return ToolResult(
-            text="[error: ask_user needs at least one option; "
+            text="[error: ask_user_multiple_choice needs at least one option; "
                  "each must be a string or {value, label} dict]")
     widget_data = {
         "prompt": prompt,
@@ -212,11 +213,117 @@ async def tool_ask_user(ctx, prompt: str, options: list,
     widget = WidgetRequest(
         widget_type="multiple_choice",
         data=widget_data,
-        on_response=_ask_user_default_on_response(normalized,
-                                                  bool(allow_multiple)),
+        on_response=_default_multiple_choice_callback(normalized,
+                                                      bool(allow_multiple)),
     )
     short = (f"ask: {len(normalized)} option(s)"
              + (" (multi)" if allow_multiple else ""))
+    return ToolResult(
+        text=f"[awaiting user response: {prompt}]",
+        display_short_text=short,
+        widget=widget,
+        end_turn=True,
+    )
+
+
+def _normalize_text_input_fields(fields: list | None) -> list[dict] | None:
+    """Normalize the fields argument into the widget's data_schema shape.
+
+    Accepts None (caller provides default), bare strings (used as both
+    key and title-cased label), or dicts. Dict form requires both
+    ``key`` and ``label``. Returns None on any bad entry, on duplicate
+    keys, or when given None.
+    """
+    if fields is None:
+        return None
+    out: list[dict] = []
+    seen_keys: set[str] = set()
+    for f in fields:
+        if isinstance(f, str):
+            key = f.strip()
+            if not key or key in seen_keys:
+                return None
+            entry: dict = {"key": key, "label": key.replace("_", " ").title()}
+        elif isinstance(f, dict):
+            raw_key = f.get("key")
+            label = f.get("label")
+            if not raw_key or not label:
+                return None
+            key = str(raw_key).strip()
+            if not key or key in seen_keys:
+                return None
+            entry = {"key": key, "label": str(label)}
+            for opt in ("placeholder", "default"):
+                v = f.get(opt)
+                if isinstance(v, str):
+                    entry[opt] = v
+            for opt in ("multiline", "required"):
+                v = f.get(opt)
+                if isinstance(v, bool):
+                    entry[opt] = v
+            ml = f.get("max_length")
+            if isinstance(ml, int) and ml > 0:
+                entry["max_length"] = ml
+        else:
+            return None
+        seen_keys.add(entry["key"])
+        out.append(entry)
+    return out
+
+
+def _default_text_input_callback(field_keys: list[str]):
+    """Build the default ``on_response`` callback for ask_user_text.
+
+    Single field: returns ``"User responded: <value>"`` with the value
+    trimmed. Multi-field: returns ``"User responded: {json}"`` with
+    keys in the field-definition order. Empty / no recognised data:
+    ``"User did not respond."``.
+    """
+    def _cb(data: dict) -> str:
+        if not isinstance(data, dict) or not data:
+            return "User did not respond."
+        if len(field_keys) == 1:
+            value = data.get(field_keys[0], "")
+            text = str(value).strip() if value is not None else ""
+            if not text:
+                return "User did not respond."
+            return f"User responded: {text}"
+        ordered = {k: str(data.get(k, "")) for k in field_keys}
+        if not any(v.strip() for v in ordered.values()):
+            return "User did not respond."
+        return "User responded: " + json.dumps(ordered, ensure_ascii=False)
+
+    return _cb
+
+
+async def tool_ask_user_text(ctx, prompt: str, fields: list | None = None,
+                             submit_label: str = "Submit") -> ToolResult:
+    """Pause the turn and ask the user for free-form text input."""
+    log.info(f"[tool:ask_user_text] prompt={prompt!r} "
+             f"fields={len(fields) if fields else 0}")
+    if not prompt or not prompt.strip():
+        return ToolResult(
+            text="[error: ask_user_text requires a non-empty prompt]")
+    if not fields:
+        normalized: list[dict] = [{"key": "value", "label": prompt.strip()}]
+    else:
+        normalized_or_none = _normalize_text_input_fields(fields)
+        if normalized_or_none is None or not normalized_or_none:
+            return ToolResult(
+                text="[error: ask_user_text fields must each be a non-empty "
+                     "string or a {key, label, ...} dict with unique keys]")
+        normalized = normalized_or_none
+    widget_data: dict = {"prompt": prompt, "fields": normalized}
+    if submit_label and submit_label != "Submit":
+        widget_data["submit_label"] = submit_label
+    widget = WidgetRequest(
+        widget_type="text_input",
+        data=widget_data,
+        on_response=_default_text_input_callback(
+            [f["key"] for f in normalized]),
+    )
+    short = (f"ask: {len(normalized)} field"
+             + ("s" if len(normalized) != 1 else ""))
     return ToolResult(
         text=f"[awaiting user response: {prompt}]",
         display_short_text=short,
@@ -316,7 +423,8 @@ CORE_TOOLS = {
     "context_stats": tool_context_stats,
     "current_time": tool_current_time,
     "wait": tool_wait,
-    "ask_user": tool_ask_user,
+    "ask_user_multiple_choice": tool_ask_user_multiple_choice,
+    "ask_user_text": tool_ask_user_text,
 }
 
 CORE_TOOL_DEFINITIONS = [
@@ -404,10 +512,10 @@ CORE_TOOL_DEFINITIONS = [
         "type": "function",
         "priority": "low",
         "function": {
-            "name": "ask_user",
+            "name": "ask_user_multiple_choice",
             "description": (
-                "Pause the turn and ask the user to pick from a list of "
-                "options. Use ONLY when the right answer is genuinely "
+                "Pause the turn and ask the user to pick from a fixed list "
+                "of options. Use ONLY when the right answer is genuinely "
                 "ambiguous from context and you cannot make a reasonable "
                 "choice on your own. Prefer to act on your best judgment; "
                 "calling this tool is costly — it interrupts the user's "
@@ -452,6 +560,69 @@ CORE_TOOL_DEFINITIONS = [
                     },
                 },
                 "required": ["prompt", "options"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "priority": "low",
+        "function": {
+            "name": "ask_user_text",
+            "description": (
+                "Pause the turn and ask the user a free-form text question — "
+                "a single-line answer, a multiline blob, or a small "
+                "multi-field form. Use this when the answer is open-ended "
+                "(a name, a URL, a paragraph). For picking from a fixed "
+                "list of options use ask_user_multiple_choice instead. "
+                "Use ONLY when the right answer is genuinely ambiguous "
+                "from context and you cannot make a reasonable choice on "
+                "your own. Calling this tool is costly — it interrupts "
+                "the user's flow. "
+                "Only works in the web UI; Mattermost / terminal render "
+                "the prompt as text and the turn ends without a response."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "prompt": {
+                        "type": "string",
+                        "description": "Question presented to the user.",
+                    },
+                    "fields": {
+                        "type": "array",
+                        "description": (
+                            "Optional. Each field is either a bare string "
+                            "(used as both key and title-cased label) or a "
+                            "{key, label, placeholder?, default?, "
+                            "multiline?, required?, max_length?} dict. "
+                            "Keys must be unique. Omit for a single-field "
+                            "text question keyed 'value'."
+                        ),
+                        "items": {
+                            "anyOf": [
+                                {"type": "string"},
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "key": {"type": "string"},
+                                        "label": {"type": "string"},
+                                        "placeholder": {"type": "string"},
+                                        "default": {"type": "string"},
+                                        "multiline": {"type": "boolean"},
+                                        "required": {"type": "boolean"},
+                                        "max_length": {"type": "integer"},
+                                    },
+                                    "required": ["key", "label"],
+                                },
+                            ],
+                        },
+                    },
+                    "submit_label": {
+                        "type": "string",
+                        "description": "Optional submit button label (default 'Submit').",
+                    },
+                },
+                "required": ["prompt"],
             },
         },
     },
