@@ -1,5 +1,7 @@
 # DecafClaw Documentation
 
+These docs are as much for me as they are for agents working on this project. They are not intended to be especially user friendly, though.
+
 ## Getting Started
 
 - [Installation & Setup](installation.md) — Prerequisites, configuration, running
