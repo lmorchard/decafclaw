@@ -21,6 +21,7 @@
     "@milkdown/kit": "^7.19.0",
     "@picocss/pico": "^2.0.0",
     "dompurify": "^3.3.0",
+    "highlight.js": "^11.9.0",
     "lit": "^3.3.0",
     "marked": "^15.0.0"
   },

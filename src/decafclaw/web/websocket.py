@@ -65,13 +65,17 @@ def _make_canvas_update_forwarder(state, conv_id):
             return
         if event.get("conv_id") != conv_id:
             return
-        await ws_send({
+        out = {
             "type": WSMessageType.CANVAS_UPDATE,
             "conv_id": conv_id,
-            "kind": event.get("kind", "set"),
+            "kind": event.get("kind", "update"),
             "active_tab": event.get("active_tab"),
             "tab": event.get("tab"),
-        })
+        }
+        # Phase 4 field for kind=close_tab
+        if "closed_tab_id" in event:
+            out["closed_tab_id"] = event["closed_tab_id"]
+        await ws_send(out)
 
     return _forward
 
@@ -550,13 +554,16 @@ def _subscribe_to_conv(state, conv_id):
 
         elif event_type == "canvas_update":
             if event_conv_id == conv_id:
-                await ws_send({
+                payload = {
                     "type": WSMessageType.CANVAS_UPDATE,
                     "conv_id": event_conv_id,
-                    "kind": event.get("kind", "set"),
+                    "kind": event.get("kind", "update"),
                     "active_tab": event.get("active_tab"),
                     "tab": event.get("tab"),
-                })
+                }
+                if "closed_tab_id" in event:
+                    payload["closed_tab_id"] = event["closed_tab_id"]
+                await ws_send(payload)
 
         elif event_type == "vault_retrieval":
             text = event.get("text", "")

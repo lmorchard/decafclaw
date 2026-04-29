@@ -125,12 +125,12 @@ chat-message .tool-result-raw pre {
 
 .widget-data-table__sort-btn:hover,
 .widget-data-table__sort-btn:focus {
-  background: var(--pico-secondary-background, rgba(0, 0, 0, 0.04));
+  background: var(--pico-form-element-background-color);
   outline: none;
 }
 
 .widget-data-table tbody tr:hover {
-  background: var(--pico-secondary-background, rgba(0, 0, 0, 0.03));
+  background: var(--pico-form-element-background-color);
 }
 
 /* ---- multiple_choice ---- */
@@ -166,7 +166,7 @@ chat-message .tool-result-raw pre {
 }
 
 .widget-multiple-choice__option:hover {
-  background: var(--pico-secondary-background, rgba(0, 0, 0, 0.04));
+  background: var(--pico-form-element-background-color);
 }
 
 .widget-multiple-choice__option input {
@@ -244,4 +244,73 @@ chat-message .tool-result-raw pre {
   flex: 1;
   overflow: auto;
   padding: 1rem 1.25rem;
+}
+
+/* ---- code_block ---- */
+
+.code-block {
+  display: flex;
+  flex-direction: column;
+  background: var(--pico-card-background-color);
+  border: 1px solid var(--pico-muted-border-color);
+  border-radius: 0.5rem;
+  overflow: hidden;
+}
+.code-block-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.75rem;
+  background: var(--pico-form-element-background-color);
+  border-bottom: 1px solid var(--pico-muted-border-color);
+  font-size: 0.85rem;
+  font-family: var(--pico-font-family-monospace, monospace);
+}
+.code-block-label { font-weight: 600; }
+.code-block-spacer { flex: 1; }
+.code-block-copy {
+  background: none;
+  border: 1px solid var(--pico-muted-border-color);
+  border-radius: 0.25rem;
+  padding: 0.15rem 0.5rem;
+  cursor: pointer;
+  font-size: 0.8rem;
+  /* Pico aliases --pico-color to white inside <button>; inherit
+     instead so the doc-level text color comes through. */
+  color: inherit;
+}
+.code-block-copy:hover { color: var(--pico-primary); }
+.code-block-body { position: relative; }
+.code-block-body pre {
+  margin: 0;
+  padding: 0.75rem 1rem;
+  background: transparent;
+  overflow-x: auto;
+}
+.code-block-inline.collapsed .code-block-body::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 0 0;
+  height: 2rem;
+  background: linear-gradient(transparent, var(--pico-card-background-color, #fff));
+  pointer-events: none;
+}
+.code-block-actions {
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  border-top: 1px solid var(--pico-muted-border-color);
+}
+.code-block-canvas {
+  flex: 1;
+  min-height: 0;
+}
+.code-block-canvas .code-block-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+.code-block-canvas .code-block-scroll pre {
+  margin: 0;
+  padding: 0.75rem 1rem;
 }

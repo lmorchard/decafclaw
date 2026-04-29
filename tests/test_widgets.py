@@ -293,3 +293,30 @@ def test_bundled_markdown_document_is_registered(fake_config):
     assert ok is True, err
     bad_ok, _ = reg.validate("markdown_document", {"wrong": 1})
     assert not bad_ok
+
+
+def test_bundled_code_block_is_registered(fake_config):
+    """Fresh registry scan finds the bundled code_block widget descriptor."""
+    reg = load_widget_registry(fake_config,
+                               admin_dir=Path("/nonexistent/admin"))
+    desc = reg.get("code_block")
+    assert desc is not None
+    assert desc.tier == "bundled"
+    assert "inline" in desc.modes
+    assert "canvas" in desc.modes
+    assert desc.accepts_input is False
+    # code field alone is valid
+    ok, err = reg.validate("code_block", {"code": "print('hi')"})
+    assert ok is True, err
+    # optional language field is valid
+    ok, err = reg.validate("code_block", {"code": "x", "language": "python"})
+    assert ok is True, err
+    # optional filename field is valid
+    ok, err = reg.validate("code_block", {"code": "x", "filename": "main.py"})
+    assert ok is True, err
+    # missing required code field
+    bad, _ = reg.validate("code_block", {})
+    assert not bad
+    # additionalProperties: false rejects unknown keys
+    bad, _ = reg.validate("code_block", {"code": "x", "extra": "field"})
+    assert not bad

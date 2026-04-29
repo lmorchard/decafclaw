@@ -2,6 +2,7 @@ import { LitElement, html, nothing } from 'lit';
 import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 import { renderMarkdown } from '../../lib/markdown.js';
 import { formatTime } from '../../lib/utils.js';
+import hljs from 'hljs';
 
 /** Assistant message — markdown-rendered, with optional streaming indicator and usage info. */
 export class AssistantMessage extends LitElement {
@@ -48,8 +49,21 @@ export class AssistantMessage extends LitElement {
         }
       }
 
+      // Apply hljs syntax highlighting to any <code> in the pre.
+      // hljs.highlightElement is a no-op if the code element is already
+      // marked as highlighted (data-highlighted attribute).
+      const anyCode = pre.querySelector('code');
+      if (anyCode) {
+        try {
+          hljs.highlightElement(/** @type {HTMLElement} */ (anyCode));
+        } catch (err) {
+          console.warn('hljs failed for code block:', err);
+        }
+      }
+
       const btn = document.createElement('button');
       btn.className = 'copy-btn';
+      btn.type = 'button';
       btn.textContent = 'Copy';
       btn.addEventListener('click', () => {
         navigator.clipboard.writeText(/** @type {HTMLElement} */ (pre).innerText).then(() => {

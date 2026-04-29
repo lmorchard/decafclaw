@@ -10,6 +10,14 @@
   background: var(--pico-background-color);
   color: var(--pico-color);
   overflow: hidden;
+  transition: width 0.25s ease, min-width 0.25s ease;
+}
+/* Desktop: collapse the column to zero width (chat reclaims the space).
+   Mobile @media below overrides with a translateX slide. */
+#canvas-main.canvas-collapsed {
+  width: 0;
+  min-width: 0;
+  border-left: 0;
 }
 
 #canvas-resize-handle {
@@ -38,11 +46,19 @@ canvas-panel {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  padding: 0.5rem 0.75rem;
+  /* Top padding 0.4rem matches the fixed hamburger's `top: 0.4rem`
+     so the disclosure trigger and the hamburger sit at the same Y. */
+  padding: 0.4rem 0.75rem;
   border-bottom: 1px solid var(--pico-muted-border-color);
   font-weight: 600;
 }
-.canvas-btn { color: var(--pico-color); }
+/* Desktop hides the mobile-only header strip — disclosure + close are on
+   the tab strip itself. The mobile media query re-enables it. */
+.canvas-header-mobile { display: none; }
+/* Pico aliases --pico-color → --pico-primary-inverse (white) inside
+   <button>, so use `inherit` to pick up the document text color from
+   the surrounding canvas region. */
+.canvas-btn { color: inherit; }
 .canvas-btn:hover { color: var(--pico-primary); }
 .canvas-label { flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .canvas-spacer { flex: 1; }
@@ -64,21 +80,14 @@ canvas-panel {
 }
 .canvas-empty { padding: 1rem; color: var(--pico-muted-color); }
 
+/* Resummon pill uses .dc-floating-btn for border/radius/shadow.
+   Local styles cover sizing + the unread dot. */
 .canvas-resummon-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.4rem;
-  padding: 0.35rem 0.7rem;
-  border-radius: 999px;
-  border: 1px solid var(--pico-muted-border-color);
-  background: var(--pico-card-background-color, var(--pico-background-color));
-  color: var(--pico-color);
-  cursor: pointer;
+  padding: 0 0.85rem;
   font-size: 0.85rem;
 }
 .canvas-resummon-pill[data-unread="true"]::after {
   content: "•";
-  color: var(--pico-primary, #3b82f6);
   font-weight: bold;
 }
 
@@ -92,16 +101,41 @@ canvas-panel {
   top: 0.5rem;
   right: 1.5rem;
   z-index: 5;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
 }
 
 @media (max-width: 639px) {
+  /* Mirror the hamburger's top/left offset on the opposite corner;
+     drop the label so the button is just a square doc icon, and pad
+     it out to a comfortable mobile tap-target width. */
+  #chat-main > .canvas-resummon-pill {
+    top: 0.4rem;
+    right: 0.4rem;
+    padding: 0.25rem 0.85rem;
+  }
+  .canvas-resummon-pill .resummon-label { display: none; }
+
   #canvas-main {
     position: fixed;
-    inset: 0;
-    width: 100%;
+    top: 0;
+    bottom: 0;
+    right: 0;
+    left: auto;
+    width: 90%;
+    min-width: 0;
+    max-width: 90vw;
     z-index: 100;
     border-left: 0;
+    transform: translateX(0);
+    transition: transform 0.25s ease;
+    box-shadow: -2px 0 12px rgba(0, 0, 0, 0.2);
+  }
+  /* Mobile: slide off-screen to the right. Override the desktop
+     width-collapse so the slide animates instead. */
+  #canvas-main.canvas-collapsed {
+    width: 90%;
+    transform: translateX(100%);
+    pointer-events: none;
   }
   #canvas-resize-handle { display: none !important; }
   .canvas-btn { min-width: 44px; min-height: 44px; }
@@ -128,3 +162,155 @@ body.canvas-standalone {
 }
 #canvas-standalone-body > * { flex: 1; }
 .back-link { margin-left: auto; }
+
+/* --- Tab strip (Phase 4, desktop) --- */
+/* The desktop wrapper holds the tablist + the panel-close button at the
+   end so the canvas surface gets one tight top strip instead of a
+   tab-strip-then-header sandwich. */
+.canvas-tab-strip-desktop {
+  display: flex;
+  align-items: stretch;
+  border-bottom: 1px solid var(--pico-muted-border-color);
+  /* Subtle tinted strip — slightly off-white in light mode, slightly
+     lighter than bg in dark mode. Note: --pico-secondary-background
+     is a button color (#525f7a), NOT a background — don't use it. */
+  background: var(--pico-card-sectioning-background-color);
+}
+.canvas-tab-strip-desktop > .canvas-close-panel {
+  flex: 0 0 auto;
+  border-left: 1px solid var(--pico-muted-border-color);
+  /* `<button>` elements ignore align-items: stretch in Chrome/WebKit, so
+     stretch with explicit height: 100% instead — covers both the strip's
+     content area and lines the left border up to its visual bottom. */
+  align-self: stretch;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* Match the tab's 2px transparent bottom-border so the close button's
+     left border lines up with the active tab's primary underline. */
+  border-bottom: 2px solid transparent;
+  /* Override the .canvas-btn 2.5rem min-height — the strip should be
+     governed by tab content, not the close button. */
+  min-width: 2rem;
+  min-height: 0;
+  padding: 0 0.6rem;
+  font-size: 1rem;
+}
+.canvas-tab-strip {
+  display: flex;
+  flex: 1 1 auto;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  min-width: 0;
+}
+.canvas-tab {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.15rem 0.3rem 0.15rem 0.6rem;
+  min-width: 7.5rem;
+  max-width: 14rem;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: var(--pico-muted-color);
+  cursor: pointer;
+  font-size: 0.85rem;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+.canvas-tab:focus-visible { outline: 2px solid var(--pico-primary); outline-offset: -2px; }
+.canvas-tab.active {
+  color: var(--pico-color);
+  border-bottom-color: var(--pico-primary);
+  font-weight: 600;
+}
+.canvas-tab-label {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.canvas-tab-open,
+.canvas-tab-close {
+  background: none;
+  border: 0;
+  cursor: pointer;
+  color: inherit;
+  padding: 0.05rem 0.25rem;
+  border-radius: 0.25rem;
+  font-size: 0.85rem;
+  line-height: 1;
+  opacity: 0.6;
+}
+.canvas-tab:hover .canvas-tab-open,
+.canvas-tab:hover .canvas-tab-close,
+.canvas-tab.active .canvas-tab-open,
+.canvas-tab.active .canvas-tab-close { opacity: 1; }
+.canvas-tab-open:hover,
+.canvas-tab-close:hover { background: var(--pico-muted-border-color); color: var(--pico-color); }
+
+/* Mobile tab list disclosure (≤639px) — replaces the desktop strip. */
+.canvas-mobile-disclosure { display: none; }
+
+.canvas-mobile-list {
+  display: none;
+  flex-direction: column;
+  border-bottom: 1px solid var(--pico-muted-border-color);
+  background: var(--pico-card-background-color, var(--pico-background-color));
+}
+.canvas-mobile-tab {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  /* Inner action buttons (open/close) carry the 44px tap-target floor;
+     the row itself just needs a tight horizontal padding. */
+  padding: 0 0.75rem;
+  min-height: 44px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--pico-muted-border-color);
+  color: var(--pico-color);
+}
+.canvas-mobile-tab:last-child { border-bottom: 0; }
+.canvas-mobile-tab.active {
+  background: var(--pico-card-sectioning-background-color);
+  font-weight: 600;
+}
+.canvas-mobile-tab.active::before {
+  content: "";
+  width: 0.5rem; height: 0.5rem; border-radius: 50%;
+  background: var(--pico-primary);
+}
+.canvas-mobile-tab-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.canvas-mobile-tab-open,
+.canvas-mobile-tab-close {
+  background: none;
+  border: 0;
+  cursor: pointer;
+  color: inherit;
+  padding: 0.5rem;
+  min-width: 44px; min-height: 44px;
+  font-size: 1.2rem;
+}
+
+@media (max-width: 639px) {
+  .canvas-tab-strip-desktop { display: none; }
+  .canvas-header-mobile { display: flex; }
+  /* Disclosure trigger uses .dc-floating-btn for border/radius/shadow/
+     tap-target. Local styles cover only filled-primary bg/text (which
+     `.canvas-btn` had stripped) and horizontal padding.
+     `display: inline-flex` overrides the default `display: none` above. */
+  .canvas-mobile-disclosure {
+    display: inline-flex;
+    background: var(--pico-primary-background);
+    color: var(--pico-primary-inverse);
+    padding: 0 1.1rem;
+    font-size: 0.9rem;
+  }
+  .canvas-mobile-list { display: flex; }
+}

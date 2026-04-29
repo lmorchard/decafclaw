@@ -50,6 +50,18 @@ Phase 1:
 - **`data_table`** — sortable columns, scrollable overflow, optional
   caption. Data shape: `{columns: [{key, label}], rows: [{...}], caption?}`.
 
+Phase 2:
+
+- **`multiple_choice`** — radio/checkbox prompt; `accepts_input: true`. Data shape: `{prompt, options, allow_multiple?}`.
+
+Phase 3:
+
+- **`markdown_document`** — rendered markdown; inline (collapsed) + canvas modes. Data shape: `{content: string}`.
+
+Phase 4:
+
+- **`code_block`** — syntax-highlighted code; inline (collapsed) + canvas modes. Data shape: `{code: string, language?, filename?}`. See [Phase 4](#phase-4--code_block-and-canvas-tabs).
+
 ## Adding a new widget
 
 Widgets are extensible by admins without changing DecafClaw's core. Each
@@ -242,9 +254,9 @@ Supports both `"inline"` and `"canvas"` modes.
 gradient at the bottom. Two buttons appear below the fade:
 
 - **Expand** — toggles full inline render (removes `max-height` cap).
-- **Open in Canvas** — POSTs to `/api/canvas/{conv_id}/set` to push
-  the widget to the canvas panel. The panel opens (or updates) on the
-  right side of the layout.
+- **Open in Canvas** — POSTs to `/api/canvas/{conv_id}/new_tab` to push
+  the widget into a new canvas tab. The panel opens on the right side of
+  the layout.
 
 **Canvas mode:** full content rendered with no truncation. Scroll
 position is preserved across `canvas_update` events (clamped to current
@@ -252,20 +264,64 @@ scrollable extent so it doesn't leave the viewport).
 
 **Data shape:** `{ content: string }` (raw markdown string).
 
+## Phase 4 — `code_block` and canvas tabs
+
+Phase 4 surfaces the tab-aware data model from Phase 3 as actual tab UI,
+adds the `code_block` widget with syntax highlighting via highlight.js,
+and adds explicit tab-ID addressing to the canvas tools API.
+
+### `code_block` widget
+
+Bundled at `src/decafclaw/web/static/widgets/code_block/`.
+Supports both `"inline"` and `"canvas"` modes.
+
+**Inline mode:** code collapsed via `max-height: 12rem` with a fade
+gradient. Two-button footer (always visible): **Expand** / **Collapse**
++ **Open in Canvas**. Open in Canvas POSTs to
+`/api/canvas/{conv_id}/new_tab` with `{widget_type: "code_block", data,
+label}` (label: filename → `"{language} snippet"` → `"Code"`).
+
+**Canvas mode:** full code rendered, no truncation. Scroll position
+preserved across `canvas_update` events.
+
+**Data shape:** `{code: string, language?, filename?}`.
+
+### highlight.js integration
+
+hljs is bundled at `vendor/bundle/highlight.js` (~20 common languages:
+Python, JS/TS, JSON, YAML, TOML, Markdown, Bash, Dockerfile, HTML/XML,
+CSS/SCSS, SQL, Go, Rust, Ruby, Java, Kotlin, C/C++, plaintext). Two
+themes — `atom-one-dark` and `atom-one-light` — are scoped under
+`:root[data-theme="dark"]` / `:root[data-theme="light"]` so they follow
+the app's theme toggle.
+
+The same hljs highlighting applies to existing chat fenced code blocks
+(via `assistant-message.js`) — not just the `code_block` widget.
+
 ### Canvas tools (always-loaded)
 
-Four canvas tools are always-loaded so the agent can drive the panel
-without activating a skill. See
+Five canvas tools are always-loaded so the agent can drive the panel
+without activating a skill. Tab IDs (`canvas_1`, `canvas_2`, …) are
+returned by `canvas_new_tab` and required as arguments by the mutating
+tools — the implicit active-tab model from Phase 3 is gone. See
 [Context Composer](context-composer.md#canvas-tools) for descriptions.
 
-- `canvas_set(widget_type, data, label?)` — push a widget to the canvas
-- `canvas_update(data)` — replace data on the current widget in place
-- `canvas_clear()` — remove the canvas widget and hide the panel
-- `canvas_read()` — return current canvas state or null
+- `canvas_new_tab(widget_type, data, label?)` — append a new tab; set
+  it active; return `tab_id` in `ToolResult.data["tab_id"]`.
+- `canvas_update(tab_id, data)` — replace data on the identified tab
+  (errors if `tab_id` not found).
+- `canvas_close_tab(tab_id)` — remove the identified tab; activate left
+  neighbor (or right; or clear active if last). Last tab → panel hides.
+- `canvas_clear()` — empty all tabs; hide the panel.
+- `canvas_read()` — return `{active_tab, tabs: [{id, label,
+  widget_type, data}, ...]}` via `ToolResult.data`.
 
 ## Out-of-scope
 
-- Additional widget types: `code_block` — later phases.
+- Diff view, line numbers/highlighting for `code_block` — follow-on issues.
+- Drag-to-reorder tabs — follow-on.
+- Tab limit / cap — currently unbounded; horizontal scroll handles overflow.
+- Multi-tab in standalone view — current standalone is single-tab focus by design.
 - Collapsing `EndTurnConfirm` into a widget with a Mattermost-buttons
   adapter — filed as a follow-up issue.
 - Agent-authored widget JS (workspace tier + iframe sandbox) — #358.
@@ -281,7 +337,9 @@ without activating a skill. See
 - `src/decafclaw/tools/canvas_tools.py` — canvas tools
 - `src/decafclaw/web/static/lib/canvas-state.js` — frontend state
 - `src/decafclaw/web/static/components/canvas-panel.js` — panel component
-- `src/decafclaw/web/static/widgets/` — bundled widgets (data_table, multiple_choice, markdown_document)
+- `src/decafclaw/web/static/widgets/` — bundled widgets (data_table, multiple_choice, markdown_document, code_block)
 - `src/decafclaw/web/static/widgets/markdown_document/` — markdown_document widget descriptor + Lit component
+- `src/decafclaw/web/static/widgets/code_block/` — code_block widget descriptor + Lit component
+- `vendor/bundle/highlight.js` — bundled hljs core + ~20 languages + dual themes
 - `src/decafclaw/web/static/components/widgets/widget-host.js` — frontend host
 - `src/decafclaw/web/static/lib/widget-catalog.js` — catalog client

@@ -53,6 +53,12 @@ const bundles = [
     outfile: join(outdir, 'codemirror.js'),
     external: [],
   },
+  {
+    name: 'highlight.js',
+    entry: join(__dirname, 'hljs-entry.js'),
+    outfile: join(outdir, 'highlight.js'),
+    external: [],
+  },
 ];
 
 for (const bundle of bundles) {

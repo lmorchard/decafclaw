@@ -96,9 +96,10 @@ and WebSocket event shapes.
 ### Canvas panel
 
 A persistent side panel for living documents. The agent drives it with
-always-loaded canvas tools (`canvas_set`, `canvas_update`, `canvas_clear`,
-`canvas_read`); each tool call emits a `canvas_update` event over WebSocket
-and the panel re-renders without a page reload.
+always-loaded canvas tools (`canvas_new_tab`, `canvas_update`,
+`canvas_close_tab`, `canvas_clear`, `canvas_read`); each tool call emits a
+`canvas_update` event over WebSocket and the panel re-renders without a page
+reload.
 
 **Layout:** `conversation-sidebar | (wiki-main?) | chat-main | (canvas-main?)`.
 The wiki panel and canvas panel can both be open simultaneously on desktop;
@@ -108,13 +109,32 @@ each occupies a draggable column to the right of chat.
 `workspace/conversations/{conv_id}.canvas.json` (sidecar). Loaded on
 conversation-select via `GET /api/canvas/{conv_id}`.
 
+**Tabs (Phase 4 multi-tab):** the panel holds multiple tabs. The agent
+opens tabs with `canvas_new_tab` (returns a `tab_id`), updates by
+`tab_id` with `canvas_update`, and closes by `tab_id` with
+`canvas_close_tab`. `canvas_read` returns the full state including all
+tabs. See [Widgets — canvas tools](widgets.md#canvas-tools-always-loaded-1)
+for the full tool descriptions.
+
+**Tab strip (desktop):** horizontal strip above the content area.
+Each tab has a label (truncated) + `[×]` close button. Click a tab body
+→ switch active; click `[×]` → close that tab. Active tab highlighted with
+a bottom border.
+
+**Tab list (mobile ≤639px):** the strip is replaced by a "Tabs (N) ▼"
+disclosure button. Tapping it toggles a vertical list overlay; each row has
+a label, active indicator, and `[×]` close. 44px tap targets on rows and
+close buttons. See [Web UI — mobile conventions](web-ui-mobile.md#canvas-tabs) for details.
+
 **Lifecycle:**
-- `canvas_set(widget_type, data, label?)` — push a widget to the canvas;
-  reveals the panel.
-- `canvas_update(data)` — replace data of the current widget in place;
+- `canvas_new_tab(widget_type, data, label?)` — append a tab; set active;
+  return `tab_id`. Reveals the panel.
+- `canvas_update(tab_id, data)` — replace data on the identified tab;
   preserves panel-hidden state.
-- `canvas_clear()` — remove the canvas widget; hides the panel.
-- `canvas_read()` — return `{widget_type, label, data}` or null.
+- `canvas_close_tab(tab_id)` — remove the identified tab; activates
+  neighbor or hides panel if last.
+- `canvas_clear()` — empty all tabs; hide the panel.
+- `canvas_read()` — return `{active_tab, tabs: [{id, label, widget_type, data}, ...]}`.
 
 **Resummon UI:** when canvas state exists but the panel has been dismissed,
 a "📄 Canvas" pill appears in `#chat-main-header` (mirrored to
@@ -124,15 +144,20 @@ was hidden.
 
 **Dismiss behavior:** dismissing the panel persists to localStorage
 per-conversation (key `canvas-dismissed.{conv_id}`); the canvas sidecar
-itself is unaffected. The dismissed state is cleared on `canvas_set`
+itself is unaffected. The dismissed state is cleared on `canvas_new_tab`
 events, `canvas_clear` events, and resummon click. It is preserved
 across page reload and conversation-switch so the user's intent
 sticks.
 
-**`/canvas/{conv_id}` standalone view:** full-screen render of the current
-canvas state. Same web-auth as the main UI. Live-updates via WebSocket.
-Useful for sharing a persistent link (e.g. to a Mattermost user who has a
-web token).
+**Standalone views:**
+- `/canvas/{conv_id}` — full-screen render of the active tab. Follows
+  `active_tab` changes via WebSocket (bare URL, backwards-compat).
+- `/canvas/{conv_id}/{tab_id}` — tab-locked view of one specific tab.
+  Does not follow active-tab changes; shows "Tab no longer exists" if
+  the tab is closed.
+
+Both are auth-gated with the same web-auth as the main UI. Useful for
+sharing persistent links (e.g. to a Mattermost user who has a web token).
 
 **Resize:** drag handle on the left edge of `#canvas-main`. Width persists
 to `localStorage["canvas-width"]`.
@@ -141,8 +166,9 @@ to `localStorage["canvas-width"]`.
 Mutually exclusive with the wiki overlay — most-recent-open wins. See
 [Web UI — mobile conventions](web-ui-mobile.md#canvas-panel) for details.
 
-See [Widgets](widgets.md#phase-3--canvas-panel-and-markdown_document) for
-the widget mode contract and the `markdown_document` widget.
+See [Widgets — Phase 3](widgets.md#phase-3--canvas-panel-and-markdown_document)
+and [Phase 4](widgets.md#phase-4--code_block-and-canvas-tabs) for the
+widget mode contract and bundled widgets.
 
 ## Architecture
 
@@ -271,10 +297,12 @@ Folder structure is per-user metadata stored in `data/{agent_id}/web/users/{user
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `GET` | `/api/canvas/{conv_id}` | Get current canvas state |
-| `POST` | `/api/canvas/{conv_id}/set` | Set canvas widget (widget_type, data, label?) |
-
-Phase 3 only ships the two endpoints above. The agent mutates canvas state via the `canvas_set` / `canvas_update` / `canvas_clear` tools (which emit the same `canvas_update` WebSocket event as `POST .../set`); a REST surface for `update` and `clear` is unnecessary in v1 and not implemented.
+| `GET` | `/api/canvas/{conv_id}` | Get full canvas state (active_tab + tabs array) |
+| `POST` | `/api/canvas/{conv_id}/new_tab` | Append a new tab (widget_type, data, label?); returns `{ok, tab_id}` |
+| `POST` | `/api/canvas/{conv_id}/active_tab` | Switch active tab; body `{tab_id}` |
+| `POST` | `/api/canvas/{conv_id}/close_tab` | Close a tab; body `{tab_id}` |
+| `GET` | `/canvas/{conv_id}` | Standalone view — renders active tab; follows active-tab changes via WebSocket |
+| `GET` | `/canvas/{conv_id}/{tab_id}` | Standalone tab-locked view — renders one tab; doesn't follow active changes |
 
 ### Other
 

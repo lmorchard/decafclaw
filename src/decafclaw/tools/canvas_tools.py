@@ -1,12 +1,9 @@
-"""Agent-facing canvas tools — push, replace, clear, and read the canvas surface.
+"""Agent-facing canvas tools — tab-aware (Phase 4).
 
-The canvas is a per-conversation, web-only display area where the agent
-maintains a living widget across multiple turns. These four tools wrap
-the internal state operations in :mod:`decafclaw.canvas` and project
-results into ``ToolResult`` objects suitable for the agent loop.
-
-All four tools are always-loaded (small definitions, low cost) and run
-under the standard 180s tool timeout.
+Five tools that operate on explicit tab IDs. canvas_new_tab returns an
+auto-generated tab_id; subsequent canvas_update / canvas_close_tab
+target by id. canvas_clear nukes everything; canvas_read returns the
+full state for grounding.
 """
 
 import logging
@@ -19,43 +16,54 @@ log = logging.getLogger(__name__)
 
 
 def _emit_for_ctx(ctx):
-    """Build an emit callable from the conversation manager on ctx.
-
-    Returns ``None`` when there's no manager (unit tests, terminal).
-    canvas.py treats ``None`` as fail-open.
-    """
     manager = getattr(ctx, "manager", None)
     if manager is None:
         return None
-    return manager.emit  # async (conv_id, event)
+    return manager.emit
 
 
-def _canvas_url(conv_id: str) -> str:
-    # conv_ids are constrained to URL-safe chars by _is_safe_conv_id, but
-    # encode anyway for defense in depth — the result is user-visible text.
-    return f"/canvas/{quote(conv_id, safe='')}"
+def _canvas_url(conv_id: str, tab_id: str | None = None) -> str:
+    base = f"/canvas/{quote(conv_id, safe='')}"
+    if tab_id:
+        return f"{base}/{quote(tab_id, safe='')}"
+    return base
 
 
-async def tool_canvas_set(ctx,
-                          widget_type: str,
-                          data: dict,
-                          label: str | None = None) -> ToolResult:
-    """Push a widget onto the canvas, replacing any existing tab."""
-    log.info("[tool:canvas_set] widget=%s label=%r", widget_type, label)
-    result = await canvas_mod.set_canvas(
+async def tool_canvas_new_tab(ctx,
+                              widget_type: str,
+                              data: dict,
+                              label: str | None = None) -> ToolResult:
+    """Create a new canvas tab and make it active."""
+    log.info("[tool:canvas_new_tab] widget=%s label=%r", widget_type, label)
+    result = await canvas_mod.new_tab(
         ctx.config, ctx.conv_id, widget_type, data,
         label=label, emit=_emit_for_ctx(ctx),
     )
     if not result.ok:
         return ToolResult(text=f"[error: {result.error}]")
-    return ToolResult(text=f"{result.text} — view at {_canvas_url(ctx.conv_id)}")
+    url = _canvas_url(ctx.conv_id, result.tab_id)
+    return ToolResult(
+        text=f"tab created (id={result.tab_id}) — view at {url}",
+        data={"tab_id": result.tab_id},
+    )
 
 
-async def tool_canvas_update(ctx, data: dict) -> ToolResult:
-    """Replace the data of the current canvas widget. Errors if none set."""
-    log.info("[tool:canvas_update]")
-    result = await canvas_mod.update_canvas(
-        ctx.config, ctx.conv_id, data, emit=_emit_for_ctx(ctx),
+async def tool_canvas_update(ctx, tab_id: str, data: dict) -> ToolResult:
+    """Replace data of an existing tab. Preserves widget_type + label."""
+    log.info("[tool:canvas_update] tab=%s", tab_id)
+    result = await canvas_mod.update_tab(
+        ctx.config, ctx.conv_id, tab_id, data, emit=_emit_for_ctx(ctx),
+    )
+    if not result.ok:
+        return ToolResult(text=f"[error: {result.error}]")
+    return ToolResult(text=result.text)
+
+
+async def tool_canvas_close_tab(ctx, tab_id: str) -> ToolResult:
+    """Close a single tab by id. If it was active, the panel switches or hides."""
+    log.info("[tool:canvas_close_tab] tab=%s", tab_id)
+    result = await canvas_mod.close_tab(
+        ctx.config, ctx.conv_id, tab_id, emit=_emit_for_ctx(ctx),
     )
     if not result.ok:
         return ToolResult(text=f"[error: {result.error}]")
@@ -63,34 +71,48 @@ async def tool_canvas_update(ctx, data: dict) -> ToolResult:
 
 
 async def tool_canvas_clear(ctx) -> ToolResult:
-    """Remove the canvas widget; hides the panel for all watchers."""
+    """Close all canvas tabs and hide the panel."""
     log.info("[tool:canvas_clear]")
+    state = canvas_mod.read_canvas_state(ctx.config, ctx.conv_id)
+    if not state.get("tabs"):
+        return ToolResult(text="canvas already empty")
+    # Reuse canvas_mod.clear_canvas (existing) — emits kind="clear".
     result = await canvas_mod.clear_canvas(
         ctx.config, ctx.conv_id, emit=_emit_for_ctx(ctx),
     )
+    if not result.ok:
+        return ToolResult(text=f"[error: {result.error}]")
     return ToolResult(text=result.text)
 
 
 async def tool_canvas_read(ctx) -> ToolResult:
-    """Return the current canvas tab as structured data, or null if empty."""
+    """Return the full canvas state including all tabs and active_tab."""
     log.info("[tool:canvas_read]")
-    tab = canvas_mod.get_active_tab(ctx.config, ctx.conv_id)
-    if tab is None:
-        return ToolResult(text="canvas is empty (no widget set)", data=None)
+    state = canvas_mod.read_canvas_state(ctx.config, ctx.conv_id)
     payload = {
-        "widget_type": tab["widget_type"],
-        "label": tab.get("label", ""),
-        "data": tab.get("data", {}),
+        "active_tab": state.get("active_tab"),
+        "tabs": [
+            {
+                "id": t["id"],
+                "label": t.get("label", ""),
+                "widget_type": t["widget_type"],
+                "data": t.get("data", {}),
+            }
+            for t in state.get("tabs", [])
+        ],
     }
-    return ToolResult(
-        text=f"current canvas: {payload['widget_type']} ({payload['label']})",
-        data=payload,
-    )
+    if not payload["tabs"]:
+        text = "canvas is empty (no tabs)"
+    else:
+        labels = ", ".join(f"{t['id']}({t['label']})" for t in payload["tabs"])
+        text = f"canvas has {len(payload['tabs'])} tab(s): {labels}; active={payload['active_tab']}"
+    return ToolResult(text=text, data=payload)
 
 
 CANVAS_TOOLS = {
-    "canvas_set": tool_canvas_set,
+    "canvas_new_tab": tool_canvas_new_tab,
     "canvas_update": tool_canvas_update,
+    "canvas_close_tab": tool_canvas_close_tab,
     "canvas_clear": tool_canvas_clear,
     "canvas_read": tool_canvas_read,
 }
@@ -101,14 +123,16 @@ CANVAS_TOOL_DEFINITIONS = [
         "type": "function",
         "priority": "normal",
         "function": {
-            "name": "canvas_set",
+            "name": "canvas_new_tab",
             "description": (
-                "Push a widget onto the conversation's canvas, replacing any "
-                "existing widget. The canvas is a persistent display surface "
-                "in the user's web UI — use it for documents, plans, or "
-                "visualizations you intend to revise across multiple turns. "
-                "Always reveals the panel to the user. Currently supports "
-                "widget_type='markdown_document' with data={content: <markdown>}."
+                "Create a new tab on the conversation's canvas and make it the "
+                "active tab. The canvas is a persistent display surface in the "
+                "user's web UI — use it for documents, plans, or visualizations "
+                "you intend to revise across multiple turns. Returns a tab_id "
+                "you MUST keep to target this tab in subsequent canvas_update "
+                "or canvas_close_tab calls. Currently supports widget_type='markdown_document' "
+                "with data={content: <markdown>} and widget_type='code_block' "
+                "with data={code: <string>, language?: <string>, filename?: <string>}."
             ),
             "parameters": {
                 "type": "object",
@@ -123,7 +147,7 @@ CANVAS_TOOL_DEFINITIONS = [
                     },
                     "label": {
                         "type": "string",
-                        "description": "Optional tab label. Defaults to first H1 of content for markdown_document.",
+                        "description": "Optional tab label. Defaults to first H1 of content for markdown_document, filename for code_block, else humanized widget_type.",
                     },
                 },
                 "required": ["widget_type", "data"],
@@ -136,21 +160,48 @@ CANVAS_TOOL_DEFINITIONS = [
         "function": {
             "name": "canvas_update",
             "description": (
-                "Replace the data of the existing canvas widget. Same "
-                "widget_type, same label. Use for revising the current "
-                "document — preserves scroll position and does NOT pop the "
-                "panel back open if the user has dismissed it. Errors if no "
-                "canvas_set has happened yet."
+                "Replace the data of an existing canvas tab. Pass the tab_id "
+                "you got from canvas_new_tab. Preserves widget_type and label. "
+                "Use for revising a document — the panel updates without "
+                "re-mounting the widget; scroll position is preserved. Errors "
+                "if tab_id doesn't exist (use canvas_read to list current tabs)."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "tab_id": {
+                        "type": "string",
+                        "description": "Tab id from canvas_new_tab (e.g. 'canvas_2').",
+                    },
                     "data": {
                         "type": "object",
-                        "description": "New data payload; must match the current widget's data_schema.",
+                        "description": "New data payload; must match the tab's widget data_schema.",
                     },
                 },
-                "required": ["data"],
+                "required": ["tab_id", "data"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "priority": "normal",
+        "function": {
+            "name": "canvas_close_tab",
+            "description": (
+                "Close a single canvas tab by id. If it was the active tab, "
+                "the panel switches to the left neighbor (else right; else "
+                "hides). To replace a tab with a different widget_type, "
+                "canvas_close_tab the old one and canvas_new_tab the new one."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "tab_id": {
+                        "type": "string",
+                        "description": "Tab id to close.",
+                    },
+                },
+                "required": ["tab_id"],
             },
         },
     },
@@ -160,8 +211,9 @@ CANVAS_TOOL_DEFINITIONS = [
         "function": {
             "name": "canvas_clear",
             "description": (
-                "Remove the canvas widget and hide the panel for all "
-                "watchers. No-op if the canvas is already empty."
+                "Close ALL canvas tabs and hide the panel. Use as a 'reset' "
+                "when you're done with the canvas entirely. To close one tab, "
+                "use canvas_close_tab instead."
             ),
             "parameters": {"type": "object", "properties": {}},
         },
@@ -172,10 +224,10 @@ CANVAS_TOOL_DEFINITIONS = [
         "function": {
             "name": "canvas_read",
             "description": (
-                "Return the current canvas widget as {widget_type, label, "
-                "data}, or null if empty. Use to ground revisions in the "
-                "current canvas state — especially after compaction or after "
-                "the user clicks 'Open in Canvas' on an inline widget."
+                "Return the current canvas state — list of tabs (with id, "
+                "label, widget_type, data) and the active_tab id. Use to "
+                "ground revisions in current canvas state, especially after "
+                "compaction or when you've lost track of tab ids."
             ),
             "parameters": {"type": "object", "properties": {}},
         },

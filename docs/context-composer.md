@@ -370,19 +370,26 @@ After each turn, the agent writes a diagnostics sidecar file (`workspace/convers
 
 ## Canvas tools
 
-Four canvas tools are always-loaded (non-deferrable) so the agent can drive
-the canvas panel from any context without activating a skill:
+Five canvas tools are always-loaded (non-deferrable) so the agent can drive
+the canvas panel from any context without activating a skill. Phase 4 uses
+explicit tab IDs; the Phase 3 implicit-active-tab tools (`canvas_set`,
+no-id `canvas_update`) are removed.
 
-- `canvas_set(widget_type, data, label?)` — push a widget to the canvas
-  panel (replaces any existing tab); reveals the panel.
-- `canvas_update(data)` — replace the data payload of the current canvas
-  widget in place; preserves panel-hidden state.
-- `canvas_clear()` — remove the canvas widget and hide the panel.
-- `canvas_read()` — return the current canvas tab as
-  `{widget_type, label, data}`, or null if the canvas is empty.
+- `canvas_new_tab(widget_type, data, label?)` — append a new tab to the
+  canvas, set it active, return `tab_id` in `ToolResult.data["tab_id"]`.
+  Validates widget type + data schema. Reveals the panel.
+- `canvas_update(tab_id, data)` — replace the data payload of the
+  identified tab in place; errors `[error: tab '{id}' not found]` on
+  unknown id. Preserves panel-hidden state.
+- `canvas_close_tab(tab_id)` — remove the identified tab; activates left
+  neighbor (else right; else clears active). Last tab closed → panel hides.
+- `canvas_clear()` — empty all tabs and clear `active_tab`; hide the panel.
+- `canvas_read()` — return full canvas state `{active_tab, tabs: [{id,
+  label, widget_type, data}, ...]}` via `ToolResult.data`.
 
-Each successful call emits a `canvas_update` WebSocket event to connected
-clients. The canvas state persists in
+Each successful call emits a `canvas_update` WebSocket event (with a `kind`
+field: `new_tab`, `update`, `close_tab`, `set_active`, or `clear`) to
+connected clients. The canvas state persists in
 `workspace/conversations/{conv_id}.canvas.json`.
 
 ## Key files

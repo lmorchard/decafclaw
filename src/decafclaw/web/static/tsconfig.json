@@ -17,6 +17,7 @@
       "dompurify": ["./node_modules/dompurify"],
       "@milkdown/kit": ["./milkdown-entry.js"],
       "codemirror": ["./codemirror-entry.js"],
+      "hljs": ["./hljs-entry.js"],
       "/static/*": ["./*"]
     }
   },

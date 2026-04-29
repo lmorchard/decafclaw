@@ -1,0 +1,16 @@
+{
+  "name": "code_block",
+  "description": "A syntax-highlighted code block. Inline mode shows a collapsed preview with Expand and Open in Canvas buttons; canvas mode shows the full file with scroll preservation.",
+  "modes": ["inline", "canvas"],
+  "accepts_input": false,
+  "data_schema": {
+    "type": "object",
+    "required": ["code"],
+    "properties": {
+      "code": { "type": "string" },
+      "language": { "type": "string" },
+      "filename": { "type": "string" }
+    },
+    "additionalProperties": false
+  }
+}

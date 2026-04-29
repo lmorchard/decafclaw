@@ -11,29 +11,16 @@ chat-view {
   position: relative;
 }
 
+/* Uses .dc-floating-btn for border/radius/shadow/tap-target.
+   Local styles cover sticky positioning + sizing. */
 chat-view .scroll-to-bottom {
   position: sticky;
   bottom: 0.5rem;
-  left: 50%;
-  transform: translateX(-50%);
-  background: var(--pico-primary-background);
-  color: var(--pico-primary-inverse);
-  border: none;
-  border-radius: 1rem;
-  padding: 0.35rem 1rem;
-  font-size: 0.8rem;
-  cursor: pointer;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
-  margin: 0;
   z-index: 10;
-  display: block;
   width: fit-content;
-  margin-left: auto;
-  margin-right: auto;
-}
-
-chat-view .scroll-to-bottom:hover {
-  opacity: 0.9;
+  margin: 0 auto;
+  padding: 0 0.85rem;
+  font-size: 0.85rem;
 }
 
 chat-view .load-more {

@@ -101,7 +101,10 @@ export class ConversationSidebar extends LitElement {
         this._onStoreChange();
       }
     }
-    this.toggleAttribute('collapsed', this._collapsed);
+    // [collapsed] drives the desktop width-clamp CSS — suppress it when
+    // mobile-open so the hamburger flow shows the full sidebar even if
+    // the desktop session left _collapsed=true.
+    this.toggleAttribute('collapsed', this._collapsed && !this._mobileOpen);
     this.toggleAttribute('mobile-open', this._mobileOpen);
   }
 
@@ -448,7 +451,10 @@ export class ConversationSidebar extends LitElement {
   }
 
   render() {
-    if (this._collapsed) {
+    // Collapsed-narrow view is desktop-only. When the user opens the
+    // sidebar via hamburger on mobile, render the full content even if
+    // `_collapsed` was set from a previous desktop session.
+    if (this._collapsed && !this._mobileOpen) {
       return html`
         <div class="sidebar-header">
           <button class="collapse-btn" @click=${this.#toggleCollapse} title="Expand sidebar">›</button>
@@ -457,7 +463,7 @@ export class ConversationSidebar extends LitElement {
     }
 
     return html`
-      <div class="sidebar-header">
+      <div class="sidebar-header dc-overlay-header">
         <div class="sidebar-tabs">
           <button class="sidebar-tab ${this._sidebarTab === 'conversations' ? 'active' : ''}"
             @click=${() => this.#switchTab('conversations')}>Chats</button>
@@ -466,7 +472,7 @@ export class ConversationSidebar extends LitElement {
           <button class="sidebar-tab ${this._sidebarTab === 'files' ? 'active' : ''}"
             @click=${() => this.#switchTab('files')}>Files</button>
         </div>
-        <button class="mobile-close-btn" @click=${() => this.closeMobile()} title="Close sidebar">&#10005;</button>
+        <button class="mobile-close-btn dc-overlay-close-x" @click=${() => this.closeMobile()} title="Close sidebar">×</button>
         <button class="collapse-btn" @click=${this.#toggleCollapse} title="Collapse sidebar">‹</button>
       </div>
       <vault-sidebar
@@ -586,12 +592,14 @@ export class ConversationSidebar extends LitElement {
         })()}
       ` : nothing}
       <div class="sidebar-footer">
-        <theme-toggle></theme-toggle>
-        <notification-inbox
-          @navigate-conversation=${(e) => this.#onNotificationNavigate(e)}
-          @navigate-vault=${(e) => this.#onNotificationNavigateVault(e)}
-        ></notification-inbox>
-        <button class="config-btn" title="Agent Config" @click=${() => this.#openConfig()}>&#9881;</button>
+        <div class="footer-icons">
+          <theme-toggle></theme-toggle>
+          <notification-inbox
+            @navigate-conversation=${(e) => this.#onNotificationNavigate(e)}
+            @navigate-vault=${(e) => this.#onNotificationNavigateVault(e)}
+          ></notification-inbox>
+          <button class="config-btn" title="Agent Config" @click=${() => this.#openConfig()}>&#9881;</button>
+        </div>
         <button class="logout-btn" @click=${() => this.authClient?.logout()} title="Sign out">Sign out</button>
       </div>
     `;

@@ -1,52 +1,42 @@
 /**
- * Canvas state — per-conversation canvas tab cache + dismiss flag + unread flag.
+ * Canvas state — per-conversation multi-tab cache + dismiss flag + unread flag.
  *
- * Dismiss flag is persisted to localStorage per-conversation so a page
- * reload preserves the user's intent. Cleared on:
- *   - canvas_set events (kind:'set' always reveals)
- *   - explicit resummon() click
- *   - canvas_clear (no canvas to dismiss anymore)
- * NOT cleared on conv-switch or canvas_update — those preserve the
- * user's dismiss state for the conversation.
+ * State per conv:
+ *   { tabs: [{id, label, widget_type, data}, ...], activeTabId, dismissed, unreadDot }
  *
- * Subscribers receive `(state)` snapshots after every mutation so the
- * panel and resummon UI re-render. Snapshot shape:
- *   { tab: {id,label,widget_type,data}|null,
- *     visible: boolean,
- *     unreadDot: boolean }
+ * Subscribers receive snapshots:
+ *   { tabs, activeTabId, activeTab, visible, unreadDot }
+ *
+ * Dismiss persists per-conv in localStorage (canvas-dismissed.{convId});
+ * cleared on new_tab / close_tab (when panel becomes empty) / clear /
+ * resummon click. Survives reload, conv-switch, and update events.
  */
 
 const DISMISS_KEY_PREFIX = 'canvas-dismissed.';
 
 const _state = {
-  byConv: new Map(),  // convId -> { tab, dismissed, unreadDot }
+  byConv: new Map(),  // convId -> { tabs, activeTabId, dismissed, unreadDot }
   active: null,
   subscribers: new Set(),
 };
 
 function _dismissKey(convId) { return DISMISS_KEY_PREFIX + convId; }
-
 function _loadDismissed(convId) {
-  try {
-    return localStorage.getItem(_dismissKey(convId)) === 'true';
-  } catch {
-    return false;
-  }
+  try { return localStorage.getItem(_dismissKey(convId)) === 'true'; }
+  catch { return false; }
 }
-
 function _saveDismissed(convId, value) {
   try {
     if (value) localStorage.setItem(_dismissKey(convId), 'true');
     else localStorage.removeItem(_dismissKey(convId));
-  } catch {
-    // localStorage may be unavailable (private mode); fall through silently.
-  }
+  } catch { /* localStorage unavailable */ }
 }
 
 function _ensure(convId) {
   if (!_state.byConv.has(convId)) {
     _state.byConv.set(convId, {
-      tab: null,
+      tabs: [],
+      activeTabId: null,
       dismissed: _loadDismissed(convId),
       unreadDot: false,
     });
@@ -63,12 +53,15 @@ function _publish() {
 
 export function currentSnapshot() {
   if (!_state.active) {
-    return { tab: null, visible: false, unreadDot: false };
+    return { tabs: [], activeTabId: null, activeTab: null, visible: false, unreadDot: false };
   }
   const s = _ensure(_state.active);
+  const activeTab = s.tabs.find(t => t.id === s.activeTabId) || null;
   return {
-    tab: s.tab,
-    visible: !!s.tab && !s.dismissed,
+    tabs: s.tabs.slice(),
+    activeTabId: s.activeTabId,
+    activeTab,
+    visible: s.tabs.length > 0 && !s.dismissed,
     unreadDot: s.unreadDot,
   };
 }
@@ -78,18 +71,11 @@ export function subscribe(callback) {
   return () => _state.subscribers.delete(callback);
 }
 
-/** Return the current active conversation id, or null. */
-export function getActiveConvId() {
-  return _state.active;
-}
+export function getActiveConvId() { return _state.active; }
 
-/** Switch to a different conversation. Loads state from the server. */
 export async function setActiveConv(convId) {
   _state.active = convId;
   if (!convId) { _publish(); return; }
-  // _ensure picks up the persisted dismiss flag for this conv. Don't
-  // wipe unreadDot here either — a fresh navigate shouldn't surface
-  // stale dot state from before the dismiss persisted.
   const s = _ensure(convId);
   s.unreadDot = false;
   try {
@@ -97,10 +83,8 @@ export async function setActiveConv(convId) {
                              { credentials: 'same-origin' });
     if (resp.ok) {
       const data = await resp.json();
-      const tabs = data.tabs || [];
-      const activeId = data.active_tab;
-      const tab = tabs.find(t => t.id === activeId) || null;
-      s.tab = tab;
+      s.tabs = (data.tabs || []).map(t => ({...t}));
+      s.activeTabId = data.active_tab || null;
     }
   } catch (err) {
     console.warn('canvas state load failed', err);
@@ -113,25 +97,36 @@ export function applyEvent(evt) {
   const convId = evt.conv_id;
   if (!convId) return;
   const s = _ensure(convId);
-  const kind = evt.kind || 'set';
+  const kind = evt.kind || 'update';
 
   if (kind === 'clear') {
-    s.tab = null;
+    s.tabs = [];
+    s.activeTabId = null;
     s.unreadDot = false;
     s.dismissed = false;
     _saveDismissed(convId, false);
-  } else if (kind === 'set') {
-    s.tab = evt.tab || null;
+  } else if (kind === 'new_tab') {
+    if (evt.tab) s.tabs.push({...evt.tab});
+    s.activeTabId = evt.active_tab;
     s.dismissed = false;
     s.unreadDot = false;
     _saveDismissed(convId, false);
   } else if (kind === 'update') {
-    s.tab = evt.tab || s.tab;
-    if (s.dismissed) {
-      s.unreadDot = true;
-    } else {
-      s.unreadDot = false;
+    if (evt.tab) {
+      const idx = s.tabs.findIndex(t => t.id === evt.tab.id);
+      if (idx >= 0) s.tabs[idx] = {...evt.tab};
     }
+    if (s.dismissed) s.unreadDot = true;
+  } else if (kind === 'close_tab') {
+    s.tabs = s.tabs.filter(t => t.id !== evt.closed_tab_id);
+    s.activeTabId = evt.active_tab;
+    if (s.tabs.length === 0) {
+      // Last tab closed — clear dismiss flag too so a future new_tab reveals.
+      s.dismissed = false;
+      _saveDismissed(convId, false);
+    }
+  } else if (kind === 'set_active') {
+    s.activeTabId = evt.active_tab;
   }
   if (convId === _state.active) _publish();
 }
@@ -151,4 +146,40 @@ export function resummon() {
   s.unreadDot = false;
   _saveDismissed(_state.active, false);
   _publish();
+}
+
+/** User clicks a tab — switch active. POSTs to server, optimistic UI. */
+export async function switchToTab(tabId) {
+  const convId = _state.active;
+  if (!convId) return;
+  // Optimistic local update so UI feels responsive.
+  const s = _ensure(convId);
+  s.activeTabId = tabId;
+  _publish();
+  try {
+    await fetch(`/api/canvas/${encodeURIComponent(convId)}/active_tab`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({ tab_id: tabId }),
+    });
+  } catch (err) {
+    console.warn('canvas active_tab POST failed', err);
+  }
+}
+
+/** User clicks [×] on a tab — close it via REST. Server emits canvas_update kind=close_tab. */
+export async function closeTabFromUi(tabId) {
+  const convId = _state.active;
+  if (!convId) return;
+  try {
+    await fetch(`/api/canvas/${encodeURIComponent(convId)}/close_tab`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({ tab_id: tabId }),
+    });
+  } catch (err) {
+    console.warn('canvas close_tab POST failed', err);
+  }
 }

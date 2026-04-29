@@ -1651,8 +1651,8 @@ async def get_canvas_state(request: Request, username: str) -> JSONResponse:
 
 
 @_authenticated
-async def post_canvas_set(request: Request, username: str) -> JSONResponse:
-    """Push a widget to the canvas (used by 'Open in Canvas' button)."""
+async def post_canvas_new_tab(request: Request, username: str) -> JSONResponse:
+    """Create a new canvas tab. Backs the inline 'Open in Canvas' button."""
     from . import canvas as canvas_mod
     config = request.app.state.config
     manager = request.app.state.manager
@@ -1671,22 +1671,75 @@ async def post_canvas_set(request: Request, username: str) -> JSONResponse:
     data = body.get("data") or {}
     label = body.get("label")
     emit = manager.emit if manager else None
-    result = await canvas_mod.set_canvas(
+    result = await canvas_mod.new_tab(
         config, conv_id, widget_type, data, label=label, emit=emit,
     )
     if not result.ok:
         return JSONResponse({"error": result.error}, status_code=400)
-    return JSONResponse({"ok": True, "text": result.text})
+    return JSONResponse({"ok": True, "tab_id": result.tab_id})
+
+
+@_authenticated
+async def post_canvas_active_tab(request: Request, username: str) -> JSONResponse:
+    """Set the active tab via user click in the panel."""
+    from . import canvas as canvas_mod
+    config = request.app.state.config
+    manager = request.app.state.manager
+    conv_id = request.path_params.get("conv_id", "")
+    if not _is_safe_conv_id(conv_id):
+        return JSONResponse({"error": "invalid conv_id"}, status_code=400)
+    if not _user_owns_conv(config, conv_id, username):
+        return JSONResponse({"error": "not found"}, status_code=404)
+    try:
+        body = await request.json()
+    except json.JSONDecodeError:
+        return JSONResponse({"error": "invalid JSON body"}, status_code=400)
+    if not isinstance(body, dict):
+        return JSONResponse({"error": "body must be a JSON object"}, status_code=400)
+    tab_id = body.get("tab_id", "")
+    emit = manager.emit if manager else None
+    result = await canvas_mod.set_active_tab(config, conv_id, tab_id, emit=emit)
+    if not result.ok:
+        return JSONResponse({"error": result.error}, status_code=400)
+    return JSONResponse({"ok": True})
+
+
+@_authenticated
+async def post_canvas_close_tab(request: Request, username: str) -> JSONResponse:
+    """Close a tab via user [×] click."""
+    from . import canvas as canvas_mod
+    config = request.app.state.config
+    manager = request.app.state.manager
+    conv_id = request.path_params.get("conv_id", "")
+    if not _is_safe_conv_id(conv_id):
+        return JSONResponse({"error": "invalid conv_id"}, status_code=400)
+    if not _user_owns_conv(config, conv_id, username):
+        return JSONResponse({"error": "not found"}, status_code=404)
+    try:
+        body = await request.json()
+    except json.JSONDecodeError:
+        return JSONResponse({"error": "invalid JSON body"}, status_code=400)
+    if not isinstance(body, dict):
+        return JSONResponse({"error": "body must be a JSON object"}, status_code=400)
+    tab_id = body.get("tab_id", "")
+    emit = manager.emit if manager else None
+    result = await canvas_mod.close_tab(config, conv_id, tab_id, emit=emit)
+    if not result.ok:
+        return JSONResponse({"error": result.error}, status_code=400)
+    return JSONResponse({"ok": True})
 
 
 @_authenticated
 async def get_canvas_page(request: Request, username: str):
-    """Serve the standalone canvas HTML page."""
+    """Serve the standalone canvas HTML (bare or tab-locked URL)."""
     from starlette.responses import Response
     config = request.app.state.config
     conv_id = request.path_params.get("conv_id", "")
+    tab_id = request.path_params.get("tab_id", "")  # may be empty for bare URL
     if not _is_safe_conv_id(conv_id):
         return Response("Invalid conversation id", status_code=400)
+    if tab_id and not _is_safe_conv_id(tab_id):
+        return Response("Invalid tab id", status_code=400)
     if not _user_owns_conv(config, conv_id, username):
         return Response("Not found", status_code=404)
     html_path = Path(__file__).parent / "web" / "static" / "canvas-page.html"
@@ -1761,8 +1814,11 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> Starlette:
         Route("/widgets/{tier}/{name}/widget.js", serve_widget_js,
               methods=["GET"]),
         Route("/api/canvas/{conv_id}", get_canvas_state, methods=["GET"]),
-        Route("/api/canvas/{conv_id}/set", post_canvas_set, methods=["POST"]),
+        Route("/api/canvas/{conv_id}/new_tab", post_canvas_new_tab, methods=["POST"]),
+        Route("/api/canvas/{conv_id}/active_tab", post_canvas_active_tab, methods=["POST"]),
+        Route("/api/canvas/{conv_id}/close_tab", post_canvas_close_tab, methods=["POST"]),
         Route("/canvas/{conv_id}", get_canvas_page, methods=["GET"]),
+        Route("/canvas/{conv_id}/{tab_id}", get_canvas_page, methods=["GET"]),
         WebSocketRoute("/ws/chat", ws_chat),
     ]
 

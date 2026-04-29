@@ -110,6 +110,28 @@ The resummon pill in `#mobile-header` mirrors the pill in
 `#chat-main-header` so it remains reachable even when the sidebar is
 collapsed.
 
+## Canvas tabs
+
+On desktop, tabs render as a horizontal strip at the top of the canvas panel
+(see [Canvas panel](web-ui.md#canvas-panel)). On mobile (≤639px) the
+horizontal strip is replaced by a vertical-list disclosure pattern:
+
+**Compressed header:** a "Tabs (N) ▼" button sits in the panel header
+alongside the existing open-in-new-tab and dismiss controls. Tapping it
+toggles a vertical list overlay anchored below the button.
+
+**Vertical list:** each row shows the tab label, an active indicator
+(filled dot or background tint), and a `[×]` close button.
+
+- Tap a row (anywhere except `[×]`) → switch active tab; list closes.
+- Tap `[×]` → close that tab; list stays open until the last tab is closed.
+
+**Tap targets:** rows and close buttons each meet the 44×44px floor. Row
+height is `min-height: 44px`; the close button within each row also gets
+`min-width: 44px; min-height: 44px`. This is enforced via `mobile.css`
+(annotated with the same one-line reason pattern used elsewhere in the
+file).
+
 ## Quick checklist before merging a UI change
 
 - Does every new interactive element have a 44×44 tap area on mobile? If smaller, is there a comment explaining why?
