@@ -125,3 +125,31 @@
     user explicitly asks to save to a file path is workspace_write.
     The "PREFER canvas_new_tab" guidance applies to interactive web
     content the user wants displayed, not to authoring file artifacts.
+
+# -- ask_user_multiple_choice vs ask_user_text -------------------------------
+
+- name: ask-text-vs-choice-free-form-name
+  scenario: "Ask the user what name they'd like for the new project."
+  expected: ask_user_text
+  near_miss: [ask_user_multiple_choice]
+  notes: |
+    Free-form question with no fixed options — "what name" is a
+    single-line text answer. ask_user_multiple_choice would be wrong
+    because there's no list to pick from.
+
+- name: ask-choice-vs-text-deploy-target
+  scenario: "Should I deploy to production or to staging?"
+  expected: ask_user_multiple_choice
+  near_miss: [ask_user_text]
+  notes: |
+    Two named choices presented in the prompt itself — that's the
+    canonical multiple_choice case. ask_user_text would dump a free
+    input on the user when the answer is one of two known values.
+
+- name: ask-text-vs-choice-multi-field-form
+  scenario: "Collect the user's name, email, and a short bio."
+  expected: ask_user_text
+  near_miss: [ask_user_multiple_choice]
+  notes: |
+    Multi-field form with free-form text per field — ask_user_text
+    with fields=[name, email, bio]. Nothing to pick from a list.
