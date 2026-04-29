@@ -233,6 +233,9 @@ async def new_tab(config,
     err = _validate_widget_for_canvas(widget_type, data)
     if err:
         return CanvasOpResult(ok=False, error=err)
+    registry = get_widget_registry()
+    if registry is not None:
+        data = registry.normalize(widget_type, data)
     state = read_canvas_state(config, conv_id)
     next_n = state.get("next_tab_id", 1)
     tab_id = f"canvas_{next_n}"
@@ -266,6 +269,9 @@ async def update_tab(config,
             err = _validate_widget_for_canvas(tab["widget_type"], data)
             if err:
                 return CanvasOpResult(ok=False, error=err)
+            registry = get_widget_registry()
+            if registry is not None:
+                data = registry.normalize(tab["widget_type"], data)
             tab["data"] = data
             if not write_canvas_state(config, conv_id, state):
                 return CanvasOpResult(ok=False,

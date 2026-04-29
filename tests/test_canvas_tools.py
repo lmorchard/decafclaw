@@ -47,6 +47,9 @@ def md_doc_registry(monkeypatch):
                     return False, f"missing {r}"
             return True, None
 
+        def normalize(self, name, data):
+            return data
+
     monkeypatch.setattr(canvas_mod, "get_widget_registry", lambda: _Reg())
 
 

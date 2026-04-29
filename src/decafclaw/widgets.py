@@ -3,8 +3,10 @@
 See docs/widgets.md for the admin-facing guide.
 """
 
+import html as html_lib
 import json
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -76,6 +78,28 @@ class WidgetRegistry:
         if d is None:
             raise KeyError(f"unknown widget: {name!r}")
         return d.js_path
+
+    def normalize(self, name: str, data: dict) -> dict:
+        """Apply per-widget post-validate normalization, if registered.
+
+        Used to inject server-controlled fields (e.g. iframe_sandbox's
+        wrapped CSP-locked HTML document). Returns ``data`` unchanged when
+        no normalizer is registered for ``name``. Idempotent — normalizers
+        regenerate derived fields rather than compounding them.
+
+        Normalizers are bundled-tier only: admin-tier widgets may
+        intentionally override bundled widgets on name collision (see
+        ``load_widget_registry``), and an admin-defined widget should not
+        silently inherit a bundled-only normalizer just because the name
+        matches — its data shape may be entirely different.
+        """
+        fn = _NORMALIZERS.get(name)
+        if fn is None:
+            return data
+        desc = self._descriptors.get(name)
+        if desc is not None and desc.tier != "bundled":
+            return data
+        return fn(data)
 
     def validate(self, name: str, data: dict) -> tuple[bool, str | None]:
         """Validate widget payload against the widget's data_schema.
@@ -198,3 +222,84 @@ def _reset_registry_for_tests() -> None:
     """Test helper — clears the module-level singleton."""
     global _registry
     _registry = None
+
+
+# ---------------------------------------------------------------------------
+# Per-widget normalizers
+#
+# A normalizer is a pure function ``(input_data) -> normalized_data`` invoked
+# AFTER successful schema validation. Used for server-controlled fields the
+# agent shouldn't be trusted to author. iframe_sandbox uses it to wrap
+# agent-supplied body content into a CSP-locked HTML document.
+#
+# Normalizers must be idempotent: ``normalize(normalize(d))`` should equal
+# ``normalize(d)`` for the same input. They typically achieve this by
+# regenerating derived fields from canonical source fields rather than
+# preserving prior derived state.
+# ---------------------------------------------------------------------------
+
+_NORMALIZERS: dict[str, Callable[[dict], dict]] = {}
+
+
+# Locked CSP for iframe_sandbox documents. ``default-src 'none'`` blocks all
+# network and resource loading; ``script-src 'unsafe-inline'`` and
+# ``style-src 'unsafe-inline'`` permit the agent's self-contained inline
+# scripts and styles; ``img-src data:`` and ``font-src data:`` permit
+# data-URI images and fonts so demos can embed assets without network.
+_IFRAME_SANDBOX_CSP = (
+    "default-src 'none'; "
+    "style-src 'unsafe-inline'; "
+    "script-src 'unsafe-inline'; "
+    "img-src data:; "
+    "font-src data:;"
+)
+
+_IFRAME_SANDBOX_BASE_STYLE = (
+    "html,body{margin:0;padding:0;"
+    "font-family:system-ui,-apple-system,Segoe UI,sans-serif;}"
+)
+
+
+def _normalize_iframe_sandbox(data: dict) -> dict:
+    """Wrap agent-provided body into a CSP-locked HTML document.
+
+    Input shape: ``{body: str, title?: str}`` (validated by the data_schema
+    before this is called). Output shape: ``{body, title?, html}`` where
+    ``html`` is the wrapped document the iframe consumes via ``srcdoc``.
+
+    Idempotent: a stale ``html`` key in the input is overwritten by the
+    regenerated wrapper, so a round-tripped value (e.g. via canvas_read →
+    canvas_update) doesn't compound.
+    """
+    body = data.get("body", "")
+    if not isinstance(body, str):
+        body = ""
+    title = data.get("title")
+    title_tag = ""
+    if isinstance(title, str) and title:
+        # html.escape handles `<`, `>`, `&`, and quotes — sufficient inside
+        # a <title> element where the only parser-meaningful sequence is
+        # ``</title>``.
+        title_tag = f"<title>{html_lib.escape(title)}</title>"
+    wrapped = (
+        '<!doctype html>'
+        '<html>'
+        '<head>'
+        f'<meta http-equiv="Content-Security-Policy" content="{_IFRAME_SANDBOX_CSP}">'
+        '<meta charset="utf-8">'
+        f'<meta name="viewport" content="width=device-width, initial-scale=1">'
+        f'{title_tag}'
+        f'<style>{_IFRAME_SANDBOX_BASE_STYLE}</style>'
+        '</head>'
+        '<body>'
+        f'{body}'
+        '</body>'
+        '</html>'
+    )
+    out = {"body": body, "html": wrapped}
+    if isinstance(title, str) and title:
+        out["title"] = title
+    return out
+
+
+_NORMALIZERS["iframe_sandbox"] = _normalize_iframe_sandbox
