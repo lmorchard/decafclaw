@@ -105,6 +105,19 @@ def _count_tool_calls(history: list) -> int:
     return sum(1 for msg in history if msg.get("role") == "tool")
 
 
+def _collect_tool_names(history: list) -> list[str]:
+    """List tool names called in the (slice of) history, in call order, including duplicates."""
+    names = []
+    for msg in history:
+        if msg.get("role") != "assistant":
+            continue
+        for call in msg.get("tool_calls") or []:
+            name = (call.get("function") or {}).get("name")
+            if name:
+                names.append(name)
+    return names
+
+
 def _count_tool_errors(history: list) -> int:
     """Count tool results that contain error indicators."""
     count = 0
@@ -131,7 +144,8 @@ def _collect_tool_errors(history: list) -> list[str]:
 
 
 def _check_assertions(test_case: dict, response: str, tool_calls: int,
-                      tool_errors: int = 0) -> tuple[bool, str]:
+                      tool_errors: int = 0,
+                      tool_names: list[str] | None = None) -> tuple[bool, str]:
     """Check test assertions. Returns (passed, failure_reason)."""
     import re
 
@@ -171,6 +185,33 @@ def _check_assertions(test_case: dict, response: str, tool_calls: int,
     max_errors = expect.get("max_tool_errors")
     if max_errors is not None and tool_errors > max_errors:
         return False, f"Too many tool errors: {tool_errors} > {max_errors}"
+
+    names = tool_names or []
+    called_list = f"[{', '.join(names)}]"
+
+    expect_tool = expect.get("expect_tool")
+    if expect_tool is not None:
+        wanted = [expect_tool] if isinstance(expect_tool, str) else list(expect_tool)
+        if not any(w in names for w in wanted):
+            tail = f"tools called were {called_list}" if names else "no tools were called"
+            return False, f"Expected one of {wanted} to be called, but {tail}"
+
+    expect_no_tool = expect.get("expect_no_tool")
+    if expect_no_tool is not None:
+        forbidden = [expect_no_tool] if isinstance(expect_no_tool, str) else list(expect_no_tool)
+        for f in forbidden:
+            if f in names:
+                return False, f"Unexpected tool called: '{f}' (called tools: {called_list})"
+
+    count_by_name = expect.get("expect_tool_count_by_name")
+    if count_by_name is not None:
+        for name, want in count_by_name.items():
+            got = sum(1 for n in names if n == name)
+            if got != want:
+                paren = f"called tools: {called_list}" if names else "no tools were called"
+                return False, (
+                    f"Tool count mismatch for '{name}': expected {want}, got {got} ({paren})"
+                )
 
     return True, ""
 
@@ -268,7 +309,7 @@ async def run_test(config: Config, test_case: dict) -> dict:
             })
             expect = turn.get("expect", {})
             if expect:
-                passed, reason = _check_assertions(turn, response, 0, 0)
+                passed, reason = _check_assertions(turn, response, 0, 0, tool_names=[])
                 if not passed:
                     overall_passed = False
                     failure_reason = f"Turn {turn_idx + 1}: {reason}"
@@ -300,7 +341,9 @@ async def run_test(config: Config, test_case: dict) -> dict:
         expect = turn.get("expect", {})
         if expect:
             tool_errors = _count_tool_errors(history) - pre_turn_tool_errors
-            passed, reason = _check_assertions(turn, response, tool_calls, tool_errors)
+            tool_names = _collect_tool_names(history[pre_turn_history_len:])
+            passed, reason = _check_assertions(turn, response, tool_calls, tool_errors,
+                                               tool_names=tool_names)
             if not passed:
                 overall_passed = False
                 # Collect errors from this turn's messages only
