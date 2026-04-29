@@ -41,6 +41,8 @@
   expect:
     response_contains: "Python"
     max_tool_calls: 5
+    expect_tool: vault_journal_append
+    expect_no_tool: [shell, shell_patterns]
 
 - name: "connects related memories"
   setup:
