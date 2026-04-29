@@ -127,16 +127,20 @@ CANVAS_TOOL_DEFINITIONS = [
             "description": (
                 "Create a new tab on the conversation's canvas and make it the "
                 "active tab. The canvas is a persistent display surface in the "
-                "user's web UI — use it for documents, plans, or visualizations "
-                "you intend to revise across multiple turns. Returns a tab_id "
-                "you MUST keep to target this tab in subsequent canvas_update "
-                "or canvas_close_tab calls. Currently supports widget_type='markdown_document' "
+                "user's web UI — use it for documents, plans, visualizations, "
+                "or interactive demos you intend to revise across multiple "
+                "turns. Returns a tab_id you MUST keep to target this tab in "
+                "subsequent canvas_update or canvas_close_tab calls. "
+                "Currently supports widget_type='markdown_document' "
                 "with data={content: <markdown>}, widget_type='code_block' "
                 "with data={code: <string>, language?: <string>, filename?: <string>}, "
-                "and widget_type='iframe_sandbox' with data={body: <html>, title?: <string>} "
-                "for arbitrary HTML/CSS/JS demos in a CSP-locked sandboxed iframe "
-                "(no network access — fetch, external scripts, remote images/fonts all blocked; "
-                "inline <style> and <script> are allowed)."
+                "and widget_type='iframe_sandbox' with data={body: <html>, title?: <string>} — "
+                "PREFER this over workspace_write whenever the user asks you to 'show', "
+                "'display', 'render', or 'demo' interactive HTML/CSS/JS content (3D demos, "
+                "charts, visualizations, mini-apps, animations); it renders the page directly "
+                "in their UI instead of producing a file they have to open. Runs in a "
+                "CSP-locked sandboxed iframe (no network access — fetch, external scripts, "
+                "remote images/fonts all blocked; inline <style> and <script> are allowed)."
             ),
             "parameters": {
                 "type": "object",
