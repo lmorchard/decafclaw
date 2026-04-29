@@ -305,8 +305,12 @@ conversation-sidebar[collapsed] .sidebar-header {
 }
 
 /* Structural rules from .dc-icon-btn in primitives.css. Per-site
-   overrides: tighter padding than primitive default, larger font. */
-conversation-sidebar .collapse-btn {
+   overrides: tighter padding than primitive default, larger font.
+   Tag-qualified per the documented cascade rule §1 — the descendant
+   selector already ties primitive specificity (0,1,1) on its own,
+   but tag-qualifying makes the rule robust against future refactors
+   that might drop the descendant ancestor. */
+conversation-sidebar button.collapse-btn {
   padding: 0.15rem 0.3rem;
   font-size: 1.1rem;
 }

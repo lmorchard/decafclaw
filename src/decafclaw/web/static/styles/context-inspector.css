@@ -41,8 +41,9 @@ context-inspector .inspector-header h3 {
 /* Structural rules from .dc-icon-btn in primitives.css. Per-site
    overrides: tighter inline padding, larger font. The hover state
    comes from the primitive (was previously missing here — now
-   intentionally surfaces on hover). */
-context-inspector .close-btn {
+   intentionally surfaces on hover). Tag-qualified per cascade rule §1
+   for robustness against future refactors. */
+context-inspector button.close-btn {
   font-size: 1.2rem;
   padding: 0 0.25rem;
 }

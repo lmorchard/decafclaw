@@ -247,9 +247,9 @@ export class WikiPage extends LitElement {
       <button class="wiki-close-btn dc-icon-btn" @click=${() => this._close()} title="Close wiki pane" aria-label="Close wiki pane">&times;</button>
     `;
     const rightButtons = html`
-      <button class="wiki-edit-btn dc-icon-btn" @click=${() => this._toggleMode()} title=${modeTitle}>${modeIcon}</button>
+      <button class="wiki-edit-btn dc-icon-btn" @click=${() => this._toggleMode()} title=${modeTitle} aria-label=${modeTitle}>${modeIcon}</button>
       <button class="wiki-delete-btn dc-icon-btn" @click=${() => this.#deletePage()} title="Delete page" aria-label="Delete page">\u{1F5D1}</button>
-      <a href=${newTabUrl} target="_blank" rel="noopener" class="wiki-open-tab dc-icon-btn" title="Open in new tab">&#8599;</a>
+      <a href=${newTabUrl} target="_blank" rel="noopener" class="wiki-open-tab dc-icon-btn" title="Open in new tab" aria-label="Open in new tab">&#8599;</a>
       ${closeBtn}
     `;
 
