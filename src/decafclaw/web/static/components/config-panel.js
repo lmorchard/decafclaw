@@ -86,7 +86,7 @@ export class ConfigPanel extends LitElement {
       return html`
         <div class="config-panel">
           <div class="config-panel-header">
-            <button class="config-back-btn dc-icon-btn" @click=${() => this.#backToList()} title="Back to list">&larr;</button>
+            <button class="config-back-btn dc-icon-btn" @click=${() => this.#backToList()} title="Back to list" aria-label="Back to list">&larr;</button>
             <span class="config-panel-title">${this._selectedFile.name}</span>
             <span class="config-scope-badge ${this._selectedFile.scope}">${this._selectedFile.scope}</span>
           </div>
@@ -109,7 +109,7 @@ export class ConfigPanel extends LitElement {
       <div class="config-panel">
         <div class="config-panel-header">
           <span class="config-panel-title">Agent Config</span>
-          <button class="config-close-btn dc-icon-btn" @click=${() => this.close()} title="Close">&#10005;</button>
+          <button class="config-close-btn dc-icon-btn" @click=${() => this.close()} title="Close config panel" aria-label="Close config panel">&#10005;</button>
         </div>
         <div class="config-file-list">
           ${this._files.map(f => html`

@@ -111,7 +111,7 @@
   /* On mobile, swap collapse → close. Hamburger handles open; the
      close button (× tap-target) handles dismiss. Collapse-to-narrow
      doesn't make sense in a fullscreen overlay. */
-  conversation-sidebar .collapse-btn { display: none; }
+  conversation-sidebar button.collapse-btn { display: none; }
   conversation-sidebar .mobile-close-btn { display: block; }
 
 /* On mobile, wiki takes over — hide chat when wiki is visible */

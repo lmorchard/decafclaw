@@ -365,7 +365,7 @@ export class FilePage extends LitElement {
     const modeIcon = this._editing ? '\u{1f441}' : '\u{270e}';
     const modeTitle = this._editing ? 'Switch to view mode' : 'Switch to edit mode';
     const toggleBtn = canToggle
-      ? html`<button class="file-edit-btn dc-icon-btn" @click=${() => this.#toggleMode()} title=${modeTitle}>${modeIcon}</button>`
+      ? html`<button class="file-edit-btn dc-icon-btn" @click=${() => this.#toggleMode()} title=${modeTitle} aria-label=${modeTitle}>${modeIcon}</button>`
       : nothing;
 
     const canDelete = !this.readonly;
