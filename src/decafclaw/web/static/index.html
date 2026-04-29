@@ -14,7 +14,8 @@
       "marked": "/static/vendor/bundle/marked.js",
       "dompurify": "/static/vendor/bundle/dompurify.js",
       "@milkdown/kit": "/static/vendor/bundle/milkdown.js",
-      "codemirror": "/static/vendor/bundle/codemirror.js"
+      "codemirror": "/static/vendor/bundle/codemirror.js",
+      "hljs": "/static/vendor/bundle/highlight.js"
     }
   }
   </script>
@@ -25,7 +26,7 @@
     <div id="chat-layout" class="hidden">
       <!-- Hamburger lives outside #chat-main so it stays visible on mobile
            when #wiki-main replaces #chat-main (see styles/mobile.css). -->
-      <button id="hamburger-btn" class="hamburger-btn" aria-label="Open sidebar">&#9776;</button>
+      <button id="hamburger-btn" class="hamburger-btn dc-floating-btn" aria-label="Open sidebar">&#9776;</button>
       <div id="sidebar-backdrop"></div>
       <conversation-sidebar></conversation-sidebar>
       <div id="sidebar-resize-handle"></div>
@@ -43,7 +44,7 @@
         <chat-input></chat-input>
       </div>
       <div id="canvas-resize-handle" class="hidden"></div>
-      <div id="canvas-main" class="hidden">
+      <div id="canvas-main" class="canvas-collapsed">
         <canvas-panel></canvas-panel>
       </div>
     </div>

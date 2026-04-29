@@ -48,6 +48,7 @@ def test_write_then_read_round_trip(config):
     state = {
         "schema_version": 1,
         "active_tab": "canvas_1",
+        "next_tab_id": 2,
         "tabs": [{
             "id": "canvas_1",
             "label": "Hello",
@@ -107,120 +108,6 @@ def emit_recorder():
     return emit
 
 
-async def test_set_canvas_creates_tab_and_emits(config, md_doc_registry, emit_recorder):
-    result = await canvas.set_canvas(
-        config, "conv1", "markdown_document",
-        {"content": "# Hello"}, label="Doc",
-        emit=emit_recorder,
-    )
-    assert result.ok
-    state = canvas.read_canvas_state(config, "conv1")
-    assert state["active_tab"] == "canvas_1"
-    assert state["tabs"][0]["widget_type"] == "markdown_document"
-    assert state["tabs"][0]["label"] == "Doc"
-    assert len(emit_recorder.events) == 1
-    conv_id, event = emit_recorder.events[0]
-    assert conv_id == "conv1"
-    assert event["type"] == "canvas_update"
-    assert event["kind"] == "set"
-    assert event["tab"]["data"] == {"content": "# Hello"}
-
-
-async def test_set_canvas_replaces_existing_tab(config, md_doc_registry, emit_recorder):
-    await canvas.set_canvas(config, "c", "markdown_document",
-                            {"content": "first"}, emit=emit_recorder)
-    await canvas.set_canvas(config, "c", "markdown_document",
-                            {"content": "second"}, emit=emit_recorder)
-    state = canvas.read_canvas_state(config, "c")
-    assert len(state["tabs"]) == 1
-    assert state["tabs"][0]["data"]["content"] == "second"
-
-
-async def test_set_canvas_unknown_widget(config, md_doc_registry, emit_recorder):
-    result = await canvas.set_canvas(
-        config, "c", "no_such_widget", {"x": 1}, emit=emit_recorder,
-    )
-    assert not result.ok
-    assert "not registered" in result.error
-    assert canvas.read_canvas_state(config, "c") == canvas.empty_canvas_state()
-    assert emit_recorder.events == []
-
-
-async def test_set_canvas_widget_without_canvas_mode(config, md_doc_registry, emit_recorder):
-    result = await canvas.set_canvas(
-        config, "c", "data_table", {}, emit=emit_recorder,
-    )
-    assert not result.ok
-    assert "does not support canvas mode" in result.error
-
-
-async def test_set_canvas_invalid_data(config, md_doc_registry, emit_recorder):
-    result = await canvas.set_canvas(
-        config, "c", "markdown_document", {"wrong_field": "x"},
-        emit=emit_recorder,
-    )
-    assert not result.ok
-    assert "schema validation failed" in result.error
-
-
-async def test_set_canvas_default_label_from_h1(config, md_doc_registry, emit_recorder):
-    await canvas.set_canvas(
-        config, "c", "markdown_document",
-        {"content": "# Project Summary\n\nSome text"},
-        emit=emit_recorder,
-    )
-    state = canvas.read_canvas_state(config, "c")
-    assert state["tabs"][0]["label"] == "Project Summary"
-
-
-async def test_set_canvas_default_label_fallback(config, md_doc_registry, emit_recorder):
-    await canvas.set_canvas(
-        config, "c", "markdown_document",
-        {"content": "no heading here"},
-        emit=emit_recorder,
-    )
-    state = canvas.read_canvas_state(config, "c")
-    assert state["tabs"][0]["label"] == "Untitled"
-
-
-async def test_update_canvas_with_no_tab_fails(config, md_doc_registry, emit_recorder):
-    result = await canvas.update_canvas(
-        config, "c", {"content": "x"}, emit=emit_recorder,
-    )
-    assert not result.ok
-    assert "no canvas widget set" in result.error
-    assert emit_recorder.events == []
-
-
-async def test_update_canvas_preserves_label_and_widget_type(
-    config, md_doc_registry, emit_recorder
-):
-    await canvas.set_canvas(config, "c", "markdown_document",
-                            {"content": "v1"}, label="Doc",
-                            emit=emit_recorder)
-    emit_recorder.events.clear()
-    result = await canvas.update_canvas(
-        config, "c", {"content": "v2"}, emit=emit_recorder,
-    )
-    assert result.ok
-    state = canvas.read_canvas_state(config, "c")
-    assert state["tabs"][0]["label"] == "Doc"
-    assert state["tabs"][0]["widget_type"] == "markdown_document"
-    assert state["tabs"][0]["data"]["content"] == "v2"
-    _, event = emit_recorder.events[0]
-    assert event["kind"] == "update"
-
-
-async def test_update_canvas_invalid_data(config, md_doc_registry, emit_recorder):
-    await canvas.set_canvas(config, "c", "markdown_document",
-                            {"content": "v1"}, emit=emit_recorder)
-    result = await canvas.update_canvas(
-        config, "c", {"oops": True}, emit=emit_recorder,
-    )
-    assert not result.ok
-    assert "schema validation failed" in result.error
-
-
 async def test_clear_canvas_when_empty(config, md_doc_registry, emit_recorder):
     result = await canvas.clear_canvas(config, "c", emit=emit_recorder)
     assert result.ok
@@ -229,27 +116,275 @@ async def test_clear_canvas_when_empty(config, md_doc_registry, emit_recorder):
 
 
 async def test_clear_canvas_with_tab(config, md_doc_registry, emit_recorder):
-    await canvas.set_canvas(config, "c", "markdown_document",
-                            {"content": "v1"}, emit=emit_recorder)
+    await canvas.new_tab(config, "c", "markdown_document",
+                         {"content": "v1"}, emit=emit_recorder)
     emit_recorder.events.clear()
     result = await canvas.clear_canvas(config, "c", emit=emit_recorder)
     assert result.ok
     state = canvas.read_canvas_state(config, "c")
-    assert state == canvas.empty_canvas_state()
+    assert state["tabs"] == []
+    assert state["active_tab"] is None
     _, event = emit_recorder.events[0]
     assert event["kind"] == "clear"
     assert event["tab"] is None
 
 
-def test_get_active_tab_empty(config):
-    assert canvas.get_active_tab(config, "c") is None
+async def test_clear_canvas_preserves_next_tab_id(config, md_doc_registry,
+                                                   emit_recorder):
+    """Clear must not reset next_tab_id — closed ids never get rebound."""
+    await canvas.new_tab(config, "c", "markdown_document",
+                         {"content": "a"}, emit=emit_recorder)
+    await canvas.new_tab(config, "c", "markdown_document",
+                         {"content": "b"}, emit=emit_recorder)
+    state = canvas.read_canvas_state(config, "c")
+    assert state["next_tab_id"] == 3
+
+    await canvas.clear_canvas(config, "c", emit=emit_recorder)
+    state = canvas.read_canvas_state(config, "c")
+    assert state["next_tab_id"] == 3, \
+        "clear must preserve next_tab_id so a new tab gets a fresh id"
+
+    result = await canvas.new_tab(config, "c", "markdown_document",
+                                   {"content": "c"}, emit=emit_recorder)
+    assert result.tab_id == "canvas_3"
 
 
-async def test_get_active_tab_present(config, md_doc_registry, emit_recorder):
-    await canvas.set_canvas(
+def test_read_phase3_sidecar_synthesizes_next_tab_id(config):
+    """A Phase 3 sidecar (no next_tab_id field) gets one synthesized on read."""
+    path = canvas._canvas_sidecar_path(config, "phase3conv")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({
+        "schema_version": 1,
+        "active_tab": "canvas_2",
+        "tabs": [
+            {"id": "canvas_1", "label": "L1", "widget_type": "markdown_document", "data": {"content": "a"}},
+            {"id": "canvas_2", "label": "L2", "widget_type": "markdown_document", "data": {"content": "b"}},
+        ],
+    }))
+    state = canvas.read_canvas_state(config, "phase3conv")
+    assert state["next_tab_id"] == 3
+
+
+def test_read_empty_state_has_next_tab_id_one(config):
+    state = canvas.read_canvas_state(config, "fresh")
+    assert state["next_tab_id"] == 1
+
+
+def test_write_then_read_preserves_next_tab_id(config):
+    state = {
+        "schema_version": 1,
+        "active_tab": "canvas_5",
+        "next_tab_id": 7,
+        "tabs": [
+            {"id": "canvas_5", "label": "L", "widget_type": "markdown_document", "data": {"content": "x"}},
+        ],
+    }
+    canvas.write_canvas_state(config, "c", state)
+    got = canvas.read_canvas_state(config, "c")
+    assert got["next_tab_id"] == 7
+
+
+def test_read_phase3_sidecar_with_no_tabs(config):
+    """A Phase 3 sidecar with empty tabs gets next_tab_id=1."""
+    path = canvas._canvas_sidecar_path(config, "emptyphase3")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"schema_version": 1, "active_tab": None, "tabs": []}))
+    state = canvas.read_canvas_state(config, "emptyphase3")
+    assert state["next_tab_id"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Phase 4 tab-aware state ops
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_new_tab_creates_and_activates(config, md_doc_registry, emit_recorder):
+    result = await canvas.new_tab(
         config, "c", "markdown_document",
-        {"content": "x"}, emit=emit_recorder,
+        {"content": "# Doc"}, label="Doc", emit=emit_recorder,
     )
-    tab = canvas.get_active_tab(config, "c")
+    assert result.ok
+    assert result.tab_id == "canvas_1"
+    state = canvas.read_canvas_state(config, "c")
+    assert state["active_tab"] == "canvas_1"
+    assert state["next_tab_id"] == 2
+    assert len(state["tabs"]) == 1
+    assert state["tabs"][0]["id"] == "canvas_1"
+    assert state["tabs"][0]["label"] == "Doc"
+    # Event
+    assert len(emit_recorder.events) == 1
+    _, event = emit_recorder.events[0]
+    assert event["kind"] == "new_tab"
+    assert event["active_tab"] == "canvas_1"
+    assert event["tab"]["id"] == "canvas_1"
+
+
+@pytest.mark.asyncio
+async def test_new_tab_increments_counter_across_close(config, md_doc_registry, emit_recorder):
+    """Closing a tab does NOT decrement next_tab_id; ids never reused."""
+    r1 = await canvas.new_tab(config, "c", "markdown_document",
+                              {"content": "a"}, emit=emit_recorder)
+    r2 = await canvas.new_tab(config, "c", "markdown_document",
+                              {"content": "b"}, emit=emit_recorder)
+    assert r1.tab_id == "canvas_1"
+    assert r2.tab_id == "canvas_2"
+    await canvas.close_tab(config, "c", "canvas_2", emit=emit_recorder)
+    r3 = await canvas.new_tab(config, "c", "markdown_document",
+                              {"content": "c"}, emit=emit_recorder)
+    assert r3.tab_id == "canvas_3"  # NOT canvas_2 again
+
+
+@pytest.mark.asyncio
+async def test_new_tab_unknown_widget(config, md_doc_registry, emit_recorder):
+    result = await canvas.new_tab(
+        config, "c", "no_such", {"content": "x"}, emit=emit_recorder,
+    )
+    assert not result.ok
+    assert "not registered" in result.error
+    assert canvas.read_canvas_state(config, "c") == canvas.empty_canvas_state()
+
+
+@pytest.mark.asyncio
+async def test_new_tab_invalid_data(config, md_doc_registry, emit_recorder):
+    result = await canvas.new_tab(
+        config, "c", "markdown_document", {"wrong": 1}, emit=emit_recorder,
+    )
+    assert not result.ok
+    assert "schema validation failed" in result.error
+
+
+@pytest.mark.asyncio
+async def test_update_tab_by_id(config, md_doc_registry, emit_recorder):
+    r1 = await canvas.new_tab(config, "c", "markdown_document",
+                              {"content": "v1"}, label="L", emit=emit_recorder)
+    emit_recorder.events.clear()
+    result = await canvas.update_tab(
+        config, "c", r1.tab_id, {"content": "v2"}, emit=emit_recorder,
+    )
+    assert result.ok
+    state = canvas.read_canvas_state(config, "c")
+    assert state["tabs"][0]["data"]["content"] == "v2"
+    assert state["tabs"][0]["label"] == "L"  # preserved
+    assert state["tabs"][0]["widget_type"] == "markdown_document"  # preserved
+    _, event = emit_recorder.events[0]
+    assert event["kind"] == "update"
+    assert event["tab"]["id"] == "canvas_1"
+
+
+@pytest.mark.asyncio
+async def test_update_tab_unknown_id(config, md_doc_registry, emit_recorder):
+    await canvas.new_tab(config, "c", "markdown_document",
+                         {"content": "x"}, emit=emit_recorder)
+    result = await canvas.update_tab(
+        config, "c", "canvas_99", {"content": "y"}, emit=emit_recorder,
+    )
+    assert not result.ok
+    assert "not found" in result.error
+
+
+@pytest.mark.asyncio
+async def test_update_tab_invalid_data(config, md_doc_registry, emit_recorder):
+    r1 = await canvas.new_tab(config, "c", "markdown_document",
+                              {"content": "x"}, emit=emit_recorder)
+    result = await canvas.update_tab(
+        config, "c", r1.tab_id, {"wrong": 1}, emit=emit_recorder,
+    )
+    assert not result.ok
+    assert "schema validation failed" in result.error
+
+
+@pytest.mark.asyncio
+async def test_close_tab_active_switches_to_left_neighbor(config, md_doc_registry, emit_recorder):
+    await canvas.new_tab(config, "c", "markdown_document", {"content": "1"}, emit=emit_recorder)
+    await canvas.new_tab(config, "c", "markdown_document", {"content": "2"}, emit=emit_recorder)
+    await canvas.new_tab(config, "c", "markdown_document", {"content": "3"}, emit=emit_recorder)
+    # active is canvas_3 (most recent new_tab)
+    emit_recorder.events.clear()
+    result = await canvas.close_tab(config, "c", "canvas_3", emit=emit_recorder)
+    assert result.ok
+    state = canvas.read_canvas_state(config, "c")
+    assert state["active_tab"] == "canvas_2"  # left neighbor
+    assert len(state["tabs"]) == 2
+    _, event = emit_recorder.events[0]
+    assert event["kind"] == "close_tab"
+    assert event["closed_tab_id"] == "canvas_3"
+    assert event["active_tab"] == "canvas_2"
+
+
+@pytest.mark.asyncio
+async def test_close_tab_first_switches_to_right(config, md_doc_registry, emit_recorder):
+    """Closing the leftmost active tab → right neighbor (no left exists)."""
+    r1 = await canvas.new_tab(config, "c", "markdown_document", {"content": "1"}, emit=emit_recorder)
+    await canvas.new_tab(config, "c", "markdown_document", {"content": "2"}, emit=emit_recorder)
+    # Manually activate canvas_1
+    await canvas.set_active_tab(config, "c", r1.tab_id, emit=emit_recorder)
+    emit_recorder.events.clear()
+    await canvas.close_tab(config, "c", r1.tab_id, emit=emit_recorder)
+    state = canvas.read_canvas_state(config, "c")
+    assert state["active_tab"] == "canvas_2"
+
+
+@pytest.mark.asyncio
+async def test_close_tab_non_active(config, md_doc_registry, emit_recorder):
+    """Closing a non-active tab leaves the active tab unchanged."""
+    await canvas.new_tab(config, "c", "markdown_document", {"content": "1"}, emit=emit_recorder)
+    await canvas.new_tab(config, "c", "markdown_document", {"content": "2"}, emit=emit_recorder)
+    # active is canvas_2
+    await canvas.close_tab(config, "c", "canvas_1", emit=emit_recorder)
+    state = canvas.read_canvas_state(config, "c")
+    assert state["active_tab"] == "canvas_2"
+    assert len(state["tabs"]) == 1
+    assert state["tabs"][0]["id"] == "canvas_2"
+
+
+@pytest.mark.asyncio
+async def test_close_last_tab_clears_active(config, md_doc_registry, emit_recorder):
+    await canvas.new_tab(config, "c", "markdown_document", {"content": "1"}, emit=emit_recorder)
+    emit_recorder.events.clear()
+    await canvas.close_tab(config, "c", "canvas_1", emit=emit_recorder)
+    state = canvas.read_canvas_state(config, "c")
+    assert state["active_tab"] is None
+    assert state["tabs"] == []
+    _, event = emit_recorder.events[0]
+    assert event["kind"] == "close_tab"
+    assert event["active_tab"] is None
+    assert event["tab"] is None
+
+
+@pytest.mark.asyncio
+async def test_close_tab_unknown_id(config, md_doc_registry, emit_recorder):
+    result = await canvas.close_tab(config, "c", "canvas_99", emit=emit_recorder)
+    assert not result.ok
+    assert "not found" in result.error
+
+
+@pytest.mark.asyncio
+async def test_set_active_tab(config, md_doc_registry, emit_recorder):
+    await canvas.new_tab(config, "c", "markdown_document", {"content": "1"}, emit=emit_recorder)
+    await canvas.new_tab(config, "c", "markdown_document", {"content": "2"}, emit=emit_recorder)
+    emit_recorder.events.clear()
+    result = await canvas.set_active_tab(config, "c", "canvas_1", emit=emit_recorder)
+    assert result.ok
+    state = canvas.read_canvas_state(config, "c")
+    assert state["active_tab"] == "canvas_1"
+    _, event = emit_recorder.events[0]
+    assert event["kind"] == "set_active"
+    assert event["active_tab"] == "canvas_1"
+
+
+@pytest.mark.asyncio
+async def test_set_active_tab_unknown_id(config, md_doc_registry, emit_recorder):
+    await canvas.new_tab(config, "c", "markdown_document", {"content": "1"}, emit=emit_recorder)
+    result = await canvas.set_active_tab(config, "c", "canvas_99", emit=emit_recorder)
+    assert not result.ok
+    assert "not found" in result.error
+
+
+@pytest.mark.asyncio
+async def test_get_tab_by_id(config, md_doc_registry, emit_recorder):
+    await canvas.new_tab(config, "c", "markdown_document",
+                        {"content": "x"}, label="L", emit=emit_recorder)
+    tab = canvas.get_tab(config, "c", "canvas_1")
     assert tab is not None
-    assert tab["widget_type"] == "markdown_document"
+    assert tab["label"] == "L"
+    assert canvas.get_tab(config, "c", "canvas_99") is None

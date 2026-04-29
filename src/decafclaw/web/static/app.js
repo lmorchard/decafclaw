@@ -682,25 +682,26 @@ if (canvasResizeHandle && canvasMainEl) {
 }
 
 function setupCanvasResummonPill() {
-  // Desktop: pill floats absolutely in the upper-right of #chat-main
-  // (no dedicated header strip — keeps the chat area uncluttered when
-  // there's no canvas state). Mobile: lives inside #mobile-header.
-  const desktopHost = document.getElementById('chat-main');
-  const mobileHost = document.getElementById('mobile-header');
-  if (!desktopHost) return;
+  // Pill floats absolutely in the upper-right of #chat-main on both
+  // desktop and mobile — no dedicated header strip, so the pill never
+  // pushes chat content down or reserves a dead row when canvas isn't
+  // dismissed. Position offsets in canvas.css adjust for the fixed
+  // hamburger at top-left in mobile mode.
+  const host = document.getElementById('chat-main');
+  if (!host) return;
 
   /**
-   * @param {HTMLElement} host
-   * @param {{tab: any, visible: boolean, unreadDot: boolean}} snapshot
+   * @param {{tabs: any[], activeTab: any, visible: boolean, unreadDot: boolean}} snapshot
    */
-  const renderTo = (host, snapshot) => {
+  const renderTo = (snapshot) => {
     host.querySelector('.canvas-resummon-pill')?.remove();
-    if (!snapshot.tab) return;
+    if (!snapshot.tabs || snapshot.tabs.length === 0) return;
     if (snapshot.visible) return;
     const btn = document.createElement('button');
-    btn.className = 'canvas-resummon-pill';
+    btn.className = 'canvas-resummon-pill dc-floating-btn';
     btn.type = 'button';
-    btn.textContent = '📄 Canvas';
+    // Wrap the label so mobile CSS can hide it and leave just the emoji.
+    btn.innerHTML = '📄<span class="resummon-label"> Canvas</span>';
     if (snapshot.unreadDot) {
       btn.dataset.unread = 'true';
       // The dot is purely visual (CSS ::after); pair it with an
@@ -713,32 +714,7 @@ function setupCanvasResummonPill() {
     host.appendChild(btn);
   };
 
-  const isMobile = () => window.matchMedia('(max-width: 639px)').matches;
-  const renderForViewport = (snap) => {
-    // Only mount the pill in the visible host. mobile-header uses
-    // `display: contents` on desktop, which would still render its
-    // children inline inside chat-main — producing a duplicate pill.
-    if (isMobile()) {
-      desktopHost.querySelector('.canvas-resummon-pill')?.remove();
-      if (mobileHost) renderTo(mobileHost, snap);
-    } else {
-      mobileHost?.querySelector('.canvas-resummon-pill')?.remove();
-      renderTo(desktopHost, snap);
-    }
-  };
-
-  subscribeCanvas(renderForViewport);
-  // Re-render on viewport-class changes so a desktop ↔ mobile resize
-  // moves the pill to the right host.
-  window.matchMedia('(max-width: 639px)').addEventListener('change', () => {
-    const snap = currentSnapshotForResummon();
-    renderForViewport(snap);
-  });
-}
-
-function currentSnapshotForResummon() {
-  // Avoid importing the canvas-state module twice; surface a tiny helper.
-  return canvasSnapshot();
+  subscribeCanvas(renderTo);
 }
 
 setupCanvasResummonPill();

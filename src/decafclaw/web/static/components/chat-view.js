@@ -182,7 +182,7 @@ export class ChatView extends LitElement {
 
       ${this._showScrollBtn ? html`
         <button
-          class="scroll-to-bottom"
+          class="scroll-to-bottom dc-floating-btn"
           @click=${() => this.#scrollToBottom()}
         >\u2193 New messages</button>
       ` : ''}
