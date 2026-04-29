@@ -334,6 +334,47 @@ def test_bundled_iframe_sandbox_is_registered(fake_config):
     big = "a" * (262144 + 1)
     bad, err = reg.validate("iframe_sandbox", {"body": big})
     assert not bad
+    # Oversized html on input also rejected (512 KB cap on the round-trip
+    # field) — closes the loophole where a tiny body + huge html would
+    # otherwise pass validation before normalize wipes html.
+    huge_html = "a" * (524288 + 1)
+    bad, err = reg.validate("iframe_sandbox",
+                            {"body": "x", "html": huge_html})
+    assert not bad
+
+
+def test_iframe_sandbox_normalizer_skips_admin_override(tmp_path, fake_config):
+    """Admin-tier widgets that share a bundled name must not inherit the
+    bundled normalizer — their data shape may be entirely different.
+
+    Build a registry where the admin tier defines its own iframe_sandbox
+    with a different schema; verify normalize returns input unchanged
+    instead of wrapping (which would crash or corrupt admin-tier data).
+    """
+    admin = tmp_path / "admin"
+    _write_widget(admin, "iframe_sandbox",
+                  description="admin override with different shape",
+                  modes=["inline"],
+                  schema={
+                      "type": "object",
+                      "required": ["payload"],
+                      "properties": {"payload": {"type": "string"}},
+                      "additionalProperties": False,
+                  })
+    reg = load_widget_registry(fake_config,
+                               admin_dir=admin)
+    desc = reg.get("iframe_sandbox")
+    assert desc is not None
+    assert desc.tier == "admin"
+    # Validate with the admin schema (different from bundled).
+    ok, err = reg.validate("iframe_sandbox", {"payload": "hi"})
+    assert ok, err
+    # Normalize must NOT apply the bundled wrapper — admin shape lacks
+    # `body`, so the bundled normalizer would either crash or silently
+    # produce wrapped html with empty body. Verify it's a clean passthrough.
+    out = reg.normalize("iframe_sandbox", {"payload": "hi"})
+    assert out == {"payload": "hi"}
+    assert "html" not in out
 
 
 def test_iframe_sandbox_normalize_injects_csp(fake_config):
@@ -346,14 +387,18 @@ def test_iframe_sandbox_normalize_injects_csp(fake_config):
     wrapped = out["html"]
     # Doctype first
     assert wrapped.startswith("<!doctype html>")
-    # CSP meta with the exact policy
-    assert 'http-equiv="Content-Security-Policy"' in wrapped
-    assert "default-src 'none'" in wrapped
-    assert "script-src 'unsafe-inline'" in wrapped
-    assert "style-src 'unsafe-inline'" in wrapped
-    # No allow-* network sources
-    assert "fetch-src" not in wrapped
-    assert "https:" not in wrapped or "https://" not in wrapped  # no remote scheme allowance
+    # CSP meta with the exact policy. Scope assertions to the CSP tag
+    # itself so body text can't accidentally satisfy them.
+    csp_start = wrapped.index('http-equiv="Content-Security-Policy"')
+    csp_end = wrapped.index(">", csp_start)
+    csp_tag = wrapped[csp_start:csp_end]
+    assert "default-src 'none'" in csp_tag
+    assert "script-src 'unsafe-inline'" in csp_tag
+    assert "style-src 'unsafe-inline'" in csp_tag
+    # No remote-network allowances inside the CSP itself.
+    assert "https:" not in csp_tag
+    assert "https://" not in csp_tag
+    assert "fetch-src" not in csp_tag
     # Title is escaped and present
     assert "<title>Demo</title>" in wrapped
     # Body content is present verbatim

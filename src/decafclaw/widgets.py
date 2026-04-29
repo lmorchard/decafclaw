@@ -86,9 +86,20 @@ class WidgetRegistry:
         wrapped CSP-locked HTML document). Returns ``data`` unchanged when
         no normalizer is registered for ``name``. Idempotent — normalizers
         regenerate derived fields rather than compounding them.
+
+        Normalizers are bundled-tier only: admin-tier widgets may
+        intentionally override bundled widgets on name collision (see
+        ``load_widget_registry``), and an admin-defined widget should not
+        silently inherit a bundled-only normalizer just because the name
+        matches — its data shape may be entirely different.
         """
         fn = _NORMALIZERS.get(name)
-        return fn(data) if fn else data
+        if fn is None:
+            return data
+        desc = self._descriptors.get(name)
+        if desc is not None and desc.tier != "bundled":
+            return data
+        return fn(data)
 
     def validate(self, name: str, data: dict) -> tuple[bool, str | None]:
         """Validate widget payload against the widget's data_schema.

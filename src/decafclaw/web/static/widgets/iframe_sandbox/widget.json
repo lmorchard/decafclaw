@@ -19,7 +19,8 @@
       },
       "html": {
         "type": "string",
-        "description": "Server-controlled wrapped document. Set by backend normalization; agent should not provide this."
+        "maxLength": 524288,
+        "description": "Server-controlled wrapped document. Set by backend normalization; agent should not provide this. Capped at 512 KB (2x body cap) to bound payload size when round-tripped — normalize regenerates from body anyway."
       }
     },
     "additionalProperties": false

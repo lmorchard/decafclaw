@@ -50,7 +50,7 @@ The CSP meta is **prepended on the backend** as part of normalization — fronte
 
 `body` and `title` round-trip back to the agent (so re-reading state via `canvas_read` is intelligible). `html` is what `widget.js` sets as `srcdoc`. Normalization is idempotent: re-normalizing data that already has `html` regenerates it from `body` and `title` (so a stale `html` from a round-trip can't mislead).
 
-`data_schema` declares only `body` (required) and `title` (optional). `additionalProperties` is allowed so a round-tripped `html` doesn't fail re-validation.
+`data_schema` declares `body` (required), plus optional `title` and `html`, and keeps `additionalProperties: false` so a round-tripped `html` doesn't fail re-validation while arbitrary extra fields are still rejected. `html` carries its own `maxLength` cap (512 KB, 2x the body cap) to bound the validation payload even though normalize will overwrite it.
 
 ## Backend normalization hook
 
