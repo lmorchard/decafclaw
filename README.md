@@ -1,6 +1,6 @@
 # DecafClaw
 
-An AI agent testbed in Python. Built to explore agent development patterns — tool calling, memory, reflection, skills, multi-model routing, and more. Increasingly focused on personal knowledge management and writing tools, with an Obsidian-like shared vault where user and agent collaborate on markdown documents.
+An AI agent exploration in Python. This is not a coherent product or framework. This is a laboratory in the shape of a Rube Goldberg machine. Built to explore agent development patterns. Increasingly focused on personal knowledge management and writing tools, with an Obsidian-like shared vault where user and agent collaborate on markdown documents.
 
 ## What it does
 
@@ -22,27 +22,6 @@ make run                 # interactive terminal mode (no Mattermost needed)
 
 See [Installation & Setup](docs/installation.md) for provider configuration, Mattermost bot setup, and all options.
 
-## Architecture
-
-```
-Mattermost / Web UI / Terminal
-            ↓
-       Agent turn (agent.py)
-            ↓
-  ContextComposer assembles prompt
-  (system prompt + vault context + history + tools)
-            ↓
-       Call LLM ←───────────────────┐
-            ↓                       │
-    Tool calls? ── yes → Execute → Loop back
-            │
-            no
-            ↓
-    Text response → Archive + maybe compact
-```
-
-All state is [files on disk](docs/data-layout.md) — markdown, JSONL, SQLite. See [Context Composer](docs/context-composer.md) for prompt assembly details.
-
 ## Development
 
 ```bash
@@ -55,10 +34,8 @@ make config    # Show resolved config values
 
 Most major features are developed in **dev sessions**, with design artifacts preserved under [`docs/dev-sessions/`](docs/dev-sessions/) — each session directory holds a `spec.md`, `plan.md`, and `notes.md` capturing the thinking behind the change. Browse those for the history of how the project grew.
 
-## What this is NOT
-
-This is not a framework. It's a learning project — built to understand how tools like OpenClaw, nanobot, and picoclaw work under the hood. The code is intentionally simple, with minimal abstractions.
-
 ## License
 
 MIT
+
+Do what you want with it, if you can make sense of it. I barely can, myself, but I'm learning. 😅
