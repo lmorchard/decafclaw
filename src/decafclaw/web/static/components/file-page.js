@@ -355,7 +355,7 @@ export class FilePage extends LitElement {
           `;
         })}
         <span class="file-bc-page">${fileName}</span>
-        <button class="file-rename-btn" @click=${() => this.#startRename()} title="Rename / move file" aria-label="Rename / move file">\u{270e}</button>
+        <button class="file-rename-btn dc-icon-btn" @click=${() => this.#startRename()} title="Rename / move file" aria-label="Rename / move file">\u{270e}</button>
       </span>
     `;
   }
@@ -365,17 +365,17 @@ export class FilePage extends LitElement {
     const modeIcon = this._editing ? '\u{1f441}' : '\u{270e}';
     const modeTitle = this._editing ? 'Switch to view mode' : 'Switch to edit mode';
     const toggleBtn = canToggle
-      ? html`<button class="file-edit-btn" @click=${() => this.#toggleMode()} title=${modeTitle}>${modeIcon}</button>`
+      ? html`<button class="file-edit-btn dc-icon-btn" @click=${() => this.#toggleMode()} title=${modeTitle}>${modeIcon}</button>`
       : nothing;
 
     const canDelete = !this.readonly;
     const deleteBtn = canDelete
-      ? html`<button class="file-delete-btn" @click=${() => this.#deleteFile()} title="Delete file" aria-label="Delete file">\u{1F5D1}</button>`
+      ? html`<button class="file-delete-btn dc-icon-btn" @click=${() => this.#deleteFile()} title="Delete file" aria-label="Delete file">\u{1F5D1}</button>`
       : nothing;
 
     const closeBtn = this.standalone
       ? nothing
-      : html`<button class="file-close-btn" @click=${() => this._close()} title="Close file pane">&times;</button>`;
+      : html`<button class="file-close-btn dc-icon-btn" @click=${() => this._close()} title="Close file pane" aria-label="Close file pane">&times;</button>`;
 
     return html`${toggleBtn}${deleteBtn}${closeBtn}`;
   }

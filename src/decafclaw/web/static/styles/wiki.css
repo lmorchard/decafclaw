@@ -48,34 +48,41 @@ a.wiki-link:hover {
   color: var(--pico-muted-color);
 }
 
-.wiki-edit-btn,
-.wiki-delete-btn,
-.wiki-open-tab,
-.wiki-close-btn,
-.file-edit-btn,
-.file-delete-btn,
-.file-close-btn {
-  text-decoration: none;
+/* Structural rules (border, bg, default muted color, default padding,
+   margin:0, line-height:1, cursor, text-decoration:none) come from
+   .dc-icon-btn in primitives.css. Per-site overrides: tighter padding,
+   leading margin, accent hover color.
+
+   Tag-qualified to tie the primitive's specificity (button.dc-icon-btn /
+   a.dc-icon-btn is 0,1,1; bare .wiki-edit-btn would be 0,1,0 and the
+   padding/margin overrides would silently not apply). Source-order
+   tiebreak puts wiki.css after primitives.css, so the override wins. */
+button.wiki-edit-btn,
+button.wiki-delete-btn,
+a.wiki-open-tab,
+button.wiki-close-btn,
+button.file-edit-btn,
+button.file-delete-btn,
+button.file-close-btn {
   font-size: 1rem;
-  background: none;
-  border: none;
-  cursor: pointer;
   padding: 0.2rem 0.4rem;
   margin-left: 0.25rem;
-  color: var(--pico-muted-color);
 }
-.wiki-close-btn,
-.file-close-btn {
+button.wiki-close-btn,
+button.file-close-btn {
   font-size: 1.2rem;
-  line-height: 1;
 }
-.wiki-edit-btn:hover,
-.wiki-delete-btn:hover,
-.wiki-open-tab:hover,
-.wiki-close-btn:hover,
-.file-edit-btn:hover,
-.file-delete-btn:hover,
-.file-close-btn:hover {
+/* Tag-qualified to beat the .dc-icon-btn primitive's :hover at equal
+   specificity (button.dc-icon-btn:hover is 0,2,1; bare .wiki-edit-btn:hover
+   would be 0,2,0 and lose). Source-order tiebreak then puts wiki.css
+   after primitives.css, so the accent override wins. */
+button.wiki-edit-btn:hover,
+button.wiki-delete-btn:hover,
+a.wiki-open-tab:hover,
+button.wiki-close-btn:hover,
+button.file-edit-btn:hover,
+button.file-delete-btn:hover,
+button.file-close-btn:hover {
   color: var(--pico-primary);
 }
 
@@ -123,19 +130,21 @@ button.file-bc-segment {
   color: var(--pico-color);
 }
 
-.wiki-rename-btn,
-.file-rename-btn {
-  background: none;
-  border: none;
-  cursor: pointer;
+/* Structural rules from .dc-icon-btn in primitives.css. Per-site:
+   smaller font, tighter padding, leading margin, accent hover.
+   Tag-qualified to tie primitive's 0,1,1 specificity (see action-
+   button block above for the same reasoning). */
+button.wiki-rename-btn,
+button.file-rename-btn {
   font-size: 0.75rem;
-  color: var(--pico-muted-color);
   padding: 0 0.25rem;
-  margin: 0 0 0 0.25rem;
+  margin-left: 0.25rem;
 }
 
-.wiki-rename-btn:hover,
-.file-rename-btn:hover {
+/* Tag-qualified per the same logic as the action-button hovers above —
+   beat the primitive's :hover at equal specificity, win by source order. */
+button.wiki-rename-btn:hover,
+button.file-rename-btn:hover {
   color: var(--pico-primary);
 }
 

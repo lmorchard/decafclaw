@@ -42,6 +42,15 @@ See [docs/tools.md](docs/tools.md), [docs/tool-priority.md](docs/tool-priority.m
 - **Checklist tools (`checklist_create/_step_done/_abort/_status`)** are always-loaded. Iteration happens within a single turn: do step → step_done → next.
 - **Events for progress.** Tools publish `tool_status` via `ctx.publish()`.
 
+### Web UI styling
+
+See [docs/web-ui-design.md](docs/web-ui-design.md) for the primitive catalog and Pico-in-context conventions. Most-bitten gotchas:
+
+- **Pico v2 re-scopes `--pico-color` and `--pico-background-color` inside `<button>`.** Resolves to white-on-blue at button scope, not "document text on document bg." Use `color: inherit` or a non-aliased var (`--pico-card-background-color`).
+- **`--pico-secondary-background` is a TEXT color, not a background.** Misleading name. Don't reach for it as a panel/strip bg.
+- **Tag-qualify custom button rules** (`button.foo`, not `.foo`). Pico's `button:not(...)` is 0,1,1; bare `.foo` (0,1,0) loses regardless of load order.
+- **Reach for primitives first** (`.dc-floating-btn`, `.dc-overlay-header`, `.dc-overlay-close-x`, `.dc-icon-btn` in `primitives.css`) before declaring per-component border / radius / shadow / hover-color. Cluster-style fragility is the failure mode this doc exists to prevent.
+
 ### Skills
 
 See [docs/skills.md](docs/skills.md).

@@ -457,7 +457,7 @@ export class ConversationSidebar extends LitElement {
     if (this._collapsed && !this._mobileOpen) {
       return html`
         <div class="sidebar-header">
-          <button class="collapse-btn" @click=${this.#toggleCollapse} title="Expand sidebar">›</button>
+          <button class="collapse-btn dc-icon-btn" @click=${this.#toggleCollapse} title="Expand sidebar">›</button>
         </div>
       `;
     }
@@ -473,7 +473,7 @@ export class ConversationSidebar extends LitElement {
             @click=${() => this.#switchTab('files')}>Files</button>
         </div>
         <button class="mobile-close-btn dc-overlay-close-x" @click=${() => this.closeMobile()} title="Close sidebar">×</button>
-        <button class="collapse-btn" @click=${this.#toggleCollapse} title="Collapse sidebar">‹</button>
+        <button class="collapse-btn dc-icon-btn" @click=${this.#toggleCollapse} title="Collapse sidebar">‹</button>
       </div>
       <vault-sidebar
         .active=${this._sidebarTab === 'wiki'}
