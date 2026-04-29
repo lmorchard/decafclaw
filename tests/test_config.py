@@ -26,7 +26,7 @@ def _isolate_env(monkeypatch):
             "LLM_", "MATTERMOST_", "COMPACTION_", "EMBEDDING_",
             "HEARTBEAT_", "HTTP_", "TABSTACK_", "CLAUDE_CODE_",
             "SKILLS_", "MEMORY_SEARCH", "SYSTEM_PROMPT",
-            "NOTIFICATIONS_", "EMAIL_",
+            "NOTIFICATIONS_", "EMAIL_", "EXTRA_SKILL_",
         )):
             monkeypatch.delenv(key, raising=False)
 
@@ -245,6 +245,62 @@ class TestJsonFileLoading:
         monkeypatch.delenv("LLM_MODEL", raising=False)
         c = load_config()
         assert c.llm.model == "gemini-2.5-flash"
+
+    def test_loads_extra_skill_paths_from_json(self, tmp_path, monkeypatch):
+        """extra_skill_paths read from config.json as a list of strings."""
+        agent_dir = tmp_path / "decafclaw"
+        agent_dir.mkdir()
+        (agent_dir / "config.json").write_text(json.dumps({
+            "extra_skill_paths": ["/opt/team-skills", "~/.claude/skills"],
+        }))
+        monkeypatch.setenv("DATA_HOME", str(tmp_path))
+        c = load_config()
+        assert c.extra_skill_paths == ["/opt/team-skills", "~/.claude/skills"]
+
+    def test_extra_skill_paths_env_comma_separated(self, tmp_path, monkeypatch):
+        """EXTRA_SKILL_PATHS env var (comma-separated) overrides config.json."""
+        agent_dir = tmp_path / "decafclaw"
+        agent_dir.mkdir()
+        (agent_dir / "config.json").write_text(json.dumps({
+            "extra_skill_paths": ["/from-json"],
+        }))
+        monkeypatch.setenv("DATA_HOME", str(tmp_path))
+        monkeypatch.setenv("EXTRA_SKILL_PATHS", "/a,/b,/c")
+        c = load_config()
+        assert c.extra_skill_paths == ["/a", "/b", "/c"]
+
+    def test_extra_skill_paths_env_json_array(self, tmp_path, monkeypatch):
+        """EXTRA_SKILL_PATHS env var accepts a JSON array."""
+        agent_dir = tmp_path / "decafclaw"
+        agent_dir.mkdir()
+        monkeypatch.setenv("DATA_HOME", str(tmp_path))
+        monkeypatch.setenv("EXTRA_SKILL_PATHS", '["/x", "/y"]')
+        c = load_config()
+        assert c.extra_skill_paths == ["/x", "/y"]
+
+    def test_extra_skill_paths_default_empty(self, tmp_path, monkeypatch):
+        """Default is an empty list when neither env nor JSON set."""
+        agent_dir = tmp_path / "decafclaw"
+        agent_dir.mkdir()
+        monkeypatch.setenv("DATA_HOME", str(tmp_path))
+        c = load_config()
+        assert c.extra_skill_paths == []
+
+    def test_extra_skill_paths_empty_env_does_not_clobber_json(
+        self, tmp_path, monkeypatch,
+    ):
+        """An empty EXTRA_SKILL_PATHS env var falls through to config.json,
+        matching the module's "first non-empty wins" docstring and
+        load_sub_config's empty-string handling."""
+        agent_dir = tmp_path / "decafclaw"
+        agent_dir.mkdir()
+        (agent_dir / "config.json").write_text(json.dumps({
+            "extra_skill_paths": ["/from-json"],
+        }))
+        monkeypatch.setenv("DATA_HOME", str(tmp_path))
+        monkeypatch.setenv("EXTRA_SKILL_PATHS", "")
+        c = load_config()
+        assert c.extra_skill_paths == ["/from-json"]
 
 
 class TestEnvVarOverride:
