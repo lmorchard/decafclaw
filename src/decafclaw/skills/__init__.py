@@ -175,6 +175,22 @@ def _split_frontmatter(text: str) -> tuple[dict | None, str]:
     return parsed, body
 
 
+def _resolve_extra_skill_paths(config) -> list[Path]:
+    """Resolve user-configured external skill paths.
+
+    For each entry: expand $VARS and ~, then anchor relative paths to
+    config.agent_path (matching vault_root). Order is preserved.
+    """
+    resolved: list[Path] = []
+    for raw in config.extra_skill_paths:
+        expanded = os.path.expandvars(str(raw))
+        p = Path(expanded).expanduser()
+        if not p.is_absolute():
+            p = config.agent_path / p
+        resolved.append(p)
+    return resolved
+
+
 def discover_skills(config) -> list[SkillInfo]:
     """Scan skill directories and return discovered skills.
 
@@ -182,11 +198,13 @@ def discover_skills(config) -> list[SkillInfo]:
     1. Workspace skills: data/{agent_id}/workspace/skills/
     2. Agent-level skills: data/{agent_id}/skills/
     3. Bundled skills: src/decafclaw/skills/
+    4. config.extra_skill_paths (lowest — never shadows bundled)
     """
     scan_paths = [
         config.workspace_path / "skills",
         config.agent_path / "skills",
         _BUNDLED_SKILLS_DIR,
+        *_resolve_extra_skill_paths(config),
     ]
 
     seen_names: dict[str, Path] = {}
@@ -209,18 +227,26 @@ def discover_skills(config) -> list[SkillInfo]:
             if info is None:
                 continue
 
-            # auto-approve is bundled-only (trust boundary). Admin and
-            # workspace skills declaring it get the flag stripped and
-            # a warning logged.
-            if info.auto_approve:
-                is_bundled = skill_dir.resolve().is_relative_to(bundled_dir)
-                if not is_bundled:
-                    log.warning(
-                        "Ignoring 'auto-approve: true' on non-bundled skill "
-                        "'%s' at %s — only bundled skills may auto-approve.",
-                        info.name, skill_dir,
-                    )
-                    info.auto_approve = False
+            # auto-approve and always-loaded are bundled-only (trust
+            # boundary). Admin, workspace, and external skills declaring
+            # them get the flag stripped and a warning logged so the
+            # documented "bundled-only" trust posture is enforced
+            # uniformly (catalog text + activation-time tool caching).
+            is_bundled = skill_dir.resolve().is_relative_to(bundled_dir)
+            if info.auto_approve and not is_bundled:
+                log.warning(
+                    "Ignoring 'auto-approve: true' on non-bundled skill "
+                    "'%s' at %s — only bundled skills may auto-approve.",
+                    info.name, skill_dir,
+                )
+                info.auto_approve = False
+            if info.always_loaded and not is_bundled:
+                log.warning(
+                    "Ignoring 'always-loaded: true' on non-bundled skill "
+                    "'%s' at %s — only bundled skills may always-load.",
+                    info.name, skill_dir,
+                )
+                info.always_loaded = False
 
             # Check requires.env
             missing_env = [v for v in info.requires_env if not os.environ.get(v)]

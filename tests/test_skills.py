@@ -349,6 +349,162 @@ def test_discover_honors_auto_approve_on_bundled(config):
     )
 
 
+def test_discover_strips_auto_approve_from_extra_path_skill(tmp_path, config, caplog):
+    """auto-approve on an external-path skill is stripped, same as workspace."""
+    extra = tmp_path / "external"
+    _write_skill(
+        extra / "ext-auto",
+        "name: ext-auto\ndescription: External.\nauto-approve: true",
+    )
+    config.extra_skill_paths = [str(extra)]
+    with caplog.at_level("WARNING"):
+        skills = discover_skills(config)
+    matching = [s for s in skills if s.name == "ext-auto"]
+    assert len(matching) == 1
+    assert matching[0].auto_approve is False
+    assert any("auto-approve" in r.message for r in caplog.records)
+
+
+def test_discover_strips_always_loaded_from_extra_path_skill(tmp_path, config, caplog):
+    """always-loaded on an external-path skill is stripped at discovery so
+    activation-time tool caching also treats the skill as on-demand, not
+    just the catalog text."""
+    extra = tmp_path / "external"
+    _write_skill(
+        extra / "ext-al",
+        "name: ext-al\ndescription: Pretender.\nalways-loaded: true",
+    )
+    config.extra_skill_paths = [str(extra)]
+    with caplog.at_level("WARNING"):
+        skills = discover_skills(config)
+    matching = [s for s in skills if s.name == "ext-al"]
+    assert len(matching) == 1
+    assert matching[0].always_loaded is False
+    assert any("always-loaded" in r.message for r in caplog.records)
+    catalog = build_catalog_text(skills)
+    assert "ext-al" in catalog
+    if "## Active Skills" in catalog:
+        active_block = catalog.split("## Active Skills")[1].split("##")[0]
+        assert "ext-al" not in active_block
+
+
+def test_discover_strips_always_loaded_from_workspace_skill(config, caplog):
+    """Workspace skills declaring always-loaded get the flag stripped (parity
+    with auto-approve enforcement; the trust boundary is bundled-only)."""
+    skills_dir = config.workspace_path / "skills"
+    _write_skill(
+        skills_dir / "ws-al",
+        "name: ws-al\ndescription: Workspace.\nalways-loaded: true",
+    )
+    with caplog.at_level("WARNING"):
+        skills = discover_skills(config)
+    matching = [s for s in skills if s.name == "ws-al"]
+    assert len(matching) == 1
+    assert matching[0].always_loaded is False
+    assert any("always-loaded" in r.message for r in caplog.records)
+
+
+def test_discover_honors_always_loaded_on_bundled(config):
+    """Bundled skills with always-loaded: true keep the flag — the trust
+    boundary lets bundled skills opt in while non-bundled skills get
+    stripped."""
+    skills = discover_skills(config)
+    always = {s.name for s in skills if s.always_loaded}
+    assert "vault" in always
+    assert "background" in always
+    assert "mcp" in always
+
+
+def test_discover_includes_extra_skill_path(tmp_path, config):
+    """A skill in extra_skill_paths is discovered."""
+    extra = tmp_path / "external"
+    _write_skill(extra / "ext-only", "name: ext-only\ndescription: External skill.")
+    config.extra_skill_paths = [str(extra)]
+
+    skills = discover_skills(config)
+    assert any(s.name == "ext-only" for s in skills)
+
+
+def test_discover_extra_path_does_not_shadow_bundled(tmp_path, config):
+    """An external skill named the same as a bundled skill loses to bundled."""
+    extra = tmp_path / "external"
+    _write_skill(extra / "vault", "name: vault\ndescription: Imposter vault.")
+    config.extra_skill_paths = [str(extra)]
+
+    skills = discover_skills(config)
+    vaults = [s for s in skills if s.name == "vault"]
+    assert len(vaults) == 1
+    assert vaults[0].description != "Imposter vault."
+
+
+def test_discover_workspace_and_agent_shadow_extra_path(tmp_path, config):
+    """Workspace and admin skills both override same-named external skills."""
+    extra = tmp_path / "external"
+    _write_skill(extra / "shared", "name: shared\ndescription: External version.")
+    _write_skill(
+        config.agent_path / "skills" / "shared",
+        "name: shared\ndescription: Admin version.",
+    )
+    config.extra_skill_paths = [str(extra)]
+
+    skills = discover_skills(config)
+    matching = [s for s in skills if s.name == "shared"]
+    assert len(matching) == 1
+    assert matching[0].description == "Admin version."
+
+    _write_skill(
+        config.workspace_path / "skills" / "shared",
+        "name: shared\ndescription: Workspace version.",
+    )
+    skills = discover_skills(config)
+    matching = [s for s in skills if s.name == "shared"]
+    assert len(matching) == 1
+    assert matching[0].description == "Workspace version."
+
+
+def test_discover_extra_path_relative_anchored_to_agent(tmp_path, config):
+    """A relative entry resolves under config.agent_path."""
+    rel_dir = config.agent_path / "external"
+    _write_skill(rel_dir / "rel-skill", "name: rel-skill\ndescription: Relative.")
+    config.extra_skill_paths = ["external"]
+
+    skills = discover_skills(config)
+    assert any(s.name == "rel-skill" for s in skills)
+
+
+def test_discover_extra_path_expands_user(tmp_path, config, monkeypatch):
+    """A leading ~ expands to $HOME."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    extra = tmp_path / "shared-skills"
+    _write_skill(extra / "homed", "name: homed\ndescription: Tilde skill.")
+    config.extra_skill_paths = ["~/shared-skills"]
+
+    skills = discover_skills(config)
+    assert any(s.name == "homed" for s in skills)
+
+
+def test_discover_extra_path_expands_envvar(tmp_path, config, monkeypatch):
+    """$VAR substrings are expanded via os.path.expandvars."""
+    monkeypatch.setenv("MY_SKILLS_ROOT", str(tmp_path / "myroot"))
+    extra = tmp_path / "myroot" / "skills"
+    _write_skill(extra / "expanded", "name: expanded\ndescription: Var skill.")
+    config.extra_skill_paths = ["$MY_SKILLS_ROOT/skills"]
+
+    skills = discover_skills(config)
+    assert any(s.name == "expanded" for s in skills)
+
+
+def test_discover_extra_path_skipped_when_missing(tmp_path, config, caplog):
+    """A non-existent extra path is silently skipped (no error)."""
+    config.extra_skill_paths = [str(tmp_path / "does-not-exist")]
+    discover_skills(config)  # must not raise
+    assert all(
+        "does-not-exist" not in r.message
+        for r in caplog.records
+        if r.levelname == "WARNING"
+    )
+
+
 def test_discover_skips_dirs_without_skill_md(tmp_path, config):
     """Directories without SKILL.md are ignored."""
     skills_dir = config.workspace_path / "skills"

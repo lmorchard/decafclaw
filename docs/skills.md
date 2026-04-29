@@ -230,8 +230,9 @@ Skills are discovered from three locations, in priority order (highest first):
 | 1 | `data/{agent_id}/workspace/skills/` | Agent-writable. ClawHub installs land here. |
 | 2 | `data/{agent_id}/skills/` | Admin-managed. |
 | 3 | `src/decafclaw/skills/` | Bundled with the package. |
+| 4 | Paths listed in `extra_skill_paths` config | Externally-managed (e.g., `npx skills add`). Lowest priority — cannot shadow bundled skills. |
 
-Higher-priority skills override lower-priority ones with the same name.
+Higher-priority skills override lower-priority ones with the same name. External skills (tier 4) cannot shadow bundled skills, but workspace and admin skills can shadow them.
 
 ## Activation and permissions
 
@@ -295,6 +296,38 @@ Features:
 Shell-based skills from [ClawHub](https://clawhub.com) or OpenClaw's bundled skills can be placed in `data/{agent_id}/workspace/skills/`. As long as the skill has a `SKILL.md` with valid frontmatter and any required env vars are set, it will be discovered and available for activation.
 
 Example: the `weather` skill from ClawHub uses `curl` via the `shell` tool — no external binary needed.
+
+### Installing skills via `npx skills`
+
+The [`vercel-labs/skills`](https://www.npmjs.com/package/skills) CLI installs skills from GitHub/GitLab/git URLs into per-agent paths. To wire it into decafclaw:
+
+1. Install with any compatible agent target — `claude-code` is convenient since the path matches a common Claude Code setup:
+
+   ```bash
+   npx skills add vercel-labs/agent-skills -a claude-code -g
+   # skills land in ~/.claude/skills/<name>/
+   ```
+
+2. Add the install location to the agent's `data/{agent_id}/config.json`:
+
+   ```json
+   { "extra_skill_paths": ["~/.claude/skills"] }
+   ```
+
+   Or set `EXTRA_SKILL_PATHS=~/.claude/skills` in the environment. Multiple paths are supported (JSON array or comma-separated).
+
+3. Restart decafclaw or run `refresh_skills`.
+
+Path entries support `~` and `$VAR` expansion. Relative paths resolve against `data/{agent_id}/`.
+
+**Trust posture for external skills.** External skills are treated identically to workspace skills:
+
+- `auto-approve: true` is ignored (warning logged) — every activation requires confirmation
+- `always-loaded: true` is ignored — externals stay lazy-loaded
+- `schedule:` frontmatter is ignored — only bundled and admin-level skills can self-schedule
+- `user-invocable: true` and Python `tools.py` work normally
+
+Skills authored against the standard Agent Skills format (`SKILL.md` only) work as-is. Skills authored for decafclaw with a `tools.py` extension are decafclaw-specific and won't run in other agents.
 
 ## Creating a skill
 
