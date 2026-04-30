@@ -13,6 +13,7 @@ from decafclaw.context_composer import (
     SourceEntry,
     _expand_background_event,
 )
+from decafclaw.util import estimate_tokens
 
 # -- Dataclass construction ---------------------------------------------------
 
@@ -907,6 +908,128 @@ class TestCompose:
             composer = ContextComposer()
             result = await composer.compose(ctx, "hello", [], mode=ComposerMode.INTERACTIVE)
             assert result.retrieved_context_text == "formatted memory"
+
+
+class TestHistoryArchivedRemap:
+    """Regression coverage for #393 — archived remap-role messages
+    must count toward history_entry.tokens_estimated."""
+
+    @pytest.mark.asyncio
+    async def test_archived_remap_messages_counted_in_history_entry(
+        self, ctx, config,
+    ):
+        """An archived vault_retrieval / vault_references / conversation_notes
+        message in history (loaded from the archive on a later turn) must
+        contribute to history_entry.tokens_estimated."""
+        composer = ContextComposer()
+        archived_user = {"role": "user", "content": "earlier user message"}
+        archived_assistant = {"role": "assistant", "content": "earlier reply"}
+        archived_vault_retrieval = {
+            "role": "vault_retrieval",
+            "content": "AAAA " * 100,  # ~ measurable token weight
+        }
+        archived_vault_references = {
+            "role": "vault_references",
+            "content": "BBBB " * 100,
+            "wiki_page": "Foo",
+        }
+        archived_notes = {
+            "role": "conversation_notes",
+            "content": "CCCC " * 100,
+        }
+        history = [
+            archived_user,
+            archived_assistant,
+            archived_vault_retrieval,
+            archived_vault_references,
+            archived_notes,
+        ]
+
+        with (
+            patch("decafclaw.agent._collect_all_tool_defs", return_value=[]),
+            patch("decafclaw.memory_context.retrieve_memory_context",
+                  new_callable=AsyncMock, return_value=[]),
+        ):
+            composed = await composer.compose(
+                ctx, "current user message", history,
+                mode=ComposerMode.INTERACTIVE,
+            )
+
+        history_entries = [s for s in composed.sources if s.source == "history"]
+        assert len(history_entries) == 1
+        history_entry = history_entries[0]
+
+        # Sum of all five archived messages — naive estimate the same way
+        # compose() does it, to match the assertion to the implementation.
+        expected_min = sum(
+            estimate_tokens(str(m.get("content", "")))
+            for m in (
+                archived_user,
+                archived_assistant,
+                archived_vault_retrieval,
+                archived_vault_references,
+                archived_notes,
+            )
+        )
+        assert history_entry.tokens_estimated >= expected_min, (
+            f"history_entry.tokens_estimated={history_entry.tokens_estimated} "
+            f"expected >= {expected_min} (sum of all five archived messages)"
+        )
+
+    @pytest.mark.asyncio
+    async def test_source_entries_account_for_all_llm_content(
+        self, ctx, config,
+    ):
+        """The sum of SourceEntry.tokens_estimated across all sources
+        should equal the sum of token estimates over llm_history (the
+        messages the model actually sees). Catches double-counting and
+        silent drops."""
+        composer = ContextComposer()
+        history = [
+            {"role": "user", "content": "prior user " * 50},
+            {"role": "assistant", "content": "prior assistant " * 50},
+            {"role": "vault_references", "content": "archived ref " * 50, "wiki_page": "Old"},
+        ]
+
+        with (
+            patch("decafclaw.agent._collect_all_tool_defs", return_value=[]),
+            patch("decafclaw.memory_context.retrieve_memory_context",
+                  new_callable=AsyncMock, return_value=[]),
+        ):
+            composed = await composer.compose(
+                ctx, "fresh user message " * 20, history,
+                mode=ComposerMode.INTERACTIVE,
+            )
+
+        # Sum of SourceEntry.tokens_estimated for sources that map to
+        # entries in composed.messages. Tools are tracked via a SourceEntry
+        # but sent via the separate API `tools=` parameter, NOT in
+        # composed.messages — they have to be excluded from this sum or
+        # the comparison is not apples-to-apples. The test still patches
+        # _collect_all_tool_defs to [] to keep tools_entry near-zero, but
+        # excluding it explicitly makes the invariant robust to future
+        # changes that introduce non-empty default tool fixtures.
+        source_total = sum(
+            s.tokens_estimated for s in composed.sources if s.source != "tools"
+        )
+
+        # Sum of token estimates over the actual LLM-bound message list.
+        # composed.messages includes the system prompt as the first entry;
+        # SourceEntry breakdown also includes "system_prompt" as a source,
+        # so this comparison is apples-to-apples once tools is excluded.
+        llm_total = sum(
+            estimate_tokens(str(m.get("content", "")))
+            for m in composed.messages
+        )
+
+        # Allow small rounding drift from per-message estimate boundaries
+        # (estimate_tokens may use ceiling division). Tighten if the gap
+        # is larger than a few percent — that signals a real divergence.
+        assert abs(source_total - llm_total) <= max(50, llm_total * 0.05), (
+            f"SourceEntry sum {source_total} (excl tools) vs composed.messages "
+            f"sum {llm_total} diverge by more than 5% / 50 tokens — token "
+            f"accounting is drifting."
+        )
 
 
 # -- Relevance scoring ---------------------------------------------------------
