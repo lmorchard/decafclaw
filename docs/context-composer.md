@@ -88,6 +88,14 @@ compaction prompts.
 - Tool definitions are fixed overhead on every turn — [tool deferral](tool-search.md) keeps this in check
 - Vault context competes for remaining budget after fixed costs (see [Vault Retrieval](#vault-retrieval) below)
 
+#### History accounting
+
+`compose()` treats the input `history` list as read-only during all token-budget and diagnostics calculation. Fresh-this-turn injections (`vault_references`, `conversation_notes`, `vault_retrieval`, and the current user message) are each tracked via their own `SourceEntry` (`wiki_entry`, `notes_entry`, `memory_entry`, `user_msg_entry`). The `history` source entry counts everything archived from prior turns, including messages whose role is in `ROLE_REMAP` (auto-injected role messages archived from earlier turns) — they're sent to the LLM after remap, so they count.
+
+After all token accounting and message-list assembly, `compose()` appends this turn's injections to `history` so the caller (agent loop) sees the post-turn state on subsequent turns. The single mutation point at the end of `compose()` replaces a previous shape that mixed input and scratchpad uses of `history`.
+
+This contract closes a class of underreporting bugs (#393) where a role-based filter excluded archived auto-injected messages even though the LLM still sees them after remap.
+
 ## How it works
 
 ### Lifecycle

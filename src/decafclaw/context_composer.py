@@ -18,6 +18,15 @@ from decafclaw.skills.background.tools import format_status_text
 
 log = logging.getLogger(__name__)
 
+# Roles that are remapped to "user" before sending to the LLM.
+# These messages are auto-injected by the composer per-turn, then
+# archived under their internal role for accounting and dedupe.
+ROLE_REMAP: dict[str, str] = {
+    "vault_retrieval": "user",
+    "vault_references": "user",
+    "conversation_notes": "user",
+}
+
 
 # -- Enums --------------------------------------------------------------------
 
@@ -249,10 +258,13 @@ class ContextComposer:
     ) -> ComposedContext:
         """Assemble the complete context for this turn.
 
-        Orchestrates all context sources, mutates history in place (appending
-        wiki/memory/user messages), publishes events, and returns the
-        ready-to-send ComposedContext. Does NOT archive — the caller is
-        responsible for persisting messages via the messages_to_archive list.
+        Orchestrates all context sources. Token accounting treats ``history``
+        as read-only (archived prior turns); this turn's wiki / notes / memory
+        / user-message injections are appended to ``history`` once, at the end,
+        before returning. The caller's continued reads of ``history`` after
+        compose() returns see the post-turn state.
+        Does NOT archive — the caller is responsible for persisting messages
+        via the messages_to_archive list.
         """
         from .agent import _resolve_attachments
         from .archive import LLM_ROLES
@@ -286,7 +298,6 @@ class ContextComposer:
             ctx, config, user_message, history, mode,
         )
         for wm in wiki_msgs:
-            history.append(wm)
             to_archive.append(wm)
             await ctx.publish("vault_references", text=wm["content"], page=wm.get("wiki_page"))
         if wiki_entry:
@@ -297,7 +308,6 @@ class ContextComposer:
         # tool call per turn to read them.
         notes_msgs, notes_entry = self._compose_notes(ctx, config, mode)
         for nm in notes_msgs:
-            history.append(nm)
             to_archive.append(nm)
         if notes_entry:
             sources.append(notes_entry)
@@ -331,20 +341,30 @@ class ContextComposer:
             fixed_tokens += wiki_entry.tokens_estimated
         if notes_entry:
             fixed_tokens += notes_entry.tokens_estimated
-        # Estimate existing history (before this turn's additions)
-        # Exclude messages injected THIS turn (wiki, notes); their tokens
-        # are already counted via their respective SourceEntry. Prior
-        # turns' wiki/notes/memory are already in history and sent to the LLM.
-        injected_ids = {id(wm) for wm in wiki_msgs}
-        injected_ids |= {id(nm) for nm in notes_msgs}
-        existing_history_tokens = sum(
+        # History contains only archived prior-turn content at this point —
+        # fresh wiki / notes / memory / user injections are appended after
+        # all token accounting, at the end of compose(). Count messages whose
+        # role is sent to the LLM either directly (LLM_ROLES) or after remap
+        # (ROLE_REMAP keys). Other roles (e.g. confirmation_request, archive-only
+        # bookkeeping) are not sent and don't count.
+        countable_roles = LLM_ROLES | ROLE_REMAP.keys()
+        history_tokens = sum(
             estimate_tokens(str(m.get("content", "")))
             for m in history
-            if id(m) not in injected_ids
+            if m.get("role") in countable_roles
         )
-        fixed_tokens += existing_history_tokens
-        # User message
-        fixed_tokens += estimate_tokens(user_message)
+        fixed_tokens += history_tokens
+        # User message — has its own SourceEntry so the diagnostics
+        # waffle chart and [Context: ...] status line account for the
+        # current-turn user content alongside archived history.
+        user_msg_tokens = estimate_tokens(user_message)
+        user_msg_entry = SourceEntry(
+            source="user_message",
+            tokens_estimated=user_msg_tokens,
+            items_included=1,
+        )
+        sources.append(user_msg_entry)
+        fixed_tokens += user_msg_tokens
         # Tools (actual token cost, not estimate)
         fixed_tokens += tools_entry.tokens_estimated
         if preempt_skill_entry is not None:
@@ -370,23 +390,20 @@ class ContextComposer:
             token_budget=memory_budget,
         )
         for mm in memory_msgs:
-            history.append(mm)
             to_archive.append(mm)
         if memory_entry:
             sources.append(memory_entry)
 
-        # -- User message (added to history; caller archives with archive_text if needed) --
-        history.append(user_msg)
+        # -- User message (archived; appended to history at the end) --
         to_archive.append(user_msg)
 
         # -- Build LLM messages (filter + remap roles) --
-        role_remap = {
-            "vault_retrieval": "user",
-            "vault_references": "user",
-            "conversation_notes": "user",
-        }
+        # Combine archived history with this turn's injections in the same
+        # order they'll be archived: prior history → wiki → notes → memory →
+        # user message. The combined list is what the LLM sees.
+        combined = [*history, *wiki_msgs, *notes_msgs, *memory_msgs, user_msg]
         llm_history = []
-        for m in history:
+        for m in combined:
             role = m.get("role")
             if role == "background_event":
                 # Expand completion records into a synthetic poll pair so the
@@ -395,8 +412,8 @@ class ContextComposer:
                 llm_history.extend(_expand_background_event(m))
             elif role in LLM_ROLES:
                 llm_history.append(m)
-            elif role in role_remap:
-                llm_history.append({**m, "role": role_remap[role]})
+            elif role in ROLE_REMAP:
+                llm_history.append({**m, "role": ROLE_REMAP[role]})
         # Sanitize tool message ordering for LLM compatibility.
         # LiteLLM / Gemini require each tool result to immediately follow
         # the assistant message that issued its tool_call. After compaction
@@ -408,21 +425,14 @@ class ContextComposer:
         llm_history = [_resolve_attachments(config, m) for m in llm_history]
 
         # -- History source entry --
-        # Exclude wiki/memory messages — they have their own SourceEntry,
-        # so counting them here would double-count tokens in the total.
-        remapped_roles = set(role_remap.keys())
-        history_only = [m for m in history if m.get("role") not in remapped_roles]
-        history_tokens = sum(
-            estimate_tokens(str(m.get("content", "")))
-            for m in history_only
-            if m.get("role") in LLM_ROLES
-        )
+        # history_tokens was computed above (budget side); reuse the same value
+        # so budget and diagnostics are a single source of truth.
         history_msg_count = sum(
-            1 for m in history_only if m.get("role") in LLM_ROLES
+            1 for m in history if m.get("role") in countable_roles
         )
         history_entry = SourceEntry(
             source="history",
-            tokens_estimated=history_tokens,
+            tokens_estimated=history_tokens,  # computed earlier, single source of truth
             items_included=history_msg_count,
             details={"total_llm_messages": len(llm_history)},
         )
@@ -457,6 +467,14 @@ class ContextComposer:
         # -- Update state --
         self.state.last_sources = sources
         self.state.last_total_tokens_estimated = total_tokens
+
+        # Preserve the load-bearing side effect: caller (agent.py) continues
+        # to read self.history after compose() returns. Append this turn's
+        # injections in the same order as `combined` above.
+        history.extend(wiki_msgs)
+        history.extend(notes_msgs)
+        history.extend(memory_msgs)
+        history.append(user_msg)
 
         return ComposedContext(
             messages=messages,
