@@ -299,26 +299,36 @@ Example: the `weather` skill from ClawHub uses `curl` via the `shell` tool — n
 
 ### Installing skills via `npx skills`
 
-The [`vercel-labs/skills`](https://www.npmjs.com/package/skills) CLI installs skills from GitHub/GitLab/git URLs into per-agent paths. To wire it into decafclaw:
+The [`vercel-labs/skills`](https://www.npmjs.com/package/skills) CLI installs skills from GitHub/GitLab/git URLs into per-agent paths. `decafclaw` isn't in its built-in agent list, so install under one of the agent targets it knows about and point `extra_skill_paths` at the resulting directory.
 
-1. Install with any compatible agent target — `claude-code` is convenient since the path matches a common Claude Code setup:
+The CLI's path is `<scope>/<agent-dir>/skills/<skill>/`, where:
+
+- `<scope>` is `~/` with `-g` (global) or the current directory without it (project-local)
+- `<agent-dir>` is `.claude` for `-a claude-code`, otherwise `.agents` (used by `universal` and most other targets)
+
+So the four canonical install locations are `~/.claude/skills/`, `~/.agents/skills/`, `./.claude/skills/`, `./.agents/skills/`. Any of them can be added to `extra_skill_paths`.
+
+1. Install with a compatible agent target. `claude-code` and `universal` are both reasonable:
 
    ```bash
    npx skills add vercel-labs/agent-skills -a claude-code -g
    # skills land in ~/.claude/skills/<name>/
+
+   npx skills add vercel-labs/agent-skills -a universal -g
+   # skills land in ~/.agents/skills/<name>/
    ```
 
 2. Add the install location to the agent's `data/{agent_id}/config.json`:
 
    ```json
-   { "extra_skill_paths": ["~/.claude/skills"] }
+   { "extra_skill_paths": ["~/.claude/skills", "~/.agents/skills"] }
    ```
 
-   Or set `EXTRA_SKILL_PATHS=~/.claude/skills` in the environment. Multiple paths are supported (JSON array or comma-separated).
+   Or set `EXTRA_SKILL_PATHS=~/.claude/skills,~/.agents/skills` in the environment. Multiple paths are supported (JSON array or comma-separated).
 
 3. Restart decafclaw or run `refresh_skills`.
 
-Path entries support `~` and `$VAR` expansion. Relative paths resolve against `data/{agent_id}/`.
+Path entries support `~` and `$VAR` expansion. Relative paths resolve against `data/{agent_id}/` — useful for project-local installs (`.claude/skills`, `.agents/skills`) when you run decafclaw from a fixed working directory.
 
 **Trust posture for external skills.** External skills are treated identically to workspace skills:
 

@@ -56,7 +56,7 @@ See [docs/web-ui-design.md](docs/web-ui-design.md) for the primitive catalog and
 See [docs/skills.md](docs/skills.md).
 
 - **Lazy-loaded by default.** Catalog (name + description) in system prompt; full body and tools load on `activate_skill`. `always-loaded: true` opts a skill out (auto-activated, exempt from deferral).
-- **Bundled in `src/decafclaw/skills/`**. Each: SKILL.md (required) + `tools.py` (optional). Scan order: workspace > agent-level > bundled > `extra_skill_paths` (configured external dirs, e.g. for `npx skills add`).
+- **Bundled in `src/decafclaw/skills/`**. Each: SKILL.md (required) + `tools.py` (optional). Scan order: workspace > agent-level > bundled > `extra_skill_paths` (configured external dirs — common targets are `~/.claude/skills` and `~/.agents/skills` from `npx skills add`).
 - **Skills must use absolute imports** (`from decafclaw.skills.X.Y import ...`). The loader uses `importlib.spec_from_file_location` without package context, so relative imports fail at runtime.
 - **Skill config via `SkillConfig` dataclass in `tools.py`.** Resolved at activation by `load_sub_config` (env + `config.skills[name]` + defaults). `init(config, skill_config)` receives both.
 - **User-invokable commands** (`user-invocable: true`) trigger via `!name` (Mattermost) / `/name` (web UI). Supports `$ARGUMENTS`/`$0`/`$1`, `context: fork`, `allowed-tools`.
