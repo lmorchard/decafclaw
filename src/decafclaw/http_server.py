@@ -10,7 +10,7 @@ from pathlib import Path
 
 from starlette.applications import Starlette
 from starlette.requests import Request
-from starlette.responses import FileResponse, JSONResponse, RedirectResponse
+from starlette.responses import FileResponse, JSONResponse
 from starlette.routing import Mount, Route, WebSocketRoute
 from starlette.staticfiles import StaticFiles
 
@@ -53,8 +53,8 @@ def _get_username_or_401(request: Request) -> str | None:
     """Resolve the authenticated username from cookies, or None.
 
     Used by handlers that need the username outside the
-    ``_authenticated`` decorator (e.g. the WebSocket entry point and
-    raw-vault page serving). Returning ``None`` means "no valid
+    ``_authenticated`` decorator (currently the WebSocket entry point,
+    which has its own signature). Returning ``None`` means "no valid
     session"; callers decide whether to 401 or return a redirect.
     """
     from .web.auth import get_current_user
@@ -1374,11 +1374,9 @@ async def vault_delete(request: Request, username: str) -> JSONResponse:
     return JSONResponse({"ok": True})
 
 
-async def serve_vault_page(request: Request):
+@_authenticated
+async def serve_vault_page(request: Request, username: str):
     """Serve the vault page HTML shell."""
-    username = _get_username_or_401(request)
-    if not username:
-        return JSONResponse({"error": "not authenticated"}, status_code=401)
     vault_html = Path(__file__).parent / "web" / "static" / "vault.html"
     if not vault_html.exists():
         return JSONResponse({"error": "vault page not found"}, status_code=404)
@@ -1746,16 +1744,6 @@ async def get_canvas_page(request: Request, username: str):
     return Response(html_path.read_text(), media_type="text/html")
 
 
-# -- Wiki redirect ------------------------------------------------------------
-
-
-def _redirect_wiki_to_vault(request: Request) -> RedirectResponse:
-    """Legacy /wiki/* → /vault/* redirect."""
-    return RedirectResponse(
-        f"/vault/{request.path_params['page']}", status_code=301,
-    )
-
-
 def create_app(config, event_bus, app_ctx=None, manager=None) -> Starlette:
     """Wire up the Starlette ASGI app — handlers live at module level
     and read deps off ``request.app.state`` (populated below).
@@ -1806,10 +1794,9 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> Starlette:
         Route("/api/vault/{page:path}", vault_read, methods=["GET"]),
         Route("/api/vault/{page:path}", vault_delete, methods=["DELETE"]),
         Route("/vault/{page:path}", serve_vault_page, methods=["GET"]),
-        # Legacy wiki routes (redirect to vault)
+        # Legacy /api/wiki/* aliases — vault handlers under the old name.
         Route("/api/wiki", vault_list, methods=["GET"]),
         Route("/api/wiki/{page:path}", vault_read, methods=["GET"]),
-        Route("/wiki/{page:path}", _redirect_wiki_to_vault, methods=["GET"]),
         Route("/api/widgets", list_widgets, methods=["GET"]),
         Route("/widgets/{tier}/{name}/widget.js", serve_widget_js,
               methods=["GET"]),
