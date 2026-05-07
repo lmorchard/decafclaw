@@ -355,6 +355,43 @@ class TestListFields:
         assert c.mattermost.channel_blocklist == ["id1", "id2"]
 
 
+class TestVaultUserWritablePathsTypeGuard:
+    """Misconfigured `vault.user_writable_paths` should not crash load_config."""
+
+    def test_null_value_coerced_to_empty(self, tmp_path, monkeypatch, caplog):
+        """`null` in JSON arrives as None — must not crash the validation loop."""
+        agent_dir = tmp_path / "decafclaw"
+        agent_dir.mkdir()
+        (agent_dir / "config.json").write_text(json.dumps({
+            "vault": {"user_writable_paths": None},
+        }))
+        monkeypatch.setenv("DATA_HOME", str(tmp_path))
+        with caplog.at_level("WARNING", logger="decafclaw.config"):
+            c = load_config()
+        assert c.vault.user_writable_paths == []
+        assert any(
+            "user_writable_paths must be a list" in rec.message
+            for rec in caplog.records
+        )
+
+    def test_dict_value_coerced_to_empty(self, tmp_path, monkeypatch, caplog):
+        """A non-list/non-None value (e.g. a dict) would silently iterate keys
+        in the validation loop — guard catches it and warns."""
+        agent_dir = tmp_path / "decafclaw"
+        agent_dir.mkdir()
+        (agent_dir / "config.json").write_text(json.dumps({
+            "vault": {"user_writable_paths": {"creative": True}},
+        }))
+        monkeypatch.setenv("DATA_HOME", str(tmp_path))
+        with caplog.at_level("WARNING", logger="decafclaw.config"):
+            c = load_config()
+        assert c.vault.user_writable_paths == []
+        assert any(
+            "user_writable_paths must be a list" in rec.message
+            for rec in caplog.records
+        )
+
+
 class TestFallbackResolution:
     def test_compaction_resolved(self):
         """CompactionConfig.resolved() fills from llm."""
