@@ -4,10 +4,14 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from decafclaw.skills.vault._grants import add_grant
 from decafclaw.skills.vault.tools import (
+    GateOutcome,
+    _check_user_write_allowed,
     resolve_page,
     tool_vault_backlinks,
     tool_vault_delete,
+    tool_vault_grant_folder,
     tool_vault_journal_append,
     tool_vault_list,
     tool_vault_read,
@@ -39,6 +43,15 @@ def agent_journal(config):
     d = config.vault_agent_journal_dir
     d.mkdir(parents=True, exist_ok=True)
     return d
+
+
+def _dummy_request_confirmation(*args, **kwargs):
+    """Module-level stand-in callable so the gate sees a non-None
+    ctx.request_confirmation. Tests that exercise the gate patch
+    `request_confirmation` (the module-level helper) directly, so this
+    sentinel should never actually be invoked.
+    """
+    raise AssertionError("ctx.request_confirmation should not be invoked directly")
 
 
 class TestResolvePage:
@@ -147,11 +160,14 @@ class TestVaultWrite:
 
     @pytest.mark.asyncio
     async def test_rejects_write_outside_agent_folder(self, ctx, vault_dir):
-        """vault_write must refuse paths outside the agent folder, mirroring
-        vault_delete / vault_rename behavior."""
+        """In a non-interactive context (no request_confirmation), vault_write
+        to a path outside the agent folder must error rather than write.
+        With Phase 2, the message names interactive confirmation as the
+        missing prerequisite."""
+        ctx.request_confirmation = None
         result = await tool_vault_write(ctx, "StrayRootPage", "# Stray")
         assert "error" in result.text.lower()
-        assert "agent folder" in result.text.lower()
+        assert "interactive confirmation" in result.text.lower()
         assert not (vault_dir / "StrayRootPage.md").exists()
 
     @pytest.mark.asyncio
@@ -173,6 +189,81 @@ class TestVaultWrite:
         assert "saved" in result.lower() or "saved" in str(result).lower()
         assert (vault_dir / "agent" / "pages" / "Test.md").exists()
         assert not (vault_dir / "agent" / "pages" / "Test.md.md").exists()
+
+
+class TestVaultWriteUserFolders:
+    """Phase 2: vault_write to user folders via the three-tier gate.
+
+    Allowlist and grants short-circuit to direct write; otherwise the tool
+    requests user confirmation; non-interactive contexts error out.
+    """
+
+    @pytest.mark.asyncio
+    async def test_allowlist_bypass_writes_directly(self, ctx, vault_dir):
+        ctx.config.vault.user_writable_paths = ["creative/"]
+        with patch("decafclaw.embeddings.index_entry", new_callable=AsyncMock):
+            result = await tool_vault_write(ctx, "creative/foo", "content body")
+        assert "saved" in str(result).lower()
+        assert (vault_dir / "creative" / "foo.md").exists()
+
+    @pytest.mark.asyncio
+    async def test_grant_bypass_writes_directly(self, ctx, vault_dir):
+        ctx.conv_id = "conv-123"
+        add_grant(ctx.config, "conv-123", "creative/")
+        with patch("decafclaw.embeddings.index_entry", new_callable=AsyncMock):
+            result = await tool_vault_write(ctx, "creative/foo", "content body")
+        assert "saved" in str(result).lower()
+        assert (vault_dir / "creative" / "foo.md").exists()
+
+    @pytest.mark.asyncio
+    async def test_no_allowlist_or_grant_confirms_then_writes(self, ctx, vault_dir):
+        ctx.request_confirmation = _dummy_request_confirmation
+        with (
+            patch("decafclaw.skills.vault.tools.request_confirmation",
+                  AsyncMock(return_value={"approved": True})) as mock_conf,
+            patch("decafclaw.embeddings.index_entry", new_callable=AsyncMock),
+        ):
+            result = await tool_vault_write(ctx, "creative/foo", "content body")
+        assert "saved" in str(result).lower()
+        assert mock_conf.called
+        assert (vault_dir / "creative" / "foo.md").exists()
+
+    @pytest.mark.asyncio
+    async def test_denied_returns_error_no_write(self, ctx, vault_dir):
+        ctx.request_confirmation = _dummy_request_confirmation
+        with patch("decafclaw.skills.vault.tools.request_confirmation",
+                   AsyncMock(return_value={"approved": False})):
+            result = await tool_vault_write(ctx, "creative/foo", "content body")
+        text = result.text if hasattr(result, "text") else str(result)
+        assert "denied by user" in text
+        assert not (vault_dir / "creative" / "foo.md").exists()
+
+    @pytest.mark.asyncio
+    async def test_non_interactive_context_errors(self, ctx, vault_dir):
+        ctx.request_confirmation = None
+        result = await tool_vault_write(ctx, "creative/foo", "content body")
+        text = result.text if hasattr(result, "text") else str(result)
+        assert "interactive confirmation" in text
+        assert not (vault_dir / "creative" / "foo.md").exists()
+
+    @pytest.mark.asyncio
+    async def test_confirmation_preview_includes_path_and_content(self, ctx, vault_dir):
+        ctx.request_confirmation = _dummy_request_confirmation
+        captured: dict = {}
+
+        async def capture_request(ctx_, **kwargs):
+            captured.update(kwargs)
+            return {"approved": True}
+
+        with (
+            patch("decafclaw.skills.vault.tools.request_confirmation",
+                  side_effect=capture_request),
+            patch("decafclaw.embeddings.index_entry", new_callable=AsyncMock),
+        ):
+            await tool_vault_write(ctx, "creative/foo", "hello world content")
+        assert "creative/foo.md" in captured["message"]
+        assert "hello world" in captured["message"]
+        assert "(new page)" in captured["message"]
 
 
 class TestVaultDelete:
@@ -200,11 +291,15 @@ class TestVaultDelete:
 
     @pytest.mark.asyncio
     async def test_rejects_page_outside_agent_dir(self, ctx, vault_dir):
-        # A page directly at the vault root is outside agent/
+        """In a non-interactive context (no request_confirmation), vault_delete
+        of a path outside the agent folder must error rather than delete.
+        With Phase 3, the message names interactive confirmation as the
+        missing prerequisite."""
+        ctx.request_confirmation = None
         (vault_dir / "User Notes.md").write_text("mine")
         result = await tool_vault_delete(ctx, "User Notes")
         assert "error" in result.text.lower()
-        assert "agent folder" in result.text.lower()
+        assert "interactive confirmation" in result.text.lower()
         assert (vault_dir / "User Notes.md").exists()
 
     @pytest.mark.asyncio
@@ -235,6 +330,92 @@ class TestVaultDelete:
             result = await tool_vault_delete(ctx, bad)
             assert "error" in result.text.lower(), f"bad input {bad!r} was accepted"
         assert (vault_dir / ".md").exists()
+
+
+class TestVaultDeleteUserFolders:
+    """Phase 3: vault_delete on user folders via the three-tier gate.
+
+    Allowlist and grants short-circuit to direct delete; otherwise the tool
+    requests user confirmation; non-interactive contexts error out.
+    """
+
+    @pytest.mark.asyncio
+    async def test_allowlist_bypass_deletes_directly(self, ctx, vault_dir):
+        (vault_dir / "creative").mkdir(parents=True, exist_ok=True)
+        (vault_dir / "creative" / "foo.md").write_text("body")
+        ctx.config.vault.user_writable_paths = ["creative/"]
+        with patch("decafclaw.embeddings.delete_entries"):
+            result = await tool_vault_delete(ctx, "creative/foo")
+        assert "deleted" in result.text.lower()
+        assert not (vault_dir / "creative" / "foo.md").exists()
+
+    @pytest.mark.asyncio
+    async def test_grant_bypass_deletes_directly(self, ctx, vault_dir):
+        (vault_dir / "creative").mkdir(parents=True, exist_ok=True)
+        (vault_dir / "creative" / "foo.md").write_text("body")
+        ctx.conv_id = "conv-123"
+        add_grant(ctx.config, "conv-123", "creative/")
+        with patch("decafclaw.embeddings.delete_entries"):
+            result = await tool_vault_delete(ctx, "creative/foo")
+        assert "deleted" in result.text.lower()
+        assert not (vault_dir / "creative" / "foo.md").exists()
+
+    @pytest.mark.asyncio
+    async def test_no_allowlist_or_grant_confirms_then_deletes(self, ctx, vault_dir):
+        (vault_dir / "creative").mkdir(parents=True, exist_ok=True)
+        (vault_dir / "creative" / "foo.md").write_text("body")
+        ctx.request_confirmation = _dummy_request_confirmation
+        with (
+            patch("decafclaw.skills.vault.tools.request_confirmation",
+                  AsyncMock(return_value={"approved": True})) as mock_conf,
+            patch("decafclaw.embeddings.delete_entries"),
+        ):
+            result = await tool_vault_delete(ctx, "creative/foo")
+        assert "deleted" in result.text.lower()
+        assert mock_conf.called
+        assert not (vault_dir / "creative" / "foo.md").exists()
+
+    @pytest.mark.asyncio
+    async def test_denied_returns_error_no_delete(self, ctx, vault_dir):
+        (vault_dir / "creative").mkdir(parents=True, exist_ok=True)
+        (vault_dir / "creative" / "foo.md").write_text("body")
+        ctx.request_confirmation = _dummy_request_confirmation
+        with patch("decafclaw.skills.vault.tools.request_confirmation",
+                   AsyncMock(return_value={"approved": False})):
+            result = await tool_vault_delete(ctx, "creative/foo")
+        text = result.text if hasattr(result, "text") else str(result)
+        assert "denied by user" in text
+        assert (vault_dir / "creative" / "foo.md").exists()
+
+    @pytest.mark.asyncio
+    async def test_non_interactive_context_errors(self, ctx, vault_dir):
+        (vault_dir / "creative").mkdir(parents=True, exist_ok=True)
+        (vault_dir / "creative" / "foo.md").write_text("body")
+        ctx.request_confirmation = None
+        result = await tool_vault_delete(ctx, "creative/foo")
+        text = result.text if hasattr(result, "text") else str(result)
+        assert "interactive confirmation" in text
+        assert (vault_dir / "creative" / "foo.md").exists()
+
+    @pytest.mark.asyncio
+    async def test_confirmation_preview_includes_path(self, ctx, vault_dir):
+        (vault_dir / "creative").mkdir(parents=True, exist_ok=True)
+        (vault_dir / "creative" / "foo.md").write_text("body")
+        ctx.request_confirmation = _dummy_request_confirmation
+        captured: dict = {}
+
+        async def capture_request(ctx_, **kwargs):
+            captured.update(kwargs)
+            return {"approved": True}
+
+        with (
+            patch("decafclaw.skills.vault.tools.request_confirmation",
+                  side_effect=capture_request),
+            patch("decafclaw.embeddings.delete_entries"),
+        ):
+            await tool_vault_delete(ctx, "creative/foo")
+        assert "creative/foo.md" in captured["message"]
+        assert "(cannot be undone" in captured["message"]
 
 
 class TestVaultRename:
@@ -291,12 +472,14 @@ class TestVaultRename:
 
     @pytest.mark.asyncio
     async def test_rejects_rename_outside_agent_dir(self, ctx, vault_dir, agent_pages):
+        """Non-interactive context + new path outside agent → error, no rename."""
         (agent_pages / "Inside.md").write_text("x")
+        ctx.request_confirmation = None
         result = await tool_vault_rename(
             ctx, "agent/pages/Inside", "Escaped"
         )
         assert "error" in result.text.lower()
-        assert "agent folder" in result.text.lower()
+        assert "interactive confirmation" in result.text.lower()
         assert (agent_pages / "Inside.md").exists()
         assert not (vault_dir / "Escaped.md").exists()
 
@@ -339,6 +522,137 @@ class TestVaultRename:
             result = await tool_vault_rename(ctx, "agent/pages/Doc", bad)
             assert "error" in result.text.lower(), f"bad target {bad!r} accepted"
         assert (agent_pages / "Doc.md").exists()
+
+
+class TestVaultRenameUserFolders:
+    """Phase 4: vault_rename across user folders via the three-tier gate.
+
+    A single confirmation must cover BOTH source and target paths. If either
+    needs confirmation, the whole op confirms once. If either is non-interactive
+    error, the whole op fails.
+    """
+
+    @pytest.mark.asyncio
+    async def test_old_in_agent_new_in_user_confirms(self, ctx, agent_pages, vault_dir):
+        """Rename agent/pages/X to creative/X — confirms (new path is outside)."""
+        (agent_pages / "X.md").write_text("body")
+        ctx.request_confirmation = _dummy_request_confirmation
+        with (
+            patch("decafclaw.skills.vault.tools.request_confirmation",
+                  AsyncMock(return_value={"approved": True})) as mock_conf,
+            patch("decafclaw.embeddings.delete_entries"),
+            patch("decafclaw.embeddings.index_entry", new_callable=AsyncMock),
+        ):
+            result = await tool_vault_rename(ctx, "agent/pages/X", "creative/X")
+        assert "renamed" in result.text.lower()
+        assert mock_conf.called
+        assert not (agent_pages / "X.md").exists()
+        assert (vault_dir / "creative" / "X.md").exists()
+
+    @pytest.mark.asyncio
+    async def test_both_in_user_confirms_once(self, ctx, vault_dir):
+        """Rename creative/A to creative/B — single confirmation covers both."""
+        (vault_dir / "creative").mkdir(parents=True, exist_ok=True)
+        (vault_dir / "creative" / "A.md").write_text("body")
+        ctx.request_confirmation = _dummy_request_confirmation
+        with (
+            patch("decafclaw.skills.vault.tools.request_confirmation",
+                  AsyncMock(return_value={"approved": True})) as mock_conf,
+            patch("decafclaw.embeddings.delete_entries"),
+            patch("decafclaw.embeddings.index_entry", new_callable=AsyncMock),
+        ):
+            result = await tool_vault_rename(ctx, "creative/A", "creative/B")
+        assert "renamed" in result.text.lower()
+        assert mock_conf.call_count == 1
+        assert not (vault_dir / "creative" / "A.md").exists()
+        assert (vault_dir / "creative" / "B.md").exists()
+
+    @pytest.mark.asyncio
+    async def test_both_in_user_with_grant_no_confirm(self, ctx, vault_dir):
+        """Pre-grant 'creative/' — rename within creative/ requires no confirm."""
+        (vault_dir / "creative").mkdir(parents=True, exist_ok=True)
+        (vault_dir / "creative" / "A.md").write_text("body")
+        ctx.conv_id = "conv-rename-grant"
+        add_grant(ctx.config, "conv-rename-grant", "creative/")
+        # If request_confirmation gets called, this AsyncMock asserts loudly.
+        sentinel = AsyncMock(side_effect=AssertionError(
+            "request_confirmation must not be invoked when grant covers both paths"))
+        with (
+            patch("decafclaw.skills.vault.tools.request_confirmation", sentinel),
+            patch("decafclaw.embeddings.delete_entries"),
+            patch("decafclaw.embeddings.index_entry", new_callable=AsyncMock),
+        ):
+            result = await tool_vault_rename(ctx, "creative/A", "creative/B")
+        assert "renamed" in result.text.lower()
+        assert not sentinel.called
+        assert not (vault_dir / "creative" / "A.md").exists()
+        assert (vault_dir / "creative" / "B.md").exists()
+
+    @pytest.mark.asyncio
+    async def test_old_in_grant_new_outside_grant_confirms(self, ctx, vault_dir):
+        """Grant covers creative/ but target is notes/ — needs confirmation."""
+        (vault_dir / "creative").mkdir(parents=True, exist_ok=True)
+        (vault_dir / "creative" / "A.md").write_text("body")
+        ctx.conv_id = "conv-rename-partial"
+        add_grant(ctx.config, "conv-rename-partial", "creative/")
+        ctx.request_confirmation = _dummy_request_confirmation
+        with (
+            patch("decafclaw.skills.vault.tools.request_confirmation",
+                  AsyncMock(return_value={"approved": True})) as mock_conf,
+            patch("decafclaw.embeddings.delete_entries"),
+            patch("decafclaw.embeddings.index_entry", new_callable=AsyncMock),
+        ):
+            result = await tool_vault_rename(ctx, "creative/A", "notes/B")
+        assert "renamed" in result.text.lower()
+        assert mock_conf.called
+        assert not (vault_dir / "creative" / "A.md").exists()
+        assert (vault_dir / "notes" / "B.md").exists()
+
+    @pytest.mark.asyncio
+    async def test_denied_no_rename(self, ctx, vault_dir):
+        """Deny → original file remains, target doesn't exist."""
+        (vault_dir / "creative").mkdir(parents=True, exist_ok=True)
+        (vault_dir / "creative" / "A.md").write_text("body")
+        ctx.request_confirmation = _dummy_request_confirmation
+        with patch("decafclaw.skills.vault.tools.request_confirmation",
+                   AsyncMock(return_value={"approved": False})):
+            result = await tool_vault_rename(ctx, "creative/A", "creative/B")
+        assert "denied by user" in result.text
+        assert (vault_dir / "creative" / "A.md").exists()
+        assert not (vault_dir / "creative" / "B.md").exists()
+
+    @pytest.mark.asyncio
+    async def test_non_interactive_errors(self, ctx, vault_dir):
+        """ctx.request_confirmation = None → error, no rename."""
+        (vault_dir / "creative").mkdir(parents=True, exist_ok=True)
+        (vault_dir / "creative" / "A.md").write_text("body")
+        ctx.request_confirmation = None
+        result = await tool_vault_rename(ctx, "creative/A", "creative/B")
+        assert "interactive confirmation" in result.text
+        assert (vault_dir / "creative" / "A.md").exists()
+        assert not (vault_dir / "creative" / "B.md").exists()
+
+    @pytest.mark.asyncio
+    async def test_confirmation_preview_includes_both_paths(self, ctx, vault_dir):
+        """Capture confirmation kwargs; assert message has both old and new paths."""
+        (vault_dir / "creative").mkdir(parents=True, exist_ok=True)
+        (vault_dir / "creative" / "A.md").write_text("body")
+        ctx.request_confirmation = _dummy_request_confirmation
+        captured: dict = {}
+
+        async def capture_request(ctx_, **kwargs):
+            captured.update(kwargs)
+            return {"approved": True}
+
+        with (
+            patch("decafclaw.skills.vault.tools.request_confirmation",
+                  side_effect=capture_request),
+            patch("decafclaw.embeddings.delete_entries"),
+            patch("decafclaw.embeddings.index_entry", new_callable=AsyncMock),
+        ):
+            await tool_vault_rename(ctx, "creative/A", "notes/B")
+        assert "creative/A.md" in captured["message"]
+        assert "notes/B.md" in captured["message"]
 
 
 class TestVaultJournalAppend:
@@ -479,3 +793,205 @@ class TestVaultBacklinks:
             "Classic: [[Tempest (arcade game)|Tempest arcade game]].")
         result = await tool_vault_backlinks(ctx, "Tempest (arcade game)")
         assert "Arcade Games" in result
+
+
+class TestCheckUserWriteAllowed:
+    """Unit tests for `_check_user_write_allowed` — the three-tier gate.
+
+    Phase 1 plumbing only: this verifies the helper's classification.
+    Phases 2-4 wire the helper into the actual write/delete/rename tools.
+    """
+
+    def test_agent_dir_allows(self, ctx, agent_pages):
+        """Paths inside agent/ skip every other check."""
+        ctx.request_confirmation = _dummy_request_confirmation
+        path = agent_pages / "Note.md"
+        assert _check_user_write_allowed(ctx, path) == GateOutcome.ALLOW
+
+    def test_agent_journal_allows(self, ctx, agent_journal):
+        """Paths inside agent/journal/ are also under agent/, so ALLOW."""
+        ctx.request_confirmation = _dummy_request_confirmation
+        path = agent_journal / "2026" / "2026-05-07.md"
+        assert _check_user_write_allowed(ctx, path) == GateOutcome.ALLOW
+
+    def test_allowlist_allows(self, ctx, vault_dir):
+        """Paths under a configured allowlist entry skip confirmation."""
+        ctx.request_confirmation = _dummy_request_confirmation
+        ctx.config.vault.user_writable_paths = ["creative/"]
+        path = vault_dir / "creative" / "story.md"
+        assert _check_user_write_allowed(ctx, path) == GateOutcome.ALLOW
+
+    def test_allowlist_normalizes_entry(self, ctx, vault_dir):
+        """An entry without a trailing slash still matches its subtree."""
+        ctx.request_confirmation = _dummy_request_confirmation
+        ctx.config.vault.user_writable_paths = ["creative"]  # no trailing slash
+        path = vault_dir / "creative" / "story.md"
+        assert _check_user_write_allowed(ctx, path) == GateOutcome.ALLOW
+
+    def test_allowlist_partial_prefix_does_not_match(self, ctx, vault_dir):
+        """`creative/` should NOT match `creativewriting/...` — trailing-slash anchors."""
+        ctx.request_confirmation = _dummy_request_confirmation
+        ctx.config.vault.user_writable_paths = ["creative/"]
+        path = vault_dir / "creativewriting" / "story.md"
+        assert _check_user_write_allowed(ctx, path) == GateOutcome.NEEDS_CONFIRMATION
+
+    def test_allowlist_skips_invalid_entries(self, ctx, vault_dir):
+        """Bad allowlist entries are skipped (logged) without breaking the gate."""
+        ctx.request_confirmation = _dummy_request_confirmation
+        ctx.config.vault.user_writable_paths = ["..", "creative/"]
+        path = vault_dir / "creative" / "story.md"
+        assert _check_user_write_allowed(ctx, path) == GateOutcome.ALLOW
+
+    def test_grants_allow(self, ctx, vault_dir):
+        """A folder grant on this conv_id allows writes under it."""
+        ctx.request_confirmation = _dummy_request_confirmation
+        ctx.conv_id = "conv-X"
+        add_grant(ctx.config, "conv-X", "creative/")
+        path = vault_dir / "creative" / "foo" / "bar.md"
+        assert _check_user_write_allowed(ctx, path) == GateOutcome.ALLOW
+
+    def test_grants_scoped_to_conversation(self, ctx, vault_dir):
+        """A grant for one conv_id does NOT carry over to another."""
+        ctx.request_confirmation = _dummy_request_confirmation
+        add_grant(ctx.config, "other-conv", "creative/")
+        ctx.conv_id = "conv-X"
+        path = vault_dir / "creative" / "foo.md"
+        assert _check_user_write_allowed(ctx, path) == GateOutcome.NEEDS_CONFIRMATION
+
+    def test_outside_yields_needs_confirmation(self, ctx, vault_dir):
+        """Outside agent/, no allowlist, no grant — confirmation required."""
+        ctx.request_confirmation = _dummy_request_confirmation
+        path = vault_dir / "random" / "page.md"
+        assert _check_user_write_allowed(ctx, path) == GateOutcome.NEEDS_CONFIRMATION
+
+    def test_no_request_conf_yields_non_interactive_error(self, ctx, vault_dir):
+        """When no UI is available, the gate signals non-interactive error."""
+        ctx.request_confirmation = None
+        path = vault_dir / "random" / "page.md"
+        assert _check_user_write_allowed(ctx, path) == GateOutcome.NON_INTERACTIVE_ERROR
+
+    def test_agent_dir_allows_even_when_non_interactive(self, ctx, agent_pages):
+        """Agent-dir writes never require confirmation, even from heartbeat ctx."""
+        ctx.request_confirmation = None
+        path = agent_pages / "Note.md"
+        assert _check_user_write_allowed(ctx, path) == GateOutcome.ALLOW
+
+    def test_allowlist_allows_even_when_non_interactive(self, ctx, vault_dir):
+        """Allowlist short-circuit beats the non-interactive check."""
+        ctx.request_confirmation = None
+        ctx.config.vault.user_writable_paths = ["creative/"]
+        path = vault_dir / "creative" / "story.md"
+        assert _check_user_write_allowed(ctx, path) == GateOutcome.ALLOW
+
+
+class TestVaultGrantFolder:
+    """Phase 5: vault_grant_folder requests per-conversation folder trust."""
+
+    @pytest.mark.asyncio
+    async def test_approves_and_persists(self, ctx, vault_dir):
+        ctx.conv_id = "conv-X"
+        ctx.request_confirmation = _dummy_request_confirmation
+        with patch(
+            "decafclaw.skills.vault.tools.request_confirmation",
+            AsyncMock(return_value={"approved": True}),
+        ):
+            result = await tool_vault_grant_folder(ctx, "creative", "batch rename")
+        assert "trusted" in result.text
+        from decafclaw.skills.vault._grants import read_grants
+        assert "creative/" in read_grants(ctx.config, "conv-X")
+
+    @pytest.mark.asyncio
+    async def test_denied_returns_error_no_persist(self, ctx, vault_dir):
+        ctx.conv_id = "conv-X"
+        ctx.request_confirmation = _dummy_request_confirmation
+        with patch(
+            "decafclaw.skills.vault.tools.request_confirmation",
+            AsyncMock(return_value={"approved": False}),
+        ):
+            result = await tool_vault_grant_folder(ctx, "creative", "...")
+        assert "denied by user" in result.text
+        from decafclaw.skills.vault._grants import read_grants
+        assert read_grants(ctx.config, "conv-X") == set()
+
+    @pytest.mark.asyncio
+    async def test_rejects_dotdot(self, ctx, vault_dir):
+        ctx.request_confirmation = _dummy_request_confirmation
+        result = await tool_vault_grant_folder(ctx, "../etc", "escape")
+        assert "invalid folder" in result.text
+
+    @pytest.mark.asyncio
+    async def test_strips_leading_slash(self, ctx, vault_dir):
+        """Leading `/` is stripped (consistent with vault.user_writable_paths).
+
+        `/creative` normalizes to `creative/` and is accepted; the grant key
+        in the sidecar omits the leading slash.
+        """
+        ctx.conv_id = "conv-X"
+        ctx.request_confirmation = _dummy_request_confirmation
+        with patch(
+            "decafclaw.skills.vault.tools.request_confirmation",
+            AsyncMock(return_value={"approved": True}),
+        ):
+            result = await tool_vault_grant_folder(ctx, "/creative", "batch rename")
+        assert "trusted" in result.text
+        from decafclaw.skills.vault._grants import read_grants
+        grants = read_grants(ctx.config, "conv-X")
+        assert "creative/" in grants
+        assert "/creative/" not in grants
+        assert "/creative" not in grants
+
+    @pytest.mark.asyncio
+    async def test_rejects_inside_agent(self, ctx, vault_dir):
+        ctx.request_confirmation = _dummy_request_confirmation
+        result = await tool_vault_grant_folder(ctx, "agent/pages", "...")
+        assert "no grant needed" in result.text
+
+    @pytest.mark.asyncio
+    async def test_rejects_no_conv_id(self, ctx, vault_dir):
+        ctx.request_confirmation = _dummy_request_confirmation
+        # Empty string and None should both be rejected — the impl uses
+        # `if not ctx.conv_id:` which catches both, but the contract is explicit.
+        for missing in ("", None):
+            ctx.conv_id = missing
+            result = await tool_vault_grant_folder(ctx, "creative", "...")
+            assert "conversation context" in result.text, (
+                f"conv_id={missing!r} was not rejected"
+            )
+
+    @pytest.mark.asyncio
+    async def test_rejects_non_interactive(self, ctx, vault_dir):
+        ctx.request_confirmation = None
+        result = await tool_vault_grant_folder(ctx, "creative", "...")
+        assert "interactive confirmation" in result.text
+
+    @pytest.mark.asyncio
+    async def test_rejects_empty_folder(self, ctx, vault_dir):
+        ctx.request_confirmation = _dummy_request_confirmation
+        result = await tool_vault_grant_folder(ctx, "", "...")
+        assert "folder is required" in result.text
+
+    @pytest.mark.asyncio
+    async def test_rejects_empty_reason(self, ctx, vault_dir):
+        ctx.request_confirmation = _dummy_request_confirmation
+        result = await tool_vault_grant_folder(ctx, "creative", "")
+        assert "reason is required" in result.text
+
+    @pytest.mark.asyncio
+    async def test_grant_then_write_skips_confirmation(self, ctx, vault_dir):
+        """Integration: grant a folder, then write — no second confirmation."""
+        ctx.conv_id = "conv-X"
+        ctx.request_confirmation = _dummy_request_confirmation
+        with patch(
+            "decafclaw.skills.vault.tools.request_confirmation",
+            AsyncMock(return_value={"approved": True}),
+        ):
+            await tool_vault_grant_folder(ctx, "creative", "batch")
+        # Now write — should NOT call request_confirmation again
+        sentinel = AsyncMock(side_effect=AssertionError("should not have been called"))
+        with (
+            patch("decafclaw.skills.vault.tools.request_confirmation", sentinel),
+            patch("decafclaw.embeddings.index_entry", new_callable=AsyncMock),
+        ):
+            result = await tool_vault_write(ctx, "creative/foo", "content body")
+        assert sentinel.call_count == 0
+        assert "saved" in str(result)

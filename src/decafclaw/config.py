@@ -36,6 +36,7 @@ from .config_types import (
     VaultConfig,
     VaultRetrievalConfig,
 )
+from .skills.vault._grants import normalize_folder
 
 log = logging.getLogger(__name__)
 
@@ -509,6 +510,22 @@ def load_config() -> Config:
 
     # Apply custom env vars (only sets those not already in environment)
     config.apply_env()
+
+    # Validate vault.user_writable_paths once at load time so misconfigured
+    # entries surface in the logs without spamming per-call (the gate runs
+    # this check on every vault write/delete/rename). load_sub_config does
+    # not coerce types from JSON, so a malformed value (e.g. null, or a
+    # string) would otherwise blow up here at startup or iterate characters.
+    paths = config.vault.user_writable_paths
+    if not isinstance(paths, list):
+        log.warning(
+            "vault.user_writable_paths must be a list; got %s. Treating as empty.",
+            type(paths).__name__,
+        )
+        config.vault.user_writable_paths = []
+    else:
+        for entry in paths:
+            normalize_folder(entry, warn_on_invalid=True)
 
     return config
 

@@ -204,6 +204,9 @@ class VaultConfig:
     vault_path: str = "workspace/vault/"
     agent_folder: str = "agent/"
     recent_changes_limit: int = 50
+    # Vault-relative folder paths that bypass the user-page write
+    # confirmation. Prefix match (no globs). Empty by default — opt-in.
+    user_writable_paths: list[str] = field(default_factory=list)
 
 
 @dataclass
