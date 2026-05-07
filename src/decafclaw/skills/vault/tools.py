@@ -11,6 +11,16 @@ from enum import Enum
 from pathlib import Path
 
 from decafclaw.media import ToolResult, WidgetRequest
+from decafclaw.skills.vault._events import (
+    KIND_CREATE,
+    KIND_DELETE,
+    KIND_JOURNAL,
+    KIND_MOVE,
+    KIND_RENAME,
+    KIND_SECTION,
+    KIND_UPDATE,
+    publish_vault_changed,
+)
 from decafclaw.skills.vault._grants import (
     add_grant,
     is_path_in_grants,
@@ -315,6 +325,7 @@ async def tool_vault_write(ctx, page: str, content: str) -> str | ToolResult:
     if gate_result is not None:
         return gate_result
 
+    existed = path.exists()  # capture before write so kind reflects pre-state
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content)
 
@@ -331,6 +342,11 @@ async def tool_vault_write(ctx, page: str, content: str) -> str | ToolResult:
     except Exception as e:
         log.warning(f"Failed to index vault page '{page}': {e}")
 
+    await publish_vault_changed(
+        ctx.event_bus, ctx.config,
+        kind=KIND_UPDATE if existed else KIND_CREATE,
+        path=path,
+    )
     return f"Vault page '{page}' saved."
 
 
@@ -383,6 +399,9 @@ async def tool_vault_delete(ctx, page: str) -> ToolResult:
     except Exception as e:
         log.warning(f"Failed to remove embeddings for '{page}': {e}")
 
+    await publish_vault_changed(
+        ctx.event_bus, ctx.config, kind=KIND_DELETE, path=path,
+    )
     return ToolResult(text=f"Vault page '{page}' deleted.")
 
 
@@ -455,6 +474,9 @@ async def tool_vault_rename(ctx, page: str, rename_to: str) -> ToolResult:
     except Exception as e:
         log.warning(f"Failed to re-index after rename '{page}' -> '{rename_to}': {e}")
 
+    await publish_vault_changed(
+        ctx.event_bus, ctx.config, kind=KIND_RENAME, path=new_path,
+    )
     return ToolResult(text=f"Vault page '{page}' renamed to '{rename_to}'.")
 
 
@@ -579,6 +601,9 @@ async def tool_vault_journal_append(ctx, tags: list[str], content: str) -> str:
     except Exception as e:
         log.warning(f"Failed to index journal entry: {e}")
 
+    await publish_vault_changed(
+        ctx.event_bus, ctx.config, kind=KIND_JOURNAL, path=filepath,
+    )
     log.info(f"Saved journal entry tagged [{tag_str}]")
     return f"Saved journal entry tagged [{tag_str}]"
 
@@ -921,6 +946,9 @@ async def tool_vault_section(
         if doc.add_section(title, level=level, after=after, before=before, parent=parent):
             path.write_text(doc.to_text(), encoding="utf-8")
             await _reindex_page(ctx, path)
+            await publish_vault_changed(
+                ctx.event_bus, ctx.config, kind=KIND_SECTION, path=path,
+            )
             return ToolResult(text=f"Added section: {title}")
         return ToolResult(text="[error: target section not found]")
 
@@ -931,6 +959,9 @@ async def tool_vault_section(
         if removed is not None:
             path.write_text(doc.to_text(), encoding="utf-8")
             await _reindex_page(ctx, path)
+            await publish_vault_changed(
+                ctx.event_bus, ctx.config, kind=KIND_SECTION, path=path,
+            )
             return ToolResult(text=f"Removed section: {section}")
         return ToolResult(text=f"[error: section not found: {section}]")
 
@@ -940,6 +971,9 @@ async def tool_vault_section(
         if doc.rename_section(section, title):
             path.write_text(doc.to_text(), encoding="utf-8")
             await _reindex_page(ctx, path)
+            await publish_vault_changed(
+                ctx.event_bus, ctx.config, kind=KIND_SECTION, path=path,
+            )
             return ToolResult(text=f"Renamed section: {section} → {title}")
         return ToolResult(text=f"[error: section not found: {section}]")
 
@@ -949,6 +983,9 @@ async def tool_vault_section(
         if doc.move_section(section, after=after, before=before):
             path.write_text(doc.to_text(), encoding="utf-8")
             await _reindex_page(ctx, path)
+            await publish_vault_changed(
+                ctx.event_bus, ctx.config, kind=KIND_SECTION, path=path,
+            )
             return ToolResult(text=f"Moved section: {section}")
         return ToolResult(text="[error: section or target not found]")
 
@@ -1028,6 +1065,15 @@ async def tool_vault_move_lines(
     # Update embedding index for both affected pages (fail-open)
     await _reindex_page(ctx, to_path)
     await _reindex_page(ctx, from_path)
+
+    # Publish a vault_changed event for each affected page so the UI can
+    # refresh both source and target views.
+    await publish_vault_changed(
+        ctx.event_bus, ctx.config, kind=KIND_MOVE, path=to_path,
+    )
+    await publish_vault_changed(
+        ctx.event_bus, ctx.config, kind=KIND_MOVE, path=from_path,
+    )
 
     return ToolResult(
         text=f"Moved {len(moved)} line(s) from {from_page} to {to_page}"
