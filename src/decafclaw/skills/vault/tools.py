@@ -7,10 +7,17 @@ that supports curated pages, daily journal entries, and user content.
 import logging
 import re
 from datetime import datetime, timezone
+from enum import Enum
 from pathlib import Path
 
 from decafclaw.media import ToolResult, WidgetRequest
+from decafclaw.skills.vault._grants import (
+    add_grant,
+    is_path_in_grants,
+    normalize_folder,
+)
 from decafclaw.skills.vault._sections import Document, _insert_into_doc
+from decafclaw.tools.confirmation import request_confirmation
 
 log = logging.getLogger(__name__)
 
@@ -120,6 +127,127 @@ def _is_in_agent_dir(config, path: Path) -> bool:
         return False
 
 
+class GateOutcome(Enum):
+    """Outcome of the user-page write gate. See `_check_user_write_allowed`."""
+
+    ALLOW = "allow"
+    NEEDS_CONFIRMATION = "needs_confirmation"
+    NON_INTERACTIVE_ERROR = "non_interactive_error"
+
+
+def _is_in_user_writable_paths(config, path: Path) -> bool:
+    """Check if a vault-relative path is under any configured allowlist entry.
+
+    Per-call: silent on invalid entries. The allowlist is validated once at
+    config-load time (see `load_config` in `decafclaw.config`), which surfaces
+    misconfigured entries without spamming logs on every write attempt.
+    """
+    paths = config.vault.user_writable_paths or []
+    if not paths:
+        return False
+    try:
+        rel = str(path.resolve().relative_to(_vault_root(config).resolve()))
+    except (ValueError, OSError):
+        return False
+    rel = rel.replace("\\", "/")
+    for entry in paths:
+        norm = normalize_folder(entry)
+        if norm and rel.startswith(norm):
+            return True
+    return False
+
+
+def _check_user_write_allowed(ctx, path: Path) -> GateOutcome:
+    """Decide how to handle a vault write/delete/rename for the given path.
+
+    Returns:
+        GateOutcome.ALLOW — write directly (path is in agent/, allowlist, or grants)
+        GateOutcome.NEEDS_CONFIRMATION — caller must call request_confirmation()
+        GateOutcome.NON_INTERACTIVE_ERROR — no UI available; caller returns error
+    """
+    if _is_in_agent_dir(ctx.config, path):
+        return GateOutcome.ALLOW
+    if _is_in_user_writable_paths(ctx.config, path):
+        return GateOutcome.ALLOW
+    if is_path_in_grants(ctx.config, ctx.conv_id, path):
+        return GateOutcome.ALLOW
+    if ctx.request_confirmation is None:
+        return GateOutcome.NON_INTERACTIVE_ERROR
+    return GateOutcome.NEEDS_CONFIRMATION
+
+
+async def _run_gate_or_confirm(
+    ctx,
+    outcomes: list[GateOutcome],
+    *,
+    tool_name: str,
+    command: str,
+    preview: str,
+    non_interactive_error: str,
+    denied_error: str,
+) -> ToolResult | None:
+    """Run the user-write gate flow shared by vault_write/delete/rename.
+
+    Pass one or more `GateOutcome` values (write/delete take one path; rename
+    takes both old and new). Returns:
+        - ToolResult with the appropriate error message if any outcome is
+          NON_INTERACTIVE_ERROR or if the user denies confirmation.
+        - None if the operation should proceed (all outcomes are ALLOW, or the
+          user approved confirmation).
+    """
+    if any(o == GateOutcome.NON_INTERACTIVE_ERROR for o in outcomes):
+        return ToolResult(text=non_interactive_error)
+    if any(o == GateOutcome.NEEDS_CONFIRMATION for o in outcomes):
+        approval = await request_confirmation(
+            ctx, tool_name=tool_name, command=command, message=preview,
+        )
+        if not approval.get("approved"):
+            return ToolResult(text=denied_error)
+    return None
+
+
+def _format_vault_write_preview(
+    config, path: Path, content: str, exists: bool
+) -> str:
+    """Confirmation preview for vault_write. Mirrors email's preview helper."""
+    try:
+        rel = str(path.resolve().relative_to(config.vault_root.resolve()))
+    except ValueError:
+        rel = path.name
+    state = "(overwrites existing page)" if exists else "(new page)"
+    size_kb = len(content.encode("utf-8")) / 1024
+    preview = content[:200] + ("..." if len(content) > 200 else "")
+    return "\n".join([
+        f"Vault write to: {rel}",
+        state,
+        f"Content: {size_kb:.1f} KB",
+        "---",
+        preview,
+    ])
+
+
+def _format_vault_delete_preview(config, path: Path) -> str:
+    """Confirmation preview for vault_delete."""
+    try:
+        rel = str(path.resolve().relative_to(config.vault_root.resolve()))
+    except ValueError:
+        rel = path.name
+    return (
+        f"Vault delete: {rel}\n"
+        f"(cannot be undone — page and embeddings will be removed)"
+    )
+
+
+def _format_vault_rename_preview(config, old_path: Path, new_path: Path) -> str:
+    """Confirmation preview for vault_rename. Shows both paths."""
+    def _rel(p: Path) -> str:
+        try:
+            return str(p.resolve().relative_to(config.vault_root.resolve()))
+        except ValueError:
+            return p.name
+    return f"Vault rename: {_rel(old_path)} → {_rel(new_path)}"
+
+
 def _safe_folder(config, folder: str) -> Path | None:
     """Validate a folder path within the vault. Returns resolved path or None."""
     if not folder:
@@ -168,10 +296,24 @@ async def tool_vault_write(ctx, page: str, content: str) -> str | ToolResult:
             text=f"[error: invalid page name '{page}' — must be within vault directory]")
     if not content or not content.strip():
         return ToolResult(text=f"[error: refusing to write empty vault page '{page}']")
-    if not _is_in_agent_dir(ctx.config, path):
-        return ToolResult(
-            text=f"[error: refusing to write '{page}' — "
-                 f"only pages under the agent folder may be written]")
+
+    outcome = _check_user_write_allowed(ctx, path)
+    gate_result = await _run_gate_or_confirm(
+        ctx,
+        [outcome],
+        tool_name="vault_write",
+        command=f"vault_write to '{page}'",
+        preview=_format_vault_write_preview(
+            ctx.config, path, content, path.exists()
+        ),
+        non_interactive_error=(
+            f"[error: vault_write to '{page}' outside agent folder "
+            f"requires interactive confirmation; not available from this context]"
+        ),
+        denied_error=f"[error: vault_write to '{page}' was denied by user]",
+    )
+    if gate_result is not None:
+        return gate_result
 
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content)
@@ -193,7 +335,8 @@ async def tool_vault_write(ctx, page: str, content: str) -> str | ToolResult:
 
 
 async def tool_vault_delete(ctx, page: str) -> ToolResult:
-    """Delete a vault page. Agent-owned pages only (under the agent folder)."""
+    """Delete a vault page. Agent pages allow direct delete; user pages
+    require confirmation per call (or grant/allowlist short-circuit)."""
     log.info(f"[tool:vault_delete] page={page}")
     path = _safe_write_path(ctx.config, page)
     if path is None:
@@ -201,9 +344,22 @@ async def tool_vault_delete(ctx, page: str) -> ToolResult:
             text=f"[error: invalid page name '{page}' — must be within vault directory]")
     if not path.exists():
         return ToolResult(text=f"[error: vault page '{page}' not found]")
-    if not _is_in_agent_dir(ctx.config, path):
-        return ToolResult(
-            text=f"[error: refusing to delete '{page}' — only pages under the agent folder may be deleted]")
+
+    outcome = _check_user_write_allowed(ctx, path)
+    gate_result = await _run_gate_or_confirm(
+        ctx,
+        [outcome],
+        tool_name="vault_delete",
+        command=f"vault_delete '{page}'",
+        preview=_format_vault_delete_preview(ctx.config, path),
+        non_interactive_error=(
+            f"[error: vault_delete of '{page}' outside agent folder "
+            f"requires interactive confirmation; not available from this context]"
+        ),
+        denied_error=f"[error: vault_delete of '{page}' was denied by user]",
+    )
+    if gate_result is not None:
+        return gate_result
 
     vault_resolved = _vault_root(ctx.config).resolve()
     rel_path = str(path.resolve().relative_to(vault_resolved))
@@ -231,7 +387,9 @@ async def tool_vault_delete(ctx, page: str) -> ToolResult:
 
 
 async def tool_vault_rename(ctx, page: str, rename_to: str) -> ToolResult:
-    """Rename or move a vault page. Agent-owned pages only."""
+    """Rename or move a vault page. Agent pages allow direct rename; user pages
+    require confirmation per call (or grant/allowlist short-circuit). A single
+    confirmation covers both source and target paths."""
     log.info(f"[tool:vault_rename] {page} -> {rename_to}")
     old_path = _safe_write_path(ctx.config, page)
     if old_path is None:
@@ -245,12 +403,27 @@ async def tool_vault_rename(ctx, page: str, rename_to: str) -> ToolResult:
         return ToolResult(text=f"[error: vault page '{page}' not found]")
     if new_path.exists():
         return ToolResult(text=f"[error: target '{rename_to}' already exists]")
-    if not _is_in_agent_dir(ctx.config, old_path):
-        return ToolResult(
-            text=f"[error: refusing to rename '{page}' — only pages under the agent folder may be renamed]")
-    if not _is_in_agent_dir(ctx.config, new_path):
-        return ToolResult(
-            text=f"[error: refusing to move '{page}' outside the agent folder]")
+
+    # Combined gate: a single confirmation must cover BOTH paths.
+    # If either path is non-interactive-error, the whole op fails.
+    # If either needs confirmation (and neither errors), confirm once.
+    old_outcome = _check_user_write_allowed(ctx, old_path)
+    new_outcome = _check_user_write_allowed(ctx, new_path)
+    gate_result = await _run_gate_or_confirm(
+        ctx,
+        [old_outcome, new_outcome],
+        tool_name="vault_rename",
+        command=f"vault_rename '{page}' -> '{rename_to}'",
+        preview=_format_vault_rename_preview(ctx.config, old_path, new_path),
+        non_interactive_error=(
+            f"[error: vault_rename '{page}' -> '{rename_to}' touches a path "
+            f"outside the agent folder and requires interactive confirmation; "
+            f"not available from this context]"
+        ),
+        denied_error=f"[error: vault_rename '{page}' -> '{rename_to}' was denied by user]",
+    )
+    if gate_result is not None:
+        return gate_result
 
     vault_resolved = _vault_root(ctx.config).resolve()
     old_rel = str(old_path.resolve().relative_to(vault_resolved))
@@ -283,6 +456,86 @@ async def tool_vault_rename(ctx, page: str, rename_to: str) -> ToolResult:
         log.warning(f"Failed to re-index after rename '{page}' -> '{rename_to}': {e}")
 
     return ToolResult(text=f"Vault page '{page}' renamed to '{rename_to}'.")
+
+
+async def tool_vault_grant_folder(ctx, folder: str, reason: str) -> ToolResult:
+    """Request per-conversation trust for a vault folder.
+
+    The folder is normalized via `normalize_folder` (leading `/` stripped,
+    trailing `/` enforced, `..` rejected) so inputs are accepted on the same
+    terms as `vault.user_writable_paths` config entries.
+
+    After user approval, vault_write/delete/rename under the granted folder
+    skip per-call confirmation for the rest of the conversation. The grant is
+    persisted as a sidecar at workspace/conversations/{conv_id}.vault_grants.json.
+    """
+    log.info(f"[tool:vault_grant_folder] folder={folder!r}")
+
+    # Path safety: empty / .. / vault-escape are rejected up front. Leading
+    # `/` is stripped by normalize_folder for consistency with the allowlist
+    # config (which also strips it), so /etc/passwd lands as etc/passwd/ and
+    # is then evaluated by the vault-containment check below.
+    if not isinstance(folder, str) or not folder.strip():
+        return ToolResult(text="[error: folder is required]")
+    if not isinstance(reason, str) or not reason.strip():
+        return ToolResult(text="[error: reason is required]")
+
+    normalized = normalize_folder(folder)
+    if not normalized:
+        return ToolResult(text=f"[error: invalid folder '{folder}']")
+
+    vault = _vault_root(ctx.config).resolve()
+    candidate = (vault / normalized.rstrip("/")).resolve()
+    if not candidate.is_relative_to(vault):
+        return ToolResult(text=f"[error: folder '{folder}' escapes the vault]")
+
+    # Reject if folder is inside agent/ (no grant needed — direct write allowed).
+    # `is_relative_to` returns True when the path equals itself, so it covers
+    # both the equality and subtree cases.
+    try:
+        agent = _agent_dir(ctx.config).resolve()
+        if candidate.is_relative_to(agent):
+            return ToolResult(
+                text=f"[error: '{folder}' is inside the agent folder; no grant needed]"
+            )
+    except (ValueError, OSError):
+        pass
+
+    # Validate context BEFORE prompting, so we never ask for a doomed grant.
+    if ctx.request_confirmation is None:
+        return ToolResult(
+            text=(
+                "[error: vault_grant_folder requires interactive confirmation; "
+                "not available from this context]"
+            )
+        )
+    if not ctx.conv_id:
+        return ToolResult(
+            text="[error: vault_grant_folder requires a conversation context]"
+        )
+
+    rel = str(candidate.relative_to(vault)).replace("\\", "/")
+    if not rel.endswith("/"):
+        rel = rel + "/"
+
+    msg = (
+        f"Grant vault write/delete/rename trust for folder '{rel}' "
+        f"for the rest of this conversation?\n\nReason: {reason}"
+    )
+    approval = await request_confirmation(
+        ctx,
+        tool_name="vault_grant_folder",
+        command=f"trust folder '{rel}'",
+        message=msg,
+    )
+    if not approval.get("approved"):
+        return ToolResult(text=f"[error: folder grant for '{rel}' was denied by user]")
+
+    if not add_grant(ctx.config, ctx.conv_id, rel):
+        return ToolResult(
+            text=f"[error: failed to persist folder grant for '{rel}']"
+        )
+    return ToolResult(text=f"Folder '{rel}' trusted for this conversation.")
 
 
 async def tool_vault_journal_append(ctx, tags: list[str], content: str) -> str:
@@ -791,6 +1044,7 @@ TOOLS = {
     "vault_write": tool_vault_write,
     "vault_delete": tool_vault_delete,
     "vault_rename": tool_vault_rename,
+    "vault_grant_folder": tool_vault_grant_folder,
     "vault_journal_append": tool_vault_journal_append,
     "vault_search": tool_vault_search,
     "vault_list": tool_vault_list,
@@ -838,9 +1092,10 @@ TOOL_DEFINITIONS = [
                 "workspace_write for those. ALWAYS vault_read first if "
                 "updating an existing page to preserve content you want to keep. "
                 "Use [[Page Name]] syntax to link to other pages. Include a "
-                "## Sources section. Writes are restricted to the agent folder "
-                "(agent/pages/, agent/journal/); admin and user pages are "
-                "off-limits."
+                "## Sources section. Pages outside the agent folder (agent/pages/, "
+                "agent/journal/) require user confirmation per call. For batch "
+                "operations on user folders, request folder trust via "
+                "vault_grant_folder first."
             ),
             "parameters": {
                 "type": "object",
@@ -868,11 +1123,12 @@ TOOL_DEFINITIONS = [
             "name": "vault_delete",
             "description": (
                 "DESTRUCTIVE — permanently delete a vault page and its embedding "
-                "entries. Only pages under the agent folder (agent/pages/, "
-                "agent/journal/) may be deleted; admin and user pages are "
-                "off-limits. Prefer vault_write with updated content to retire "
-                "or mark pages superseded; use delete only when the page is "
-                "definitively wrong, duplicate, or no longer reachable."
+                "entries. Pages outside the agent folder (agent/pages/, "
+                "agent/journal/) require user confirmation per call. For batch "
+                "operations, request folder trust via vault_grant_folder first. "
+                "Prefer vault_write with updated content to retire or mark pages "
+                "superseded; use delete only when the page is definitively wrong, "
+                "duplicate, or no longer reachable."
             ),
             "parameters": {
                 "type": "object",
@@ -895,11 +1151,12 @@ TOOL_DEFINITIONS = [
             "name": "vault_rename",
             "description": (
                 "Rename or move a vault page. Updates the embedding index so "
-                "search results stay consistent. Agent-owned pages only (under "
-                "the agent folder); target must also land under the agent "
-                "folder and must not already exist. Use this to reorganize or "
-                "refine page names — prefer it over delete + rewrite when the "
-                "content stays the same."
+                "search results stay consistent. Pages outside the agent folder "
+                "(agent/pages/, agent/journal/) require user confirmation per "
+                "call. For batch operations, request folder trust via "
+                "vault_grant_folder first. Use this to reorganize or refine page "
+                "names — prefer it over delete + rewrite when the content stays "
+                "the same. Target must not already exist."
             ),
             "parameters": {
                 "type": "object",
@@ -921,6 +1178,42 @@ TOOL_DEFINITIONS = [
                     },
                 },
                 "required": ["page", "rename_to"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "vault_grant_folder",
+            "description": (
+                "Request user trust for a vault folder for the rest of this "
+                "conversation. Use this BEFORE a batch operation on user-owned "
+                "folders (3+ writes/deletes/renames in the same area) to avoid "
+                "per-page confirmations. After approval, vault_write, "
+                "vault_delete, and vault_rename under the folder skip "
+                "confirmation. For one-off operations, the regular tools handle "
+                "confirmation per-call — don't call this for a single page."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "folder": {
+                        "type": "string",
+                        "description": (
+                            "Vault-relative folder path "
+                            "(e.g. 'creative/in-progress/fungal-world')."
+                        ),
+                    },
+                    "reason": {
+                        "type": "string",
+                        "description": (
+                            "Short user-facing reason. Shown in the confirmation "
+                            "message so the user knows why the grant is being "
+                            "requested."
+                        ),
+                    },
+                },
+                "required": ["folder", "reason"],
             },
         },
     },

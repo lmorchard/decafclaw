@@ -132,6 +132,21 @@ Tool-result clearing — a lightweight pre-compaction tier that replaces large o
 
 `min_turn_age: 2` means tool messages from the current and previous user turn stay intact; older results are eligible for clearing. `min_size_bytes: 1024` is a floor — messages smaller than the stub itself wouldn't be worth clearing. `preserve_tools` is a hard allowlist for tools whose output is fundamentally load-bearing (e.g. `activate_skill` announces the tools the agent will use; `checklist_*` carries the per-conversation execution-loop state).
 
+### `vault`
+
+Vault location and write-gate settings. See [vault.md](vault.md).
+
+| Field | Type | Default | Env Var |
+|-------|------|---------|---------|
+| `vault_path` | str | `workspace/vault/` | `VAULT_VAULT_PATH` |
+| `agent_folder` | str | `agent/` | `VAULT_AGENT_FOLDER` |
+| `recent_changes_limit` | int | `50` | `VAULT_RECENT_CHANGES_LIMIT` |
+| `user_writable_paths` | list[str] | `[]` | `VAULT_USER_WRITABLE_PATHS` |
+
+`agent_folder` is resolved relative to `vault_path`. Set `vault_path` to an absolute path to point the agent at an existing Obsidian vault.
+
+`user_writable_paths` lists vault-relative folder paths that bypass the user-page write confirmation. Prefix match (no globs); leading `/` is stripped and a trailing `/` is enforced, so `creative` and `creative/` are equivalent. Entries containing `..` are skipped with a warning. Empty by default — opt-in. Example: `["creative/", "notes/"]`.
+
 ### `vault_retrieval`
 
 Controls auto-retrieval injection at turn start. See [context-composer.md#memory-retrieval-modes](context-composer.md#memory-retrieval-modes) and #301.
