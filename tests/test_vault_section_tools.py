@@ -344,3 +344,70 @@ async def test_vault_section_reindexes_after_add(vault_ctx):
     # The indexed path must correspond to note.md
     indexed_path = mock_index.call_args.args[1]
     assert "note" in indexed_path
+
+
+@pytest.mark.asyncio
+async def test_vault_section_publishes_vault_changed(vault_ctx):
+    """vault_section publishes a single vault_changed event after a successful
+    write. Exercising the 'add' branch is enough — every action branch shares
+    the same publish pattern."""
+    vault = vault_ctx.config.vault_root
+    agent_pages = vault / "agent" / "pages"
+    agent_pages.mkdir(parents=True, exist_ok=True)
+    (agent_pages / "note.md").write_text("# Top\n\n## First\n")
+    captured: list[dict] = []
+
+    async def capture(event):
+        captured.append(event)
+
+    vault_ctx.event_bus.publish = capture
+    with patch("decafclaw.embeddings.index_entry", new_callable=AsyncMock), \
+         patch("decafclaw.embeddings.delete_entries"):
+        result = await tool_vault_section(
+            vault_ctx,
+            page="agent/pages/note",
+            action="add",
+            title="Second",
+            level=2,
+            after="top/first",
+        )
+    assert "[error" not in result.text.lower()
+    matching = [e for e in captured if e.get("type") == "vault_changed"]
+    assert len(matching) == 1
+    assert matching[0]["kind"] == "section"
+    assert matching[0]["path"].endswith("note.md")
+
+
+@pytest.mark.asyncio
+async def test_vault_move_lines_publishes_vault_changed_for_both_pages(vault_ctx):
+    """vault_move_lines publishes one vault_changed event per affected page —
+    one for the target write, one for the source write."""
+    vault = vault_ctx.config.vault_root
+    agent_pages = vault / "agent" / "pages"
+    agent_pages.mkdir(parents=True, exist_ok=True)
+    (agent_pages / "src.md").write_text(
+        "# Top\n\n- [ ] task1\n- [ ] task2\n- [ ] task3\n"
+    )
+    (agent_pages / "dst.md").write_text("# Today\n\n## inbox\n")
+    captured: list[dict] = []
+
+    async def capture(event):
+        captured.append(event)
+
+    vault_ctx.event_bus.publish = capture
+    with patch("decafclaw.embeddings.index_entry", new_callable=AsyncMock), \
+         patch("decafclaw.embeddings.delete_entries"):
+        result = await tool_vault_move_lines(
+            vault_ctx,
+            from_page="agent/pages/src",
+            to_page="agent/pages/dst",
+            lines="3,4",
+            to_section="today/inbox",
+        )
+    assert "[error" not in result.text.lower()
+    matching = [e for e in captured if e.get("type") == "vault_changed"]
+    assert len(matching) == 2
+    assert all(e["kind"] == "move" for e in matching)
+    paths = {e["path"] for e in matching}
+    assert any(p.endswith("src.md") for p in paths)
+    assert any(p.endswith("dst.md") for p in paths)
