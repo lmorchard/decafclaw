@@ -10,7 +10,6 @@ export class VaultSidebar extends LitElement {
     _openWikiPage: { type: String, state: true },
     _vaultView: { type: String, state: true },
     _recentPages: { type: Array, state: true },
-    _everActivated: { type: Boolean, state: true },
   };
 
   createRenderRoot() { return this; }
@@ -29,37 +28,28 @@ export class VaultSidebar extends LitElement {
     this._vaultView = 'browse'; // 'browse' | 'recent'
     /** @type {Array<{title: string, path: string, folder: string, modified: number}>} */
     this._recentPages = [];
-    // Set to true on first Vault-tab activation. Gates the vault-page-deleted
-    // listener so it doesn't fire before the user has opened the Vault tab.
-    this._everActivated = false;
   }
 
   connectedCallback() {
     super.connectedCallback();
-    this._onVaultPageDeleted = () => {
-      // Only refetch if the Vault tab has been activated at least once —
-      // avoids firing requests before the user has ever opened it.
-      if (!this._everActivated) return;
+    this._onVaultChanged = () => {
       if (this._vaultView === 'recent') this.#fetchRecentPages();
       else this.#fetchWikiPages();
     };
-    window.addEventListener('vault-page-deleted', this._onVaultPageDeleted);
+    window.addEventListener('vault-changed', this._onVaultChanged);
   }
 
   disconnectedCallback() {
     super.disconnectedCallback();
-    window.removeEventListener('vault-page-deleted', this._onVaultPageDeleted);
+    window.removeEventListener('vault-changed', this._onVaultChanged);
   }
 
   /** @param {Map} changedProps */
   updated(changedProps) {
-    // Re-fetch on every false→true transition of `active`, matching the
-    // pre-refactor behavior where clicking the Vault tab always refreshed
-    // the current view. `_everActivated` stays as a latch so the
-    // `vault-page-deleted` listener doesn't fire before the user has ever
-    // opened the Vault tab.
+    // Re-fetch on every false→true transition of `active` — clicking the
+    // Vault tab refreshes the current view as a fallback (and as the
+    // initial-load trigger before any mutation event has fired).
     if (changedProps.has('active') && this.active && !changedProps.get('active')) {
-      this._everActivated = true;
       if (this._vaultView === 'recent') this.#fetchRecentPages();
       else this.#fetchWikiPages();
     }

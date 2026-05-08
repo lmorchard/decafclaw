@@ -15,6 +15,13 @@ from starlette.routing import Mount, Route, WebSocketRoute
 from starlette.staticfiles import StaticFiles
 
 from .mattermost_ui import get_token_registry
+from .skills.vault._events import (
+    KIND_CREATE,
+    KIND_DELETE,
+    KIND_RENAME,
+    KIND_UPDATE,
+    publish_vault_changed,
+)
 from .web.workspace_paths import (
     IMAGE_EXTENSIONS,
     detect_kind,
@@ -1174,6 +1181,7 @@ async def vault_read(request: Request, username: str) -> JSONResponse:
 
 async def _vault_rename(
     config, vault: Path, old_file: Path, old_name: str, rename_to: str,
+    event_bus=None,
 ) -> JSONResponse:
     """Rename/move a vault page; re-indexes embeddings on success."""
     if not isinstance(rename_to, str) or not rename_to.strip():
@@ -1216,6 +1224,7 @@ async def _vault_rename(
         await index_entry(config, new_rel, new_content, source_type=new_source_type)
     except Exception as e:
         log.warning(f"Failed to re-index after rename '{old_name}' -> '{rename_to}': {e}")
+    await publish_vault_changed(event_bus, config, kind=KIND_RENAME, path=new_file)
     stat = new_file.stat()
     rel = new_file.relative_to(vault_resolved)
     folder = str(rel.parent) if rel.parent != Path(".") else ""
@@ -1232,6 +1241,7 @@ async def _vault_rename(
 async def vault_write(request: Request, username: str) -> JSONResponse:
     """Create or update a vault page, or rename/move it."""
     config = request.app.state.config
+    event_bus = request.app.state.event_bus
     page_name = request.path_params.get("page", "")
     if not page_name:
         return JSONResponse({"error": "page name required"}, status_code=400)
@@ -1251,7 +1261,10 @@ async def vault_write(request: Request, username: str) -> JSONResponse:
                 {"error": "cannot combine rename_to with content"},
                 status_code=400,
             )
-        return await _vault_rename(config, vault, target, page_name, rename_to)
+        return await _vault_rename(
+            config, vault, target, page_name, rename_to,
+            event_bus=event_bus,
+        )
 
     content = body.get("content")
     if content is None or not isinstance(content, str):
@@ -1269,6 +1282,7 @@ async def vault_write(request: Request, username: str) -> JSONResponse:
                     {"error": "conflict", "server_modified": file_mtime},
                     status_code=409,
                 )
+    existed = target.exists()
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(content, encoding="utf-8")
     source_type = _vault_source_type(config, target)
@@ -1279,6 +1293,11 @@ async def vault_write(request: Request, username: str) -> JSONResponse:
         await index_entry(config, rel_path, content, source_type=source_type)
     except Exception as e:
         log.warning(f"Failed to index vault page '{page_name}': {e}")
+    await publish_vault_changed(
+        event_bus, config,
+        kind=KIND_UPDATE if existed else KIND_CREATE,
+        path=target,
+    )
     return JSONResponse({"ok": True, "modified": target.stat().st_mtime})
 
 
@@ -1286,6 +1305,7 @@ async def vault_write(request: Request, username: str) -> JSONResponse:
 async def vault_create(request: Request, username: str) -> JSONResponse:
     """Create a new vault page."""
     config = request.app.state.config
+    event_bus = request.app.state.event_bus
     body = await request.json()
     name = body.get("name")
     if not name or not isinstance(name, str):
@@ -1314,6 +1334,7 @@ async def vault_create(request: Request, username: str) -> JSONResponse:
         await index_entry(config, rel_path, content, source_type=source_type)
     except Exception as e:
         log.warning(f"Failed to index new vault page '{name}': {e}")
+    await publish_vault_changed(event_bus, config, kind=KIND_CREATE, path=target)
     return JSONResponse({"ok": True, "page": name, "modified": target.stat().st_mtime})
 
 
@@ -1321,6 +1342,7 @@ async def vault_create(request: Request, username: str) -> JSONResponse:
 async def vault_create_folder(request: Request, username: str) -> JSONResponse:
     """Create a new empty folder in the vault."""
     config = request.app.state.config
+    event_bus = request.app.state.event_bus
     body = await request.json()
     folder = body.get("folder")
     if not folder or not isinstance(folder, str):
@@ -1337,6 +1359,7 @@ async def vault_create_folder(request: Request, username: str) -> JSONResponse:
     if target.exists():
         return JSONResponse({"error": "folder already exists"}, status_code=409)
     target.mkdir(parents=True, exist_ok=True)
+    await publish_vault_changed(event_bus, config, kind=KIND_CREATE, path=target)
     return JSONResponse({"ok": True, "folder": folder})
 
 
@@ -1344,6 +1367,7 @@ async def vault_create_folder(request: Request, username: str) -> JSONResponse:
 async def vault_delete(request: Request, username: str) -> JSONResponse:
     """Delete a vault page."""
     config = request.app.state.config
+    event_bus = request.app.state.event_bus
     page_name = request.path_params.get("page", "")
     if not page_name:
         return JSONResponse({"error": "page name required"}, status_code=400)
@@ -1371,6 +1395,7 @@ async def vault_delete(request: Request, username: str) -> JSONResponse:
         delete_entries(config, rel_path, source_type=source_type)
     except Exception as e:
         log.warning(f"Failed to remove embeddings for '{page_name}': {e}")
+    await publish_vault_changed(event_bus, config, kind=KIND_DELETE, path=target)
     return JSONResponse({"ok": True})
 
 

@@ -436,6 +436,9 @@ ws.addEventListener('message', (e) => {
   if (msg?.type === MESSAGE_TYPES.NOTIFICATION_READ) {
     window.dispatchEvent(new CustomEvent('notification-read', { detail: msg }));
   }
+  if (msg?.type === MESSAGE_TYPES.VAULT_CHANGED) {
+    window.dispatchEvent(new CustomEvent('vault-changed', { detail: msg }));
+  }
   if (msg?.type === MESSAGE_TYPES.CANVAS_UPDATE) {
     applyEvent(msg);
   }

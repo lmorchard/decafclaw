@@ -24,6 +24,7 @@ export const MESSAGE_TYPES = Object.freeze({
   TURN_COMPLETE: 'turn_complete',
   TURN_START: 'turn_start',
   USER_MESSAGE: 'user_message',
+  VAULT_CHANGED: 'vault_changed',
   CANCEL_TURN: 'cancel_turn',
   CONFIRM_RESPONSE: 'confirm_response',
   LOAD_HISTORY: 'load_history',

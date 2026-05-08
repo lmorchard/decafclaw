@@ -190,6 +190,72 @@ class TestVaultWrite:
         assert (vault_dir / "agent" / "pages" / "Test.md").exists()
         assert not (vault_dir / "agent" / "pages" / "Test.md.md").exists()
 
+    @pytest.mark.asyncio
+    async def test_publishes_vault_changed_on_create(self, ctx, agent_pages):
+        captured: list[dict] = []
+
+        async def capture(event):
+            captured.append(event)
+
+        ctx.event_bus.publish = capture
+        with patch("decafclaw.embeddings.index_entry", new_callable=AsyncMock):
+            await tool_vault_write(ctx, "agent/pages/Foo", "# Foo content")
+        matching = [e for e in captured if e.get("type") == "vault_changed"]
+        assert len(matching) == 1
+        assert matching[0]["kind"] == "create"
+        assert matching[0]["path"].endswith("Foo.md")
+
+    @pytest.mark.asyncio
+    async def test_publishes_vault_changed_on_update(self, ctx, agent_pages):
+        (agent_pages / "Existing.md").write_text("Old content.")
+        captured: list[dict] = []
+
+        async def capture(event):
+            captured.append(event)
+
+        ctx.event_bus.publish = capture
+        with patch("decafclaw.embeddings.index_entry", new_callable=AsyncMock):
+            await tool_vault_write(ctx, "agent/pages/Existing", "New content.")
+        matching = [e for e in captured if e.get("type") == "vault_changed"]
+        assert len(matching) == 1
+        assert matching[0]["kind"] == "update"
+
+    @pytest.mark.asyncio
+    async def test_does_not_publish_on_invalid_page_name(self, ctx, vault_dir):
+        captured: list[dict] = []
+
+        async def capture(event):
+            captured.append(event)
+
+        ctx.event_bus.publish = capture
+        await tool_vault_write(ctx, "..", "content")
+        assert not [e for e in captured if e.get("type") == "vault_changed"]
+
+    @pytest.mark.asyncio
+    async def test_does_not_publish_on_empty_content(self, ctx, vault_dir):
+        captured: list[dict] = []
+
+        async def capture(event):
+            captured.append(event)
+
+        ctx.event_bus.publish = capture
+        await tool_vault_write(ctx, "agent/pages/Empty", "")
+        assert not [e for e in captured if e.get("type") == "vault_changed"]
+
+    @pytest.mark.asyncio
+    async def test_does_not_publish_on_non_interactive_outside_agent(
+        self, ctx, vault_dir,
+    ):
+        ctx.request_confirmation = None
+        captured: list[dict] = []
+
+        async def capture(event):
+            captured.append(event)
+
+        ctx.event_bus.publish = capture
+        await tool_vault_write(ctx, "StrayRootPage", "# Stray")
+        assert not [e for e in captured if e.get("type") == "vault_changed"]
+
 
 class TestVaultWriteUserFolders:
     """Phase 2: vault_write to user folders via the three-tier gate.
@@ -330,6 +396,22 @@ class TestVaultDelete:
             result = await tool_vault_delete(ctx, bad)
             assert "error" in result.text.lower(), f"bad input {bad!r} was accepted"
         assert (vault_dir / ".md").exists()
+
+    @pytest.mark.asyncio
+    async def test_publishes_vault_changed_on_delete(self, ctx, agent_pages):
+        (agent_pages / "Stale.md").write_text("old")
+        captured: list[dict] = []
+
+        async def capture(event):
+            captured.append(event)
+
+        ctx.event_bus.publish = capture
+        with patch("decafclaw.embeddings.delete_entries"):
+            await tool_vault_delete(ctx, "agent/pages/Stale")
+        matching = [e for e in captured if e.get("type") == "vault_changed"]
+        assert len(matching) == 1
+        assert matching[0]["kind"] == "delete"
+        assert matching[0]["path"].endswith("Stale.md")
 
 
 class TestVaultDeleteUserFolders:
@@ -523,6 +605,27 @@ class TestVaultRename:
             assert "error" in result.text.lower(), f"bad target {bad!r} accepted"
         assert (agent_pages / "Doc.md").exists()
 
+    @pytest.mark.asyncio
+    async def test_publishes_vault_changed_on_rename(self, ctx, agent_pages):
+        (agent_pages / "Old Name.md").write_text("body")
+        captured: list[dict] = []
+
+        async def capture(event):
+            captured.append(event)
+
+        ctx.event_bus.publish = capture
+        with (
+            patch("decafclaw.embeddings.delete_entries"),
+            patch("decafclaw.embeddings.index_entry", new_callable=AsyncMock),
+        ):
+            await tool_vault_rename(
+                ctx, "agent/pages/Old Name", "agent/pages/New Name"
+            )
+        matching = [e for e in captured if e.get("type") == "vault_changed"]
+        assert len(matching) == 1
+        assert matching[0]["kind"] == "rename"
+        assert matching[0]["path"].endswith("New Name.md")
+
 
 class TestVaultRenameUserFolders:
     """Phase 4: vault_rename across user folders via the three-tier gate.
@@ -677,6 +780,25 @@ class TestVaultJournalAppend:
         text = files[0].read_text()
         assert "First" in text
         assert "Second" in text
+
+    @pytest.mark.asyncio
+    async def test_publishes_vault_changed_on_journal_append(
+        self, ctx, agent_journal,
+    ):
+        captured: list[dict] = []
+
+        async def capture(event):
+            captured.append(event)
+
+        ctx.event_bus.publish = capture
+        with patch("decafclaw.embeddings.index_entry", new_callable=AsyncMock):
+            await tool_vault_journal_append(
+                ctx, tags=["test"], content="Something happened.",
+            )
+        matching = [e for e in captured if e.get("type") == "vault_changed"]
+        assert len(matching) == 1
+        assert matching[0]["kind"] == "journal"
+        assert matching[0]["path"].endswith(".md")
 
 
 class TestVaultSearch:

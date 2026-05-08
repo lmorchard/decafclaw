@@ -12,6 +12,7 @@ import re
 
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
+from decafclaw.skills.vault._events import VAULT_CHANGED_EVENT_TYPE
 from decafclaw.web.message_types import WSMessageType
 
 log = logging.getLogger(__name__)
@@ -732,6 +733,27 @@ def _make_notification_forwarder(ws_send):
     return _forward
 
 
+def _make_vault_change_forwarder(ws_send):
+    """Forward `vault_changed` events from the global bus to a single socket.
+
+    Mirrors `_make_notification_forwarder`: filter by event type, send the
+    matching wire shape to the client. The bus dispatches every event to
+    every subscriber, so per-event filtering is required.
+    """
+    async def _forward(event: dict):
+        if event.get("type") != VAULT_CHANGED_EVENT_TYPE:
+            return
+        # `... or ""` (not `, ""` default) coerces both missing keys AND
+        # explicit None values to empty string, keeping the wire contract
+        # stable even if a publisher sends a JSON null.
+        await ws_send({
+            "type": WSMessageType.VAULT_CHANGED,
+            "path": event.get("path") or "",
+            "kind": event.get("kind") or "",
+        })
+    return _forward
+
+
 # -- Main WebSocket handler ----------------------------------------------------
 
 
@@ -781,6 +803,7 @@ async def websocket_chat(websocket: WebSocket, config, event_bus, app_ctx,
     # unsubscribes — otherwise a raise during setup could leak the
     # subscriber. See docs/notifications.md for the push architecture.
     notif_sub_id = event_bus.subscribe(_make_notification_forwarder(ws_send))
+    vault_sub_id = event_bus.subscribe(_make_vault_change_forwarder(ws_send))
 
     try:
         while True:
@@ -805,4 +828,5 @@ async def websocket_chat(websocket: WebSocket, config, event_bus, app_ctx,
         log.error(f"WebSocket error for {username}: {e}", exc_info=True)
     finally:
         event_bus.unsubscribe(notif_sub_id)
+        event_bus.unsubscribe(vault_sub_id)
         _unsubscribe_all(state)

@@ -377,3 +377,113 @@ async def test_vault_recent_excludes_user_pages(client, http_config):
     titles = [p["title"] for p in pages]
     assert "AgentPage" in titles
     assert "UserNote" not in titles
+
+
+# -- vault_changed event publishing -------------------------------------------
+#
+# These tests verify the REST handlers publish `vault_changed` events on the
+# success path so the WebSocket forwarder can broadcast them to clients.
+
+
+def _vault_changed_events(bus) -> list[dict]:
+    """Subscribe a list-collector to `bus` and return the list.
+
+    Use BEFORE issuing the request so events emitted during the call land
+    in the returned list.
+    """
+    captured: list[dict] = []
+
+    async def _capture(event: dict) -> None:
+        if event.get("type") == "vault_changed":
+            captured.append(event)
+
+    bus.subscribe(_capture)
+    return captured
+
+
+@pytest.mark.asyncio
+async def test_rest_vault_create_publishes_vault_changed(client, bus):
+    events = _vault_changed_events(bus)
+    resp = await client.post(
+        "/api/vault",
+        json={"name": "agent/pages/EventCreate"},
+    )
+    assert resp.status_code == 200
+    assert len(events) == 1
+    assert events[0]["kind"] == "create"
+    assert events[0]["path"] == "agent/pages/EventCreate.md"
+
+
+@pytest.mark.asyncio
+async def test_rest_vault_create_folder_publishes_vault_changed(client, bus):
+    events = _vault_changed_events(bus)
+    resp = await client.post(
+        "/api/vault/folders",
+        json={"folder": "agent/pages/event-folder"},
+    )
+    assert resp.status_code == 200
+    assert len(events) == 1
+    assert events[0]["kind"] == "create"
+    assert events[0]["path"] == "agent/pages/event-folder"
+
+
+@pytest.mark.asyncio
+async def test_rest_vault_write_new_page_publishes_create(client, bus):
+    events = _vault_changed_events(bus)
+    resp = await client.put(
+        "/api/vault/agent/pages/EventWrite",
+        json={"content": "# New"},
+    )
+    assert resp.status_code == 200
+    assert len(events) == 1
+    assert events[0]["kind"] == "create"
+    assert events[0]["path"] == "agent/pages/EventWrite.md"
+
+
+@pytest.mark.asyncio
+async def test_rest_vault_write_existing_page_publishes_update(
+    client, http_config, bus,
+):
+    pages_dir = http_config.vault_agent_pages_dir
+    (pages_dir / "EventUpdate.md").write_text("# Old")
+    events = _vault_changed_events(bus)
+    resp = await client.put(
+        "/api/vault/agent/pages/EventUpdate",
+        json={"content": "# New"},
+    )
+    assert resp.status_code == 200
+    assert len(events) == 1
+    assert events[0]["kind"] == "update"
+    assert events[0]["path"] == "agent/pages/EventUpdate.md"
+
+
+@pytest.mark.asyncio
+async def test_rest_vault_rename_publishes_vault_changed(
+    client, http_config, bus,
+):
+    pages_dir = http_config.vault_agent_pages_dir
+    (pages_dir / "RenameMe.md").write_text("# Old")
+    events = _vault_changed_events(bus)
+    resp = await client.put(
+        "/api/vault/agent/pages/RenameMe",
+        json={"rename_to": "agent/pages/Renamed"},
+    )
+    assert resp.status_code == 200
+    # Only the rename publish should fire — the write branch is bypassed.
+    assert len(events) == 1
+    assert events[0]["kind"] == "rename"
+    assert events[0]["path"] == "agent/pages/Renamed.md"
+
+
+@pytest.mark.asyncio
+async def test_rest_vault_delete_publishes_vault_changed(
+    client, http_config, bus,
+):
+    pages_dir = http_config.vault_agent_pages_dir
+    (pages_dir / "DeleteMe.md").write_text("# Bye")
+    events = _vault_changed_events(bus)
+    resp = await client.delete("/api/vault/agent/pages/DeleteMe")
+    assert resp.status_code == 200
+    assert len(events) == 1
+    assert events[0]["kind"] == "delete"
+    assert events[0]["path"] == "agent/pages/DeleteMe.md"

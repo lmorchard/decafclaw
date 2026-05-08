@@ -211,6 +211,15 @@ Echo of a user-authored message to all subscribers of the conversation (used for
 - `conv_id` — string
 - `message` — object
 
+### `vault_changed`
+
+A vault page or folder was created, edited, deleted, renamed, or moved. Clients showing vault content should re-fetch.
+
+**Fields:**
+
+- `path` — string
+- `kind` — string
+
 ## Client → Server
 
 ### `cancel_turn`
