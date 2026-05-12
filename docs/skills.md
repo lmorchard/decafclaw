@@ -230,7 +230,7 @@ Skills are discovered from three locations, in priority order (highest first):
 | 1 | `data/{agent_id}/workspace/skills/` | Agent-writable. ClawHub installs land here. |
 | 2 | `data/{agent_id}/skills/` | Admin-managed. |
 | 3 | `src/decafclaw/skills/` | Bundled with the package. |
-| 4 | Paths listed in `extra_skill_paths` config | Externally-managed. Each entry can be a directory of skills (e.g., `~/.claude/skills`) or a direct skill directory (e.g., `../../contrib/skills/linkding-ingest`). Lowest priority — cannot shadow bundled skills. |
+| 4 | Paths listed in `extra_skill_paths` config | Externally-managed. Each entry can be a directory of skills (e.g., `~/.claude/skills`) or a direct skill directory (e.g., `$DECAFCLAW_REPO/contrib/skills/linkding-ingest`). Lowest priority — cannot shadow bundled skills. |
 
 Higher-priority skills override lower-priority ones with the same name. External skills (tier 4) cannot shadow bundled skills, but workspace and admin skills can shadow them.
 
@@ -243,19 +243,26 @@ Each entry in `extra_skill_paths` is interpreted polymorphically:
 
 The two forms can be mixed within the same `extra_skill_paths` list. Detection is per-entry — the loader checks for `SKILL.md` at the entry path first; if absent, it falls back to scanning subdirectories.
 
-Example mixing both forms (relative paths anchor to `data/{agent_id}/`, so `../../contrib/skills/<name>` reaches the repo's `contrib/skills/` directory when `data_home` is at its default `./data` location):
+**Path resolution.** Each entry is run through `os.path.expandvars` + `~` expansion, then anchored to `config.agent_path` (i.e. `data/{agent_id}/`) if still relative. The agent-path anchor only reaches the repo's `contrib/skills/` when `data_home` happens to live inside the repo (the default `./data` dev layout). Production deployments typically keep `data_home` somewhere stable like `~/.decafclaw/`, where relative paths can't see the repo — prefer absolute paths or a `$VAR` for those.
+
+Example pointing at shared skills via a repo-locating env var (recommended for any deployment where `data_home` is outside the repo):
+
+```bash
+# .env
+DECAFCLAW_REPO=/absolute/path/to/decafclaw-repo
+```
 
 ```json
 {
   "extra_skill_paths": [
-    "../../contrib/skills/linkding-ingest",
-    "../../contrib/skills/mastodon-ingest",
+    "$DECAFCLAW_REPO/contrib/skills/linkding-ingest",
+    "$DECAFCLAW_REPO/contrib/skills/mastodon-ingest",
     "~/.claude/skills"
   ]
 }
 ```
 
-For deployments where `data_home` lives outside the repo, use absolute paths or `$VAR` expansion (e.g. set `DECAFCLAW_REPO=/path/to/repo` in `.env` and reference `$DECAFCLAW_REPO/contrib/skills/<name>`).
+For an in-repo `data_home` (default dev layout), a relative `../../contrib/skills/<name>` also works.
 
 Per-deployment customization still works via the priority order: a same-named skill under `data/{agent_id}/skills/<name>/` shadows any entry in `extra_skill_paths`. So you can start by referencing a shared skill and switch to a local copy later if you need to fork it.
 
