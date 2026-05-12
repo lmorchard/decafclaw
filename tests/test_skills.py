@@ -700,3 +700,77 @@ async def test_activate_native_skill(ctx, tmp_path):
     assert "native_test" in _text(result)
     assert "native_test" in ctx.tools.extra
     assert len(ctx.tools.extra_definitions) == 1
+
+
+def test_discover_loads_direct_skill_dir_from_extra_paths(tmp_path, config):
+    """An entry in extra_skill_paths that points directly at a skill
+    directory (one with SKILL.md at its root) loads that skill."""
+    direct_skill = tmp_path / "my-direct-skill"
+    _write_skill(
+        direct_skill,
+        "name: my-direct-skill\ndescription: Loaded directly.",
+    )
+    config.extra_skill_paths = [str(direct_skill)]
+
+    skills = discover_skills(config)
+    matching = [s for s in skills if s.name == "my-direct-skill"]
+    assert len(matching) == 1
+    assert matching[0].description == "Loaded directly."
+
+
+def test_discover_mixed_extra_paths(tmp_path, config):
+    """extra_skill_paths can mix direct skill dirs and directory-of-skills
+    entries; both kinds load."""
+    direct = tmp_path / "direct-skill"
+    _write_skill(direct, "name: direct-skill\ndescription: Direct.")
+
+    dir_of_skills = tmp_path / "skills-root"
+    _write_skill(dir_of_skills / "child-a", "name: child-a\ndescription: Child A.")
+    _write_skill(dir_of_skills / "child-b", "name: child-b\ndescription: Child B.")
+
+    config.extra_skill_paths = [str(direct), str(dir_of_skills)]
+
+    skills = discover_skills(config)
+    names = {s.name for s in skills}
+    assert "direct-skill" in names
+    assert "child-a" in names
+    assert "child-b" in names
+
+
+def test_discover_skips_missing_extra_path(tmp_path, config):
+    """A non-existent path in extra_skill_paths is silently skipped —
+    no crash, no unrelated skills lost."""
+    real_skill = tmp_path / "real-skill"
+    _write_skill(real_skill, "name: real-skill\ndescription: Real.")
+
+    config.extra_skill_paths = [
+        str(tmp_path / "does-not-exist"),
+        str(real_skill),
+    ]
+
+    skills = discover_skills(config)
+    names = {s.name for s in skills}
+    assert "real-skill" in names
+
+
+def test_discover_admin_skill_shadows_direct_extra_path(tmp_path, config):
+    """A skill at admin level (data/{agent_id}/skills/) wins over a
+    direct-skill-dir entry in extra_skill_paths with the same name —
+    this is how per-deployment overrides of shared optional skills work."""
+    # Direct entry in extra_skill_paths
+    shared = tmp_path / "shared-loc"
+    _write_skill(shared, "name: shared-skill\ndescription: From contrib.")
+
+    # Admin-level shadow
+    admin_skills = config.agent_path / "skills"
+    _write_skill(
+        admin_skills / "shared-skill",
+        "name: shared-skill\ndescription: Local override.",
+    )
+
+    config.extra_skill_paths = [str(shared)]
+
+    skills = discover_skills(config)
+    matching = [s for s in skills if s.name == "shared-skill"]
+    assert len(matching) == 1
+    assert matching[0].description == "Local override."

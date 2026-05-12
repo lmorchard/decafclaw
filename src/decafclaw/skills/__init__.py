@@ -3,6 +3,7 @@
 import logging
 import os
 import re
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -191,6 +192,26 @@ def _resolve_extra_skill_paths(config) -> list[Path]:
     return resolved
 
 
+def _iter_skill_dirs(base_path: Path) -> Iterator[Path]:
+    """Yield skill-directory candidates for a scan entry.
+
+    If ``base_path`` itself contains ``SKILL.md`` at its root, it IS a
+    skill directory — yield it directly. Otherwise, if ``base_path`` is
+    a directory, yield each immediate subdirectory (the caller checks
+    for SKILL.md presence inside each).
+
+    Yields nothing when ``base_path`` doesn't exist or isn't a directory.
+    """
+    if (base_path / "SKILL.md").exists():
+        yield base_path
+        return
+    if not base_path.is_dir():
+        return
+    for entry in sorted(base_path.iterdir()):
+        if entry.is_dir():
+            yield entry
+
+
 def discover_skills(config) -> list[SkillInfo]:
     """Scan skill directories and return discovered skills.
 
@@ -199,6 +220,14 @@ def discover_skills(config) -> list[SkillInfo]:
     2. Agent-level skills: data/{agent_id}/skills/
     3. Bundled skills: src/decafclaw/skills/
     4. config.extra_skill_paths (lowest — never shadows bundled)
+
+    Each scan entry is interpreted polymorphically: if the entry path
+    itself contains a SKILL.md at its root, it IS the skill (per-skill
+    opt-in). Otherwise, each immediate subdirectory with a SKILL.md is
+    a discovered skill (directory-of-skills, the original behavior).
+    Both forms can be freely mixed in any scan entry — most useful for
+    `extra_skill_paths`, where deployments opt into shared skills
+    from `contrib/skills/` by referencing them directly.
     """
     scan_paths = [
         config.workspace_path / "skills",
@@ -212,13 +241,7 @@ def discover_skills(config) -> list[SkillInfo]:
     bundled_dir = _BUNDLED_SKILLS_DIR.resolve()
 
     for base_path in scan_paths:
-        if not base_path.is_dir():
-            continue
-
-        for skill_dir in sorted(base_path.iterdir()):
-            if not skill_dir.is_dir():
-                continue
-
+        for skill_dir in _iter_skill_dirs(base_path):
             skill_md = skill_dir / "SKILL.md"
             if not skill_md.exists():
                 continue
