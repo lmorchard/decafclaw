@@ -67,6 +67,29 @@ Pipe syntax for display text: `[[Tempest (arcade game)|Tempest arcade game]]`
 
 Link resolution: closest match in the same folder subtree first, then any match across the vault. Explicit paths work too: `[[agent/pages/DecafClaw]]`.
 
+## Page Frontmatter
+
+Vault pages may begin with a YAML frontmatter block. Frontmatter is optional and additive — the parser in `frontmatter.py` preserves unknown keys, and pages without frontmatter work the same as those with it. The schema is informal today; we may tighten it as patterns become clearer.
+
+Fields the system recognizes today (parsed by `frontmatter.py` / `build_composite_text`):
+
+| Field | Type | Used for |
+|-------|------|----------|
+| `summary` | string | Prepended to body for semantic-search embeddings; surfaced in UI |
+| `keywords` | list of strings | Prepended to body for embeddings |
+| `tags` | list of strings | Prepended to body for embeddings; loose categorization |
+| `importance` | float in [0, 1] | Composite scoring weight in memory retrieval |
+
+Skill-authored conventions (preserved by the parser but not interpreted by core code):
+
+| Field | Where | Shape |
+|-------|-------|-------|
+| `sources` | `linkding-ingest`, `mastodon-ingest` outputs | YAML list of `{url, date, added_by}` objects |
+
+The `sources:` list records each source that contributed to a page, with the originating URL, date (`YYYY-MM-DD`), and skill name. Each ingest pass appends an entry rather than overwriting earlier ones, so the list accumulates page provenance over time. The body `## Sources` section mirrors it for human readability. Planned use: revalidation tooling (an addition to `garden` or its own scheduled task) that refetches each URL, compares to current page content, and flags staleness.
+
+New skills producing structured page metadata are welcome to add their own conventions; document them here when they stabilize.
+
 ## Tools
 
 The vault skill is **always loaded** — its tools are available in every conversation.

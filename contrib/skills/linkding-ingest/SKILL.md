@@ -1,42 +1,32 @@
 ---
 name: linkding-ingest
-description: Fetch recent Linkding bookmarks, read their content, and record insights to the vault
+description: Fetch recent Linkding bookmarks, analyze their content in child agents, and record insights to the vault
 schedule: "45 */4 * * *"
 effort: default
 required-skills:
   - tabstack
-allowed-tools: shell($SKILL_DIR/fetch.sh), vault_read, vault_write, vault_search, vault_list, vault_backlinks, tabstack_extract_markdown, vault_journal_append, current_time, delegate_task
+allowed-tools: shell($SKILL_DIR/fetch.sh), vault_read, vault_write, vault_search, vault_list, vault_backlinks, vault_journal_append, tabstack_extract_markdown, current_time, delegate_tasks
 user-invocable: true
 ---
 
 # Linkding Bookmark Ingestion
 
-Fetch recent bookmarks from Linkding, then delegate each bookmark to a child agent for content extraction and vault integration.
+Fetch recent bookmarks from Linkding, delegate per-bookmark analysis to child agents (so the heavy article text never enters this context), then apply their planned vault writes here.
 
-## Output Folder — READ THIS FIRST
+**Children CANNOT write to the vault.** They research and return a structured plan; the parent applies the writes.
 
-**All new bookmark-derived pages MUST be created under `agent/pages/bookmarks/`.** Never call `vault_write` with a page path that doesn't start with `agent/pages/bookmarks/`. Example valid paths:
+## Output Folder
 
-- `agent/pages/bookmarks/Rust Async Runtimes`
-- `agent/pages/bookmarks/tools/ripgrep`
-- `agent/pages/bookmarks/programming/FFI patterns`
-
-Use sub-organization by topic when it makes sense (e.g. `bookmarks/programming/`, `bookmarks/tools/`). Include `[[wiki-links]]` back to related pages elsewhere in the vault.
-
-If `vault_search` finds a relevant page that's already under `agent/pages/` but outside `agent/pages/bookmarks/` (e.g. a page you or another skill put in `agent/pages/topics/foo`), update it in place — don't create a duplicate. If you find a relevant page *outside* `agent/pages/` (e.g. the user's own notes under a different vault root), do NOT modify it — create a new page under `agent/pages/bookmarks/` and optionally link to the user's page with a `[[wiki-link]]`.
+All bookmark-derived pages live **directly under `agent/pages/bookmarks/`** as a flat namespace — no topical subdirectories. Children acting independently can't coordinate categorization and tend to create one-page subdirs that don't pay off. Use `[[wiki-links]]` between pages instead of folder structure to express relationships, and link out to related pages elsewhere in the vault.
 
 ## Configuration
-
-Required environment variables (set in `.env` or `config.json` env section):
 
 | Env Var | Description |
 |---------|-------------|
 | `LINKDING_URL` | Linkding instance URL (e.g. `https://links.example.com`) |
 | `LINKDING_TOKEN` | API token (Linkding Settings > Integrations) |
 
-## Process
-
-### 1. Fetch the bookmark list
+## Step 1: Fetch the bookmark list
 
 Run the fetch script:
 
@@ -44,75 +34,112 @@ Run the fetch script:
 $SKILL_DIR/fetch.sh
 ```
 
-This outputs ALL recent bookmarks as markdown. Read the entire output to get the full list.
+This outputs ALL recent bookmarks as markdown. Read the entire output to get the full list. Drop obviously low-signal bookmarks (duplicates, ephemeral content) before delegating — don't waste a child on them.
 
-### 2. Delegate each bookmark
+If the output is empty (no bookmarks since the last run), start your final summary with `HEARTBEAT_OK` and stop.
 
-For EACH bookmark in the list, use `delegate_task` to spawn a child agent that will:
-- Fetch the full article content
-- Analyze it for key insights
-- Update the wiki
+## Step 2: Delegate analysis with `delegate_tasks`
 
-The task description for each delegate should include:
+Call `delegate_tasks` with all of these:
+
+- `allow_vault_read: true` — children must browse the vault for context.
+- `return_schema`: the shape shown below.
+- `tasks`: an array of per-bookmark task descriptions using the template below. One entry per bookmark.
+
+The plural cap is 10 tasks per call. If you have more than 10 bookmarks, call `delegate_tasks` again with the next batch — don't try to cram everything into one call. Concurrent execution is capped server-side; you just submit batches.
+
+### `return_schema`
+
+```json
+{
+  "writes": [
+    {
+      "page": "agent/pages/bookmarks/example-slug",
+      "content": "---\ntags: [ingested, example]\nsummary: one-line summary of the page\nsources:\n  - url: https://example.com\n    date: 2026-05-12\n    added_by: linkding-ingest\n---\n\nBody synthesizing the source with [[wiki-links]].\n\n## Sources\n- https://example.com (2026-05-12)"
+    }
+  ],
+  "notes": "one-line note about what you wrote or why you skipped"
+}
+```
+
+### Per-bookmark task description
+
+Substitute the bookmark fields into this template. Send it verbatim to the child:
 
 ```
-Process this bookmark and update the wiki knowledge base:
+Analyze this bookmark and return a vault-write plan in the structured JSON shape requested by the return_schema. You CANNOT call vault_write — the parent will apply your plan.
 
 URL: {bookmark_url}
 Title: {bookmark_title}
 Tags: {bookmark_tags}
 Description: {bookmark_description}
+Date: {bookmark_date}
 
-You have these tools available:
+Tools available to you:
 - tabstack_extract_markdown(url) — fetch full article content
-- vault_search(query) — search vault pages by name/content
-- vault_read(page) — read a vault page (parameter is "page", not "path")
-- vault_write(page, content) — create or overwrite a vault page (parameters are "page" and "content")
+- vault_search(query) — search the vault for related pages
+- vault_read(page) — read an existing vault page
 - vault_backlinks(page) — find pages linking to a page
 
-PATH RULE: All NEW pages you create MUST have a `page` argument starting with `agent/pages/bookmarks/`. This is not a suggestion — any `vault_write(page=...)` that doesn't start with that prefix is wrong.
+Steps:
+1. Fetch the article with tabstack_extract_markdown. If it fails (paywall, dead link, error stub), work from the title/tags/description only.
+2. Search the vault for related pages (vault_search). Read any strong matches (vault_read) so you can extend them rather than creating duplicates.
+3. Decide what should be written:
+   - Primary: ONE page for this bookmark. If a strong match already exists under `agent/pages/`, return its existing path and the FULL revised content. Otherwise create a new page directly under `agent/pages/bookmarks/` — flat namespace, no subdirectories.
+   - Secondary (optional): a small number of related pages under `agent/pages/` to extend with a sentence or cross-link. Return the FULL updated content for each.
+   - Cap total writes at ~3. If more pages seem relevant, mention them in `notes` instead of writing them.
+   - Do NOT touch pages outside `agent/pages/`. If a strong match lives elsewhere (user notes, admin pages), leave it alone and link to it from your primary page.
+4. Each page's content must include:
+   - YAML frontmatter — see provenance rules below.
+   - Body that synthesizes in your own words (short quotes only, attributed inline).
+   - `[[wiki-links]]` to related pages you found.
+   - A `## Sources` section. NEW pages: list this bookmark's URL + date. UPDATED pages: KEEP existing entries and append the new bookmark.
 
-If `vault_search` returns an existing page already under `agent/pages/` (anywhere in that tree), update it in place rather than creating a duplicate. If it returns a page OUTSIDE `agent/pages/` (e.g. the user's own notes), do NOT modify it — create a new page under `agent/pages/bookmarks/` and link to the user's page with `[[wiki-link]]` instead.
+Frontmatter rules:
+- NEW pages — include all three top-level fields:
+  - `tags:` — list of topic tags
+  - `summary:` — one-line summary
+  - `sources:` — YAML list seeded with ONE entry for this bookmark (shape below)
+- UPDATED pages WITH existing frontmatter — PRESERVE everything; just APPEND a new entry to the `sources:` list for this bookmark. Don't modify earlier entries; they record when each source was first added. You may refresh `summary` or extend `tags` if the new content materially changes them.
+- UPDATED pages WITHOUT frontmatter — add a full frontmatter block. Seed `sources:` with just this bookmark. DO NOT backfill historical sources from the body `## Sources` section.
 
-FRONTMATTER RULE: Every page you write (new or updated) MUST begin with Obsidian-compatible YAML frontmatter containing a `tags` list. Seed the list from the Tags field above; add more tags if the content reveals clearer categories. When updating an existing page that already has frontmatter, merge the bookmark's tags into the existing `tags` list (preserve existing tags, deduplicate, keep other frontmatter fields intact). Shape:
+`sources:` entry shape:
+
+```yaml
+- url: https://example.com
+  date: 2026-05-12
+  added_by: linkding-ingest
+```
+
+`date` is YYYY-MM-DD. If the bookmark has no URL (rare), omit the `sources:` entry and just note the source in the body `## Sources` section.
+5. If the bookmark isn't worth a page (low-signal duplicate, throwaway content), return `writes: []` with a one-line `notes` explaining why.
+6. Keep your prose response short — one line is enough. The JSON block is what matters.
+```
+
+## Step 3: Apply the writes
+
+For each per-task result where `ok` is true, iterate `data.writes` and call `vault_write(page=<page>, content=<content>)`. The child has already synthesized and merged with existing content — don't second-guess.
+
+For results where `ok` is false, note the failure in your summary and move on.
+
+If two writes target the same page (rare — two bookmarks on the same topic), the later one overwrites the earlier. Acceptable; mention it in the summary.
+
+## Step 4: Summarize
+
+Report what you processed and what changed:
 
 ```
----
-tags:
-  - topic-one
-  - topic-two
----
-
-# Page Title
-
-...body...
+Linkding ingest: processed N bookmarks.
+Wrote: [[Page A]], [[Page B]], [[Page C]]
+Skipped: M (low-signal)
+Failed: K (see error)
 ```
 
-Instructions:
-1. Use tabstack_extract_markdown(url="{bookmark_url}") to fetch the full content. If it fails (paywall, dead link), work with just the title, tags, and description above.
-2. Analyze the content for key facts, insights, technologies, people, projects, or concepts.
-3. Use vault_search(query="relevant topic") to find existing vault pages.
-4. If a relevant page exists: vault_read(page="...full existing path...") to get it, revise with new info, merge the bookmark's tags into the page's frontmatter `tags` list (dedupe), vault_write(page="...same existing path...", content="...") to save. Keep the existing path — don't move the page.
-5. If no relevant page exists and the topic is substantial: vault_write(page="agent/pages/bookmarks/New Page", content="...") with frontmatter (including `tags:` seeded from the bookmark tags), [[wiki-links]], and a ## Sources section. The `page` argument MUST start with `agent/pages/bookmarks/`.
-6. Include the original URL and {bookmark_date} in ## Sources.
-7. Extract knowledge — "X uses Y approach for Z problem" is better than "bookmarked an article about X".
-8. Prefer adding to existing vault pages over creating new ones — but if you must create, use the `agent/pages/bookmarks/` prefix.
-9. Do NOT use tool_search — it is not available. Use only the tools listed above.
-```
-
-You can delegate multiple bookmarks concurrently — `delegate_task` runs them in parallel.
-
-Skip obviously low-signal bookmarks (duplicates, ephemeral content) — don't waste a delegate on them.
-
-### 3. Finish
-
-After all delegates complete, end with a short narrative summary of what was processed and what wiki pages were updated or created. If there was nothing interesting to ingest this cycle, begin your summary with `HEARTBEAT_OK` on its own line followed by a brief quiet-cycle note — the leading marker lets the scheduler log a tidy line, and the narrative keeps the archive readable for the newsletter.
+If every bookmark was skipped or there were no bookmarks at all, start your summary with `HEARTBEAT_OK` on its own line followed by a brief note.
 
 ## Rules
 
-- **New pages go under `agent/pages/bookmarks/`** — never create a new page at the vault root. This applies to the parent turn and to every delegate you spawn.
-- **Frontmatter with `tags:` is required on every written page** — seed from the bookmark's tags; merge when updating an existing page. Tags boost semantic search and future tag-based retrieval.
-- **Delegate each bookmark** — don't try to fetch and process articles yourself, your context will fill up
-- **Group related content** — include guidance in the delegate task to add to existing pages when possible
-- Convert relative dates to absolute dates
-- Include original URLs so sources can be revisited
+- **Children cannot write to the vault.** They have read access (with `allow_vault_read: true`) but vault writes are categorically blocked for child agents. The parent applies all writes.
+- **Don't fetch article content in this turn.** That's what children are for — your context stays clean.
+- **All writes go under `agent/pages/`.** Children that propose paths elsewhere are buggy; skip those writes and note them.
+- Convert relative dates to absolute dates.
