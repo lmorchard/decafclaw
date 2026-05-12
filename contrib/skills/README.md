@@ -10,18 +10,28 @@ Two installation styles, depending on whether you want updates to flow with `git
 
 Add the skill's directory to your agent's `extra_skill_paths` so the loader picks it up in place. `git pull` then keeps `SKILL.md` up to date automatically; downloaded binaries persist (they're already gitignored).
 
-In `data/{agent_id}/config.json`:
+**Why `$VAR` over relative paths.** Relative entries in `extra_skill_paths` are anchored to `data/{agent_id}/`, not to the repo or the CWD. That only reaches the repo's `contrib/skills/` when `data_home` happens to live inside the repo (the default `./data` dev layout). Production deployments usually keep `data_home` somewhere stable like `~/.decafclaw/`, which is nowhere near the repo — relative paths will silently miss. A `$VAR` decouples the two.
+
+Add to `.env`:
+
+```bash
+DECAFCLAW_REPO=/absolute/path/to/decafclaw-repo
+```
+
+Then in `data/{agent_id}/config.json`:
 
 ```json
 {
   "extra_skill_paths": [
-    "../../contrib/skills/linkding-ingest",
-    "../../contrib/skills/mastodon-ingest"
+    "$DECAFCLAW_REPO/contrib/skills/linkding-ingest",
+    "$DECAFCLAW_REPO/contrib/skills/mastodon-ingest"
   ]
 }
 ```
 
-Each entry points at a single skill directory (one with `SKILL.md` at its root). **Relative paths are anchored to `data/{agent_id}/`**, so `../../contrib/skills/<name>` reaches the repo's `contrib/skills/` directory when `data_home` is at its default `./data` location. Absolute paths and `~` / `$VAR` expansion also work — e.g. set `DECAFCLAW_REPO=/path/to/repo` in `.env` and use `$DECAFCLAW_REPO/contrib/skills/<name>` to decouple from the `data_home` layout.
+Each entry points at a single skill directory (one with `SKILL.md` at its root). The loader runs `os.path.expandvars` + `~` expansion on every entry before scanning, so plain absolute paths and `~/...` also work. Use whichever fits your deployment.
+
+(If `data_home` is the default `./data` location inside the repo, a relative `../../contrib/skills/<name>` will also work — but the `$VAR` form is portable across deployment layouts.)
 
 Then download the required binaries (run from the repo root):
 
