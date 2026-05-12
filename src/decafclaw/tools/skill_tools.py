@@ -180,10 +180,12 @@ async def activate_skill_internal(ctx, skill_info) -> str | ToolResult:
     """
     name = skill_info.name
     # Substitute $SKILL_DIR in the body so the LLM sees usable paths.
-    # The command and schedule paths do the same via commands.substitute_body;
+    # The command and schedule paths do the same via commands.substitute_body
+    # (commands.py:417 / schedules.py:235), both using .resolve() so the LLM
+    # always gets an absolute path regardless of how data_home was configured.
     # activate_skill needs to match so skills loaded via extra_skill_paths
     # (where the location isn't a conventional guess) work consistently.
-    body = skill_info.body.replace("$SKILL_DIR", str(skill_info.location))
+    body = skill_info.body.replace("$SKILL_DIR", str(skill_info.location.resolve()))
     result_parts = [body]
 
     if skill_info.has_native_tools:

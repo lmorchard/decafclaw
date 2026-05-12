@@ -681,7 +681,9 @@ async def test_activate_substitutes_skill_dir_in_body(ctx, tmp_path):
     result = await tool_activate_skill(ctx, name=skill.name)
     text = _text(result)
     assert "$SKILL_DIR" not in text
-    assert f"Run: {skill.location}/fetch.sh" in text
+    # The substitution uses .resolve() to match the command/schedule paths
+    # so the body always carries an absolute path regardless of data_home.
+    assert f"Run: {skill.location.resolve()}/fetch.sh" in text
 
 
 @pytest.mark.asyncio
