@@ -658,6 +658,35 @@ async def test_auto_approve_blocked_by_explicit_deny(ctx, tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_activate_substitutes_skill_dir_in_body(ctx, tmp_path):
+    """`activate_skill` substitutes `$SKILL_DIR` in the body with the
+    skill's actual location.
+
+    Without this, a skill body containing `$SKILL_DIR/fetch.sh` is
+    shown verbatim to the LLM, which then has to guess where the
+    skill lives. That guess fails for skills loaded via
+    `extra_skill_paths` (e.g. shared optional skills in `contrib/`)
+    because their location isn't conventional. The substitution
+    matches the behavior of the command and schedule paths
+    (`substitute_body` in `commands.py`).
+    """
+    skill = _make_skill_info(
+        tmp_path,
+        name="dir-test",
+        body="Run: $SKILL_DIR/fetch.sh",
+    )
+    ctx.config.discovered_skills = [skill]
+    _save_permission(ctx.config, skill.name, "always")
+
+    result = await tool_activate_skill(ctx, name=skill.name)
+    text = _text(result)
+    assert "$SKILL_DIR" not in text
+    # The substitution uses .resolve() to match the command/schedule paths
+    # so the body always carries an absolute path regardless of data_home.
+    assert f"Run: {skill.location.resolve()}/fetch.sh" in text
+
+
+@pytest.mark.asyncio
 async def test_discover_bundled_tabstack(config, monkeypatch):
     """Bundled tabstack skill is discovered when TABSTACK_API_KEY is set."""
     monkeypatch.setenv("TABSTACK_API_KEY", "test-key")
