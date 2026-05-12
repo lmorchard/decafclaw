@@ -230,9 +230,34 @@ Skills are discovered from three locations, in priority order (highest first):
 | 1 | `data/{agent_id}/workspace/skills/` | Agent-writable. ClawHub installs land here. |
 | 2 | `data/{agent_id}/skills/` | Admin-managed. |
 | 3 | `src/decafclaw/skills/` | Bundled with the package. |
-| 4 | Paths listed in `extra_skill_paths` config | Externally-managed (e.g., `npx skills add`). Lowest priority — cannot shadow bundled skills. |
+| 4 | Paths listed in `extra_skill_paths` config | Externally-managed. Each entry can be a directory of skills (e.g., `~/.claude/skills`) or a direct skill directory (e.g., `../../contrib/skills/linkding-ingest`). Lowest priority — cannot shadow bundled skills. |
 
 Higher-priority skills override lower-priority ones with the same name. External skills (tier 4) cannot shadow bundled skills, but workspace and admin skills can shadow them.
+
+### Direct skill paths vs. directories of skills
+
+Each entry in `extra_skill_paths` is interpreted polymorphically:
+
+- **Directory of skills** — the entry points at a directory whose immediate subdirectories each contain a `SKILL.md`. Each subdir is a discovered skill. Common targets: `~/.claude/skills`, `~/.agents/skills` (see the `npx skills` section below).
+- **Direct skill directory** — the entry path itself contains a `SKILL.md` at its root and IS the skill. Use this to opt into a specific shared skill (e.g. one in `contrib/skills/`) without copying it into `data/{agent_id}/skills/`.
+
+The two forms can be mixed within the same `extra_skill_paths` list. Detection is per-entry — the loader checks for `SKILL.md` at the entry path first; if absent, it falls back to scanning subdirectories.
+
+Example mixing both forms (relative paths anchor to `data/{agent_id}/`, so `../../contrib/skills/<name>` reaches the repo's `contrib/skills/` directory when `data_home` is at its default `./data` location):
+
+```json
+{
+  "extra_skill_paths": [
+    "../../contrib/skills/linkding-ingest",
+    "../../contrib/skills/mastodon-ingest",
+    "~/.claude/skills"
+  ]
+}
+```
+
+For deployments where `data_home` lives outside the repo, use absolute paths or `$VAR` expansion (e.g. set `DECAFCLAW_REPO=/path/to/repo` in `.env` and reference `$DECAFCLAW_REPO/contrib/skills/<name>`).
+
+Per-deployment customization still works via the priority order: a same-named skill under `data/{agent_id}/skills/<name>/` shadows any entry in `extra_skill_paths`. So you can start by referencing a shared skill and switch to a local copy later if you need to fork it.
 
 ## Activation and permissions
 
