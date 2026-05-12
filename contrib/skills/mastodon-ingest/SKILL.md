@@ -55,8 +55,8 @@ Skip boring posts — routine posts, casual replies, and low-signal content don'
 
 For each interesting post:
 1. `vault_search` to find existing relevant pages.
-2. If a page exists with existing frontmatter: `vault_read` it, revise with new context. PRESERVE the existing frontmatter as-is; APPEND a new entry to the `sources:` list for this post (don't modify earlier entries — they record when each source was first added). Append the new post to the body `## Sources` section. `vault_write` the updated page.
-3. If a page exists WITHOUT frontmatter: add a full frontmatter block on this write. Seed `sources:` with just this post. Don't backfill historical sources from the body `## Sources` section.
+2. If a page exists with existing frontmatter: `vault_read` it, revise with new context. PRESERVE the existing frontmatter as-is. If this post has a URL, APPEND a new entry to the `sources:` list for it (don't modify earlier entries — they record when each source was first added); if there's no URL, leave `sources:` as-is. Either way, append the post to the body `## Sources` section. `vault_write` the updated page.
+3. If a page exists WITHOUT frontmatter: add a full frontmatter block on this write. If this post has a URL, seed `sources:` with just this post; otherwise omit the `sources:` key. Don't backfill historical sources from the body `## Sources` section.
 4. If no page exists: create a new page with full YAML frontmatter (see shape below), a body with `[[wiki-links]]`, and a `## Sources` section listing this post.
 
 New-page frontmatter:
@@ -66,13 +66,13 @@ New-page frontmatter:
 tags: [<topic-tags>]
 summary: one-line summary of the page
 sources:
-  - url: <post URL, if available>
+  - url: <post URL>
     date: <post date as YYYY-MM-DD>
     added_by: mastodon-ingest
 ---
 ```
 
-`sources:` is a YAML list of objects. `date` is YYYY-MM-DD. If the post has no URL, omit the `sources:` entry and just note the source in the body `## Sources` section — the list is for revalidation tooling, which needs a URL.
+`sources:` is a YAML list of objects keyed by URL — the list exists for revalidation tooling, which needs a URL to refetch. If the post has no URL, OMIT the `sources:` key entirely from the frontmatter (or leave any existing list unchanged) and just note the source in the body `## Sources` section.
 
 In the `## Sources` section, note the Mastodon post date and include the post URL if available.
 

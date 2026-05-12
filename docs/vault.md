@@ -71,14 +71,14 @@ Link resolution: closest match in the same folder subtree first, then any match 
 
 Vault pages may begin with a YAML frontmatter block. Frontmatter is optional and additive — the parser in `frontmatter.py` preserves unknown keys, and pages without frontmatter work the same as those with it. The schema is informal today; we may tighten it as patterns become clearer.
 
-Fields the system recognizes today (parsed by `frontmatter.py` / `build_composite_text`):
+Fields the system recognizes today (parsed by `frontmatter.py` via `get_frontmatter_field`):
 
 | Field | Type | Used for |
 |-------|------|----------|
-| `summary` | string | Prepended to body for semantic-search embeddings; surfaced in UI |
-| `keywords` | list of strings | Prepended to body for embeddings |
-| `tags` | list of strings | Prepended to body for embeddings; loose categorization |
-| `importance` | float in [0, 1] | Composite scoring weight in memory retrieval |
+| `summary` | string | Prepended to body for semantic-search embeddings (via `build_composite_text`); surfaced in UI |
+| `keywords` | list of strings | Prepended to body for embeddings (via `build_composite_text`) |
+| `tags` | list of strings | Prepended to body for embeddings (via `build_composite_text`); loose categorization |
+| `importance` | float in [0, 1] | Composite scoring weight in memory retrieval (not used by `build_composite_text`) |
 
 Skill-authored conventions (preserved by the parser but not interpreted by core code):
 

@@ -118,9 +118,11 @@ Frontmatter rules:
 
 ## Step 3: Apply the writes
 
-For each per-task result where `ok` is true, iterate `data.writes` and call `vault_write(page=<page>, content=<content>)`. The child has already synthesized and merged with existing content — don't second-guess.
+`delegate_tasks` returns a `ToolResult` whose `data` field has the shape `{summary: {...}, results: [...]}`. Each entry in `results` represents one child and has `{index, ok, text, data}` — with `data.writes` and `data.notes` matching the per-child return schema you specified.
 
-For results where `ok` is false, note the failure in your summary and move on.
+Iterate `data.results`. For each entry where `ok` is true, walk that entry's `data.writes` and call `vault_write(page=<page>, content=<content>)` for each item. The child has already synthesized and merged with existing content — don't second-guess.
+
+For entries where `ok` is false, note the failure in your summary and move on. (The error message is in `entry.error`.)
 
 If two writes target the same page (rare — two bookmarks on the same topic), the later one overwrites the earlier. Acceptable; mention it in the summary.
 
