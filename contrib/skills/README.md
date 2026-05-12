@@ -4,19 +4,43 @@ Optional skills that require external services or API keys. Not enabled by defau
 
 ## Installation
 
-Copy a skill directory to your agent's skills directory:
+Two installation styles, depending on whether you want updates to flow with `git pull`.
 
-```bash
-cp -r contrib/skills/linkding-ingest data/{agent_id}/skills/
+### Option 1 — Reference (recommended)
+
+Add the skill's directory to your agent's `extra_skill_paths` so the loader picks it up in place. `git pull` then keeps `SKILL.md` up to date automatically; downloaded binaries persist (they're already gitignored).
+
+In `data/{agent_id}/config.json`:
+
+```json
+{
+  "extra_skill_paths": [
+    "../../contrib/skills/linkding-ingest",
+    "../../contrib/skills/mastodon-ingest"
+  ]
+}
 ```
 
-Then download the required binaries:
+Each entry points at a single skill directory (one with `SKILL.md` at its root). **Relative paths are anchored to `data/{agent_id}/`**, so `../../contrib/skills/<name>` reaches the repo's `contrib/skills/` directory when `data_home` is at its default `./data` location. Absolute paths and `~` / `$VAR` expansion also work — e.g. set `DECAFCLAW_REPO=/path/to/repo` in `.env` and use `$DECAFCLAW_REPO/contrib/skills/<name>` to decouple from the `data_home` layout.
+
+Then download the required binaries (run from the repo root):
 
 ```bash
-data/{agent_id}/skills/linkding-ingest/download-binary.sh
+contrib/skills/linkding-ingest/download-binary.sh
 ```
 
 And set the required environment variables (in `.env` or `config.json` `env` section).
+
+### Option 2 — Copy (fork for customization)
+
+If you want a fully detached copy you can edit per-deployment, copy the skill directory into your agent's admin-level skills folder:
+
+```bash
+cp -r contrib/skills/linkding-ingest data/{agent_id}/skills/
+data/{agent_id}/skills/linkding-ingest/download-binary.sh
+```
+
+A skill at `data/{agent_id}/skills/<name>/` shadows any same-named entry in `extra_skill_paths`, so you can also start with Option 1 and switch to Option 2 later if you need to customize.
 
 ## Available Skills
 
