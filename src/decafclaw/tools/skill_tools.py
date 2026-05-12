@@ -179,7 +179,12 @@ async def activate_skill_internal(ctx, skill_info) -> str | ToolResult:
     skill body text on success.
     """
     name = skill_info.name
-    result_parts = [skill_info.body]
+    # Substitute $SKILL_DIR in the body so the LLM sees usable paths.
+    # The command and schedule paths do the same via commands.substitute_body;
+    # activate_skill needs to match so skills loaded via extra_skill_paths
+    # (where the location isn't a conventional guess) work consistently.
+    body = skill_info.body.replace("$SKILL_DIR", str(skill_info.location))
+    result_parts = [body]
 
     if skill_info.has_native_tools:
         try:
