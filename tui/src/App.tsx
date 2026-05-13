@@ -16,7 +16,8 @@ type Action =
   | { kind: "wire"; msg: ServerMessage }
   | { kind: "reconnected" }
   | { kind: "auth_failed"; reason: string }
-  | { kind: "closed"; code: number; reason: string };
+  | { kind: "closed"; code: number; reason: string }
+  | { kind: "clear_confirm" };
 
 function reducer(s: State, a: Action): State {
   switch (a.kind) {
@@ -37,6 +38,8 @@ function reducer(s: State, a: Action): State {
       };
     case "closed":
       return s;
+    case "clear_confirm":
+      return { ...s, confirm: null };
   }
 }
 
@@ -78,10 +81,40 @@ export function App({ client, initialConvId }: AppProps): React.JSX.Element {
     return undefined;
   }, []);
 
-  useInput((_input, key) => {
-    if (key.ctrl && _input === "c") {
-      client.close();
-      exit();
+  const [cancelArmed, setCancelArmed] = useState(false);
+
+  useInput((input, key) => {
+    // Confirm prompt active: y/n/a keys send decision.
+    if (state.confirm) {
+      const decision =
+        input === "y" || input === "Y" ? "approve" :
+        input === "n" || input === "N" ? "deny" :
+        input === "a" || input === "A" ? "always" :
+        null;
+      if (decision && state.conv_id) {
+        client.send({
+          type: "confirm_response",
+          conv_id: state.conv_id,
+          request_id: state.confirm.request_id,
+          decision,
+          extras: {},
+        });
+        dispatchUi({ kind: "clear_confirm" });
+      }
+      return;
+    }
+
+    // Ctrl+C: cancel turn if busy (first press), or exit (idle or second press).
+    if (key.ctrl && input === "c") {
+      if (state.turnInFlight && !cancelArmed && state.conv_id) {
+        client.send({ type: "cancel_turn", conv_id: state.conv_id });
+        setCancelArmed(true);
+        // arm for 2s; after that Ctrl+C cancels again instead of exiting
+        setTimeout(() => setCancelArmed(false), 2000);
+      } else {
+        client.close();
+        exit();
+      }
     }
   });
 
@@ -111,9 +144,19 @@ export function App({ client, initialConvId }: AppProps): React.JSX.Element {
           [{state.activity.name}] {state.activity.status || "running..."}
         </Text>
       )}
+      {state.confirm && (
+        <Box flexDirection="column">
+          <Text color="magenta">
+            confirm ({state.confirm.kind}): {JSON.stringify(state.confirm.payload)}
+          </Text>
+          <Text color="magenta">[y]es / [n]o / [a]lways</Text>
+        </Box>
+      )}
       <Box>
         <Text>{state.conv_id ? "> " : "(connecting...) "}</Text>
-        <TextInput value={draft} onChange={setDraft} onSubmit={onSubmit} />
+        {!state.confirm && (
+          <TextInput value={draft} onChange={setDraft} onSubmit={onSubmit} />
+        )}
       </Box>
     </Box>
   );
