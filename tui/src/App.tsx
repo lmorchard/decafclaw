@@ -106,6 +106,11 @@ export function App({ client, initialConvId }: AppProps): React.JSX.Element {
         </Text>
       ))}
       {state.draft && <Text color="cyan">{"bot> "}{state.draft}</Text>}
+      {state.activity && (
+        <Text color="gray">
+          [{state.activity.name}] {state.activity.status || "running..."}
+        </Text>
+      )}
       <Box>
         <Text>{state.conv_id ? "> " : "(connecting...) "}</Text>
         <TextInput value={draft} onChange={setDraft} onSubmit={onSubmit} />
