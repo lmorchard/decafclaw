@@ -199,7 +199,7 @@ The spike is "validated" when all of the following work against a locally runnin
 - [ ] `Ctrl+C` mid-turn cancels via `cancel_turn`; transcript reflects the cancel.
 - [ ] Kill `make dev`, restart, see TUI reconnect and resume the same conversation.
 - [ ] Run `cd tui && npm test` — dispatcher unit test passes.
-- [ ] Run `cd tui && npm run lint && npx tsc --noEmit` — clean.
+- [ ] Run `cd tui && npm run typecheck` — clean. (Lint is not part of the spike's quality bar; add in Phase 2 if we promote.)
 
 ## Open questions
 
