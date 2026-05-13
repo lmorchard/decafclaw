@@ -60,9 +60,16 @@ Server is asking the user to approve or deny a pending action (tool call, end-of
 **Fields:**
 
 - `conv_id` — string
-- `request_id` — string
-- `kind` — string
-- `payload` — object
+- `confirmation_id` — string
+- `action_type` — string
+- `tool` — string
+- `command` — string
+- `suggested_pattern` — string
+- `message` — string
+- `approve_label` — string
+- `deny_label` — string
+- `tool_call_id` — string
+- `action_data` — object
 
 ### `confirmation_response`
 
@@ -109,7 +116,7 @@ Final form of an assistant message after streaming completed (or when replayed f
 **Fields:**
 
 - `conv_id` — string
-- `message` — object
+- `text` — string
 
 ### `model_changed`
 
@@ -209,7 +216,7 @@ Echo of a user-authored message to all subscribers of the conversation (used for
 **Fields:**
 
 - `conv_id` — string
-- `message` — object
+- `text` — string
 
 ### `vault_changed`
 
@@ -237,9 +244,10 @@ User's decision on a pending confirm_request.
 **Fields:**
 
 - `conv_id` — string
-- `request_id` — string
-- `decision` — string
-- `extras` — object
+- `confirmation_id` — string
+- `approved` — boolean
+- `always` — boolean
+- `add_pattern` — boolean
 
 ### `load_history`
 

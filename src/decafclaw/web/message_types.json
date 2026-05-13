@@ -30,7 +30,7 @@
     "confirm_request": {
       "direction": "server_to_client",
       "description": "Server is asking the user to approve or deny a pending action (tool call, end-of-turn gate, widget input).",
-      "fields": {"conv_id": "string", "request_id": "string", "kind": "string", "payload": "object"}
+      "fields": {"conv_id": "string", "confirmation_id": "string", "action_type": "string", "tool": "string", "command": "string", "suggested_pattern": "string", "message": "string", "approve_label": "string", "deny_label": "string", "tool_call_id": "string", "action_data": "object"}
     },
     "confirmation_response": {
       "direction": "server_to_client",
@@ -55,7 +55,7 @@
     "message_complete": {
       "direction": "server_to_client",
       "description": "Final form of an assistant message after streaming completed (or when replayed from history).",
-      "fields": {"conv_id": "string", "message": "object"}
+      "fields": {"conv_id": "string", "text": "string"}
     },
     "model_changed": {
       "direction": "server_to_client",
@@ -110,7 +110,7 @@
     "user_message": {
       "direction": "server_to_client",
       "description": "Echo of a user-authored message to all subscribers of the conversation (used for multi-tab sync).",
-      "fields": {"conv_id": "string", "message": "object"}
+      "fields": {"conv_id": "string", "text": "string"}
     },
     "vault_changed": {
       "direction": "server_to_client",
@@ -126,7 +126,7 @@
     "confirm_response": {
       "direction": "client_to_server",
       "description": "User's decision on a pending confirm_request.",
-      "fields": {"conv_id": "string", "request_id": "string", "decision": "string", "extras": "object"}
+      "fields": {"conv_id": "string", "confirmation_id": "string", "approved": "boolean", "always": "boolean", "add_pattern": "boolean"}
     },
     "load_history": {
       "direction": "client_to_server",
