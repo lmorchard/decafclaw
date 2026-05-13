@@ -8,6 +8,9 @@
  * Reconnect with exponential backoff: 1s, 2s, 4s, 8s, 16s, capped at 30s.
  * Auth-failure exits are surfaced by leaving the WS closed and emitting a
  * synthetic `__auth_failed` marker. The App treats this as fatal.
+ *
+ * Lifecycle: a WSClient is intended for one-shot use. After `close()`, create
+ * a new instance to reconnect intentionally — don't reuse.
  */
 
 import WebSocket from "ws";
@@ -50,9 +53,15 @@ export class WSClient {
   close(): void {
     this.wantClosed = true;
     this.ws?.close();
+    this.hadOpen = false;
   }
 
   connect(): void {
+    if (this.ws) {
+      this.ws.removeAllListeners();
+      this.ws.close();
+      this.ws = null;
+    }
     const wsUrl = this.opts.host.replace(/^http/, "ws") + "/api/ws";
     const ws = new WebSocket(wsUrl, {
       headers: {
