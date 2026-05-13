@@ -1,4 +1,4 @@
-import React, { useEffect, useReducer, useState } from "react";
+import React, { useEffect, useReducer, useRef, useState } from "react";
 import { Box, Text, useApp, useInput } from "ink";
 import TextInput from "ink-text-input";
 import type { WSClient, WSEvent } from "./wsClient.js";
@@ -55,16 +55,24 @@ export function App({
   const { exit } = useApp();
   const [pickedConv, setPickedConv] = useState<string | null>(initialConvId);
 
-  // Subscribe to WS events once on mount.
-  // Stale-closure trade-off accepted for the spike: `state.conv_id` inside this
-  // handler always reads the mount-time value (null). The __reconnected branch
-  // uses it to re-select — silently no-ops on reconnect since pickedConv is also
-  // stale here. Happy-path smoke (no reconnect) is unaffected.
+  // Live pointer to the currently-active conversation. The WS subscription
+  // effect runs once on mount with stale-closed state, so it reads through
+  // this ref to know which conv to re-select after a reconnect.
+  const activeConvIdRef = useRef<string | null>(initialConvId);
+  useEffect(() => {
+    activeConvIdRef.current = pickedConv;
+  }, [pickedConv]);
+
+  // Subscribe to WS events once on mount. The empty dep array is deliberate —
+  // re-subscribing on every state change would accumulate handlers (wsClient.on
+  // is append-only). State references inside the handler are stale-closed; use
+  // activeConvIdRef.current for the currently-picked conversation id.
   useEffect(() => {
     client.on((e: WSEvent) => {
       if (e.type === "__reconnected") {
         dispatchUi({ kind: "reconnected" });
-        if (state.conv_id) client.send({ type: "select_conv", conv_id: state.conv_id });
+        const liveConvId = activeConvIdRef.current;
+        if (liveConvId) client.send({ type: "select_conv", conv_id: liveConvId });
       } else if (e.type === "__auth_failed") {
         dispatchUi({ kind: "auth_failed", reason: e.reason });
       } else if (e.type === "__closed") {
