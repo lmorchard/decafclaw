@@ -54,6 +54,20 @@ These are **explicitly deferred from the spike**, not rejected. If the spike val
 
 If the spike succeeds, the natural Phase 2 sequence is roughly: **markdown rendering → multi-line composer + history → tab completion → theme → model picker**, with widgets/canvas/files/vault later if there's appetite.
 
+### Cross-cutting Phase 2 concern: client capability hints
+
+Several deferred items — **widget inputs**, **canvas panel**, and possibly file/wiki editing surfaces — share an architectural prerequisite that's missing from today's wire protocol: **decafclaw assumes the connected client can render full HTML.** The web UI's widget host, canvas panel, and Milkdown editor all emit and consume rich HTML/JS surfaces. A TUI can't, and the spike currently dodges this only by deferring those features.
+
+Today's wire protocol has no way for the bot to know what the connected client can render. Phase 2 work on widgets or canvas should resolve this first — naively adding widget rendering to the TUI without a capability story will either break silently (HTML widget emitted to a terminal) or force a protocol break later.
+
+Possible directions (not chosen here — flagged for Phase 2 design discussion):
+
+- **Client capability handshake.** TUI sends a `client_capabilities` message on connect declaring supported surfaces (e.g., `html_widgets: false`, `canvas: false`). Skills/tools read this off `ctx` and pick a degradation path when emitting a widget.
+- **Per-widget TUI fallback in the widget definition.** Each widget declares a TUI-equivalent form (text prompt, picker, masked input — hermes's fixed vocabulary is a reference point). Widget host on TUI renders the fallback; web renders HTML. Skill author writes one widget, both surfaces work.
+- **Capability gate at emit time.** Skill author opts into "widget" only when the active client supports it; otherwise emits a plain text question or confirm prompt.
+
+Markdown rendering is *not* in this bucket — it's a pure client-side rendering concern, not a backend-protocol one. Same for theme/skin: the bot doesn't need to know.
+
 ## Architecture
 
 ```
