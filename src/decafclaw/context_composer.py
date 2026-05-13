@@ -823,12 +823,12 @@ class ContextComposer:
         gating. Currently all composer-driven modes apply matching
         (reflection and compaction bypass the composer entirely).
         """
-        from .agent import _collect_all_tool_defs
         from .preempt_search import (
             extract_last_assistant_text,
             match_tools,
             tokenize,
         )
+        from .tool_definitions import collect_all_tool_defs
         from .tools.tool_registry import get_critical_names, get_fetched_tools
 
         _ = mode  # reserved for future per-mode gating
@@ -862,7 +862,7 @@ class ContextComposer:
             for td in ctx.tools.extra_definitions
         }
 
-        all_defs = _collect_all_tool_defs(ctx)
+        all_defs = collect_all_tool_defs(ctx)
         # If the context restricts the usable tool set (eval runner,
         # restricted child agents), don't surface disallowed tools —
         # they'd waste the match cap and error at execute_tool.
@@ -1011,9 +1011,9 @@ class ContextComposer:
         """Classify tools into active and deferred sets.
 
         Returns (active_tools, deferred_tools, deferred_text, source_entry).
-        Replicates the logic in agent._build_tool_list() with diagnostics.
+        Replicates the logic in tool_definitions.build_tool_list() with diagnostics.
         """
-        from .agent import _collect_all_tool_defs
+        from .tool_definitions import collect_all_tool_defs
         from .tools import TOOL_DEFINITIONS
         from .tools.search_tools import SEARCH_TOOL_DEFINITIONS
         from .tools.tool_registry import (
@@ -1024,7 +1024,7 @@ class ContextComposer:
         )
         from .util import estimate_tokens
 
-        all_defs = _collect_all_tool_defs(ctx)
+        all_defs = collect_all_tool_defs(ctx)
         fetched = get_fetched_tools(ctx)
         # Skill tools (from activated skills) should never be deferred
         skill_tool_names = {

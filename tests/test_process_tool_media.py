@@ -1,12 +1,12 @@
-"""Tests for _process_tool_media — per-tool-call media save and placeholder replacement."""
+"""Tests for process_tool_media — per-tool-call media save and placeholder replacement."""
 
 from dataclasses import dataclass
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from decafclaw.agent import _process_tool_media
 from decafclaw.media import MediaSaveResult, ToolResult
+from decafclaw.tool_execution import process_tool_media
 
 
 @dataclass
@@ -40,7 +40,7 @@ async def test_image_placeholder_replaced_with_markdown_image():
         text="[file attached: img.png (image/png) — will appear as an attachment on your reply]",
         media=[{"type": "file", "filename": "img.png", "data": b"png", "content_type": "image/png"}],
     )
-    file_ids = await _process_tool_media(ctx, result)
+    file_ids = await process_tool_media(ctx, result)
     assert file_ids == []
     assert "![img.png](workspace://conversations/conv1/uploads/img-20260327.png)" in result.text
     assert "[file attached:" not in result.text
@@ -58,7 +58,7 @@ async def test_non_image_placeholder_replaced_with_markdown_link():
         text="[file attached: doc.pdf (application/pdf) — will appear as an attachment on your reply]",
         media=[{"type": "file", "filename": "doc.pdf", "data": b"pdf", "content_type": "application/pdf"}],
     )
-    file_ids = await _process_tool_media(ctx, result)
+    file_ids = await process_tool_media(ctx, result)
     assert file_ids == []
     assert "[doc.pdf](workspace://conversations/conv1/uploads/doc-20260327.pdf)" in result.text
     assert "![" not in result.text  # not an image ref
@@ -75,7 +75,7 @@ async def test_file_id_collected():
         text="[file attached: img.png (image/png) — will appear as an attachment on your reply]",
         media=[{"type": "file", "filename": "img.png", "data": b"png", "content_type": "image/png"}],
     )
-    file_ids = await _process_tool_media(ctx, result)
+    file_ids = await process_tool_media(ctx, result)
     assert file_ids == ["mm-file-123"]
     assert result.media == []
 
@@ -90,7 +90,7 @@ async def test_no_handler_logs_warning_leaves_text(caplog):
         text="[file attached: img.png (image/png) — will appear as an attachment on your reply]",
         media=[{"type": "file", "filename": "img.png", "data": b"png", "content_type": "image/png"}],
     )
-    file_ids = await _process_tool_media(ctx, result)
+    file_ids = await process_tool_media(ctx, result)
     assert file_ids == []
     assert "[file attached:" in result.text
     assert "No media handler" in caplog.text
@@ -108,7 +108,7 @@ async def test_failed_save_logs_warning_preserves_placeholder(caplog):
         text="[file attached: img.png (image/png) — will appear as an attachment on your reply]",
         media=[{"type": "file", "filename": "img.png", "data": b"png", "content_type": "image/png"}],
     )
-    file_ids = await _process_tool_media(ctx, result)
+    file_ids = await process_tool_media(ctx, result)
     assert file_ids == []
     assert "[file attached:" in result.text
     assert "Failed to save media" in caplog.text
@@ -143,7 +143,7 @@ async def test_multiple_media_items():
             {"type": "file", "filename": "b.txt", "data": b"b", "content_type": "text/plain"},
         ],
     )
-    await _process_tool_media(ctx, result)
+    await process_tool_media(ctx, result)
     assert "![a.png](workspace://uploads/a-1.png)" in result.text
     assert "[b.txt](workspace://uploads/b-2.txt)" in result.text
     assert "[file attached:" not in result.text
@@ -164,7 +164,7 @@ async def test_no_placeholder_appends_ref():
         text="Here's a test image (200x200 gradient):",
         media=[{"type": "file", "filename": "img.png", "data": b"png", "content_type": "image/png"}],
     )
-    await _process_tool_media(ctx, result)
+    await process_tool_media(ctx, result)
     assert "Here's a test image" in result.text
     assert "![img.png](workspace://conversations/conv1/uploads/img-20260327.png)" in result.text
     assert result.media == []
@@ -177,7 +177,7 @@ async def test_no_handler_clears_media():
         text="some text",
         media=[{"type": "file", "filename": "img.png", "data": b"png", "content_type": "image/png"}],
     )
-    await _process_tool_media(ctx, result)
+    await process_tool_media(ctx, result)
     assert result.media == []
 
 
@@ -188,6 +188,6 @@ async def test_no_handler_clears_media():
 async def test_empty_media_noop():
     ctx = _FakeCtx(media_handler=None)
     result = ToolResult(text="no media here")
-    file_ids = await _process_tool_media(ctx, result)
+    file_ids = await process_tool_media(ctx, result)
     assert file_ids == []
     assert result.text == "no media here"
