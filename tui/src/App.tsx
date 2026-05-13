@@ -84,6 +84,24 @@ export function App({ client, initialConvId }: AppProps): React.JSX.Element {
   const [cancelArmed, setCancelArmed] = useState(false);
 
   useInput((input, key) => {
+    // Universal escape: Ctrl+C always works, even mid-confirm.
+    // Mirrors what users expect from CLI prompts everywhere.
+    if (key.ctrl && input === "c") {
+      // If a turn is in flight (and we haven't already armed), send cancel_turn
+      // and arm for 2s — a second Ctrl+C within that window forces exit.
+      if (state.turnInFlight && !cancelArmed && state.conv_id) {
+        client.send({ type: "cancel_turn", conv_id: state.conv_id });
+        setCancelArmed(true);
+        setTimeout(() => setCancelArmed(false), 2000);
+        return;
+      }
+      // Otherwise: close cleanly and exit. This also fires from inside a
+      // confirm prompt — server will time out the confirm on its end.
+      client.close();
+      exit();
+      return;
+    }
+
     // Confirm prompt active: y/n/a keys send decision.
     if (state.confirm) {
       const decision =
@@ -102,19 +120,6 @@ export function App({ client, initialConvId }: AppProps): React.JSX.Element {
         dispatchUi({ kind: "clear_confirm" });
       }
       return;
-    }
-
-    // Ctrl+C: cancel turn if busy (first press), or exit (idle or second press).
-    if (key.ctrl && input === "c") {
-      if (state.turnInFlight && !cancelArmed && state.conv_id) {
-        client.send({ type: "cancel_turn", conv_id: state.conv_id });
-        setCancelArmed(true);
-        // arm for 2s; after that Ctrl+C cancels again instead of exiting
-        setTimeout(() => setCancelArmed(false), 2000);
-      } else {
-        client.close();
-        exit();
-      }
     }
   });
 
