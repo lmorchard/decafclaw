@@ -3,7 +3,7 @@ name: mastodon-ingest
 description: Fetch recent Mastodon posts and record interesting content to the vault
 schedule: "30 */4 * * *"
 effort: default
-allowed-tools: shell($SKILL_DIR/fetch.sh), vault_read, vault_write, vault_search, vault_list, vault_backlinks, vault_journal_append, current_time
+allowed-tools: shell($SKILL_DIR/fetch.sh*), vault_read, vault_write, vault_search, vault_list, vault_backlinks, vault_journal_append, current_time
 user-invocable: true
 ---
 
@@ -32,13 +32,24 @@ Run the fetch script using the shell tool. The script is bundled with this skill
 $SKILL_DIR/fetch.sh
 ```
 
-**What this does:**
+**What this does (no-args mode):**
 - Detects the current platform and runs the correct `mastodon-to-markdown` binary
 - Reads Mastodon credentials from env vars
-- Automatically fetches posts since the last successful run (stored in `$SKILL_DIR/last-run-time.txt`)
-- On first run (no `.last_run` file), defaults to the last 24 hours
-- Updates `.last_run` on success so the next run only fetches new posts
+- Automatically fetches posts since the last successful run (timestamp stored under `workspace/skill-state/mastodon-ingest/last-run-time.txt`)
+- On first run (no timestamp file), defaults to the last 24 hours
+- Applies `--exclude-boosts` and `--exclude-replies` by default
+- Updates the timestamp on success so the next run only fetches new posts
 - Outputs the posts as formatted markdown to stdout
+
+**Backfill mode.** When invoked with arguments, the script forwards them directly to the underlying `mastodon-to-markdown fetch` binary and skips the timestamp update — so a backfill doesn't clobber the scheduled-cycle state. The `--exclude-boosts` / `--exclude-replies` defaults are also dropped; pass them explicitly if you want them. Use this when the user asks for older posts or a specific date range:
+
+```
+$SKILL_DIR/fetch.sh --since 7d                      # last 7 days, ad-hoc
+$SKILL_DIR/fetch.sh --start 2026-04-01 --end 2026-04-30
+$SKILL_DIR/fetch.sh --since 7d --exclude-boosts --exclude-replies
+```
+
+Available flags (forwarded to the binary): `--since <duration>` (e.g. `24h`, `7d`), `--start YYYY-MM-DD`, `--end YYYY-MM-DD`, `--exclude-boosts`, `--exclude-replies`, `--exclude-favorites`, `--public-only`, `--visibility <list>`, `--sort-order asc|desc`. See `$SKILL_DIR/bin/<platform>/mastodon-to-markdown fetch --help` for the full list.
 
 If the script fails (missing env vars, binary not found), report the error and stop.
 

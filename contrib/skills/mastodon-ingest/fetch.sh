@@ -19,8 +19,27 @@ fi
 : "${MASTODON_SERVER:?MASTODON_SERVER env var is required}"
 : "${MASTODON_ACCESS_TOKEN:?MASTODON_ACCESS_TOKEN env var is required}"
 
-# Last-run tracking
-# State lives in workspace, not the skill directory
+# Backfill mode: any args from the caller are forwarded directly to the
+# binary, bypassing the last-run-based incremental fetch. Last-run
+# tracking is also skipped so a backfill doesn't clobber the timestamp
+# the scheduled cycle relies on. `--exclude-boosts` / `--exclude-replies`
+# defaults are NOT applied in this mode — pass them explicitly if you
+# want them.
+#
+# Examples:
+#   fetch.sh                              # auto: since last run (or 24h)
+#   fetch.sh --since 7d                   # last week, ad-hoc
+#   fetch.sh --start 2026-04-01 --end 2026-04-30
+#   fetch.sh --since 7d --exclude-boosts --exclude-replies
+if [ "$#" -gt 0 ]; then
+    exec "$BIN" fetch \
+        --server "${MASTODON_SERVER}" \
+        --token "${MASTODON_ACCESS_TOKEN}" \
+        "$@"
+fi
+
+# No args → auto-fetch since the last successful run.
+# State lives in workspace, not the skill directory.
 WORKSPACE_DIR="$(cd "${SCRIPT_DIR}/../../workspace" 2>/dev/null && pwd || echo "${SCRIPT_DIR}")"
 LAST_RUN_DIR="${WORKSPACE_DIR}/skill-state/mastodon-ingest"
 mkdir -p "$LAST_RUN_DIR"
