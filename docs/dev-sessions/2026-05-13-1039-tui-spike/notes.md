@@ -62,36 +62,61 @@ A handful of things in the plan turned out to be wrong or underspecified:
   that is kept current by a separate `useEffect([pickedConv])`. This is the React
   stale-closure footgun for long-lived subscriptions.
 
-## Acceptance criteria walkthrough (for Les)
+## Acceptance criteria walkthrough — completed
 
-The spec's acceptance criteria require live testing against `make dev`. Walk them
-in order:
+Live-smoked against `make dev` on port 18880. All eight criteria passed:
 
-- [ ] Connect with `--token <t>` and either pick a conversation or pass `--conv <id>`.
-- [ ] Send a user message, see streamed assistant response, see `message_complete` finalize it.
-- [ ] Trigger a confirm-gated tool (shell command), approve inline, see tool output continue.
-- [ ] Trigger a confirm-gated tool, deny inline, see the agent recover.
-- [ ] `Ctrl+C` mid-turn cancels via `cancel_turn`; transcript reflects the cancel.
-- [ ] Kill `make dev`, restart, see TUI reconnect and resume the same conversation. (Fixed via `useRef` in T9 follow-up; verify the fix works in practice.)
-- [ ] Run `cd tui && npm test` — dispatcher unit tests pass (11/11).
-- [ ] Run `cd tui && npm run typecheck` — clean.
+- [x] Connect with `--token <t>` and `--conv <id>` — works (picker also works).
+- [x] Send a user message, see streamed assistant response, see `message_complete` finalize it.
+- [x] Trigger a confirm-gated tool (shell command), approve inline, see tool output continue.
+- [x] Trigger a confirm-gated tool, deny inline, see the agent recover.
+- [x] `Ctrl+C` mid-turn cancels via `cancel_turn`; transcript reflects the cancel (now preserves the streamed draft, see deltas below).
+- [x] Kill `make dev`, restart, see TUI reconnect and resume the same conversation — `[reconnected]` line appears and conversation context is intact.
+- [x] `cd tui && npm test` — 12/12 (added one test for cancel-preserves-draft).
+- [x] `cd tui && npm run typecheck` — clean.
 
-Commands for the live tests:
+Working launch command (single line, semicolons keep vars in shell):
 
 ```bash
-# Grab a token key from the agent's web_tokens.json.
-# Replace <agent_id> with the subdirectory name under data/ for the bot you want.
-TOKEN=$(jq -r 'keys[0]' /Users/lorchard/devel/decafclaw/data/<agent_id>/web_tokens.json)
-
-# Launch with picker:
-cd tui && DECAFCLAW_TOKEN="$TOKEN" npm run dev
-
-# Launch with explicit conversation:
-cd tui && DECAFCLAW_TOKEN="$TOKEN" npm run dev -- --conv smoke-tui-spike
-
-# For a confirm-gated tool: ask the agent to run a shell command,
-# e.g. "run the shell command: ls /tmp"
+TOKEN=$(jq -r 'keys[0]' /Users/lorchard/devel/decafclaw/data/decafclaw/web_tokens.json); \
+CONV=$(curl -s -X POST -H "Cookie: decafclaw_session=$TOKEN" \
+  -H "Content-Type: application/json" -d '{"title":"tui smoke"}' \
+  http://localhost:18880/api/conversations | jq -r .conv_id); \
+echo "Created: $CONV"; \
+cd /Users/lorchard/devel/decafclaw/.claude/worktrees/tui-spike/tui && \
+  DECAFCLAW_TOKEN=$TOKEN DECAFCLAW_HOST=http://localhost:18880 \
+  npm run dev -- --conv "$CONV"
 ```
+
+Notes:
+
+- Conversation IDs are *server-assigned* via `POST /api/conversations`; we can't just pass a random fresh ID. The picker's `newConvId()` local-random generator is also broken because of this — needs a Phase 2 fix to POST first.
+- Default `make dev` port is 18880 in this environment, not the plan's 8088.
+
+## Smoke-driven wire deltas (manifest reconciliation)
+
+Live testing surfaced four wire-shape errors in `src/decafclaw/web/message_types.json`. The manifest had drifted from the actual implementation; the TUI was the first hand-typed consumer to catch them. Fixed in both the manifest *and* the TUI:
+
+- **`user_message`**: manifest declared `{conv_id, message: object}`, server actually emits `{conv_id, text: string}` (websocket.py:505).
+- **`message_complete`**: manifest declared `{conv_id, message: object}`, server actually emits `{conv_id, text: string, ...}` (conversation_manager.py:1062).
+- **`confirm_request`**: manifest declared `{request_id, kind, payload}`, server actually emits flat fields `{confirmation_id, action_type, tool, command, suggested_pattern, message, approve_label, deny_label, tool_call_id, action_data}` (websocket.py:600).
+- **`confirm_response`**: manifest declared `{request_id, decision, extras}`, server actually reads `{confirmation_id, approved: bool, always: bool, add_pattern: bool}` (websocket.py:_handle_confirm_response).
+
+Plus one routing error:
+
+- **WS path**: plan/spec said `/api/ws`. Actual mount is `/ws/chat` (http_server.py:1834).
+
+Codegen blast radius from the manifest fix: only `docs/websocket-messages.md` regenerated. `message_types.py` and `message-types.js` enumerate names only (which were already correct), so they're unchanged. Existing Python and JS consumers were unaffected.
+
+## Smoke-driven UX improvement
+
+- **Cancel preserves the streamed draft.** Server emits `message_complete` with `text: "[cancelled]"` on cancel (conversation_manager.py:1080). The first version of the dispatcher replaced the streamed `bot>` output with `[cancelled]`, throwing away the partial response. Fixed: when `text === "[cancelled]"` and there's a streamed draft, emit two transcript lines — the partial reply preserved as assistant text, then a yellow `[cancelled]` system marker. New test added (`message_complete with [cancelled] preserves streamed draft`).
+
+## Server-side curiosity (not a TUI issue)
+
+After a cancel-then-reconnect cycle, sending "hello" triggered the agent to first re-fulfill the cancelled essay request (writing a fresh full essay on a new topic), then respond to "hello." Inspecting the conversation history, the cancel persists `[cancelled]` as the assistant message — so the LLM sees `user(write essay) → assistant([cancelled]) → user(hello)` and apparently treats the original request as still open.
+
+This is server-side / archive behavior, not a TUI bug. Worth a separate issue: cancelled turns probably want a stronger marker that signals "the user is done with this, don't continue."
 
 ## Retro candidates (Phase 2 follow-ups)
 
