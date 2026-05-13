@@ -4,6 +4,7 @@ import TextInput from "ink-text-input";
 import type { WSClient, WSEvent } from "./wsClient.js";
 import { dispatch, initialState, type State } from "./dispatcher.js";
 import type { ServerMessage } from "./types.js";
+import { ConversationPicker } from "./conversationPicker.js";
 
 export interface AppProps {
   client: WSClient;
@@ -43,18 +44,23 @@ function reducer(s: State, a: Action): State {
   }
 }
 
-export function App({ client, initialConvId }: AppProps): React.JSX.Element {
+export function App({
+  client,
+  initialConvId,
+  host,
+  token,
+}: AppProps): React.JSX.Element {
   const [state, dispatchUi] = useReducer(reducer, initialState);
   const [draft, setDraft] = useState("");
   const { exit } = useApp();
+  const [pickedConv, setPickedConv] = useState<string | null>(initialConvId);
 
+  // Subscribe to WS events once on mount.
+  // Stale-closure trade-off accepted for the spike: `state.conv_id` inside this
+  // handler always reads the mount-time value (null). The __reconnected branch
+  // uses it to re-select — silently no-ops on reconnect since pickedConv is also
+  // stale here. Happy-path smoke (no reconnect) is unaffected.
   useEffect(() => {
-    // Capture-once subscription: registered once on mount. Re-registering on
-    // every render would stack up duplicate handlers. The stale-closure trade-off
-    // is accepted for the spike: `state.conv_id` inside this handler always reads
-    // the mount-time value (null). The __reconnected branch uses it to re-select
-    // the conversation — this will silently no-op until T9 provides a ref-based
-    // fix. Happy-path smoke (no reconnect) is unaffected.
     client.on((e: WSEvent) => {
       if (e.type === "__reconnected") {
         dispatchUi({ kind: "reconnected" });
@@ -67,19 +73,20 @@ export function App({ client, initialConvId }: AppProps): React.JSX.Element {
         dispatchUi({ kind: "wire", msg: e });
       }
     });
-
-    if (initialConvId) {
-      // Small delay to let the socket open before sending select_conv.
-      // WSClient silently drops sends when not yet OPEN, and a proper
-      // buffered-send is out of scope for the spike.
-      const t = setInterval(() => {
-        client.send({ type: "select_conv", conv_id: initialConvId });
-        clearInterval(t);
-      }, 100);
-      return () => clearInterval(t);
-    }
-    return undefined;
   }, []);
+
+  // Select the active conversation whenever the user picks one.
+  // Small delay lets the socket open before sending select_conv.
+  // WSClient silently drops sends when not yet OPEN, and a proper
+  // buffered-send is out of scope for the spike.
+  useEffect(() => {
+    if (!pickedConv) return undefined;
+    const t = setInterval(() => {
+      client.send({ type: "select_conv", conv_id: pickedConv });
+      clearInterval(t);
+    }, 100);
+    return () => clearInterval(t);
+  }, [pickedConv]);
 
   const [cancelArmed, setCancelArmed] = useState(false);
 
@@ -133,6 +140,16 @@ export function App({ client, initialConvId }: AppProps): React.JSX.Element {
       attachments: [],
     });
     setDraft("");
+  }
+
+  if (!pickedConv) {
+    return (
+      <ConversationPicker
+        host={host}
+        token={token}
+        onPick={(id) => setPickedConv(id)}
+      />
+    );
   }
 
   return (
