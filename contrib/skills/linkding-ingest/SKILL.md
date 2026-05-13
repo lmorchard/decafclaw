@@ -5,7 +5,7 @@ schedule: "45 */4 * * *"
 effort: default
 required-skills:
   - tabstack
-allowed-tools: shell($SKILL_DIR/fetch.sh), vault_read, vault_write, vault_search, vault_list, vault_backlinks, vault_journal_append, tabstack_extract_markdown, current_time, delegate_tasks
+allowed-tools: shell($SKILL_DIR/fetch.sh), shell($SKILL_DIR/fetch.sh *), vault_read, vault_write, vault_search, vault_list, vault_backlinks, vault_journal_append, tabstack_extract_markdown, current_time, delegate_tasks
 user-invocable: true
 ---
 
@@ -34,9 +34,22 @@ Run the fetch script:
 $SKILL_DIR/fetch.sh
 ```
 
-This outputs ALL recent bookmarks as markdown. Read the entire output to get the full list. Drop obviously low-signal bookmarks (duplicates, ephemeral content) before delegating — don't waste a child on them.
+With no args, the script auto-fetches everything since the last successful run (or the past 1 day on first run) and updates a workspace-side timestamp file when it succeeds. This is what scheduled cycles use.
 
-If the output is empty (no bookmarks since the last run), start your final summary with `HEARTBEAT_OK` and stop.
+**Backfill mode.** When invoked with arguments, the script forwards them directly to the underlying `linkding-to-markdown fetch` binary and skips the timestamp update — so a backfill doesn't clobber the scheduled-cycle state. Use this when the user asks for older bookmarks or a specific date range:
+
+```
+$SKILL_DIR/fetch.sh --days 30                       # last 30 days
+$SKILL_DIR/fetch.sh --since 2026-04-01              # since a date
+$SKILL_DIR/fetch.sh --since 2026-04-01 --until 2026-04-30
+$SKILL_DIR/fetch.sh --query golang --days 365       # filtered fetch
+```
+
+Available flags (forwarded to the binary): `--days N`, `--since YYYY-MM-DD`, `--until YYYY-MM-DD`, `--query <text>`. See `$SKILL_DIR/bin/<platform>/linkding-to-markdown fetch --help` for the full list.
+
+This outputs ALL matching bookmarks as markdown. Read the entire output to get the full list. Drop obviously low-signal bookmarks (duplicates, ephemeral content) before delegating — don't waste a child on them.
+
+If the output is empty (no matching bookmarks), start your final summary with `HEARTBEAT_OK` and stop.
 
 ## Step 2: Delegate analysis with `delegate_tasks`
 

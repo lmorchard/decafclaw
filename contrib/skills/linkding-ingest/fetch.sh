@@ -19,8 +19,26 @@ fi
 : "${LINKDING_URL:?LINKDING_URL env var is required}"
 : "${LINKDING_TOKEN:?LINKDING_TOKEN env var is required}"
 
-# Last-run tracking
-# State lives in workspace, not the skill directory
+# Backfill mode: any args from the caller are forwarded directly to the
+# binary, bypassing the last-run-based incremental fetch. Last-run
+# tracking is also skipped so a backfill doesn't clobber the timestamp
+# the scheduled cycle relies on.
+#
+# Examples:
+#   fetch.sh                              # auto: since last run (or 1 day)
+#   fetch.sh --days 30                    # last 30 days, ad-hoc
+#   fetch.sh --since 2026-04-01           # since a specific date
+#   fetch.sh --since 2026-04-01 --until 2026-04-30
+#   fetch.sh --query golang               # filtered fetch
+if [ "$#" -gt 0 ]; then
+    exec "$BIN" fetch \
+        --url "${LINKDING_URL}" \
+        --token "${LINKDING_TOKEN}" \
+        "$@"
+fi
+
+# No args → auto-fetch since the last successful run.
+# State lives in workspace, not the skill directory.
 WORKSPACE_DIR="$(cd "${SCRIPT_DIR}/../../workspace" 2>/dev/null && pwd || echo "${SCRIPT_DIR}")"
 LAST_RUN_DIR="${WORKSPACE_DIR}/skill-state/linkding-ingest"
 mkdir -p "$LAST_RUN_DIR"
