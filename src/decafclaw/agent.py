@@ -62,54 +62,6 @@ def _conv_id(ctx) -> str:
     return ctx.conv_id or ctx.channel_id or "unknown"
 
 
-def _resolve_attachments(config, message: dict) -> dict:
-    """Transform a message with attachments into multimodal content for the LLM.
-
-    Messages without attachments pass through unchanged. The archive stores
-    plain text + attachment metadata; this builds the ephemeral content array.
-    """
-    atts = message.get("attachments")
-    if not atts:
-        return message
-
-    from .attachments import read_attachment_base64
-
-    content_parts: list[dict] = []
-    text = message.get("content", "")
-    if text:
-        content_parts.append({"type": "text", "text": text})
-
-    for att in atts:
-        b64_data = read_attachment_base64(config, att)
-        if b64_data is None:
-            content_parts.append({
-                "type": "text",
-                "text": f"[attachment missing: {att.get('filename', '?')}]",
-            })
-            continue
-
-        mime = att.get("mime_type", "application/octet-stream")
-        # TODO(#137): MIME type is client-supplied — validate with magic bytes
-        # server-side to prevent non-images from being base64-embedded
-        if mime.startswith("image/"):
-            content_parts.append({
-                "type": "image_url",
-                "image_url": {"url": f"data:{mime};base64,{b64_data}"},
-            })
-        else:
-            # Non-image: represent as a textual placeholder only
-            # (binary data is not sent to the LLM)
-            content_parts.append({
-                "type": "text",
-                "text": f"[file: {att.get('filename', '?')} ({mime})]",
-            })
-
-    # Return message with multimodal content, stripping attachments key
-    result = {k: v for k, v in message.items() if k != "attachments"}
-    result["content"] = content_parts
-    return result
-
-
 def _archive(ctx, msg) -> None:
     """Archive a message, logging errors but never raising."""
     if ctx.skip_archive:
@@ -891,65 +843,6 @@ async def _setup_turn_state(ctx, config, history) -> dict[str, str]:
         log.info("Agent turn: model=%s (legacy config.llm)", config.llm.model)
 
     return model_override
-
-
-# -- Wiki context helpers ------------------------------------------------------
-
-_WIKI_MENTION_RE = _re.compile(r'@\[\[([^\]]+)\]\]')
-
-
-def _parse_wiki_references(
-    user_message: str, wiki_page: str | None = None,
-) -> list[dict]:
-    """Parse @[[PageName]] mentions and optional open wiki page.
-
-    Returns a list of dicts: {"page": name, "source": "mention"|"open_page"}.
-    Does NOT resolve or read pages — caller filters against already-injected
-    pages first, then resolves only the ones needed.
-    """
-    seen: set[str] = set()
-    results: list[dict] = []
-
-    # Parse @[[...]] mentions from message text
-    for match in _WIKI_MENTION_RE.finditer(user_message):
-        raw = match.group(1).strip()
-        # Handle @[[target|display]] — extract target before pipe
-        page_name = raw.split("|")[0].strip()
-        if page_name and page_name not in seen:
-            seen.add(page_name)
-            results.append({"page": page_name, "source": "mention"})
-
-    # Add open wiki page from web UI (if not already mentioned)
-    if wiki_page and wiki_page not in seen:
-        results.append({"page": wiki_page, "source": "open_page"})
-
-    return results
-
-
-def _read_wiki_page(config, page_name: str) -> str | None:
-    """Resolve and read a wiki page. Returns content or None. Fail-open."""
-    from .skills.vault.tools import resolve_page
-
-    resolved = resolve_page(config, page_name)
-    if not resolved:
-        return None
-    try:
-        return resolved.read_text()
-    except (OSError, UnicodeError):
-        log.warning("Failed to read wiki page %s at %s", page_name, resolved,
-                     exc_info=True)
-        return None
-
-
-def _get_already_injected_pages(history: list) -> set[str]:
-    """Scan history for vault_references messages and return set of page names."""
-    pages: set[str] = set()
-    for msg in history:
-        if msg.get("role") == "vault_references":
-            page = msg.get("wiki_page")
-            if page:
-                pages.add(page)
-    return pages
 
 
 class IterationOutcome:

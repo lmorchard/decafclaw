@@ -1,15 +1,14 @@
-"""Tests for _resolve_attachments in agent.py."""
+"""Tests for resolve_attachments in attachments.py."""
 
 import pytest
 
-from decafclaw.agent import _resolve_attachments
-from decafclaw.attachments import save_attachment
+from decafclaw.attachments import resolve_attachments, save_attachment
 
 
 def test_message_without_attachments_passes_through(config):
     """Messages without attachments are returned unchanged."""
     msg = {"role": "user", "content": "hello"}
-    result = _resolve_attachments(config, msg)
+    result = resolve_attachments(config, msg)
     assert result is msg
 
 
@@ -25,7 +24,7 @@ def test_image_attachment_becomes_multimodal(config):
     att = save_attachment(config, "test-conv", "photo.png", pixel, "image/png")
 
     msg = {"role": "user", "content": "look at this", "attachments": [att]}
-    result = _resolve_attachments(config, msg)
+    result = resolve_attachments(config, msg)
 
     assert "attachments" not in result
     assert isinstance(result["content"], list)
@@ -45,7 +44,7 @@ def test_missing_file_gets_placeholder(config):
         "mime_type": "image/png",
     }
     msg = {"role": "user", "content": "see this", "attachments": [att]}
-    result = _resolve_attachments(config, msg)
+    result = resolve_attachments(config, msg)
 
     assert isinstance(result["content"], list)
     # Text content still present

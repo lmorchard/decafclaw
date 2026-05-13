@@ -2,24 +2,24 @@
 
 import pytest
 
-from decafclaw.agent import (
-    _get_already_injected_pages,
-    _parse_wiki_references,
-    _read_wiki_page,
+from decafclaw.memory_context import (
+    get_already_injected_pages,
+    parse_wiki_references,
+    read_wiki_page,
 )
 
-# -- _parse_wiki_references ---------------------------------------------------
+# -- parse_wiki_references ----------------------------------------------------
 
 
 def test_parse_no_mentions_no_page():
     """No @[[...]] and no wiki_page → empty list."""
-    result = _parse_wiki_references("hello world")
+    result = parse_wiki_references("hello world")
     assert result == []
 
 
 def test_parse_mention():
     """@[[TestPage]] is parsed."""
-    result = _parse_wiki_references("check @[[TestPage]] please")
+    result = parse_wiki_references("check @[[TestPage]] please")
     assert len(result) == 1
     assert result[0]["page"] == "TestPage"
     assert result[0]["source"] == "mention"
@@ -27,7 +27,7 @@ def test_parse_mention():
 
 def test_parse_open_page():
     """wiki_page param appears as open_page source."""
-    result = _parse_wiki_references("hello", wiki_page="OpenPage")
+    result = parse_wiki_references("hello", wiki_page="OpenPage")
     assert len(result) == 1
     assert result[0]["page"] == "OpenPage"
     assert result[0]["source"] == "open_page"
@@ -35,14 +35,14 @@ def test_parse_open_page():
 
 def test_parse_dedup_mention_and_open_page():
     """If @[[X]] and wiki_page=X, only one entry (mention wins)."""
-    result = _parse_wiki_references("@[[Page]]", wiki_page="Page")
+    result = parse_wiki_references("@[[Page]]", wiki_page="Page")
     assert len(result) == 1
     assert result[0]["source"] == "mention"
 
 
 def test_parse_multiple_mentions():
     """Multiple @[[...]] in one message all parse."""
-    result = _parse_wiki_references("see @[[A]] and @[[B]]")
+    result = parse_wiki_references("see @[[A]] and @[[B]]")
     assert len(result) == 2
     pages = {r["page"] for r in result}
     assert pages == {"A", "B"}
@@ -50,19 +50,19 @@ def test_parse_multiple_mentions():
 
 def test_parse_duplicate_mention():
     """Same page mentioned twice → only one entry."""
-    result = _parse_wiki_references("@[[X]] and @[[X]]")
+    result = parse_wiki_references("@[[X]] and @[[X]]")
     assert len(result) == 1
 
 
 def test_parse_pipe_display_syntax():
     """@[[target|display]] extracts the target before the pipe."""
-    result = _parse_wiki_references("see @[[Tempest (arcade game)|Tempest arcade game]]")
+    result = parse_wiki_references("see @[[Tempest (arcade game)|Tempest arcade game]]")
     assert len(result) == 1
     assert result[0]["page"] == "Tempest (arcade game)"
     assert result[0]["source"] == "mention"
 
 
-# -- _read_wiki_page ----------------------------------------------------------
+# -- read_wiki_page -----------------------------------------------------------
 
 
 def test_read_wiki_page_found(config):
@@ -70,26 +70,26 @@ def test_read_wiki_page_found(config):
     vault_dir = config.vault_root
     vault_dir.mkdir(parents=True, exist_ok=True)
     (vault_dir / "TestPage.md").write_text("# Test\nHello")
-    assert _read_wiki_page(config, "TestPage") == "# Test\nHello"
+    assert read_wiki_page(config, "TestPage") == "# Test\nHello"
 
 
 def test_read_wiki_page_not_found(config):
     """Missing page returns None."""
     vault_dir = config.vault_root
     vault_dir.mkdir(parents=True, exist_ok=True)
-    assert _read_wiki_page(config, "Missing") is None
+    assert read_wiki_page(config, "Missing") is None
 
 
 def test_read_wiki_page_no_vault_dir(config):
     """No vault directory → None (no crash)."""
-    assert _read_wiki_page(config, "Anything") is None
+    assert read_wiki_page(config, "Anything") is None
 
 
-# -- _get_already_injected_pages -----------------------------------------------
+# -- get_already_injected_pages -----------------------------------------------
 
 
 def test_already_injected_empty():
-    assert _get_already_injected_pages([]) == set()
+    assert get_already_injected_pages([]) == set()
 
 
 def test_already_injected_finds_vault_references():
@@ -99,7 +99,7 @@ def test_already_injected_finds_vault_references():
         {"role": "assistant", "content": "ok"},
         {"role": "vault_references", "content": "...", "wiki_page": "Page2"},
     ]
-    assert _get_already_injected_pages(history) == {"Page1", "Page2"}
+    assert get_already_injected_pages(history) == {"Page1", "Page2"}
 
 
 def test_already_injected_ignores_other_roles():
@@ -107,7 +107,7 @@ def test_already_injected_ignores_other_roles():
         {"role": "user", "content": "hi"},
         {"role": "vault_retrieval", "content": "..."},
     ]
-    assert _get_already_injected_pages(history) == set()
+    assert get_already_injected_pages(history) == set()
 
 
 # -- Integration: wiki context via ContextComposer --------------------------------
