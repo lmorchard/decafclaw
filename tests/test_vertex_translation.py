@@ -460,7 +460,7 @@ def test_parse_usage_missing():
 
 
 def test_user_message_with_image_attachment():
-    """Multimodal user content (from _resolve_attachments) → Vertex inlineData."""
+    """Multimodal user content (from resolve_attachments) → Vertex inlineData."""
     messages = [{
         "role": "user",
         "content": [

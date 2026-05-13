@@ -266,8 +266,8 @@ class ContextComposer:
         Does NOT archive — the caller is responsible for persisting messages
         via the messages_to_archive list.
         """
-        from .agent import _resolve_attachments
         from .archive import LLM_ROLES
+        from .attachments import resolve_attachments
         from .util import estimate_tokens
 
         config = ctx.config
@@ -422,7 +422,7 @@ class ContextComposer:
         # Fix: pull tool results out and reattach them right after their
         # matching assistant message; drop any with no match.
         llm_history = _reorder_tool_results(llm_history)
-        llm_history = [_resolve_attachments(config, m) for m in llm_history]
+        llm_history = [resolve_attachments(config, m) for m in llm_history]
 
         # -- History source entry --
         # history_tokens was computed above (budget side); reuse the same value
@@ -722,17 +722,21 @@ class ContextComposer:
         if mode in skip_modes:
             return [], None
 
-        from .agent import _get_already_injected_pages, _parse_wiki_references, _read_wiki_page
+        from .memory_context import (
+            get_already_injected_pages,
+            parse_wiki_references,
+            read_wiki_page,
+        )
 
         vault_dir = config.vault_root
         if not vault_dir.exists():
             return [], None
 
-        wiki_refs = _parse_wiki_references(user_message, ctx.wiki_page)
+        wiki_refs = parse_wiki_references(user_message, ctx.wiki_page)
         if not wiki_refs:
             return [], None
 
-        already_injected = _get_already_injected_pages(history)
+        already_injected = get_already_injected_pages(history)
         messages = []
         skipped = 0
 
@@ -740,7 +744,7 @@ class ContextComposer:
             if ref["page"] in already_injected:
                 skipped += 1
                 continue
-            content = _read_wiki_page(config, ref["page"])
+            content = read_wiki_page(config, ref["page"])
             if content is None:
                 text = f"[Wiki page '{ref['page']}' not found]"
             elif ref["source"] == "open_page":

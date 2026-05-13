@@ -393,9 +393,9 @@ class TestComposeWikiContext:
         vault_dir = tmp_path / "vault"
         vault_dir.mkdir()
         config.vault.vault_path = str(vault_dir)
-        with patch("decafclaw.agent._parse_wiki_references",
+        with patch("decafclaw.memory_context.parse_wiki_references",
                    return_value=[{"page": "TestPage", "source": "mention"}]):
-            with patch("decafclaw.agent._read_wiki_page",
+            with patch("decafclaw.memory_context.read_wiki_page",
                        return_value="Page content here"):
                 composer = ContextComposer()
                 msgs, entry = composer._compose_vault_references(
@@ -413,7 +413,7 @@ class TestComposeWikiContext:
         vault_dir.mkdir()
         config.vault.vault_path = str(vault_dir)
         history = [{"role": "vault_references", "content": "old", "wiki_page": "TestPage"}]
-        with patch("decafclaw.agent._parse_wiki_references",
+        with patch("decafclaw.memory_context.parse_wiki_references",
                    return_value=[{"page": "TestPage", "source": "mention"}]):
             composer = ContextComposer()
             msgs, entry = composer._compose_vault_references(

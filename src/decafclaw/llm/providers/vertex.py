@@ -394,13 +394,13 @@ def _content_to_parts(content) -> list[dict]:
     """Convert message content (string or multimodal list) to Vertex parts.
 
     Handles both plain string content and the OpenAI multimodal format
-    produced by _resolve_attachments: [{"type": "text", ...}, {"type": "image_url", ...}].
+    produced by resolve_attachments: [{"type": "text", ...}, {"type": "image_url", ...}].
     """
     if not content:
         return []
     if isinstance(content, str):
         return [{"text": content}]
-    # Multimodal list (from _resolve_attachments)
+    # Multimodal list (from resolve_attachments)
     parts = []
     for item in content:
         item_type = item.get("type", "")
