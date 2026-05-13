@@ -80,6 +80,8 @@ Markdown rendering, theme/skin, and font/color preferences are *not* in this buc
 
 This may deserve its own initiative/issue independent of the TUI work; the TUI is a forcing function, not the only consumer.
 
+Tracked separately as [#487](https://github.com/lmorchard/decafclaw/issues/487). The TUI spike does not block on it — widgets and canvas are deferred Phase 2 items anyway.
+
 ## Architecture
 
 ```
