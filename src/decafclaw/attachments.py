@@ -93,3 +93,49 @@ def delete_conversation_uploads(config, conv_id: str) -> None:
     dest_dir = uploads_dir(config, conv_id)
     if dest_dir.exists():
         shutil.rmtree(dest_dir)
+
+
+def resolve_attachments(config, message: dict) -> dict:
+    """Transform a message with attachments into multimodal content for the LLM.
+
+    Messages without attachments pass through unchanged. The archive stores
+    plain text + attachment metadata; this builds the ephemeral content array.
+    """
+    atts = message.get("attachments")
+    if not atts:
+        return message
+
+    content_parts: list[dict] = []
+    text = message.get("content", "")
+    if text:
+        content_parts.append({"type": "text", "text": text})
+
+    for att in atts:
+        b64_data = read_attachment_base64(config, att)
+        if b64_data is None:
+            content_parts.append({
+                "type": "text",
+                "text": f"[attachment missing: {att.get('filename', '?')}]",
+            })
+            continue
+
+        mime = att.get("mime_type", "application/octet-stream")
+        # TODO(#137): MIME type is client-supplied — validate with magic bytes
+        # server-side to prevent non-images from being base64-embedded
+        if mime.startswith("image/"):
+            content_parts.append({
+                "type": "image_url",
+                "image_url": {"url": f"data:{mime};base64,{b64_data}"},
+            })
+        else:
+            # Non-image: represent as a textual placeholder only
+            # (binary data is not sent to the LLM)
+            content_parts.append({
+                "type": "text",
+                "text": f"[file: {att.get('filename', '?')} ({mime})]",
+            })
+
+    # Return message with multimodal content, stripping attachments key
+    result = {k: v for k, v in message.items() if k != "attachments"}
+    result["content"] = content_parts
+    return result

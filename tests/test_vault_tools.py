@@ -864,21 +864,21 @@ class TestWikiMentionRegex:
     """Verify @[[folder/Page]] mentions work with folder paths."""
 
     def test_folder_path_mention(self):
-        from decafclaw.agent import _WIKI_MENTION_RE
+        from decafclaw.memory_context import _WIKI_MENTION_RE
         text = "Check @[[agent/pages/Foo]] for details"
         matches = _WIKI_MENTION_RE.findall(text)
         assert matches == ["agent/pages/Foo"]
 
     def test_pipe_display_with_folder(self):
-        from decafclaw.agent import _WIKI_MENTION_RE
+        from decafclaw.memory_context import _WIKI_MENTION_RE
         text = "See @[[agent/pages/Foo|my display text]]"
         matches = _WIKI_MENTION_RE.findall(text)
         assert matches == ["agent/pages/Foo|my display text"]
 
     def test_multiple_folder_mentions(self):
-        from decafclaw.agent import _parse_wiki_references
+        from decafclaw.memory_context import parse_wiki_references
         text = "Check @[[projects/Alpha]] and @[[people/Bob]]"
-        results = _parse_wiki_references(text)
+        results = parse_wiki_references(text)
         pages = [r["page"] for r in results]
         assert "projects/Alpha" in pages
         assert "people/Bob" in pages

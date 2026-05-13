@@ -299,3 +299,65 @@ def _excerpt_for_headline(text: str, max_chars: int) -> str:
     # Collapse internal whitespace so the headline is one tidy line.
     cleaned = " ".join(text.split())
     return cleaned[:max_chars] if max_chars > 0 else cleaned
+
+
+# -- Wiki references (@[[Page]] mentions) --------------------------------------
+
+# Matches @[[PageName]] (and @[[PageName|display]]) mentions in user messages.
+# Distinct from _WIKI_LINK_RE above which matches bare [[PageName]] links
+# inside vault page bodies.
+_WIKI_MENTION_RE = re.compile(r'@\[\[([^\]]+)\]\]')
+
+
+def parse_wiki_references(
+    user_message: str, wiki_page: str | None = None,
+) -> list[dict]:
+    """Parse @[[PageName]] mentions and optional open wiki page.
+
+    Returns a list of dicts: {"page": name, "source": "mention"|"open_page"}.
+    Does NOT resolve or read pages — caller filters against already-injected
+    pages first, then resolves only the ones needed.
+    """
+    seen: set[str] = set()
+    results: list[dict] = []
+
+    # Parse @[[...]] mentions from message text
+    for match in _WIKI_MENTION_RE.finditer(user_message):
+        raw = match.group(1).strip()
+        # Handle @[[target|display]] — extract target before pipe
+        page_name = raw.split("|")[0].strip()
+        if page_name and page_name not in seen:
+            seen.add(page_name)
+            results.append({"page": page_name, "source": "mention"})
+
+    # Add open wiki page from web UI (if not already mentioned)
+    if wiki_page and wiki_page not in seen:
+        results.append({"page": wiki_page, "source": "open_page"})
+
+    return results
+
+
+def read_wiki_page(config, page_name: str) -> str | None:
+    """Resolve and read a wiki page. Returns content or None. Fail-open."""
+    from .skills.vault.tools import resolve_page
+
+    resolved = resolve_page(config, page_name)
+    if not resolved:
+        return None
+    try:
+        return resolved.read_text()
+    except (OSError, UnicodeError):
+        log.warning("Failed to read wiki page %s at %s", page_name, resolved,
+                    exc_info=True)
+        return None
+
+
+def get_already_injected_pages(history: list) -> set[str]:
+    """Scan history for vault_references messages and return set of page names."""
+    pages: set[str] = set()
+    for msg in history:
+        if msg.get("role") == "vault_references":
+            page = msg.get("wiki_page")
+            if page:
+                pages.add(page)
+    return pages
