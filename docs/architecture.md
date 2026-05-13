@@ -142,7 +142,7 @@ When the model emits multiple tool calls in a single response, they run concurre
 semaphore = asyncio.Semaphore(ctx.config.agent.max_concurrent_tools)  # default 5
 
 tasks = [
-    _execute_single_tool(parent.fork_for_tool_call(tc.id), tc, semaphore)
+    execute_single_tool(parent.fork_for_tool_call(tc.id), tc, semaphore)
     for tc in tool_calls
 ]
 results = await asyncio.gather(*tasks, return_exceptions=True)

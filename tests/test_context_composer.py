@@ -445,7 +445,7 @@ class TestComposeTools:
         config.agent.tool_context_budget_pct = 1.0
         config.compaction.max_tokens = 1000000
         small_tools = [_make_tool_def("tool_a"), _make_tool_def("tool_b")]
-        with patch("decafclaw.agent._collect_all_tool_defs", return_value=small_tools):
+        with patch("decafclaw.tool_definitions.collect_all_tool_defs", return_value=small_tools):
             composer = ContextComposer()
             active, deferred, text, entry = composer._compose_tools(ctx, config)
             assert len(active) == 2
@@ -463,7 +463,7 @@ class TestComposeTools:
         critical_def = _make_tool_def("current_time", "Get current time")
         critical_def["priority"] = "critical"
         many_tools.append(critical_def)
-        with patch("decafclaw.agent._collect_all_tool_defs", return_value=many_tools):
+        with patch("decafclaw.tool_definitions.collect_all_tool_defs", return_value=many_tools):
             composer = ContextComposer()
             active, deferred, text, entry = composer._compose_tools(ctx, config)
             assert len(deferred) > 0
@@ -479,7 +479,7 @@ class TestComposeTools:
         config.compaction.max_tokens = 1000000
         tools = [_make_tool_def("allowed_tool"), _make_tool_def("blocked_tool")]
         ctx.tools.allowed = {"allowed_tool"}
-        with patch("decafclaw.agent._collect_all_tool_defs", return_value=tools):
+        with patch("decafclaw.tool_definitions.collect_all_tool_defs", return_value=tools):
             composer = ContextComposer()
             active, deferred, text, entry = composer._compose_tools(ctx, config)
             active_names = {t["function"]["name"] for t in active}
@@ -494,7 +494,7 @@ class TestComposeTools:
         tools = [_make_tool_def(f"tool_{i}", "x" * 200) for i in range(20)]
         # Simulate a pre-emptive match — tool_7 should survive deferral.
         ctx.tools.preempt_matches = {"tool_7"}
-        with patch("decafclaw.agent._collect_all_tool_defs", return_value=tools):
+        with patch("decafclaw.tool_definitions.collect_all_tool_defs", return_value=tools):
             composer = ContextComposer()
             active, deferred, text, entry = composer._compose_tools(ctx, config)
             active_names = {t["function"]["name"] for t in active}
@@ -509,7 +509,7 @@ class TestComposePreemptMatches:
         """When pre-emptive search is disabled, no matching happens and no entry is returned."""
         config.agent.preemptive_search.enabled = False
         tools = [_make_tool_def("vault_read", "Read a vault page")]
-        with patch("decafclaw.agent._collect_all_tool_defs", return_value=tools):
+        with patch("decafclaw.tool_definitions.collect_all_tool_defs", return_value=tools):
             composer = ContextComposer()
             entry = composer._compose_preempt_matches(
                 ctx, config, "read my vault", [], ComposerMode.INTERACTIVE,
@@ -520,7 +520,7 @@ class TestComposePreemptMatches:
     def test_empty_user_message_no_match(self, ctx, config):
         """Empty user message with no prior history yields no matches."""
         tools = [_make_tool_def("vault_read", "vault page")]
-        with patch("decafclaw.agent._collect_all_tool_defs", return_value=tools):
+        with patch("decafclaw.tool_definitions.collect_all_tool_defs", return_value=tools):
             composer = ContextComposer()
             entry = composer._compose_preempt_matches(
                 ctx, config, "", [], ComposerMode.INTERACTIVE,
@@ -534,7 +534,7 @@ class TestComposePreemptMatches:
             _make_tool_def("vault_backlinks", "List pages linking to a vault page"),
             _make_tool_def("unrelated_tool", "Totally unrelated"),
         ]
-        with patch("decafclaw.agent._collect_all_tool_defs", return_value=tools):
+        with patch("decafclaw.tool_definitions.collect_all_tool_defs", return_value=tools):
             composer = ContextComposer()
             entry = composer._compose_preempt_matches(
                 ctx, config, "show my vault backlinks", [], ComposerMode.INTERACTIVE,
@@ -555,7 +555,7 @@ class TestComposePreemptMatches:
             {"role": "user", "content": "what are the backlinks?"},
             {"role": "assistant", "content": "Here are the vault backlinks for foo."},
         ]
-        with patch("decafclaw.agent._collect_all_tool_defs", return_value=tools):
+        with patch("decafclaw.tool_definitions.collect_all_tool_defs", return_value=tools):
             composer = ContextComposer()
             # User message alone is stopword-only; prior assistant carries the topic.
             entry = composer._compose_preempt_matches(
@@ -568,7 +568,7 @@ class TestComposePreemptMatches:
         """Tools already declared critical don't get re-promoted — they're in already."""
         crit = _make_tool_def("shell", "Run a shell command")
         crit["priority"] = "critical"
-        with patch("decafclaw.agent._collect_all_tool_defs", return_value=[crit]):
+        with patch("decafclaw.tool_definitions.collect_all_tool_defs", return_value=[crit]):
             composer = ContextComposer()
             entry = composer._compose_preempt_matches(
                 ctx, config, "run a shell command", [], ComposerMode.INTERACTIVE,
@@ -581,7 +581,7 @@ class TestComposePreemptMatches:
         """Already-fetched tools don't get re-promoted."""
         ctx.skills.data = {"fetched_tools": ["vault_backlinks"]}
         tools = [_make_tool_def("vault_backlinks", "vault backlinks")]
-        with patch("decafclaw.agent._collect_all_tool_defs", return_value=tools):
+        with patch("decafclaw.tool_definitions.collect_all_tool_defs", return_value=tools):
             composer = ContextComposer()
             entry = composer._compose_preempt_matches(
                 ctx, config, "show me vault backlinks", [], ComposerMode.INTERACTIVE,
@@ -593,7 +593,7 @@ class TestComposePreemptMatches:
         """max_matches caps the number of promoted tools."""
         config.agent.preemptive_search.max_matches = 3
         tools = [_make_tool_def(f"vault_tool_{i}", "vault operation") for i in range(10)]
-        with patch("decafclaw.agent._collect_all_tool_defs", return_value=tools):
+        with patch("decafclaw.tool_definitions.collect_all_tool_defs", return_value=tools):
             composer = ContextComposer()
             entry = composer._compose_preempt_matches(
                 ctx, config, "vault operation", [], ComposerMode.INTERACTIVE,
@@ -610,7 +610,7 @@ class TestComposePreemptMatches:
             _make_tool_def("blocked_tool", "Also vault backlinks description"),
         ]
         ctx.tools.allowed = {"vault_backlinks"}
-        with patch("decafclaw.agent._collect_all_tool_defs", return_value=tools):
+        with patch("decafclaw.tool_definitions.collect_all_tool_defs", return_value=tools):
             composer = ContextComposer()
             entry = composer._compose_preempt_matches(
                 ctx, config, "show vault backlinks", [], ComposerMode.INTERACTIVE,
@@ -623,7 +623,7 @@ class TestComposePreemptMatches:
         """Calling _compose_preempt_matches resets ctx.tools.preempt_matches."""
         ctx.tools.preempt_matches = {"stale_tool"}
         tools = [_make_tool_def("vault_backlinks", "vault backlinks")]
-        with patch("decafclaw.agent._collect_all_tool_defs", return_value=tools):
+        with patch("decafclaw.tool_definitions.collect_all_tool_defs", return_value=tools):
             composer = ContextComposer()
             composer._compose_preempt_matches(
                 ctx, config, "show vault backlinks", [], ComposerMode.INTERACTIVE,
@@ -822,7 +822,7 @@ class TestCompose:
         config.compaction.max_tokens = 1000000
         small_tools = [_make_tool_def("tool_a")]
         with (
-            patch("decafclaw.agent._collect_all_tool_defs", return_value=small_tools),
+            patch("decafclaw.tool_definitions.collect_all_tool_defs", return_value=small_tools),
             patch("decafclaw.memory_context.retrieve_memory_context",
                   new_callable=AsyncMock, return_value=[]),
         ):
@@ -842,7 +842,7 @@ class TestCompose:
         many_tools = [_make_tool_def(f"t_{i}", "x" * 200) for i in range(20)]
         many_tools.append(_make_tool_def("think", "Think"))
         with (
-            patch("decafclaw.agent._collect_all_tool_defs", return_value=many_tools),
+            patch("decafclaw.tool_definitions.collect_all_tool_defs", return_value=many_tools),
             patch("decafclaw.memory_context.retrieve_memory_context",
                   new_callable=AsyncMock, return_value=[]),
         ):
@@ -865,7 +865,7 @@ class TestCompose:
         config.agent.tool_context_budget_pct = 1.0
         config.compaction.max_tokens = 1000000
         with (
-            patch("decafclaw.agent._collect_all_tool_defs", return_value=[]),
+            patch("decafclaw.tool_definitions.collect_all_tool_defs", return_value=[]),
             patch("decafclaw.memory_context.retrieve_memory_context",
                   new_callable=AsyncMock, return_value=[]),
         ):
@@ -881,7 +881,7 @@ class TestCompose:
         config.agent.tool_context_budget_pct = 1.0
         config.compaction.max_tokens = 1000000
         with (
-            patch("decafclaw.agent._collect_all_tool_defs", return_value=[]),
+            patch("decafclaw.tool_definitions.collect_all_tool_defs", return_value=[]),
             patch("decafclaw.memory_context.retrieve_memory_context",
                   new_callable=AsyncMock, return_value=[]),
         ):
@@ -899,7 +899,7 @@ class TestCompose:
             {"entry_text": "memory entry", "source_type": "page", "similarity": 0.8},
         ]
         with (
-            patch("decafclaw.agent._collect_all_tool_defs", return_value=[]),
+            patch("decafclaw.tool_definitions.collect_all_tool_defs", return_value=[]),
             patch("decafclaw.memory_context.retrieve_memory_context",
                   new_callable=AsyncMock, return_value=mock_results),
             patch("decafclaw.memory_context.format_memory_context",
@@ -946,7 +946,7 @@ class TestHistoryArchivedRemap:
         ]
 
         with (
-            patch("decafclaw.agent._collect_all_tool_defs", return_value=[]),
+            patch("decafclaw.tool_definitions.collect_all_tool_defs", return_value=[]),
             patch("decafclaw.memory_context.retrieve_memory_context",
                   new_callable=AsyncMock, return_value=[]),
         ):
@@ -992,7 +992,7 @@ class TestHistoryArchivedRemap:
         ]
 
         with (
-            patch("decafclaw.agent._collect_all_tool_defs", return_value=[]),
+            patch("decafclaw.tool_definitions.collect_all_tool_defs", return_value=[]),
             patch("decafclaw.memory_context.retrieve_memory_context",
                   new_callable=AsyncMock, return_value=[]),
         ):
@@ -1226,7 +1226,7 @@ class TestContextStatusInCompose:
         config.agent.tool_context_budget_pct = 1.0
         config.compaction.max_tokens = 100000
         with (
-            patch("decafclaw.agent._collect_all_tool_defs", return_value=[]),
+            patch("decafclaw.tool_definitions.collect_all_tool_defs", return_value=[]),
             patch("decafclaw.memory_context.retrieve_memory_context",
                   new_callable=AsyncMock, return_value=[]),
         ):
@@ -1246,7 +1246,7 @@ class TestContextStatusInCompose:
         config.agent.tool_context_budget_pct = 1.0
         config.compaction.max_tokens = 100000
         with (
-            patch("decafclaw.agent._collect_all_tool_defs", return_value=[]),
+            patch("decafclaw.tool_definitions.collect_all_tool_defs", return_value=[]),
             patch("decafclaw.memory_context.retrieve_memory_context",
                   new_callable=AsyncMock, return_value=[]),
         ):
@@ -1413,7 +1413,7 @@ class TestComposeExpandsBackgroundEvent:
         ]
 
         with (
-            patch("decafclaw.agent._collect_all_tool_defs", return_value=[]),
+            patch("decafclaw.tool_definitions.collect_all_tool_defs", return_value=[]),
             patch("decafclaw.memory_context.retrieve_memory_context",
                   new_callable=AsyncMock, return_value=[]),
         ):
@@ -1466,7 +1466,7 @@ class TestComposeExpandsBackgroundEvent:
         ]
 
         with (
-            patch("decafclaw.agent._collect_all_tool_defs", return_value=[]),
+            patch("decafclaw.tool_definitions.collect_all_tool_defs", return_value=[]),
             patch("decafclaw.memory_context.retrieve_memory_context",
                   new_callable=AsyncMock, return_value=[]),
         ):

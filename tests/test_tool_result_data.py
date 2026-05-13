@@ -76,7 +76,7 @@ def test_complex_data_serializes():
 @pytest.mark.asyncio
 async def test_agent_loop_appends_json_block(ctx):
     """The actual agent loop appends a JSON block when ToolResult.data is set."""
-    from decafclaw.agent import _execute_single_tool
+    from decafclaw.tool_execution import execute_single_tool
 
     test_data = {"exit_status": "success", "cost_usd": 1.23}
     mock_result = ToolResult(text="task completed", data=test_data)
@@ -87,8 +87,8 @@ async def test_agent_loop_appends_json_block(ctx):
     }
     semaphore = asyncio.Semaphore(1)
 
-    with patch("decafclaw.agent.execute_tool", new_callable=AsyncMock, return_value=mock_result):
-        tool_msg, _ = await _execute_single_tool(ctx, tc, semaphore)
+    with patch("decafclaw.tool_execution.execute_tool", new_callable=AsyncMock, return_value=mock_result):
+        tool_msg, _ = await execute_single_tool(ctx, tc, semaphore)
 
     assert tool_msg["role"] == "tool"
     assert tool_msg["content"].startswith("task completed")
@@ -105,7 +105,7 @@ async def test_agent_loop_appends_json_block(ctx):
 @pytest.mark.asyncio
 async def test_agent_loop_no_json_block_without_data(ctx):
     """No JSON block when ToolResult.data is None."""
-    from decafclaw.agent import _execute_single_tool
+    from decafclaw.tool_execution import execute_single_tool
 
     mock_result = ToolResult(text="plain result")
     tc = {
@@ -114,8 +114,8 @@ async def test_agent_loop_no_json_block_without_data(ctx):
     }
     semaphore = asyncio.Semaphore(1)
 
-    with patch("decafclaw.agent.execute_tool", new_callable=AsyncMock, return_value=mock_result):
-        tool_msg, _ = await _execute_single_tool(ctx, tc, semaphore)
+    with patch("decafclaw.tool_execution.execute_tool", new_callable=AsyncMock, return_value=mock_result):
+        tool_msg, _ = await execute_single_tool(ctx, tc, semaphore)
 
     assert tool_msg["content"] == "plain result"
     assert "```json" not in tool_msg["content"]
@@ -124,7 +124,7 @@ async def test_agent_loop_no_json_block_without_data(ctx):
 @pytest.mark.asyncio
 async def test_agent_loop_handles_unserializable_data(ctx):
     """Non-serializable data doesn't crash the tool call."""
-    from decafclaw.agent import _execute_single_tool
+    from decafclaw.tool_execution import execute_single_tool
 
     mock_result = ToolResult(text="result", data={"bad": object()})
     tc = {
@@ -133,8 +133,8 @@ async def test_agent_loop_handles_unserializable_data(ctx):
     }
     semaphore = asyncio.Semaphore(1)
 
-    with patch("decafclaw.agent.execute_tool", new_callable=AsyncMock, return_value=mock_result):
-        tool_msg, _ = await _execute_single_tool(ctx, tc, semaphore)
+    with patch("decafclaw.tool_execution.execute_tool", new_callable=AsyncMock, return_value=mock_result):
+        tool_msg, _ = await execute_single_tool(ctx, tc, semaphore)
 
     assert "result" in tool_msg["content"]
     assert "serialization error" in tool_msg["content"]

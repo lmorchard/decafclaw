@@ -245,8 +245,8 @@ async def _request_skill_confirmation(ctx, skill_name: str) -> tuple[bool, bool]
 def tool_refresh_skills(ctx) -> str | ToolResult:
     """Re-discover skills and update the system prompt catalog."""
     log.info("[tool:refresh_skills]")
-    from ..agent import invalidate_skill_cache  # deferred: circular dep
     from ..prompts import load_system_prompt
+    from ..tool_definitions import invalidate_skill_cache  # deferred: circular dep
     # Intentional mutation: runtime fields need to update the shared config
     # object that the agent loop holds. dataclasses.replace() would create
     # a disconnected copy.
