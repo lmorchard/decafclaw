@@ -60,20 +60,25 @@ lint-fix:
 fmt:
 	uv run ruff format src/ tests/
 
-# Run tests (pytest, excludes integration tests by default — see pyproject.toml addopts)
+# Run tests (pytest, excludes integration tests by default — see pyproject.toml addopts).
+# Includes contrib/skills/ so contrib-skill tests don't bit-rot.
 test:
-	uv run pytest tests/
+	uv run pytest tests/ contrib/skills/
 
 # Run integration tests only (requires provider credentials).
 # Override the default `-m "not integration"` from addopts, and disable
 # xdist so parallel workers don't hammer the real APIs concurrently.
 test-integration:
-	uv run pytest tests/ -v -m integration -n 0
+	uv run pytest tests/ contrib/skills/ -v -m integration -n 0
 
 # Run all tests including integration. Matches parallel + default policy,
 # but opts back in to integration by OR-ing the markers.
 test-all:
-	uv run pytest tests/ -m "integration or not integration"
+	uv run pytest tests/ contrib/skills/ -m "integration or not integration"
+
+# Run contrib-skill tests in isolation (subset of `make test`).
+test-contrib:
+	uv run pytest contrib/skills/ -v
 
 # Rebuild production embedding index
 reindex:

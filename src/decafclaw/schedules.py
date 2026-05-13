@@ -118,20 +118,30 @@ def discover_schedules(config) -> list[ScheduleTask]:
             if task.name not in tasks_by_name or source == "admin":
                 tasks_by_name[task.name] = task
 
-    # Also discover scheduled skills from disk (bundled + admin only, not workspace).
+    # Also discover scheduled skills from disk (bundled, admin, and extra_skill_paths).
     # Re-reads SKILL.md files each poll so edits (e.g. enabled: false) take
     # effect without restart.
-    from .skills import _BUNDLED_SKILLS_DIR, parse_skill_md
+    from .skills import _BUNDLED_SKILLS_DIR, _iter_skill_dirs, _resolve_extra_skill_paths, parse_skill_md
     bundled_dir = _BUNDLED_SKILLS_DIR.resolve()
     admin_skills_dir = (config.agent_path / "skills").resolve()
+    extra_paths = _resolve_extra_skill_paths(config)
 
-    for source_label, base_dir in [
-        ("bundled", bundled_dir),
+    # Sources: list of (label, scan_base_path). For bundled/admin, _iter_skill_dirs
+    # yields their subdirectories; for extra_skill_paths, each entry is itself a
+    # single skill directory (SKILL.md at its root) — _iter_skill_dirs handles both.
+    #
+    # Precedence (first wins via the `skill.name in tasks_by_name` guard below):
+    # admin > extra > bundled. Admin is explicit per-deployment customization
+    # and always wins. `extra_skill_paths` is opt-in third-party — beats bundled
+    # because the user took explicit action to enable it. Bundled is the default.
+    skill_sources: list[tuple[str, Path]] = [
         ("admin", admin_skills_dir),
-    ]:
-        if not base_dir.is_dir():
-            continue
-        for skill_dir in sorted(base_dir.iterdir()):
+        *[("extra", p) for p in extra_paths],
+        ("bundled", bundled_dir),
+    ]
+
+    for source_label, base_dir in skill_sources:
+        for skill_dir in _iter_skill_dirs(base_dir):
             skill_md = skill_dir / "SKILL.md"
             if not skill_md.exists():
                 continue

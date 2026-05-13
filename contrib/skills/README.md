@@ -54,6 +54,20 @@ A skill at `data/{agent_id}/skills/<name>/` shadows any same-named entry in `ext
 
 ## Available Skills
 
+### kindle
+
+Syncs highlights and notes from your Kindle library (`read.amazon.com/notebook`) into per-book vault pages under `agent/pages/kindle/`. Each book gets one page with frontmatter tracking the ASIN, title, author, and highlight count. Deleted highlights are moved to an `## Archived` section with a date stamp.
+
+**Requires:** A Netscape-format `cookies.txt` file exported from a logged-in Amazon session. Place at `data/{agent_id}/secrets/kindle.cookies.txt` (or configure `skills.kindle.cookies_path`). No binary downloads needed.
+
+**Smoke test:** `uv run python contrib/skills/kindle/smoke.py`
+
+**Tests:** `make test-contrib` (or `uv run pytest contrib/skills/kindle/ -v`)
+
+**Schedule:** Daily at 5am UTC (`0 5 * * *`). Gated by `skills.kindle.enabled` (default `false`); on-demand via `/kindle-sync` always works.
+
+See [docs/kindle.md](../../docs/kindle.md) for full setup and configuration details.
+
 ### linkding-ingest
 
 Fetches bookmarks from a [Linkding](https://github.com/sissbruecker/linkding) instance, reads the bookmarked content via Tabstack, and records insights to the wiki knowledge base. Delegates each bookmark to a child agent for parallel processing.

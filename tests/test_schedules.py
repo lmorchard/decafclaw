@@ -251,6 +251,73 @@ class TestDiscoverSchedules:
         task = [t for t in tasks if t.name == "paused-job"][0]
         assert task.enabled is False
 
+    def test_skill_precedence_admin_over_extra_over_bundled(self, config, tmp_path, monkeypatch):
+        """Skill-based schedule precedence is admin > extra > bundled.
+
+        Admin is explicit per-deployment customization; extra is opt-in third-party;
+        bundled is the default. Uses `dream` (a real bundled skill) as the collision
+        target — its bundled schedule is `0 3 * * *`. Asserts that admin and extra
+        copies with different schedules correctly shadow it.
+        """
+        monkeypatch.setattr("decafclaw.schedules.run_schedule_task", lambda *a, **kw: None)
+
+        # Admin copy of `dream` with a distinct schedule.
+        admin_dream = config.agent_path / "skills" / "dream"
+        admin_dream.mkdir(parents=True)
+        (admin_dream / "SKILL.md").write_text(
+            "---\nname: dream\ndescription: Admin override\n"
+            "schedule: '15 4 * * *'\n---\nAdmin dream body.\n"
+        )
+
+        # Extra copy with yet another distinct schedule.
+        extra_dream = tmp_path / "dream"
+        extra_dream.mkdir()
+        (extra_dream / "SKILL.md").write_text(
+            "---\nname: dream\ndescription: Extra-paths override\n"
+            "schedule: '30 5 * * *'\n---\nExtra dream body.\n"
+        )
+        config.extra_skill_paths = [str(extra_dream)]
+
+        tasks = discover_schedules(config)
+        dream_tasks = [t for t in tasks if t.name == "dream"]
+        assert len(dream_tasks) == 1
+        # Admin wins over both extra and bundled.
+        assert dream_tasks[0].source == "admin"
+        assert dream_tasks[0].schedule == "15 4 * * *"
+
+        # Now remove the admin copy and re-check — extra should win over bundled.
+        (admin_dream / "SKILL.md").unlink()
+        admin_dream.rmdir()
+
+        tasks = discover_schedules(config)
+        dream_tasks = [t for t in tasks if t.name == "dream"]
+        assert len(dream_tasks) == 1
+        assert dream_tasks[0].source == "extra"
+        assert dream_tasks[0].schedule == "30 5 * * *"
+
+    def test_discovers_extra_skill_path_schedules(self, config, tmp_path, monkeypatch):
+        """Skills in extra_skill_paths with schedule field are discovered with source='extra'.
+
+        Patches run_schedule_task so discovered skills don't fire real agent turns.
+        """
+        monkeypatch.setattr("decafclaw.schedules.run_schedule_task", lambda *a, **kw: None)
+
+        # Create a minimal scheduled skill in an isolated tmp dir.
+        skill_dir = tmp_path / "ext-job"
+        skill_dir.mkdir()
+        (skill_dir / "SKILL.md").write_text(
+            "---\nname: ext-job\ndescription: External scheduled job\n"
+            "schedule: '0 7 * * *'\n---\nDo external things.\n"
+        )
+        config.extra_skill_paths = [str(skill_dir)]
+
+        tasks = discover_schedules(config)
+        names = {t.name for t in tasks}
+        assert "ext-job" in names
+        task = next(t for t in tasks if t.name == "ext-job")
+        assert task.source == "extra"
+        assert task.schedule == "0 7 * * *"
+
 
 # -- Last-run tracking --------------------------------------------------------
 

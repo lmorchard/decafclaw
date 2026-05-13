@@ -1,0 +1,3 @@
+# Netscape HTTP Cookie File — synthetic, for testing only
+.amazon.com	TRUE	/	TRUE	9999999999	at-main	dummy-value-1
+.amazon.com	TRUE	/	TRUE	9999999999	sess-at-main	dummy-value-2
