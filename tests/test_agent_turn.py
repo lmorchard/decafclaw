@@ -8,16 +8,15 @@ import pytest
 
 from decafclaw.agent import (
     _archive,
-    _build_tool_list,
     _check_cancelled,
     _conv_id,
-    _execute_tool_calls,
-    _refresh_dynamic_tools,
     run_agent_turn,
 )
 from decafclaw.config_types import ReflectionConfig
 from decafclaw.media import EndTurnConfirm, ToolResult
 from decafclaw.reflection import ReflectionResult
+from decafclaw.tool_definitions import build_tool_list, refresh_dynamic_tools
+from decafclaw.tool_execution import execute_tool_calls
 
 # -- Helper tests --------------------------------------------------------------
 
@@ -89,7 +88,7 @@ def test_check_cancelled_not_set(ctx):
 
 
 def test_build_tool_list_base_tools(ctx):
-    tools, deferred_text = _build_tool_list(ctx)
+    tools, deferred_text = build_tool_list(ctx)
     # Should have some active tools and may defer some with max_active_tools
     assert len(tools) > 0
     names = [t["function"]["name"] for t in tools]
@@ -103,12 +102,12 @@ def test_build_tool_list_with_extra_tools(ctx):
         "function": {"name": "custom_tool", "parameters": {}},
     }
     ctx.tools.extra_definitions = [extra_def]
-    tools, _ = _build_tool_list(ctx)
+    tools, _ = build_tool_list(ctx)
     names = [t["function"]["name"] for t in tools]
     assert "custom_tool" in names
 
 
-# -- _execute_tool_calls tests -------------------------------------------------
+# -- execute_tool_calls tests --------------------------------------------------
 
 
 @pytest.mark.asyncio
@@ -124,7 +123,7 @@ async def test_execute_tool_calls_runs_tools(ctx):
     ]
     history = []
     messages = []
-    cancelled, end_turn = await _execute_tool_calls(ctx, tool_calls, history, messages)
+    cancelled, end_turn = await execute_tool_calls(ctx, tool_calls, history, messages)
     assert cancelled is None  # not cancelled
     assert end_turn is False
     assert len(history) == 1
@@ -147,7 +146,7 @@ async def test_execute_tool_calls_handles_malformed_json(ctx):
     messages = []
 
     # Should not raise — handles JSONDecodeError gracefully
-    cancelled, _ = await _execute_tool_calls(ctx, tool_calls, history, messages)
+    cancelled, _ = await execute_tool_calls(ctx, tool_calls, history, messages)
     assert cancelled is None
     assert len(history) == 1
 
@@ -165,7 +164,7 @@ async def test_execute_tool_calls_cancellation(ctx):
     ]
     history = []
     messages = []
-    cancelled, _ = await _execute_tool_calls(ctx, tool_calls, history, messages)
+    cancelled, _ = await execute_tool_calls(ctx, tool_calls, history, messages)
     assert cancelled is not None
     assert "cancelled" in cancelled.text
 
@@ -198,8 +197,8 @@ async def test_execute_tool_calls_concurrent(ctx):
     messages = []
 
 
-    with patch("decafclaw.agent.execute_tool", side_effect=_concurrent_tool):
-        cancelled, _ = await _execute_tool_calls(ctx, tool_calls, history, messages)
+    with patch("decafclaw.tool_execution.execute_tool", side_effect=_concurrent_tool):
+        cancelled, _ = await execute_tool_calls(ctx, tool_calls, history, messages)
 
     assert cancelled is None
     assert len(history) == 3
@@ -230,8 +229,8 @@ async def test_execute_tool_calls_semaphore_limits(ctx):
     messages = []
 
 
-    with patch("decafclaw.agent.execute_tool", side_effect=_tracked_tool):
-        await _execute_tool_calls(ctx, tool_calls, history, messages)
+    with patch("decafclaw.tool_execution.execute_tool", side_effect=_tracked_tool):
+        await execute_tool_calls(ctx, tool_calls, history, messages)
 
     # With semaphore=1, max concurrency should be exactly 1
     assert concurrency_high_water == 1
@@ -255,8 +254,8 @@ async def test_execute_tool_calls_one_fails_others_succeed(ctx):
     messages = []
 
 
-    with patch("decafclaw.agent.execute_tool", side_effect=_maybe_fail):
-        cancelled, _ = await _execute_tool_calls(ctx, tool_calls, history, messages)
+    with patch("decafclaw.tool_execution.execute_tool", side_effect=_maybe_fail):
+        cancelled, _ = await execute_tool_calls(ctx, tool_calls, history, messages)
 
     assert cancelled is None
     assert len(history) == 3
@@ -280,8 +279,8 @@ async def test_execute_tool_calls_preserves_order(ctx):
     messages = []
 
 
-    with patch("decafclaw.agent.execute_tool", side_effect=_variable_speed):
-        await _execute_tool_calls(ctx, tool_calls, history, messages)
+    with patch("decafclaw.tool_execution.execute_tool", side_effect=_variable_speed):
+        await execute_tool_calls(ctx, tool_calls, history, messages)
 
     assert history[0]["tool_call_id"] == "tc0"
     assert history[1]["tool_call_id"] == "tc1"
@@ -304,8 +303,8 @@ async def test_execute_tool_calls_end_turn_signal(ctx):
     history = []
     messages = []
 
-    with patch("decafclaw.agent.execute_tool", side_effect=_end_turn_tool):
-        cancelled, end_turn = await _execute_tool_calls(ctx, tool_calls, history, messages)
+    with patch("decafclaw.tool_execution.execute_tool", side_effect=_end_turn_tool):
+        cancelled, end_turn = await execute_tool_calls(ctx, tool_calls, history, messages)
 
     assert cancelled is None
     assert end_turn is True
@@ -329,8 +328,8 @@ async def test_execute_tool_calls_end_turn_in_parallel_batch(ctx):
     history = []
     messages = []
 
-    with patch("decafclaw.agent.execute_tool", side_effect=_mixed_tools):
-        cancelled, end_turn = await _execute_tool_calls(ctx, tool_calls, history, messages)
+    with patch("decafclaw.tool_execution.execute_tool", side_effect=_mixed_tools):
+        cancelled, end_turn = await execute_tool_calls(ctx, tool_calls, history, messages)
 
     assert cancelled is None
     assert end_turn is True
@@ -354,8 +353,8 @@ async def test_execute_tool_calls_no_end_turn_for_bare_strings(ctx):
     history = []
     messages = []
 
-    with patch("decafclaw.agent.execute_tool", side_effect=_string_tool):
-        cancelled, end_turn = await _execute_tool_calls(ctx, tool_calls, history, messages)
+    with patch("decafclaw.tool_execution.execute_tool", side_effect=_string_tool):
+        cancelled, end_turn = await execute_tool_calls(ctx, tool_calls, history, messages)
 
     assert cancelled is None
     assert end_turn is False
@@ -375,8 +374,8 @@ async def test_execute_tool_calls_end_turn_confirm(ctx):
     history = []
     messages = []
 
-    with patch("decafclaw.agent.execute_tool", side_effect=_confirm_tool):
-        cancelled, end_turn_signal = await _execute_tool_calls(ctx, tool_calls, history, messages)
+    with patch("decafclaw.tool_execution.execute_tool", side_effect=_confirm_tool):
+        cancelled, end_turn_signal = await execute_tool_calls(ctx, tool_calls, history, messages)
 
     assert cancelled is None
     assert isinstance(end_turn_signal, EndTurnConfirm)
@@ -400,8 +399,8 @@ async def test_execute_tool_calls_end_turn_confirm_takes_priority(ctx):
     history = []
     messages = []
 
-    with patch("decafclaw.agent.execute_tool", side_effect=_mixed_tools):
-        cancelled, end_turn_signal = await _execute_tool_calls(ctx, tool_calls, history, messages)
+    with patch("decafclaw.tool_execution.execute_tool", side_effect=_mixed_tools):
+        cancelled, end_turn_signal = await execute_tool_calls(ctx, tool_calls, history, messages)
 
     assert cancelled is None
     assert isinstance(end_turn_signal, EndTurnConfirm)
@@ -434,7 +433,7 @@ def test_refresh_dynamic_tools_updates_extra(ctx):
     # Simulate previous turn having tool_a
     ctx.tools.dynamic_provider_names = {"my_skill": {"tool_a"}}
 
-    _refresh_dynamic_tools(ctx)
+    refresh_dynamic_tools(ctx)
 
     assert call_count == 1
     # tool_a removed, tool_b added, other_tool unchanged
@@ -451,7 +450,7 @@ def test_refresh_dynamic_tools_updates_extra(ctx):
 def test_refresh_dynamic_tools_noop_without_providers(ctx):
     """No providers means no changes."""
     ctx.tools.extra = {"existing": lambda: None}
-    _refresh_dynamic_tools(ctx)
+    refresh_dynamic_tools(ctx)
     assert "existing" in ctx.tools.extra
 
 
@@ -465,7 +464,7 @@ def test_refresh_dynamic_tools_tracks_provider_names(ctx):
         )
 
     ctx.tools.dynamic_providers = {"skill": get_tools}
-    _refresh_dynamic_tools(ctx)
+    refresh_dynamic_tools(ctx)
     assert ctx.tools.dynamic_provider_names["skill"] == {"t1", "t2"}
 
 
@@ -480,7 +479,7 @@ def test_refresh_dynamic_tools_handles_provider_error(ctx):
     ctx.tools.extra = {"old_tool": lambda: None}
     ctx.tools.extra_definitions = [{"function": {"name": "old_tool"}}]
 
-    _refresh_dynamic_tools(ctx)
+    refresh_dynamic_tools(ctx)
 
     # Old tool removed, provider names cleared
     assert "old_tool" not in ctx.tools.extra

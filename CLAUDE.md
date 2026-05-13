@@ -130,12 +130,14 @@ See [docs/conversations.md](docs/conversations.md), [docs/web-ui.md](docs/web-ui
 Full doc index: [docs/index.md](docs/index.md). Hot files for navigation:
 
 ### Core
-- `agent.py` — Agent loop: turn orchestration, tool execution, LLM calls
+- `agent.py` — Agent loop: turn orchestration, LLM calls, iteration outcomes (`TurnRunner`, `run_agent_turn`)
 - `conversation_manager.py` — Central orchestrator: TurnKind dispatch, confirmation persistence, per-conversation event streams
 - `context.py` — Forkable runtime context (TokenUsage, ToolState, SkillState, ComposerState)
 - `context_composer.py` — Unified context assembly, relevance scoring, dynamic budget allocation
 - `events.py` — Pub/sub event bus
 - `runner.py` — Top-level orchestrator: MCP, HTTP, Mattermost, heartbeat as parallel tasks
+- `tool_definitions.py` — Tool-registry assembly: classification, deferral, dynamic-skill providers (`build_tool_list`, `collect_all_tool_defs`, `refresh_dynamic_tools`)
+- `tool_execution.py` — Concurrent tool-call execution: media handling, widget validation, end-turn signals (`execute_tool_calls`, `execute_single_tool`, `process_tool_media`, `resolve_widget`)
 - `confirmations.py` — Confirmation types and handler registry
 
 ### Config and LLM

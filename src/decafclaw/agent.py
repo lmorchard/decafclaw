@@ -12,11 +12,9 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import functools
-import json
 import logging
 import re as _re
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -31,26 +29,13 @@ from .context_composer import ComposerMode, ContextComposer
 from .llm import call_llm
 from .media import EndTurnConfirm, ToolResult, WidgetInputPause, extract_workspace_media
 from .persistence import read_skill_data, read_skills_state, write_skill_data, write_skills_state
-from .tools import TOOL_DEFINITIONS, execute_tool
-from .tools.search_tools import SEARCH_TOOL_DEFINITIONS
-from .tools.tool_registry import (
-    build_deferred_list_text,
-    classify_tools,
-    get_fetched_tools,
-)
+from .tool_definitions import build_tool_list, refresh_dynamic_tools
+from .tool_execution import execute_tool_calls
 
 _TASK_MODE_TO_COMPOSER: dict[str, ComposerMode] = {
     "heartbeat": ComposerMode.HEARTBEAT,
     "scheduled": ComposerMode.SCHEDULED,
 }
-
-# Cache preloaded skill definitions by config id, avoiding Config mutation
-_skill_def_cache: dict[int, list] = {}
-
-
-def invalidate_skill_cache(config) -> None:
-    """Clear the cached skill definitions for a config. Call after refresh_skills."""
-    _skill_def_cache.pop(id(config), None)
 
 log = logging.getLogger(__name__)
 
@@ -331,137 +316,6 @@ async def _handle_end_turn_confirm(ctx, action: EndTurnConfirm) -> bool:
     return result.get("approved", False)
 
 
-def _refresh_dynamic_tools(ctx) -> None:
-    """Call dynamic tool providers to refresh skill tools for this turn.
-
-    Skills that export get_tools(ctx) have their tools and definitions
-    replaced each turn based on current state (e.g., project phase).
-    Collects all possible tool names from providers, removes stale entries,
-    then re-adds the current set.
-    """
-    providers = ctx.tools.dynamic_providers
-    if not providers:
-        return
-
-    # Collect names from previous turn + this turn so we can remove stale entries
-    names_to_remove: set[str] = set()
-    for skill_name in providers:
-        names_to_remove.update(ctx.tools.dynamic_provider_names.get(skill_name, set()))
-
-    # Call each provider for this turn's tools
-    provider_results: list[tuple[str, dict, list]] = []
-    for skill_name, get_tools_fn in providers.items():
-        try:
-            tools, tool_defs = get_tools_fn(ctx)
-            names_to_remove.update(tools.keys())
-            ctx.tools.dynamic_provider_names[skill_name] = set(tools.keys())
-            provider_results.append((skill_name, tools, tool_defs))
-        except Exception as e:
-            # Fail-open: remove this provider's stale tools. If the model
-            # tries to call a removed tool, it gets a "tool not found" error.
-            log.warning(f"Dynamic tool provider for '{skill_name}' failed: {e}")
-            ctx.tools.dynamic_provider_names[skill_name] = set()
-
-    # Remove all dynamic-provider tools (old + new names) from extra
-    ctx.tools.extra = {
-        name: fn for name, fn in ctx.tools.extra.items()
-        if name not in names_to_remove
-    }
-    ctx.tools.extra_definitions = [
-        td for td in ctx.tools.extra_definitions
-        if td.get("function", {}).get("name") not in names_to_remove
-    ]
-
-    # Re-add the current turn's tools from each provider
-    for skill_name, tools, tool_defs in provider_results:
-        ctx.tools.extra.update(tools)
-        ctx.tools.extra_definitions.extend(tool_defs)
-
-
-def _collect_all_tool_defs(ctx) -> list:
-    """Gather all available tool definitions (core + skill + MCP + extra).
-
-    Does NOT apply allowed_tools filter — returns the full unfiltered set
-    so classification can see everything before deciding what to defer.
-    """
-    # Skill tools first — activated skill tools get priority positioning
-    # so the model sees them before the long tail of core tools
-    all_tools = list(ctx.tools.extra_definitions) + list(TOOL_DEFINITIONS)
-
-    # Pre-load tool definitions from discovered skills (stable tool list).
-    # Cached by config id to avoid re-executing tools.py every iteration.
-    config_id = id(ctx.config)
-    _cached = _skill_def_cache.get(config_id)
-    if _cached is None:
-        _cached = []
-        for skill_info in ctx.config.discovered_skills:
-            if skill_info.has_native_tools:
-                try:
-                    from .tools.skill_tools import _load_native_tools
-                    _, tool_defs, _ = _load_native_tools(skill_info)
-                    _cached.extend(tool_defs)
-                except Exception as e:
-                    log.warning(f"Failed to pre-load skill '{skill_info.name}' tools: {e}")
-        _skill_def_cache[config_id] = _cached
-
-    preloaded_names = {t.get("function", {}).get("name") for t in all_tools}
-    for td in _cached:
-        name = td.get("function", {}).get("name")
-        if name and name not in preloaded_names:
-            all_tools.append(td)
-            preloaded_names.add(name)
-
-    from .mcp_client import get_registry
-    mcp_registry = get_registry()
-    if mcp_registry:
-        all_tools = all_tools + mcp_registry.get_tool_definitions()
-
-    return all_tools
-
-
-def _build_tool_list(ctx) -> tuple[list, str | None]:
-    """Build the tool list, with optional deferred mode.
-
-    Returns (tool_definitions, deferred_text) where deferred_text is
-    None if all tools fit in the budget, or a system prompt block
-    listing deferred tools when the budget is exceeded.
-    """
-    all_defs = _collect_all_tool_defs(ctx)
-    fetched = get_fetched_tools(ctx)
-    # Skill tools (from activated skills) should never be deferred
-    skill_tool_names = {
-        td.get("function", {}).get("name", "")
-        for td in ctx.tools.extra_definitions
-    }
-    # Pre-emptive matches populated by ContextComposer at turn start;
-    # reused across iterations so mid-turn reclassification stays consistent.
-    active, deferred = classify_tools(
-        all_defs, ctx.config, fetched, skill_tool_names,
-        preempt_matches=ctx.tools.preempt_matches,
-    )
-
-    # Apply allowed_tools filter to the active set only
-    allowed = ctx.tools.allowed
-    if allowed is not None:
-        active = [
-            t for t in active
-            if t.get("function", {}).get("name") in allowed
-        ]
-
-    if not deferred:
-        return active, None
-
-    # Deferred mode: set the pool on ctx and add tool_search
-    ctx.tools.deferred_pool = deferred
-    active = active + SEARCH_TOOL_DEFINITIONS
-
-    # Build deferred list text for system prompt
-    core_names = {td.get("function", {}).get("name", "") for td in TOOL_DEFINITIONS}
-    deferred_text = build_deferred_list_text(deferred, core_names=core_names)
-
-    return active, deferred_text
-
-
 async def _call_llm_with_events(ctx, config, messages, tools,
                                 model_name=None,
                                 llm_url=None, llm_model=None,
@@ -516,311 +370,6 @@ async def _call_llm_with_events(ctx, config, messages, tools,
                       content=response.get("content"),
                       has_tool_calls=bool(response.get("tool_calls")))
     return response
-
-
-@functools.lru_cache(maxsize=128)
-def _media_placeholder_pattern(filename: str) -> _re.Pattern:
-    """Build a regex to find the placeholder for a given filename."""
-    return _re.compile(
-        r"\[file attached: " + _re.escape(filename) + r"[^\]]*\]"
-    )
-
-
-async def _process_tool_media(ctx, result: ToolResult) -> list[str]:
-    """Process media items on a tool result — save/upload and replace placeholders.
-
-    For handlers returning workspace_ref: replaces placeholder text with markdown refs.
-    For handlers returning file_id: collects file_ids for caller to attach.
-
-    Returns list of file_ids (for Mattermost attachment), empty for other channels.
-    Clears result.media after processing.
-    """
-    if not result.media:
-        return []
-
-    handler = ctx.media_handler
-    if handler is None:
-        log.warning(f"No media handler — {len(result.media)} media item(s) not delivered")
-        result.media.clear()
-        return []
-
-    conv_id = ctx.conv_id or ctx.channel_id or "unknown"
-    file_ids = []
-
-    for item in result.media:
-        filename = item.get("filename", "unknown")
-        content_type = item.get("content_type", "application/octet-stream")
-        data = item.get("data", b"")
-
-        try:
-            save_result = await handler.save_media(conv_id, filename, data, content_type)
-        except Exception as e:
-            log.warning(f"Failed to save media {filename}: {e}")
-            continue
-
-        if save_result.workspace_ref:
-            pattern = _media_placeholder_pattern(filename)
-            if content_type.startswith("image/"):
-                replacement = f"![{filename}]({save_result.workspace_ref})"
-            else:
-                replacement = f"[{filename}]({save_result.workspace_ref})"
-            new_text, count = pattern.subn(replacement, result.text, count=1)
-            if count > 0:
-                result.text = new_text
-            else:
-                # No placeholder — append ref so the media is discoverable
-                result.text = result.text.rstrip() + "\n" + replacement
-        if save_result.file_id:
-            file_ids.append(save_result.file_id)
-
-    result.media.clear()
-    return file_ids
-
-
-async def _execute_single_tool(call_ctx, tc, semaphore):
-    """Execute one tool call. Returns (tool_msg dict, end_turn flag).
-
-    Designed to run concurrently — uses its own forked ctx so
-    current_tool_call_id doesn't race with other calls.
-    Media is processed per-tool-call via _process_tool_media().
-    """
-    tool_call_id = tc["id"]
-    fn_name = tc["function"]["name"]
-    try:
-        fn_args = json.loads(tc["function"]["arguments"])
-    except json.JSONDecodeError as e:
-        log.error(f"Malformed tool call arguments for {fn_name}: {e}")
-        fn_args = {}
-
-    log.info(f"Tool call: {fn_name}({fn_args})")
-
-    result = ToolResult(text=f"[error: {fn_name} did not complete]")
-    async with semaphore:
-        try:
-            await call_ctx.publish("tool_start", tool=fn_name, args=fn_args,
-                                   tool_call_id=tool_call_id)
-            result = await execute_tool(call_ctx, fn_name, fn_args)
-            log.debug(f"Tool result [{fn_name}]: {result.text[:200]}...")
-
-            # Process media per-tool-call (save/upload, replace placeholders)
-            file_ids = await _process_tool_media(call_ctx, result)
-            if file_ids:
-                await call_ctx.publish("tool_media_uploaded",
-                                       tool=fn_name,
-                                       file_ids=file_ids,
-                                       tool_call_id=tool_call_id)
-        except asyncio.CancelledError:
-            result = ToolResult(text=f"[cancelled: {fn_name}]")
-        except Exception as e:
-            log.error(f"Tool call {fn_name} failed: {e}", exc_info=True)
-            result = ToolResult(text=f"[error executing {fn_name}: {e}]")
-        finally:
-            widget_payload = _resolve_widget(fn_name, result, tool_call_id)
-            publish_kwargs = {
-                "tool": fn_name,
-                "result_text": result.text,
-                "display_text": getattr(result, "display_text", None),
-                "display_short_text": getattr(
-                    result, "display_short_text", None),
-                "media": result.media or [],
-                "tool_call_id": tool_call_id,
-            }
-            if widget_payload is not None:
-                publish_kwargs["widget"] = widget_payload
-            await call_ctx.publish("tool_end", **publish_kwargs)
-
-    content = result.text
-    if result.data is not None:
-        try:
-            content += "\n\n```json\n" + json.dumps(result.data, indent=2) + "\n```"
-        except (TypeError, ValueError) as e:
-            log.warning(f"Failed to serialize ToolResult.data for {fn_name}: {e}")
-            content += "\n\n[structured data omitted: serialization error]"
-    tool_msg = {
-        "role": "tool",
-        "tool_call_id": tool_call_id,
-        "content": content,
-    }
-    if result.display_short_text:
-        tool_msg["display_short_text"] = result.display_short_text
-    if widget_payload is not None:
-        tool_msg["widget"] = widget_payload
-    _archive(call_ctx, tool_msg)
-    return tool_msg, result.end_turn
-
-
-def _resolve_widget(fn_name: str, result: ToolResult,
-                    tool_call_id: str = "") -> dict | None:
-    """Validate result.widget against the registry and return a
-    serializable payload, or None if no widget / validation fails.
-
-    Phase-2 side effects for input widgets (``accepts_input=True``):
-
-    - If ``end_turn`` is falsy, strip the widget (input widgets require
-      the turn to pause).
-    - If ``end_turn`` is an ``EndTurnConfirm``, drop the confirm (widget
-      pause wins) and set ``end_turn=True``.
-    - Register the ``on_response`` callback in
-      ``widget_input.pending_callbacks`` keyed by ``tool_call_id``.
-    - Promote ``result.end_turn`` to a ``WidgetInputPause`` sentinel
-      that the agent loop detects and routes to the pause path.
-    """
-    widget = getattr(result, "widget", None)
-    if widget is None:
-        return None
-    from .widgets import get_widget_registry
-    registry = get_widget_registry()
-    if registry is None:
-        log.warning(
-            "tool %s returned a widget but widget registry is not "
-            "initialized; stripping", fn_name)
-        result.widget = None
-        return None
-    ok, err = registry.validate(widget.widget_type, widget.data)
-    if not ok:
-        log.warning(
-            "tool %s widget %r failed validation: %s — stripping",
-            fn_name, widget.widget_type, err)
-        result.widget = None
-        return None
-    desc = registry.get(widget.widget_type)
-    target = widget.target
-    if target not in ("inline", "canvas"):
-        log.warning(
-            "tool %s widget %r has unknown target %r — stripping",
-            fn_name, widget.widget_type, target)
-        result.widget = None
-        return None
-    if desc is not None and target not in desc.modes:
-        log.warning(
-            "tool %s widget %r used target %r not in declared modes %r"
-            " — stripping",
-            fn_name, widget.widget_type, target, desc.modes)
-        result.widget = None
-        return None
-    # Apply per-widget server-side normalization (e.g. iframe_sandbox CSP
-    # wrapping). Mutate widget.data so downstream consumers — archive,
-    # canvas state, WS event — all see the same normalized shape.
-    normalized = registry.normalize(widget.widget_type, widget.data)
-    widget.data = normalized
-    payload = {
-        "widget_type": widget.widget_type,
-        "target": target,
-        "data": normalized,
-    }
-
-    # Phase 2: input-widget enforcement + pause-signal promotion.
-    if desc is not None and desc.accepts_input:
-        # Rule: input widget requires end_turn truthy (True or
-        # EndTurnConfirm; widget-pause wins over EndTurnConfirm).
-        if not result.end_turn:
-            log.warning(
-                "tool %s emitted input widget %r without end_turn=True "
-                "— stripping (input widgets must pause the turn)",
-                fn_name, widget.widget_type)
-            result.widget = None
-            return None
-        if isinstance(result.end_turn, EndTurnConfirm):
-            log.warning(
-                "tool %s emitted input widget %r alongside EndTurnConfirm "
-                "— dropping EndTurnConfirm (widget-pause takes priority)",
-                fn_name, widget.widget_type)
-        # Register the callback for live-path pickup.
-        if widget.on_response is not None and tool_call_id:
-            from .widget_input import pending_callbacks
-            pending_callbacks[tool_call_id] = widget.on_response
-        # Promote end_turn to the pause sentinel.
-        result.end_turn = WidgetInputPause(
-            tool_call_id=tool_call_id,
-            widget_payload=payload,
-        )
-
-    return payload
-
-
-async def _execute_tool_calls(ctx, tool_calls, history, messages):
-    """Execute tool calls concurrently, add results to history.
-
-    Returns (ToolResult, False) if cancelled, (None, end_turn_signal) otherwise.
-    end_turn_signal is False, True, or an EndTurnConfirm action.
-    """
-    cancelled = _check_cancelled(ctx, history)
-    if cancelled:
-        return cancelled, False
-
-    semaphore = asyncio.Semaphore(ctx.config.agent.max_concurrent_tools)
-
-    # Fork ctx per tool call so concurrent tools don't race on current_tool_call_id
-    tasks = []
-    for tc in tool_calls:
-        call_ctx = ctx.fork_for_tool_call(tc["id"])
-        task = asyncio.create_task(
-            _execute_single_tool(call_ctx, tc, semaphore),
-            name=f"tool-{tc['function']['name']}-{tc['id'][:8]}",
-        )
-        tasks.append(task)
-
-    # Cancel watcher: if the cancel event fires, cancel all in-flight tasks
-    cancel_event = ctx.cancelled
-
-    async def _cancel_watcher():
-        if cancel_event:
-            await cancel_event.wait()
-            for t in tasks:
-                t.cancel()
-
-    watcher = asyncio.create_task(_cancel_watcher()) if cancel_event else None
-
-    try:
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-    finally:
-        if watcher:
-            watcher.cancel()
-            try:
-                await watcher
-            except asyncio.CancelledError:
-                pass
-
-    # Check if we were cancelled during execution
-    cancelled = _check_cancelled(ctx, history)
-    if cancelled:
-        return cancelled, False
-
-    # Collect results in original call order (gather preserves order).
-    # Priority among end-turn signals in a single batch:
-    #   WidgetInputPause > EndTurnConfirm > True
-    # Only one pause/end signal wins per batch.
-    end_turn_signal: bool | EndTurnConfirm | WidgetInputPause = False
-    for i, result in enumerate(results):
-        if isinstance(result, BaseException):
-            # Task was cancelled or failed — gather with return_exceptions.
-            # _execute_single_tool normally handles errors internally,
-            # so this only fires for unexpected failures (e.g. CancelledError
-            # from the cancel watcher).
-            err_type = type(result).__name__
-            err_text = str(result) or err_type
-            tool_msg = {
-                "role": "tool",
-                "tool_call_id": tool_calls[i]["id"],
-                "content": f"[error: {err_text}]",
-            }
-            history.append(tool_msg)
-            messages.append(tool_msg)
-            _archive(ctx, tool_msg)
-        else:
-            tool_msg, end_turn = result
-            if isinstance(end_turn, WidgetInputPause):
-                end_turn_signal = end_turn  # Widget pause wins over all
-            elif isinstance(end_turn, EndTurnConfirm):
-                if not isinstance(end_turn_signal, WidgetInputPause):
-                    end_turn_signal = end_turn
-            elif end_turn and not isinstance(
-                    end_turn_signal, (EndTurnConfirm, WidgetInputPause)):
-                end_turn_signal = True
-            history.append(tool_msg)
-            messages.append(tool_msg)
-
-    return None, end_turn_signal
 
 
 # -- Turn setup helpers ---------------------------------------------------------
@@ -1090,8 +639,8 @@ class TurnRunner:
         log.debug(f"Agent iteration {iteration + 1}")
         self.ctx._current_iteration = iteration + 1
 
-        _refresh_dynamic_tools(self.ctx)
-        all_tools, deferred_text = _build_tool_list(self.ctx)
+        refresh_dynamic_tools(self.ctx)
+        all_tools, deferred_text = build_tool_list(self.ctx)
 
         if deferred_text:
             new_msg = {"role": "system", "content": deferred_text}
@@ -1147,7 +696,7 @@ class TurnRunner:
             self.accumulated_text_parts.append(iter_content)
             await self.ctx.publish("text_before_tools", text=iter_content)
 
-        cancelled, end_turn_signal = await _execute_tool_calls(
+        cancelled, end_turn_signal = await execute_tool_calls(
             self.ctx, tool_calls, self.history, self.messages,
         )
         if cancelled:

@@ -5,9 +5,9 @@ import json
 import pytest
 
 from decafclaw import widgets as widgets_module
-from decafclaw.agent import _execute_tool_calls, _resolve_widget
 from decafclaw.archive import read_archive
 from decafclaw.media import ToolResult, WidgetRequest
+from decafclaw.tool_execution import execute_tool_calls, resolve_widget
 
 _PANEL_SCHEMA = {
     "type": "object",
@@ -66,14 +66,14 @@ def test_registry(tmp_path, monkeypatch):
     yield registry
 
 
-# -------------- _resolve_widget unit tests --------------
+# -------------- resolve_widget unit tests --------------
 
 
 def test_resolve_widget_valid(test_registry):
     result = ToolResult(text="ok", widget=WidgetRequest(
         widget_type="data_table",
         data={"columns": [{"key": "a", "label": "A"}], "rows": []}))
-    payload = _resolve_widget("my_tool", result)
+    payload = resolve_widget("my_tool", result)
     assert payload is not None
     assert payload["widget_type"] == "data_table"
     assert payload["target"] == "inline"
@@ -86,7 +86,7 @@ def test_resolve_widget_invalid_data_strips(test_registry, caplog):
     result = ToolResult(text="ok", widget=WidgetRequest(
         widget_type="data_table",
         data={"columns": []}))  # missing rows
-    payload = _resolve_widget("my_tool", result)
+    payload = resolve_widget("my_tool", result)
     assert payload is None
     assert result.widget is None  # stripped
     assert any("failed validation" in r.message for r in caplog.records)
@@ -96,7 +96,7 @@ def test_resolve_widget_unknown_type_strips(test_registry, caplog):
     result = ToolResult(text="ok", widget=WidgetRequest(
         widget_type="nonexistent_widget",
         data={"anything": 1}))
-    payload = _resolve_widget("my_tool", result)
+    payload = resolve_widget("my_tool", result)
     assert payload is None
     assert result.widget is None
     assert any("failed validation" in r.message for r in caplog.records)
@@ -104,7 +104,7 @@ def test_resolve_widget_unknown_type_strips(test_registry, caplog):
 
 def test_resolve_widget_no_widget(test_registry):
     result = ToolResult(text="no widget here")
-    payload = _resolve_widget("my_tool", result)
+    payload = resolve_widget("my_tool", result)
     assert payload is None
 
 
@@ -113,7 +113,7 @@ def test_resolve_widget_unknown_target_strips(test_registry, caplog):
         widget_type="data_table",
         data={"columns": [], "rows": []},
         target="bogus"))
-    payload = _resolve_widget("my_tool", result)
+    payload = resolve_widget("my_tool", result)
     assert payload is None
     assert result.widget is None
     assert any("unknown target" in r.message for r in caplog.records)
@@ -141,7 +141,7 @@ def test_resolve_widget_target_not_in_modes_strips(
         widget_type="inline_only",
         data={},
         target="canvas"))  # not in modes
-    payload = _resolve_widget("my_tool", result)
+    payload = resolve_widget("my_tool", result)
     assert payload is None
     assert result.widget is None
     assert any("not in declared modes" in r.message for r in caplog.records)
@@ -152,7 +152,7 @@ def test_resolve_widget_no_registry(monkeypatch, caplog):
     result = ToolResult(text="ok", widget=WidgetRequest(
         widget_type="data_table",
         data={"columns": [], "rows": []}))
-    payload = _resolve_widget("my_tool", result)
+    payload = resolve_widget("my_tool", result)
     assert payload is None
     assert result.widget is None
     assert any("registry is not" in r.message for r in caplog.records)
@@ -179,7 +179,7 @@ def test_input_widget_with_end_turn_promotes_to_pause(test_registry):
             on_response=on_response),
         end_turn=True,
     )
-    payload = _resolve_widget("my_tool", result, "tc-input")
+    payload = resolve_widget("my_tool", result, "tc-input")
     assert payload is not None
     assert payload["widget_type"] == "pick"
     assert isinstance(result.end_turn, WidgetInputPause)
@@ -198,7 +198,7 @@ def test_input_widget_without_end_turn_strips(test_registry, caplog):
             data={"options": []}),
         end_turn=False,
     )
-    payload = _resolve_widget("my_tool", result, "tc-no-end")
+    payload = resolve_widget("my_tool", result, "tc-no-end")
     assert payload is None
     assert result.widget is None
     assert any("without end_turn=True" in r.message for r in caplog.records)
@@ -217,7 +217,7 @@ def test_input_widget_with_end_turn_confirm_drops_confirm(
             data={"options": []}),
         end_turn=EndTurnConfirm(message="review?"),
     )
-    payload = _resolve_widget("my_tool", result, "tc-both")
+    payload = resolve_widget("my_tool", result, "tc-both")
     assert payload is not None
     assert isinstance(result.end_turn, WidgetInputPause)
     assert any("alongside EndTurnConfirm" in r.message
@@ -236,13 +236,13 @@ def test_display_widget_unchanged_by_phase2(test_registry):
             data={"columns": [], "rows": []}),
         end_turn=False,
     )
-    payload = _resolve_widget("my_tool", result, "tc-display")
+    payload = resolve_widget("my_tool", result, "tc-display")
     assert payload is not None
     assert result.end_turn is False
     assert "tc-display" not in widget_input.pending_callbacks
 
 
-# -------------- _execute_tool_calls integration tests --------------
+# -------------- execute_tool_calls integration tests --------------
 
 
 async def _fake_execute_tool_with_widget(call_ctx, fn_name, fn_args):
@@ -271,7 +271,7 @@ async def _fake_execute_tool_no_widget(call_ctx, fn_name, fn_args):
 async def test_execute_tool_calls_propagates_valid_widget(
         ctx, config, test_registry, monkeypatch):
     monkeypatch.setattr(
-        "decafclaw.agent.execute_tool", _fake_execute_tool_with_widget)
+        "decafclaw.tool_execution.execute_tool", _fake_execute_tool_with_widget)
     ctx.conv_id = "test-widget-valid"
     tool_calls = [{"id": "tc1",
                    "function": {"name": "fake_tool", "arguments": "{}"}}]
@@ -285,7 +285,7 @@ async def test_execute_tool_calls_propagates_valid_widget(
 
     ctx.event_bus.subscribe(_capture)
 
-    await _execute_tool_calls(ctx, tool_calls, history, messages)
+    await execute_tool_calls(ctx, tool_calls, history, messages)
 
     # History tool record carries widget payload
     tool_msgs = [m for m in history if m.get("role") == "tool"]
@@ -310,7 +310,7 @@ async def test_execute_tool_calls_propagates_valid_widget(
 async def test_execute_tool_calls_strips_invalid_widget(
         ctx, config, test_registry, monkeypatch, caplog):
     monkeypatch.setattr(
-        "decafclaw.agent.execute_tool", _fake_execute_tool_with_bad_widget)
+        "decafclaw.tool_execution.execute_tool", _fake_execute_tool_with_bad_widget)
     ctx.conv_id = "test-widget-invalid"
     tool_calls = [{"id": "tc1",
                    "function": {"name": "fake_tool", "arguments": "{}"}}]
@@ -324,7 +324,7 @@ async def test_execute_tool_calls_strips_invalid_widget(
 
     ctx.event_bus.subscribe(_capture)
 
-    await _execute_tool_calls(ctx, tool_calls, history, messages)
+    await execute_tool_calls(ctx, tool_calls, history, messages)
 
     tool_msgs = [m for m in history if m.get("role") == "tool"]
     assert len(tool_msgs) == 1
@@ -347,14 +347,14 @@ async def test_execute_tool_calls_no_widget(
     """Tools that don't set widget produce tool_end/archive records
     with no widget key (not widget:null)."""
     monkeypatch.setattr(
-        "decafclaw.agent.execute_tool", _fake_execute_tool_no_widget)
+        "decafclaw.tool_execution.execute_tool", _fake_execute_tool_no_widget)
     ctx.conv_id = "test-no-widget"
     tool_calls = [{"id": "tc1",
                    "function": {"name": "fake_tool", "arguments": "{}"}}]
     history = []
     messages = []
 
-    await _execute_tool_calls(ctx, tool_calls, history, messages)
+    await execute_tool_calls(ctx, tool_calls, history, messages)
 
     tool_msgs = [m for m in history if m.get("role") == "tool"]
     assert len(tool_msgs) == 1
