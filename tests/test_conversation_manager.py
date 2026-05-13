@@ -1195,3 +1195,725 @@ def test_save_truthy_only_preserves_sticky_semantics(manager, config):
     manager._save_conversation_state(state, ctx)
 
     assert state.persisted.skip_vault_retrieval is True
+
+
+# -- Concurrency: per-conv lock (issue #440) ----------------------------------
+
+@pytest.mark.asyncio
+async def test_concurrent_user_enqueue_serializes_via_lock(
+    manager, config, monkeypatch
+):
+    """Two simultaneous enqueue_turn(USER) calls for the same conv must
+    serialize: exactly one runs, the other queues. Guard test for
+    issue #440.
+
+    Status: this test PASSES on both pre- and post-lock code because
+    asyncio is cooperative and the current `enqueue_turn` / `_start_turn`
+    structure has no yield between the busy check (`if state.busy:`)
+    and the `state.busy = True` write inside `_start_turn`. The first
+    task to resume from `await self.emit(...)` synchronously runs
+    through the busy check and into `_start_turn`'s body, setting
+    busy=True before yielding again — so subsequent tasks see busy=True
+    and queue.
+
+    The test is kept as a **structural guard** of the invariant: if
+    someone adds an await between those two points (or in `_start_turn`
+    before its `state.busy = True` assignment) the race opens, and
+    this test would catch it *only when paired with the lock*. The
+    lock makes the invariant explicit; without the lock, the
+    invariant is implicit in the current control flow and silently
+    regressable.
+
+    See `test_concurrent_confirmation_responses_dont_double_dispatch`
+    below for the companion test that DOES reproduce a live race
+    against unlocked code (the confirmation recovery dispatch path).
+    """
+    started = asyncio.Event()
+    release = asyncio.Event()
+    call_count = 0
+
+    async def fake_run_agent_turn(ctx, user_message, history, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        started.set()
+        await release.wait()
+        from decafclaw.media import ToolResult
+        return ToolResult(text="ok")
+
+    monkeypatch.setattr("decafclaw.agent.run_agent_turn", fake_run_agent_turn)
+
+    # Subscriber forces `emit` to actually await (real yield point at the
+    # user_message emission inside enqueue_turn).
+    async def _noop(_event):
+        pass
+    manager.subscribe("c1", _noop)
+
+    # Fire both enqueues concurrently. If a future change adds a
+    # yield between the busy check and `state.busy = True` inside
+    # `_start_turn`, both calls could observe `busy=False` and both
+    # would call `_start_turn` without the lock. With the lock in
+    # place, the second call blocks on the lock and observes
+    # `busy=True` set by the first.
+    f1, f2 = await asyncio.gather(
+        manager.enqueue_turn("c1", kind=TurnKind.USER, prompt="one"),
+        manager.enqueue_turn("c1", kind=TurnKind.USER, prompt="two"),
+    )
+
+    # Let the started turn run to the point of awaiting `release`.
+    await started.wait()
+
+    state = manager.get_state("c1")
+    assert state is not None
+
+    # Exactly one turn started; the other is queued.
+    assert call_count == 1, (
+        f"expected exactly one turn started, got {call_count}"
+    )
+    assert len(state.pending_messages) == 1, (
+        f"expected one pending message, got {len(state.pending_messages)}"
+    )
+
+    # Drain: release the parked turn so the queued one also runs.
+    release.set()
+    await asyncio.wait_for(f1, timeout=2.0)
+    await asyncio.wait_for(f2, timeout=2.0)
+
+
+@pytest.mark.asyncio
+async def test_concurrent_confirmation_responses_dont_double_dispatch(
+    manager, monkeypatch
+):
+    """Two simultaneous respond_to_confirmation calls for the same
+    confirmation_id must not both dispatch recovery. Regression for
+    issue #440 — the state.pending_confirmation / state.confirmation_event
+    mutations used to be unlocked, so two responses could both observe
+    ``pending_confirmation`` set, both pass the id check, and both
+    dispatch the registered handler.
+    """
+    from decafclaw.archive import append_message
+
+    conv_id = "conv-conf-race"
+    request = ConfirmationRequest(
+        action_type=ConfirmationAction.RUN_SHELL_COMMAND,
+        action_data={"command": "ls"},
+        message="Allow?",
+    )
+    # Pre-populate pending state on a recovered conv (no running loop)
+    # so respond_to_confirmation goes through the recovery path.
+    append_message(manager.config, conv_id, request.to_archive_message())
+    await manager.startup_scan()
+
+    handler_calls = 0
+
+    class FakeHandler:
+        async def on_approve(self, ctx, req, resp):
+            nonlocal handler_calls
+            handler_calls += 1
+            # Yield so the second responder can race past
+            # pending_confirmation check before this one clears it.
+            await asyncio.sleep(0)
+            return {"ok": True}
+
+        async def on_deny(self, ctx, req, resp):
+            return {}
+
+    manager.confirmation_registry.register(
+        ConfirmationAction.RUN_SHELL_COMMAND, FakeHandler()
+    )
+
+    await asyncio.gather(
+        manager.respond_to_confirmation(
+            conv_id, request.confirmation_id, approved=True),
+        manager.respond_to_confirmation(
+            conv_id, request.confirmation_id, approved=True),
+    )
+
+    assert handler_calls == 1, (
+        f"expected exactly one handler dispatch, got {handler_calls}"
+    )
+    state = manager.get_state(conv_id)
+    assert state is not None
+    assert state.pending_confirmation is None
+
+
+@pytest.mark.asyncio
+async def test_cancel_pending_confirmation_after_response_claimed_is_noop(
+    manager,
+):
+    """If `respond_to_confirmation` has already claimed
+    `state.confirmation_response`, a racing
+    `cancel_pending_confirmation` must NOT clear it — otherwise
+    `request_confirmation`'s success path would observe the slot
+    nulled out and persist a denial that contradicts the already-
+    archived approval. (Copilot review on PR #484.)
+    """
+    conv_id = "conv-cancel-race"
+    state = manager._get_or_create(conv_id)
+
+    request = ConfirmationRequest(
+        action_type=ConfirmationAction.RUN_SHELL_COMMAND,
+        action_data={"command": "ls"},
+        message="Allow?",
+    )
+    response = ConfirmationResponse(
+        confirmation_id=request.confirmation_id,
+        approved=True,
+    )
+    # Simulate `respond_to_confirmation` having claimed the slot.
+    state.pending_confirmation = request
+    state.confirmation_event = asyncio.Event()
+    state.confirmation_response = response
+
+    cleared = await manager.cancel_pending_confirmation(conv_id)
+    assert cleared is False, (
+        "cancel_pending_confirmation should defer to the claimed "
+        "response and return False"
+    )
+    # Slot must still be claimed for request_confirmation to find.
+    assert state.confirmation_response is response
+    assert state.pending_confirmation is request
+
+
+@pytest.mark.asyncio
+async def test_request_confirmation_timeout_loses_race_to_late_responder(
+    manager, monkeypatch
+):
+    """A responder that wins the race against `request_confirmation`'s
+    timeout — claiming `state.confirmation_response` between
+    `wait_for` raising TimeoutError and the timeout-path archive
+    write — must have its response honored. The timeout path must
+    NOT archive a denial that contradicts the responder's answer.
+    (Copilot review on PR #484.)
+
+    We deterministically force the race by patching `asyncio.wait_for`
+    to raise TimeoutError only AFTER the responder has run and
+    claimed the slot. This exercises the exact post-wait code path
+    the fix protects, rather than relying on wall-clock timing.
+    """
+    from decafclaw import conversation_manager as cm
+
+    conv_id = "conv-timeout-race"
+
+    request = ConfirmationRequest(
+        action_type=ConfirmationAction.RUN_SHELL_COMMAND,
+        action_data={"command": "ls"},
+        message="Allow?",
+        timeout=10.0,  # large; we control timeout via the patched wait_for
+    )
+
+    responder_ran = asyncio.Event()
+
+    async def respond_when_signaled():
+        # Wait until request_confirmation is in `wait_for` (set up by
+        # the patched wait_for below), then claim the slot.
+        await responder_ran.wait()
+        await manager.respond_to_confirmation(
+            conv_id, request.confirmation_id, approved=True)
+
+    async def fake_wait_for(fut, timeout):
+        # Close the underlying coroutine without awaiting it — we're
+        # simulating a timeout, so the wait never completes. Closing
+        # avoids the "coroutine never awaited" RuntimeWarning.
+        if asyncio.iscoroutine(fut):
+            fut.close()
+        # Release the responder, then yield enough times so it
+        # acquires the lock and claims state.confirmation_response.
+        # Finally raise TimeoutError — putting request_confirmation's
+        # post-wait block on the timeout path with the slot already
+        # claimed.
+        responder_ran.set()
+        for _ in range(5):
+            await asyncio.sleep(0)
+        raise asyncio.TimeoutError()
+
+    monkeypatch.setattr(cm.asyncio, "wait_for", fake_wait_for)
+
+    responder_task = asyncio.create_task(respond_when_signaled())
+    response = await manager.request_confirmation(conv_id, request)
+    await responder_task
+
+    state = manager.get_state(conv_id)
+    assert state is not None
+    assert state.confirmation_response is None
+    assert state.pending_confirmation is None
+
+    # The responder claimed the slot first, so request_confirmation's
+    # timeout path honored their approval rather than synthesizing a
+    # denial.
+    assert response.approved is True, (
+        "responder claimed slot under the lock before the timeout path "
+        "ran; request_confirmation must honor that response, not "
+        f"synthesize a denial. Got: {response}"
+    )
+
+    # Archive must have exactly one confirmation_response row (the
+    # responder's approval) — never both a timeout denial and an
+    # approval.
+    from decafclaw.archive import restore_history
+    history = restore_history(manager.config, conv_id) or []
+    responses = [
+        m for m in history if m.get("role") == "confirmation_response"
+    ]
+    assert len(responses) == 1, (
+        f"expected exactly one confirmation_response in archive, "
+        f"got {len(responses)}: {responses}"
+    )
+    assert responses[0]["approved"] is True
+
+
+@pytest.mark.asyncio
+async def test_respond_to_confirmation_rolls_back_claim_on_archive_failure(
+    manager, monkeypatch
+):
+    """If `append_message` raises while `respond_to_confirmation`
+    is dispatching, the response-slot claim must NEVER be written
+    so a retry isn't treated as a duplicate and a running waiter
+    doesn't hang until timeout. Archive write now happens UNDER the
+    lock BEFORE the claim is set; on failure the raise propagates
+    with pending state untouched. Emit happens after the lock and
+    is best-effort — emit failures are logged but the durable
+    record + claim are already in place, so this test does NOT
+    cover the emit-failure path (which is intentionally non-
+    rollback). (Copilot review on PR #484.)
+    """
+    conv_id = "conv-rollback-test"
+    state = manager._get_or_create(conv_id)
+
+    request = ConfirmationRequest(
+        action_type=ConfirmationAction.RUN_SHELL_COMMAND,
+        action_data={"command": "ls"},
+        message="Allow?",
+    )
+    # Set up pending state as if request_confirmation had run.
+    state.pending_confirmation = request
+    state.confirmation_event = asyncio.Event()
+    state.confirmation_response = None
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("archive write failed")
+
+    # respond_to_confirmation does a function-level `from .archive
+    # import append_message`, so patch the source module.
+    monkeypatch.setattr("decafclaw.archive.append_message", boom)
+
+    with pytest.raises(RuntimeError, match="archive write failed"):
+        await manager.respond_to_confirmation(
+            conv_id, request.confirmation_id, approved=True)
+
+    # Claim must be rolled back so retry works.
+    assert state.confirmation_response is None, (
+        "respond_to_confirmation must roll back its claim on I/O "
+        "failure; otherwise a retry would be silently dropped as a "
+        "duplicate."
+    )
+    # Pending request must still be there for the retry.
+    assert state.pending_confirmation is request
+    # Event must NOT be set — running waiter is still waiting and
+    # the retry will signal it.
+    assert state.confirmation_event is not None
+    assert not state.confirmation_event.is_set()
+
+
+@pytest.mark.asyncio
+async def test_cancel_pending_confirmation_rolls_back_on_archive_failure(
+    manager, monkeypatch
+):
+    """If `append_message` fails during
+    `cancel_pending_confirmation`, the in-memory pending state must
+    not be cleared — otherwise the manager would be left with no
+    pending confirmation and no archive denial, leaving the user
+    unable to retry and startup recovery seeing the request as
+    still unresolved. (Copilot review on PR #484.)
+    """
+    conv_id = "conv-cancel-rollback"
+    state = manager._get_or_create(conv_id)
+    request = ConfirmationRequest(
+        action_type=ConfirmationAction.RUN_SHELL_COMMAND,
+        action_data={"command": "ls"},
+        message="Allow?",
+    )
+    state.pending_confirmation = request
+    state.confirmation_event = asyncio.Event()
+    state.confirmation_response = None
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("archive write failed")
+    monkeypatch.setattr("decafclaw.archive.append_message", boom)
+
+    with pytest.raises(RuntimeError, match="archive write failed"):
+        await manager.cancel_pending_confirmation(conv_id)
+
+    # In-memory state must be preserved so retry can persist a denial.
+    assert state.pending_confirmation is request
+    assert state.confirmation_response is None
+    assert state.confirmation_event is not None
+
+
+@pytest.mark.asyncio
+async def test_recover_confirmation_restores_on_dispatch_failure(manager):
+    """If `_dispatch_recovery` raises (e.g. the registered handler
+    fails), `recover_confirmation` must restore
+    `state.pending_confirmation` so a future retry / startup
+    recovery can pick up where dispatch left off. Otherwise the
+    request would be silently lost from memory while remaining
+    unresolved in the archive. (Copilot review on PR #484.)
+    """
+    from decafclaw.archive import append_message
+
+    conv_id = "conv-recover-rollback"
+    request = ConfirmationRequest(
+        action_type=ConfirmationAction.RUN_SHELL_COMMAND,
+        action_data={"command": "ls"},
+        message="Allow?",
+    )
+    append_message(manager.config, conv_id, request.to_archive_message())
+    await manager.startup_scan()
+    state = manager.get_state(conv_id)
+    assert state is not None
+    assert state.pending_confirmation is not None
+
+    class BoomHandler:
+        async def on_approve(self, ctx, req, resp):
+            raise RuntimeError("handler exploded")
+
+        async def on_deny(self, ctx, req, resp):
+            return {}
+
+    manager.confirmation_registry.register(
+        ConfirmationAction.RUN_SHELL_COMMAND, BoomHandler()
+    )
+
+    response = ConfirmationResponse(
+        confirmation_id=request.confirmation_id, approved=True,
+    )
+    with pytest.raises(RuntimeError, match="handler exploded"):
+        await manager.recover_confirmation(conv_id, response)
+
+    # Pending confirmation must be restored so the next retry can
+    # try dispatch again.
+    assert state.pending_confirmation is not None
+    assert (state.pending_confirmation.confirmation_id
+            == request.confirmation_id)
+
+
+@pytest.mark.asyncio
+async def test_drain_pending_defers_when_concurrent_enqueue_won_dispatch(
+    manager,
+):
+    """If a concurrent ``enqueue_turn`` wins the dispatch race after
+    the finally-block sets ``busy=False`` but before ``_drain_pending``
+    runs, the drain must defer rather than dispatch over the new
+    turn — otherwise ``_start_turn`` would overwrite
+    ``state.agent_task`` / ``state.cancel_event`` and run two turns
+    for the same conv concurrently. (Copilot review on PR #484.)
+    """
+    state = manager._get_or_create("conv-drain-defer")
+    # Simulate the post-finally-block state where busy was just
+    # cleared, but a concurrent enqueue has since taken the slot
+    # (busy=True, agent_task set) and there's still pending work
+    # left over from the original turn.
+    state.busy = True
+    fake_task = asyncio.create_task(asyncio.sleep(0))
+    state.agent_task = fake_task
+    state.pending_messages.append({
+        "kind": TurnKind.USER,
+        "text": "queued",
+        "user_id": "u",
+        "context_setup": None,
+        "archive_text": "",
+        "attachments": None,
+        "command_ctx": None,
+        "wiki_page": None,
+        "task_mode": None,
+        "history": None,
+        "metadata": None,
+        "future": None,
+    })
+
+    # Drain must defer (no dispatch) when busy is already set.
+    await manager._drain_pending(state)
+
+    # The queued message must still be there for the new in-flight
+    # turn's finally-block drain to pick up.
+    assert len(state.pending_messages) == 1
+    # The agent_task must not have been overwritten.
+    assert state.agent_task is fake_task
+
+    # Clean up.
+    await fake_task
+
+
+@pytest.mark.asyncio
+async def test_request_confirmation_timeout_archive_failure_preserves_state(
+    manager, monkeypatch
+):
+    """If the timeout-path archive write fails inside
+    `request_confirmation`, the in-memory pending state must NOT be
+    cleared — otherwise the request would be lost in memory while
+    remaining unresolved in the archive, leaving no way to recover.
+    (Copilot review on PR #484.)
+    """
+    from decafclaw import conversation_manager as cm
+
+    conv_id = "conv-timeout-archive-fail"
+
+    request = ConfirmationRequest(
+        action_type=ConfirmationAction.RUN_SHELL_COMMAND,
+        action_data={"command": "ls"},
+        message="Allow?",
+        timeout=10.0,
+    )
+
+    # Force timeout via patched wait_for.
+    async def fake_wait_for(fut, timeout):
+        if asyncio.iscoroutine(fut):
+            fut.close()
+        raise asyncio.TimeoutError()
+
+    monkeypatch.setattr(cm.asyncio, "wait_for", fake_wait_for)
+
+    # Force the timeout-path archive write to fail. The initial
+    # request archive write succeeds; only the timeout response
+    # write fails.
+    from decafclaw import archive as archive_mod
+    real_archive_append = archive_mod.append_message
+
+    def boom_on_response(config, conv, msg):
+        if msg.get("role") == "confirmation_response":
+            raise RuntimeError("timeout archive failed")
+        return real_archive_append(config, conv, msg)
+
+    monkeypatch.setattr("decafclaw.archive.append_message", boom_on_response)
+
+    with pytest.raises(RuntimeError, match="timeout archive failed"):
+        await manager.request_confirmation(conv_id, request)
+
+    # Pending state must be preserved so retry/recovery can proceed.
+    state = manager.get_state(conv_id)
+    assert state is not None
+    assert state.pending_confirmation is not None
+    assert state.pending_confirmation.confirmation_id == request.confirmation_id
+
+
+@pytest.mark.asyncio
+async def test_recovered_confirmation_dispatch_uses_captured_request(
+    manager, monkeypatch
+):
+    """In the recovered-confirmation path, ``respond_to_confirmation``
+    captures ``state.pending_confirmation`` under the lock so the
+    recovery dispatch uses the ORIGINAL recovered request — not
+    whatever happens to be in ``state.pending_confirmation`` when the
+    second lock block re-acquires the lock.
+
+    A concurrent ``request_confirmation`` (a fresh turn starting up
+    during our archive/emit I/O window) can overwrite
+    ``state.pending_confirmation`` with a different request. Without
+    the in-lock capture, the recovery dispatch would pop and dispatch
+    the new request with our old response, calling the wrong handler.
+    The capture pins recovery to the request we resolved.
+    (Copilot review on PR #484.)
+    """
+    from decafclaw.archive import append_message
+
+    conv_id = "conv-recovered-capture"
+    original_request = ConfirmationRequest(
+        action_type=ConfirmationAction.RUN_SHELL_COMMAND,
+        action_data={"command": "ls"},
+        message="Allow?",
+    )
+    append_message(manager.config, conv_id,
+                   original_request.to_archive_message())
+    await manager.startup_scan()
+    state = manager.get_state(conv_id)
+    assert state is not None
+
+    dispatched_requests: list[ConfirmationRequest] = []
+
+    class CapturingHandler:
+        async def on_approve(self, ctx, req, resp):
+            dispatched_requests.append(req)
+            return {"ok": True}
+
+        async def on_deny(self, ctx, req, resp):
+            return {}
+
+    manager.confirmation_registry.register(
+        ConfirmationAction.RUN_SHELL_COMMAND, CapturingHandler()
+    )
+    # Also register a sentinel handler under a DIFFERENT action so
+    # that if the racer's request is dispatched instead we'd see it.
+    class SentinelHandler:
+        async def on_approve(self, ctx, req, resp):
+            dispatched_requests.append(req)
+            return {"oops": True}
+
+        async def on_deny(self, ctx, req, resp):
+            return {}
+
+    manager.confirmation_registry.register(
+        ConfirmationAction.ACTIVATE_SKILL, SentinelHandler()
+    )
+
+    # Force the race: subscribe a callback that mutates
+    # state.pending_confirmation when our confirmation_response emits.
+    # This simulates a concurrent request_confirmation racing in during
+    # respond_to_confirmation's I/O window — specifically the case where
+    # only pending_confirmation is overwritten (e.g., a partially-
+    # complete request_confirmation that landed under the lock just
+    # after our claim). The post-emit lock block must use the captured
+    # request, not re-read state.pending_confirmation.
+    racer_request = ConfirmationRequest(
+        action_type=ConfirmationAction.ACTIVATE_SKILL,
+        action_data={"skill_name": "x"},
+        message="racer",
+    )
+
+    def overwrite_on_response_emit(event):
+        if event.get("type") != "confirmation_response":
+            return
+        # Simulate the racer landing inside the I/O window. Mimic the
+        # exact mutation request_confirmation would do but preserve our
+        # confirmation_response claim — the bug being tested is the
+        # capture-vs-re-read, not the response-clear identity check.
+        state.pending_confirmation = racer_request
+
+    manager.subscribe(conv_id, overwrite_on_response_emit)
+
+    await manager.respond_to_confirmation(
+        conv_id, original_request.confirmation_id, approved=True)
+
+    # The handler must have been called for the ORIGINAL request, not
+    # for the racer. Exactly one dispatch, with original action_type.
+    assert len(dispatched_requests) == 1, (
+        f"expected exactly one handler dispatch, got "
+        f"{len(dispatched_requests)}"
+    )
+    assert (dispatched_requests[0].action_type
+            == ConfirmationAction.RUN_SHELL_COMMAND), (
+        f"recovery dispatched the wrong request — should have used the "
+        f"captured original, not re-read state.pending_confirmation. "
+        f"Got: {dispatched_requests[0].action_type}"
+    )
+    assert (dispatched_requests[0].confirmation_id
+            == original_request.confirmation_id)
+
+
+@pytest.mark.asyncio
+async def test_recovery_dispatch_proceeds_when_new_request_lands_mid_flight(
+    manager, monkeypatch
+):
+    """A real concurrent `request_confirmation` (not just an isolated
+    overwrite of ``state.pending_confirmation``) can land between the
+    initial claim block and the recovery dispatch. The dispatch must
+    still proceed using the captured original request — the new
+    request belongs to a different turn and is handled by its own
+    `request_confirmation` invocation. (Copilot review on PR #484.)
+    """
+    from decafclaw.archive import append_message
+
+    conv_id = "conv-real-concurrent-request"
+    original_request = ConfirmationRequest(
+        action_type=ConfirmationAction.RUN_SHELL_COMMAND,
+        action_data={"command": "ls"},
+        message="Allow?",
+    )
+    append_message(manager.config, conv_id,
+                   original_request.to_archive_message())
+    await manager.startup_scan()
+    state = manager.get_state(conv_id)
+    assert state is not None
+
+    dispatched: list[ConfirmationRequest] = []
+
+    class CapturingHandler:
+        async def on_approve(self, ctx, req, resp):
+            dispatched.append(req)
+            return {"ok": True}
+
+        async def on_deny(self, ctx, req, resp):
+            return {}
+
+    manager.confirmation_registry.register(
+        ConfirmationAction.RUN_SHELL_COMMAND, CapturingHandler()
+    )
+
+    # Mid-flight, a NEW request_confirmation kicks off — writes its
+    # own pending_confirmation + confirmation_event + response=None.
+    new_request = ConfirmationRequest(
+        action_type=ConfirmationAction.ACTIVATE_SKILL,
+        action_data={"skill_name": "x"},
+        message="new",
+    )
+
+    def land_new_request(event):
+        if event.get("type") != "confirmation_response":
+            return
+        # Simulate a fresh request_confirmation landing — writes the
+        # full triple, mirroring request_confirmation's claim block.
+        state.pending_confirmation = new_request
+        state.confirmation_event = asyncio.Event()
+        state.confirmation_response = None
+
+    manager.subscribe(conv_id, land_new_request)
+
+    await manager.respond_to_confirmation(
+        conv_id, original_request.confirmation_id, approved=True)
+
+    # Recovery MUST have dispatched the original request, not given
+    # up on it just because state.confirmation_response was overwritten
+    # by the new request_confirmation.
+    assert len(dispatched) == 1, (
+        f"recovery should have dispatched the original request "
+        f"even with a new request_confirmation in flight; got "
+        f"{len(dispatched)} dispatches"
+    )
+    assert (dispatched[0].confirmation_id
+            == original_request.confirmation_id)
+    # The new request should still be pending — recovery didn't
+    # touch it.
+    assert state.pending_confirmation is new_request
+
+
+@pytest.mark.asyncio
+async def test_cancel_pending_confirmation_wakes_live_waiter(manager):
+    """If a `request_confirmation` waiter is parked on
+    `event.wait()` when `cancel_pending_confirmation` is called,
+    the waiter must be signaled so its post-wait block can consume
+    the denial and unblock. Without this, a confirmation with
+    `timeout=None` would hang forever even after cancellation.
+    (Copilot review on PR #484.)
+    """
+    conv_id = "conv-cancel-wake"
+
+    request = ConfirmationRequest(
+        action_type=ConfirmationAction.RUN_SHELL_COMMAND,
+        action_data={"command": "ls"},
+        message="Allow?",
+        timeout=10.0,  # long timeout — proves we don't depend on it
+    )
+
+    waiter_started = asyncio.Event()
+
+    async def cancel_after_waiter_parks():
+        # Wait until the waiter is actually parked on event.wait().
+        await waiter_started.wait()
+        # One extra yield to make sure the waiter is at the await.
+        await asyncio.sleep(0)
+        cleared = await manager.cancel_pending_confirmation(conv_id)
+        assert cleared is True
+
+    # Spy on emit so we can detect the waiter has entered the wait.
+    async def watch_for_request(event):
+        if event.get("type") == "confirmation_request":
+            waiter_started.set()
+    manager.subscribe(conv_id, watch_for_request)
+
+    asyncio.create_task(cancel_after_waiter_parks())
+    response = await asyncio.wait_for(
+        manager.request_confirmation(conv_id, request),
+        timeout=5.0,  # if the waiter hangs, wait_for catches it
+    )
+
+    # Waiter unblocked with the cancellation denial.
+    assert response.approved is False
+    assert response.confirmation_id == request.confirmation_id

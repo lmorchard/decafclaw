@@ -147,6 +147,44 @@ class ConversationState:
     agent_task: asyncio.Task | None = None
     cancel_event: asyncio.Event | None = None
 
+    # Per-conversation lock guarding the dispatch decision and the
+    # confirmation lifecycle (issue #440). Held during:
+    #   - enqueue_turn's busy-check → start-or-queue sequence
+    #     (including the user_message emit, the _start_turn dispatch
+    #     up to asyncio.create_task(run()), and any awaits inside
+    #     _start_turn's pre-task setup such as context_setup and the
+    #     turn_start emit)
+    #   - the agent task's finally-block busy=False reset
+    #   - _drain_pending's pop-and-dispatch (same scope as
+    #     enqueue_turn's dispatch path); re-checks state.busy and
+    #     defers if a concurrent enqueue won
+    #   - request_confirmation's pending/event/response triple setup
+    #     and post-wait teardown (released across event.wait() so the
+    #     responder can acquire it); the post-wait timeout-archive
+    #     write also runs inside the lock for durability
+    #   - respond_to_confirmation's pending-check + archive write +
+    #     response-slot claim — archive happens UNDER the lock so the
+    #     durable record exists before any waiter/claimer can observe
+    #     the claim
+    #   - cancel_pending_confirmation's archive write + claim + state
+    #     clear (all under the lock for the same durability reason)
+    #   - cancel_turn's paired read of cancel_event/agent_task
+    #   - recover_confirmation's atomic pop of pending_confirmation
+    # NOT held during:
+    #   - the agent task body itself (asyncio.create_task returns
+    #     immediately so the caller's lock-acquire is released before
+    #     run() executes)
+    #   - confirmation handler invocations in _dispatch_recovery /
+    #     recover_confirmation (handlers may do arbitrary I/O)
+    #   - subscriber emit awaits AFTER the claim/clear in
+    #     respond_to_confirmation, request_confirmation's timeout
+    #     emit, and cancel_pending_confirmation's emit — the durable
+    #     state is already in place by then, so emit failures log
+    #     but don't roll back
+    #   - request_confirmation's event.wait() — released to let the
+    #     responder acquire the lock and claim the slot
+    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+
     # Confirmation state
     pending_confirmation: ConfirmationRequest | None = None
     confirmation_event: asyncio.Event | None = None
@@ -210,7 +248,12 @@ class ConversationManager:
         return self._conversations[conv_id]
 
     def _circuit_breaker_tripped(self, state: ConversationState) -> bool:
-        """Check if the circuit breaker has tripped for a conversation."""
+        """Check if the circuit breaker has tripped for a conversation.
+
+        Caller must hold ``state.lock`` — read-then-write of
+        ``state.paused_until`` and ``state.turn_times`` must be
+        atomic with the surrounding dispatch decision (issue #440).
+        """
 
         now = time.monotonic()
         if now < state.paused_until:
@@ -227,7 +270,10 @@ class ConversationManager:
         return False
 
     def _circuit_breaker_record(self, state: ConversationState) -> None:
-        """Record an agent turn completion for circuit breaker tracking."""
+        """Record an agent turn completion for circuit breaker tracking.
+
+        Caller must hold ``state.lock``.
+        """
 
         state.turn_times.append(time.monotonic())
 
@@ -254,79 +300,89 @@ class ConversationManager:
         state = self._get_or_create(conv_id)
         future: asyncio.Future = asyncio.get_running_loop().create_future()
 
-        # WAKE-kind: rate limiter — drop excess wakes within the window.
-        if kind is TurnKind.WAKE:
-            now = time.monotonic()
-            cutoff = now - self._wake_window_sec
-            state.wake_times = [t for t in state.wake_times if t > cutoff]
-            if len(state.wake_times) >= self._wake_max_per_window:
-                log.warning(
-                    "Wake rate limit exceeded for conv %s "
-                    "(%d wakes in last %ds) — dropping wake",
-                    conv_id[:8], len(state.wake_times), self._wake_window_sec,
-                )
-                future.set_result(None)
+        # Dispatch decision runs under state.lock so the busy-check /
+        # circuit-breaker / wake-limiter reads are atomic with the
+        # decision to queue vs. start a turn. The lock is held across
+        # the user_message emit and the synchronous body of
+        # _start_turn (which sets busy=True before scheduling the
+        # agent task), but the agent task itself runs without the
+        # lock. See issue #440.
+        async with state.lock:
+            # WAKE-kind: rate limiter — drop excess wakes within the window.
+            if kind is TurnKind.WAKE:
+                now = time.monotonic()
+                cutoff = now - self._wake_window_sec
+                state.wake_times = [t for t in state.wake_times if t > cutoff]
+                if len(state.wake_times) >= self._wake_max_per_window:
+                    log.warning(
+                        "Wake rate limit exceeded for conv %s "
+                        "(%d wakes in last %ds) — dropping wake",
+                        conv_id[:8], len(state.wake_times),
+                        self._wake_window_sec,
+                    )
+                    future.set_result(None)
+                    return future
+                state.wake_times.append(now)
+
+            # USER-kind only: circuit breaker check + user_message event emission.
+            if kind is TurnKind.USER:
+                if self._circuit_breaker_tripped(state):
+                    log.warning("Dropping message for paused conversation %s",
+                                conv_id[:8])
+                    future.set_result(None)
+                    return future
+                await self.emit(conv_id, {
+                    "type": "user_message",
+                    "text": archive_text or prompt,
+                    "user_id": user_id,
+                })
+
+            if state.busy:
+                # Cancel-on-new-message: cancel the current turn if configured
+                # (USER kind only, same as previous send_message behavior)
+                if (kind is TurnKind.USER
+                        and self.config.agent.turn_on_new_message == "cancel"
+                        and state.cancel_event
+                        and not state.cancel_event.is_set()):
+                    log.info("Conv %s busy, cancelling for new message",
+                             conv_id[:8])
+                    state.cancel_event.set()
+                    if state.agent_task and not state.agent_task.done():
+                        state.agent_task.cancel()
+
+                state.pending_messages.append({
+                    "kind": kind,
+                    "text": prompt,
+                    "user_id": user_id,
+                    "context_setup": context_setup,
+                    "archive_text": archive_text,
+                    "attachments": attachments,
+                    "command_ctx": command_ctx,
+                    "wiki_page": wiki_page,
+                    "task_mode": task_mode,
+                    "history": history,
+                    "metadata": metadata,
+                    "future": future,
+                })
+                log.info("Conv %s busy, queued message (%d pending)",
+                         conv_id[:8], len(state.pending_messages))
                 return future
-            state.wake_times.append(now)
 
-        # USER-kind only: circuit breaker check + user_message event emission.
-        if kind is TurnKind.USER:
-            if self._circuit_breaker_tripped(state):
-                log.warning("Dropping message for paused conversation %s",
-                            conv_id[:8])
-                future.set_result(None)
-                return future
-            await self.emit(conv_id, {
-                "type": "user_message",
-                "text": archive_text or prompt,
-                "user_id": user_id,
-            })
-
-        if state.busy:
-            # Cancel-on-new-message: cancel the current turn if configured
-            # (USER kind only, same as previous send_message behavior)
-            if (kind is TurnKind.USER
-                    and self.config.agent.turn_on_new_message == "cancel"
-                    and state.cancel_event
-                    and not state.cancel_event.is_set()):
-                log.info("Conv %s busy, cancelling for new message", conv_id[:8])
-                state.cancel_event.set()
-                if state.agent_task and not state.agent_task.done():
-                    state.agent_task.cancel()
-
-            state.pending_messages.append({
-                "kind": kind,
-                "text": prompt,
-                "user_id": user_id,
-                "context_setup": context_setup,
-                "archive_text": archive_text,
-                "attachments": attachments,
-                "command_ctx": command_ctx,
-                "wiki_page": wiki_page,
-                "task_mode": task_mode,
-                "history": history,
-                "metadata": metadata,
-                "future": future,
-            })
-            log.info("Conv %s busy, queued message (%d pending)",
-                     conv_id[:8], len(state.pending_messages))
-            return future
-
-        await self._start_turn(
-            state,
-            prompt,
-            kind=kind,
-            user_id=user_id,
-            context_setup=context_setup,
-            archive_text=archive_text,
-            attachments=attachments,
-            command_ctx=command_ctx,
-            wiki_page=wiki_page,
-            task_mode=task_mode,
-            history=history,
-            metadata=metadata,
-            future=future,
-        )
+            await self._start_turn(
+                state,
+                prompt,
+                kind=kind,
+                user_id=user_id,
+                context_setup=context_setup,
+                archive_text=archive_text,
+                attachments=attachments,
+                command_ctx=command_ctx,
+                wiki_page=wiki_page,
+                task_mode=task_mode,
+                history=history,
+                metadata=metadata,
+                future=future,
+            )
         return future
 
     async def send_message(
@@ -372,49 +428,134 @@ class ConversationManager:
 
         ``data`` carries free-form response payload (widget selections,
         etc.).
+
+        Concurrency: the pending-confirmation match, archive write,
+        response-slot claim, pending-state clear, and waiter capture
+        all happen under ``state.lock`` so the durable record exists
+        before any waiter or concurrent claimer can observe the
+        claim (issue #440 + Copilot review on #484). Emit and the
+        downstream wake / recovery dispatch run OUTSIDE the lock:
+        emit awaits subscribers (arbitrary I/O) and the recovery
+        handler may also do arbitrary I/O.
         """
         state = self._conversations.get(conv_id)
-        if not state or not state.pending_confirmation:
+        if not state:
             log.warning("No pending confirmation for conv %s", conv_id)
             return
-        if state.pending_confirmation.confirmation_id != confirmation_id:
-            log.warning("Confirmation ID mismatch for conv %s: expected %s, got %s",
-                        conv_id, state.pending_confirmation.confirmation_id,
-                        confirmation_id)
-            return
 
-        response = ConfirmationResponse(
-            confirmation_id=confirmation_id,
-            approved=approved,
-            always=always,
-            add_pattern=add_pattern,
-            data=data or {},
-        )
+        async with state.lock:
+            if not state.pending_confirmation:
+                log.warning("No pending confirmation for conv %s", conv_id)
+                return
+            if state.pending_confirmation.confirmation_id != confirmation_id:
+                log.warning(
+                    "Confirmation ID mismatch for conv %s: expected %s, got %s",
+                    conv_id, state.pending_confirmation.confirmation_id,
+                    confirmation_id)
+                return
+            # A previously-responded confirmation that hasn't been cleared
+            # yet (e.g. running-loop case where request_confirmation hasn't
+            # observed the event) — skip rather than double-dispatch.
+            if state.confirmation_response is not None:
+                log.warning(
+                    "Confirmation %s already has a response, ignoring "
+                    "duplicate respond_to_confirmation for conv %s",
+                    confirmation_id, conv_id)
+                return
 
-        # Persist to archive
-        from .archive import append_message
-        append_message(self.config, conv_id, response.to_archive_message())
+            response = ConfirmationResponse(
+                confirmation_id=confirmation_id,
+                approved=approved,
+                always=always,
+                add_pattern=add_pattern,
+                data=data or {},
+            )
+            # Archive the response under the lock so the durable record
+            # is in place BEFORE the waiter or any concurrent claimer
+            # can observe the claim. Without this, a `request_confirmation`
+            # waiter timing out while we're between claim and archive
+            # could consume our (uncommitted) response and clear the
+            # slot — and if the archive then failed, rollback couldn't
+            # restore (Copilot review on #484). `append_message` is
+            # sync filesystem I/O, so holding the per-conv lock across
+            # it just briefly blocks other lock acquirers on this conv.
+            from .archive import append_message
+            try:
+                append_message(self.config, conv_id,
+                               response.to_archive_message())
+            except Exception:
+                log.exception(
+                    "respond_to_confirmation archive write failed for "
+                    "conv %s; pending state untouched, caller may retry",
+                    conv_id[:8])
+                raise
+            # Capture the pending request AND atomically clear all
+            # pending state under the lock. Clearing here (rather
+            # than after the I/O) means a concurrent
+            # `request_confirmation` for a NEW request can land in
+            # the gap and write its own pending state without
+            # overwriting ours; our recovery dispatch uses
+            # `claimed_request` (a local variable), not state.
+            # The waiter_event is captured for the running-loop wake
+            # path before it's cleared. (Copilot review on #484.)
+            claimed_request = state.pending_confirmation
+            waiter_event = state.confirmation_event
+            state.confirmation_response = response
+            state.pending_confirmation = None
+            state.confirmation_event = None
 
-        # Emit to subscribers
-        emit_payload: dict[str, Any] = {
-            "type": "confirmation_response",
-            "confirmation_id": confirmation_id,
-            "approved": approved,
-        }
-        if response.data:
-            emit_payload["data"] = response.data
-        await self.emit(conv_id, emit_payload)
+        # Emit to subscribers outside the lock (subscriber awaits may
+        # do arbitrary I/O). If emit fails, the response is already
+        # durable in the archive and the waiter has observed our
+        # claim — subscribers may be out of sync but no persistent
+        # inconsistency results, so we log and continue.
+        try:
+            emit_payload: dict[str, Any] = {
+                "type": "confirmation_response",
+                "confirmation_id": confirmation_id,
+                "approved": approved,
+            }
+            if response.data:
+                emit_payload["data"] = response.data
+            await self.emit(conv_id, emit_payload)
+        except Exception:
+            log.exception(
+                "respond_to_confirmation emit failed for conv %s "
+                "(archive write already succeeded); continuing",
+                conv_id[:8])
 
-        # Wake the waiting agent loop or dispatch recovery
-        state.confirmation_response = response
-        if state.confirmation_event:
-            state.confirmation_event.set()
+        if waiter_event is not None:
+            # Running loop: wake it. request_confirmation will read
+            # state.confirmation_response under the lock (we already
+            # cleared pending_confirmation / confirmation_event
+            # above; request_confirmation's success path tolerates
+            # those being None) and then clear confirmation_response.
+            waiter_event.set()
         else:
-            # No running loop — dispatch recovery
+            # No running loop — dispatch recovery using the request
+            # captured under the lock above. The slot is already
+            # cleared (pending_confirmation = None, confirmation_event
+            # = None); confirmation_response is still set to mark the
+            # claim. On handler failure, restore pending state so the
+            # next retry / startup recovery can proceed.
+            async with state.lock:
+                state.confirmation_response = None
             log.info("No running loop for conv %s, dispatching recovery",
                      conv_id)
-            result = await self.recover_confirmation(conv_id, response)
-            log.info("Recovery result for conv %s: %s", conv_id[:8], result)
+            try:
+                result = await self._dispatch_recovery(
+                    conv_id, claimed_request, response)
+                log.info("Recovery result for conv %s: %s", conv_id[:8], result)
+            except Exception:
+                log.exception(
+                    "Recovery dispatch failed for conv %s; restoring "
+                    "pending state so retry can proceed",
+                    conv_id[:8])
+                async with state.lock:
+                    # Restore only if nothing else has taken the slot.
+                    if state.pending_confirmation is None:
+                        state.pending_confirmation = claimed_request
+                raise
 
     async def cancel_pending_confirmation(self, conv_id: str) -> bool:
         """Drop a pending confirmation without triggering recovery.
@@ -426,31 +567,90 @@ class ConversationManager:
         future submission attempt is a no-op rather than reviving the
         cancelled turn. Returns True if a pending confirmation was
         cleared, False otherwise.
+
+        State mutations run under ``state.lock`` so a concurrent
+        ``respond_to_confirmation`` can't see the request as still
+        pending after we've started clearing it (issue #440). If a
+        responder has already claimed the slot
+        (``state.confirmation_response is not None``), cancellation is
+        a no-op: the responder's answer wins and we must NOT persist a
+        denial that contradicts an already-emitted approval
+        (Copilot review on #484).
         """
         state = self._conversations.get(conv_id)
-        if not state or not state.pending_confirmation:
+        if not state:
             return False
-        request = state.pending_confirmation
-        response = ConfirmationResponse(
-            confirmation_id=request.confirmation_id,
-            approved=False,
-        )
-        from .archive import append_message
-        append_message(self.config, conv_id, response.to_archive_message())
-        state.pending_confirmation = None
-        state.confirmation_event = None
-        state.confirmation_response = None
+        async with state.lock:
+            if not state.pending_confirmation:
+                return False
+            if state.confirmation_response is not None:
+                # A responder already claimed the slot — let their
+                # response stand. Cancellation arrived too late.
+                log.info("cancel_pending_confirmation arrived after "
+                         "responder claimed slot for conv %s; "
+                         "deferring to responder",
+                         conv_id[:8])
+                return False
+            request = state.pending_confirmation
+            response = ConfirmationResponse(
+                confirmation_id=request.confirmation_id,
+                approved=False,
+            )
+            # Capture the waiter's event (if any) BEFORE clearing
+            # state.confirmation_event — we must signal it after the
+            # archive succeeds so a live request_confirmation with
+            # timeout=None doesn't hang forever. (Copilot review on
+            # #484.)
+            waiter_event = state.confirmation_event
+            # Archive UNDER the lock so the durable record is in place
+            # before the waiter (if any) can observe the claim. If a
+            # `request_confirmation` waiter is timing out and we
+            # claimed before archive, the waiter could consume our
+            # unpersisted denial and a subsequent archive failure
+            # would leave no durable record (Copilot review on #484).
+            # append_message is sync filesystem I/O.
+            from .archive import append_message
+            try:
+                append_message(self.config, conv_id,
+                               response.to_archive_message())
+            except Exception:
+                log.exception(
+                    "cancel_pending_confirmation archive write failed "
+                    "for conv %s; pending state untouched",
+                    conv_id[:8])
+                raise
+            # Archive succeeded — claim the slot for the live waiter
+            # (so request_confirmation's post-wait block observes our
+            # denial) and clear pending state atomically.
+            state.confirmation_response = response
+            state.pending_confirmation = None
+            state.confirmation_event = None
+        # Signal the live waiter outside the lock so its post-wait
+        # block can acquire the lock and consume our denial.
+        # request_confirmation will null out confirmation_response
+        # itself under the lock.
+        if waiter_event is not None:
+            waiter_event.set()
         return True
 
     async def cancel_turn(self, conv_id: str) -> None:
-        """Cancel an in-progress agent turn."""
+        """Cancel an in-progress agent turn.
+
+        Reads ``state.cancel_event`` / ``state.agent_task`` under
+        ``state.lock`` so the finally-block's null-out of those fields
+        (which also runs under the lock) can't race the cancellation
+        request (issue #440).
+        """
         state = self._conversations.get(conv_id)
         if not state:
             return
-        if state.cancel_event:
-            state.cancel_event.set()
-        if state.agent_task and not state.agent_task.done():
-            state.agent_task.cancel()
+        async with state.lock:
+            cancel_event = state.cancel_event
+            agent_task = state.agent_task
+        if cancel_event:
+            cancel_event.set()
+        if agent_task and not agent_task.done():
+            agent_task.cancel()
             log.info("Cancelled agent turn for conv %s", conv_id[:8])
 
     async def shutdown(self, timeout: float = 15) -> None:
@@ -569,19 +769,32 @@ class ConversationManager:
 
         Persists the request to the archive, emits to subscribers, and
         waits for a response (or timeout).
+
+        Concurrency: the waiting-state setup and the post-response /
+        post-timeout cleanup run under ``state.lock`` so the
+        pending_confirmation / confirmation_event / confirmation_response
+        triple is mutated atomically and racing
+        ``respond_to_confirmation`` / ``cancel_pending_confirmation``
+        callers observe a consistent view (issue #440). The lock is
+        released across the ``confirmation_event.wait()`` await so the
+        responder can acquire it to set the event.
         """
         state = self._get_or_create(conv_id)
 
-        # Persist to archive
+        # Persist to archive (outside the lock — sync I/O).
         from .archive import append_message
         append_message(self.config, conv_id, request.to_archive_message())
 
-        # Set up waiting state
-        state.pending_confirmation = request
-        state.confirmation_event = asyncio.Event()
-        state.confirmation_response = None
+        # Set up waiting state under the lock so concurrent responders
+        # see all three fields consistently.
+        async with state.lock:
+            state.pending_confirmation = request
+            state.confirmation_event = asyncio.Event()
+            state.confirmation_response = None
+            event = state.confirmation_event
 
         # Emit to subscribers so transports can show the confirmation UI
+        # (outside the lock — emit awaits subscribers).
         await self.emit(conv_id, {
             "type": "confirmation_request",
             "confirmation_id": request.confirmation_id,
@@ -593,35 +806,86 @@ class ConversationManager:
             "tool_call_id": request.tool_call_id,
         })
 
-        # Wait for response or timeout
+        # Wait for response or timeout (lock not held — responder
+        # needs to acquire it to claim the slot and set the event).
         try:
-            await asyncio.wait_for(
-                state.confirmation_event.wait(),
-                timeout=request.timeout,
-            )
+            await asyncio.wait_for(event.wait(), timeout=request.timeout)
+            timed_out = False
         except asyncio.TimeoutError:
-            log.info("Confirmation timed out for conv %s: %s",
-                     conv_id[:8], request.message)
-            # Create a timeout denial
-            response = ConfirmationResponse(
-                confirmation_id=request.confirmation_id,
-                approved=False,
-            )
-            append_message(self.config, conv_id, response.to_archive_message())
+            timed_out = True
+
+        # Claim the response slot under the lock atomically with the
+        # state read, so a late responder racing the timeout decision
+        # can't slip in between the read and the archive write / emit
+        # / null-out. Three possible states inside the lock:
+        # 1. responder already claimed `confirmation_response` — honor
+        #    it (cooperative path on signaled event, or responder won
+        #    a tight race against the timeout)
+        # 2. timed out with no responder — synthesize a timeout denial
+        #    and persist it
+        # 3. signaled but no response — cancel_pending_confirmation
+        #    raced and cleared the slot; treat as denial without
+        #    archiving (cancel already wrote its own denial)
+        # (Copilot review on #484.)
+        # Hold the lock across the timeout archive write to keep the
+        # in-memory state and the archive in sync — if the write
+        # fails, we leave pending state intact so the caller (or a
+        # later retry / startup recovery) can try again. Other paths
+        # (claimed / cancel-raced) don't archive here so the read-
+        # and-clear stays cheap (Copilot review on #484).
+        needs_timeout_emit = False
+        async with state.lock:
+            claimed = state.confirmation_response
+            if claimed is not None:
+                response = claimed
+                state.pending_confirmation = None
+                state.confirmation_event = None
+                state.confirmation_response = None
+            elif timed_out:
+                log.info("Confirmation timed out for conv %s: %s",
+                         conv_id[:8], request.message)
+                response = ConfirmationResponse(
+                    confirmation_id=request.confirmation_id,
+                    approved=False,
+                )
+                try:
+                    append_message(
+                        self.config, conv_id,
+                        response.to_archive_message(),
+                    )
+                except Exception:
+                    log.exception(
+                        "Timeout archive write failed for conv %s; "
+                        "leaving pending state intact for retry",
+                        conv_id[:8])
+                    raise
+                # Archive succeeded — now safe to clear pending state.
+                state.pending_confirmation = None
+                state.confirmation_event = None
+                state.confirmation_response = None
+                needs_timeout_emit = True
+            else:
+                # Signaled but no response — `cancel_pending_confirmation`
+                # cleared the slot. Return a denial; cancel has already
+                # written its own denial to the archive.
+                response = ConfirmationResponse(
+                    confirmation_id=request.confirmation_id,
+                    approved=False,
+                )
+                state.pending_confirmation = None
+                state.confirmation_event = None
+                state.confirmation_response = None
+                log.info("Confirmation for conv %s was cancelled out "
+                         "from under the waiter; returning denial",
+                         conv_id[:8])
+
+        if needs_timeout_emit:
             await self.emit(conv_id, {
                 "type": "confirmation_response",
                 "confirmation_id": request.confirmation_id,
                 "approved": False,
             })
-            state.pending_confirmation = None
-            state.confirmation_event = None
-            return response
 
-        response = state.confirmation_response
-        assert response is not None, "confirmation_event set but no response"
-        state.pending_confirmation = None
-        state.confirmation_event = None
-        state.confirmation_response = None
         return response
 
     # -- Internal methods ------------------------------------------------------
@@ -643,7 +907,16 @@ class ConversationManager:
         metadata: dict | None = None,
         future: asyncio.Future | None = None,
     ) -> None:
-        """Start an agent turn as an asyncio task."""
+        """Start an agent turn as an asyncio task.
+
+        Caller must hold ``state.lock``. The lock is held across this
+        method's synchronous setup (so ``state.busy = True`` is set
+        before concurrent enqueues observe it) but is released before
+        the agent task itself runs — ``asyncio.create_task(run())``
+        schedules ``run()`` and returns immediately. The finally
+        block inside ``run()`` re-acquires the lock to reset
+        ``busy`` / ``agent_task`` / ``cancel_event`` (issue #440).
+        """
         from .context import Context
 
         conv_id = state.conv_id
@@ -827,13 +1100,23 @@ class ConversationManager:
                 # Persist per-conversation state for kinds that own user convs.
                 if kind in STATE_PERSIST_KINDS:
                     self._save_conversation_state(state, ctx)
-                # Circuit breaker tracking is USER-only (task turns are
-                # externally rate-limited by the scheduler / heartbeat timer).
-                if kind is TurnKind.USER:
-                    self._circuit_breaker_record(state)
-                state.busy = False
-                state.agent_task = None
-                state.cancel_event = None
+                # Reset busy/task/cancel atomically under the lock so
+                # the busy=False write and the cancel_event/agent_task
+                # null-outs become visible to other lock holders as a
+                # single transition. After the lock releases, a
+                # concurrent enqueue_turn CAN acquire the lock and
+                # observe busy=False before _drain_pending has run —
+                # see the "Drain queued messages" comment below for
+                # how the drain handles that case (issue #440).
+                async with state.lock:
+                    # Circuit breaker tracking is USER-only (task turns are
+                    # externally rate-limited by the scheduler / heartbeat
+                    # timer).
+                    if kind is TurnKind.USER:
+                        self._circuit_breaker_record(state)
+                    state.busy = False
+                    state.agent_task = None
+                    state.cancel_event = None
 
                 await self.emit(conv_id, {"type": "turn_complete"})
 
@@ -843,7 +1126,11 @@ class ConversationManager:
                                    if response_text_holder else None)
                     future.set_result(result_text)
 
-                # Drain queued messages
+                # Drain queued messages. _drain_pending re-acquires the
+                # lock around its pop-and-dispatch sequence, so a
+                # concurrent enqueue_turn that landed between the
+                # finally-block lock release and here will compete on
+                # equal footing: whoever grabs the lock first dispatches.
                 await self._drain_pending(state)
 
         state.agent_task = asyncio.create_task(run())
@@ -898,89 +1185,123 @@ class ConversationManager:
         single turn. Any other kind pops a single entry and fires it on its own.
         The recursive _start_turn→_drain_pending path handles the rest of the
         queue once each batch completes.
+
+        Acquires ``state.lock`` around the pop-and-dispatch sequence so
+        a concurrent ``enqueue_turn`` can't observe ``busy=False`` while
+        we are mid-dispatch and start a competing turn (issue #440).
+        Whoever grabs the lock first wins; the loser sees ``busy=True``
+        set by the winner's ``_start_turn`` and queues.
+
+        Re-checks ``state.busy`` under the lock and defers if another
+        turn already won the dispatch race after the finally-block's
+        ``busy=False`` reset (Copilot review on #484). The deferred
+        turn will be picked up by the new in-flight turn's own
+        finally-block drain.
         """
         if not state.pending_messages:
             return
 
-        first = state.pending_messages[0]
+        async with state.lock:
+            if not state.pending_messages:
+                # Another path drained the queue while we were waiting
+                # on the lock.
+                return
+            if state.busy:
+                # A concurrent enqueue won the dispatch race after our
+                # finally-block reset busy=False and before we got here.
+                # Defer: the winner's finally-block will drain whatever
+                # is still queued when its turn completes.
+                log.debug(
+                    "_drain_pending: conv %s already busy with a "
+                    "concurrent turn, deferring drain",
+                    state.conv_id[:8])
+                return
 
-        if first["kind"] is TurnKind.USER:
-            # Pop all contiguous USER entries from the front.
-            run: list[dict] = []
-            while state.pending_messages and state.pending_messages[0]["kind"] is TurnKind.USER:
-                run.append(state.pending_messages.pop(0))
+            first = state.pending_messages[0]
 
-            texts = [q["text"] for q in run]
-            combined = "\n".join(texts)
-            last = run[-1]
+            if first["kind"] is TurnKind.USER:
+                # Pop all contiguous USER entries from the front.
+                run: list[dict] = []
+                while (state.pending_messages
+                       and state.pending_messages[0]["kind"] is TurnKind.USER):
+                    run.append(state.pending_messages.pop(0))
 
-            all_attachments: list[dict] = []
-            for q in run:
-                if q.get("attachments"):
-                    all_attachments.extend(q["attachments"])
+                texts = [q["text"] for q in run]
+                combined = "\n".join(texts)
+                last = run[-1]
 
-            log.info("Draining %d queued USER message(s) for conv %s",
-                     len(run), state.conv_id[:8])
+                all_attachments: list[dict] = []
+                for q in run:
+                    if q.get("attachments"):
+                        all_attachments.extend(q["attachments"])
 
-            # Fan-out: when the head future resolves, resolve all tail futures
-            # with the same result so every waiting caller gets notified.
-            head_fut = last.get("future")
-            tail_futs = [q.get("future") for q in run[:-1]]
-            tail_futs = [f for f in tail_futs if f is not None]
-            if head_fut is not None and tail_futs:
-                def _fanout(fut: asyncio.Future, _tails: list = tail_futs) -> None:
-                    # Determine the value to propagate to tail futures.
-                    # Propagate None on cancellation or exception (tails never
-                    # observe the error — they were coalesced into the head turn
-                    # and the head's error path already returned "[error: ...]"
-                    # text via set_result).  Propagate the result on normal
-                    # completion.  Calling fut.result() on an exception future
-                    # would raise and leave tails unresolved, so guard explicitly.
-                    result = None
-                    if fut.done() and not fut.cancelled():
-                        exc = fut.exception()
-                        if exc is None:
-                            result = fut.result()
-                    for f in _tails:
+                log.info("Draining %d queued USER message(s) for conv %s",
+                         len(run), state.conv_id[:8])
+
+                # Fan-out: when the head future resolves, resolve all tail
+                # futures with the same result so every waiting caller gets
+                # notified.
+                head_fut = last.get("future")
+                tail_futs = [q.get("future") for q in run[:-1]]
+                tail_futs = [f for f in tail_futs if f is not None]
+                if head_fut is not None and tail_futs:
+                    def _fanout(fut: asyncio.Future,
+                                _tails: list = tail_futs) -> None:
+                        # Determine the value to propagate to tail futures.
+                        # Propagate None on cancellation or exception (tails
+                        # never observe the error — they were coalesced into
+                        # the head turn and the head's error path already
+                        # returned "[error: ...]" text via set_result).
+                        # Propagate the result on normal completion. Calling
+                        # fut.result() on an exception future would raise and
+                        # leave tails unresolved, so guard explicitly.
+                        result = None
+                        if fut.done() and not fut.cancelled():
+                            exc = fut.exception()
+                            if exc is None:
+                                result = fut.result()
+                        for f in _tails:
+                            if not f.done():
+                                f.set_result(result)
+                    head_fut.add_done_callback(_fanout)
+                elif tail_futs:
+                    # No head future (edge case) — resolve tails to None so
+                    # callers don't hang.
+                    for f in tail_futs:
                         if not f.done():
-                            f.set_result(result)
-                head_fut.add_done_callback(_fanout)
-            elif tail_futs:
-                # No head future (edge case) — resolve tails to None so callers don't hang.
-                for f in tail_futs:
-                    if not f.done():
-                        f.set_result(None)
+                            f.set_result(None)
 
-            await self._start_turn(
-                state, combined,
-                kind=TurnKind.USER,
-                user_id=last.get("user_id", ""),
-                context_setup=last.get("context_setup"),
-                archive_text=last.get("archive_text", ""),
-                attachments=all_attachments or None,
-                command_ctx=last.get("command_ctx"),
-                wiki_page=last.get("wiki_page"),
-                future=head_fut,
-            )
-        else:
-            # Non-USER kinds fire one at a time, preserving all their own kwargs.
-            q = state.pending_messages.pop(0)
-            log.info("Draining queued %s turn for conv %s",
-                     q["kind"].value, state.conv_id[:8])
-            await self._start_turn(
-                state, q["text"],
-                kind=q["kind"],
-                user_id=q.get("user_id", ""),
-                context_setup=q.get("context_setup"),
-                archive_text=q.get("archive_text", ""),
-                attachments=q.get("attachments"),
-                command_ctx=q.get("command_ctx"),
-                wiki_page=q.get("wiki_page"),
-                task_mode=q.get("task_mode"),
-                history=q.get("history"),
-                metadata=q.get("metadata"),
-                future=q.get("future"),
-            )
+                await self._start_turn(
+                    state, combined,
+                    kind=TurnKind.USER,
+                    user_id=last.get("user_id", ""),
+                    context_setup=last.get("context_setup"),
+                    archive_text=last.get("archive_text", ""),
+                    attachments=all_attachments or None,
+                    command_ctx=last.get("command_ctx"),
+                    wiki_page=last.get("wiki_page"),
+                    future=head_fut,
+                )
+            else:
+                # Non-USER kinds fire one at a time, preserving all their own
+                # kwargs.
+                q = state.pending_messages.pop(0)
+                log.info("Draining queued %s turn for conv %s",
+                         q["kind"].value, state.conv_id[:8])
+                await self._start_turn(
+                    state, q["text"],
+                    kind=q["kind"],
+                    user_id=q.get("user_id", ""),
+                    context_setup=q.get("context_setup"),
+                    archive_text=q.get("archive_text", ""),
+                    attachments=q.get("attachments"),
+                    command_ctx=q.get("command_ctx"),
+                    wiki_page=q.get("wiki_page"),
+                    task_mode=q.get("task_mode"),
+                    history=q.get("history"),
+                    metadata=q.get("metadata"),
+                    future=q.get("future"),
+                )
 
     # -- Startup recovery ------------------------------------------------------
 
@@ -1093,34 +1414,65 @@ class ConversationManager:
                                    response: ConfirmationResponse) -> dict:
         """Handle a confirmation response for a conversation with no running loop.
 
-        Dispatches to the appropriate confirmation handler based on the
-        action type. Returns the handler result dict.
+        Atomically pops ``state.pending_confirmation`` under
+        ``state.lock`` so a concurrent caller can't double-dispatch
+        the same recovery (issue #440), then delegates to
+        ``_dispatch_recovery``. If dispatch raises, restore the
+        pending state so a future retry / startup-recovery can pick
+        up where we left off (Copilot review on #484). Public entry
+        point retained for external callers;
+        ``respond_to_confirmation`` bypasses this wrapper because it
+        has already claimed the slot.
         """
         state = self._conversations.get(conv_id)
-        if not state or not state.pending_confirmation:
+        if not state:
             return {"error": "No pending confirmation"}
+        async with state.lock:
+            request = state.pending_confirmation
+            if not request:
+                return {"error": "No pending confirmation"}
+            state.pending_confirmation = None
+            state.confirmation_response = None
+        try:
+            return await self._dispatch_recovery(conv_id, request, response)
+        except Exception:
+            log.exception(
+                "recover_confirmation dispatch failed for conv %s; "
+                "restoring pending state so retry can proceed",
+                conv_id[:8])
+            async with state.lock:
+                if state.pending_confirmation is None:
+                    state.pending_confirmation = request
+            raise
 
-        request = state.pending_confirmation
+    async def _dispatch_recovery(
+        self,
+        conv_id: str,
+        request: ConfirmationRequest,
+        response: ConfirmationResponse,
+    ) -> dict:
+        """Run a confirmation handler for a recovered (no-running-loop) conv.
 
+        Caller is responsible for clearing ``state.pending_confirmation``
+        under ``state.lock`` before invoking — both call sites
+        (``respond_to_confirmation`` and ``recover_confirmation``) do
+        this so a concurrent responder can't re-enter the same slot.
+        """
         if not self.confirmation_registry._handlers:
             log.warning(
                 "No confirmation handlers registered — cannot recover "
                 "confirmation for conv %s (action: %s)",
                 conv_id[:8], request.action_type.value,
             )
-            state.pending_confirmation = None
             return {"error": "No confirmation handlers registered"}
 
         # The handler needs config + conv_id to write back to the archive
         # (no running loop means no real ctx). Provide a minimal recovery
         # context that handlers can duck-type against.
         recovery_ctx = _RecoveryContext(config=self.config, conv_id=conv_id)
-        result = await self.confirmation_registry.dispatch(
+        return await self.confirmation_registry.dispatch(
             recovery_ctx, request, response,
         )
-
-        state.pending_confirmation = None
-        return result
 
 
 @dataclass
