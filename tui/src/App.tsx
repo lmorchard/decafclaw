@@ -119,18 +119,21 @@ export function App({
 
     // Confirm prompt active: y/n/a keys send decision.
     if (state.confirm) {
+      // Map UI keys to the server's flat-flag confirm shape (websocket.py).
+      // y → approved once, n → deny, a → approved + always.
       const decision =
-        input === "y" || input === "Y" ? "approve" :
-        input === "n" || input === "N" ? "deny" :
-        input === "a" || input === "A" ? "always" :
+        input === "y" || input === "Y" ? { approved: true, always: false } :
+        input === "n" || input === "N" ? { approved: false, always: false } :
+        input === "a" || input === "A" ? { approved: true, always: true } :
         null;
       if (decision && state.conv_id) {
         client.send({
           type: "confirm_response",
           conv_id: state.conv_id,
-          request_id: state.confirm.request_id,
-          decision,
-          extras: {},
+          confirmation_id: state.confirm.confirmation_id,
+          approved: decision.approved,
+          always: decision.always,
+          add_pattern: false,
         });
         dispatchUi({ kind: "clear_confirm" });
       }
@@ -177,7 +180,7 @@ export function App({
       {state.confirm && (
         <Box flexDirection="column">
           <Text color="magenta">
-            confirm ({state.confirm.kind}): {JSON.stringify(state.confirm.payload)}
+            confirm ({state.confirm.action_type}): {state.confirm.command || state.confirm.message}
           </Text>
           <Text color="magenta">[y]es / [n]o / [a]lways</Text>
         </Box>

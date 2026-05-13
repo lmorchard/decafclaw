@@ -13,7 +13,22 @@ export interface SrvCanvasUpdate { type: "canvas_update"; conv_id: string; state
 export interface SrvChunk { type: "chunk"; conv_id: string; text: string; }
 export interface SrvCommandAck { type: "command_ack"; conv_id: string; command: string; }
 export interface SrvCompactionDone { type: "compaction_done"; conv_id: string; }
-export interface SrvConfirmRequest { type: "confirm_request"; conv_id: string; request_id: string; kind: string; payload: Record<string, unknown>; }
+// NOTE: manifest declares {request_id, kind, payload} but server (websocket.py:600)
+// actually emits these flat fields (confirmation_id, action_type, command, ...).
+export interface SrvConfirmRequest {
+  type: "confirm_request";
+  conv_id: string;
+  confirmation_id: string;
+  action_type: string;
+  tool: string;
+  command: string;
+  suggested_pattern: string;
+  message: string;
+  approve_label: string;
+  deny_label: string;
+  tool_call_id: string;
+  action_data: Record<string, unknown>;
+}
 export interface SrvConfirmationResponse { type: "confirmation_response"; conv_id: string; request_id: string; decision: string; }
 export interface SrvConvHistory { type: "conv_history"; conv_id: string; messages: Array<Record<string, unknown>>; before: string | null; }
 export interface SrvConvSelected { type: "conv_selected"; conv_id: string; model: string | null; }
@@ -65,7 +80,17 @@ export type ServerMessage =
 // ---- Client -> server ----
 
 export interface CliCancelTurn { type: "cancel_turn"; conv_id: string; }
-export interface CliConfirmResponse { type: "confirm_response"; conv_id: string; request_id: string; decision: string; extras: Record<string, unknown>; }
+// NOTE: manifest declares {request_id, decision, extras} but server
+// (websocket.py:_handle_confirm_response) actually reads
+// {confirmation_id, approved, always, add_pattern}.
+export interface CliConfirmResponse {
+  type: "confirm_response";
+  conv_id: string;
+  confirmation_id: string;
+  approved: boolean;
+  always: boolean;
+  add_pattern: boolean;
+}
 export interface CliLoadHistory { type: "load_history"; conv_id: string; limit: number; before: string | null; }
 export interface CliSelectConv { type: "select_conv"; conv_id: string; }
 export interface CliSend { type: "send"; conv_id: string; text: string; attachments: Array<Record<string, unknown>>; }

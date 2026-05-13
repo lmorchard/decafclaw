@@ -68,14 +68,23 @@ describe("dispatcher", () => {
     const s1 = dispatch(s0, {
       type: "confirm_request",
       conv_id: CONV,
-      request_id: "req1",
-      kind: "run_shell_command",
-      payload: { command: "ls" },
+      confirmation_id: "req1",
+      action_type: "run_shell_command",
+      tool: "shell",
+      command: "ls",
+      suggested_pattern: "",
+      message: "Run ls",
+      approve_label: "",
+      deny_label: "",
+      tool_call_id: "",
+      action_data: {},
     });
     expect(s1.confirm).toEqual({
-      request_id: "req1",
-      kind: "run_shell_command",
-      payload: { command: "ls" },
+      confirmation_id: "req1",
+      action_type: "run_shell_command",
+      command: "ls",
+      message: "Run ls",
+      suggested_pattern: "",
     });
   });
 

@@ -22,9 +22,11 @@ export type Activity = {
 } | null;
 
 export type Confirm = {
-  request_id: string;
-  kind: string;
-  payload: Record<string, unknown>;
+  confirmation_id: string;
+  action_type: string;
+  command: string;
+  message: string;
+  suggested_pattern: string;
 } | null;
 
 export interface State {
@@ -104,9 +106,11 @@ export function dispatch(s: State, m: ServerMessage): State {
       return {
         ...s,
         confirm: {
-          request_id: m.request_id,
-          kind: m.kind,
-          payload: m.payload,
+          confirmation_id: m.confirmation_id,
+          action_type: m.action_type,
+          command: m.command,
+          message: m.message,
+          suggested_pattern: m.suggested_pattern,
         },
       };
 
