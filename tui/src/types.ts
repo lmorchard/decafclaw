@@ -65,7 +65,8 @@ export interface CliConfirmResponse { type: "confirm_response"; conv_id: string;
 export interface CliLoadHistory { type: "load_history"; conv_id: string; limit: number; before: string | null; }
 export interface CliSelectConv { type: "select_conv"; conv_id: string; }
 export interface CliSend { type: "send"; conv_id: string; text: string; attachments: Array<Record<string, unknown>>; }
-// NOTE: manifest field is `model: string`, not `effort: string`. Plan had wrong field name — corrected here.
+// NOTE: `set_effort` is a deprecated alias for `set_model` (older web clients).
+// The manifest field is `model: string` — intentionally matches set_model's field.
 export interface CliSetEffort { type: "set_effort"; conv_id: string; model: string; }
 export interface CliSetModel { type: "set_model"; conv_id: string; model: string; }
 export interface CliWidgetResponse { type: "widget_response"; conv_id: string; request_id: string; value: Record<string, unknown>; }
