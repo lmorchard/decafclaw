@@ -4,7 +4,7 @@
 
 **Goal:** Build a minimal Ink (React-for-terminal) TUI that connects to the running decafclaw bot over its existing WebSocket gateway and drives a single conversation: chat with streaming, tool activity lane, inline confirmation prompts, Ctrl+C cancel/exit. Validate Option A (hand-typed minimal Ink) from `spec.md`.
 
-**Architecture:** Node CLI binary `decafclaw-tui` in a new `tui/` sibling directory. Connects to `/api/ws` on the running daemon with `Cookie: decafclaw_session=<token>` (same auth as the browser). Single WS connection, per-conversation subscription via `select_conv`. No bot-side changes. Wire types hand-typed but codegen-shaped so we can graduate to generated types from `src/decafclaw/web/message_types.json` later without consumer churn.
+**Architecture:** Node CLI binary `decafclaw-tui` in a new `tui/` sibling directory. Connects to `/ws/chat` on the running daemon with `Cookie: decafclaw_session=<token>` (same auth as the browser). Single WS connection, per-conversation subscription via `select_conv`. No bot-side changes. Wire types hand-typed but codegen-shaped so we can graduate to generated types from `src/decafclaw/web/message_types.json` later without consumer churn.
 
 **Tech Stack:** Node 20+, TypeScript, Ink 5, `ink-text-input`, React 18, `ws` (for cookie-header WS upgrade), `tsx` (run TS directly, no build step), Vitest (dispatcher unit test only).
 

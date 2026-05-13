@@ -100,7 +100,7 @@ Tracked separately as [#487](https://github.com/lmorchard/decafclaw/issues/487).
                                                          (all unaffected)
 ```
 
-- Network boundary: `ws://<host>:<port>/api/ws` with `Cookie: decafclaw_session=<token>` on upgrade.
+- Network boundary: `ws://<host>:<port>/ws/chat` with `Cookie: decafclaw_session=<token>` on upgrade.
 - Conversation selection: REST `GET /api/conversations` for the picker; WS `select_conv` to subscribe.
 - No bot-side changes. The TUI is a pure client.
 
@@ -132,7 +132,7 @@ Five files. The spike's structural budget is "everything lives in one of these f
 ## Data flow
 
 1. `entry.tsx` resolves token → constructs `WSClient({host, token})` → renders `<App/>`.
-2. `WSClient` opens `/api/ws` with `Cookie: decafclaw_session=<token>` header. On open, emits `ready` to dispatcher.
+2. `WSClient` opens `/ws/chat` with `Cookie: decafclaw_session=<token>` header. On open, emits `ready` to dispatcher.
 3. If `--conv <id>` provided: dispatcher sends `select_conv` immediately. Otherwise: render `<ConversationPicker/>`, fetch list via REST, on selection send `select_conv`.
 4. Server responds with `conv_selected` (+ initial state) and `conv_history` (recent messages). Dispatcher populates transcript.
 5. **Message handling** (server → client):

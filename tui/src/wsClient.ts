@@ -62,7 +62,7 @@ export class WSClient {
       this.ws.close();
       this.ws = null;
     }
-    const wsUrl = this.opts.host.replace(/^http/, "ws") + "/api/ws";
+    const wsUrl = this.opts.host.replace(/^http/, "ws") + "/ws/chat";
     const ws = new WebSocket(wsUrl, {
       headers: {
         Cookie: `decafclaw_session=${this.opts.token}`,
