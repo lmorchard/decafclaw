@@ -13,6 +13,8 @@ export type TranscriptItem =
   | { kind: "assistant"; text: string }
   | { kind: "system"; text: string };
 
+// Spike simplification: tracks one active tool at a time. Phase 2 with
+// concurrent tools would need this to become `Activity[]` or a Map.
 export type Activity = {
   tool_call_id: string;
   name: string;
@@ -44,6 +46,11 @@ export const initialState: State = {
   turnInFlight: false,
   model: null,
 };
+
+function assertNever(_x: never): void {
+  // Exhaustiveness check — TS errors here if a new ServerMessage variant
+  // is added without a matching case in `dispatch`.
+}
 
 function appendTranscript(s: State, item: TranscriptItem): State {
   return { ...s, transcript: [...s.transcript, item] };
@@ -118,6 +125,8 @@ export function dispatch(s: State, m: ServerMessage): State {
         else if (role === "assistant") items.push({ kind: "assistant", text });
         // skip tool/system roles in the spike
       }
+      // Preserves draft/activity/confirm/turnInFlight from prior state — history
+      // is expected to arrive on connect, before any turn is in flight.
       return { ...s, transcript: [...items, ...s.transcript] };
     }
 
@@ -145,11 +154,10 @@ export function dispatch(s: State, m: ServerMessage): State {
       return s;
 
     default: {
-      // Forward-compat: surface unknown types as unchanged.
-      // TS exhaustiveness check — if a new variant is added to ServerMessage
-      // and not handled above, this will fail to compile.
-      const _exhaustive: never = m;
-      void _exhaustive;
+      // Forward-compat: surface unknown types as unchanged. The assertNever
+      // call below is a compile-time exhaustiveness check; at runtime we
+      // silently no-op so new wire types from the server don't crash the TUI.
+      assertNever(m);
       return s;
     }
   }

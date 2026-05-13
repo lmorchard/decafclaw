@@ -63,7 +63,7 @@ describe("dispatcher", () => {
     expect(s3.activity).toBeNull();
   });
 
-  it("confirm_request sets confirm; we clear it on response intent", () => {
+  it("confirm_request sets confirm", () => {
     const s0 = { ...initialState, conv_id: CONV };
     const s1 = dispatch(s0, {
       type: "confirm_request",
