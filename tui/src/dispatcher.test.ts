@@ -23,6 +23,20 @@ describe("dispatcher", () => {
     expect(s1.transcript).toEqual([{ kind: "assistant", text: "answer" }]);
   });
 
+  it("message_complete with [cancelled] preserves streamed draft", () => {
+    const s0 = { ...initialState, conv_id: CONV, draft: "partial reply..." };
+    const s1 = dispatch(s0, {
+      type: "message_complete",
+      conv_id: CONV,
+      text: "[cancelled]",
+    });
+    expect(s1.draft).toBe("");
+    expect(s1.transcript).toEqual([
+      { kind: "assistant", text: "partial reply..." },
+      { kind: "system", text: "[cancelled]" },
+    ]);
+  });
+
   it("turn_start / turn_complete toggle turnInFlight", () => {
     const s0 = { ...initialState, conv_id: CONV };
     const s1 = dispatch(s0, { type: "turn_start", conv_id: CONV });

@@ -70,6 +70,15 @@ export function dispatch(s: State, m: ServerMessage): State {
       return { ...s, draft: s.draft + m.text };
 
     case "message_complete": {
+      // Cancel preserves the streamed draft: the server replaces text with
+      // "[cancelled]" but the partial assistant response is still useful to
+      // keep in the transcript. Emit two lines: the partial reply + a system
+      // marker.
+      if (m.text === "[cancelled]" && s.draft) {
+        const withDraft = appendTranscript(s, { kind: "assistant", text: s.draft });
+        const withMarker = appendTranscript(withDraft, { kind: "system", text: "[cancelled]" });
+        return { ...withMarker, draft: "" };
+      }
       const text = m.text || s.draft;
       const next = appendTranscript(s, { kind: "assistant", text });
       return { ...next, draft: "" };
