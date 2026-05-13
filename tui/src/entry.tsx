@@ -55,7 +55,10 @@ function main(): void {
   const client = new WSClient({ host: parsed.host, token: parsed.token });
   client.connect();
 
-  render(<App client={client} initialConvId={parsed.conv} host={parsed.host} token={parsed.token} />);
+  render(
+    <App client={client} initialConvId={parsed.conv} host={parsed.host} token={parsed.token} />,
+    { exitOnCtrlC: false }
+  );
 }
 
 main();
