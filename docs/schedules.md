@@ -83,7 +83,7 @@ context: fork
 
 This makes a skill both a user command (`!dream`) and a scheduled task — no separate schedule file needed.
 
-**Trust boundary:** only bundled skills (`src/decafclaw/skills/`) and admin-level skills (`data/{agent_id}/skills/`) can declare schedules. Workspace skills are ignored.
+**Trust boundary:** bundled skills (`src/decafclaw/skills/`), admin-level skills (`data/{agent_id}/skills/`), and `extra_skill_paths`-loaded skills can declare schedules. Workspace skills are ignored.
 
 File-based schedules take precedence over skill schedules when names collide.
 

@@ -1,0 +1,257 @@
+<!-- Redacted from a real read.amazon.com/notebook capture; titles/authors/highlight-text/notes scrubbed for privacy.
+     ASINs and annotation IDs are retained (they are random-looking identifiers, not PII).
+     Cover image URLs point to local save paths from the original download and are not PII.
+     Contains 4 books and 6 highlights (4 yellow, 1 blue, 1 yellow-with-note) for parser testing. -->
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>Kindle Notebook - Test Fixture</title></head>
+<body>
+
+<!-- Book library section -->
+<div id="books-filter" class="a-row a-spacing-base a-spacing-top-base kp-notebook-books-filter">
+  <p class="a-spacing-none a-text-center a-size-mini a-color-base a-text-bold a-text-caps">Annotated books from your library</p>
+  <div class="a-row kp-notebook-header">
+    <span class="a-size-small a-color-base">(Most recently accessed shown first)</span>
+  </div>
+</div>
+
+<div id="library-section" class="a-section kp-notebook-library-header-separator">
+  <div class="a-scroller kp-notebook-scroller-addon a-scroller-vertical">
+    <div id="kp-notebook-library" class="a-row">
+
+      <!-- Book 1 (currently selected) -->
+      <div id="B078VWDNKT" class="a-row kp-notebook-library-each-book a-color-base-background">
+        <span class="a-declarative" data-action="get-annotations-for-asin" data-get-annotations-for-asin="{&quot;asin&quot;:&quot;B078VWDNKT&quot;}">
+          <a class="a-link-normal a-text-normal" href="javascript:void(0);">
+            <div class="a-row">
+              <div class="a-column a-span4 a-push4 a-spacing-medium a-spacing-top-medium">
+                <img alt="" src="amazon-kindle-notebook_files/71QT-dIEr8L._SY160.jpg" class="kp-notebook-cover-image kp-notebook-cover-image-border">
+              </div>
+            </div>
+            <h2 class="a-size-base a-color-base a-text-center kp-notebook-searchable a-text-bold">Sample Book One</h2>
+            <p class="a-spacing-base a-spacing-top-mini a-text-center a-size-base a-color-secondary kp-notebook-searchable">By: Author One</p>
+          </a>
+        </span>
+        <input type="hidden" name="" value="Wednesday, May 13, 2026" id="kp-notebook-annotated-date-B078VWDNKT">
+      </div>
+
+      <!-- Book 2 -->
+      <div id="B09G14BQMM" class="a-row kp-notebook-library-each-book">
+        <span class="a-declarative" data-action="get-annotations-for-asin" data-get-annotations-for-asin="{&quot;asin&quot;:&quot;B09G14BQMM&quot;}">
+          <a class="a-link-normal a-text-normal" href="javascript:void(0);">
+            <div class="a-row">
+              <div class="a-column a-span4 a-push4 a-spacing-medium a-spacing-top-medium">
+                <img alt="" src="amazon-kindle-notebook_files/81H6am-hATL._SY160.jpg" class="kp-notebook-cover-image kp-notebook-cover-image-border">
+              </div>
+            </div>
+            <h2 class="a-size-base a-color-base a-text-center kp-notebook-searchable a-text-bold">Sample Book Two</h2>
+            <p class="a-spacing-base a-spacing-top-mini a-text-center a-size-base a-color-secondary kp-notebook-searchable">By: Author Two</p>
+          </a>
+        </span>
+        <input type="hidden" name="" value="Tuesday, May 12, 2026" id="kp-notebook-annotated-date-B09G14BQMM">
+      </div>
+
+      <!-- Book 3 -->
+      <div id="B07WYSGHC7" class="a-row kp-notebook-library-each-book">
+        <span class="a-declarative" data-action="get-annotations-for-asin" data-get-annotations-for-asin="{&quot;asin&quot;:&quot;B07WYSGHC7&quot;}">
+          <a class="a-link-normal a-text-normal" href="javascript:void(0);">
+            <div class="a-row">
+              <div class="a-column a-span4 a-push4 a-spacing-medium a-spacing-top-medium">
+                <img alt="" src="amazon-kindle-notebook_files/81wVk-n7G7S._SY160.jpg" class="kp-notebook-cover-image kp-notebook-cover-image-border">
+              </div>
+            </div>
+            <h2 class="a-size-base a-color-base a-text-center kp-notebook-searchable a-text-bold">Sample Book Three</h2>
+            <p class="a-spacing-base a-spacing-top-mini a-text-center a-size-base a-color-secondary kp-notebook-searchable">By: Author Two</p>
+          </a>
+        </span>
+        <input type="hidden" name="" value="Monday, May 11, 2026" id="kp-notebook-annotated-date-B07WYSGHC7">
+      </div>
+
+      <!-- Book 4 -->
+      <div id="B07J6HWLPR" class="a-row kp-notebook-library-each-book">
+        <span class="a-declarative" data-action="get-annotations-for-asin" data-get-annotations-for-asin="{&quot;asin&quot;:&quot;B07J6HWLPR&quot;}">
+          <a class="a-link-normal a-text-normal" href="javascript:void(0);">
+            <div class="a-row">
+              <div class="a-column a-span4 a-push4 a-spacing-medium a-spacing-top-medium">
+                <img alt="" src="amazon-kindle-notebook_files/71GHKo78YBL._SY160.jpg" class="kp-notebook-cover-image kp-notebook-cover-image-border">
+              </div>
+            </div>
+            <h2 class="a-size-base a-color-base a-text-center kp-notebook-searchable a-text-bold">Sample Book Four</h2>
+            <p class="a-spacing-base a-spacing-top-mini a-text-center a-size-base a-color-secondary kp-notebook-searchable">By: Author Two</p>
+          </a>
+        </span>
+        <input type="hidden" name="" value="Sunday, May 10, 2026" id="kp-notebook-annotated-date-B07J6HWLPR">
+      </div>
+
+    </div><!-- #kp-notebook-library -->
+  </div>
+</div><!-- #library-section -->
+
+<!-- Annotations section for currently-selected book (B078VWDNKT) -->
+<input id="kp-notebook-asin" value="B078VWDNKT" type="hidden">
+
+<div id="kp-notebook-annotations-header">
+  <span id="kp-notebook-annotation-count">6&nbsp;Highlights | 1&nbsp;Notes</span>
+</div>
+
+<div id="kp-notebook-annotations" class="a-row">
+
+  <!-- Annotation 1: yellow, no note -->
+  <div class="a-row a-spacing-base" id="QTNONVpPTk1aR044NUo6QjA3OFZXRE5LVDoyNDg0NzpISUdITElHSFQ6YTMxYmVkYjYzLTIxY2EtNDVlYy05ZTI4LTIyM2U4ZmUwN2E0ZA">
+    <div class="a-column a-span10 kp-notebook-row-separator">
+      <div class="a-row">
+        <input id="kp-annotation-location" name="" type="hidden" value="166"/>
+        <div class="a-column a-span8">
+          <span class="a-size-small a-color-secondary kp-notebook-selectable kp-notebook-metadata" id="annotationHighlightHeader">Yellow highlight | Location:&#160;166</span>
+          <span class="a-size-small a-color-secondary aok-hidden kp-notebook-selectable kp-notebook-metadata" id="annotationNoteHeader">Note | Location:&#160;166</span>
+        </div>
+      </div>
+      <div class="a-row a-spacing-top-medium">
+        <div class="a-column a-span10 a-spacing-small kp-notebook-print-override">
+          <div class="a-row kp-notebook-highlight kp-notebook-selectable kp-notebook-highlight-yellow" id="highlight-QTNONVpPTk1aR044NUo6QjA3OFZXRE5LVDoyNDg0NzpISUdITElHSFQ6YTMxYmVkYjYzLTIxY2EtNDVlYy05ZTI4LTIyM2U4ZmUwN2E0ZA">
+            <span class="a-size-base-plus a-color-base" id="highlight">Sample highlight text 1. This is a longer passage to test that highlight text extraction works correctly for multi-sentence highlights.</span>
+            <div></div>
+          </div>
+          <div class="a-row a-spacing-top-base kp-notebook-note aok-hidden kp-notebook-selectable" id="note-">
+            <span class="a-size-small a-color-secondary" id="note-label">Note:<span class="a-letter-space"></span></span>
+            <span class="a-size-base-plus a-color-base" id="note"></span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Annotation 2: yellow, no note -->
+  <div class="a-row a-spacing-base" id="QTNONVpPTk1aR044NUo6QjA3OFZXRE5LVDoyODA5NDpISUdITElHSFQ6YTFl">
+    <div class="a-column a-span10 kp-notebook-row-separator">
+      <div class="a-row">
+        <input id="kp-annotation-location" name="" type="hidden" value="188"/>
+        <div class="a-column a-span8">
+          <span class="a-size-small a-color-secondary kp-notebook-selectable kp-notebook-metadata" id="annotationHighlightHeader">Yellow highlight | Location:&#160;188</span>
+          <span class="a-size-small a-color-secondary aok-hidden kp-notebook-selectable kp-notebook-metadata" id="annotationNoteHeader">Note | Location:&#160;188</span>
+        </div>
+      </div>
+      <div class="a-row a-spacing-top-medium">
+        <div class="a-column a-span10 a-spacing-small kp-notebook-print-override">
+          <div class="a-row kp-notebook-highlight kp-notebook-selectable kp-notebook-highlight-yellow" id="highlight-QTNONVpPTk1aR044NUo6QjA3OFZXRE5LVDoyODA5NDpISUdITElHSFQ6YTFl">
+            <span class="a-size-base-plus a-color-base" id="highlight">Sample highlight text 2. A shorter passage here.</span>
+            <div></div>
+          </div>
+          <div class="a-row a-spacing-top-base kp-notebook-note aok-hidden kp-notebook-selectable" id="note-">
+            <span class="a-size-small a-color-secondary" id="note-label">Note:<span class="a-letter-space"></span></span>
+            <span class="a-size-base-plus a-color-base" id="note"></span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Annotation 3: yellow, no note -->
+  <div class="a-row a-spacing-base" id="QTNONVpPTk1aR044NUo6QjA3OFZXRE5LVDozMTYyNjpISUdITElHSFQ6YWEz">
+    <div class="a-column a-span10 kp-notebook-row-separator">
+      <div class="a-row">
+        <input id="kp-annotation-location" name="" type="hidden" value="211"/>
+        <div class="a-column a-span8">
+          <span class="a-size-small a-color-secondary kp-notebook-selectable kp-notebook-metadata" id="annotationHighlightHeader">Yellow highlight | Location:&#160;211</span>
+          <span class="a-size-small a-color-secondary aok-hidden kp-notebook-selectable kp-notebook-metadata" id="annotationNoteHeader">Note | Location:&#160;211</span>
+        </div>
+      </div>
+      <div class="a-row a-spacing-top-medium">
+        <div class="a-column a-span10 a-spacing-small kp-notebook-print-override">
+          <div class="a-row kp-notebook-highlight kp-notebook-selectable kp-notebook-highlight-yellow" id="highlight-QTNONVpPTk1aR044NUo6QjA3OFZXRE5LVDozMTYyNjpISUdITElHSFQ6YWEz">
+            <span class="a-size-base-plus a-color-base" id="highlight">Sample highlight text 3. Yet another passage to exercise the parser.</span>
+            <div></div>
+          </div>
+          <div class="a-row a-spacing-top-base kp-notebook-note aok-hidden kp-notebook-selectable" id="note-">
+            <span class="a-size-small a-color-secondary" id="note-label">Note:<span class="a-letter-space"></span></span>
+            <span class="a-size-base-plus a-color-base" id="note"></span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Annotation 4: yellow, no note -->
+  <div class="a-row a-spacing-base" id="QTNONVpPTk1aR044NUo6QjA3OFZXRE5LVDozMzc1NTpISUdITElHSFQ6YWI5">
+    <div class="a-column a-span10 kp-notebook-row-separator">
+      <div class="a-row">
+        <input id="kp-annotation-location" name="" type="hidden" value="226"/>
+        <div class="a-column a-span8">
+          <span class="a-size-small a-color-secondary kp-notebook-selectable kp-notebook-metadata" id="annotationHighlightHeader">Yellow highlight | Location:&#160;226</span>
+          <span class="a-size-small a-color-secondary aok-hidden kp-notebook-selectable kp-notebook-metadata" id="annotationNoteHeader">Note | Location:&#160;226</span>
+        </div>
+      </div>
+      <div class="a-row a-spacing-top-medium">
+        <div class="a-column a-span10 a-spacing-small kp-notebook-print-override">
+          <div class="a-row kp-notebook-highlight kp-notebook-selectable kp-notebook-highlight-yellow" id="highlight-QTNONVpPTk1aR044NUo6QjA3OFZXRE5LVDozMzc1NTpISUdITElHSFQ6YWI5">
+            <span class="a-size-base-plus a-color-base" id="highlight">Sample highlight text 4.</span>
+            <div></div>
+          </div>
+          <div class="a-row a-spacing-top-base kp-notebook-note aok-hidden kp-notebook-selectable" id="note-">
+            <span class="a-size-small a-color-secondary" id="note-label">Note:<span class="a-letter-space"></span></span>
+            <span class="a-size-base-plus a-color-base" id="note"></span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Annotation 5: blue highlight, no note (synthetic — exercises non-yellow color path) -->
+  <div class="a-row a-spacing-base" id="QTNONVpPTk1aR044NUo6QjA3OFZXRE5LVDozNTIzOTpISUdITElHSFQ6Ymx1ZQ">
+    <div class="a-column a-span10 kp-notebook-row-separator">
+      <div class="a-row">
+        <input id="kp-annotation-location" name="" type="hidden" value="247"/>
+        <div class="a-column a-span8">
+          <span class="a-size-small a-color-secondary kp-notebook-selectable kp-notebook-metadata" id="annotationHighlightHeader">Blue highlight | Location:&#160;247</span>
+          <span class="a-size-small a-color-secondary aok-hidden kp-notebook-selectable kp-notebook-metadata" id="annotationNoteHeader">Note | Location:&#160;247</span>
+        </div>
+      </div>
+      <div class="a-row a-spacing-top-medium">
+        <div class="a-column a-span10 a-spacing-small kp-notebook-print-override">
+          <div class="a-row kp-notebook-highlight kp-notebook-selectable kp-notebook-highlight-blue" id="highlight-QTNONVpPTk1aR044NUo6QjA3OFZXRE5LVDozNTIzOTpISUdITElHSFQ6Ymx1ZQ">
+            <span class="a-size-base-plus a-color-base" id="highlight">Sample highlight text 5. This highlight is blue to test color extraction.</span>
+            <div></div>
+          </div>
+          <div class="a-row a-spacing-top-base kp-notebook-note aok-hidden kp-notebook-selectable" id="note-">
+            <span class="a-size-small a-color-secondary" id="note-label">Note:<span class="a-letter-space"></span></span>
+            <span class="a-size-base-plus a-color-base" id="note"></span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Annotation 6: yellow highlight WITH a note (synthetic — exercises note extraction) -->
+  <div class="a-row a-spacing-base" id="QTNONVpPTk1aR044NUo6QjA3OFZXRE5LVDozNzQxMjpISUdITElHSFQ6bm90ZQ">
+    <div class="a-column a-span10 kp-notebook-row-separator">
+      <div class="a-row">
+        <input id="kp-annotation-location" name="" type="hidden" value="312"/>
+        <div class="a-column a-span8">
+          <span class="a-size-small a-color-secondary kp-notebook-selectable kp-notebook-metadata" id="annotationHighlightHeader">Yellow highlight | Location:&#160;312</span>
+          <span class="a-size-small a-color-secondary kp-notebook-selectable kp-notebook-metadata" id="annotationNoteHeader">Note | Location:&#160;312</span>
+        </div>
+      </div>
+      <div class="a-row a-spacing-top-medium">
+        <div class="a-column a-span10 a-spacing-small kp-notebook-print-override">
+          <div class="a-row kp-notebook-highlight kp-notebook-selectable kp-notebook-highlight-yellow" id="highlight-QTNONVpPTk1aR044NUo6QjA3OFZXRE5LVDozNzQxMjpISUdITElHSFQ6bm90ZQ">
+            <span class="a-size-base-plus a-color-base" id="highlight">Sample highlight text 6. This one has a user note attached to it.</span>
+            <div></div>
+          </div>
+          <div class="a-row a-spacing-top-base kp-notebook-note kp-notebook-selectable" id="note-with-content">
+            <span class="a-size-small a-color-secondary" id="note-label">Note:<span class="a-letter-space"></span></span>
+            <span class="a-size-base-plus a-color-base" id="note">Sample note 1.</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Empty annotations pane placeholder (matches real page structure) -->
+  <div id="empty-annotations-pane" class="a-row aok-hidden">
+    <p>No annotations yet.</p>
+  </div>
+
+</div><!-- #kp-notebook-annotations -->
+
+</body>
+</html>
