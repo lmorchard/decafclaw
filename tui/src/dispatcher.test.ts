@@ -17,7 +17,7 @@ describe("dispatcher", () => {
     const s1 = dispatch(s0, {
       type: "message_complete",
       conv_id: CONV,
-      message: { text: "answer" },
+      text: "answer",
     });
     expect(s1.draft).toBe("");
     expect(s1.transcript).toEqual([{ kind: "assistant", text: "answer" }]);
@@ -84,7 +84,7 @@ describe("dispatcher", () => {
     const s1 = dispatch(s0, {
       type: "user_message",
       conv_id: CONV,
-      message: { text: "hi" },
+      text: "hi",
     });
     expect(s1.transcript).toEqual([{ kind: "user", text: "hi" }]);
   });

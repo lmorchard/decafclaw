@@ -18,7 +18,9 @@ export interface SrvConfirmationResponse { type: "confirmation_response"; conv_i
 export interface SrvConvHistory { type: "conv_history"; conv_id: string; messages: Array<Record<string, unknown>>; before: string | null; }
 export interface SrvConvSelected { type: "conv_selected"; conv_id: string; model: string | null; }
 export interface SrvError { type: "error"; message: string; conv_id: string | null; }
-export interface SrvMessageComplete { type: "message_complete"; conv_id: string; message: Record<string, unknown>; }
+// NOTE: manifest declares {message: object} but server (conversation_manager.py)
+// actually emits {text: string, ...}. Matching the wire reality, not the manifest.
+export interface SrvMessageComplete { type: "message_complete"; conv_id: string; text: string; }
 export interface SrvModelChanged { type: "model_changed"; conv_id: string; model: string; }
 export interface SrvModelsAvailable { type: "models_available"; models: string[]; }
 export interface SrvNotificationCreated { type: "notification_created"; notification: Record<string, unknown>; }
@@ -29,7 +31,9 @@ export interface SrvToolStart { type: "tool_start"; conv_id: string; tool_call_i
 export interface SrvToolStatus { type: "tool_status"; conv_id: string; tool_call_id: string; status: string; }
 export interface SrvTurnComplete { type: "turn_complete"; conv_id: string; }
 export interface SrvTurnStart { type: "turn_start"; conv_id: string; }
-export interface SrvUserMessage { type: "user_message"; conv_id: string; message: Record<string, unknown>; }
+// NOTE: manifest declares {message: object} but server (websocket.py:505) actually
+// emits {text: string}. Matching the wire reality, not the manifest.
+export interface SrvUserMessage { type: "user_message"; conv_id: string; text: string; }
 // NOTE: manifest has two fields: path + kind. Plan omitted kind — corrected here.
 export interface SrvVaultChanged { type: "vault_changed"; path: string; kind: string; }
 

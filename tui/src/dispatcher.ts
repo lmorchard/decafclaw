@@ -56,7 +56,8 @@ function appendTranscript(s: State, item: TranscriptItem): State {
   return { ...s, transcript: [...s.transcript, item] };
 }
 
-function extractText(msg: Record<string, unknown>): string {
+function extractText(msg: Record<string, unknown> | null | undefined): string {
+  if (!msg) return "";
   const t = msg["text"];
   return typeof t === "string" ? t : "";
 }
@@ -67,13 +68,13 @@ export function dispatch(s: State, m: ServerMessage): State {
       return { ...s, draft: s.draft + m.text };
 
     case "message_complete": {
-      const text = extractText(m.message) || s.draft;
+      const text = m.text || s.draft;
       const next = appendTranscript(s, { kind: "assistant", text });
       return { ...next, draft: "" };
     }
 
     case "user_message":
-      return appendTranscript(s, { kind: "user", text: extractText(m.message) });
+      return appendTranscript(s, { kind: "user", text: m.text });
 
     case "turn_start":
       return { ...s, turnInFlight: true };
