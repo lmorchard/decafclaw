@@ -136,18 +136,21 @@ Five files. The spike's structural budget is "everything lives in one of these f
 3. If `--conv <id>` provided: dispatcher sends `select_conv` immediately. Otherwise: render `<ConversationPicker/>`, fetch list via REST, on selection send `select_conv`.
 4. Server responds with `conv_selected` (+ initial state) and `conv_history` (recent messages). Dispatcher populates transcript.
 5. **Message handling** (server → client):
+   - `turn_start` → set in-flight UI state (composer hint, optional spinner).
    - `chunk` → append to in-flight assistant draft.
    - `message_complete` → finalize draft into transcript, clear draft.
-   - `tool_call_start` / `tool_start` / `tool_status` → update activity-lane state.
-   - `tool_end` (if surfaced; otherwise next `chunk` clears it) → clear activity lane.
+   - `tool_start` / `tool_status` → update activity-lane state.
+   - `tool_end` → clear activity lane; if `ok: false` show terminal state.
+   - `turn_complete` → clear in-flight UI state.
+   - `user_message` (echo) → append user message to transcript (for parity / multi-tab sync).
    - `confirm_request` → set confirm-prompt state, suspend composer.
    - `compaction_done` → show `[compaction complete]` line; optionally reload history.
    - `model_changed` → show `[model: …]` line.
    - `error` → push error line.
    - Unknown `type` → log to stderr, ignore. (Forward-compat.)
 6. **Message handling** (client → server):
-   - Composer submit → `{type: "user_message", conv_id, text, attachments: []}`.
-   - Confirm `y` → `{type: "confirmation_response", conv_id, request_id, decision: "approve", extras: {}}`. `n` → `"deny"`. `a` → `"always"`.
+   - Composer submit → `{type: "send", conv_id, text, attachments: []}`.
+   - Confirm `y` → `{type: "confirm_response", conv_id, request_id, decision: "approve", extras: {}}`. `n` → `"deny"`. `a` → `"always"`.
    - `Ctrl+C` while turn is in flight → `{type: "cancel_turn", conv_id}`. While idle → close WS cleanly, exit.
 
 ## Error handling
@@ -202,7 +205,6 @@ The spike is "validated" when all of the following work against a locally runnin
 
 None at spec time. Items that may surface during implementation:
 
-- Whether `tool_end` is currently emitted to the WS (not in the message_types.json grep). If not, activity-lane clear-on-next-`chunk` heuristic stands.
-- Whether `/api/conversations` returns a shape the picker can use directly, or we need a different REST endpoint for the listing.
+- Whether `/api/conversations` returns a shape the picker can use directly, or we need a different REST endpoint for the listing. (`tool_end` is confirmed present in `message_types.json` — original open question resolved during plan drafting.)
 
-Both are implementation-time verifications, not blockers.
+Implementation-time verification, not a blocker.
