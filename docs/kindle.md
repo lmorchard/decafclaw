@@ -26,11 +26,13 @@ See `contrib/skills/README.md` for detailed installation options (reference vs. 
 
 ## Operating modes
 
-**On-demand:** `!kindle-sync` (Mattermost) / `/kindle-sync` (web UI) syncs all books in your Kindle library that have highlights. Pass a book title or ASIN to sync a single book:
+**On-demand:** `!kindle` (Mattermost) / `/kindle` (web UI) syncs all books in your Kindle library that have highlights. Pass a book title or ASIN to sync a single book:
 
-- `/kindle-sync` — sync all books
-- `/kindle-sync "The Pragmatic Programmer"` — sync by title
-- `/kindle-sync B0XXXXXXXX` — sync by ASIN
+- `/kindle` — sync all books
+- `/kindle "The Pragmatic Programmer"` — sync by title (substring match)
+- `/kindle B0XXXXXXXX` — sync by ASIN
+
+(The skill's `name:` field is `kindle`, which is what the command parser matches. The skill's *purpose* is sync — that's what the body instructs the LLM to do when invoked.)
 
 **Scheduled:** daily at 5am UTC via `schedule: "0 5 * * *"` in SKILL.md. Gated by `skills.kindle.enabled` (default `false`) so fresh installs don't fire failing scrapes.
 
