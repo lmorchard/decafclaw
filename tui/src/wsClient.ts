@@ -14,7 +14,7 @@
  */
 
 import WebSocket from "ws";
-import type { ClientMessage, ServerMessage } from "./types.js";
+import type { ClientMessage, ServerMessage } from "./types.generated.js";
 
 export type WSEvent =
   | ServerMessage

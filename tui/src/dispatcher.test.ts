@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { initialState, dispatch } from "./dispatcher.js";
-import type { ServerMessage } from "./types.js";
+import type { ServerMessage } from "./types.generated.js";
 
 const CONV = "conv-abc";
 
@@ -111,20 +111,23 @@ describe("dispatcher", () => {
     expect(s1.transcript).toEqual([{ kind: "user", text: "hi" }]);
   });
 
-  it("conv_selected stores model", () => {
+  it("conv_selected stores conv_id", () => {
     const s0 = { ...initialState };
     const s1 = dispatch(s0, {
       type: "conv_selected",
       conv_id: CONV,
-      model: "claude-opus-4-7",
     });
     expect(s1.conv_id).toBe(CONV);
-    expect(s1.model).toBe("claude-opus-4-7");
   });
 
   it("compaction_done appends system line", () => {
     const s0 = { ...initialState, conv_id: CONV };
-    const s1 = dispatch(s0, { type: "compaction_done", conv_id: CONV });
+    const s1 = dispatch(s0, {
+      type: "compaction_done",
+      conv_id: CONV,
+      before_messages: 42,
+      after_messages: 10,
+    });
     expect(s1.transcript.at(-1)).toEqual({
       kind: "system",
       text: "[compaction complete]",
@@ -147,7 +150,6 @@ describe("dispatcher", () => {
     const s1 = dispatch(s0, {
       type: "error",
       message: "boom",
-      conv_id: null,
     });
     expect(s1.transcript.at(-1)).toEqual({
       kind: "system",

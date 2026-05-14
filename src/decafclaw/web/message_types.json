@@ -5,12 +5,12 @@
     "background_event": {
       "direction": "server_to_client",
       "description": "Background-task lifecycle event surfaced into a conversation timeline (e.g. delegated task started/finished).",
-      "fields": {"conv_id": "string", "event": "object"}
+      "fields": {"conv_id": "string", "record": "object"}
     },
     "canvas_update": {
       "direction": "server_to_client",
       "description": "The conversation's canvas state changed; client should re-render the canvas panel.",
-      "fields": {"conv_id": "string", "state": "object"}
+      "fields": {"conv_id": "string", "kind": "string", "active_tab": "string | null", "tab": "object | null", "closed_tab_id": "string?"}
     },
     "chunk": {
       "direction": "server_to_client",
@@ -20,12 +20,12 @@
     "command_ack": {
       "direction": "server_to_client",
       "description": "Acknowledgement that a slash-style user command was received and dispatched.",
-      "fields": {"conv_id": "string", "command": "string"}
+      "fields": {"conv_id": "string", "command": "string", "skill": "string?"}
     },
     "compaction_done": {
       "direction": "server_to_client",
       "description": "Conversation history compaction completed; client should reload history.",
-      "fields": {"conv_id": "string"}
+      "fields": {"conv_id": "string", "before_messages": "number", "after_messages": "number"}
     },
     "confirm_request": {
       "direction": "server_to_client",
@@ -34,28 +34,28 @@
     },
     "confirmation_response": {
       "direction": "server_to_client",
-      "description": "Replay of a prior confirmation response, surfaced when reloading conversation history.",
-      "fields": {"conv_id": "string", "request_id": "string", "decision": "string"}
+      "description": "Replay of a prior confirmation response, forwarded to all tabs so non-originating tabs clear the widget.",
+      "fields": {"conv_id": "string", "confirmation_id": "string", "approved": "boolean", "data": "object?"}
     },
     "conv_history": {
       "direction": "server_to_client",
       "description": "Page of historical messages for a conversation.",
-      "fields": {"conv_id": "string", "messages": "array of object", "before": "string | null"}
+      "fields": {"conv_id": "string", "messages": "array of object", "has_more": "boolean", "context_limit": "number", "read_only": "boolean?", "estimated_tokens": "number?", "active_model": "string?", "available_models": "array of string?", "default_model": "string?", "turn_active": "boolean?", "pending_confirmation": "object?"}
     },
     "conv_selected": {
       "direction": "server_to_client",
       "description": "Confirmation that a select_conv subscribed this socket to the named conversation. May include initial conversation state.",
-      "fields": {"conv_id": "string", "model": "string | null"}
+      "fields": {"conv_id": "string", "read_only": "boolean?", "pending_confirmation": "object?"}
     },
     "error": {
       "direction": "server_to_client",
       "description": "Generic error surfaced to the client (bad request, unknown conversation, internal error).",
-      "fields": {"message": "string", "conv_id": "string | null"}
+      "fields": {"message": "string", "conv_id": "string?"}
     },
     "message_complete": {
       "direction": "server_to_client",
       "description": "Final form of an assistant message after streaming completed (or when replayed from history).",
-      "fields": {"conv_id": "string", "text": "string"}
+      "fields": {"conv_id": "string", "text": "string", "role": "string?", "final": "boolean?", "usage": "object?", "context_limit": "number?"}
     },
     "model_changed": {
       "direction": "server_to_client",
@@ -65,22 +65,22 @@
     "models_available": {
       "direction": "server_to_client",
       "description": "List of model identifiers the user can select in the UI.",
-      "fields": {"models": "array of string"}
+      "fields": {"available_models": "array of string", "default_model": "string"}
     },
     "notification_created": {
       "direction": "server_to_client",
       "description": "A new notification was added to the user's inbox (push from notification subsystem).",
-      "fields": {"notification": "object"}
+      "fields": {"record": "object", "unread_count": "number"}
     },
     "notification_read": {
       "direction": "server_to_client",
       "description": "A notification was marked read (push from notification subsystem).",
-      "fields": {"id": "string"}
+      "fields": {"ids": "array of string", "unread_count": "number"}
     },
     "reflection_result": {
       "direction": "server_to_client",
       "description": "Output of the post-turn reflection step for a conversation.",
-      "fields": {"conv_id": "string", "result": "object"}
+      "fields": {"conv_id": "string", "passed": "boolean", "critique": "string", "retry_number": "number", "raw_response": "string", "error": "string"}
     },
     "tool_end": {
       "direction": "server_to_client",

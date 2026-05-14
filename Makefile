@@ -50,7 +50,7 @@ gen-message-types:
 # Verify generated WebSocket message-type files are in sync with the manifest
 check-message-types:
 	uv run python scripts/gen_message_types.py
-	git diff --exit-code -- src/decafclaw/web/message_types.py src/decafclaw/web/static/lib/message-types.js docs/websocket-messages.md
+	git diff --exit-code -- src/decafclaw/web/message_types.py src/decafclaw/web/static/lib/message-types.js docs/websocket-messages.md tui/src/types.generated.ts
 
 # Auto-fix lint issues
 lint-fix:

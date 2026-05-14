@@ -5,7 +5,7 @@
 
 WebSocket message types exchanged between the decafclaw server (`src/decafclaw/web/websocket.py`) and the in-browser client. This page is generated from `src/decafclaw/web/message_types.json` — edit the manifest and run `make gen-message-types` to regenerate.
 
-> **Future direction:** Field types are human-readable sketches today, not validators. Future work could grow them into typed entries (`{type, optional, enum}`, `{type: "array", items: ...}`) for runtime validation. Out of scope at present.
+> **Field types are enforced.** The codegen at `scripts/gen_message_types.py` parses these field-type strings and emits matching TypedDicts (Python) and TypeScript interfaces (`tui/src/types.generated.ts`). Pyright validates every `ws_send` call site against the Python TypedDicts; tsc validates every TUI consumer against the TS interfaces. Drift between this manifest and either typed surface fails `make check-message-types`. Type-string grammar: `string`, `number`, `boolean`, `object`, `array of string`, `array of object`, `X | Y` unions; trailing `?` marks optional fields.
 
 ## Server → Client
 
@@ -16,7 +16,7 @@ Background-task lifecycle event surfaced into a conversation timeline (e.g. dele
 **Fields:**
 
 - `conv_id` — string
-- `event` — object
+- `record` — object
 
 ### `canvas_update`
 
@@ -25,7 +25,10 @@ The conversation's canvas state changed; client should re-render the canvas pane
 **Fields:**
 
 - `conv_id` — string
-- `state` — object
+- `kind` — string
+- `active_tab` — string | null
+- `tab` — object | null
+- `closed_tab_id` — string?
 
 ### `chunk`
 
@@ -44,6 +47,7 @@ Acknowledgement that a slash-style user command was received and dispatched.
 
 - `conv_id` — string
 - `command` — string
+- `skill` — string?
 
 ### `compaction_done`
 
@@ -52,6 +56,8 @@ Conversation history compaction completed; client should reload history.
 **Fields:**
 
 - `conv_id` — string
+- `before_messages` — number
+- `after_messages` — number
 
 ### `confirm_request`
 
@@ -73,13 +79,14 @@ Server is asking the user to approve or deny a pending action (tool call, end-of
 
 ### `confirmation_response`
 
-Replay of a prior confirmation response, surfaced when reloading conversation history.
+Replay of a prior confirmation response, forwarded to all tabs so non-originating tabs clear the widget.
 
 **Fields:**
 
 - `conv_id` — string
-- `request_id` — string
-- `decision` — string
+- `confirmation_id` — string
+- `approved` — boolean
+- `data` — object?
 
 ### `conv_history`
 
@@ -89,7 +96,15 @@ Page of historical messages for a conversation.
 
 - `conv_id` — string
 - `messages` — array of object
-- `before` — string | null
+- `has_more` — boolean
+- `context_limit` — number
+- `read_only` — boolean?
+- `estimated_tokens` — number?
+- `active_model` — string?
+- `available_models` — array of string?
+- `default_model` — string?
+- `turn_active` — boolean?
+- `pending_confirmation` — object?
 
 ### `conv_selected`
 
@@ -98,7 +113,8 @@ Confirmation that a select_conv subscribed this socket to the named conversation
 **Fields:**
 
 - `conv_id` — string
-- `model` — string | null
+- `read_only` — boolean?
+- `pending_confirmation` — object?
 
 ### `error`
 
@@ -107,7 +123,7 @@ Generic error surfaced to the client (bad request, unknown conversation, interna
 **Fields:**
 
 - `message` — string
-- `conv_id` — string | null
+- `conv_id` — string?
 
 ### `message_complete`
 
@@ -117,6 +133,10 @@ Final form of an assistant message after streaming completed (or when replayed f
 
 - `conv_id` — string
 - `text` — string
+- `role` — string?
+- `final` — boolean?
+- `usage` — object?
+- `context_limit` — number?
 
 ### `model_changed`
 
@@ -133,7 +153,8 @@ List of model identifiers the user can select in the UI.
 
 **Fields:**
 
-- `models` — array of string
+- `available_models` — array of string
+- `default_model` — string
 
 ### `notification_created`
 
@@ -141,7 +162,8 @@ A new notification was added to the user's inbox (push from notification subsyst
 
 **Fields:**
 
-- `notification` — object
+- `record` — object
+- `unread_count` — number
 
 ### `notification_read`
 
@@ -149,7 +171,8 @@ A notification was marked read (push from notification subsystem).
 
 **Fields:**
 
-- `id` — string
+- `ids` — array of string
+- `unread_count` — number
 
 ### `reflection_result`
 
@@ -158,7 +181,11 @@ Output of the post-turn reflection step for a conversation.
 **Fields:**
 
 - `conv_id` — string
-- `result` — object
+- `passed` — boolean
+- `critique` — string
+- `retry_number` — number
+- `raw_response` — string
+- `error` — string
 
 ### `tool_end`
 

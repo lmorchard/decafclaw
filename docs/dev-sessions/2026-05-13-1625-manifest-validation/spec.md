@@ -1,0 +1,251 @@
+# Manifest Validation via Typed Payloads
+
+**Status:** Spec approved 2026-05-13. Implementation not started.
+**Issue:** [#492](https://github.com/lmorchard/decafclaw/issues/492)
+**Type:** Refactor + codegen extension. Closes #492 and finishes the TUI spec's "Option A → Option B" promotion path.
+
+## Context
+
+`src/decafclaw/web/message_types.json` is documented as the source of truth for WebSocket wire message types, but only the message *names* are actually validated against the implementation (via the generated `WSMessageType` enum that Python and JS consumers import). The `fields` annotations rot silently.
+
+The TUI spike (#464 / #489) added a hand-typed TypeScript consumer that mirrored the manifest's `fields` directly. The first live smoke immediately crashed because the wire shape didn't match what the manifest promised. By the time the PR was reviewed, **eight separate drift cases** had been found and corrected. The manifest is now accurate as of #489's merge, but nothing prevents it from drifting again.
+
+This work closes that loop two ways:
+
+1. Make the Python emit sites statically type-checked against the manifest. Pyright catches drift in the editor and in CI, every time, for every emit site.
+2. Generate `tui/src/types.generated.ts` from the same manifest. The TUI's hand-typed file (deliberately written in codegen-shaped style during #489) gets replaced. Future TUI consumers never hand-type wire shapes again.
+
+The TUI spike's spec called this the "A → B promotion path"; this is that promotion.
+
+## Goals
+
+After this work:
+
+- A developer who edits `message_types.json` and forgets to run `make gen-message-types` gets a clear failure from `make check-message-types`.
+- A developer who adds a typo'd field to an `ws_send` call gets a pyright error in their editor and in `make check`.
+- A developer who adds a new wire message type updates the manifest, runs `make gen-message-types`, and all consumers (Python + JS + Markdown + TS) update together.
+- The TUI's `types.generated.ts` is regenerated from the same source, with the same naming conventions the hand-typed file used.
+
+## Non-goals
+
+- **Runtime validation wrapper around `ws_send`.** Pyright's static check covers the cases that matter. Adding a runtime check would duplicate effort for paths that pyright already verifies and add overhead with no incremental benefit for the paths it doesn't.
+- **Python-authoritative source of truth.** Manifest JSON stays canonical. Flipping the regen direction (Python → JSON) is a bigger pivot with no incremental win for the problem being solved.
+- **Refactoring non-wire surfaces.** `_HANDLERS` dispatch, conversation-manager event types, internal helpers — all stay as-is. The wire protocol is the only typed surface.
+- **Validating `widget` sub-shapes** inside `tool_end.widget` or similar. Those stay loosely typed (`dict[str, object]`). Widget shape is a separate concern (and per #487, future widget work has its own design questions).
+- **Adding new wire message types** as part of this PR. Any new types are a separate concern.
+
+## Architecture
+
+```
+                                                  ┌───────────────────────────┐
+                                                  │ src/decafclaw/web/        │
+                                                  │ message_types.json        │
+                                                  │ (canonical, hand-edited)  │
+                                                  └─────────────┬─────────────┘
+                                                                │
+                                                  make gen-message-types
+                                                                │
+                  ┌──────────────────┬───────────────┬──────────┴──────────┬────────────────────────┐
+                  ▼                  ▼               ▼                     ▼                        ▼
+        message_types.py    message-types.js   docs/             tui/src/                  (validation)
+        WSMessageType +     export             websocket-        types.generated.ts        make check-message-types
+        TypedDicts +        MESSAGE_TYPES      messages.md                                 (drift gate)
+        ServerMessage /                                                                    make check
+        ClientMessage /                                                                    (pyright + tsc)
+        WSSendCallable
+                  │                                                       │
+                  ▼                                                       ▼
+        ws_send(payload: ServerMessage)                               TUI imports {ServerMessage, ClientMessage, ...}
+        pyright validates at every call site                          tsc validates at every consumer
+```
+
+Source-of-truth chain: manifest → codegen → typed consumers. Drift becomes a type error before it becomes a runtime crash.
+
+## File layout (final state)
+
+**Generated by `make gen-message-types`:**
+
+| File | Status |
+|---|---|
+| `src/decafclaw/web/message_types.py` | Existing, **extended** — now contains TypedDicts + unions + callable alias alongside the enum |
+| `src/decafclaw/web/static/lib/message-types.js` | Existing, unchanged |
+| `docs/websocket-messages.md` | Existing, unchanged |
+| `tui/src/types.generated.ts` | **New** — replaces the hand-typed `tui/src/types.ts` |
+
+**Hand-edited:**
+
+| File | Status |
+|---|---|
+| `src/decafclaw/web/message_types.json` | Existing, unchanged structure |
+| `scripts/gen_message_types.py` | Existing, **extended** with two new renderers + type-string parser |
+| `Makefile` | Existing, `check-message-types` target extends its `git diff` to include `tui/src/types.generated.ts` |
+| `src/decafclaw/web/websocket.py` | Existing, **refactored** — `ws_send` parameter retyped to `WSSendCallable`, payload sites typed, helpers annotated |
+| `src/decafclaw/conversation_manager.py` | Existing, **possibly touched** — if it has direct `ws_send`-shaped payload construction that gets type-flagged |
+| `tui/src/wsClient.ts`, `tui/src/dispatcher.ts`, `tui/src/dispatcher.test.ts`, `tui/src/App.tsx` | Existing, **import updates only** — change `./types.js` → `./types.generated.js` |
+
+**Removed:**
+
+| File | Reason |
+|---|---|
+| `tui/src/types.ts` | Replaced by codegen output |
+
+## Type-string grammar
+
+The manifest's `fields` values are strings drawn from a fixed grammar that the generator parses. Any value outside this grammar fails the generator's validation step before any file is emitted.
+
+| Manifest string | Python type | TS type | Required? |
+|---|---|---|---|
+| `"string"` | `str` | `string` | yes |
+| `"number"` | `int` | `number` | yes |
+| `"boolean"` | `bool` | `boolean` | yes |
+| `"object"` | `dict[str, object]` | `Record<string, unknown>` | yes |
+| `"array of string"` | `list[str]` | `string[]` | yes |
+| `"array of object"` | `list[dict[str, object]]` | `Array<Record<string, unknown>>` | yes |
+| `"string \| null"` | `str \| None` | `string \| null` | yes |
+| `"string \| object"` | `str \| dict[str, object]` | `string \| Record<string, unknown>` | yes |
+| `"string?"` | `NotRequired[str]` | `string` (as `?:` field) | optional |
+| `"object?"` | `NotRequired[dict[str, object]]` | `Record<string, unknown>` (as `?:` field) | optional |
+
+**Notes on choices:**
+
+- `"number"` → `int`: all current usages are integers (`load_history.limit`). Future float fields would need a manifest grammar extension.
+- `"object"` → `dict[str, object]` (not `dict[str, Any]`): consumers must narrow before access, matching the TS-side `Record<string, unknown>` discipline.
+
+## Component design
+
+### Extended `gen_message_types.py`
+
+Adds two renderers plus a shared validator.
+
+```
+load_manifest()                          # existing — adds field-grammar validation
+sorted_messages(data)                    # existing
+parse_field_type(s: str) -> FieldType    # NEW — returns (python_type, ts_type, required)
+render_python(data)                      # existing — enum
+render_python_typed(data)                # NEW — TypedDicts + unions + WSSendCallable
+render_js(data)                          # existing
+render_typescript(data)                  # NEW — interfaces + unions (replaces tui/src/types.ts)
+render_doc(data)                         # existing
+main()                                   # extended — calls all 5 renderers, writes 4 files (Python output combines enum + TypedDicts in one file)
+```
+
+**Python output** combines existing enum content + new TypedDicts into one `src/decafclaw/web/message_types.py`. Section comments delineate enum block, TypedDict block, union block. Single import path for consumers: `from decafclaw.web.message_types import WSMessageType, ChunkMsg, ServerMessage, WSSendCallable`.
+
+**TS output** mirrors the existing hand-typed conventions verbatim:
+
+- Each message is an `export interface SrvFoo` / `export interface CliBar` with the matching `type: "foo"` discriminant.
+- Two exported discriminated unions: `ServerMessage`, `ClientMessage`.
+- File header: `// DO NOT EDIT — regenerate via 'make gen-message-types'` matching existing JS output.
+- File path: `tui/src/types.generated.ts`.
+
+**Naming convention for codegen** (matches the hand-typed file's pattern):
+
+- Strip direction prefix; PascalCase the rest; prefix `Srv` for server-to-client, `Cli` for client-to-server.
+- `chunk` (s→c) → `SrvChunk`; `user_message` (s→c) → `SrvUserMessage`; `send` (c→s) → `CliSend`; `confirm_response` (c→s) → `CliConfirmResponse`.
+- Multi-word message keys split on `_`: `tool_call_id` field stays snake_case (matches wire); but `tool_call_start` (hypothetical) → `SrvToolCallStart`.
+
+These rules are deterministic from the manifest, so the generator can produce identical names to the hand-typed file. Consumers see no API surface change.
+
+### `WSSendCallable` and `ws_send` retype
+
+The Python output adds:
+
+```python
+WSSendCallable = Callable[[ServerMessage], Awaitable[None]]
+```
+
+`src/decafclaw/web/websocket.py` updates `ws_send`'s parameter type in `websocket_chat()` and threads `WSSendCallable` through the handler signatures (`_handle_select_conv(ws_send: WSSendCallable, ...)`, forwarder factories, etc.).
+
+At that point, pyright flags every emit site that doesn't conform. The refactor follows pyright's complaints.
+
+## Data flow
+
+1. Developer edits `message_types.json` to add / change / correct a message.
+2. Developer runs `make gen-message-types`. Five files regenerate; any unrecognized type-string fails the run with a clear error.
+3. Developer commits all six files (manifest + 5 generated).
+4. `make check-message-types` (run in `make check`) verifies the four generated files are up to date by running the generator and `git diff --exit-code`-ing the outputs.
+5. `make check` runs pyright and tsc on top, validating that all consumers conform to the manifest's shapes.
+6. Wire is byte-for-byte unchanged; only the type-check layer is new.
+
+## Refactor strategy
+
+Three logical commits (the work fits one PR):
+
+### Commit 1: Generator extension
+
+- Add `parse_field_type`, `render_python_typed`, `render_typescript` to `scripts/gen_message_types.py`.
+- Run `make gen-message-types`. `src/decafclaw/web/message_types.py` gains TypedDicts alongside the enum; `tui/src/types.generated.ts` is created from scratch.
+- Update the `check-message-types` Makefile target's `git diff` line to also include `tui/src/types.generated.ts`.
+- At this point: nothing imports the new typed exports. Existing tests + `make check` pass exactly as before. No behavior change anywhere.
+
+### Commit 2: Python emit-site retype
+
+- In `websocket.py`: change `ws_send`'s type from `Callable[[dict], Awaitable[None]]` to `WSSendCallable`. Propagate through handler signatures and forwarder factories.
+- Run pyright. For each flagged site:
+  - **Bare literal:** no change needed; pyright narrows on the `type` discriminant.
+  - **Variable-built dict:** add explicit `out: SrvFoo = {...}` annotation.
+  - **Helper returning payload:** annotate return type as the matching TypedDict.
+  - **Conditional key:** mark field `NotRequired[]` in the manifest; convert to always-build + post-assignment pattern (`payload: SrvFoo = {...}; if cond: payload["k"] = v`).
+  - **Genuinely dynamic:** add `# pyright: ignore[typeddict-unknown-key]` with a one-line comment explaining why. Should be zero or one of these in practice.
+- Touch any emit site in `conversation_manager.py` (or elsewhere) that pyright flags through the same `ws_send` chain.
+- Tests pass (`make test`), check passes (`make check`).
+
+### Commit 3: TUI codegen swap
+
+- Delete `tui/src/types.ts`.
+- Update imports in `tui/src/wsClient.ts`, `tui/src/dispatcher.ts`, `tui/src/App.tsx`, `tui/src/conversationPicker.tsx`: `./types.js` → `./types.generated.js`.
+- Verify TUI tests pass: `cd tui && npm test && npm run typecheck`.
+- All 12 dispatcher tests should pass unchanged — the generated types have identical names and shapes to the hand-typed versions.
+
+## Tricky patterns and their resolutions
+
+Sampled from a `websocket.py` walk-through; the actual refactor surfaces the full list via pyright.
+
+| Pattern | Resolution |
+|---|---|
+| `ws_send({"type": WSMessageType.X, "field": value})` (~50 sites) | No change. TypedDict discriminant narrows. |
+| `out = {...}; out["k"] = v; await ws_send(out)` (~10 sites) | `out: SrvFoo = {...}`. |
+| `await ws_send(_project_tool_end(event, conv_id))` (helper return) | Annotate helper `def _project_tool_end(...) -> SrvToolEnd`. |
+| `{"type": X, **({"k": v} if cond else {})}` (conditional spread) | Mark `k` as `NotRequired[]` in manifest; rewrite as `payload: SrvFoo = {...}; if cond: payload["k"] = v`. |
+| Forwarder factories like `_make_notification_forwarder(ws_send)` | The factory parameter type becomes `WSSendCallable`; the returned closure produces payloads that flow through. |
+
+## Error handling
+
+- **Unrecognized manifest field type string** → generator exits with `sys.exit(f"{msg_name}: unknown field type {field!r}")`. Catches typos in the manifest grammar before any code generation.
+- **Pyright errors after retype** → developer's local `make check` fails with a list of sites and shapes; they fix each and re-run.
+- **Generator output not committed after manifest edit** → `make check-message-types` fails with the file diff visible.
+- **TUI import not updated** → `cd tui && npm run typecheck` fails with "Cannot find module './types.js'".
+
+All failure modes surface at type-check or check-message-types time. No runtime failure modes added.
+
+## Testing
+
+The type checker IS the contract test. No new test files needed.
+
+- Existing 2431 Python tests pass.
+- Existing 12 TUI tests pass (with regenerated types).
+- `make check` cleanliness validates the entire wire-protocol surface against the manifest.
+- A manually-introduced typo in any `ws_send` literal → pyright fails locally and in CI.
+
+A regression guard worth doing once: before merging, deliberately introduce one typo (e.g., `"texxt"` in a `chunk` payload), confirm pyright catches it, revert.
+
+## Acceptance criteria
+
+The work is complete when all of:
+
+- [ ] `make gen-message-types` produces all 4 expected outputs (existing 3 with Python file extended to include TypedDicts + new TS file).
+- [ ] `make check-message-types` enforces drift detection across all generated files.
+- [ ] `make check` clean (ruff + pyright + tsc on web/static + manifest drift).
+- [ ] `make test` clean (2431).
+- [ ] `cd tui && npm test && npm run typecheck` clean (12).
+- [ ] `tui/src/types.ts` removed; consumers import from `types.generated.js`.
+- [ ] A manually-introduced emit-site typo (e.g., `"texxt": "..."` in a `chunk` payload) produces a pyright error.
+- [ ] No runtime behavior changes — the wire is byte-for-byte identical before and after.
+- [ ] Three logical commits on the branch (generator / Python retype / TUI swap), as outlined above.
+
+## Open questions
+
+None at spec time. Items that may surface during implementation:
+
+- Exact size of the per-site refactor in Commit 2. Estimate is 4–8 hours of pyright-driven fixes; could surprise. If it surprises significantly, may warrant splitting Commit 2 into sub-commits by file or handler cluster.
+- Whether `conversation_manager.py` has any direct ws_send-shaped emit sites or whether it's all bus events that get adapted in `websocket.py`. If the latter, Commit 2 stays focused on `websocket.py`.
