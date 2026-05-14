@@ -3,7 +3,7 @@ import { Box, Text, useApp, useInput } from "ink";
 import TextInput from "ink-text-input";
 import type { WSClient, WSEvent } from "./wsClient.js";
 import { dispatch, initialState, type State } from "./dispatcher.js";
-import type { ServerMessage } from "./types.js";
+import type { ServerMessage } from "./types.generated.js";
 import { ConversationPicker } from "./conversationPicker.js";
 
 export interface AppProps {

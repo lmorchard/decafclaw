@@ -6,7 +6,7 @@
  * rather than silent drift. See spec.md "Promotion path" section.
  */
 
-import type { ServerMessage } from "./types.js";
+import type { ServerMessage } from "./types.generated.js";
 
 export type TranscriptItem =
   | { kind: "user"; text: string }
@@ -128,7 +128,7 @@ export function dispatch(s: State, m: ServerMessage): State {
       return s;
 
     case "conv_selected":
-      return { ...s, conv_id: m.conv_id, model: m.model };
+      return { ...s, conv_id: m.conv_id };
 
     case "conv_history": {
       const items: TranscriptItem[] = [];
@@ -141,7 +141,7 @@ export function dispatch(s: State, m: ServerMessage): State {
       }
       // Preserves draft/activity/confirm/turnInFlight from prior state — history
       // is expected to arrive on connect, before any turn is in flight.
-      return { ...s, transcript: [...items, ...s.transcript] };
+      return { ...s, model: m.active_model ?? s.model, transcript: [...items, ...s.transcript] };
     }
 
     case "compaction_done":
