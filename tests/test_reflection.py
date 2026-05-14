@@ -8,6 +8,7 @@ import pytest
 from decafclaw.config import Config
 from decafclaw.config_types import AgentConfig, LlmConfig, ReflectionConfig
 from decafclaw.reflection import (
+    _BUNDLED_PROMPT,
     ReflectionResult,
     _parse_verdict,
     _summarize_tool_result,
@@ -531,3 +532,39 @@ class TestEvaluateResponse:
             await evaluate_response(config, "hello", "Hi!", "")
         prompt = mock_call.call_args[0][1][0]["content"]
         assert "Tools used in prior turns:" not in prompt
+
+
+class TestReflectionPromptStructure:
+    """Assert the bundled REFLECTION.md wraps each dynamic input in its tag."""
+
+    def _filled(self) -> str:
+        return _BUNDLED_PROMPT.read_text().format(
+            user_message="what is 2+2?",
+            agent_response="4",
+            tool_results_summary="(no tools used)",
+            prior_turn_tools="(none)",
+            retrieved_context="page X is relevant",
+        )
+
+    def test_all_expected_tags_present(self):
+        out = self._filled()
+        for tag in (
+            "<user_request>", "</user_request>",
+            "<assistant_response>", "</assistant_response>",
+            "<tool_results>", "</tool_results>",
+            "<prior_turn_tools>", "</prior_turn_tools>",
+            "<retrieved_context>", "</retrieved_context>",
+        ):
+            assert tag in out, f"missing {tag}"
+
+    def test_placeholder_values_inside_tags(self):
+        out = self._filled()
+        assert out.index("<user_request>") < out.index("what is 2+2?") < out.index("</user_request>")
+        assert out.index("<assistant_response>") < out.index("4") < out.index("</assistant_response>")
+        assert out.index("<retrieved_context>") < out.index("page X is relevant") < out.index("</retrieved_context>")
+
+    def test_legacy_prefix_removed(self):
+        text = _BUNDLED_PROMPT.read_text()
+        assert "Retrieved context (automatically injected" not in text
+        assert "User: {user_message}" not in text
+        assert "Assistant response: {agent_response}" not in text

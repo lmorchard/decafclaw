@@ -14,6 +14,7 @@ from .compaction_decisions import (
     strip_json_block,
 )
 from .llm import call_llm
+from .prompts import wrap_xml
 from .util import estimate_tokens
 
 log = logging.getLogger(__name__)
@@ -27,6 +28,11 @@ def _load_sweep_prompt(config) -> str:
     if override.exists():
         return override.read_text()
     return _BUNDLED_SWEEP_PROMPT_PATH.read_text()
+
+
+def _build_sweep_user_input(flattened: str) -> str:
+    """Wrap flattened messages in <messages_to_compact> for the memory sweep child agent."""
+    return wrap_xml("messages_to_compact", flattened)
 
 
 async def _run_memory_sweep(ctx, old_messages: list[dict]) -> None:
@@ -48,7 +54,7 @@ async def _run_memory_sweep(ctx, old_messages: list[dict]) -> None:
     try:
         sweep_prompt = _load_sweep_prompt(config)
         flattened = flatten_messages(old_messages)
-        task_prompt = f"Conversation history to review:\n\n{flattened}"
+        task_prompt = _build_sweep_user_input(flattened)
 
         # Build an isolated child context with vault tools only
         from dataclasses import replace
@@ -123,7 +129,7 @@ Each list contains short strings (≤ 200 chars):
 - artifacts: concrete things produced (files written, vault pages
   created, PRs opened, scripts shipped).
 
-If a "Current state slice" is provided in the input, **reuse existing
+If a `<decision_slice>` block is provided in the input, **reuse existing
 entries verbatim** when they still apply — do NOT paraphrase. Add new
 entries for new info. Drop entries that have been obsoleted (e.g. a
 decision was reversed, a question was resolved). The list you emit IS
@@ -149,6 +155,39 @@ def _with_decisions_addendum(prompt: str, config) -> str:
     if config.compaction.decisions_enabled:
         return prompt + DECISIONS_PROMPT_ADDENDUM
     return prompt
+
+
+def _build_compaction_user_input(mode, old_slice_block: str = "") -> str:
+    """Assemble the user-message text fed to the compaction LLM.
+
+    Sections, joined by ``\\n\\n``:
+      - ``<decision_slice>``…``</decision_slice>`` (optional; pre-wrapped
+        by :func:`compaction_decisions.format_slice`)
+      - Incremental mode:
+        ``<previous_summary>``…``</previous_summary>``,
+        ``<new_messages>``…``</new_messages>``
+      - Full mode:
+        ``<messages_to_compact>``…``</messages_to_compact>``
+
+    ``old_slice_block`` is the output of ``format_slice(slice_)`` when a
+    non-empty slice exists, or ``""`` to omit the section.
+    """
+    sections: list[str] = []
+    slice_section = old_slice_block.strip()
+    if slice_section:
+        sections.append(slice_section)
+
+    if mode.incremental:
+        newly_old_flat = flatten_messages(
+            [msg for turn in mode.newly_old_turns for msg in turn]
+        )
+        sections.append(wrap_xml("previous_summary", mode.prev_summary))
+        sections.append(wrap_xml("new_messages", newly_old_flat))
+    else:
+        flattened = flatten_messages(mode.old_messages)
+        sections.append(wrap_xml("messages_to_compact", flattened))
+
+    return "\n\n".join(s for s in sections if s)
 
 
 def _extract_previous_summary(config, conv_id: str) -> tuple[str | None, str | None]:
@@ -534,25 +573,18 @@ async def compact_history(ctx, history: list) -> bool:
     # captured. After summarization, the LLM's emitted slice replaces
     # this in the merge step.
     old_slice = load_slice(config, conv_id) if config.compaction.decisions_enabled else None
-    slice_prefix_input = ""
-    if old_slice and not old_slice.is_empty():
-        slice_prefix_input = (
-            f"Current state slice (preserve verbatim if still applicable):\n"
-            f"{format_slice(old_slice)}\n"
-        )
+    old_slice_block = (
+        format_slice(old_slice)
+        if old_slice and not old_slice.is_empty()
+        else ""
+    )
 
     try:
         await ctx.publish("compaction_start")
 
         # Summarize
         if mode.incremental:
-            newly_old_flat = flatten_messages(
-                [msg for turn in mode.newly_old_turns for msg in turn])
-            combined_input = (
-                f"{slice_prefix_input}"
-                f"Existing summary:\n{mode.prev_summary}\n\n"
-                f"New conversation turns to incorporate:\n{newly_old_flat}"
-            )
+            combined_input = _build_compaction_user_input(mode, old_slice_block)
             estimated = estimate_tokens(combined_input)
             log.info(f"Incremental summarization: ~{estimated} est. tokens")
             summary = await _single_summarize(
@@ -560,17 +592,20 @@ async def compact_history(ctx, history: list) -> bool:
                 _with_decisions_addendum(INCREMENTAL_COMPACTION_PROMPT, config))
         else:
             prompt = _with_decisions_addendum(_load_compaction_prompt(config), config)
-            flattened = (slice_prefix_input + flatten_messages(mode.old_messages)
-                         if slice_prefix_input
-                         else flatten_messages(mode.old_messages))
-            estimated = estimate_tokens(flattened)
+            flattened_input = _build_compaction_user_input(mode, old_slice_block)
+            estimated = estimate_tokens(flattened_input)
             if estimated > budget:
                 log.info(f"Flattened text ({estimated} est. tokens) exceeds "
                          f"budget ({budget}), using chunked compaction")
+                # Chunked path flattens per-chunk inside _chunked_summarize
+                # and does not wrap in <messages_to_compact> — a rare
+                # fallback for oversized inputs. The <decision_slice>
+                # guidance still lives in the system prompt via the
+                # addendum.
                 summary = await _chunked_summarize(
                     ctx, config, mode.old_turns, prompt, budget)
             else:
-                summary = await _single_summarize(ctx, config, flattened, prompt)
+                summary = await _single_summarize(ctx, config, flattened_input, prompt)
 
         if not summary:
             log.warning("Compaction LLM returned empty summary, skipping")
