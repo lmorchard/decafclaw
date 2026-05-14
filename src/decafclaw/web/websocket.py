@@ -13,7 +13,17 @@ import re
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from decafclaw.skills.vault._events import VAULT_CHANGED_EVENT_TYPE
-from decafclaw.web.message_types import WSMessageType
+from decafclaw.web.message_types import (
+    ServerMessage,
+    SrvCanvasUpdate,
+    SrvConfirmationResponse,
+    SrvConvHistory,
+    SrvConvSelected,
+    SrvMessageComplete,
+    SrvToolEnd,
+    WSMessageType,
+    WSSendCallable,
+)
 
 log = logging.getLogger(__name__)
 
@@ -31,14 +41,14 @@ def _legacy_tool_name(action_type: str) -> str:
     return {"run_shell_command": "shell"}.get(action_type, action_type)
 
 
-def _project_tool_end(event: dict, conv_id: str) -> dict:
+def _project_tool_end(event: dict, conv_id: str) -> SrvToolEnd:
     """Project a bus tool_end event into the WebSocket payload shape.
 
     Fields are included selectively: display_short_text and widget only
     appear when the upstream event set them, to keep the socket messages
     compact.
     """
-    payload = {
+    payload: SrvToolEnd = {
         "type": WSMessageType.TOOL_END, "conv_id": conv_id,
         "tool": event.get("tool", ""),
         "result_text": event.get("result_text", ""),
@@ -59,14 +69,14 @@ def _make_canvas_update_forwarder(state, conv_id):
     Used in unit tests; production code uses the inline branch in
     on_conv_event for performance.
     """
-    ws_send = state["ws_send"]
+    ws_send: WSSendCallable = state["ws_send"]
 
     async def _forward(event):
         if event.get("type") != "canvas_update":
             return
         if event.get("conv_id") != conv_id:
             return
-        out = {
+        out: SrvCanvasUpdate = {
             "type": WSMessageType.CANVAS_UPDATE,
             "conv_id": conv_id,
             "kind": event.get("kind", "update"),
@@ -102,14 +112,14 @@ def _confirmation_to_dict(req) -> dict:
 # -- WebSocket message handlers ------------------------------------------------
 
 
-async def _handle_select_conv(ws_send, index, username, msg, state):
+async def _handle_select_conv(ws_send: WSSendCallable, index, username, msg, state) -> None:
     conv_id = msg.get("conv_id", "")
     if not _is_safe_conv_id(conv_id):
         await ws_send({"type": WSMessageType.ERROR, "message": "Invalid conversation ID"})
         return
     conv = index.get(conv_id)
     if conv and conv.user_id == username:
-        response = {"type": WSMessageType.CONV_SELECTED, "conv_id": conv_id}
+        response: SrvConvSelected = {"type": WSMessageType.CONV_SELECTED, "conv_id": conv_id}
         # Check for pending confirmation via the manager
         manager = state.get("manager")
         if manager:
@@ -183,7 +193,7 @@ def _annotate_widget_responses(messages: list[dict],
     return visible
 
 
-async def _handle_load_history(ws_send, index, username, msg, state):
+async def _handle_load_history(ws_send: WSSendCallable, index, username, msg, state) -> None:
     config = state["config"]
     conv_id = msg.get("conv_id", "")
     if not _is_safe_conv_id(conv_id):
@@ -243,7 +253,7 @@ async def _handle_load_history(ws_send, index, username, msg, state):
                     current_model = name
                     break
 
-    response = {
+    response: SrvConvHistory = {
         "type": WSMessageType.CONV_HISTORY, "conv_id": conv_id,
         "messages": messages, "has_more": has_more,
         "context_limit": config.compaction.max_tokens,
@@ -276,7 +286,7 @@ async def _handle_load_history(ws_send, index, username, msg, state):
     await ws_send(response)
 
 
-async def _handle_send(ws_send, index, username, msg, state):
+async def _handle_send(ws_send: WSSendCallable, index, username, msg, state) -> None:
     conv_id = msg.get("conv_id", "")
     text = msg.get("text", "").strip()
     attachments = msg.get("attachments") or None
@@ -372,7 +382,7 @@ async def _handle_send(ws_send, index, username, msg, state):
     index.touch(conv_id)
 
 
-async def _handle_cancel_turn(ws_send, index, username, msg, state):
+async def _handle_cancel_turn(ws_send: WSSendCallable, index, username, msg, state) -> None:
     conv_id = msg.get("conv_id", "")
     manager = state.get("manager")
     if manager:
@@ -380,7 +390,7 @@ async def _handle_cancel_turn(ws_send, index, username, msg, state):
         log.info(f"Cancelling agent turn for {conv_id}")
 
 
-async def _handle_set_model(ws_send, index, username, msg, state):
+async def _handle_set_model(ws_send: WSSendCallable, index, username, msg, state) -> None:
     conv_id = msg.get("conv_id", "")
     model_name = msg.get("model", msg.get("level", ""))
     conv = index.get(conv_id)
@@ -411,7 +421,7 @@ async def _handle_set_model(ws_send, index, username, msg, state):
     })
 
 
-async def _handle_widget_response(ws_send, index, username, msg, state):
+async def _handle_widget_response(ws_send: WSSendCallable, index, username, msg, state) -> None:
     """Route a widget-input submission through the confirmation infra.
 
     Widget submits are always 'approved=True' in the confirmation sense;
@@ -441,7 +451,7 @@ async def _handle_widget_response(ws_send, index, username, msg, state):
             "dropping (msg=%s)", msg)
 
 
-async def _handle_confirm_response(ws_send, index, username, msg, state):
+async def _handle_confirm_response(ws_send: WSSendCallable, index, username, msg, state) -> None:
     """Route confirmation response through the manager."""
     manager = state.get("manager")
     conv_id = msg.get("conv_id", "")
@@ -489,7 +499,7 @@ def _subscribe_to_conv(state, conv_id):
             manager.unsubscribe(old_id, old_sub_id)
             del subscriptions[old_id]
 
-    ws_send = state["ws_send"]
+    ws_send: WSSendCallable = state["ws_send"]
     config = state["config"]
     streaming_buffer = {"text": ""}
 
@@ -555,7 +565,7 @@ def _subscribe_to_conv(state, conv_id):
 
         elif event_type == "canvas_update":
             if event_conv_id == conv_id:
-                payload = {
+                payload: SrvCanvasUpdate = {
                     "type": WSMessageType.CANVAS_UPDATE,
                     "conv_id": event_conv_id,
                     "kind": event.get("kind", "update"),
@@ -613,7 +623,7 @@ def _subscribe_to_conv(state, conv_id):
 
         elif event_type == "confirmation_response":
             # Forward to all tabs so non-originating tabs clear the widget
-            payload = {
+            confirm_resp: SrvConfirmationResponse = {
                 "type": WSMessageType.CONFIRMATION_RESPONSE, "conv_id": event_conv_id,
                 "confirmation_id": event.get("confirmation_id", ""),
                 "approved": event.get("approved", False),
@@ -622,15 +632,28 @@ def _subscribe_to_conv(state, conv_id):
             if data is not None:
                 # Widget responses ride here so other tabs can show the
                 # selection in their post-submit widget state.
-                payload["data"] = data
-            await ws_send(payload)
+                confirm_resp["data"] = data
+            await ws_send(confirm_resp)
 
         elif event_type == "message_complete":
             if event.get("suppress_user_message"):
                 return  # WAKE turn ended with BACKGROUND_WAKE_OK — silent end
             if event.get("final"):
                 streaming_buffer["text"] = ""
-            await ws_send(event)
+            msg_complete: SrvMessageComplete = {
+                "type": WSMessageType.MESSAGE_COMPLETE,
+                "conv_id": event_conv_id,
+                "text": event.get("text", ""),
+            }
+            if "role" in event:
+                msg_complete["role"] = event["role"]
+            if "final" in event:
+                msg_complete["final"] = event["final"]
+            if "usage" in event:
+                msg_complete["usage"] = event["usage"]
+            if "context_limit" in event:
+                msg_complete["context_limit"] = event["context_limit"]
+            await ws_send(msg_complete)
 
         elif event_type == "turn_start":
             await ws_send({"type": WSMessageType.TURN_START, "conv_id": event_conv_id})
@@ -708,7 +731,7 @@ _HANDLERS = {
 # -- Notification event forwarding --------------------------------------------
 
 
-def _make_notification_forwarder(ws_send):
+def _make_notification_forwarder(ws_send: WSSendCallable):
     """Build an event-bus subscriber that forwards notification events
     to a single WebSocket's ``ws_send``.
 
@@ -733,7 +756,7 @@ def _make_notification_forwarder(ws_send):
     return _forward
 
 
-def _make_vault_change_forwarder(ws_send):
+def _make_vault_change_forwarder(ws_send: WSSendCallable):
     """Forward `vault_changed` events from the global bus to a single socket.
 
     Mirrors `_make_notification_forwarder`: filter by event type, send the
@@ -771,7 +794,7 @@ async def websocket_chat(websocket: WebSocket, config, event_bus, app_ctx,
     await websocket.accept()
     log.info(f"WebSocket connected: {username}")
 
-    async def ws_send(msg):
+    async def ws_send(msg: ServerMessage) -> None:
         try:
             await websocket.send_json(msg)
         except Exception as exc:
