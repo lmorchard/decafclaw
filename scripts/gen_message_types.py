@@ -16,6 +16,7 @@ MANIFEST_PATH = REPO_ROOT / "src/decafclaw/web/message_types.json"
 PY_OUT = REPO_ROOT / "src/decafclaw/web/message_types.py"
 JS_OUT = REPO_ROOT / "src/decafclaw/web/static/lib/message-types.js"
 DOC_OUT = REPO_ROOT / "docs/websocket-messages.md"
+TS_OUT = REPO_ROOT / "tui/src/types.generated.ts"
 
 GEN_HEADER = "DO NOT EDIT — regenerate via 'make gen-message-types'"
 SOURCE_REL = MANIFEST_PATH.relative_to(REPO_ROOT).as_posix()
@@ -52,6 +53,84 @@ def sorted_messages(data: dict) -> list[tuple[str, dict]]:
     )
 
 
+_SCALAR_TYPES = {
+    "string":  ("str", "string"),
+    "number":  ("int", "number"),
+    "boolean": ("bool", "boolean"),
+    "object":  ("dict[str, object]", "Record<string, unknown>"),
+    "null":    ("None", "null"),
+}
+
+
+def _scalar_pair(s: str) -> tuple[str, str]:
+    """Map a single scalar type name to (python, typescript) pair."""
+    if s not in _SCALAR_TYPES:
+        raise ValueError(f"unknown scalar type: {s!r}")
+    return _SCALAR_TYPES[s]
+
+
+def _interface_name(message_name: str, direction: str) -> str:
+    """tool_call_start, server_to_client -> SrvToolCallStart.
+
+    Currently only server_to_client and client_to_server are supported.
+    Bidirectional messages don't exist in the manifest yet and would need
+    their own naming convention (probably `Bi` prefix) plus a third
+    union in render_python_typed / render_typescript.
+    """
+    parts = [w.capitalize() for w in message_name.split("_")]
+    if direction == "server_to_client":
+        prefix = "Srv"
+    elif direction == "client_to_server":
+        prefix = "Cli"
+    else:
+        raise ValueError(
+            f"_interface_name: unsupported direction {direction!r} for "
+            f"message {message_name!r}"
+        )
+    return prefix + "".join(parts)
+
+
+def parse_field_type(s: str) -> tuple[str, str, bool]:
+    """Parse a manifest field-type string.
+
+    Returns ``(python_base_type, ts_base_type, required)``. Renderers
+    wrap the base type with ``NotRequired[]`` (Python) or a ``?:`` field
+    suffix (TS) when ``required`` is False.
+
+    Grammar:
+      * scalar: "string" | "number" | "boolean" | "object" | "null"
+      * array:  "array of <scalar>"
+      * union:  "<scalar> | <scalar>" (two members; e.g. "string | null")
+      * optional: any of the above with a trailing "?"
+    """
+    optional = s.endswith("?")
+    if optional:
+        s = s[:-1]
+
+    if s.startswith("array of "):
+        elem = s[len("array of "):]
+        # Array element types are explicit (not derived from _SCALAR_TYPES) —
+        # current manifest only uses arrays of string and object. Add new
+        # element types here AND to _SCALAR_TYPES if scalar support is needed.
+        if elem == "string":
+            return ("list[str]", "string[]", not optional)
+        if elem == "object":
+            return ("list[dict[str, object]]", "Array<Record<string, unknown>>", not optional)
+        raise ValueError(f"unknown array element type: {elem!r}")
+
+    if " | " in s:
+        py_parts: list[str] = []
+        ts_parts: list[str] = []
+        for part in s.split(" | "):
+            py, ts = _scalar_pair(part)
+            py_parts.append(py)
+            ts_parts.append(ts)
+        return (" | ".join(py_parts), " | ".join(ts_parts), not optional)
+
+    py, ts = _scalar_pair(s)
+    return (py, ts, not optional)
+
+
 def render_python(data: dict) -> str:
     items = sorted_messages(data)
     out: list[str] = []
@@ -59,7 +138,9 @@ def render_python(data: dict) -> str:
     out.append("")
     out.append("from __future__ import annotations")
     out.append("")
+    out.append("from collections.abc import Awaitable, Callable")
     out.append("from enum import StrEnum")
+    out.append("from typing import Literal, NotRequired, TypedDict")
     out.append("")
     out.append("")
     out.append("class WSMessageType(StrEnum):")
@@ -92,6 +173,103 @@ def render_python(data: dict) -> str:
     return "\n".join(out).rstrip() + "\n"
 
 
+def render_python_typed(data: dict) -> str:
+    """Render TypedDicts, discriminated unions, and WSSendCallable.
+
+    Appended after `render_python`'s output in the same file.
+    """
+    items = sorted_messages(data)
+    out: list[str] = ["", "", "# -- TypedDicts (one per wire message) --", ""]
+
+    s2c_ifaces: list[str] = []
+    c2s_ifaces: list[str] = []
+
+    for name, entry in items:
+        iface = _interface_name(name, entry["direction"])
+        if entry["direction"] == "server_to_client":
+            s2c_ifaces.append(iface)
+        elif entry["direction"] == "client_to_server":
+            c2s_ifaces.append(iface)
+        # bidirectional (none currently) would need a separate bucket
+
+        out.append(f"class {iface}(TypedDict):")
+        # Use Literal[WSMessageType.X] (not Literal["x"]) so existing emit
+        # sites that pass WSMessageType.X enum values continue to narrow
+        # correctly. Pyright treats StrEnum members as enum-member literals,
+        # not as `str` literals, so the latter would force every call site
+        # to be rewritten with bare strings.
+        out.append(f'    type: Literal[WSMessageType.{name.upper()}]')
+        for fname, ftype in entry["fields"].items():
+            py_base, _, required = parse_field_type(ftype)
+            if required:
+                out.append(f"    {fname}: {py_base}")
+            else:
+                out.append(f"    {fname}: NotRequired[{py_base}]")
+        out.append("")
+
+    out.append("")
+    out.append("# -- Discriminated unions --")
+    out.append("")
+    if s2c_ifaces:
+        out.append("ServerMessage = " + " | ".join(s2c_ifaces))
+        out.append("")
+    if c2s_ifaces:
+        out.append("ClientMessage = " + " | ".join(c2s_ifaces))
+        out.append("")
+
+    out.append("")
+    out.append("# -- Callable alias for ws_send and friends --")
+    out.append("")
+    out.append("WSSendCallable = Callable[[ServerMessage], Awaitable[None]]")
+    out.append("")
+
+    return "\n".join(out)
+
+
+def render_typescript(data: dict) -> str:
+    """Render TS interfaces + discriminated unions for the TUI."""
+    items = sorted_messages(data)
+    out: list[str] = []
+    out.append(f"// {GEN_HEADER}")
+    out.append(f"// Source: {SOURCE_REL}")
+    out.append("")
+
+    s2c_ifaces: list[str] = []
+    c2s_ifaces: list[str] = []
+
+    for name, entry in items:
+        iface = _interface_name(name, entry["direction"])
+        if entry["direction"] == "server_to_client":
+            s2c_ifaces.append(iface)
+        elif entry["direction"] == "client_to_server":
+            c2s_ifaces.append(iface)
+
+        out.append(f"export interface {iface} {{")
+        out.append(f'  type: "{name}";')
+        for fname, ftype in entry["fields"].items():
+            _, ts_base, required = parse_field_type(ftype)
+            suffix = "" if required else "?"
+            out.append(f"  {fname}{suffix}: {ts_base};")
+        out.append("}")
+        out.append("")
+
+    def _emit_union(union_name: str, ifaces: list[str]) -> None:
+        if not ifaces:
+            return
+        # Build member lines locally so the trailing-semicolon mutation
+        # is on a small list, not on the running `out` buffer.
+        lines = [f"  | {iface}" for iface in ifaces]
+        lines[-1] += ";"
+        out.append(f"export type {union_name} =")
+        out.extend(lines)
+        out.append("")
+
+    _emit_union("ServerMessage", s2c_ifaces)
+    _emit_union("ClientMessage", c2s_ifaces)
+
+    return "\n".join(out).rstrip() + "\n"
+
+
 def render_js(data: dict) -> str:
     items = sorted_messages(data)
     out: list[str] = []
@@ -119,9 +297,15 @@ def render_doc(data: dict) -> str:
         out.append(header)
         out.append("")
     out.append(
-        "> **Future direction:** Field types are human-readable sketches today, not validators. "
-        "Future work could grow them into typed entries (`{type, optional, enum}`, "
-        "`{type: \"array\", items: ...}`) for runtime validation. Out of scope at present."
+        "> **Field types are enforced.** The codegen at `scripts/gen_message_types.py` "
+        "parses these field-type strings and emits matching TypedDicts (Python) "
+        "and TypeScript interfaces (`tui/src/types.generated.ts`). Pyright validates "
+        "every `ws_send` call site against the Python TypedDicts; tsc validates "
+        "every TUI consumer against the TS interfaces. Drift between this manifest "
+        "and either typed surface fails `make check-message-types`. "
+        "Type-string grammar: `string`, `number`, `boolean`, `object`, "
+        "`array of string`, `array of object`, `X | Y` unions; trailing `?` "
+        "marks optional fields."
     )
     out.append("")
     sections = (
@@ -157,10 +341,11 @@ def render_doc(data: dict) -> str:
 
 def main() -> int:
     data = load_manifest()
-    PY_OUT.write_text(render_python(data), encoding="utf-8")
+    PY_OUT.write_text(render_python(data) + render_python_typed(data), encoding="utf-8")
     JS_OUT.write_text(render_js(data), encoding="utf-8")
     DOC_OUT.write_text(render_doc(data), encoding="utf-8")
-    for p in (PY_OUT, JS_OUT, DOC_OUT):
+    TS_OUT.write_text(render_typescript(data), encoding="utf-8")
+    for p in (PY_OUT, JS_OUT, DOC_OUT, TS_OUT):
         print(f"wrote {p.relative_to(REPO_ROOT)}")
     return 0
 
