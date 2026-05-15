@@ -34,6 +34,7 @@ export class WSClient {
   private handlers: Array<(e: WSEvent) => void> = [];
   private reconnectAttempt = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private outbound: ClientMessage[] = [];
   private wantClosed = false;
   private hadOpen = false;
 
@@ -49,8 +50,12 @@ export class WSClient {
   send(msg: ClientMessage): void {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify(msg));
+    } else {
+      // Buffer until next open. Covers the pre-open mount race (select_conv
+      // sent before the socket finishes upgrading) and the during-reconnect
+      // window. `flushOutbound` drains in FIFO order on each open.
+      this.outbound.push(msg);
     }
-    // else: silently drop; reconnect path will re-establish state via re-select_conv
   }
 
   close(): void {
@@ -83,6 +88,7 @@ export class WSClient {
       if (wasReconnect) {
         this.emit({ type: "__reconnected" });
       }
+      this.flushOutbound();
     });
 
     ws.on("message", (data: WebSocket.RawData) => {
@@ -142,5 +148,14 @@ export class WSClient {
 
   private emit(e: WSEvent): void {
     for (const h of this.handlers) h(e);
+  }
+
+  private flushOutbound(): void {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+    const pending = this.outbound;
+    this.outbound = [];
+    for (const m of pending) {
+      this.ws.send(JSON.stringify(m));
+    }
   }
 }

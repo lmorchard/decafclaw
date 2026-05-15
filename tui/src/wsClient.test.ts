@@ -12,6 +12,7 @@ class FakeWebSocket extends EventEmitter {
   readyState = 0;
   url: string;
   opts: unknown;
+  sent: string[] = [];
   static OPEN = 1;
   constructor(url: string, opts: unknown) {
     super();
@@ -22,8 +23,13 @@ class FakeWebSocket extends EventEmitter {
   close(): void {
     /* noop — tests drive close via emit */
   }
-  send(): void {
-    /* noop */
+  send(data: string): void {
+    this.sent.push(data);
+  }
+  // Test helper: transition to OPEN and fire the event.
+  triggerOpen(): void {
+    this.readyState = 1;
+    this.emit("open");
   }
 }
 
@@ -74,6 +80,29 @@ describe("WSClient lifecycle hygiene", () => {
     expect(fakeWsState.instances).toHaveLength(2);
 
     // Clean up so the second timer doesn't leak into other tests.
+    c.close();
+  });
+
+  it("send() before open buffers; flushes on open", () => {
+    const c = new WSClient({ host: "http://localhost:8088", token: "t" });
+    c.connect();
+    const w = fakeWsState.instances[0]!;
+
+    // Pre-open: send should buffer rather than reach the socket.
+    c.send({ type: "select_conv", conv_id: "abc" });
+    c.send({ type: "send", conv_id: "abc", text: "hello", attachments: [] });
+    expect(w.sent).toEqual([]);
+
+    // After open: buffer should flush in order.
+    w.triggerOpen();
+    expect(w.sent).toHaveLength(2);
+    expect(JSON.parse(w.sent[0]!)).toMatchObject({ type: "select_conv", conv_id: "abc" });
+    expect(JSON.parse(w.sent[1]!)).toMatchObject({ type: "send", text: "hello" });
+
+    // Subsequent sends go directly (no double-flush).
+    c.send({ type: "cancel_turn", conv_id: "abc" });
+    expect(w.sent).toHaveLength(3);
+
     c.close();
   });
 
