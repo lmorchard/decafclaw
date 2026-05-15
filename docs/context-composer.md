@@ -41,6 +41,30 @@ See #304 for the change history and #357 for the follow-up that
 applies the same convention to the reflection / memory-sweep /
 compaction prompts.
 
+#### Auxiliary prompt surfaces
+
+The reflection judge, pre-compaction memory sweep, and compaction
+summarizer follow the same delimiter convention for their dynamic
+inputs (#357). The shared helper is `wrap_xml(tag, body)` exported
+from `src/decafclaw/prompts/__init__.py` — same empty-body gating as
+the main system prompt assembly. Static instruction bodies are not
+wrapped: the imperative-voice prose + message role (system for
+sweep/compaction, user for reflection) carry the framing already.
+
+| Surface | Tags | Where |
+|---------|------|-------|
+| Reflection judge (user message) | `<retrieved_context>`, `<prior_turn_tools>`, `<user_request>`, `<tool_results>`, `<assistant_response>` | `src/decafclaw/prompts/REFLECTION.md` (placeholders wrapped in the template) |
+| Memory sweep (user message) | `<messages_to_compact>` | `_build_sweep_user_input` in `compaction.py` |
+| Compaction full mode (user message) | `<decision_slice>` (optional), `<messages_to_compact>` | `_build_compaction_user_input` in `compaction.py` |
+| Compaction incremental mode (user message) | `<decision_slice>` (optional), `<previous_summary>`, `<new_messages>` | `_build_compaction_user_input` in `compaction.py` |
+
+The `<decision_slice>` block is pre-wrapped by `format_slice` in
+`compaction_decisions.py` (#302). `DECISIONS_PROMPT_ADDENDUM`
+references this tag name directly so the LLM's instructions and the
+input it sees stay aligned. The chunked-compaction fallback for
+oversized inputs does not wrap chunks in `<messages_to_compact>` —
+the slice guidance still lives in the system prompt via the addendum.
+
 ### Context window layout
 
 ```
