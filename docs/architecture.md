@@ -162,6 +162,8 @@ The rule: **one agent turn per conversation at a time, unlimited concurrent conv
 
 When a tool needs user approval (shell commands, skill activation), the ConversationManager persists the confirmation request as a JSONL archive entry with `role: "confirmation_request"`. The agent loop suspends mechanically until it receives a matching `confirmation_response` entry. Pending confirmations survive page reload and server restart — a startup scan recovers them. See `confirmations.py` for the `ConfirmationAction` enum and handler registry.
 
+Concurrent `request_confirmation` calls on the same conversation (common with delegated background tasks producing parallel approval prompts) are serialized through a per-conversation FIFO queue: the user sees them one at a time, each waits for its own response, and `request.timeout` starts only when a queued request becomes active.
+
 ## Transport adapters
 
 Each transport is responsible for:
