@@ -22,7 +22,7 @@ _PROMPT_FILES: list[tuple[str, str]] = [
 ]
 
 
-def _wrap(tag: str, body: str) -> str:
+def wrap_xml(tag: str, body: str) -> str:
     """Wrap body in <tag>\n…\n</tag>; return "" if body is empty.
 
     Callers rely on the empty-case returning "" so they can skip the
@@ -65,7 +65,7 @@ def load_system_prompt(config):
                 text = bundled_file.read_text().strip()
             else:
                 continue
-        wrapped = _wrap(tag, text)
+        wrapped = wrap_xml(tag, text)
         if wrapped:
             sections.append(wrapped)
 
@@ -73,7 +73,7 @@ def load_system_prompt(config):
     user_file = agent_dir / "USER.md"
     if user_file.exists():
         text = user_file.read_text().strip()
-        wrapped = _wrap("user_context", text)
+        wrapped = wrap_xml("user_context", text)
         if wrapped:
             sections.append(wrapped)
             log.info("Loaded USER.md from workspace")
@@ -81,7 +81,7 @@ def load_system_prompt(config):
     # Discover skills and append catalog
     skills = discover_skills(config)
     catalog = build_catalog_text(skills)
-    wrapped = _wrap("skill_catalog", catalog)
+    wrapped = wrap_xml("skill_catalog", catalog)
     if wrapped:
         sections.append(wrapped)
 

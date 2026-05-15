@@ -271,18 +271,14 @@ async def evaluate_response(
     """
     try:
         prompt_template = load_reflection_prompt(config)
-        if retrieved_context:
-            context_block = (
-                "Retrieved context (automatically injected before the user's message):\n"
-                + retrieved_context
-            )
-        else:
-            context_block = ""
+        # The <retrieved_context> tag in REFLECTION.md conveys the
+        # "auto-injected before the user's message" semantic that the
+        # legacy prose prefix used to carry.
         prompt = prompt_template.format(
             user_message=user_message,
             tool_results_summary=tool_summary or "(no tools used)",
             agent_response=agent_response,
-            retrieved_context=context_block,
+            retrieved_context=retrieved_context,
             prior_turn_tools=prior_turn_summary,
         )
 

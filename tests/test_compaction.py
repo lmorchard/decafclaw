@@ -1,12 +1,16 @@
 """Tests for conversation compaction."""
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from decafclaw.archive import append_message, write_compacted_history
 from decafclaw.compaction import (
+    DECISIONS_PROMPT_ADDENDUM,
     SUMMARY_PREFIX,
+    _build_compaction_user_input,
+    _build_sweep_user_input,
     _extract_previous_summary,
     _run_memory_sweep,
     _split_into_turns,
@@ -236,9 +240,11 @@ class TestCompactHistory:
         call_args = mock_llm.call_args
         messages = call_args[0][1]  # second positional arg
         user_content = messages[1]["content"]
-        assert "Existing summary:" in user_content
+        assert "<previous_summary>" in user_content
+        assert "</previous_summary>" in user_content
         assert "Summary of turns 0-4." in user_content
-        assert "New conversation turns to incorporate:" in user_content
+        assert "<new_messages>" in user_content
+        assert "</new_messages>" in user_content
 
     @pytest.mark.asyncio
     async def test_incremental_skips_when_no_new_turns(self, ctx, config):
@@ -677,3 +683,73 @@ class TestDecisionSliceIntegration:
         summary = history[0]["content"]
         assert "```json" in summary
         assert "<decision_slice>" not in summary
+
+
+class TestBuildCompactionUserInput:
+    """Pure-function checks for the user-message assembly helper."""
+
+    def _mock_mode(self, incremental: bool, **kwargs):
+        return SimpleNamespace(incremental=incremental, **kwargs)
+
+    def test_full_mode_wraps_in_messages_to_compact(self):
+        mode = self._mock_mode(
+            incremental=False,
+            old_messages=[
+                {"role": "user", "content": "hi"},
+                {"role": "assistant", "content": "hello"},
+            ],
+        )
+        out = _build_compaction_user_input(mode, old_slice_block="")
+        assert "<messages_to_compact>" in out
+        assert "</messages_to_compact>" in out
+        assert "User: hi" in out
+        assert "Assistant: hello" in out
+
+    def test_incremental_mode_wraps_previous_summary_and_new_messages(self):
+        mode = self._mock_mode(
+            incremental=True,
+            prev_summary="prior summary text",
+            newly_old_turns=[
+                [{"role": "user", "content": "next message"}],
+            ],
+        )
+        out = _build_compaction_user_input(mode, old_slice_block="")
+        assert "<previous_summary>\nprior summary text\n</previous_summary>" in out
+        assert "<new_messages>" in out
+        assert "User: next message" in out
+
+    def test_decision_slice_block_prepended_when_provided(self):
+        mode = self._mock_mode(
+            incremental=False,
+            old_messages=[{"role": "user", "content": "hi"}],
+        )
+        slice_block = "<decision_slice>\nDecisions:\n- foo\n</decision_slice>"
+        out = _build_compaction_user_input(mode, old_slice_block=slice_block)
+        assert out.startswith("<decision_slice>")
+        assert "<messages_to_compact>" in out
+        assert "</decision_slice>\n\n<messages_to_compact>" in out
+
+    def test_empty_slice_block_omits_section(self):
+        mode = self._mock_mode(
+            incremental=False,
+            old_messages=[{"role": "user", "content": "hi"}],
+        )
+        out = _build_compaction_user_input(mode, old_slice_block="")
+        assert "<decision_slice>" not in out
+        assert out.startswith("<messages_to_compact>")
+
+
+def test_decisions_addendum_references_decision_slice_tag():
+    """The addendum must instruct the LLM about the actual tag name it sees."""
+    assert "<decision_slice>" in DECISIONS_PROMPT_ADDENDUM
+    assert "Current state slice" not in DECISIONS_PROMPT_ADDENDUM
+
+
+class TestBuildSweepUserInput:
+    def test_wraps_flattened_in_messages_to_compact(self):
+        out = _build_sweep_user_input("User: hi\nAssistant: hello")
+        assert out == "<messages_to_compact>\nUser: hi\nAssistant: hello\n</messages_to_compact>"
+
+    def test_no_legacy_prefix_present(self):
+        out = _build_sweep_user_input("any text")
+        assert "Conversation history to review:" not in out

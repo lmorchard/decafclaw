@@ -4,8 +4,19 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from decafclaw.prompts import load_system_prompt
+from decafclaw.prompts import load_system_prompt, wrap_xml
 from decafclaw.skills import _BUNDLED_SKILLS_DIR, SkillInfo
+
+
+class TestWrapXml:
+    def test_wraps_body_in_tag(self):
+        assert wrap_xml("foo", "bar") == "<foo>\nbar\n</foo>"
+
+    def test_empty_body_returns_empty_string(self):
+        assert wrap_xml("foo", "") == ""
+
+    def test_preserves_internal_newlines(self):
+        assert wrap_xml("foo", "line1\nline2") == "<foo>\nline1\nline2\n</foo>"
 
 # -- Default bundled load ------------------------------------------------------
 

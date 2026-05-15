@@ -32,12 +32,22 @@ the response meaningfully misses what the user asked for.
 
 ---
 
+<retrieved_context>
 {retrieved_context}
+</retrieved_context>
 
+<prior_turn_tools>
 {prior_turn_tools}
+</prior_turn_tools>
 
-User: {user_message}
+<user_request>
+{user_message}
+</user_request>
 
+<tool_results>
 {tool_results_summary}
+</tool_results>
 
-Assistant response: {agent_response}
+<assistant_response>
+{agent_response}
+</assistant_response>
