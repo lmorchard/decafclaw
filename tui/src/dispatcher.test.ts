@@ -157,6 +157,57 @@ describe("dispatcher", () => {
     });
   });
 
+  it("conv_history populates transcript with user + assistant messages in order", () => {
+    const s0 = { ...initialState };
+    const s1 = dispatch(s0, {
+      type: "conv_history",
+      conv_id: CONV,
+      messages: [
+        { role: "user", text: "hi" },
+        { role: "assistant", text: "hello" },
+      ],
+      has_more: false,
+      context_limit: 0,
+    });
+    expect(s1.transcript).toEqual([
+      { kind: "user", text: "hi" },
+      { kind: "assistant", text: "hello" },
+    ]);
+  });
+
+  it("conv_history skips tool/system roles per spike intent", () => {
+    const s0 = { ...initialState };
+    const s1 = dispatch(s0, {
+      type: "conv_history",
+      conv_id: CONV,
+      messages: [
+        { role: "user", text: "first" },
+        { role: "tool", text: "tool output" },
+        { role: "system", text: "system note" },
+        { role: "assistant", text: "second" },
+      ],
+      has_more: false,
+      context_limit: 0,
+    });
+    expect(s1.transcript).toEqual([
+      { kind: "user", text: "first" },
+      { kind: "assistant", text: "second" },
+    ]);
+  });
+
+  it("conv_history adopts active_model when present", () => {
+    const s0 = { ...initialState };
+    const s1 = dispatch(s0, {
+      type: "conv_history",
+      conv_id: CONV,
+      messages: [],
+      has_more: false,
+      context_limit: 0,
+      active_model: "claude-opus-4-7",
+    });
+    expect(s1.model).toBe("claude-opus-4-7");
+  });
+
   it("unknown type returns state unchanged (forward-compat)", () => {
     const s0 = { ...initialState, conv_id: CONV };
     const unknown = { type: "future_message", conv_id: CONV } as unknown as ServerMessage;

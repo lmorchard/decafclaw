@@ -10,53 +10,31 @@ import React from "react";
 import { render } from "ink";
 import { WSClient } from "./wsClient.js";
 import { App } from "./App.js";
-
-interface Args {
-  token: string;
-  host: string;
-  conv: string | null;
-}
-
-function parseArgs(argv: string[]): Args | { error: string } {
-  const args: Partial<Args> = {};
-  for (let i = 0; i < argv.length; i++) {
-    const a = argv[i];
-    if (a === "--token") args.token = argv[++i];
-    else if (a === "--host") args.host = argv[++i];
-    else if (a === "--conv") args.conv = argv[++i];
-    else if (a === "--help" || a === "-h") {
-      return {
-        error:
-          "Usage: decafclaw-tui [--token <t>] [--host <url>] [--conv <id>]\n" +
-          "Env: DECAFCLAW_TOKEN, DECAFCLAW_HOST",
-      };
-    }
-  }
-  const token = args.token ?? process.env.DECAFCLAW_TOKEN;
-  const host = args.host ?? process.env.DECAFCLAW_HOST ?? "http://localhost:8088";
-  if (!token) {
-    return { error: "Missing token. Use --token <t> or DECAFCLAW_TOKEN." };
-  }
-  return { token, host, conv: args.conv ?? null };
-}
+import { parseArgs } from "./parseArgs.js";
 
 function main(): void {
+  const parsed = parseArgs(process.argv.slice(2), process.env);
+
+  if (parsed.kind === "help") {
+    console.log(parsed.message);
+    process.exit(0);
+  }
+  if (parsed.kind === "error") {
+    console.error(parsed.message);
+    process.exit(1);
+  }
+
   if (!process.stdin.isTTY) {
     console.error("decafclaw-tui requires a TTY stdin.");
     process.exit(1);
   }
 
-  const parsed = parseArgs(process.argv.slice(2));
-  if ("error" in parsed) {
-    console.error(parsed.error);
-    process.exit(1);
-  }
-
-  const client = new WSClient({ host: parsed.host, token: parsed.token });
+  const { token, host, conv } = parsed.args;
+  const client = new WSClient({ host, token });
   client.connect();
 
   render(
-    <App client={client} initialConvId={parsed.conv} host={parsed.host} token={parsed.token} />,
+    <App client={client} initialConvId={conv} host={host} token={token} />,
     { exitOnCtrlC: false }
   );
 }
