@@ -29,14 +29,17 @@ export interface WSClientOptions {
 
 export class WSClient {
   private opts: WSClientOptions;
+  private readonly wsUrl: string;
   private ws: WebSocket | null = null;
   private handlers: Array<(e: WSEvent) => void> = [];
   private reconnectAttempt = 0;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private wantClosed = false;
   private hadOpen = false;
 
   constructor(opts: WSClientOptions) {
     this.opts = opts;
+    this.wsUrl = opts.host.replace(/^http/, "ws") + "/ws/chat";
   }
 
   on(handler: (e: WSEvent) => void): void {
@@ -52,6 +55,10 @@ export class WSClient {
 
   close(): void {
     this.wantClosed = true;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
     this.ws?.close();
     this.hadOpen = false;
   }
@@ -62,8 +69,7 @@ export class WSClient {
       this.ws.close();
       this.ws = null;
     }
-    const wsUrl = this.opts.host.replace(/^http/, "ws") + "/ws/chat";
-    const ws = new WebSocket(wsUrl, {
+    const ws = new WebSocket(this.wsUrl, {
       headers: {
         Cookie: `decafclaw_session=${this.opts.token}`,
       },
@@ -113,17 +119,23 @@ export class WSClient {
     });
 
     ws.on("error", (err: Error) => {
-      console.error("[tui] ws error:", err.message);
+      console.error(
+        `[tui] ws error: ${err.message} url=${this.wsUrl} attempt=${this.reconnectAttempt}`,
+      );
       // close handler will fire after this; reconnect is scheduled there.
     });
   }
 
   private scheduleReconnect(): void {
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+    }
     const delays = [1000, 2000, 4000, 8000, 16000, 30000];
     const idx = Math.min(this.reconnectAttempt, delays.length - 1);
     const delay = delays[idx]!;
     this.reconnectAttempt += 1;
-    setTimeout(() => {
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
       if (!this.wantClosed) this.connect();
     }, delay);
   }
