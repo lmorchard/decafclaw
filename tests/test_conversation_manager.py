@@ -1917,3 +1917,435 @@ async def test_cancel_pending_confirmation_wakes_live_waiter(manager):
     # Waiter unblocked with the cancellation denial.
     assert response.approved is False
     assert response.confirmation_id == request.confirmation_id
+
+
+# -- Confirmation queue (issue #485) ------------------------------------------
+
+@pytest.mark.asyncio
+async def test_concurrent_request_confirmation_serializes(manager):
+    """Two concurrent request_confirmation calls on the same conv resolve
+    to their own responses in submission order. Regression for issue #485
+    — the second call used to clobber the first's pending slot, orphaning
+    the first waiter on a dead event.
+    """
+    conv_id = "conv-queue-serialize"
+    manager._get_or_create(conv_id)
+
+    req_a = ConfirmationRequest(
+        action_type=ConfirmationAction.RUN_SHELL_COMMAND,
+        action_data={"command": "ls"},
+        message="A?",
+        timeout=5.0,
+    )
+    req_b = ConfirmationRequest(
+        action_type=ConfirmationAction.RUN_SHELL_COMMAND,
+        action_data={"command": "pwd"},
+        message="B?",
+        timeout=5.0,
+    )
+
+    task_a = asyncio.create_task(manager.request_confirmation(conv_id, req_a))
+    # Yield so task A reaches its "install active" point.
+    await asyncio.sleep(0)
+    task_b = asyncio.create_task(manager.request_confirmation(conv_id, req_b))
+    # Yield so task B reaches its "enqueue" point.
+    await asyncio.sleep(0)
+
+    # B must NOT be done yet — it's queued behind A.
+    assert not task_b.done(), "B should be queued while A is active"
+
+    state = manager.get_state(conv_id)
+    assert state is not None
+    assert state.pending_confirmation is req_a
+    assert len(state.confirmation_queue) == 1
+    assert state.confirmation_queue[0].request is req_b
+
+    # Respond to A first.
+    await manager.respond_to_confirmation(
+        conv_id, req_a.confirmation_id, approved=True)
+    resp_a = await asyncio.wait_for(task_a, timeout=2.0)
+    assert resp_a.approved is True
+    assert resp_a.confirmation_id == req_a.confirmation_id
+
+    # B should now be promoted and observable in state.
+    assert state.pending_confirmation is req_b
+    assert state.confirmation_queue == []
+    assert not task_b.done(), "B should be active but still awaiting response"
+
+    # Respond to B.
+    await manager.respond_to_confirmation(
+        conv_id, req_b.confirmation_id, approved=True)
+    resp_b = await asyncio.wait_for(task_b, timeout=2.0)
+    assert resp_b.approved is True
+    assert resp_b.confirmation_id == req_b.confirmation_id
+
+    # Pending state fully cleared.
+    assert state.pending_confirmation is None
+    assert state.confirmation_response is None
+
+
+@pytest.mark.asyncio
+async def test_promoted_confirmation_emits_request_event(manager):
+    """Each queued confirmation gets its own confirmation_request emit
+    when it promotes to active — the UI sees the second request only
+    after the first resolves. Issue #485.
+    """
+    conv_id = "conv-queue-emit"
+    manager._get_or_create(conv_id)
+
+    events = []
+
+    async def cb(event):
+        events.append(event)
+
+    manager.subscribe(conv_id, cb)
+
+    req_a = ConfirmationRequest(
+        action_type=ConfirmationAction.RUN_SHELL_COMMAND,
+        action_data={"command": "ls"},
+        message="A?",
+        timeout=5.0,
+    )
+    req_b = ConfirmationRequest(
+        action_type=ConfirmationAction.RUN_SHELL_COMMAND,
+        action_data={"command": "pwd"},
+        message="B?",
+        timeout=5.0,
+    )
+
+    task_a = asyncio.create_task(manager.request_confirmation(conv_id, req_a))
+    await asyncio.sleep(0)
+    task_b = asyncio.create_task(manager.request_confirmation(conv_id, req_b))
+    await asyncio.sleep(0)
+
+    # Only A's request event so far.
+    req_events = [e for e in events if e["type"] == "confirmation_request"]
+    assert len(req_events) == 1
+    assert req_events[0]["confirmation_id"] == req_a.confirmation_id
+
+    await manager.respond_to_confirmation(
+        conv_id, req_a.confirmation_id, approved=True)
+    await asyncio.wait_for(task_a, timeout=2.0)
+    # Yield so the post-respond emit for B's promotion happens.
+    await asyncio.sleep(0)
+
+    req_events = [e for e in events if e["type"] == "confirmation_request"]
+    assert len(req_events) == 2, (
+        f"expected two confirmation_request emits, got {len(req_events)}"
+    )
+    assert req_events[1]["confirmation_id"] == req_b.confirmation_id
+
+    await manager.respond_to_confirmation(
+        conv_id, req_b.confirmation_id, approved=True)
+    await asyncio.wait_for(task_b, timeout=2.0)
+
+
+@pytest.mark.asyncio
+async def test_cancelled_queued_waiter_removed_from_queue(manager):
+    """A queued waiter task that gets cancelled mid-await must drop its
+    own queue entry so it isn't promoted later. Issue #485.
+    """
+    conv_id = "conv-queue-cancel"
+    manager._get_or_create(conv_id)
+
+    req_a = ConfirmationRequest(
+        action_type=ConfirmationAction.RUN_SHELL_COMMAND,
+        action_data={"command": "ls"},
+        message="A?",
+        timeout=5.0,
+    )
+    req_b = ConfirmationRequest(
+        action_type=ConfirmationAction.RUN_SHELL_COMMAND,
+        action_data={"command": "pwd"},
+        message="B?",
+        timeout=5.0,
+    )
+
+    task_a = asyncio.create_task(manager.request_confirmation(conv_id, req_a))
+    await asyncio.sleep(0)
+    task_b = asyncio.create_task(manager.request_confirmation(conv_id, req_b))
+    await asyncio.sleep(0)
+
+    state = manager.get_state(conv_id)
+    assert state is not None
+    assert state.pending_confirmation is req_a
+    assert len(state.confirmation_queue) == 1
+
+    # Cancel B's task while it's still queued.
+    task_b.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task_b
+    # B's entry should be gone.
+    assert state.confirmation_queue == []
+
+    # A still resolves normally and no ghost-promotion happens.
+    await manager.respond_to_confirmation(
+        conv_id, req_a.confirmation_id, approved=True)
+    resp_a = await asyncio.wait_for(task_a, timeout=2.0)
+    assert resp_a.approved is True
+    assert state.pending_confirmation is None
+    assert state.confirmation_queue == []
+
+
+@pytest.mark.asyncio
+async def test_cancelled_after_promote_drains_to_next(manager):
+    """If a queued waiter is cancelled after it has been promoted to the
+    active slot (but before it consumed the promote signal), its active
+    slot must be cleared and the next queued entry must be promoted —
+    otherwise the queue stalls. Issue #485.
+    """
+    conv_id = "conv-queue-cancel-after-promote"
+    manager._get_or_create(conv_id)
+
+    events: list[dict] = []
+
+    async def cb(event):
+        events.append(event)
+
+    manager.subscribe(conv_id, cb)
+
+    req_a = ConfirmationRequest(
+        action_type=ConfirmationAction.RUN_SHELL_COMMAND,
+        action_data={"command": "ls"},
+        message="A?",
+        timeout=5.0,
+    )
+    req_b = ConfirmationRequest(
+        action_type=ConfirmationAction.RUN_SHELL_COMMAND,
+        action_data={"command": "pwd"},
+        message="B?",
+        timeout=5.0,
+    )
+    req_c = ConfirmationRequest(
+        action_type=ConfirmationAction.RUN_SHELL_COMMAND,
+        action_data={"command": "echo c"},
+        message="C?",
+        timeout=5.0,
+    )
+
+    task_a = asyncio.create_task(manager.request_confirmation(conv_id, req_a))
+    await asyncio.sleep(0)
+    task_b = asyncio.create_task(manager.request_confirmation(conv_id, req_b))
+    await asyncio.sleep(0)
+    task_c = asyncio.create_task(manager.request_confirmation(conv_id, req_c))
+    await asyncio.sleep(0)
+
+    state = manager.get_state(conv_id)
+    assert state is not None
+    assert len(state.confirmation_queue) == 2
+
+    # Approve A — B gets promoted, but before B's task observes the
+    # promote signal and emits its own confirmation_request, cancel B.
+    # We approve A then immediately cancel B; the run-order of A's
+    # post-wait promote vs B's wakeup is implementation-defined, but
+    # the post-condition we test (C is promoted, queue drains) must
+    # hold either way.
+    await manager.respond_to_confirmation(
+        conv_id, req_a.confirmation_id, approved=True)
+    task_b.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task_b
+    await asyncio.wait_for(task_a, timeout=2.0)
+    # Yield so any pending promote work completes.
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    # C must have been promoted to active. The queue must be empty.
+    assert state.pending_confirmation is req_c
+    assert state.confirmation_queue == []
+
+    # C is resolvable.
+    await manager.respond_to_confirmation(
+        conv_id, req_c.confirmation_id, approved=True)
+    resp_c = await asyncio.wait_for(task_c, timeout=2.0)
+    assert resp_c.approved is True
+
+
+@pytest.mark.asyncio
+async def test_queued_confirmation_timeout_starts_at_promote(manager):
+    """A queued confirmation's ``request.timeout`` is the post-promote
+    countdown, not the post-submission countdown. While queued, the
+    waiter blocks on its ``promoted_event`` indefinitely so a
+    long-running active confirmation doesn't silently deny everything
+    queued behind it. Issue #485.
+    """
+    import time
+
+    conv_id = "conv-queue-timeout-promote"
+    manager._get_or_create(conv_id)
+
+    req_a = ConfirmationRequest(
+        action_type=ConfirmationAction.RUN_SHELL_COMMAND,
+        action_data={"command": "ls"},
+        message="A?",
+        timeout=5.0,  # long; we control resolution explicitly
+    )
+    req_b = ConfirmationRequest(
+        action_type=ConfirmationAction.RUN_SHELL_COMMAND,
+        action_data={"command": "pwd"},
+        message="B?",
+        timeout=0.1,  # short post-promote deadline
+    )
+
+    task_a = asyncio.create_task(manager.request_confirmation(conv_id, req_a))
+    await asyncio.sleep(0)
+    submitted_at = time.monotonic()
+    task_b = asyncio.create_task(manager.request_confirmation(conv_id, req_b))
+    await asyncio.sleep(0)
+
+    state = manager.get_state(conv_id)
+    assert state is not None
+    assert state.pending_confirmation is req_a
+    assert len(state.confirmation_queue) == 1
+
+    # Wait longer than B's timeout while A is still active. B must NOT
+    # time out while queued.
+    await asyncio.sleep(0.25)
+    assert not task_b.done(), (
+        "B should still be queued and not timed out — "
+        "timeout countdown should only start post-promote"
+    )
+
+    # Resolve A. B promotes; its 0.1s timeout starts now.
+    await manager.respond_to_confirmation(
+        conv_id, req_a.confirmation_id, approved=True)
+    await asyncio.wait_for(task_a, timeout=2.0)
+    promoted_at = time.monotonic()
+
+    # B times out. Its task returns a denial. The time-from-promotion
+    # must be roughly request.timeout (0.1s), not the time-from-submit.
+    resp_b = await asyncio.wait_for(task_b, timeout=2.0)
+    timed_out_at = time.monotonic()
+
+    assert resp_b.approved is False, "B should time out post-promote"
+    assert resp_b.confirmation_id == req_b.confirmation_id
+
+    post_promote_elapsed = timed_out_at - promoted_at
+    post_submit_elapsed = timed_out_at - submitted_at
+    # post-promote elapsed should be approximately 0.1s; allow a wide
+    # margin for CI jitter.
+    assert 0.05 < post_promote_elapsed < 0.5, (
+        f"B timeout should fire ~0.1s after promote, got "
+        f"{post_promote_elapsed:.3f}s"
+    )
+    # post-submit elapsed must clearly exceed the 0.1s timeout — proves
+    # the waiter wasn't ticking while queued.
+    assert post_submit_elapsed > 0.3, (
+        f"B timeout fired too quickly post-submit ({post_submit_elapsed:.3f}s)"
+        " — queued waiter may have been ticking instead of awaiting promote"
+    )
+
+
+@pytest.mark.asyncio
+async def test_cancel_pending_promotes_next_queued(manager):
+    """``cancel_pending_confirmation`` cancels the active confirmation
+    and the next queued entry promotes. Cancel-as-cleanup must not
+    drain the queue or skip the queued entries. Issue #485.
+    """
+    conv_id = "conv-cancel-promote"
+    manager._get_or_create(conv_id)
+
+    events: list[dict] = []
+
+    async def cb(event):
+        events.append(event)
+
+    manager.subscribe(conv_id, cb)
+
+    req_a = ConfirmationRequest(
+        action_type=ConfirmationAction.RUN_SHELL_COMMAND,
+        action_data={"command": "ls"},
+        message="A?",
+        timeout=5.0,
+    )
+    req_b = ConfirmationRequest(
+        action_type=ConfirmationAction.RUN_SHELL_COMMAND,
+        action_data={"command": "pwd"},
+        message="B?",
+        timeout=5.0,
+    )
+
+    task_a = asyncio.create_task(manager.request_confirmation(conv_id, req_a))
+    await asyncio.sleep(0)
+    task_b = asyncio.create_task(manager.request_confirmation(conv_id, req_b))
+    await asyncio.sleep(0)
+
+    state = manager.get_state(conv_id)
+    assert state is not None
+    assert state.pending_confirmation is req_a
+
+    cleared = await manager.cancel_pending_confirmation(conv_id)
+    assert cleared is True
+
+    # A receives denial; B promotes and is resolvable.
+    resp_a = await asyncio.wait_for(task_a, timeout=2.0)
+    assert resp_a.approved is False
+    assert resp_a.confirmation_id == req_a.confirmation_id
+
+    # Yield so B's queued waiter wakes and the post-promote emit fires.
+    await asyncio.sleep(0)
+    assert state.pending_confirmation is req_b
+    assert state.confirmation_queue == []
+
+    # Emit ordering: two confirmation_request events (A's active, then
+    # B's promoted). cancel_pending_confirmation itself does not emit a
+    # confirmation_response (pre-existing behavior — cancel is a
+    # cleanup side-channel), so we only assert on the request stream.
+    request_events = [
+        e for e in events if e["type"] == "confirmation_request"
+    ]
+    assert [e["confirmation_id"] for e in request_events] == [
+        req_a.confirmation_id, req_b.confirmation_id,
+    ], "expected A's request then B's promoted request"
+
+    await manager.respond_to_confirmation(
+        conv_id, req_b.confirmation_id, approved=True)
+    resp_b = await asyncio.wait_for(task_b, timeout=2.0)
+    assert resp_b.approved is True
+
+
+@pytest.mark.asyncio
+async def test_cancel_pending_with_empty_queue_unchanged(manager):
+    """``cancel_pending_confirmation`` with no queued entries behaves
+    exactly as before — the active confirmation gets a denial and no
+    extra emits fire. Regression guard for the no-queue path. Issue
+    #485.
+    """
+    conv_id = "conv-cancel-empty-queue"
+    manager._get_or_create(conv_id)
+
+    events: list[dict] = []
+
+    async def cb(event):
+        events.append(event)
+
+    manager.subscribe(conv_id, cb)
+
+    request = ConfirmationRequest(
+        action_type=ConfirmationAction.RUN_SHELL_COMMAND,
+        action_data={"command": "ls"},
+        message="A?",
+        timeout=5.0,
+    )
+
+    task = asyncio.create_task(manager.request_confirmation(conv_id, request))
+    await asyncio.sleep(0)
+
+    state = manager.get_state(conv_id)
+    assert state is not None
+    assert state.confirmation_queue == []
+
+    cleared = await manager.cancel_pending_confirmation(conv_id)
+    assert cleared is True
+
+    response = await asyncio.wait_for(task, timeout=2.0)
+    assert response.approved is False
+    assert response.confirmation_id == request.confirmation_id
+
+    assert state.pending_confirmation is None
+    assert state.confirmation_queue == []
+
+    # Only one confirmation_request emit (the initial one) — no
+    # spurious promote-emit on the empty queue.
+    request_emits = [e for e in events if e["type"] == "confirmation_request"]
+    assert len(request_emits) == 1
