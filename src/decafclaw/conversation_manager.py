@@ -138,6 +138,43 @@ _PERSISTED_FIELD_NAMES: frozenset[str] = frozenset(
 
 
 @dataclass
+class _QueuedConfirmation:
+    """A confirmation request waiting to become active.
+
+    Holds the request, a per-request asyncio.Event the waiter blocks
+    on (``promoted_event``), and a slot for the freshly-installed
+    active ``confirmation_event`` (``active_event``). The promote
+    helper writes ``active_event`` BEFORE signalling ``promoted_event``
+    so the waiter never has to re-read ``state.confirmation_event``
+    after waking — that re-read had a narrow race window where a
+    concurrent caller could null the field out between wake and lock
+    re-acquisition (Copilot review on #485 PR). Issue #485.
+    """
+    request: ConfirmationRequest
+    promoted_event: asyncio.Event = field(default_factory=asyncio.Event)
+    active_event: asyncio.Event | None = None
+
+
+def _confirmation_request_payload(request: ConfirmationRequest) -> dict:
+    """Build the ``confirmation_request`` emit payload for a request.
+
+    Shared by the initial-active emit and every promote-emit in
+    request_confirmation / respond_to_confirmation /
+    cancel_pending_confirmation (issue #485).
+    """
+    return {
+        "type": "confirmation_request",
+        "confirmation_id": request.confirmation_id,
+        "action_type": request.action_type.value,
+        "action_data": request.action_data,
+        "message": request.message,
+        "approve_label": request.approve_label,
+        "deny_label": request.deny_label,
+        "tool_call_id": request.tool_call_id,
+    }
+
+
+@dataclass
 class ConversationState:
     """Per-conversation state managed by the ConversationManager."""
     conv_id: str = ""
@@ -170,6 +207,13 @@ class ConversationState:
     #     clear (all under the lock for the same durability reason)
     #   - cancel_turn's paired read of cancel_event/agent_task
     #   - recover_confirmation's atomic pop of pending_confirmation
+    #   - confirmation_queue mutations and
+    #     _promote_next_confirmation_unlocked side-effects (issue #485)
+    #     — enqueue-on-collision, promote-on-clear, and queued-waiter
+    #     cleanup all happen under the lock so the queue ordering and
+    #     the active-slot transitions stay consistent for concurrent
+    #     request_confirmation / respond_to_confirmation /
+    #     cancel_pending_confirmation callers
     # NOT held during:
     #   - the agent task body itself (asyncio.create_task returns
     #     immediately so the caller's lock-acquire is released before
@@ -189,6 +233,12 @@ class ConversationState:
     pending_confirmation: ConfirmationRequest | None = None
     confirmation_event: asyncio.Event | None = None
     confirmation_response: ConfirmationResponse | None = None
+
+    # FIFO queue of confirmations awaiting their turn (issue #485). Each
+    # entry is a request that arrived while another was active; the waiter
+    # blocks on the entry's ``promoted_event`` until
+    # ``_promote_next_confirmation_unlocked`` moves it to the active slot.
+    confirmation_queue: list[_QueuedConfirmation] = field(default_factory=list)
 
     # Per-conversation persistent state (survives across turns).
     # See PersistedTurnState for what lives here and how save/restore
@@ -503,6 +553,19 @@ class ConversationManager:
             state.confirmation_response = response
             state.pending_confirmation = None
             state.confirmation_event = None
+            # Queue-promotion ownership splits on waiter presence:
+            #   * Live waiter: it clears ``confirmation_response``
+            #     itself and calls
+            #     ``_clear_active_and_promote_unlocked`` from its
+            #     post-wait block.
+            #   * No waiter (recovery path below): we clear
+            #     ``confirmation_response`` and explicitly call
+            #     ``_promote_next_confirmation_unlocked`` after the
+            #     recovery handler dispatches, so queued entries
+            #     don't get orphaned.
+            # We do NOT promote here under the same lock as the claim,
+            # because that would clobber a live waiter's view of
+            # ``confirmation_response``. (Issue #485.)
 
         # Emit to subscribers outside the lock (subscriber awaits may
         # do arbitrary I/O). If emit fails, the response is already
@@ -529,7 +592,8 @@ class ConversationManager:
             # state.confirmation_response under the lock (we already
             # cleared pending_confirmation / confirmation_event
             # above; request_confirmation's success path tolerates
-            # those being None) and then clear confirmation_response.
+            # those being None) and then clear confirmation_response
+            # and promote the next queued confirmation (issue #485).
             waiter_event.set()
         else:
             # No running loop — dispatch recovery using the request
@@ -556,6 +620,17 @@ class ConversationManager:
                     if state.pending_confirmation is None:
                         state.pending_confirmation = claimed_request
                 raise
+            # Recovery dispatched successfully. There's no running
+            # waiter to promote the queue, so do it ourselves: if any
+            # request_confirmation calls landed while the recovered
+            # confirmation was active, they're queued and need
+            # promotion. ``_promote_next_confirmation_unlocked`` is a
+            # no-op if a parallel request_confirmation already won the
+            # active slot. The promoted request's own queued waiter
+            # will emit its ``confirmation_request`` payload when it
+            # wakes; we don't emit here. (Issue #485.)
+            async with state.lock:
+                self._promote_next_confirmation_unlocked(state, conv_id)
 
     async def cancel_pending_confirmation(self, conv_id: str) -> bool:
         """Drop a pending confirmation without triggering recovery.
@@ -619,16 +694,35 @@ class ConversationManager:
                     "for conv %s; pending state untouched",
                     conv_id[:8])
                 raise
-            # Archive succeeded — claim the slot for the live waiter
-            # (so request_confirmation's post-wait block observes our
-            # denial) and clear pending state atomically.
-            state.confirmation_response = response
-            state.pending_confirmation = None
-            state.confirmation_event = None
+            # Archive succeeded. Behavior splits on whether a live
+            # waiter is present:
+            #   * Live waiter: claim the slot (set
+            #     ``confirmation_response``) so the waiter's post-wait
+            #     block observes our denial when it re-acquires the
+            #     lock, then clear pending/event. The waiter promotes
+            #     any queued entry from there.
+            #   * No live waiter: nothing will consume a claim, so
+            #     just clear pending/event and promote the next queued
+            #     confirmation directly. Setting and then clearing
+            #     ``confirmation_response`` in this branch would be a
+            #     dead write under the same lock (Copilot review on
+            #     this PR). Skipping it makes the no-waiter case
+            #     symmetric with the recovery-path promotion in
+            #     ``respond_to_confirmation``. The promoted request's
+            #     own queued waiter emits its ``confirmation_request``
+            #     when it wakes; we don't emit here.
+            if waiter_event is not None:
+                state.confirmation_response = response
+                state.pending_confirmation = None
+                state.confirmation_event = None
+            else:
+                state.pending_confirmation = None
+                state.confirmation_event = None
+                self._promote_next_confirmation_unlocked(state, conv_id)
         # Signal the live waiter outside the lock so its post-wait
         # block can acquire the lock and consume our denial.
         # request_confirmation will null out confirmation_response
-        # itself under the lock.
+        # itself under the lock and promote the next queued entry.
         if waiter_event is not None:
             waiter_event.set()
         return True
@@ -760,6 +854,70 @@ class ConversationManager:
         state.history = history
         return history
 
+    def _promote_next_confirmation_unlocked(
+        self, state: "ConversationState", conv_id: str,
+    ) -> ConfirmationRequest | None:
+        """Move the next queued confirmation (if any) into the active slot.
+
+        Caller must hold ``state.lock``. Returns the promoted request so
+        the caller can emit the ``confirmation_request`` event outside
+        the lock, or None when there is nothing to promote (issue #485).
+
+        Defensive precondition: if ``state.pending_confirmation`` is
+        already non-None, the active slot is still claimed (e.g. the
+        recovery branch's failed-dispatch restored the prior request,
+        or a parallel ``request_confirmation`` already won the empty
+        slot). In that case promote is a no-op so we don't clobber the
+        active claim; the next clear-and-promote pass will pick the
+        queue back up.
+
+        Side effects under the caller's lock when a queued entry is
+        promoted:
+          - ``state.pending_confirmation = queued.request``
+          - ``state.confirmation_event = asyncio.Event()``  (fresh)
+          - ``state.confirmation_response = None``
+          - ``queued.active_event = state.confirmation_event`` (so the
+            waker doesn't need to re-read ``state.confirmation_event``
+            after wake, avoiding a race window where a concurrent caller
+            could null the field; Copilot review on #485 PR)
+          - ``queued.promoted_event.set()``  (wakes the queued waiter)
+        """
+        if state.pending_confirmation is not None:
+            return None
+        if not state.confirmation_queue:
+            return None
+        queued = state.confirmation_queue.pop(0)
+        state.pending_confirmation = queued.request
+        state.confirmation_event = asyncio.Event()
+        state.confirmation_response = None
+        # Hand the freshly-installed event to the queued waiter
+        # directly. Setting active_event BEFORE promoted_event.set()
+        # ensures the wake-and-read sequence is race-free even though
+        # the lock is released across the waiter's await.
+        queued.active_event = state.confirmation_event
+        queued.promoted_event.set()
+        log.info("Promoted queued confirmation for conv %s: %s",
+                 conv_id[:8], queued.request.action_type.value)
+        return queued.request
+
+    def _clear_active_and_promote_unlocked(
+        self, state: "ConversationState", conv_id: str,
+    ) -> None:
+        """Null out the active-confirmation triple and promote the next
+        queued entry (if any).
+
+        Caller must hold ``state.lock``. This is the post-resolution
+        cleanup pattern shared by the three branches of
+        ``request_confirmation``'s post-wait claim block and the
+        already-promoted limb of the queued-waiter cancellation cleanup
+        (issue #485). Extracting it ensures every clear-active path
+        drives queue promotion the same way.
+        """
+        state.pending_confirmation = None
+        state.confirmation_event = None
+        state.confirmation_response = None
+        self._promote_next_confirmation_unlocked(state, conv_id)
+
     async def request_confirmation(
         self,
         conv_id: str,
@@ -778,34 +936,86 @@ class ConversationManager:
         callers observe a consistent view (issue #440). The lock is
         released across the ``confirmation_event.wait()`` await so the
         responder can acquire it to set the event.
+
+        Queueing (issue #485): if another confirmation is already active
+        on this conv, the new request is appended to
+        ``state.confirmation_queue`` and the caller blocks on its own
+        ``promoted_event`` (no timeout — ``request.timeout`` only starts
+        once the request becomes active). When the active confirmation
+        resolves (respond / cancel / timeout) the
+        ``_promote_next_confirmation_unlocked`` helper moves the next
+        queued request into the active slot and signals its waiter.
         """
         state = self._get_or_create(conv_id)
 
-        # Persist to archive (outside the lock — sync I/O).
+        # Persist to archive (outside the lock — sync I/O). Archive at
+        # enqueue time so crash recovery sees every requested
+        # confirmation, not only the currently-active one.
         from .archive import append_message
         append_message(self.config, conv_id, request.to_archive_message())
 
-        # Set up waiting state under the lock so concurrent responders
-        # see all three fields consistently.
+        # Install as the active confirmation, or queue behind it.
         async with state.lock:
-            state.pending_confirmation = request
-            state.confirmation_event = asyncio.Event()
-            state.confirmation_response = None
-            event = state.confirmation_event
+            if state.pending_confirmation is None:
+                state.pending_confirmation = request
+                state.confirmation_event = asyncio.Event()
+                state.confirmation_response = None
+                event = state.confirmation_event
+                queued: _QueuedConfirmation | None = None
+            else:
+                queued = _QueuedConfirmation(request=request)
+                state.confirmation_queue.append(queued)
+                event = None  # filled in after promotion
+                log.info(
+                    "Conv %s has active confirmation; queued new request "
+                    "(%d in queue)",
+                    conv_id[:8], len(state.confirmation_queue))
 
-        # Emit to subscribers so transports can show the confirmation UI
-        # (outside the lock — emit awaits subscribers).
-        await self.emit(conv_id, {
-            "type": "confirmation_request",
-            "confirmation_id": request.confirmation_id,
-            "action_type": request.action_type.value,
-            "action_data": request.action_data,
-            "message": request.message,
-            "approve_label": request.approve_label,
-            "deny_label": request.deny_label,
-            "tool_call_id": request.tool_call_id,
-        })
+        if queued is None:
+            # Active path: emit the confirmation_request event for the
+            # transports to render UI (outside the lock — emit awaits
+            # subscribers).
+            await self.emit(
+                conv_id, _confirmation_request_payload(request))
+        else:
+            # Queued path: wait (no timeout) for promotion. The promote
+            # helper will assign state.confirmation_event for our turn
+            # before signalling, so we re-read it under the lock.
+            #
+            # Cancellation handling has two shapes (issue #485):
+            #   1. Still queued: just drop our entry so no later
+            #      promotion picks the dead waiter.
+            #   2. Already promoted but cancel landed before we
+            #      consumed the active slot: clear the slot and
+            #      promote the next queued entry so the queue doesn't
+            #      stall on our corpse. (state.pending_confirmation is
+            #      ``request`` only in the just-promoted case — if a
+            #      racing path already replaced it, leave the slot
+            #      alone.)
+            try:
+                await queued.promoted_event.wait()
+            except asyncio.CancelledError:
+                async with state.lock:
+                    if queued in state.confirmation_queue:
+                        state.confirmation_queue.remove(queued)
+                    elif state.pending_confirmation is request:
+                        self._clear_active_and_promote_unlocked(
+                            state, conv_id)
+                raise
+            # The promote helper assigned our active event to
+            # ``queued.active_event`` BEFORE signalling
+            # ``promoted_event``, so we can capture it directly
+            # without re-reading ``state.confirmation_event``. That
+            # re-read had a narrow race window where a concurrent
+            # caller could null the field (Copilot review on this PR).
+            event = queued.active_event
+            await self.emit(
+                conv_id, _confirmation_request_payload(request))
 
+        # By either path (active or queued-then-promoted) ``event`` is
+        # bound to the live ``state.confirmation_event`` for this
+        # request.
+        assert event is not None
         # Wait for response or timeout (lock not held — responder
         # needs to acquire it to claim the slot and set the event).
         try:
@@ -827,20 +1037,16 @@ class ConversationManager:
         #    raced and cleared the slot; treat as denial without
         #    archiving (cancel already wrote its own denial)
         # (Copilot review on #484.)
-        # Hold the lock across the timeout archive write to keep the
-        # in-memory state and the archive in sync — if the write
-        # fails, we leave pending state intact so the caller (or a
-        # later retry / startup recovery) can try again. Other paths
-        # (claimed / cancel-raced) don't archive here so the read-
-        # and-clear stays cheap (Copilot review on #484).
+        # Each branch ends by promoting the next queued confirmation
+        # (if any) under the same lock so the queue can't stall (issue
+        # #485). The promote helper signals the queued waiter; the
+        # caller (us) emits the new confirmation_request after lock
+        # release.
         needs_timeout_emit = False
         async with state.lock:
             claimed = state.confirmation_response
             if claimed is not None:
                 response = claimed
-                state.pending_confirmation = None
-                state.confirmation_event = None
-                state.confirmation_response = None
             elif timed_out:
                 log.info("Confirmation timed out for conv %s: %s",
                          conv_id[:8], request.message)
@@ -859,10 +1065,6 @@ class ConversationManager:
                         "leaving pending state intact for retry",
                         conv_id[:8])
                     raise
-                # Archive succeeded — now safe to clear pending state.
-                state.pending_confirmation = None
-                state.confirmation_event = None
-                state.confirmation_response = None
                 needs_timeout_emit = True
             else:
                 # Signaled but no response — `cancel_pending_confirmation`
@@ -872,12 +1074,14 @@ class ConversationManager:
                     confirmation_id=request.confirmation_id,
                     approved=False,
                 )
-                state.pending_confirmation = None
-                state.confirmation_event = None
-                state.confirmation_response = None
                 log.info("Confirmation for conv %s was cancelled out "
                          "from under the waiter; returning denial",
                          conv_id[:8])
+            # All three branches converge on the same post-resolution
+            # cleanup: null out the active-confirmation triple and
+            # promote the next queued entry. The shared helper keeps
+            # the three branches from drifting (issue #485).
+            self._clear_active_and_promote_unlocked(state, conv_id)
 
         if needs_timeout_emit:
             await self.emit(conv_id, {
@@ -885,6 +1089,12 @@ class ConversationManager:
                 "confirmation_id": request.confirmation_id,
                 "approved": False,
             })
+        # Note: when ``_promote_next_confirmation_unlocked`` promoted
+        # an entry, the promoted request's own queued waiter (in
+        # another ``request_confirmation`` call) is now awake and will
+        # emit its own ``confirmation_request`` payload — we
+        # deliberately don't emit here to avoid duplicate emits per
+        # promotion (issue #485).
 
         return response
 
