@@ -46,6 +46,7 @@ Tests are YAML files with a list of test cases. Single-turn form:
 | `setup.workspace_files` | Map of `{relative_path: content}` to seed into the test workspace. Paths are sandboxed — no `..` escape |
 | `setup.embeddings_fixture` | Path to a pre-built embeddings.db to copy into the workspace |
 | `setup.auto_confirm` | Default `true`. Auto-approve (or deny) all tool confirmation requests (shell, email, `EndTurnConfirm`, etc.) |
+| `setup.max_tool_iterations` | Override `config.agent.max_tool_iterations` for this test only. Use for tests that need to exercise budget-exhaustion behavior (e.g., the grace turn) without changing the global default |
 
 ### Expect assertions
 

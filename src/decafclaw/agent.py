@@ -26,6 +26,7 @@ from .archive import append_message
 from .compaction import compact_history
 from .context_cleanup import clear_old_tool_results
 from .context_composer import ComposerMode, ContextComposer
+from .iteration_budget import IterationBudget
 from .llm import call_llm
 from .media import EndTurnConfirm, ToolResult, WidgetInputPause, extract_workspace_media
 from .persistence import read_skill_data, read_skills_state, write_skill_data, write_skills_state
@@ -447,6 +448,9 @@ class TurnRunner:
     retrieved_context_text: str = ""
     composed: "ComposedContext | None" = None
     composer: "ContextComposer | None" = None
+    budget: IterationBudget = field(
+        default_factory=lambda: IterationBudget(remaining=0),
+    )
 
     async def run(self) -> "ToolResult":
         """Process a single user message through the agent loop."""
@@ -463,11 +467,22 @@ class TurnRunner:
             self.last_reflection = None  # last ReflectionResult, for archiving after final response
 
             self.accumulated_text_parts = []  # text from iterations that also had tool calls
+            self.budget = IterationBudget(
+                remaining=self.config.agent.max_tool_iterations,
+            )
 
-            for iteration in range(self.config.agent.max_tool_iterations):
+            iteration = 0
+            while self.budget.consume():
                 outcome = await self._run_iteration(iteration)
                 if isinstance(outcome, _Final):
                     return outcome.result
+                iteration += 1
+
+            # Budget exhausted — try one grace turn before giving up.
+            if self.budget.grace_turn():
+                grace_result = await self._run_grace_turn()
+                if grace_result is not None:
+                    return grace_result
             return await self._finalize_max_iterations()
 
         finally:
@@ -673,6 +688,9 @@ class TurnRunner:
         if not content:
             if self.empty_retries < 1:
                 self.empty_retries += 1
+                # Empty response — refund the iteration so the retry doesn't
+                # eat budget (the LLM produced nothing usable).
+                self.budget.refund()
                 log.warning("LLM returned empty response, retrying")
                 return _Continue()
             log.warning("LLM returned empty content with no tool calls (after retry)")
@@ -814,6 +832,64 @@ class TurnRunner:
             return ReflectionOutcome(text=None, should_retry=True)
 
         return ReflectionOutcome(text=content, should_retry=False)
+
+    async def _run_grace_turn(self) -> "ToolResult | None":
+        """One-shot final LLM call after budget exhaustion. Appends a
+        directive user-role nudge, calls the LLM with tools=[], archives
+        the result. (User-role chosen over system-role because models
+        weight user messages more heavily mid-turn — matches the
+        reflection-critique pattern.)
+
+        Returns the final ToolResult on success, or None on exception so the
+        caller falls back to ``_finalize_max_iterations`` (always-something
+        contract — the user never sees a turn that produces no output)."""
+        log.info("Iteration budget exhausted — making grace-turn LLM call")
+        # Bump _current_iteration so llm_start/llm_end events for the grace
+        # call don't reuse the last tool-enabled iteration's number — event
+        # consumers (UI iteration counters, diagnostics) key off this.
+        self.ctx._current_iteration += 1
+        # User-role nudge (models weight user-role > system in mid-turn
+        # context, matching the reflection critique pattern). Directive
+        # phrasing — without "STOP" / "Do not continue", models keep trying
+        # to do the original task and bail mid-stream when they realize they
+        # can't call a tool.
+        grace_note = {
+            "role": "user",
+            "content": (
+                "[iteration_limit] You have reached your tool iteration "
+                "budget. STOP. Do not continue the task you were given — "
+                "no more tool calls are available. Reply with a brief "
+                "closing message (1-3 sentences) that summarizes what you "
+                "accomplished so far and tells the user you've hit your "
+                "iteration limit."
+            ),
+        }
+        self.messages.append(grace_note)
+        try:
+            response = await _call_llm_with_events(
+                self.ctx, self.config, self.messages, [],
+                **self.model_override,
+            )
+        except Exception as exc:
+            log.warning(
+                f"Grace-turn LLM call failed: {exc!r} — falling back to notice",
+            )
+            return None
+
+        content = response.get("content") or ""
+        if not content:
+            # Grace turn produced no usable output — fall back to the notice
+            # path so the user always sees *something* (always-something
+            # contract). _finalize_max_iterations will archive the notice.
+            log.warning("Grace-turn LLM call returned empty content — falling back to notice")
+            return None
+        final_msg = {"role": "assistant", "content": content}
+        self.history.append(final_msg)
+        _archive(self.ctx, final_msg)
+        await _maybe_compact(
+            self.ctx, self.config, self.history, self.prompt_tokens,
+        )
+        return self._extract_workspace_media(content)
 
     async def _finalize_max_iterations(self) -> "ToolResult":
         """Hit max iterations without a final response. Preserve any

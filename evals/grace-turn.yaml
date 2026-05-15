@@ -1,0 +1,32 @@
+# Eval for the grace-turn behavior (#448).
+#
+# When `max_tool_iterations` is exhausted, the agent loop makes one final
+# no-tools LLM call (the "grace turn") so the model can wrap up coherently
+# instead of being cut off mid-task. This eval forces a budget-exhaustion
+# scenario and asserts the grace turn produced a wrap-up that:
+#   - acknowledges the iteration limit
+#   - does NOT include the `[Agent reached max tool iterations …]` fallback
+#     notice (that notice only appears if the grace LLM call itself failed)
+#
+# Self-contained — `setup.max_tool_iterations: 3` pins the budget for this
+# test, so it runs correctly as part of the default `make eval` invocation.
+
+- name: "grace turn produces wrap-up when budget exhausts on sequential tools"
+  setup:
+    auto_confirm: true
+    max_tool_iterations: 3
+  input: |
+    Use the shell tool to run these commands ONE AT A TIME, commenting briefly
+    on each result before running the next: (1) `date`, (2) `echo $HOME`,
+    (3) `uname -s`, (4) `whoami`, (5) `pwd`. After all five, give me a
+    one-line summary.
+  expect:
+    # Grace turn produced a coherent wrap-up that names the limit.
+    response_contains:
+      - "re:(?i)iteration (limit|budget)|ran out|out of (iterations|tool)|couldn't finish"
+    # Fallback notice should NOT appear — that means the grace LLM call
+    # itself failed and we hit `_finalize_max_iterations` instead.
+    response_not_contains:
+      - "Agent reached max tool iterations"
+    # Budget=3 means at most 3 tool calls before the grace turn fires.
+    max_tool_calls: 3
