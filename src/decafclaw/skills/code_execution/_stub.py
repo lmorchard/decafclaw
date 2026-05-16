@@ -70,8 +70,22 @@ def generate_stub_source(allowed: tuple[str, ...], *, sock_path: str) -> str:
     `DECAFCLAW_RPC_SOCKET` at runtime so the same generated file can be
     inspected without knowing where it would have connected.
     """
-    accessors = "\n    ".join(
+    accessor_defs = [
         f"def {name}(self, **kwargs): return _call({name!r}, kwargs)"
         for name in allowed
+    ]
+    # Replace Python's default "Did you mean..." string-similarity hint
+    # (which suggests e.g. vault_write when the real issue is that
+    # vault_list isn't allowlisted) with a directly actionable message.
+    available = ", ".join(sorted(allowed))
+    getattr_def = (
+        "def __getattr__(self, name):\n"
+        "        raise AttributeError(\n"
+        '            f"tool {name!r} is not in the code_execution sandbox "\n'
+        f'            f"allowlist. Available: {available}. "\n'
+        '            "Call the tool directly outside code_execution if you '
+        'need it."\n'
+        "        )"
     )
+    accessors = "\n    ".join(accessor_defs + [getattr_def])
     return _STUB_TEMPLATE.format(accessors=accessors)

@@ -15,7 +15,7 @@ import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
-from decafclaw.media import ToolResult
+from decafclaw.media import ToolResult, WidgetRequest
 from decafclaw.skills.code_execution import _sandbox
 from decafclaw.tools import execute_tool
 
@@ -108,7 +108,7 @@ def _make_tool_handler(
     return handler
 
 
-def _render_result(s: _sandbox.SandboxResult) -> ToolResult:
+def _render_result(s: _sandbox.SandboxResult, code: str) -> ToolResult:
     lines = [
         f"**status:** {s.status}",
         f"**elapsed:** {s.elapsed_seconds:.2f}s",
@@ -119,20 +119,35 @@ def _render_result(s: _sandbox.SandboxResult) -> ToolResult:
             f"  - {c['tool']}({', '.join(c['args_keys'])}) "
             f"{'ok' if c['ok'] else 'err'} {c['duration_ms']}ms"
         )
+    lines.append("**code:**\n```python\n" + code + "\n```")
     if s.stdout:
         lines.append("**stdout:**\n```\n" + s.stdout + "\n```")
     if s.stderr:
         lines.append("**stderr:**\n```\n" + s.stderr + "\n```")
+    # The code_block widget renders inline collapsed with an "Open in
+    # Canvas" affordance — much friendlier than the fenced text block
+    # for non-trivial scripts. The text fallback above stays for TUI
+    # users and for the LLM's own view of the result.
+    widget = WidgetRequest(
+        widget_type="code_block",
+        data={
+            "code": code,
+            "language": "python",
+            "filename": "script.py",
+        },
+    )
     return ToolResult(
         text="\n".join(lines),
         data={
             "status": s.status,
             "elapsed_seconds": s.elapsed_seconds,
             "tool_calls": s.tool_calls,
+            "code": code,
             "stdout": s.stdout,
             "stderr": s.stderr,
             "exit_code": s.exit_code,
         },
+        widget=widget,
     )
 
 
@@ -143,7 +158,7 @@ async def tool_code_execution(ctx, code: str) -> ToolResult:
         allowed=SANDBOX_ALLOWED_TOOLS,
         progress_publish=ctx.publish,
     )
-    return _render_result(result)
+    return _render_result(result, code)
 
 
 TOOLS = {"code_execution": tool_code_execution}
@@ -191,8 +206,12 @@ TOOL_DEFINITIONS = [
                 "occur). Script imports the "
                 "proxy as `from decafclaw_tools import dc`. Each "
                 "`dc.<tool>(...)` returns a ToolResultProxy with `.text`, "
-                "`.data`, `.error`. `print(...)` what you want returned to "
-                "the conversation."
+                "`.data`, `.error`. Most tools populate `.text` only — "
+                "`.data` is usually None and must be parsed from `.text` "
+                "(e.g. workspace_list returns one line per entry like "
+                "'<name> (<bytes>B)'; vault_search returns a numbered list "
+                "with '- <page>' bullets). `print(...)` what you want "
+                "returned to the conversation."
             ),
             "parameters": {
                 "type": "object",

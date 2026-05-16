@@ -61,6 +61,8 @@ Each `dc.<tool>(...)` call returns a result object with three attributes:
 - `.data` — structured dict or `None`
 - `.error` — error string or `None` if the call succeeded
 
+**Most allowlisted tools populate `.text` only — `.data` is usually `None`.** Treat `.text` as the source of truth and parse it inside the script. For example, `workspace_list` returns one line per entry like `"<name> (<bytes>B)"` for files (no trailing `/`) and `"<name>/"` for directories; `vault_search` returns a numbered list with `- <page>` bullets. Tabstack tools (`tabstack_extract_json`, `tabstack_research`) are the main exceptions that do return structured `.data`.
+
 ```python
 from decafclaw_tools import dc
 
