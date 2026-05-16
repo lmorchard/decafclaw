@@ -34,6 +34,23 @@ def main():
         format="%(asctime)s %(name)s %(levelname)s: %(message)s",
     )
 
+    # Silence three loggers that fire on every LLM call in eval context but
+    # are noise rather than signal here. All three remain WARNING-level in
+    # production where they carry useful information.
+    #   - tool_registry "Critical tool set exceeds budget" — fires per
+    #     `_build_tool_list`; informational ("Critical tools are included
+    #     anyway"). Tracked separately if we want to downgrade globally.
+    #   - tools.confirmation "No ConversationManager" — evals never wire one
+    #     up; the legacy event-bus path is the intended eval behavior.
+    #   - tool_execution "widget registry is not initialized" — evals don't
+    #     render widgets; stripping is the intended eval behavior.
+    for name in (
+        "decafclaw.tools.tool_registry",
+        "decafclaw.tools.confirmation",
+        "decafclaw.tool_execution",
+    ):
+        logging.getLogger(name).setLevel(logging.ERROR)
+
     # Load test cases
     path = Path(args.path)
     if path.is_dir():
