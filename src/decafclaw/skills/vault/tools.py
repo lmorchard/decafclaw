@@ -294,7 +294,23 @@ async def tool_vault_read(ctx, page: str) -> str | ToolResult:
     path = resolve_page(ctx.config, page)
     if path is None:
         return ToolResult(text=f"[error: vault page '{page}' not found]")
-    return ToolResult(text=path.read_text(), display_short_text=page)
+    content = path.read_text()
+    # Structured metadata for programmatic callers (code_execution sandbox).
+    # Body intentionally NOT echoed here — it's already in `text` and would
+    # double the tool-result token cost. Frontmatter is small and useful for
+    # filtering / sorting in scripts.
+    from decafclaw.frontmatter import parse_frontmatter
+    frontmatter, body = parse_frontmatter(content)
+    return ToolResult(
+        text=content,
+        display_short_text=page,
+        data={
+            "path": page,
+            "frontmatter": frontmatter,
+            "body_size": len(body),
+            "body_lines": body.count("\n") + (0 if body.endswith("\n") or not body else 1),
+        },
+    )
 
 
 async def tool_vault_write(ctx, page: str, content: str) -> str | ToolResult:
@@ -347,7 +363,14 @@ async def tool_vault_write(ctx, page: str, content: str) -> str | ToolResult:
         kind=KIND_UPDATE if existed else KIND_CREATE,
         path=path,
     )
-    return f"Vault page '{page}' saved."
+    return ToolResult(
+        text=f"Vault page '{page}' saved.",
+        data={
+            "path": page,
+            "created": not existed,
+            "bytes_written": len(content.encode("utf-8")),
+        },
+    )
 
 
 async def tool_vault_delete(ctx, page: str) -> ToolResult:
@@ -560,7 +583,7 @@ async def tool_vault_grant_folder(ctx, folder: str, reason: str) -> ToolResult:
     return ToolResult(text=f"Folder '{rel}' trusted for this conversation.")
 
 
-async def tool_vault_journal_append(ctx, tags: list[str], content: str) -> str:
+async def tool_vault_journal_append(ctx, tags: list[str], content: str) -> ToolResult:
     """Append a timestamped entry to today's journal file."""
     log.info(f"[tool:vault_journal_append] tags={tags}")
     now = datetime.now()
@@ -605,7 +628,16 @@ async def tool_vault_journal_append(ctx, tags: list[str], content: str) -> str:
         ctx.event_bus, ctx.config, kind=KIND_JOURNAL, path=filepath,
     )
     log.info(f"Saved journal entry tagged [{tag_str}]")
-    return f"Saved journal entry tagged [{tag_str}]"
+    vault_root = ctx.config.vault_root.resolve()
+    rel = str(filepath.resolve().relative_to(vault_root))
+    return ToolResult(
+        text=f"Saved journal entry tagged [{tag_str}]",
+        data={
+            "path": rel,
+            "tags": list(tags) if tags else [],
+            "entry_size": len(entry.encode("utf-8")),
+        },
+    )
 
 
 async def tool_vault_search(ctx, query: str, source_type: str = "",
@@ -661,10 +693,27 @@ async def tool_vault_search(ctx, query: str, source_type: str = "",
                         f"{r['entry_text']}")
                 text = "\n\n".join(lines)
                 widget = _semantic_results_widget(query, results)
+                # Structured shape for programmatic callers. Mirrors the
+                # widget rows but with the full entry_text for scripts that
+                # want to compute on snippets without re-fetching.
+                data_results = [
+                    {
+                        "path": r.get("file_path", "").removesuffix(".md"),
+                        "similarity": round(float(r.get("similarity", 0.0)), 3),
+                        "source_type": r.get("source_type", ""),
+                        "snippet": r.get("entry_text", ""),
+                    }
+                    for r in results
+                ]
                 return ToolResult(
                     text=text,
                     display_short_text=f"'{query}' — {len(results)} result(s)",
-                    widget=widget)
+                    widget=widget,
+                    data={
+                        "query": query,
+                        "mode": "semantic",
+                        "results": data_results,
+                    })
             # Fall through to substring
             log.info("Semantic search returned no results, falling back to substring")
         except Exception as e:
@@ -725,14 +774,20 @@ def _substring_search(config, query: str, days: int = 0,
 
     if not lines:
         msg = f"No results matching '{query}'." if query else "No files found."
-        return ToolResult(text=msg,
-                          display_short_text=f"'{query}' — no results")
+        return ToolResult(
+            text=msg,
+            display_short_text=f"'{query}' — no results",
+            data={"query": query, "mode": "substring", "results": []},
+        )
 
     text = f"Found {len(lines)} result(s):\n\n" + "\n".join(lines)
     widget = _substring_results_widget(query, rows)
-    return ToolResult(text=text,
-                      display_short_text=f"'{query}' — {len(lines)} result(s)",
-                      widget=widget)
+    return ToolResult(
+        text=text,
+        display_short_text=f"'{query}' — {len(lines)} result(s)",
+        widget=widget,
+        data={"query": query, "mode": "substring", "results": rows},
+    )
 
 
 def _semantic_results_widget(query: str,

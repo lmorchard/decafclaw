@@ -62,12 +62,12 @@ def test_resolve_safe_rejects_prefix_attack(config, tmp_data):
 
 def test_write_and_read(ctx):
     tool_workspace_write(ctx, "test.txt", "hello world")
-    assert "hello world" in tool_workspace_read(ctx, "test.txt")
+    assert "hello world" in _text(tool_workspace_read(ctx, "test.txt"))
 
 
 def test_write_creates_dirs(ctx):
     tool_workspace_write(ctx, "subdir/nested/file.txt", "content")
-    assert "content" in tool_workspace_read(ctx, "subdir/nested/file.txt")
+    assert "content" in _text(tool_workspace_read(ctx, "subdir/nested/file.txt"))
 
 
 def test_read_nonexistent(ctx):

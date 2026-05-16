@@ -41,6 +41,10 @@ def tool_notes_append(ctx, text: str) -> ToolResult:
         text=f"Saved note ({len(note.text)} chars). Recent notes are "
              f"auto-loaded into context on interactive turns; you can "
              f"also read them back via `notes_read`.",
+        data={
+            "timestamp": note.timestamp,
+            "chars": len(note.text),
+        },
     )
 
 
@@ -53,9 +57,21 @@ def tool_notes_read(ctx, limit: int = 20) -> ToolResult:
         limit = 20
     items = notes_core.read_notes(ctx.config, conv_id, limit=limit)
     if not items:
-        return ToolResult(text="[no notes yet]")
+        return ToolResult(
+            text="[no notes yet]",
+            data={"count": 0, "notes": []},
+        )
     rendered = notes_core.format_notes_for_context(items)
-    return ToolResult(text=rendered)
+    return ToolResult(
+        text=rendered,
+        data={
+            "count": len(items),
+            "notes": [
+                {"timestamp": n.timestamp, "text": n.text}
+                for n in items
+            ],
+        },
+    )
 
 
 NOTES_TOOLS = {

@@ -61,7 +61,25 @@ Each `dc.<tool>(...)` call returns a result object with three attributes:
 - `.data` — structured dict or `None`
 - `.error` — error string or `None` if the call succeeded
 
-**Every allowlisted tool populates `.text` only — `.data` is always `None`.** Treat `.text` as the source of truth and parse it inside the script. For example, `workspace_list` returns one line per entry like `"<name> (<bytes>B)"` for files (no trailing `/`) and `"<name>/"` for directories; `vault_search` returns a numbered list with `- <page>` bullets. `tabstack_extract_json` returns a JSON-serialized string you can `json.loads()` directly; `tabstack_research` returns a synthesized prose report.
+**Every allowlisted tool populates both `.text` (human-readable rendering) and `.data` (machine-readable structure).** Use whichever is more convenient — prefer `.data` for filtering/sorting/aggregating since you skip the parse step.
+
+Per-tool `.data` shapes (small + non-duplicative of `.text`):
+
+| Tool | `.data` shape |
+|------|---------------|
+| `vault_read` | `{"path", "frontmatter": dict, "body_size", "body_lines"}` (body is in `.text`) |
+| `vault_search` | `{"query", "mode": "semantic"\|"substring", "results": [{"path", "similarity", "snippet"} or {"page", "excerpt"/"modified"}]}` |
+| `vault_write` | `{"path", "created": bool, "bytes_written"}` |
+| `vault_journal_append` | `{"path", "tags": list, "entry_size"}` |
+| `workspace_read` | `{"path", "size", "lines", "range": [start, end], "truncated": bool}` (content is in `.text`) |
+| `workspace_list` | `{"path", "entries": [{"name", "is_dir", "size"}]}` |
+| `notes_read` | `{"count", "notes": [{"timestamp", "text"}]}` |
+| `notes_append` | `{"timestamp", "chars"}` |
+| `tabstack_extract_markdown` | `{"url", "size"}` (content is in `.text`) |
+| `tabstack_extract_json` | `{"url", "result": <parsed object>}` — skip the `json.loads` step |
+| `tabstack_research` | `{"query", "mode", "size"}` (report is in `.text`) |
+
+Body/content payloads stay in `.text` to avoid doubling the tool-result token cost when both copies would land in LLM context anyway.
 
 ```python
 from decafclaw_tools import dc
