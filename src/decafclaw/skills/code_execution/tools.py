@@ -138,11 +138,15 @@ def _render_result(s: _sandbox.SandboxResult, code: str) -> ToolResult:
     )
     return ToolResult(
         text="\n".join(lines),
+        # Script body is intentionally NOT on `data` — it's already in the
+        # rendered text (for TUI / LLM context) AND in the widget payload
+        # (for web UI). Adding it here would auto-render a third copy via
+        # the data → fenced-JSON convention, ballooning context for every
+        # subsequent turn.
         data={
             "status": s.status,
             "elapsed_seconds": s.elapsed_seconds,
             "tool_calls": s.tool_calls,
-            "code": code,
             "stdout": s.stdout,
             "stderr": s.stderr,
             "exit_code": s.exit_code,
