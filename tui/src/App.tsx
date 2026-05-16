@@ -37,8 +37,16 @@ function reducer(s: State, a: Action): State {
           { kind: "system", text: `[auth failed: ${a.reason}]` },
         ],
       };
-    case "closed":
-      return s;
+    case "closed": {
+      const reason = a.reason ? ` ${a.reason}` : "";
+      return {
+        ...s,
+        transcript: [
+          ...s.transcript,
+          { kind: "system", text: `[disconnected: ${a.code}${reason}]` },
+        ],
+      };
+    }
     case "clear_confirm":
       return { ...s, confirm: null };
   }
@@ -84,30 +92,27 @@ export function App({
   }, []);
 
   // Select the active conversation whenever the user picks one. WSClient
-  // silently drops sends before the socket is OPEN, and we don't have a
-  // buffered-send yet — so poll until conv_selected echoes back. We can detect
-  // that by watching state.conv_id (the dispatcher sets it on conv_selected).
+  // buffers sends until OPEN, so we don't need to poll — fire once per
+  // (pickedConv, state.conv_id) change. The buffer absorbs the pre-open
+  // race; the __reconnected handler re-sends after drops.
   useEffect(() => {
-    if (!pickedConv) return undefined;
-    let cancelled = false;
-    const t = setInterval(() => {
-      if (cancelled) return;
-      if (state.conv_id === pickedConv) {
-        clearInterval(t);
-        return;
-      }
-      client.send({ type: "select_conv", conv_id: pickedConv });
-    }, 250);
-    // Fire one attempt immediately so the common fast-open case doesn't wait.
+    if (!pickedConv) return;
+    if (state.conv_id === pickedConv) return;
     client.send({ type: "select_conv", conv_id: pickedConv });
-    return () => {
-      cancelled = true;
-      clearInterval(t);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pickedConv, state.conv_id]);
+  }, [pickedConv, state.conv_id, client]);
 
   const [cancelArmed, setCancelArmed] = useState(false);
+  const cancelArmedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Clear any pending cancelArmed timer when the component unmounts so it
+  // can't fire setState after teardown.
+  useEffect(() => {
+    return () => {
+      if (cancelArmedTimerRef.current) {
+        clearTimeout(cancelArmedTimerRef.current);
+      }
+    };
+  }, []);
 
   useInput((input, key) => {
     // Universal escape: Ctrl+C always works, even mid-confirm.
@@ -118,7 +123,13 @@ export function App({
       if (state.turnInFlight && !cancelArmed && state.conv_id) {
         client.send({ type: "cancel_turn", conv_id: state.conv_id });
         setCancelArmed(true);
-        setTimeout(() => setCancelArmed(false), 2000);
+        if (cancelArmedTimerRef.current) {
+          clearTimeout(cancelArmedTimerRef.current);
+        }
+        cancelArmedTimerRef.current = setTimeout(() => {
+          cancelArmedTimerRef.current = null;
+          setCancelArmed(false);
+        }, 2000);
         return;
       }
       // Otherwise: close cleanly and exit. This also fires from inside a
@@ -170,6 +181,10 @@ export function App({
         host={host}
         token={token}
         onPick={(id) => setPickedConv(id)}
+        onExit={() => {
+          client.close();
+          exit();
+        }}
       />
     );
   }
@@ -193,6 +208,9 @@ export function App({
           <Text color="magenta">
             confirm ({state.confirm.action_type}): {state.confirm.command || state.confirm.message}
           </Text>
+          {state.confirm.suggested_pattern && (
+            <Text color="magenta">suggested pattern: {state.confirm.suggested_pattern}</Text>
+          )}
           <Text color="magenta">[y]es / [n]o / [a]lways</Text>
         </Box>
       )}
