@@ -69,7 +69,10 @@ def test_check_cancelled_returns_none_when_no_event(ctx):
 
 
 @pytest.mark.asyncio
-async def test_check_cancelled_returns_result_when_cancelled(ctx):
+async def test_check_cancelled_returns_result_when_cancelled(ctx, config):
+    """_check_cancelled appends an in-memory marker to history but no
+    longer writes to the archive — the canonical cancel write happens
+    in the manager's CancelledError handler (issue #491)."""
     ctx.cancelled = asyncio.Event()
     ctx.cancelled.set()
     history = []
@@ -78,6 +81,10 @@ async def test_check_cancelled_returns_result_when_cancelled(ctx):
     assert "cancelled" in result.text
     assert len(history) == 1
     assert history[0]["role"] == "assistant"
+    # No archive write for the in-memory cancel marker.
+    from decafclaw.archive import read_archive
+    archived = read_archive(config, ctx.conv_id or ctx.channel_id)
+    assert archived == []
 
 
 def test_check_cancelled_not_set(ctx):

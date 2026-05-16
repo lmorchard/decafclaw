@@ -1032,6 +1032,53 @@ class TestHistoryArchivedRemap:
         )
 
 
+class TestCancelMarker:
+    """The cancel_marker role is archived when a user cancels a turn;
+    composer must remap it to user-role so the LLM sees the marker
+    between the cancelled-user-turn and the next user message at the
+    correct position (issue #491)."""
+
+    @pytest.mark.asyncio
+    async def test_cancel_marker_remapped_to_user(self, ctx, config):
+        config.system_prompt = "System."
+        config.agent.tool_context_budget_pct = 1.0
+        config.compaction.max_tokens = 1000000
+        history = [
+            {"role": "user", "content": "write me a 600-word essay"},
+            {"role": "assistant", "content": "Once upon a"},
+            {
+                "role": "cancel_marker",
+                "content": "[User cancelled this turn. Do not retry.]",
+            },
+        ]
+        with (
+            patch("decafclaw.tool_definitions.collect_all_tool_defs",
+                  return_value=[]),
+            patch("decafclaw.memory_context.retrieve_memory_context",
+                  new_callable=AsyncMock, return_value=[]),
+        ):
+            composer = ContextComposer()
+            result = await composer.compose(
+                ctx, "hello", history, mode=ComposerMode.INTERACTIVE,
+            )
+
+        # cancel_marker should appear as a user-role message in the
+        # composed messages list, with its content preserved.
+        cancel_msgs = [
+            m for m in result.messages
+            if m.get("role") == "user"
+            and "cancelled this turn" in m.get("content", "")
+        ]
+        assert len(cancel_msgs) == 1, (
+            f"expected exactly one user-role cancel marker in "
+            f"composed.messages; got {len(cancel_msgs)}"
+        )
+        # No cancel_marker role should leak through to the LLM.
+        assert not any(
+            m.get("role") == "cancel_marker" for m in result.messages
+        )
+
+
 # -- Relevance scoring ---------------------------------------------------------
 
 
