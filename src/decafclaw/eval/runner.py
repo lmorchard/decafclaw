@@ -416,8 +416,16 @@ async def run_eval(yaml_data: list[dict], config: Config,
         nonlocal completed
         async with semaphore:
             with tempfile.TemporaryDirectory() as tmp:
+                # Per-test AgentConfig overrides from `setup`. Keep this list
+                # small — anything that genuinely varies per test should opt
+                # in here. Currently only `max_tool_iterations` (#448 grace
+                # turn eval needs a small budget to force exhaustion).
+                agent_overrides = {"data_home": tmp, "id": "eval"}
+                setup = test_case.get("setup", {})
+                if "max_tool_iterations" in setup:
+                    agent_overrides["max_tool_iterations"] = setup["max_tool_iterations"]
                 test_config = replace(config,
-                    agent=replace(config.agent, data_home=tmp, id="eval"),
+                    agent=replace(config.agent, **agent_overrides),
                 )
                 result = await run_test(test_config, test_case)
                 completed += 1
