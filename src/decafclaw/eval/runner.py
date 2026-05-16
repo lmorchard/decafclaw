@@ -37,6 +37,38 @@ async def _setup_skills(ctx, test_case: dict):
             log.warning(f"Skill '{name}' not found for eval pre-activation")
 
 
+def _seed_conversation_history(config, test_case: dict) -> list[dict]:
+    """Seed `{workspace}/conversations/eval.jsonl` from `setup.conversation_history`.
+
+    Returns the same list of messages (with timestamps filled in) so the
+    caller can pre-populate the in-memory history passed to ``run_agent_turn``.
+    This way both the running agent loop AND tools that read the archive
+    (e.g. ``conversation_search``) see the seeded data.
+
+    Validates that each entry has a ``role``; everything else is passed
+    through. Returns ``[]`` when the setup field is absent.
+    """
+    setup = test_case.get("setup", {})
+    seed = setup.get("conversation_history") or []
+    if not seed:
+        return []
+
+    from ..archive import append_message  # local to avoid top-level dep cycle
+
+    now_iso = datetime.now().isoformat()
+    out: list[dict] = []
+    for i, msg in enumerate(seed):
+        if not isinstance(msg, dict) or "role" not in msg:
+            raise ValueError(
+                f"setup.conversation_history[{i}] must be a dict with a 'role' key"
+            )
+        # Stamp upfront so the returned list and on-disk archive agree.
+        stamped = {**msg, "timestamp": msg.get("timestamp") or now_iso}
+        append_message(config, "eval", stamped)
+        out.append(stamped)
+    return out
+
+
 async def _setup_workspace(config, test_case: dict):
     """Create fixture data in the temp workspace."""
     import shutil
@@ -325,6 +357,11 @@ async def run_test(config: Config, test_case: dict) -> dict:
     # Setup fixtures
     await _setup_workspace(config, test_case)
 
+    # Seed the conversation archive AND in-memory history if requested. Both
+    # views need to agree so conversation_search reads the same data the
+    # agent loop is processing.
+    seeded_history = _seed_conversation_history(config, test_case)
+
     # Pre-activate skills
     await _setup_skills(ctx, test_case)
 
@@ -351,7 +388,8 @@ async def run_test(config: Config, test_case: dict) -> dict:
     else:
         turns = [{"input": test_case["input"], "expect": test_case.get("expect", {})}]
 
-    history = []
+    # Start with whatever was seeded — agent loop appends to this list.
+    history = list(seeded_history)
     total_duration = 0
     all_responses = []
     overall_passed = True

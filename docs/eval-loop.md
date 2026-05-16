@@ -44,6 +44,7 @@ Tests are YAML files with a list of test cases. Single-turn form:
 | `setup.skills` | List of skill names to pre-activate before the test case (once, shared across turns) |
 | `setup.memories` | List of `{content, tags}`; seeded as journal entries (and indexed for semantic search if the strategy is `semantic`) |
 | `setup.workspace_files` | Map of `{relative_path: content}` to seed into the test workspace. Paths are sandboxed — no `..` escape |
+| `setup.conversation_history` | List of message dicts (`{role, content, ...}`) written to `{workspace}/conversations/eval.jsonl` *and* pre-loaded into the in-memory history before the first turn. Use to test `conversation_search` / `conversation_compact` without organically building up history. Each entry must have a `role`; timestamps are auto-stamped if missing. |
 | `setup.embeddings_fixture` | Path to a pre-built embeddings.db to copy into the workspace |
 | `setup.auto_confirm` | Default `true`. Auto-approve (or deny) all tool confirmation requests (shell, email, `EndTurnConfirm`, etc.) |
 | `setup.max_tool_iterations` | Override `config.agent.max_tool_iterations` for this test only. Use for tests that need to exercise budget-exhaustion behavior (e.g., the grace turn) without changing the global default |
