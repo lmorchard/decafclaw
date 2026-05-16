@@ -323,6 +323,12 @@ Features:
 - Mid-execution replanning via `project_add_steps`
 - User-invocable as `!project` / `/project`
 
+### code_execution
+
+Always-loaded sandbox that runs LLM-authored Python scripts in a subprocess, calling a curated subset of decafclaw tools over a Unix-domain-socket RPC channel. Intermediate per-tool outputs stay off the conversation transcript — useful for deterministic multi-step work (read N pages, extract a field, return one answer). See [Code Execution](code-execution.md) for full details, allowlist, caps, and security boundary.
+
+Tools: `code_execution`
+
 ## Using community skills
 
 Shell-based skills from [ClawHub](https://clawhub.com) or OpenClaw's bundled skills can be placed in `data/{agent_id}/workspace/skills/`. As long as the skill has a `SKILL.md` with valid frontmatter and any required env vars are set, it will be discovered and available for activation.

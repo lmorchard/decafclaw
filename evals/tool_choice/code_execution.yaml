@@ -1,0 +1,45 @@
+# code_execution disambiguation (#471).
+# The risk is the LLM reaching for the heavy hammer (code_execution) on
+# simple single-call work. These cases assert the agent prefers the
+# direct tool when one call would do, and only reaches for
+# code_execution when multiple intermediate outputs would otherwise
+# clutter context.
+
+- name: code-exec-vs-vault-read-single-page
+  scenario: "Read agent/pages/DecafClaw and tell me what it says."
+  expected: vault_read
+  near_miss: [code_execution]
+  notes: |
+    Single-page lookup — call vault_read directly. code_execution is
+    only justified when intermediate per-tool outputs would be wasted
+    context. One read → one output, nothing to hide.
+
+- name: code-exec-vs-vault-search-single-query
+  scenario: "Search the vault for pages about React performance."
+  expected: vault_search
+  near_miss: [code_execution]
+  notes: |
+    Single search — vault_search is one tool call. Wrapping it in
+    code_execution buys nothing.
+
+- name: code-exec-vs-notes-read-single
+  scenario: "What did I write in notes recently?"
+  expected: notes_read
+  near_miss: [code_execution]
+  notes: |
+    Single notes read. Don't reach for the heavy hammer.
+
+- name: code-exec-multi-page-synthesis
+  scenario: "Compare the 'summary' frontmatter field across these three vault pages: agent/pages/Decaf, agent/pages/Claw, agent/pages/Mattermost — return the one with the longest summary."
+  expected: code_execution
+  near_miss: [vault_read]
+  notes: |
+    Three explicitly-named pages, a mechanical computation (compare
+    summary lengths), and the intermediate per-page bodies are wasted
+    context — the agent only needs the winner. This is the textbook
+    code_execution case: deterministic multi-step work where every
+    `vault_read` intermediate would clutter the transcript.
+    vault_read is in near_miss because the obvious wrong move is to
+    call it three times in succession; code_execution should win
+    because the synthesis step is what makes intermediate outputs
+    worthless.

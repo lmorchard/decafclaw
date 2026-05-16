@@ -426,6 +426,17 @@ field: `new_tab`, `update`, `close_tab`, `set_active`, or `clear`) to
 connected clients. The canvas state persists in
 `workspace/conversations/{conv_id}.canvas.json`.
 
+## Code execution tool
+
+The `code_execution` tool (bundled always-loaded skill, #471) is classified
+as `critical` like every other always-loaded tool, so its definition stays
+in the active tool set and never appears in the deferred catalog. Its outer
+per-tool timeout is opted out (`timeout=None` in `TOOL_DEFINITIONS`)
+because the skill owns its own wall-clock cap (`SkillConfig.timeout_seconds`,
+default 300s) — a generic outer timeout would only race with it. See
+[Code Execution](code-execution.md) for the allowlist, caps, and security
+boundary.
+
 ## Key files
 
 - `src/decafclaw/context_composer.py` — unified context assembly pipeline

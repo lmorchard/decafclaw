@@ -164,7 +164,7 @@ Full doc index: [docs/index.md](docs/index.md). Hot files for navigation:
 - `preempt_search.py` — Keyword-match for pre-emptive tool promotion
 
 ### Skills (bundled)
-`skills/{vault,tabstack,dream,garden,project,claude_code,health,postmortem,ingest,background,mcp,newsletter}/`. `vault`, `background`, `mcp` are always-loaded. Contrib (opt-in) skills live in `contrib/skills/`.
+`skills/{vault,tabstack,dream,garden,project,claude_code,code_execution,health,postmortem,ingest,background,mcp,newsletter}/`. `vault`, `background`, `mcp`, `code_execution` are always-loaded. Contrib (opt-in) skills live in `contrib/skills/`.
 
 ### Other
 - `prompts/` — System prompt assembly

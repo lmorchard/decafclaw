@@ -167,6 +167,7 @@ These skills ship with DecafClaw and provide tools when activated. Full details 
 
 - **[Tabstack](skills.md#tabstack)** — web browsing/research: `tabstack_extract_markdown`, `tabstack_extract_json`, `tabstack_generate`, `tabstack_automate`, `tabstack_research`
 - **[Claude Code](skills.md#claude_code)** — delegate coding tasks: `claude_code_start`, `claude_code_send`, `claude_code_exec`, `claude_code_push_file`, `claude_code_pull_file`, `claude_code_stop`, `claude_code_sessions`
+- **[Code Execution](code-execution.md)** — always-loaded Python sandbox for deterministic multi-step tool calls: `code_execution`
 
 ## Priority tiers and deferred loading
 
