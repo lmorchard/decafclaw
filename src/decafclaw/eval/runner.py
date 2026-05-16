@@ -169,6 +169,20 @@ def _check_assertions(test_case: dict, response: str, tool_calls: int,
         if not matched:
             return False, f"Expected one of {contains} in response"
 
+    # response_contains_all: string or list (AND semantics — all must match).
+    # Mirror response_contains item handling: `re:` prefix opts into regex,
+    # bare strings use case-insensitive substring.
+    contains_all = expect.get("response_contains_all")
+    if contains_all:
+        if isinstance(contains_all, str):
+            contains_all = [contains_all]
+        for c in contains_all:
+            if c.startswith("re:"):
+                if not re.search(c[3:], response, re.IGNORECASE):
+                    return False, f"Expected all of {contains_all} in response, missing pattern {c!r}"
+            elif c.lower() not in response_lower:
+                return False, f"Expected all of {contains_all} in response, missing {c!r}"
+
     # response_not_contains: string or list (all must be absent)
     not_contains = expect.get("response_not_contains")
     if not_contains:

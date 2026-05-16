@@ -53,6 +53,7 @@ Tests are YAML files with a list of test cases. Single-turn form:
 | Field | Type | Semantics |
 |-------|------|-----------|
 | `response_contains` | str / list[str] / `"re:pattern"` | **OR semantics.** Matches if any listed string/regex is in the response. Case-insensitive for non-regex; regex uses `re:` prefix. |
+| `response_contains_all` | str / list[str] / `"re:pattern"` | **AND semantics.** Fails if any listed string/regex is missing from the response. Same item handling as `response_contains` (case-insensitive substring or `re:` regex). Use this when the test name implies "and" — `response_contains: [a, b]` would pass with only `a`. |
 | `response_not_contains` | str / list[str] | **AND semantics.** Fails if any listed string is in the response. Case-insensitive. |
 | `max_tool_calls` | int | Fail if tool calls in this turn exceed the bound |
 | `max_tool_errors` | int | Fail if tool results containing `[error` in this turn exceed the bound |
@@ -60,7 +61,7 @@ Tests are YAML files with a list of test cases. Single-turn form:
 | `expect_no_tool` | str / list[str] | **AND semantics.** Fail if any of the listed tools were called this turn. |
 | `expect_tool_count_by_name` | dict[str, int] | Fail if any listed tool's call count this turn does not equal the mapped int. Tools not listed are unconstrained. Count `0` is allowed (overlaps `expect_no_tool`). |
 
-Note that `response_contains` with a list uses OR semantics — to require several strings, use a single `re:(?s).*foo.*bar.*` regex, or use multiple assertions by splitting into separate test cases.
+Note that `response_contains` with a list uses OR semantics — to require several strings, use `response_contains_all`, a single `re:(?s).*foo.*bar.*` regex, or multiple test cases.
 
 Tool-name assertions see only parent-agent tool calls; tools invoked inside child agents (via `delegate_task`) are not visible.
 
