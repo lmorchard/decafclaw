@@ -55,6 +55,8 @@ Defaults live on `SkillConfig` in `src/decafclaw/skills/code_execution/tools.py`
 
 ## Usage
 
+**Boilerplate.** Every script must begin with `from decafclaw_tools import dc`. The proxy is a generated module written into the sandbox tempdir on each run — it is NOT a Python builtin and importing it is non-optional. (The runtime auto-injects the line if you forget it, but the injected import shows up in the rendered result either way — author it explicitly.)
+
 Each `dc.<tool>(...)` call returns a result object with three attributes:
 
 - `.text` — string payload (always present)

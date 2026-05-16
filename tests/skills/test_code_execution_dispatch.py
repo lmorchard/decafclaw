@@ -240,3 +240,47 @@ async def test_tabstack_inactive_surfaces_error(dispatch_ctx):
     assert len(result.tool_calls) == 1
     assert result.tool_calls[0]["tool"] == "tabstack_extract_markdown"
     assert result.tool_calls[0]["ok"] is False
+
+
+# ---------------------------------------------------------------------------
+# dc-proxy import auto-inject
+# ---------------------------------------------------------------------------
+
+
+def test_ensure_dc_import_prepends_when_missing():
+    from decafclaw.skills.code_execution.tools import _ensure_dc_import
+    out = _ensure_dc_import("print(dc.ping().text)\n")
+    assert out.startswith("from decafclaw_tools import dc\n")
+    assert "print(dc.ping().text)" in out
+
+
+def test_ensure_dc_import_skips_when_already_present():
+    from decafclaw.skills.code_execution.tools import _ensure_dc_import
+    src = "from decafclaw_tools import dc\nprint(dc.ping().text)\n"
+    assert _ensure_dc_import(src) == src
+    # also skips when imported under an alias / non-`dc` name
+    src2 = "from decafclaw_tools import _call\n_call('vault_read', {})\n"
+    assert _ensure_dc_import(src2) == src2
+
+
+@pytest.mark.asyncio
+async def test_tool_code_execution_auto_injects_import(dispatch_ctx):
+    """End-to-end: a script that forgot `from decafclaw_tools import dc`
+    still runs, and the injected line appears in the rendered tool result
+    so the LLM sees the actual code that executed."""
+    from decafclaw.skills.code_execution import tools as code_exec_tools
+
+    code_exec_tools._settings = _SETTINGS
+
+    code_no_import = (
+        "r = dc.notes_read()\n"
+        "print(r.error or 'ok')\n"
+    )
+    result = await code_exec_tools.tool_code_execution(dispatch_ctx, code_no_import)
+    assert result.data is not None
+    assert result.data["status"] == "success", (
+        f"auto-injected script should run cleanly; stderr={result.data['stderr']!r}"
+    )
+    # The rendered text MUST show the injected import so the LLM learns
+    # the boilerplate by example from its own past turns.
+    assert "from decafclaw_tools import dc" in result.text

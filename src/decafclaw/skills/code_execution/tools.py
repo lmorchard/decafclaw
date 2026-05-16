@@ -155,7 +155,28 @@ def _render_result(s: _sandbox.SandboxResult, code: str) -> ToolResult:
     )
 
 
+_DC_IMPORT_LINE = "from decafclaw_tools import dc\n"
+
+
+def _ensure_dc_import(code: str) -> str:
+    """Prepend the dc-proxy import if the script forgot it.
+
+    Recurring failure mode: LLM reads the docs, absorbs the dc.* API
+    surface, and writes a script treating `dc` as a builtin. We auto-
+    inject the line and surface the modified code in the rendered tool
+    result so the LLM learns by example on subsequent turns. Strict
+    substring check avoids a double-import when the script imported it
+    correctly; if a future script aliases the import (e.g.
+    ``from decafclaw_tools import dc as d``) it'll get two imports —
+    harmless, just runs the module init twice.
+    """
+    if "from decafclaw_tools" in code:
+        return code
+    return _DC_IMPORT_LINE + code
+
+
 async def tool_code_execution(ctx, code: str) -> ToolResult:
+    code = _ensure_dc_import(code)
     result = await _sandbox.run_script(
         ctx, code, _settings,
         handler=_make_tool_handler(ctx),
@@ -209,6 +230,11 @@ TOOL_DEFINITIONS = [
                 "the script continues running but no further dc.* dispatches "
                 "occur). Script imports the "
                 "proxy as `from decafclaw_tools import dc`. Each "
+                "ALWAYS start the script with `from decafclaw_tools "
+                "import dc` — the proxy is a generated module inside the "
+                "sandbox, NOT a builtin. (The runtime injects the import "
+                "if you forget, but the line will show up in the rendered "
+                "result either way — author it explicitly.) "
                 "`dc.<tool>(...)` returns a ToolResultProxy with `.text` "
                 "(human-readable rendering), `.data` (machine-readable "
                 "structure — populated for every allowlisted tool), and "
