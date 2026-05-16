@@ -143,6 +143,71 @@ def _collect_tool_errors(history: list) -> list[str]:
     return errors
 
 
+def _check_workspace_assertions(test_case: dict,
+                                workspace_path: Path) -> tuple[bool, str]:
+    """Check post-turn workspace-state assertions.
+
+    Reads ``test_case["expect_workspace"]`` (top-level, parallel to ``setup:``)
+    so the timing is unambiguous: these run once at the end of the test, not
+    per-turn. Three fields supported:
+
+    - ``workspace_files: {rel_path: content_or_re_pattern}`` — both existence
+      AND content. Strings prefixed with ``re:`` match as regex; otherwise
+      bare-substring (case-insensitive) match. Use the regex form for exact
+      content (anchor with ``^`` / ``$`` if needed).
+    - ``workspace_file_exists: [rel_path, ...]`` — existence only.
+    - ``workspace_file_absent: [rel_path, ...]`` — must NOT exist.
+
+    All paths must be relative to ``workspace_path`` and must not escape via
+    ``..`` — symmetric with ``_setup_workspace``'s ``workspace_files``.
+    """
+    import re
+
+    expect_ws = test_case.get("expect_workspace")
+    if not expect_ws:
+        return True, ""
+
+    workspace_root = workspace_path.resolve()
+
+    def _resolve(rel_path: str) -> Path:
+        rel = Path(rel_path)
+        if rel.is_absolute():
+            raise ValueError(f"expect_workspace path must be relative: {rel_path}")
+        dest = (workspace_path / rel).resolve()
+        if not dest.is_relative_to(workspace_root):
+            raise ValueError(f"expect_workspace path escapes workspace: {rel_path}")
+        return dest
+
+    for rel_path, expected in (expect_ws.get("workspace_files") or {}).items():
+        dest = _resolve(rel_path)
+        if not dest.exists():
+            return False, f"workspace_files: expected file {rel_path!r} to exist"
+        content = dest.read_text(encoding="utf-8")
+        if expected.startswith("re:"):
+            if not re.search(expected[3:], content, re.IGNORECASE | re.DOTALL):
+                return False, (
+                    f"workspace_files[{rel_path!r}]: content did not match "
+                    f"pattern {expected!r}"
+                )
+        elif expected.lower() not in content.lower():
+            return False, (
+                f"workspace_files[{rel_path!r}]: content did not contain "
+                f"expected substring {expected!r}"
+            )
+
+    for rel_path in expect_ws.get("workspace_file_exists") or []:
+        dest = _resolve(rel_path)
+        if not dest.exists():
+            return False, f"workspace_file_exists: {rel_path!r} does not exist"
+
+    for rel_path in expect_ws.get("workspace_file_absent") or []:
+        dest = _resolve(rel_path)
+        if dest.exists():
+            return False, f"workspace_file_absent: {rel_path!r} unexpectedly exists"
+
+    return True, ""
+
+
 def _check_assertions(test_case: dict, response: str, tool_calls: int,
                       tool_errors: int = 0,
                       tool_names: list[str] | None = None) -> tuple[bool, str]:
@@ -367,6 +432,17 @@ async def run_test(config: Config, test_case: dict) -> dict:
                 if detail_str:
                     failure_reason += f"\n         Errors: {detail_str}"
                 break
+
+    # Post-turn workspace-state checks (#352). Run once at end-of-test so
+    # the timing matches the field name's promise. Only check if everything
+    # before this passed — first failure still wins.
+    if overall_passed:
+        ws_passed, ws_reason = _check_workspace_assertions(
+            test_case, config.workspace_path,
+        )
+        if not ws_passed:
+            overall_passed = False
+            failure_reason = ws_reason
 
     # Gather cumulative metrics
     prompt_tokens = ctx.tokens.total_prompt

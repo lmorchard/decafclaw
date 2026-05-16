@@ -65,6 +65,33 @@ Note that `response_contains` with a list uses OR semantics — to require sever
 
 Tool-name assertions see only parent-agent tool calls; tools invoked inside child agents (via `delegate_task`) are not visible.
 
+### Post-turn workspace assertions
+
+`expect_workspace` sits at the test-case top level (parallel to `setup` / `expect`) and runs once at the end of the test, after all turns complete. Useful for tests that need to verify the agent's *side effects* rather than its response text.
+
+| Field | Type | Semantics |
+|-------|------|-----------|
+| `workspace_files` | dict[str, str] | `{rel_path: content_match}`. Both existence AND content. Plain strings: case-insensitive substring. `re:` prefix opts into regex (case-insensitive, `re.DOTALL` so `.` matches newlines). |
+| `workspace_file_exists` | list[str] | Each path must exist (existence only, no content check). |
+| `workspace_file_absent` | list[str] | Each path must NOT exist. Useful for delete/move tests. |
+
+All paths are relative to `config.workspace_path`. Absolute paths and `..` escapes raise `ValueError` — symmetric with `setup.workspace_files`.
+
+Example: after the agent runs a section edit, verify other sections are untouched.
+
+```yaml
+- name: "section edit leaves other sections intact"
+  setup:
+    workspace_files:
+      "page.md": "## A\n\noriginal a\n\n## B\n\noriginal b\n"
+  input: "Update section A of page.md to say 'updated a'"
+  expect:
+    expect_tool: vault_section
+  expect_workspace:
+    workspace_files:
+      "page.md": "re:## A.+updated a.+## B.+original b"
+```
+
 ### Multi-turn tests
 
 ```yaml
