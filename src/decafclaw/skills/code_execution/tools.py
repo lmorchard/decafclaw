@@ -210,11 +210,13 @@ TOOL_DEFINITIONS = [
                 "occur). Script imports the "
                 "proxy as `from decafclaw_tools import dc`. Each "
                 "`dc.<tool>(...)` returns a ToolResultProxy with `.text`, "
-                "`.data`, `.error`. Most tools populate `.text` only — "
-                "`.data` is usually None and must be parsed from `.text` "
-                "(e.g. workspace_list returns one line per entry like "
-                "'<name> (<bytes>B)'; vault_search returns a numbered list "
-                "with '- <page>' bullets). `print(...)` what you want "
+                "`.data`, `.error`. Every allowlisted tool populates "
+                "`.text` only — `.data` is always None and must be parsed "
+                "from `.text` (e.g. workspace_list returns one line per "
+                "entry like '<name> (<bytes>B)'; vault_search returns a "
+                "numbered list with '- <page>' bullets; "
+                "tabstack_extract_json returns a JSON-serialized string "
+                "you can json.loads()). `print(...)` what you want "
                 "returned to the conversation."
             ),
             "parameters": {
