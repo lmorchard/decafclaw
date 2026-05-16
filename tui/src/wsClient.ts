@@ -34,6 +34,7 @@ export class WSClient {
   private handlers: Array<(e: WSEvent) => void> = [];
   private reconnectAttempt = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private outbound: ClientMessage[] = [];
   private wantClosed = false;
   private hadOpen = false;
 
@@ -49,8 +50,12 @@ export class WSClient {
   send(msg: ClientMessage): void {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify(msg));
+    } else {
+      // Buffer until next open. Covers the pre-open mount race (select_conv
+      // sent before the socket finishes upgrading) and the during-reconnect
+      // window. `flushOutbound` drains in FIFO order on each open.
+      this.outbound.push(msg);
     }
-    // else: silently drop; reconnect path will re-establish state via re-select_conv
   }
 
   close(): void {
@@ -80,6 +85,14 @@ export class WSClient {
       const wasReconnect = this.hadOpen;
       this.hadOpen = true;
       this.reconnectAttempt = 0;
+      // Drain the buffer BEFORE emitting __reconnected. The App's
+      // __reconnected handler immediately re-sends `select_conv` for the
+      // currently-active conv; if we flushed after, any stale `select_conv`
+      // buffered during the disconnect window would land last and bounce the
+      // server's subscription to the old conv. Flushing first preserves FIFO
+      // for in-disconnect sends and guarantees the handler's re-select is the
+      // final word.
+      this.flushOutbound();
       if (wasReconnect) {
         this.emit({ type: "__reconnected" });
       }
@@ -142,5 +155,14 @@ export class WSClient {
 
   private emit(e: WSEvent): void {
     for (const h of this.handlers) h(e);
+  }
+
+  private flushOutbound(): void {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+    const pending = this.outbound;
+    this.outbound = [];
+    for (const m of pending) {
+      this.ws.send(JSON.stringify(m));
+    }
   }
 }
