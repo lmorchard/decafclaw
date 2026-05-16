@@ -542,7 +542,7 @@ def test_search_single_file(ctx):
 def test_search_no_matches(ctx):
     tool_workspace_write(ctx, "f.txt", "nothing here\n")
     result = tool_workspace_search(ctx, "zzzzz")
-    assert result == "(no matches)"
+    assert _text(result) == "(no matches)"
 
 
 def test_search_invalid_regex(ctx):
@@ -587,7 +587,7 @@ def test_glob_specific_name(ctx):
 def test_glob_no_matches(ctx):
     tool_workspace_write(ctx, "a.txt", "text\n")
     result = tool_workspace_glob(ctx, "*.zzz")
-    assert result == "(no matches)"
+    assert _text(result) == "(no matches)"
 
 
 def test_glob_with_subpath(ctx):

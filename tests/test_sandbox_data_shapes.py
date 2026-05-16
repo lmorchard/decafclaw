@@ -137,6 +137,51 @@ async def test_workspace_read_partial_data_shape(ctx):
 
 
 @pytest.mark.asyncio
+async def test_workspace_glob_data_shape(ctx):
+    from decafclaw.tools.workspace_tools import (
+        tool_workspace_glob,
+        tool_workspace_write,
+    )
+    tool_workspace_write(ctx, "a.md", "alpha")
+    tool_workspace_write(ctx, "sub/b.md", "beta")
+    tool_workspace_write(ctx, "sub/c.txt", "gamma")
+    result = tool_workspace_glob(ctx, "**/*.md")
+    assert isinstance(result, ToolResult)
+    assert result.data is not None
+    assert result.data["pattern"] == "**/*.md"
+    paths = {m["path"] for m in result.data["matches"]}
+    assert "a.md" in paths
+    assert "sub/b.md" in paths
+    # Non-.md file should NOT appear in glob results
+    assert "sub/c.txt" not in paths
+    assert result.data["truncated"] is False
+    md_entry = next(m for m in result.data["matches"] if m["path"] == "a.md")
+    assert md_entry["is_dir"] is False
+    assert md_entry["size"] == 5
+
+
+@pytest.mark.asyncio
+async def test_workspace_search_data_shape(ctx):
+    from decafclaw.tools.workspace_tools import (
+        tool_workspace_search,
+        tool_workspace_write,
+    )
+    tool_workspace_write(ctx, "x.txt", "hello\nworld\nhello again\n")
+    tool_workspace_write(ctx, "y.txt", "nope\n")
+    result = tool_workspace_search(ctx, "hello")
+    assert isinstance(result, ToolResult)
+    assert result.data is not None
+    assert result.data["pattern"] == "hello"
+    assert result.data["truncated"] is False
+    assert result.data["total_matches"] == 2
+    files_by_path = {f["path"]: f for f in result.data["files"]}
+    assert "x.txt" in files_by_path
+    assert files_by_path["x.txt"]["match_lines"] == [1, 3]
+    # File with no match should NOT appear
+    assert "y.txt" not in files_by_path
+
+
+@pytest.mark.asyncio
 async def test_workspace_list_data_shape(ctx):
     from decafclaw.tools.workspace_tools import (
         tool_workspace_list,

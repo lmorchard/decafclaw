@@ -461,6 +461,10 @@ def tool_workspace_search(ctx, pattern: str, path: str = ".",
     max_matches = 50
     total_matches = 0
     output_sections = []
+    # Structured per-file match list for programmatic callers — path
+    # plus 1-based line numbers. Excerpts stay in .text only so .data
+    # doesn't duplicate large bodies.
+    data_files: list[dict] = []
 
     # Collect files to search
     if resolved.is_file():
@@ -506,16 +510,29 @@ def tool_workspace_search(ctx, pattern: str, path: str = ".",
                 section_lines.append(f"{prefix} {lineno:>4}| {lines[j]}")
 
         output_sections.append("\n".join(section_lines))
+        data_files.append({
+            "path": str(rel_path),
+            "match_lines": [i + 1 for i in file_matches],  # 1-based
+        })
         if total_matches >= max_matches:
             break
 
+    truncated = total_matches >= max_matches
+    base_data = {
+        "pattern": pattern,
+        "path": path,
+        "total_matches": total_matches,
+        "truncated": truncated,
+        "files": data_files,
+    }
+
     if not output_sections:
-        return "(no matches)"
+        return ToolResult(text="(no matches)", data=base_data)
 
     result = "\n\n".join(output_sections)
-    if total_matches >= max_matches:
+    if truncated:
         result += f"\n\n(truncated — showing first {max_matches} matches)"
-    return result
+    return ToolResult(text=result, data=base_data)
 
 
 def tool_workspace_glob(ctx, pattern: str, path: str = ".") -> str | ToolResult:
@@ -531,24 +548,40 @@ def tool_workspace_glob(ctx, pattern: str, path: str = ".") -> str | ToolResult:
 
     workspace = ctx.config.workspace_path.resolve()
     max_results = 200
-    matches = []
+    text_lines: list[str] = []
+    data_matches: list[dict] = []
     for fpath in sorted(resolved.rglob(pattern)):
         rel = fpath.relative_to(workspace)
+        is_dir = fpath.is_dir()
         if fpath.is_file():
             size = fpath.stat().st_size
-            matches.append(f"{rel} ({size}B)")
-        else:
-            matches.append(f"{rel}/")
-        if len(matches) >= max_results:
+            text_lines.append(f"{rel} ({size}B)")
+            data_matches.append({
+                "path": str(rel), "is_dir": False, "size": size,
+            })
+        elif is_dir:
+            text_lines.append(f"{rel}/")
+            data_matches.append({
+                "path": str(rel), "is_dir": True, "size": None,
+            })
+        if len(text_lines) >= max_results:
             break
 
-    if not matches:
-        return "(no matches)"
+    truncated = len(text_lines) >= max_results
+    base_data = {
+        "pattern": pattern,
+        "path": path,
+        "matches": data_matches,
+        "truncated": truncated,
+    }
 
-    result = "\n".join(matches)
-    if len(matches) >= max_results:
+    if not text_lines:
+        return ToolResult(text="(no matches)", data=base_data)
+
+    result = "\n".join(text_lines)
+    if truncated:
         result += f"\n\n(truncated — showing first {max_results} results)"
-    return result
+    return ToolResult(text=result, data=base_data)
 
 
 WORKSPACE_TOOLS = {

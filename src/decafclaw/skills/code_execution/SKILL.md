@@ -26,7 +26,7 @@ Deterministic multi-step work where you'd otherwise pay for several large tool o
 
 ## Allowlist (v1)
 
-The script can call these 11 tools via `dc.<name>(...)`:
+The script can call these 13 tools via `dc.<name>(...)`:
 
 | Tool | Role inside the sandbox |
 |------|-------------------------|
@@ -36,6 +36,8 @@ The script can call these 11 tools via `dc.<name>(...)`:
 | `vault_write` | Create/update a vault page (agent folder only — outside hits non-interactive error) |
 | `workspace_read` | Read a file under the workspace |
 | `workspace_list` | List workspace files / dirs |
+| `workspace_glob` | Recursive glob (e.g. `docs/dev-sessions/*/spec.md`) |
+| `workspace_search` | Regex search across workspace files |
 | `notes_read` | Read the per-conversation scratchpad |
 | `notes_append` | Append to the per-conversation scratchpad |
 | `tabstack_extract_markdown` | Fetch a URL as readable markdown (Tabstack) |
@@ -75,6 +77,8 @@ Per-tool `.data` shapes (small + non-duplicative of `.text`):
 | `vault_journal_append` | `{"path", "tags": list, "entry_size"}` |
 | `workspace_read` | `{"path", "size", "lines", "range": [start, end], "truncated": bool}` (content is in `.text`) |
 | `workspace_list` | `{"path", "entries": [{"name", "is_dir", "size"}]}` |
+| `workspace_glob` | `{"pattern", "path", "matches": [{"path", "is_dir", "size"}], "truncated"}` |
+| `workspace_search` | `{"pattern", "path", "total_matches", "truncated", "files": [{"path", "match_lines": [1-based line numbers]}]}` (excerpts stay in `.text`) |
 | `notes_read` | `{"count", "notes": [{"timestamp", "text"}]}` |
 | `notes_append` | `{"timestamp", "chars"}` |
 | `tabstack_extract_markdown` | `{"url", "size"}` (content is in `.text`) |

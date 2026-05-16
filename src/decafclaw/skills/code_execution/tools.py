@@ -29,7 +29,7 @@ log = logging.getLogger(__name__)
 # init error cleanly when it isn't.
 SANDBOX_ALLOWED_TOOLS: tuple[str, ...] = (
     "vault_read", "vault_search", "vault_journal_append", "vault_write",
-    "workspace_read", "workspace_list",
+    "workspace_read", "workspace_list", "workspace_glob", "workspace_search",
     "notes_read", "notes_append",
     "tabstack_extract_markdown", "tabstack_extract_json", "tabstack_research",
 )
@@ -222,7 +222,8 @@ TOOL_DEFINITIONS = [
                 "yet (call tools interactively first)\n"
                 "\n"
                 "Allowlist: vault_read, vault_search, vault_journal_append, "
-                "vault_write, workspace_read, workspace_list, notes_read, "
+                "vault_write, workspace_read, workspace_list, "
+                "workspace_glob, workspace_search, notes_read, "
                 "notes_append, tabstack_extract_markdown, "
                 "tabstack_extract_json, tabstack_research. Limits: 300s "
                 "wall-clock (subprocess killed on expiry); max 50 tool calls "
