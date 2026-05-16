@@ -85,10 +85,17 @@ export class WSClient {
       const wasReconnect = this.hadOpen;
       this.hadOpen = true;
       this.reconnectAttempt = 0;
+      // Drain the buffer BEFORE emitting __reconnected. The App's
+      // __reconnected handler immediately re-sends `select_conv` for the
+      // currently-active conv; if we flushed after, any stale `select_conv`
+      // buffered during the disconnect window would land last and bounce the
+      // server's subscription to the old conv. Flushing first preserves FIFO
+      // for in-disconnect sends and guarantees the handler's re-select is the
+      // final word.
+      this.flushOutbound();
       if (wasReconnect) {
         this.emit({ type: "__reconnected" });
       }
-      this.flushOutbound();
     });
 
     ws.on("message", (data: WebSocket.RawData) => {

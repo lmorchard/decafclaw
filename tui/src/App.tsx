@@ -181,6 +181,10 @@ export function App({
         host={host}
         token={token}
         onPick={(id) => setPickedConv(id)}
+        onExit={() => {
+          client.close();
+          exit();
+        }}
       />
     );
   }

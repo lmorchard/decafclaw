@@ -106,6 +106,40 @@ describe("WSClient lifecycle hygiene", () => {
     c.close();
   });
 
+  it("flushes buffer before emitting __reconnected (handler re-sends land last)", () => {
+    const c = new WSClient({ host: "http://localhost:8088", token: "t" });
+    c.connect();
+    const w1 = fakeWsState.instances[0]!;
+    w1.triggerOpen();
+
+    // Server drops us; reconnect is scheduled. While disconnected, App or
+    // some other caller buffers a now-stale select_conv (e.g. one queued
+    // before the user picked a different conv).
+    w1.emit("close", 1006, Buffer.from(""));
+    c.send({ type: "select_conv", conv_id: "old" });
+
+    // Advance to fire the reconnect; second socket is created but not yet
+    // open. Register a handler that mimics App.tsx: on __reconnected, send a
+    // fresh select_conv with the current conv id.
+    vi.advanceTimersByTime(1500);
+    const w2 = fakeWsState.instances[1]!;
+    c.on((e) => {
+      if (e.type === "__reconnected") {
+        c.send({ type: "select_conv", conv_id: "new" });
+      }
+    });
+    w2.triggerOpen();
+
+    // Buffer flushes first (old), THEN handler runs and sends new. Order
+    // matters: the server processes select_conv in receive order, so the
+    // "new" send must be last for the final subscription to match.
+    expect(w2.sent).toHaveLength(2);
+    expect(JSON.parse(w2.sent[0]!)).toMatchObject({ type: "select_conv", conv_id: "old" });
+    expect(JSON.parse(w2.sent[1]!)).toMatchObject({ type: "select_conv", conv_id: "new" });
+
+    c.close();
+  });
+
   it("ws error log includes URL and attempt count", () => {
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const c = new WSClient({ host: "http://localhost:8088", token: "tok" });
