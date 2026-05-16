@@ -31,7 +31,7 @@ When the judge returns `pass: false`:
 3. The agent loop continues back to the LLM call step — no nested loop.
 4. The new response goes through reflection again (up to `max_retries`).
 
-Retries consume iterations from the `max_tool_iterations` budget. If that budget is exhausted during a retry, the turn ends with whatever the agent has produced.
+Retries consume iterations from the `max_tool_iterations` budget. If that budget is exhausted during a retry, the loop ends and the agent makes one **grace turn** (a final no-tools LLM call) so the model can produce a closing response summarizing its progress.
 
 ## Quick start
 

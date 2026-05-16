@@ -572,8 +572,8 @@ async def test_run_agent_turn_cancellation(ctx):
 
 
 @pytest.mark.asyncio
-async def test_run_agent_turn_max_iterations(ctx):
-    """LLM keeps calling tools until max iterations is reached."""
+async def test_run_agent_turn_max_iterations_grace_turn(ctx):
+    """When budget exhausts, one grace LLM call (tools=[]) produces the final response."""
     ctx.config.llm.streaming = False
     ctx.config.system_prompt = "You are a test bot."
     ctx.config.agent.max_tool_iterations = 2
@@ -588,18 +588,148 @@ async def test_run_agent_turn_max_iterations(ctx):
             },
         }],
     )
+    grace_response = _mock_llm_response(
+        content="I ran out of iterations. Here's where I am.",
+    )
 
     with patch("decafclaw.agent.call_llm", new_callable=AsyncMock) as mock_llm:
-        mock_llm.return_value = tool_call_response
+        # First two calls: tool-call responses (budget=2). Third: grace-turn final.
+        mock_llm.side_effect = [tool_call_response, tool_call_response, grace_response]
         history = []
         result = await run_agent_turn(ctx, "loop forever", history)
 
+    assert "I ran out of iterations" in result.text
+    # Grace turn succeeded, so the fallback notice should NOT appear.
+    assert "max tool iterations" not in result.text
+    # Last LLM call should have tools=[] (the grace call). call_llm is invoked
+    # as `call_llm(config, messages, tools=tools, ...)` in
+    # agent.py:_call_llm_with_events, so tools is a keyword arg.
+    last_call = mock_llm.call_args_list[-1]
+    assert last_call.kwargs.get("tools") == []
+
+
+@pytest.mark.asyncio
+async def test_run_agent_turn_grace_turn_bumps_current_iteration(ctx):
+    """The grace turn must use a fresh iteration number so llm_start /
+    llm_end events don't collide with the last tool-enabled iteration."""
+    ctx.config.llm.streaming = False
+    ctx.config.system_prompt = "You are a test bot."
+    ctx.config.agent.max_tool_iterations = 2
+
+    tool_call_response = _mock_llm_response(
+        content=None,
+        tool_calls=[{
+            "id": "tc1",
+            "function": {
+                "name": "memory_recent",
+                "arguments": "{}",
+            },
+        }],
+    )
+    grace_response = _mock_llm_response(content="Wrapping up.")
+
+    # Capture ctx._current_iteration at the moment of each LLM call so we
+    # can assert the grace turn used a higher number than the last normal
+    # iteration.
+    seen_iterations: list[int] = []
+
+    async def capture_iteration(*args, **kwargs):
+        seen_iterations.append(ctx._current_iteration)
+        # Return one of the queued responses by index.
+        responses = [tool_call_response, tool_call_response, grace_response]
+        return responses[len(seen_iterations) - 1]
+
+    with patch("decafclaw.agent.call_llm", new=capture_iteration):
+        history = []
+        await run_agent_turn(ctx, "loop forever", history)
+
+    assert len(seen_iterations) == 3
+    # First two calls used iterations 1 and 2 (1-indexed in agent.py:_run_iteration).
+    assert seen_iterations[0] == 1
+    assert seen_iterations[1] == 2
+    # Grace turn must have advanced past 2.
+    assert seen_iterations[2] > seen_iterations[1], (
+        f"Grace turn reused iteration {seen_iterations[2]} (last was "
+        f"{seen_iterations[1]}); event consumers would see duplicate "
+        f"iteration numbers in llm_start/llm_end."
+    )
+
+
+@pytest.mark.asyncio
+async def test_run_agent_turn_empty_retry_refunds_budget(ctx):
+    """Empty-response retry refunds the budget so the retry doesn't exhaust it."""
+    ctx.config.llm.streaming = False
+    ctx.config.system_prompt = "You are a test bot."
+    ctx.config.agent.max_tool_iterations = 1  # budget of exactly one iteration
+
+    empty_response = _mock_llm_response(content="")
+    final_response = _mock_llm_response(content="Hello after retry.")
+
+    with patch("decafclaw.agent.call_llm", new_callable=AsyncMock) as mock_llm:
+        # First call: empty (triggers refund + retry).
+        # Second call: final response.
+        # Without refund, budget=1 would be exhausted after the empty call
+        # and the retry would never happen as a normal iteration — the grace
+        # turn would fire instead, with content "Hello after retry." but with
+        # the grace system note appended to messages.
+        mock_llm.side_effect = [empty_response, final_response]
+        history = []
+        result = await run_agent_turn(ctx, "hi", history)
+
+    assert result.text == "Hello after retry."
+    # No grace-turn fallback notice should appear — the retry succeeded as
+    # a real iteration.
+    assert "max tool iterations" not in result.text
+    # Exactly two LLM calls.
+    assert mock_llm.call_count == 2
+    # The second call must be a normal iteration (tools non-empty), NOT the
+    # grace turn (tools=[]). This is what refund() buys us — without it,
+    # budget=1 would be exhausted after the empty call and the second LLM
+    # call would have tools=[] with the grace system note appended.
+    last_call = mock_llm.call_args_list[-1]
+    assert last_call.kwargs.get("tools") != [], (
+        "Second call should have tools (normal iteration); empty list "
+        "means refund() did not happen and grace turn ran instead."
+    )
+
+
+@pytest.mark.asyncio
+async def test_run_agent_turn_grace_turn_fallback_on_empty_content(ctx):
+    """When the grace LLM call succeeds but returns empty content, fall back
+    to accumulated text + notice (always-something contract)."""
+    ctx.config.llm.streaming = False
+    ctx.config.system_prompt = "You are a test bot."
+    ctx.config.agent.max_tool_iterations = 2
+
+    tool_call_response = _mock_llm_response(
+        content="Working on it...",
+        tool_calls=[{
+            "id": "tc1",
+            "function": {
+                "name": "memory_recent",
+                "arguments": "{}",
+            },
+        }],
+    )
+    empty_grace_response = _mock_llm_response(content="")
+
+    with patch("decafclaw.agent.call_llm", new_callable=AsyncMock) as mock_llm:
+        mock_llm.side_effect = [
+            tool_call_response,
+            tool_call_response,
+            empty_grace_response,
+        ]
+        history = []
+        result = await run_agent_turn(ctx, "loop forever", history)
+
+    # Falls back to accumulated text + notice (always-something contract).
+    assert "Working on it..." in result.text
     assert "max tool iterations" in result.text
 
 
 @pytest.mark.asyncio
-async def test_run_agent_turn_max_iterations_preserves_text(ctx):
-    """Max iterations preserves text from tool-call iterations."""
+async def test_run_agent_turn_grace_turn_fallback_on_exception(ctx):
+    """When the grace LLM call raises, fall back to accumulated text + notice."""
     ctx.config.llm.streaming = False
     ctx.config.system_prompt = "You are a test bot."
     ctx.config.agent.max_tool_iterations = 2
@@ -616,10 +746,16 @@ async def test_run_agent_turn_max_iterations_preserves_text(ctx):
     )
 
     with patch("decafclaw.agent.call_llm", new_callable=AsyncMock) as mock_llm:
-        mock_llm.return_value = tool_call_response
+        # Two tool-call responses, then grace call raises.
+        mock_llm.side_effect = [
+            tool_call_response,
+            tool_call_response,
+            RuntimeError("simulated LLM failure on grace turn"),
+        ]
         history = []
         result = await run_agent_turn(ctx, "loop forever", history)
 
+    # Falls back to accumulated text + notice.
     assert "Let me check that for you." in result.text
     assert "max tool iterations" in result.text
 
