@@ -14,6 +14,7 @@ from enum import Enum
 from typing import Any, Callable
 from uuid import uuid4
 
+from .archive import append_message
 from .confirmations import (
     ConfirmationRegistry,
     ConfirmationRequest,
@@ -22,6 +23,39 @@ from .confirmations import (
 from .heartbeat import is_background_wake_ok
 
 log = logging.getLogger(__name__)
+
+
+# Canonical archive text written when a user cancels an in-progress agent
+# turn (issue #491). Strong enough wording that the LLM treats the prior
+# request as closed instead of re-fulfilling it on the next turn. The
+# message is archived under the cancel_marker role and remapped to "user"
+# for the LLM via context_composer.ROLE_REMAP.
+CANCEL_MARKER_TEXT = (
+    "[User cancelled this turn. Do not retry the cancelled request "
+    "unless they explicitly ask for it again.]"
+)
+
+
+def _write_cancel_archive(
+    config, conv_id: str, partial: str,
+    *, partial_already_archived: bool = False,
+) -> None:
+    """Append optional partial assistant content followed by the
+    canonical cancel marker to the conversation archive. Chronological
+    order matters: the LLM-side conversation reads
+    `user → assistant(partial) → cancel_marker(→user) → user`, so the
+    partial must precede the marker. Step-level dedup against retry
+    failures is handled in `_write_cancel_marker_once`.
+    """
+    if partial and not partial_already_archived:
+        append_message(config, conv_id, {
+            "role": "assistant",
+            "content": partial,
+        })
+    append_message(config, conv_id, {
+        "role": "cancel_marker",
+        "content": CANCEL_MARKER_TEXT,
+    })
 
 
 class TurnKind(Enum):
@@ -183,6 +217,27 @@ class ConversationState:
     pending_messages: list = field(default_factory=list)
     agent_task: asyncio.Task | None = None
     cancel_event: asyncio.Event | None = None
+
+    # Streamed assistant text accumulated for the current turn so the
+    # cancel handler can persist whatever was delivered before cancel
+    # (issue #491). Reset at turn start; appended to in on_stream_chunk
+    # (list of chunks — joined lazily to avoid O(n²) concatenation).
+    # `partial_assistant_archived` indicates whether the agent loop
+    # already wrote the assistant content to the archive — if so, the
+    # cancel handler only appends the marker, avoiding a duplicate body.
+    # `cancel_observed_by_agent` is set by the agent when it observes
+    # cancellation cleanly (iteration-start check or streaming short-
+    # circuit). The manager's normal-completion path uses this rather
+    # than raw `cancel_event.is_set()` to avoid persisting a cancel
+    # marker when cancel arrives *after* the turn fully completed.
+    # `cancel_marker_written` is a write-once latch: both the clean
+    # cancel-observed path and the CancelledError handler funnel through
+    # the same marker write; the latch prevents a double-write when
+    # both fire.
+    partial_assistant_chunks: list[str] = field(default_factory=list)
+    partial_assistant_archived: bool = False
+    cancel_observed_by_agent: bool = False
+    cancel_marker_written: bool = False
 
     # Per-conversation lock guarding the dispatch decision and the
     # confirmation lifecycle (issue #440). Held during:
@@ -727,6 +782,70 @@ class ConversationManager:
             waiter_event.set()
         return True
 
+    def note_partial_assistant_archived(self, conv_id: str) -> None:
+        """Mark that the agent loop has archived an assistant message for
+        the current turn. The cancel handler reads this flag to avoid
+        double-writing the partial content (issue #491).
+        """
+        state = self._conversations.get(conv_id)
+        if state is not None:
+            state.partial_assistant_archived = True
+
+    def note_cancel_observed_by_agent(self, conv_id: str) -> None:
+        """Mark that the agent loop observed the cancel signal cleanly
+        (iteration-start check or streaming short-circuit). The manager's
+        normal-completion path uses this flag rather than raw
+        `cancel_event.is_set()` so a cancel arriving *after* the turn
+        already completed normally doesn't spuriously persist a cancel
+        marker (issue #491).
+        """
+        state = self._conversations.get(conv_id)
+        if state is not None:
+            state.cancel_observed_by_agent = True
+
+    def _write_cancel_marker_once(
+        self, conv_id: str, state: ConversationState,
+    ) -> None:
+        """Persist the canonical cancel marker (and any streamed partial)
+        for this turn, exactly once across both the iteration-start
+        cancel path and the CancelledError handler (issue #491).
+
+        Each archive append updates `state` immediately on success so
+        that if marker-write fails mid-flight, a later retry doesn't
+        double-write the partial body.
+        """
+        if state.cancel_marker_written:
+            return
+        partial = "".join(state.partial_assistant_chunks)
+        # Step 1: persist any streamed partial that the agent loop
+        # didn't already archive itself.
+        if partial and not state.partial_assistant_archived:
+            try:
+                append_message(self.config, conv_id, {
+                    "role": "assistant",
+                    "content": partial,
+                })
+                state.partial_assistant_archived = True
+            except Exception as exc:
+                log.warning(
+                    "Failed to archive cancel partial for %s: %s",
+                    conv_id, exc,
+                )
+        # Step 2: persist the canonical marker. This is the load-bearing
+        # signal; if it fails we leave the latch unset so a later cancel
+        # call can retry the marker (the partial-archived flag protects
+        # against duplicating the partial).
+        try:
+            append_message(self.config, conv_id, {
+                "role": "cancel_marker",
+                "content": CANCEL_MARKER_TEXT,
+            })
+            state.cancel_marker_written = True
+        except Exception as exc:
+            log.warning(
+                "Failed to write cancel marker for %s: %s", conv_id, exc,
+            )
+
     async def cancel_turn(self, conv_id: str) -> None:
         """Cancel an in-progress agent turn.
 
@@ -1193,6 +1312,13 @@ class ConversationManager:
             else:
                 context_setup(ctx)
 
+        # Reset cancel/partial accounting so this turn starts clean and
+        # a subsequent cancel only persists what we actually streamed.
+        state.partial_assistant_chunks = []
+        state.partial_assistant_archived = False
+        state.cancel_observed_by_agent = False
+        state.cancel_marker_written = False
+
         # Set up streaming callback that emits to subscribers.
         # WAKE turns don't stream: the agent may emit BACKGROUND_WAKE_OK to
         # suppress the final message, and streaming would have already
@@ -1201,6 +1327,8 @@ class ConversationManager:
         if kind is not TurnKind.WAKE and resolve_streaming(self.config, ctx.active_model):
             async def on_stream_chunk(chunk_type, data):
                 if chunk_type == "text":
+                    if isinstance(data, str):
+                        state.partial_assistant_chunks.append(data)
                     await self.emit(conv_id, {
                         "type": "chunk", "text": data,
                     })
@@ -1266,6 +1394,19 @@ class ConversationManager:
                 response_text = result.text if hasattr(result, "text") else str(result)
                 response_text_holder.append(response_text)
                 response_media = result.media if hasattr(result, "media") else []
+                # If cancel was observed cleanly inside the agent loop
+                # (e.g. the iteration-start check returned _Final, or
+                # the streaming provider broke out of its SSE loop
+                # without raising), we still need to persist the cancel
+                # marker. Gated on the agent's explicit cancel-observed
+                # flag — NOT raw cancel_event.is_set() — so a cancel
+                # signal arriving after the turn already completed
+                # normally doesn't spuriously mark the response as
+                # cancelled. The latch in _write_cancel_marker_once
+                # makes this safe even if the CancelledError handler
+                # also fires below. Issue #491.
+                if state.cancel_observed_by_agent:
+                    self._write_cancel_marker_once(conv_id, state)
                 suppress = (kind is TurnKind.WAKE
                             and is_background_wake_ok(response_text))
                 await self.emit(conv_id, {
@@ -1286,6 +1427,9 @@ class ConversationManager:
             except asyncio.CancelledError:
                 log.info("Agent turn cancelled for conv %s", conv_id[:8])
                 response_text_holder.append("[cancelled]")
+                # Persist a strong cancel signal so the next turn's LLM
+                # doesn't re-fulfill the cancelled request (issue #491).
+                self._write_cancel_marker_once(conv_id, state)
                 await self.emit(conv_id, {
                     "type": "message_complete",
                     "role": "assistant",

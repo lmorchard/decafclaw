@@ -51,10 +51,26 @@ def _archive(ctx, msg) -> None:
     """Archive a message, logging errors but never raising."""
     if ctx.skip_archive:
         return
+    wrote = False
     try:
         append_message(ctx.config, _conv_id(ctx), msg)
+        wrote = True
     except Exception as e:
         log.error(f"Archive write failed: {e}")
+    # Mark the conversation so a subsequent CancelledError handler
+    # doesn't double-archive the partial body (issue #491). Only fires
+    # for assistant messages with actual body content that actually
+    # landed in the archive — tool_call-only assistant rows don't count
+    # as "delivered text" for cancel bookkeeping, and we don't want a
+    # failed write to make the manager think the partial is durable.
+    if (wrote
+            and msg.get("role") == "assistant"
+            and msg.get("content")
+            and ctx.manager is not None):
+        try:
+            ctx.manager.note_partial_assistant_archived(_conv_id(ctx))
+        except Exception as exc:
+            log.debug("note_partial_assistant_archived failed: %s", exc)
 
 
 
@@ -104,15 +120,37 @@ async def _maybe_compact(ctx, config, history, prompt_tokens) -> None:
 
 
 def _check_cancelled(ctx, history):
-    """Check if the agent turn has been cancelled. Returns ToolResult or None."""
+    """Check if the agent turn has been cancelled. Returns ToolResult or None.
+
+    Appends an in-memory marker to history so the iteration loop's
+    accumulated-text / reflection logic sees the cancel notice, but does
+    NOT write to the archive. The canonical cancel-archive write happens
+    in ConversationManager.run() once the loop unwinds. Notifies the
+    manager that the agent observed the cancellation so the normal-
+    completion path persists the marker even when this helper returns
+    cleanly via _Final (issue #491).
+    """
     if ctx.cancelled and ctx.cancelled.is_set():
         log.info("Agent turn cancelled by user")
         msg = "[Agent turn cancelled by user]"
         final_msg = {"role": "assistant", "content": msg}
         history.append(final_msg)
-        _archive(ctx, final_msg)
+        _note_cancel_observed(ctx)
         return ToolResult(text=msg)
     return None
+
+
+def _note_cancel_observed(ctx) -> None:
+    """Tell the manager the agent observed the cancel signal cleanly,
+    so the normal-completion path persists the marker. No-op when no
+    manager is attached (e.g. unit tests calling the helper directly).
+    """
+    if ctx.manager is None:
+        return
+    try:
+        ctx.manager.note_cancel_observed_by_agent(_conv_id(ctx))
+    except Exception as exc:
+        log.debug("note_cancel_observed_by_agent failed: %s", exc)
 
 
 @dataclass(frozen=True)
@@ -670,6 +708,14 @@ class TurnRunner:
         reflection, archive of last_reflection, and compaction trigger.
         Returns _Continue (retry) or _Final(result) (deliver response)."""
         content = response.get("content") or ""
+        # If cancellation fired mid-stream and the provider returned an
+        # empty body, don't archive an empty assistant message — the
+        # cancel propagates to the manager which writes the canonical
+        # marker (plus any partial accumulated server-side). Issue #491.
+        if (not content and self.ctx.cancelled
+                and self.ctx.cancelled.is_set()):
+            _note_cancel_observed(self.ctx)
+            return _Final(result=ToolResult(text=""))
         if not content:
             if self.empty_retries < 1:
                 self.empty_retries += 1

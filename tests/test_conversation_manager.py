@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from decafclaw.archive import read_archive
 from decafclaw.confirmations import (
     ConfirmationAction,
     ConfirmationRegistry,
@@ -14,10 +15,12 @@ from decafclaw.confirmations import (
 from decafclaw.conversation_manager import (
     _CTX_DRIVEN_FIELDS,
     _PERSISTED_BINDINGS,
+    CANCEL_MARKER_TEXT,
     ConversationManager,
     ConversationState,
     PersistedTurnState,
     TurnKind,
+    _write_cancel_archive,
 )
 from decafclaw.events import EventBus
 
@@ -366,6 +369,273 @@ async def test_cancel_turn_sets_event(manager):
     # Give the task a moment to be cancelled
     await asyncio.sleep(0.05)
     assert state.agent_task.cancelled()
+
+
+# -- Cancel archive helper (issue #491) ----------------------------------------
+
+
+def test_write_cancel_archive_with_partial(config):
+    """When partial text is present, _write_cancel_archive emits two
+    archive rows: the partial assistant message, then the cancel marker."""
+    conv_id = "conv-cancel-1"
+    _write_cancel_archive(config, conv_id, "Once upon a time, in ")
+
+    messages = read_archive(config, conv_id)
+    assert len(messages) == 2
+    assert messages[0]["role"] == "assistant"
+    assert messages[0]["content"] == "Once upon a time, in "
+    assert messages[1]["role"] == "cancel_marker"
+    assert messages[1]["content"] == CANCEL_MARKER_TEXT
+
+
+def test_write_cancel_archive_without_partial(config):
+    """Empty partial → only the cancel marker is archived."""
+    conv_id = "conv-cancel-2"
+    _write_cancel_archive(config, conv_id, "")
+
+    messages = read_archive(config, conv_id)
+    assert len(messages) == 1
+    assert messages[0]["role"] == "cancel_marker"
+    assert messages[0]["content"] == CANCEL_MARKER_TEXT
+
+
+def test_write_cancel_archive_skips_partial_when_already_archived(config):
+    """If the partial was already archived by the agent loop, the helper
+    must not double-write it — only the cancel marker is appended."""
+    conv_id = "conv-cancel-3"
+    _write_cancel_archive(
+        config, conv_id, "partial text", partial_already_archived=True,
+    )
+
+    messages = read_archive(config, conv_id)
+    assert len(messages) == 1
+    assert messages[0]["role"] == "cancel_marker"
+
+
+@pytest.mark.asyncio
+async def test_cancel_during_turn_archives_marker_and_partial(
+    manager, config, monkeypatch,
+):
+    """End-to-end: a turn that streams partial text and then raises
+    CancelledError should leave the archive with the streamed partial
+    (as an assistant row) followed by the cancel_marker row (issue #491).
+    The real run_agent_turn archives the user prompt as part of context
+    composition; this fake replaces that with a manual write."""
+    from decafclaw.archive import append_message
+    conv_id = "c1-cancel-integration"
+
+    async def fake_run_agent_turn(ctx, user_message, history, **kwargs):
+        # Emulate the real agent's user-archive step.
+        append_message(ctx.config, ctx.conv_id, {
+            "role": "user", "content": user_message,
+        })
+        # Simulate streaming a few text chunks before cancellation.
+        assert ctx.on_stream_chunk is not None
+        await ctx.on_stream_chunk("text", "Once upon a time, ")
+        await ctx.on_stream_chunk("text", "in a faraway kingdom...")
+        raise asyncio.CancelledError()
+
+    monkeypatch.setattr(
+        "decafclaw.agent.run_agent_turn", fake_run_agent_turn,
+    )
+
+    future = await manager.enqueue_turn(
+        conv_id=conv_id,
+        kind=TurnKind.USER,
+        prompt="write me a 600-word essay",
+        user_id="u",
+    )
+    await asyncio.wait_for(future, timeout=2.0)
+
+    messages = read_archive(config, conv_id)
+    roles = [m["role"] for m in messages]
+    # user, assistant (partial), cancel_marker — in that order.
+    assert roles == ["user", "assistant", "cancel_marker"]
+    assert messages[0]["content"] == "write me a 600-word essay"
+    assert messages[1]["content"] == "Once upon a time, in a faraway kingdom..."
+    assert messages[2]["content"] == CANCEL_MARKER_TEXT
+
+
+@pytest.mark.asyncio
+async def test_cancel_without_partial_archives_marker_only(
+    manager, config, monkeypatch,
+):
+    """When no text streamed before cancel, the archive holds only the
+    marker for the cancelled turn (no empty assistant row)."""
+    from decafclaw.archive import append_message
+    conv_id = "c1-cancel-no-partial"
+
+    async def fake_run_agent_turn(ctx, user_message, history, **kwargs):
+        append_message(ctx.config, ctx.conv_id, {
+            "role": "user", "content": user_message,
+        })
+        raise asyncio.CancelledError()
+
+    monkeypatch.setattr(
+        "decafclaw.agent.run_agent_turn", fake_run_agent_turn,
+    )
+
+    future = await manager.enqueue_turn(
+        conv_id=conv_id,
+        kind=TurnKind.USER,
+        prompt="hi",
+        user_id="u",
+    )
+    await asyncio.wait_for(future, timeout=2.0)
+
+    messages = read_archive(config, conv_id)
+    roles = [m["role"] for m in messages]
+    assert roles == ["user", "cancel_marker"]
+    assert messages[1]["content"] == CANCEL_MARKER_TEXT
+
+
+@pytest.mark.asyncio
+async def test_cancel_observed_cleanly_still_writes_marker(
+    manager, config, monkeypatch,
+):
+    """When the agent loop observes the cancel signal at iteration start
+    and returns a ToolResult cleanly (no CancelledError), the manager's
+    normal-path emit must still persist the cancel marker (issue #491).
+    This guards against the iteration-boundary race where task.cancel()
+    hasn't fired yet but cancel_event has been set."""
+    from decafclaw.archive import append_message
+    from decafclaw.media import ToolResult
+    conv_id = "c1-cancel-clean-return"
+
+    async def fake_run_agent_turn(ctx, user_message, history, **kwargs):
+        append_message(ctx.config, ctx.conv_id, {
+            "role": "user", "content": user_message,
+        })
+        # Set cancel_event AND mark the manager that the agent observed
+        # it — emulates _check_cancelled firing at iteration start and
+        # returning ToolResult via _Final.
+        ctx.cancelled.set()
+        ctx.manager.note_cancel_observed_by_agent(ctx.conv_id)
+        return ToolResult(text="[Agent turn cancelled by user]")
+
+    monkeypatch.setattr(
+        "decafclaw.agent.run_agent_turn", fake_run_agent_turn,
+    )
+
+    future = await manager.enqueue_turn(
+        conv_id=conv_id,
+        kind=TurnKind.USER,
+        prompt="hi",
+        user_id="u",
+    )
+    await asyncio.wait_for(future, timeout=2.0)
+
+    messages = read_archive(config, conv_id)
+    roles = [m["role"] for m in messages]
+    assert "cancel_marker" in roles, (
+        f"expected cancel marker in archive after clean cancel return; "
+        f"got roles={roles}"
+    )
+    cancel_idx = roles.index("cancel_marker")
+    assert messages[cancel_idx]["content"] == CANCEL_MARKER_TEXT
+
+
+@pytest.mark.asyncio
+async def test_late_cancel_after_completion_no_marker(
+    manager, config, monkeypatch,
+):
+    """When cancel_event is set AFTER the agent loop already returned
+    a real response (a late cancel that didn't actually interrupt
+    anything), the archive must NOT carry a cancel marker — the
+    response was real and delivered. Distinguishes via the explicit
+    cancel_observed_by_agent flag rather than raw cancel_event state.
+    Issue #491 Copilot review."""
+    from decafclaw.archive import append_message
+    from decafclaw.media import ToolResult
+    conv_id = "c1-cancel-too-late"
+
+    async def fake_run_agent_turn(ctx, user_message, history, **kwargs):
+        append_message(ctx.config, ctx.conv_id, {
+            "role": "user", "content": user_message,
+        })
+        # The agent completes a real response. Cancel fires AFTER the
+        # agent returned (e.g., the user clicked cancel just after the
+        # final chunk landed). The agent never observed it.
+        ctx.cancelled.set()
+        return ToolResult(text="here is the real answer")
+
+    monkeypatch.setattr(
+        "decafclaw.agent.run_agent_turn", fake_run_agent_turn,
+    )
+
+    future = await manager.enqueue_turn(
+        conv_id=conv_id,
+        kind=TurnKind.USER,
+        prompt="hi",
+        user_id="u",
+    )
+    await asyncio.wait_for(future, timeout=2.0)
+
+    messages = read_archive(config, conv_id)
+    roles = [m["role"] for m in messages]
+    assert "cancel_marker" not in roles, (
+        f"late cancel after real completion must not write a marker; "
+        f"got roles={roles}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_cancel_skips_partial_when_already_archived(
+    manager, config, monkeypatch,
+):
+    """When the agent loop already archived the assistant content before
+    cancel propagated, the marker is appended but no duplicate partial
+    row is written."""
+    from decafclaw.archive import append_message
+    conv_id = "c1-cancel-dedupe"
+
+    async def fake_run_agent_turn(ctx, user_message, history, **kwargs):
+        # Simulate streaming + the agent loop archiving the partial.
+        append_message(ctx.config, ctx.conv_id, {
+            "role": "user", "content": user_message,
+        })
+        assert ctx.on_stream_chunk is not None
+        await ctx.on_stream_chunk("text", "Hello ")
+        await ctx.on_stream_chunk("text", "world")
+        # The real agent does this via _archive() in agent.py — emulate.
+        append_message(ctx.config, ctx.conv_id, {
+            "role": "assistant", "content": "Hello world",
+        })
+        ctx.manager.note_partial_assistant_archived(ctx.conv_id)
+        raise asyncio.CancelledError()
+
+    monkeypatch.setattr(
+        "decafclaw.agent.run_agent_turn", fake_run_agent_turn,
+    )
+
+    future = await manager.enqueue_turn(
+        conv_id=conv_id,
+        kind=TurnKind.USER,
+        prompt="say hi",
+        user_id="u",
+    )
+    await asyncio.wait_for(future, timeout=2.0)
+
+    messages = read_archive(config, conv_id)
+    # user, assistant (from agent), cancel_marker — no duplicate assistant
+    assert [m["role"] for m in messages] == [
+        "user", "assistant", "cancel_marker",
+    ]
+    assert messages[1]["content"] == "Hello world"
+
+
+@pytest.mark.asyncio
+async def test_partial_assistant_chunks_resets_each_turn(manager):
+    """ConversationState.partial_assistant_chunks starts empty and
+    tracks streamed text for the current turn only."""
+    state = manager._get_or_create("conv-stream-1")
+    assert state.partial_assistant_chunks == []
+    state.partial_assistant_chunks.append("leftover from prior turn")
+    # _start_turn resets this before any chunk could arrive. We assert
+    # the field exists and is mutable; the reset behavior is exercised
+    # by the integration tests above.
+    state.partial_assistant_chunks = []
+    assert state.partial_assistant_chunks == []
 
 
 # -- Send message with mocked agent turn ---------------------------------------

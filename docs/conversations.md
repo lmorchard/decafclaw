@@ -22,6 +22,21 @@ Each line is a JSON object with `role`, `content`, optional `tool_calls`/`tool_c
 
 When DecafClaw restarts, it reads the archive for any conversation that receives a new message. The full history is replayed into memory, so the agent picks up where it left off.
 
+### Cancelled turns
+
+When a user cancels an in-progress agent turn (Ctrl+C in the TUI, the cancel button in the web UI), `ConversationManager` persists:
+
+1. Any partial assistant text that was streamed before the cancel (as an `assistant` row). Omitted if no content streamed.
+2. A `cancel_marker` row carrying `CANCEL_MARKER_TEXT`: `"[User cancelled this turn. Do not retry the cancelled request unless they explicitly ask for it again.]"`.
+
+The write happens on **whichever cancel path fires first** — either the `CancelledError` handler when `task.cancel()` propagates an exception, or the normal-completion path when the agent loop observes the cancel cleanly (via `_check_cancelled` at iteration start, or the streaming short-circuit in `_handle_no_tool_calls`). The agent reports the clean-observation via `ConversationManager.note_cancel_observed_by_agent`. A write-once latch (`ConversationState.cancel_marker_written`) makes both entries safe when both fire.
+
+The normal-path write is gated on the agent's explicit `cancel_observed_by_agent` flag rather than the raw `cancel_event` state — so a cancel signal that arrives *after* the agent has already returned a real response doesn't spuriously mark a delivered response as cancelled.
+
+`cancel_marker` is an archive-only role; the [context composer](context-composer.md) remaps it to `user` before sending history to the LLM (matching the `vault_retrieval` / `conversation_notes` pattern, see `ROLE_REMAP`). The marker sits between the cancelled-user-turn and the next user turn at the right position across all providers — Gemini/Vertex collapses `system`-role messages into the top-level `systemInstruction` field, which would lose the positional meaning.
+
+If the agent loop happened to archive a complete assistant message before the cancel propagated, the helper skips its partial write (tracked via `ConversationState.partial_assistant_archived`) so the archive doesn't carry a duplicate body.
+
 ## Compaction
 
 When the conversation grows too large (exceeding the token budget), the agent automatically compacts older messages into a summary.
