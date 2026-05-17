@@ -75,6 +75,15 @@ def tool_workspace_read(ctx, path: str, start_line: int | None = None,
     all_lines = content.splitlines()
     total = len(all_lines)
     partial = start_line is not None or end_line is not None
+    # Common metadata for programmatic callers — sized in bytes so the
+    # script can decide whether to keep, summarize, or skip without
+    # re-reading. Body is intentionally NOT echoed into `data` (already in
+    # text) to avoid doubling the tool-result token cost.
+    base_data: dict = {
+        "path": path,
+        "size": len(content.encode("utf-8")),
+        "lines": total,
+    }
 
     # Large file guard: cap full reads at MAX_READ_LINES
     if not partial and total > MAX_READ_LINES:
@@ -85,7 +94,10 @@ def tool_workspace_read(ctx, path: str, start_line: int | None = None,
                     for i, line in enumerate(selected)]
         header = (f"File has {total} lines, showing first {MAX_READ_LINES}. "
                   f"Use start_line/end_line to read specific sections.\n")
-        return header + "\n".join(numbered)
+        return ToolResult(
+            text=header + "\n".join(numbered),
+            data={**base_data, "range": [1, end], "truncated": True},
+        )
 
     # Determine range (1-based, inclusive)
     start = max(1, start_line or 1)
@@ -96,8 +108,14 @@ def tool_workspace_read(ctx, path: str, start_line: int | None = None,
                 for i, line in enumerate(selected)]
     if partial:
         header = f"Lines {start}-{end} of {total}:\n"
-        return header + "\n".join(numbered)
-    return "\n".join(numbered)
+        return ToolResult(
+            text=header + "\n".join(numbered),
+            data={**base_data, "range": [start, end], "truncated": False},
+        )
+    return ToolResult(
+        text="\n".join(numbered),
+        data={**base_data, "range": [1, total], "truncated": False},
+    )
 
 
 _MARKDOWN_EXTS = (".md", ".markdown")
@@ -188,12 +206,24 @@ def tool_workspace_list(ctx, path: str = ".") -> str | ToolResult:
     try:
         entries = sorted(resolved.iterdir())
         lines = []
+        data_entries: list[dict] = []
         for entry in entries:
             rel = entry.relative_to(resolved)
-            suffix = "/" if entry.is_dir() else ""
-            size = f" ({entry.stat().st_size}B)" if entry.is_file() else ""
+            is_dir = entry.is_dir()
+            suffix = "/" if is_dir else ""
+            size_bytes = entry.stat().st_size if entry.is_file() else None
+            size = f" ({size_bytes}B)" if size_bytes is not None else ""
             lines.append(f"{rel}{suffix}{size}")
-        return "\n".join(lines) if lines else "(empty directory)"
+            data_entries.append({
+                "name": str(rel),
+                "is_dir": is_dir,
+                "size": size_bytes,
+            })
+        text = "\n".join(lines) if lines else "(empty directory)"
+        return ToolResult(
+            text=text,
+            data={"path": path, "entries": data_entries},
+        )
     except PermissionError as e:
         return _file_error(e, path)
 
@@ -431,6 +461,10 @@ def tool_workspace_search(ctx, pattern: str, path: str = ".",
     max_matches = 50
     total_matches = 0
     output_sections = []
+    # Structured per-file match list for programmatic callers — path
+    # plus 1-based line numbers. Excerpts stay in .text only so .data
+    # doesn't duplicate large bodies.
+    data_files: list[dict] = []
 
     # Collect files to search
     if resolved.is_file():
@@ -476,16 +510,29 @@ def tool_workspace_search(ctx, pattern: str, path: str = ".",
                 section_lines.append(f"{prefix} {lineno:>4}| {lines[j]}")
 
         output_sections.append("\n".join(section_lines))
+        data_files.append({
+            "path": str(rel_path),
+            "match_lines": [i + 1 for i in file_matches],  # 1-based
+        })
         if total_matches >= max_matches:
             break
 
+    truncated = total_matches >= max_matches
+    base_data = {
+        "pattern": pattern,
+        "path": path,
+        "total_matches": total_matches,
+        "truncated": truncated,
+        "files": data_files,
+    }
+
     if not output_sections:
-        return "(no matches)"
+        return ToolResult(text="(no matches)", data=base_data)
 
     result = "\n\n".join(output_sections)
-    if total_matches >= max_matches:
+    if truncated:
         result += f"\n\n(truncated — showing first {max_matches} matches)"
-    return result
+    return ToolResult(text=result, data=base_data)
 
 
 def tool_workspace_glob(ctx, pattern: str, path: str = ".") -> str | ToolResult:
@@ -501,24 +548,40 @@ def tool_workspace_glob(ctx, pattern: str, path: str = ".") -> str | ToolResult:
 
     workspace = ctx.config.workspace_path.resolve()
     max_results = 200
-    matches = []
+    text_lines: list[str] = []
+    data_matches: list[dict] = []
     for fpath in sorted(resolved.rglob(pattern)):
         rel = fpath.relative_to(workspace)
+        is_dir = fpath.is_dir()
         if fpath.is_file():
             size = fpath.stat().st_size
-            matches.append(f"{rel} ({size}B)")
-        else:
-            matches.append(f"{rel}/")
-        if len(matches) >= max_results:
+            text_lines.append(f"{rel} ({size}B)")
+            data_matches.append({
+                "path": str(rel), "is_dir": False, "size": size,
+            })
+        elif is_dir:
+            text_lines.append(f"{rel}/")
+            data_matches.append({
+                "path": str(rel), "is_dir": True, "size": None,
+            })
+        if len(text_lines) >= max_results:
             break
 
-    if not matches:
-        return "(no matches)"
+    truncated = len(text_lines) >= max_results
+    base_data = {
+        "pattern": pattern,
+        "path": path,
+        "matches": data_matches,
+        "truncated": truncated,
+    }
 
-    result = "\n".join(matches)
-    if len(matches) >= max_results:
+    if not text_lines:
+        return ToolResult(text="(no matches)", data=base_data)
+
+    result = "\n".join(text_lines)
+    if truncated:
         result += f"\n\n(truncated — showing first {max_results} results)"
-    return result
+    return ToolResult(text=result, data=base_data)
 
 
 WORKSPACE_TOOLS = {
