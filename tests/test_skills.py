@@ -505,6 +505,77 @@ def test_discover_extra_path_skipped_when_missing(tmp_path, config, caplog):
     )
 
 
+def test_decafclaw_repo_auto_populated_when_unset(
+    tmp_path, config, monkeypatch
+):
+    """`$DECAFCLAW_REPO` resolves against the auto-detected source root
+    when the env var is unset — letting `extra_skill_paths` entries
+    work without a manual `.env` setting."""
+    monkeypatch.delenv("DECAFCLAW_REPO", raising=False)
+    # The detected root is the repo we're running tests from; place a
+    # marker skill there relative to its `contrib/skills/` and verify
+    # discovery picks it up via `$DECAFCLAW_REPO`.
+    from decafclaw.skills import _AUTO_REPO_ROOT
+
+    assert _AUTO_REPO_ROOT is not None, "test must run from a source checkout"
+    # Use a real existing contrib skill as the target so we don't have
+    # to write into the repo from a test.
+    config.extra_skill_paths = ["$DECAFCLAW_REPO/contrib/skills/writing-clearly"]
+    skills = discover_skills(config)
+    assert any(s.name == "writing-clearly" for s in skills)
+
+
+def test_decafclaw_repo_explicit_env_wins(tmp_path, config, monkeypatch):
+    """An explicit `$DECAFCLAW_REPO` env value overrides auto-detection."""
+    _write_skill(
+        tmp_path / "elsewhere" / "contrib" / "skills" / "elsewhere-skill",
+        "name: elsewhere-skill\ndescription: Marker skill.",
+    )
+    monkeypatch.setenv("DECAFCLAW_REPO", str(tmp_path / "elsewhere"))
+    config.extra_skill_paths = ["$DECAFCLAW_REPO/contrib/skills/elsewhere-skill"]
+    skills = discover_skills(config)
+    assert any(s.name == "elsewhere-skill" for s in skills)
+
+
+def test_contrib_shorthand_auto_populated(tmp_path, config, monkeypatch):
+    """`$CONTRIB` auto-resolves to `$DECAFCLAW_REPO/contrib` so the
+    shorter form works in `extra_skill_paths`."""
+    monkeypatch.delenv("DECAFCLAW_REPO", raising=False)
+    monkeypatch.delenv("CONTRIB", raising=False)
+    config.extra_skill_paths = ["$CONTRIB/skills/writing-clearly"]
+    skills = discover_skills(config)
+    assert any(s.name == "writing-clearly" for s in skills)
+
+
+def test_contrib_follows_explicit_decafclaw_repo(
+    tmp_path, config, monkeypatch
+):
+    """When the user overrides `$DECAFCLAW_REPO`, the derived `$CONTRIB`
+    follows — pointing at the new checkout's contrib/ rather than the
+    auto-detected one."""
+    _write_skill(
+        tmp_path / "alt" / "contrib" / "skills" / "alt-skill",
+        "name: alt-skill\ndescription: Alt skill.",
+    )
+    monkeypatch.setenv("DECAFCLAW_REPO", str(tmp_path / "alt"))
+    monkeypatch.delenv("CONTRIB", raising=False)
+    config.extra_skill_paths = ["$CONTRIB/skills/alt-skill"]
+    skills = discover_skills(config)
+    assert any(s.name == "alt-skill" for s in skills)
+
+
+def test_contrib_explicit_env_wins(tmp_path, config, monkeypatch):
+    """An explicit `$CONTRIB` env value wins over the derived default."""
+    _write_skill(
+        tmp_path / "myown" / "skills" / "own-skill",
+        "name: own-skill\ndescription: Own skill.",
+    )
+    monkeypatch.setenv("CONTRIB", str(tmp_path / "myown"))
+    config.extra_skill_paths = ["$CONTRIB/skills/own-skill"]
+    skills = discover_skills(config)
+    assert any(s.name == "own-skill" for s in skills)
+
+
 def test_discover_skips_dirs_without_skill_md(tmp_path, config):
     """Directories without SKILL.md are ignored."""
     skills_dir = config.workspace_path / "skills"

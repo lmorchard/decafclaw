@@ -15,6 +15,25 @@ log = logging.getLogger(__name__)
 _BUNDLED_SKILLS_DIR = Path(__file__).parent
 
 
+def _detect_repo_root() -> Path | None:
+    """Auto-detect the DecafClaw repo root for `$DECAFCLAW_REPO`.
+
+    Walks up from this file looking for a directory that has BOTH
+    ``contrib/`` and ``pyproject.toml`` — the signature of a source
+    checkout. Returns ``None`` when those markers aren't found (e.g.
+    a wheel-only install), in which case `$DECAFCLAW_REPO` is left
+    unset and `extra_skill_paths` entries that reference it will
+    miss as before.
+    """
+    for parent in [_BUNDLED_SKILLS_DIR, *_BUNDLED_SKILLS_DIR.parents]:
+        if (parent / "contrib").is_dir() and (parent / "pyproject.toml").is_file():
+            return parent
+    return None
+
+
+_AUTO_REPO_ROOT = _detect_repo_root()
+
+
 @dataclass
 class SkillInfo:
     """Metadata for a discovered skill."""
@@ -181,7 +200,24 @@ def _resolve_extra_skill_paths(config) -> list[Path]:
 
     For each entry: expand $VARS and ~, then anchor relative paths to
     config.agent_path (matching vault_root). Order is preserved.
+
+    Two variables are auto-populated from the detected source-checkout
+    root (see ``_detect_repo_root``) when unset, so `extra_skill_paths`
+    entries work out of the box:
+
+    - ``$DECAFCLAW_REPO`` — the repo root.
+    - ``$CONTRIB`` — shorthand for ``$DECAFCLAW_REPO/contrib``. Useful
+      for compact entries like ``$CONTRIB/skills/<name>``.
+
+    Explicit env-var settings always win. ``$CONTRIB`` is derived from
+    the resolved value of ``$DECAFCLAW_REPO`` — set ``DECAFCLAW_REPO``
+    to point at a different checkout and ``$CONTRIB`` follows.
     """
+    if "DECAFCLAW_REPO" not in os.environ and _AUTO_REPO_ROOT is not None:
+        os.environ["DECAFCLAW_REPO"] = str(_AUTO_REPO_ROOT)
+    if "CONTRIB" not in os.environ and "DECAFCLAW_REPO" in os.environ:
+        os.environ["CONTRIB"] = os.path.join(os.environ["DECAFCLAW_REPO"], "contrib")
+
     resolved: list[Path] = []
     for raw in config.extra_skill_paths:
         expanded = os.path.expandvars(str(raw))
