@@ -6,11 +6,11 @@ allowed-tools: edit_with_strunk
 
 # Writing Clearly and Concisely
 
-Adapts the [writing-clearly-and-concisely](https://github.com/obra/the-elements-of-style) skill for DecafClaw. The Strunk corpus (`elements-of-style.md`, ~12k tokens) never enters this conversation — it's loaded server-side and inlined into a delegated child agent that does the edit in a clean context.
+Edits prose drafts using Strunk's *Elements of Style*. The rulebook is inlined into a delegated child agent, so it never enters this conversation.
 
 ## When to use
 
-Whenever you have prose a human will read and want it tighter:
+Any prose a human will read and you want it tighter:
 
 - Documentation, READMEs, technical explanations
 - Commit messages, PR descriptions
@@ -24,15 +24,16 @@ Call `edit_with_strunk` with the draft inline:
 ```
 edit_with_strunk(
   draft="<the prose you wrote>",
-  focus="optional: 'omit needless words' or 'active voice' or leave blank for general"
+  focus="optional: 'omit needless words' or 'active voice' — leave blank for general"
 )
 ```
 
-The tool returns the revised prose. Hand it back to the user, or use it as the next iteration of your draft.
+The tool returns the revised prose. Hand it back to the user, or use it as the next iteration of the draft.
 
-## What happens under the hood
+Use `focus` when you want the editor to bias toward one rule cluster (e.g. tighten verbs only, or strip passive voice only). Leave blank for a full pass.
 
-1. The tool reads `elements-of-style.md` from disk (your context never sees it).
-2. Builds a task: persona + rules + draft + focus.
-3. Calls `delegate_task` — a child agent with clean context applies the rules and returns the revision.
-4. The revision lands as the tool's output.
+## What it preserves
+
+- Technical terms, names, code, links, and quoted material — verbatim.
+- The author's voice and intent. The editor tightens; it does not rewrite for style or tone.
+- Sentences already clean by Strunk's standards are left alone.
