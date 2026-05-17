@@ -62,12 +62,12 @@ def test_resolve_safe_rejects_prefix_attack(config, tmp_data):
 
 def test_write_and_read(ctx):
     tool_workspace_write(ctx, "test.txt", "hello world")
-    assert "hello world" in tool_workspace_read(ctx, "test.txt")
+    assert "hello world" in _text(tool_workspace_read(ctx, "test.txt"))
 
 
 def test_write_creates_dirs(ctx):
     tool_workspace_write(ctx, "subdir/nested/file.txt", "content")
-    assert "content" in tool_workspace_read(ctx, "subdir/nested/file.txt")
+    assert "content" in _text(tool_workspace_read(ctx, "subdir/nested/file.txt"))
 
 
 def test_read_nonexistent(ctx):
@@ -542,7 +542,7 @@ def test_search_single_file(ctx):
 def test_search_no_matches(ctx):
     tool_workspace_write(ctx, "f.txt", "nothing here\n")
     result = tool_workspace_search(ctx, "zzzzz")
-    assert result == "(no matches)"
+    assert _text(result) == "(no matches)"
 
 
 def test_search_invalid_regex(ctx):
@@ -587,7 +587,7 @@ def test_glob_specific_name(ctx):
 def test_glob_no_matches(ctx):
     tool_workspace_write(ctx, "a.txt", "text\n")
     result = tool_workspace_glob(ctx, "*.zzz")
-    assert result == "(no matches)"
+    assert _text(result) == "(no matches)"
 
 
 def test_glob_with_subpath(ctx):

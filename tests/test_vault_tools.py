@@ -136,7 +136,7 @@ class TestVaultWrite:
         with patch("decafclaw.embeddings.index_entry", new_callable=AsyncMock):
             result = await tool_vault_write(ctx, "agent/pages/New Page",
                                             "# New Page\n\nFresh.")
-        assert "saved" in result.lower()
+        assert "saved" in result.text.lower()
         path = vault_dir / "agent" / "pages" / "New Page.md"
         assert path.exists()
         assert "Fresh." in path.read_text()
@@ -186,7 +186,7 @@ class TestVaultWrite:
         """Writing 'page.md' should create page.md, not page.md.md."""
         with patch("decafclaw.embeddings.index_entry", new_callable=AsyncMock):
             result = await tool_vault_write(ctx, "agent/pages/Test.md", "# Test")
-        assert "saved" in result.lower() or "saved" in str(result).lower()
+        assert "saved" in result.text.lower()
         assert (vault_dir / "agent" / "pages" / "Test.md").exists()
         assert not (vault_dir / "agent" / "pages" / "Test.md.md").exists()
 
@@ -763,7 +763,7 @@ class TestVaultJournalAppend:
     async def test_appends_entry(self, ctx, agent_journal):
         result = await tool_vault_journal_append(
             ctx, tags=["test", "foo"], content="Something happened.")
-        assert "saved" in result.lower()
+        assert "saved" in result.text.lower()
         # Find the journal file
         files = list(agent_journal.rglob("*.md"))
         assert len(files) == 1

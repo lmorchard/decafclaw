@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 
 from tabstack import AsyncTabstack
 
+from decafclaw.media import ToolResult
+
 log = logging.getLogger(__name__)
 
 
@@ -40,24 +42,32 @@ def _get_client() -> AsyncTabstack:
 
 # -- Tool implementations ---------------------------------------------------
 
-async def tool_tabstack_extract_markdown(ctx, url: str) -> str:
+async def tool_tabstack_extract_markdown(ctx, url: str) -> ToolResult:
     """Extract clean Markdown from a web page or PDF."""
     log.info(f"[tool:tabstack_extract_markdown] {url}")
     try:
         result = await _get_client().extract.markdown(url=url)
-        return result.content
+        return ToolResult(
+            text=result.content,
+            data={"url": url, "size": len(result.content.encode("utf-8"))},
+        )
     except Exception as e:
-        return f"[error: {e}]"
+        return ToolResult(text=f"[error: {e}]")
 
 
-async def tool_tabstack_extract_json(ctx, url: str, json_schema: dict) -> str:
+async def tool_tabstack_extract_json(ctx, url: str, json_schema: dict) -> ToolResult:
     """Extract structured JSON data from a web page or PDF."""
     log.info(f"[tool:tabstack_extract_json] {url}")
     try:
         result = await _get_client().extract.json(url=url, json_schema=json_schema)
-        return json.dumps(result.data, indent=2)  # type: ignore[attr-defined]
+        # `text` keeps the human-readable rendering; `data["result"]` is
+        # the parsed object so scripts skip the `json.loads` step.
+        return ToolResult(
+            text=json.dumps(result.data, indent=2),  # type: ignore[attr-defined]
+            data={"url": url, "result": result.data},  # type: ignore[attr-defined]
+        )
     except Exception as e:
-        return f"[error: {e}]"
+        return ToolResult(text=f"[error: {e}]")
 
 
 async def tool_tabstack_generate(ctx, url: str, json_schema: dict, instructions: str) -> str:
@@ -100,7 +110,7 @@ async def tool_tabstack_automate(ctx, task: str, url: str | None = None) -> str:
         return f"[error: {e}]"
 
 
-async def tool_tabstack_research(ctx, query: str, mode: str = "balanced") -> str:
+async def tool_tabstack_research(ctx, query: str, mode: str = "balanced") -> ToolResult:
     """Search the web, analyze multiple sources, and synthesize an answer."""
     log.info(f"[tool:tabstack_research] query={query} mode={mode}")
     try:
@@ -120,9 +130,14 @@ async def tool_tabstack_research(ctx, query: str, mode: str = "balanced") -> str
             if report:
                 final_answer = report
 
-        return final_answer or "[error: research stream ended without a final answer]"
+        if not final_answer:
+            return ToolResult(text="[error: research stream ended without a final answer]")
+        return ToolResult(
+            text=final_answer,
+            data={"query": query, "mode": mode, "size": len(final_answer.encode("utf-8"))},
+        )
     except Exception as e:
-        return f"[error: {e}]"
+        return ToolResult(text=f"[error: {e}]")
 
 
 # -- Helpers ----------------------------------------------------------------
