@@ -1,0 +1,52 @@
+# delegate_task — LLM tool-choice angle only. Fork mechanism, context
+# isolation, error propagation, and timeouts are covered by 10 unit tests
+# in tests/test_delegate.py. This file isolates the eval-only question:
+# does the agent decide to delegate at appropriate times?
+
+# -- Good candidate: explicit user framing ----------------------------------
+
+- name: "delegates when user explicitly asks for a sub-agent"
+  setup:
+    workspace_files:
+      "vault/agent/pages/auth-rewrite.md": |
+        ---
+        summary: Authentication middleware rewrite proposal.
+        ---
+        # Auth Rewrite
+
+        We're replacing the legacy session-token store with a JWT-based
+        approach. Constraints: legal flagged the existing storage as
+        non-compliant; rollout has to be done without downtime.
+
+        ## Approach
+
+        Two-phase migration: dual-write during a transition window, then
+        cut over reads.
+
+        ## Risks
+
+        Token revocation latency, refresh-token rotation, replay attacks.
+  input: "Spin up a separate sub-agent to read the auth-rewrite vault page and produce a one-paragraph summary of its approach and risks."
+  # The eval runner doesn't wire up a ConversationManager, so delegate_task
+  # cannot actually execute in this context — it returns a "requires a
+  # ConversationManager" error. The LLM-decision is what's under test;
+  # execution is covered by tests/test_delegate.py. Allow 1 error and 4
+  # calls so the agent can attempt the delegation and narrate the failure.
+  expect:
+    max_tool_calls: 4
+    max_tool_errors: 1
+    expect_tool: delegate_task
+
+# -- Bad candidate: trivial direct question ---------------------------------
+
+- name: "does NOT delegate a trivial direct question"
+  setup:
+    memories:
+      - tags: [preference, cocktail]
+        content: "Favorite cocktails are Boulevardier and Old Fashioned."
+  input: "What are my favorite cocktails?"
+  expect:
+    response_contains: "Boulevardier"
+    max_tool_calls: 5
+    max_tool_errors: 0
+    expect_no_tool: delegate_task

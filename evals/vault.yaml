@@ -1,0 +1,149 @@
+# Vault skill — LLM tool-choice + end-to-end behavior on the always-loaded
+# vault. Replaces the silently-broken `memory-semantic.yaml` (its allowed_tools
+# referenced removed tool names; tests passed because proactive retrieval
+# bypassed the intended path — see the 2026-04-24 audit).
+#
+# Each case is designed to force real tool use rather than relying on
+# proactive memory retrieval to satisfy the prompt. See
+# docs/eval-loop.md "Semantic search tests" for the underlying pattern.
+
+# -- vault_journal_append (durable user-level fact) ---------------------------
+
+- name: "saves user-level fact to vault journal on 'remember'"
+  input: "Please remember that my dog's name is Luna and she's a border collie mix."
+  expect:
+    response_contains: "Luna"
+    max_tool_calls: 3
+    max_tool_errors: 0
+    expect_tool: vault_journal_append
+    expect_no_tool: [notes_append, vault_write]
+
+# -- vault_search (explicit search request) ----------------------------------
+
+- name: "reaches for vault_search on explicit search request"
+  setup:
+    memories:
+      - tags: [pet, cat, personal]
+        content: "My first cat's name was Sassy and she was a tortoiseshell."
+      - tags: [pet, dog, personal, mozilla]
+        content: "I have a border collie named Luna."
+  input: "Search the vault for anything I've recorded about my pets. List them."
+  expect:
+    response_contains_all: ["Sassy", "Luna"]
+    max_tool_calls: 5
+    max_tool_errors: 0
+    expect_tool: vault_search
+
+# -- vault_search (semantic over distractor-heavy fixture) -------------------
+#
+# Uses cat-facts-embeddings.db (~97 cat facts) as the distractor noise floor
+# so that proactive retrieval can't trivially surface the seeded fact. Forces
+# the agent to issue a real vault_search query against the index.
+
+- name: "finds specific fact under heavy distractor load"
+  setup:
+    embeddings_fixture: "evals/fixtures/cat-facts-embeddings.db"
+    memories:
+      - tags: [preference, cocktail, drink]
+        content: "Favorite cocktails are Boulevardier and Old Fashioned."
+  input: "What cocktails am I into?"
+  expect:
+    response_contains: "re:boulevardier|old fashioned"
+    max_tool_calls: 5
+    max_tool_errors: 0
+
+# -- vault_read (named page, no search detour) -------------------------------
+
+- name: "reads a named vault page directly without searching first"
+  setup:
+    workspace_files:
+      "vault/agent/pages/dream-skill.md": |
+        ---
+        summary: Notes on the dream skill — overnight memory consolidation.
+        ---
+        # Dream Skill
+
+        Runs nightly to consolidate journal entries into vault pages.
+
+        ## Key behaviors
+
+        - Reads recent journal
+        - Distills into pages under agent/pages/
+        - Writes summary frontmatter for retrieval
+  input: "Read the page named 'dream-skill' and summarize its key behaviors."
+  expect:
+    response_contains_all:
+      - "re:journal"
+      - "re:summary|frontmatter|consolidat"
+    max_tool_calls: 4
+    max_tool_errors: 0
+    expect_tool: vault_read
+    expect_no_tool: vault_search
+
+# -- vault_backlinks (find inbound wiki-links) -------------------------------
+
+- name: "reaches for vault_backlinks to find inbound links"
+  setup:
+    workspace_files:
+      "vault/agent/pages/auth-rewrite.md": |
+        ---
+        summary: Authentication middleware rewrite proposal.
+        ---
+        # Auth Rewrite
+
+        Proposed approach. See [[migration-plan]] for sequencing.
+      "vault/agent/pages/data-migration.md": |
+        ---
+        summary: Schema migration for the users table.
+        ---
+        # Data Migration
+
+        Coordinated with [[migration-plan]] for the overall release window.
+      "vault/agent/pages/migration-plan.md": |
+        ---
+        summary: Migration plan covering several rewrites.
+        ---
+        # Migration Plan
+
+        Sequencing across our pending rewrites.
+  input: "Which pages in my vault link to migration-plan? Use the backlinks tool."
+  expect:
+    response_contains_all: ["auth-rewrite", "data-migration"]
+    max_tool_calls: 4
+    max_tool_errors: 0
+    expect_tool: vault_backlinks
+    expect_no_tool: vault_search
+
+# -- vault_section (edit one section, leave others alone) --------------------
+#
+# Uses PR-A's `expect_workspace` to verify the rest of the page survived
+# the edit. Tool selection is permissive — vault_section is preferred but
+# a vault_write rewrite that preserves all sections is acceptable. The
+# post-turn workspace regex is the load-bearing assertion.
+
+- name: "adds a section without rewriting other sections"
+  setup:
+    workspace_files:
+      "vault/agent/pages/project-notes.md": |
+        # Project Notes
+
+        ## Background
+
+        This is the background section. It should stay exactly as it is.
+
+        ## TODO
+
+        - Old item
+
+        ## References
+
+        - Link 1
+        - Link 2
+  input: "Edit the vault page at 'agent/pages/project-notes' — add a new section titled 'Status' with the body 'Working on it.' Place it right after the Background section. Leave the other sections untouched."
+  expect:
+    max_tool_calls: 8
+    max_tool_errors: 1
+    expect_tool: [vault_section, vault_write]
+  expect_workspace:
+    workspace_files:
+      "vault/agent/pages/project-notes.md": "re:## Background.+exactly as it is.+## Status.+Working on it.+## TODO.+Old item.+## References.+Link 1"

@@ -6,11 +6,14 @@ DecafClaw includes an eval harness for testing prompts and tools with real LLM c
 
 ```bash
 make eval                                            # Run all YAML test files (default model)
+make eval-history                                    # Print the pass-rate trend over recent runs
 uv run python -m decafclaw.eval evals/               # Same, via Python invocation
 uv run python -m decafclaw.eval evals/memory.yaml    # Run a specific file
 uv run python -m decafclaw.eval evals/ --model gemini-2.5-pro  # Override model
 uv run python -m decafclaw.eval evals/ --verbose     # Show truncated response snippets per test
 uv run python -m decafclaw.eval evals/ --concurrency 1  # Run tests sequentially (default: 4)
+uv run python -m decafclaw.eval --history            # Print history table, no run
+uv run python -m decafclaw.eval --history --history-limit 5  # Last 5 runs only
 ```
 
 ## Test case format
@@ -44,6 +47,7 @@ Tests are YAML files with a list of test cases. Single-turn form:
 | `setup.skills` | List of skill names to pre-activate before the test case (once, shared across turns) |
 | `setup.memories` | List of `{content, tags}`; seeded as journal entries (and indexed for semantic search if the strategy is `semantic`) |
 | `setup.workspace_files` | Map of `{relative_path: content}` to seed into the test workspace. Paths are sandboxed — no `..` escape |
+| `setup.conversation_history` | List of message dicts (`{role, content, ...}`) written to `{workspace}/conversations/eval.jsonl` *and* pre-loaded into the in-memory history before the first turn. Use to test `conversation_search` / `conversation_compact` without organically building up history. Each entry must have a `role`; timestamps are auto-stamped if missing. |
 | `setup.embeddings_fixture` | Path to a pre-built embeddings.db to copy into the workspace |
 | `setup.auto_confirm` | Default `true`. Auto-approve (or deny) all tool confirmation requests (shell, email, `EndTurnConfirm`, etc.) |
 | `setup.max_tool_iterations` | Override `config.agent.max_tool_iterations` for this test only. Use for tests that need to exercise budget-exhaustion behavior (e.g., the grace turn) without changing the global default |
@@ -53,6 +57,7 @@ Tests are YAML files with a list of test cases. Single-turn form:
 | Field | Type | Semantics |
 |-------|------|-----------|
 | `response_contains` | str / list[str] / `"re:pattern"` | **OR semantics.** Matches if any listed string/regex is in the response. Case-insensitive for non-regex; regex uses `re:` prefix. |
+| `response_contains_all` | str / list[str] / `"re:pattern"` | **AND semantics.** Fails if any listed string/regex is missing from the response. Same item handling as `response_contains` (case-insensitive substring or `re:` regex). Use this when the test name implies "and" — `response_contains: [a, b]` would pass with only `a`. |
 | `response_not_contains` | str / list[str] | **AND semantics.** Fails if any listed string is in the response. Case-insensitive. |
 | `max_tool_calls` | int | Fail if tool calls in this turn exceed the bound |
 | `max_tool_errors` | int | Fail if tool results containing `[error` in this turn exceed the bound |
@@ -60,9 +65,36 @@ Tests are YAML files with a list of test cases. Single-turn form:
 | `expect_no_tool` | str / list[str] | **AND semantics.** Fail if any of the listed tools were called this turn. |
 | `expect_tool_count_by_name` | dict[str, int] | Fail if any listed tool's call count this turn does not equal the mapped int. Tools not listed are unconstrained. Count `0` is allowed (overlaps `expect_no_tool`). |
 
-Note that `response_contains` with a list uses OR semantics — to require several strings, use a single `re:(?s).*foo.*bar.*` regex, or use multiple assertions by splitting into separate test cases.
+Note that `response_contains` with a list uses OR semantics — to require several strings, use `response_contains_all`, a single `re:(?s).*foo.*bar.*` regex, or multiple test cases.
 
 Tool-name assertions see only parent-agent tool calls; tools invoked inside child agents (via `delegate_task`) are not visible.
+
+### Post-turn workspace assertions
+
+`expect_workspace` sits at the test-case top level (parallel to `setup` / `expect`) and runs once at the end of the test, after all turns complete. Useful for tests that need to verify the agent's *side effects* rather than its response text.
+
+| Field | Type | Semantics |
+|-------|------|-----------|
+| `workspace_files` | dict[str, str] | `{rel_path: content_match}`. Both existence AND content. Plain strings: case-insensitive substring. `re:` prefix opts into regex (case-insensitive, `re.DOTALL` so `.` matches newlines). |
+| `workspace_file_exists` | list[str] | Each path must exist (existence only, no content check). |
+| `workspace_file_absent` | list[str] | Each path must NOT exist. Useful for delete/move tests. |
+
+All paths are relative to `config.workspace_path`. Absolute paths and `..` escapes raise `ValueError` — symmetric with `setup.workspace_files`.
+
+Example: after the agent runs a section edit, verify other sections are untouched.
+
+```yaml
+- name: "section edit leaves other sections intact"
+  setup:
+    workspace_files:
+      "page.md": "## A\n\noriginal a\n\n## B\n\noriginal b\n"
+  input: "Update section A of page.md to say 'updated a'"
+  expect:
+    expect_tool: vault_section
+  expect_workspace:
+    workspace_files:
+      "page.md": "re:## A.+updated a.+## B.+original b"
+```
 
 ### Multi-turn tests
 
@@ -122,6 +154,22 @@ evals/results/
     reflections/              # LLM-generated analysis of failures
       test-name.md
 ```
+
+## Pass-rate history
+
+After each `make eval` run, a one-line summary is appended to `evals/history.jsonl` (committed to git, unlike the gitignored detail bundles in `evals/results/`). The record includes timestamp, model, total / passed / failed counts, pass-rate, duration, total tokens, and per-file pass/total breakdown.
+
+View the trend with `make eval-history`:
+
+```
+Timestamp          Model                       Pass /  Total    Rate       Δ   Duration    Tokens
+-------------------------------------------------------------------------------------------------
+2026-05-16-1130    vertex-gemini-flash             26 /    30   86.7%     --        370s     1.05M
+2026-05-16-1256    vertex-gemini-flash             25 /    29   86.2%   -0.5%        996s    1.32M
+2026-05-16-1913    vertex-gemini-flash             41 /    42   97.6%  +11.4%        403s    1.22M
+```
+
+The Δ column is pass-rate delta from the previous row. Useful for spotting regressions when a tool-description change knocks the rate down.
 
 ## Failure reflection
 

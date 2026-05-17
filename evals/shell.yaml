@@ -1,0 +1,30 @@
+# Shell tool — approval-flow focus per audit's narrowing of #341.
+# Underlying execution mechanics are covered by 39 unit tests in
+# tests/test_shell_allowlist.py + tests/test_scoped_shell.py.
+
+# -- auto_confirm: true happy path -------------------------------------------
+
+- name: "runs a simple command and returns stdout"
+  setup:
+    auto_confirm: true
+  input: "Run `echo hello` in the shell and tell me what it printed."
+  expect:
+    response_contains: "hello"
+    max_tool_calls: 3
+    max_tool_errors: 0
+    expect_tool: shell
+
+# -- auto_confirm: false denial-recovery ------------------------------------
+#
+# Denied request: agent should narrate the denial and stop, NOT loop retrying
+# the same command. The tight max_tool_calls catches retry storms.
+
+- name: "narrates denial gracefully without retry storm"
+  setup:
+    auto_confirm: false
+  input: "Run `echo hello` in the shell."
+  expect:
+    response_contains: "re:denied|declined|approval|permission|cannot|unable|not allowed|not permit"
+    max_tool_calls: 4
+    max_tool_errors: 2
+    expect_tool: shell

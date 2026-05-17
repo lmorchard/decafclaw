@@ -263,6 +263,65 @@ def test_max_tool_errors_regression():
     assert "2" in reason and "1" in reason
 
 
+# --- response_contains_all (AND semantics) ---
+
+def test_response_contains_all_string_passes():
+    test_case = {"expect": {"response_contains_all": "hello"}}
+    passed, _ = _check(test_case, [], response="hello world")
+    assert passed
+
+
+def test_response_contains_all_list_passes_when_all_present():
+    test_case = {"expect": {"response_contains_all": ["foo", "bar"]}}
+    passed, _ = _check(test_case, [], response="foo and bar walk into")
+    assert passed
+
+
+def test_response_contains_all_list_fails_when_any_missing():
+    test_case = {"expect": {"response_contains_all": ["foo", "bar"]}}
+    passed, reason = _check(test_case, [], response="foo alone")
+    assert not passed
+    # Reason should mention the missing item, not the matched one
+    assert "bar" in reason
+    assert "missing" in reason.lower()
+
+
+def test_response_contains_all_is_case_insensitive():
+    test_case = {"expect": {"response_contains_all": ["foo", "BAR"]}}
+    passed, _ = _check(test_case, [], response="FOO and bar")
+    assert passed
+
+
+def test_response_contains_all_regex_supported():
+    test_case = {"expect": {"response_contains_all": ["re:f.+o", "re:b.+r"]}}
+    passed, _ = _check(test_case, [], response="foo bar")
+    assert passed
+
+    test_case = {"expect": {"response_contains_all": ["re:f.+o", "re:b.+r"]}}
+    passed, reason = _check(test_case, [], response="just foo")
+    assert not passed
+    assert "missing pattern" in reason
+
+
+def test_response_contains_all_mixed_regex_and_literal():
+    test_case = {"expect": {"response_contains_all": ["re:\\d+", "items"]}}
+    passed, _ = _check(test_case, [], response="42 items found")
+    assert passed
+
+
+def test_response_contains_all_combines_with_other_assertions():
+    """Pass on contains_all, but fail on expect_tool — the combined return value should be the expect_tool failure."""
+    test_case = {
+        "expect": {
+            "response_contains_all": ["foo", "bar"],
+            "expect_tool": "x",
+        }
+    }
+    passed, reason = _check(test_case, [], response="foo and bar are here")
+    assert not passed
+    assert "expected one of ['x']" in reason.lower() or "no tools were called" in reason
+
+
 # --- Default kwarg behavior (call without tool_names) ---
 
 def test_check_assertions_defaults_when_tool_names_omitted():

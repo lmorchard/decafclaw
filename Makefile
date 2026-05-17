@@ -114,6 +114,10 @@ eval:
 eval-tools:
 	uv run python -m decafclaw.eval.tool_choice evals/tool_choice/
 
+# Print the eval-run trend table from evals/history.jsonl
+eval-history:
+	uv run python -m decafclaw.eval --history
+
 # Rebuild eval embedding fixtures (run when changing embedding models)
 build-eval-fixtures:
 	uv run python scripts/build-eval-fixtures.py

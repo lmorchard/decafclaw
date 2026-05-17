@@ -7,6 +7,7 @@
   expect:
     response_contains: "Boulevardier"
     max_tool_calls: 8
+    max_tool_errors: 0
 
 - name: "finds preference by related term"
   setup:
@@ -17,8 +18,9 @@
   expect:
     response_contains: "Boulevardier"
     max_tool_calls: 10
+    max_tool_errors: 0
 
-- name: "recalls recent memories"
+- name: "recalls recent memories (project + style)"
   setup:
     memories:
       - tags: [project, architecture, decafclaw]
@@ -27,24 +29,29 @@
         content: "Prefers concise answers without summaries"
   input: "What do you know about me and what I've been working on?"
   expect:
-    response_contains:
+    response_contains_all:
       - "concise"
       - "event bus"
+    max_tool_calls: 6
+    max_tool_errors: 0
 
 - name: "handles missing memories gracefully"
   input: "What is my favorite color?"
   expect:
-    response_contains: "don't"
+    response_contains: "re:don't|do not|no record|not aware|not sure|unsure|haven't"
+    max_tool_calls: 5
+    max_tool_errors: 0
 
 - name: "saves memory when asked"
   input: "Please remember that my favorite programming language is Python. Confirm what you saved."
   expect:
     response_contains: "Python"
     max_tool_calls: 5
+    max_tool_errors: 0
     expect_tool: vault_journal_append
     expect_no_tool: [shell, shell_patterns]
 
-- name: "connects related memories"
+- name: "connects related memories (event bus + async)"
   setup:
     memories:
       - tags: [project, decafclaw, architecture, event-bus]
@@ -53,11 +60,13 @@
         content: "The agent loop is fully async with asyncio"
   input: "Tell me about the DecafClaw architecture"
   expect:
-    response_contains:
+    response_contains_all:
       - "event bus"
       - "async"
+    max_tool_calls: 5
+    max_tool_errors: 0
 
-- name: "uses think tool for complex question"
+- name: "synthesizes from multiple memories for a complex question"
   setup:
     memories:
       - tags: [preference, cocktail, drink]
@@ -69,6 +78,8 @@
     response_contains:
       - "re:thai|japanese"
       - "re:boulevardier|old fashioned|cocktail"
+    max_tool_calls: 6
+    max_tool_errors: 0
 
 - name: "finds info with indirect phrasing"
   setup:
@@ -81,3 +92,5 @@
       - "software engineer"
       - "engineer"
       - "platform"
+    max_tool_calls: 5
+    max_tool_errors: 0

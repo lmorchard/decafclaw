@@ -1,0 +1,56 @@
+# Tool deferral — does the agent reach for `tool_search` when (and only when)
+# the answer isn't reachable from already-loaded critical tools? Designed
+# against the system: a small "critical" tier is always-loaded; everything
+# else is deferred behind `tool_search` (keyword fetch) or promoted into
+# the active set by pre-emptive keyword matching against the user message.
+# See docs/preemptive-tool-search.md for the matching design.
+
+# -- No-fetch on critical-priority answer ------------------------------------
+#
+# Vault is critical-priority, so a vault-shaped question should NOT trigger
+# tool_search. If the agent reaches for tool_search here it's burning a
+# turn on discovery that wasn't necessary.
+
+- name: "no tool_search when answer is reachable from critical tools"
+  setup:
+    memories:
+      - tags: [preference, cocktail, drink]
+        content: "Favorite cocktails are Boulevardier and Old Fashioned."
+  input: "What are my favorite cocktails?"
+  expect:
+    response_contains: "Boulevardier"
+    max_tool_calls: 5
+    max_tool_errors: 0
+    expect_no_tool: tool_search
+
+# -- Pre-emptive promotion (keyword match) -----------------------------------
+#
+# `context_stats` is low-priority (normally deferred) but its description
+# mentions "context", "tokens", "budget", and "stats". A prompt saturated
+# with those keywords should pre-empt the tool into the active set, so the
+# agent calls it directly without going through tool_search.
+
+- name: "pre-empted tool callable without tool_search"
+  input: "Show me the current context token budget stats for this conversation — give me the numbers."
+  expect:
+    max_tool_calls: 3
+    max_tool_errors: 0
+    expect_tool: context_stats
+    expect_no_tool: tool_search
+
+# -- Deferred-tool reachability end-to-end ----------------------------------
+#
+# `wait` is low-priority (deferred). This asserts the deferred-tool surface
+# is reachable: whether the agent gets there via pre-emption or tool_search
+# is an implementation detail — the test cares that `wait` ran. The path-
+# specific question (does tool_search fire in this scenario?) is harder to
+# construct deterministically since the prompt itself injects keyword
+# matches that can pre-promote — leaving that as a follow-up.
+
+- name: "agent reaches a deferred tool end-to-end"
+  input: "Use the `wait` tool to pause for 1 second, then reply with the single word 'done'."
+  expect:
+    response_contains: "done"
+    max_tool_calls: 5
+    max_tool_errors: 1
+    expect_tool: wait

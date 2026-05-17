@@ -1268,10 +1268,17 @@ TOOL_DEFINITIONS = [
         "function": {
             "name": "vault_journal_append",
             "description": (
-                "Save a journal entry — a timestamped observation, fact, or note. "
-                "Entries are appended to today's journal file. Use this for anything "
-                "worth recording: user preferences, facts, project details, decisions, "
-                "conversation context. Rich tagging is critical for future retrieval."
+                "**Remember this fact for the long term** — append a "
+                "timestamped entry to the user's vault journal. Use for "
+                "**durable, cross-conversation knowledge**: user "
+                "preferences ('favorite cocktail is Negroni'), profile "
+                "facts ('works at Mozilla'), project history, lasting "
+                "decisions. When the user says \"remember X\" or \"save "
+                "this for later\", this is almost always the right tool. "
+                "**Use `notes_append` instead** for facts scoped only "
+                "to the current conversation that should be discarded "
+                "when the conversation ends. Rich tagging is critical "
+                "for future retrieval."
             ),
             "parameters": {
                 "type": "object",
