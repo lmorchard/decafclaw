@@ -6,11 +6,14 @@ DecafClaw includes an eval harness for testing prompts and tools with real LLM c
 
 ```bash
 make eval                                            # Run all YAML test files (default model)
+make eval-history                                    # Print the pass-rate trend over recent runs
 uv run python -m decafclaw.eval evals/               # Same, via Python invocation
 uv run python -m decafclaw.eval evals/memory.yaml    # Run a specific file
 uv run python -m decafclaw.eval evals/ --model gemini-2.5-pro  # Override model
 uv run python -m decafclaw.eval evals/ --verbose     # Show truncated response snippets per test
 uv run python -m decafclaw.eval evals/ --concurrency 1  # Run tests sequentially (default: 4)
+uv run python -m decafclaw.eval --history            # Print history table, no run
+uv run python -m decafclaw.eval --history --history-limit 5  # Last 5 runs only
 ```
 
 ## Test case format
@@ -151,6 +154,22 @@ evals/results/
     reflections/              # LLM-generated analysis of failures
       test-name.md
 ```
+
+## Pass-rate history
+
+After each `make eval` run, a one-line summary is appended to `evals/history.jsonl` (committed to git, unlike the gitignored detail bundles in `evals/results/`). The record includes timestamp, model, total / passed / failed counts, pass-rate, duration, total tokens, and per-file pass/total breakdown.
+
+View the trend with `make eval-history`:
+
+```
+Timestamp          Model                       Pass /  Total    Rate       Δ   Duration    Tokens
+-------------------------------------------------------------------------------------------------
+2026-05-16-1130    vertex-gemini-flash             26 /    30   86.7%     --        370s     1.05M
+2026-05-16-1256    vertex-gemini-flash             25 /    29   86.2%   -0.5%        996s    1.32M
+2026-05-16-1913    vertex-gemini-flash             41 /    42   97.6%  +11.4%        403s    1.22M
+```
+
+The Δ column is pass-rate delta from the previous row. Useful for spotting regressions when a tool-description change knocks the rate down.
 
 ## Failure reflection
 
