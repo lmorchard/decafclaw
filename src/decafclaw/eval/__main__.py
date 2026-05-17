@@ -13,6 +13,7 @@ from pathlib import Path
 import yaml
 
 from ..config import load_config
+from .history import HISTORY_PATH, append_run, build_run_record, read_history, render_table
 from .reflect import reflect_on_failure
 from .runner import run_eval
 
@@ -21,13 +22,26 @@ def main():
     parser = argparse.ArgumentParser(
         description="DecafClaw eval runner — test prompts and tools with real LLM calls"
     )
-    parser.add_argument("path", help="YAML file or directory of YAML files")
+    parser.add_argument("path", nargs="?", help="YAML file or directory of YAML files")
     parser.add_argument("--model", help="Override LLM model")
     parser.add_argument("--judge-model", help="Model for failure reflection (default: same as --model)")
     parser.add_argument("--verbose", action="store_true",
                         help="Show a truncated response snippet (first 200 chars) per test")
     parser.add_argument("--concurrency", type=int, default=4, help="Max concurrent tests (default: 4)")
+    parser.add_argument("--history", action="store_true",
+                        help="Print the eval-run history table and exit (no eval run)")
+    parser.add_argument("--history-limit", type=int, default=20,
+                        help="With --history, show this many most-recent runs (default: 20)")
     args = parser.parse_args()
+
+    # --history reads evals/history.jsonl and prints the trend table; no eval run.
+    if args.history:
+        records = read_history()
+        print(render_table(records, limit=args.history_limit))
+        sys.exit(0)
+
+    if not args.path:
+        parser.error("the following arguments are required: path (or use --history)")
 
     logging.basicConfig(
         level=logging.WARNING,
@@ -114,11 +128,30 @@ def main():
     with open(bundle_dir / "results.json", "w") as f:
         json.dump(results, f, indent=2)
 
-    # Print summary
+    # Append per-run summary to evals/history.jsonl (committed to git) so
+    # pass-rate trends are visible across runs without re-running.
     s = results["summary"]
+    record = build_run_record(
+        timestamp=timestamp,
+        model=effective_model,
+        judge_model=judge_model,
+        sources=sources,
+        test_results=results["tests"],
+        cases=all_cases,
+        duration_sec=s["duration_sec"],
+        total_tokens=s["total_tokens"],
+    )
+    try:
+        append_run(record)
+    except OSError as exc:
+        # Don't fail the eval run if history write hits a filesystem issue.
+        print(f"warning: could not append to {HISTORY_PATH}: {exc}", file=sys.stderr)
+
+    # Print summary
     print(f"\n{s['total']} tests, {s['passed']} passed, {s['failed']} failed "
           f"({s['duration_sec']}s, {s['total_tokens']} tokens)")
-    print(f"Results: {bundle_dir}/\n")
+    print(f"Results: {bundle_dir}/")
+    print(f"History: {HISTORY_PATH} (use `make eval-history` to view the trend)\n")
 
     sys.exit(1 if s["failed"] > 0 else 0)
 
