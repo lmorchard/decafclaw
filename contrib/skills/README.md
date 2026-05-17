@@ -12,13 +12,7 @@ Add the skill's directory to your agent's `extra_skill_paths` so the loader pick
 
 **Why `$VAR` over relative paths.** Relative entries in `extra_skill_paths` are anchored to `data/{agent_id}/`, not to the repo or the CWD. That only reaches the repo's `contrib/skills/` when `data_home` happens to live inside the repo (the default `./data` dev layout). Production deployments usually keep `data_home` somewhere stable like `~/.decafclaw/`, which is nowhere near the repo — relative paths will silently miss. A `$VAR` decouples the two.
 
-Add to `.env`:
-
-```bash
-DECAFCLAW_REPO=/absolute/path/to/decafclaw-repo
-```
-
-Then in `data/{agent_id}/config.json`:
+In `data/{agent_id}/config.json`:
 
 ```json
 {
@@ -28,6 +22,30 @@ Then in `data/{agent_id}/config.json`:
   ]
 }
 ```
+
+`$DECAFCLAW_REPO` is auto-populated by the skill loader when running from a source checkout — it walks up from the installed package and uses the parent directory that contains both `contrib/` and `pyproject.toml`. No `.env` setting required for the common case.
+
+For the very common pattern of pointing at a contrib skill, `$CONTRIB` is auto-populated as a shorthand for `$DECAFCLAW_REPO/contrib`, so you can write:
+
+```json
+{
+  "extra_skill_paths": [
+    "$CONTRIB/skills/linkding-ingest",
+    "$CONTRIB/skills/mastodon-ingest"
+  ]
+}
+```
+
+If you need to override (point at a different checkout, run from a wheel-only install without `contrib/` adjacent, etc.), set either explicitly:
+
+```bash
+# .env
+DECAFCLAW_REPO=/absolute/path/to/decafclaw-repo
+# Or override CONTRIB directly if your contrib/ lives somewhere unusual:
+# CONTRIB=/path/to/some/other/contrib
+```
+
+Explicit env values always win over auto-detection. `$CONTRIB` follows `$DECAFCLAW_REPO` unless you also set it explicitly.
 
 Each entry points at a single skill directory (one with `SKILL.md` at its root). The loader runs `os.path.expandvars` + `~` expansion on every entry before scanning, so plain absolute paths and `~/...` also work. Use whichever fits your deployment.
 
@@ -83,3 +101,13 @@ Fetches recent posts from a Mastodon account and records interesting content to 
 **Requires:** `MASTODON_SERVER`, `MASTODON_ACCESS_TOKEN` env vars, `mastodon-to-markdown` binary
 
 **Schedule:** Every 4 hours (`:30`)
+
+### writing-clearly
+
+Edits prose drafts (docs, commit messages, replies, blog posts) using William Strunk Jr.'s *The Elements of Style* (1918). Exposes one tool, `edit_with_strunk(draft, focus="")`, which inlines the rulebook into a `delegate_task` child agent — the corpus (~12k tokens) never enters the parent conversation.
+
+**Requires:** Nothing — public-domain corpus is bundled.
+
+**Optional config:** `WRITING_CLEARLY_MODEL` env var to pin the child to a specific model; otherwise inherits the parent's active model.
+
+Adapted from [obra/the-elements-of-style](https://github.com/obra/the-elements-of-style).
