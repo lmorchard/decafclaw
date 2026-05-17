@@ -6,7 +6,7 @@ allowed-tools: edit_with_strunk
 
 # Writing Clearly and Concisely
 
-Edits prose drafts using Strunk's *Elements of Style*. The rulebook is inlined into a delegated child agent, so it never enters this conversation.
+Edits prose drafts using Strunk's *Elements of Style*. A delegated child agent produces a structured edit plan; tool code applies the plan to the draft deterministically. The rulebook never enters this conversation, and the plan is auditable against the revision — every visible change corresponds to a recorded plan entry.
 
 ## When to use
 
@@ -28,9 +28,28 @@ edit_with_strunk(
 )
 ```
 
-The tool returns the revised prose. Hand it back to the user, or use it as the next iteration of the draft.
+The tool returns:
+
+- **`ToolResult.text`** — the revised prose, ready to paste back to the user.
+- **`ToolResult.data`** — a structured record of what changed:
+  - `summary`: one-line description of the editing pass.
+  - `applied`: list of plan entries that were applied. Each entry has `kind` (substitution or rewrite), `rule` (Strunk rule name), `before`, `after`, `note`.
+  - `skipped`: list of plan entries that were dropped, each with a `_skip_reason` (`before_not_found`, `before_empty`, or `noop`).
+
+The `data` payload lets you summarize what was changed and why — useful for showing the user not just the revision but the rationale.
 
 Use `focus` when you want the editor to bias toward one rule cluster (e.g. tighten verbs only, or strip passive voice only). Leave blank for a full pass.
+
+## How edits are applied
+
+The child agent produces a plan only — a list of `{kind, rule, before, after, note}` entries. Tool code then applies each entry by finding the `before` text in the draft and replacing the first occurrence with `after`. No second LLM pass; the revision is mechanically derived from the plan.
+
+This means:
+
+- The plan is ground truth. Every change in the revision corresponds to a recorded entry.
+- If the planner's `before` field doesn't exactly match text in the draft (whitespace drift, markdown corruption), that entry is skipped and recorded in `data.skipped`. The rest of the plan still applies.
+- Edits apply in plan order. A later entry can target text produced by an earlier entry.
+- If the planner returns malformed JSON, the tool falls back to returning the planner's raw output as text — degrading to the simpler v1 behavior.
 
 ## What to pass as `draft`
 
