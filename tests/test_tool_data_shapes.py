@@ -1,23 +1,23 @@
-"""Assert `.data` shape on every allowlisted sandbox tool.
+"""Assert `.data` shape on read-heavy tools.
 
-The code_execution sandbox exposes 11 tools to LLM-authored scripts via
-the `dc.<tool>(...)` proxy. Each call returns a ToolResultProxy with
-`.text` / `.data` / `.error`. The proxy's `.data` mirrors the underlying
-tool's `ToolResult.data`. This file pins down the contract — what fields
-appear on `.data` for each tool — so future tool edits don't silently
-drop or rename fields that scripts depend on.
+`ToolResult.data` is auto-rendered as a fenced JSON block in the tool
+result the LLM sees, giving structured fields alongside the prose
+`.text`. Without these per-tool assertions, future edits could silently
+drop or rename fields that callers (LLM-direct or otherwise) depend on.
 
-The 11 allowlisted tools (SANDBOX_ALLOWED_TOOLS in
-src/decafclaw/skills/code_execution/tools.py):
+Tools covered (read-heavy, local-only):
 
-  vault_read, vault_search, vault_journal_append, vault_write,
-  workspace_read, workspace_list,
-  notes_read, notes_append,
-  tabstack_extract_markdown, tabstack_extract_json, tabstack_research.
+  vault_read, vault_search, vault_write, vault_journal_append,
+  workspace_read, workspace_list, workspace_glob, workspace_search,
+  notes_read, notes_append.
 
-tabstack_* are network-dependent and not exercised here; the other 8
-have local-only happy paths we can drive with the standard `ctx`
-fixture.
+tabstack_* tools also populate `.data` (see their implementations) but
+are network-dependent and not exercised here.
+
+Design rule: `.data` carries STRUCTURE; `.text` carries PROSE/PAYLOAD.
+They should not duplicate large content — body/content stays in
+`.text` only so the auto-rendered JSON block doesn't double the
+tool-result token cost.
 """
 
 from __future__ import annotations
