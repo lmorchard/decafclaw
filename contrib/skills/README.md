@@ -83,3 +83,13 @@ Fetches recent posts from a Mastodon account and records interesting content to 
 **Requires:** `MASTODON_SERVER`, `MASTODON_ACCESS_TOKEN` env vars, `mastodon-to-markdown` binary
 
 **Schedule:** Every 4 hours (`:30`)
+
+### writing-clearly
+
+Edits prose drafts (docs, commit messages, replies, blog posts) using William Strunk Jr.'s *The Elements of Style* (1918). Exposes one tool, `edit_with_strunk(draft, focus="")`, which inlines the rulebook into a `delegate_task` child agent — the corpus (~12k tokens) never enters the parent conversation.
+
+**Requires:** Nothing — public-domain corpus is bundled.
+
+**Optional config:** `WRITING_CLEARLY_MODEL` env var to pin the child to a specific model; otherwise inherits the parent's active model.
+
+Adapted from [obra/the-elements-of-style](https://github.com/obra/the-elements-of-style).
