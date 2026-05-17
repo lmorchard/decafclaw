@@ -15,6 +15,25 @@ log = logging.getLogger(__name__)
 _BUNDLED_SKILLS_DIR = Path(__file__).parent
 
 
+def _detect_repo_root() -> Path | None:
+    """Auto-detect the DecafClaw repo root for `$DECAFCLAW_REPO`.
+
+    Walks up from this file looking for a directory that has BOTH
+    ``contrib/`` and ``pyproject.toml`` — the signature of a source
+    checkout. Returns ``None`` when those markers aren't found (e.g.
+    a wheel-only install), in which case `$DECAFCLAW_REPO` is left
+    unset and `extra_skill_paths` entries that reference it will
+    miss as before.
+    """
+    for parent in [_BUNDLED_SKILLS_DIR, *_BUNDLED_SKILLS_DIR.parents]:
+        if (parent / "contrib").is_dir() and (parent / "pyproject.toml").is_file():
+            return parent
+    return None
+
+
+_AUTO_REPO_ROOT = _detect_repo_root()
+
+
 @dataclass
 class SkillInfo:
     """Metadata for a discovered skill."""
@@ -181,7 +200,15 @@ def _resolve_extra_skill_paths(config) -> list[Path]:
 
     For each entry: expand $VARS and ~, then anchor relative paths to
     config.agent_path (matching vault_root). Order is preserved.
+
+    `$DECAFCLAW_REPO` is auto-populated from the detected source-checkout
+    root when unset (see ``_detect_repo_root``), so `extra_skill_paths`
+    entries like ``$DECAFCLAW_REPO/contrib/skills/<name>`` work out of
+    the box. An explicit env-var setting always wins.
     """
+    if "DECAFCLAW_REPO" not in os.environ and _AUTO_REPO_ROOT is not None:
+        os.environ["DECAFCLAW_REPO"] = str(_AUTO_REPO_ROOT)
+
     resolved: list[Path] = []
     for raw in config.extra_skill_paths:
         expanded = os.path.expandvars(str(raw))
