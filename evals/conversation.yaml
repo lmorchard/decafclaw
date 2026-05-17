@@ -1,0 +1,60 @@
+# Conversation tools — LLM-behavior angle only. Compaction history-truncation
+# bookkeeping, search text-matching mechanics, archive file I/O are all
+# covered by 28 unit tests across tests/test_conversation_search.py,
+# tests/test_compaction.py, tests/test_conversation_manager.py.
+#
+# Uses PR-A's setup.conversation_history (closes #353) to seed a pre-existing
+# archive so we don't have to organically build history inside the test.
+
+# -- Explicit conversation_search request ------------------------------------
+
+- name: "reaches for conversation_search on explicit history query"
+  setup:
+    # `conversation_search` does case-insensitive *substring* match, so seed
+    # phrasing must contain whichever exact tokens the agent's query is
+    # likely to use. Using plural "embedding providers" + naming all three
+    # provider tokens verbatim makes the search deterministic.
+    conversation_history:
+      - role: user
+        content: "I'm planning to switch our embedding providers from OpenAI to Vertex."
+      - role: assistant
+        content: "Got it. Let me know if you want help benchmarking embedding providers."
+      - role: user
+        content: "By the way, I also tried out Cohere embedding providers briefly — okay but not great."
+      - role: assistant
+        content: "Noted. Vertex it is unless you want me to run a comparison."
+  input: "Search our past chat history for what I said about embedding providers and list everything I mentioned."
+  expect:
+    # Vertex and Cohere are the distinctive tokens that prove history was
+    # actually retrieved (vs. the agent fabricating). OpenAI is omitted
+    # because the agent often paraphrases "switching to Vertex" without
+    # naming the "from" side.
+    response_contains_all: ["Vertex", "Cohere"]
+    max_tool_calls: 5
+    max_tool_errors: 0
+    expect_tool: conversation_search
+
+# -- Recall from seeded history ----------------------------------------------
+#
+# Validates that setup.conversation_history is reachable by the agent end-to-
+# end. We don't assert tool-selection here — the self-reflection layer may
+# trigger an additional conversation_search retry even when the initial
+# response is correct, and that's an orthogonal behavior (reflection working
+# eagerly, not a bug in seeding).
+
+- name: "answers from seeded conversation history"
+  setup:
+    conversation_history:
+      - role: user
+        content: "I just got back from a trip to Reykjavik — first time in Iceland."
+      - role: assistant
+        content: "Welcome back. How was it?"
+      - role: user
+        content: "Wonderful. The Blue Lagoon was packed but worth it."
+      - role: assistant
+        content: "Glad to hear."
+  input: "What city did I just visit?"
+  expect:
+    response_contains: "Reykjavik"
+    max_tool_calls: 5
+    max_tool_errors: 1
