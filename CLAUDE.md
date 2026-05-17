@@ -125,6 +125,16 @@ See [docs/conversations.md](docs/conversations.md), [docs/web-ui.md](docs/web-ui
   - **Anything that runs a real scheduler/timer must patch the work function.** `discover_schedules` picks up bundled scheduled skills (`dream`, `garden`); on a fresh `tmp_path` config they're "never run → due" and fire real `run_agent_turn` calls (one test bled to ~66s this way). Patch `decafclaw.schedules.run_schedule_task` even for "no tasks" scenarios.
 - **Check `pytest --durations=25` when adding tests.** Top-25 placement → missing mock or fixed sleep masquerading as a sync primitive.
 
+### Evals
+
+See [docs/eval-loop.md](docs/eval-loop.md). Evals exercise LLM-driven behavior with real model calls; unit tests cover deterministic code. Both required.
+
+- **New or sharpened tool description → add a `tool_choice` case.** `evals/tool_choice/` covers tool-description disambiguation; `make eval-tools` is fast (~30s). PR #429's smoke test bit-rotted in three weeks because `notes_append` arrived later with no `tool_choice` case guarding the disambiguation — that's the rot vector this convention catches.
+- **Behavior-affecting feature → add a case in `evals/<theme>.yaml`.** New skill, new always-loaded tool, system-prompt change affecting routing, new command. Use `expect_tool` / `expect_no_tool` / `expect_tool_count_by_name` for rigorous assertions. Bound every test with `max_tool_calls` and `max_tool_errors`.
+- **Skip evals for non-LLM-visible work.** Pure refactors, storage changes, tool implementation tweaks. Each eval costs tokens and ~6-10 min of wall time.
+- **Avoid `expect_no_tool` where self-reflection might retry.** Reflection's judge can invoke unexpected tools on retries; positive `expect_tool` + tight `max_tool_calls` is more reliable. ([#534](https://github.com/lmorchard/decafclaw/issues/534) tracks a `setup.reflection_enabled: false` harness gate.)
+- **Check `make eval-history` after running the suite.** Trend deltas catch regressions that single-file smoke tests miss.
+
 ## Key files
 
 Full doc index: [docs/index.md](docs/index.md). Hot files for navigation:

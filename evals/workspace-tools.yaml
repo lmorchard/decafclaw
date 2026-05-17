@@ -1,0 +1,76 @@
+# Workspace tools — does the LLM pick the right member of the workspace_*
+# family for the situation? Underlying tool behavior is covered by 78 unit
+# tests in tests/test_workspace_tools.py; this file isolates the LLM
+# tool-choice angle.
+
+# -- glob: find files by pattern ---------------------------------------------
+
+- name: "enumerates files via workspace_glob or workspace_list"
+  setup:
+    workspace_files:
+      "src/main.py": "print('hi')\n"
+      "src/util.py": "def f(): pass\n"
+      "src/data.json": "{}\n"
+      "tests/test_main.py": "def test(): pass\n"
+  input: "List all Python files under the src/ directory."
+  # workspace_glob and workspace_list have overlapping coverage for this
+  # request (glob takes a pattern; list traverses a dir). Accept either —
+  # the load-bearing assertion is that the right files surface and data.json
+  # doesn't. The glob-vs-list description tightening is tracked separately.
+  expect:
+    response_contains_all: ["main.py", "util.py"]
+    response_not_contains: ["data.json"]
+    max_tool_calls: 4
+    max_tool_errors: 0
+    expect_tool: [workspace_glob, workspace_list]
+    expect_no_tool: [workspace_search, workspace_read]
+
+# -- search: find files by content -------------------------------------------
+
+- name: "reaches for workspace_search to find by content"
+  setup:
+    workspace_files:
+      "src/locks.py": "import asyncio\n\nlock = asyncio.Lock()\nasync def f():\n    async with lock:\n        pass\n"
+      "src/util.py": "def f():\n    return 42\n"
+      "src/notes.md": "Random notes file.\n"
+  input: "Find any code in this workspace that uses asyncio.Lock."
+  expect:
+    response_contains: "locks.py"
+    max_tool_calls: 4
+    max_tool_errors: 0
+    expect_tool: workspace_search
+    expect_no_tool: workspace_glob
+
+# -- read: known path, no search detour --------------------------------------
+
+- name: "reads a known path directly without searching"
+  setup:
+    workspace_files:
+      "config/settings.json": |
+        {
+          "timeout": 30,
+          "retries": 3
+        }
+  input: "Show me the contents of config/settings.json."
+  expect:
+    response_contains: "timeout"
+    max_tool_calls: 3
+    max_tool_errors: 0
+    expect_tool: workspace_read
+    expect_no_tool: [workspace_search, workspace_glob]
+
+# -- move: rename should not be read+write+delete ----------------------------
+
+- name: "uses workspace_move for a rename"
+  setup:
+    workspace_files:
+      "drafts/old-name.md": "# Draft\n\nSome content.\n"
+  input: "Rename drafts/old-name.md to drafts/new-name.md."
+  expect:
+    max_tool_calls: 4
+    max_tool_errors: 0
+    expect_tool: workspace_move
+    expect_no_tool: [workspace_read, workspace_write, workspace_delete]
+  expect_workspace:
+    workspace_file_exists: ["drafts/new-name.md"]
+    workspace_file_absent: ["drafts/old-name.md"]

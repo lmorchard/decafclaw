@@ -94,6 +94,39 @@
     conversation_compact is for proactively shrinking history before
     context fills up — never invoked because the user has a question.
 
+# -- vault_journal_append vs notes_append ------------------------------------
+
+- name: vault-vs-notes-remember-preference
+  scenario: "Please remember that my favorite programming language is Python."
+  expected: vault_journal_append
+  near_miss: [notes_append]
+  notes: |
+    "Please remember" + a user-level preference is the canonical
+    vault_journal_append case — durable, cross-conversation fact about
+    the user. notes_append is for conversation-scoped scratchpad items
+    that get discarded when the conversation ends. PR #429's smoke
+    test regressed because notes_append's description over-claimed
+    "things you want to remember"; this case guards the disambiguation.
+
+- name: vault-vs-notes-save-profile-fact
+  scenario: "Save this for later: I work at Mozilla on the platform team."
+  expected: vault_journal_append
+  near_miss: [notes_append]
+  notes: |
+    "Save this for later" + a profile fact = durable knowledge for
+    future conversations. The phrase "for later" is the strong signal
+    pointing past the current conversation.
+
+- name: notes-vs-vault-follow-up-this-thread
+  scenario: "Note that we need to circle back to the auth question once we've finished discussing the migration plan."
+  expected: notes_append
+  near_miss: [vault_journal_append]
+  notes: |
+    Single-conversation reminder ("circle back within this thread")
+    is notes_append. Once this thread ends the reminder is no longer
+    load-bearing. vault_journal_append would be wrong — this isn't a
+    durable user-level fact.
+
 # -- canvas_new_tab vs workspace_write ---------------------------------------
 
 - name: canvas-vs-workspace-write-show-html-demo

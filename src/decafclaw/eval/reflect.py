@@ -13,7 +13,9 @@ You are analyzing why an AI agent failed a test case.
 Test case:
 - Name: {name}
 - Input: {input}
-- Expected: response should contain "{expected}"
+- Assertions that were set on this turn:
+{expected_summary}
+- Failure reason reported by the harness: {failure_reason}
 - Setup memories: {setup}
 
 Agent's response: {response}
@@ -25,13 +27,45 @@ prompt, tool descriptions, or tool behavior would fix it? Be concrete
 and actionable."""
 
 
+_ASSERTION_KEYS = (
+    "response_contains",
+    "response_contains_all",
+    "response_not_contains",
+    "max_tool_calls",
+    "max_tool_errors",
+    "expect_tool",
+    "expect_no_tool",
+    "expect_tool_count_by_name",
+)
+
+
+def _summarize_expectations(test_case: dict) -> str:
+    """Render whichever assertions are set as a bullet list for the judge prompt.
+
+    Without this, the prompt only mentioned ``response_contains`` and the
+    judge produced useless analysis for failures on tool-call bounds,
+    tool-name assertions, or ``response_not_contains``.
+    """
+    # Multi-turn: pull from the last turn's expect (where the failure landed
+    # most recently); single-turn: top-level expect.
+    if "turns" in test_case and test_case["turns"]:
+        expect = test_case["turns"][-1].get("expect", {})
+    else:
+        expect = test_case.get("expect", {})
+    lines = []
+    for key in _ASSERTION_KEYS:
+        if key in expect:
+            lines.append(f"  - {key}: {expect[key]!r}")
+    return "\n".join(lines) if lines else "  (none set)"
+
+
 async def reflect_on_failure(config, test_case: dict, result: dict,
                               judge_model: str, output_dir: Path) -> str | None:
     """Ask the judge model to analyze a test failure.
 
     Returns the relative path to the reflection file, or None on error.
     """
-    expected = test_case.get("expect", {}).get("response_contains", "?")
+    expected_summary = _summarize_expectations(test_case)
     setup_memories = test_case.get("setup", {}).get("memories", [])
 
     # Multi-turn tests use "turns" instead of "input"
@@ -46,7 +80,8 @@ async def reflect_on_failure(config, test_case: dict, result: dict,
     prompt = REFLECTION_PROMPT.format(
         name=test_case["name"],
         input=input_text,
-        expected=expected,
+        expected_summary=expected_summary,
+        failure_reason=result.get("failure_reason") or "(not reported)",
         setup=[m.get("content", "") for m in setup_memories],
         response=result["response"],
         tool_calls=result["tool_calls"],

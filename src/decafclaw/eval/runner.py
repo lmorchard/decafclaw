@@ -37,6 +37,38 @@ async def _setup_skills(ctx, test_case: dict):
             log.warning(f"Skill '{name}' not found for eval pre-activation")
 
 
+def _seed_conversation_history(config, test_case: dict) -> list[dict]:
+    """Seed `{workspace}/conversations/eval.jsonl` from `setup.conversation_history`.
+
+    Returns the same list of messages (with timestamps filled in) so the
+    caller can pre-populate the in-memory history passed to ``run_agent_turn``.
+    This way both the running agent loop AND tools that read the archive
+    (e.g. ``conversation_search``) see the seeded data.
+
+    Validates that each entry has a ``role``; everything else is passed
+    through. Returns ``[]`` when the setup field is absent.
+    """
+    setup = test_case.get("setup", {})
+    seed = setup.get("conversation_history") or []
+    if not seed:
+        return []
+
+    from ..archive import append_message  # local to avoid top-level dep cycle
+
+    now_iso = datetime.now().isoformat()
+    out: list[dict] = []
+    for i, msg in enumerate(seed):
+        if not isinstance(msg, dict) or "role" not in msg:
+            raise ValueError(
+                f"setup.conversation_history[{i}] must be a dict with a 'role' key"
+            )
+        # Stamp upfront so the returned list and on-disk archive agree.
+        stamped = {**msg, "timestamp": msg.get("timestamp") or now_iso}
+        append_message(config, "eval", stamped)
+        out.append(stamped)
+    return out
+
+
 async def _setup_workspace(config, test_case: dict):
     """Create fixture data in the temp workspace."""
     import shutil
@@ -143,6 +175,71 @@ def _collect_tool_errors(history: list) -> list[str]:
     return errors
 
 
+def _check_workspace_assertions(test_case: dict,
+                                workspace_path: Path) -> tuple[bool, str]:
+    """Check post-turn workspace-state assertions.
+
+    Reads ``test_case["expect_workspace"]`` (top-level, parallel to ``setup:``)
+    so the timing is unambiguous: these run once at the end of the test, not
+    per-turn. Three fields supported:
+
+    - ``workspace_files: {rel_path: content_or_re_pattern}`` — both existence
+      AND content. Strings prefixed with ``re:`` match as regex; otherwise
+      bare-substring (case-insensitive) match. Use the regex form for exact
+      content (anchor with ``^`` / ``$`` if needed).
+    - ``workspace_file_exists: [rel_path, ...]`` — existence only.
+    - ``workspace_file_absent: [rel_path, ...]`` — must NOT exist.
+
+    All paths must be relative to ``workspace_path`` and must not escape via
+    ``..`` — symmetric with ``_setup_workspace``'s ``workspace_files``.
+    """
+    import re
+
+    expect_ws = test_case.get("expect_workspace")
+    if not expect_ws:
+        return True, ""
+
+    workspace_root = workspace_path.resolve()
+
+    def _resolve(rel_path: str) -> Path:
+        rel = Path(rel_path)
+        if rel.is_absolute():
+            raise ValueError(f"expect_workspace path must be relative: {rel_path}")
+        dest = (workspace_path / rel).resolve()
+        if not dest.is_relative_to(workspace_root):
+            raise ValueError(f"expect_workspace path escapes workspace: {rel_path}")
+        return dest
+
+    for rel_path, expected in (expect_ws.get("workspace_files") or {}).items():
+        dest = _resolve(rel_path)
+        if not dest.exists():
+            return False, f"workspace_files: expected file {rel_path!r} to exist"
+        content = dest.read_text(encoding="utf-8")
+        if expected.startswith("re:"):
+            if not re.search(expected[3:], content, re.IGNORECASE | re.DOTALL):
+                return False, (
+                    f"workspace_files[{rel_path!r}]: content did not match "
+                    f"pattern {expected!r}"
+                )
+        elif expected.lower() not in content.lower():
+            return False, (
+                f"workspace_files[{rel_path!r}]: content did not contain "
+                f"expected substring {expected!r}"
+            )
+
+    for rel_path in expect_ws.get("workspace_file_exists") or []:
+        dest = _resolve(rel_path)
+        if not dest.exists():
+            return False, f"workspace_file_exists: {rel_path!r} does not exist"
+
+    for rel_path in expect_ws.get("workspace_file_absent") or []:
+        dest = _resolve(rel_path)
+        if dest.exists():
+            return False, f"workspace_file_absent: {rel_path!r} unexpectedly exists"
+
+    return True, ""
+
+
 def _check_assertions(test_case: dict, response: str, tool_calls: int,
                       tool_errors: int = 0,
                       tool_names: list[str] | None = None) -> tuple[bool, str]:
@@ -168,6 +265,20 @@ def _check_assertions(test_case: dict, response: str, tool_calls: int,
                 break
         if not matched:
             return False, f"Expected one of {contains} in response"
+
+    # response_contains_all: string or list (AND semantics — all must match).
+    # Mirror response_contains item handling: `re:` prefix opts into regex,
+    # bare strings use case-insensitive substring.
+    contains_all = expect.get("response_contains_all")
+    if contains_all:
+        if isinstance(contains_all, str):
+            contains_all = [contains_all]
+        for c in contains_all:
+            if c.startswith("re:"):
+                if not re.search(c[3:], response, re.IGNORECASE):
+                    return False, f"Expected all of {contains_all} in response, missing pattern {c!r}"
+            elif c.lower() not in response_lower:
+                return False, f"Expected all of {contains_all} in response, missing {c!r}"
 
     # response_not_contains: string or list (all must be absent)
     not_contains = expect.get("response_not_contains")
@@ -246,6 +357,11 @@ async def run_test(config: Config, test_case: dict) -> dict:
     # Setup fixtures
     await _setup_workspace(config, test_case)
 
+    # Seed the conversation archive AND in-memory history if requested. Both
+    # views need to agree so conversation_search reads the same data the
+    # agent loop is processing.
+    seeded_history = _seed_conversation_history(config, test_case)
+
     # Pre-activate skills
     await _setup_skills(ctx, test_case)
 
@@ -272,7 +388,8 @@ async def run_test(config: Config, test_case: dict) -> dict:
     else:
         turns = [{"input": test_case["input"], "expect": test_case.get("expect", {})}]
 
-    history = []
+    # Start with whatever was seeded — agent loop appends to this list.
+    history = list(seeded_history)
     total_duration = 0
     all_responses = []
     overall_passed = True
@@ -353,6 +470,17 @@ async def run_test(config: Config, test_case: dict) -> dict:
                 if detail_str:
                     failure_reason += f"\n         Errors: {detail_str}"
                 break
+
+    # Post-turn workspace-state checks (#352). Run once at end-of-test so
+    # the timing matches the field name's promise. Only check if everything
+    # before this passed — first failure still wins.
+    if overall_passed:
+        ws_passed, ws_reason = _check_workspace_assertions(
+            test_case, config.workspace_path,
+        )
+        if not ws_passed:
+            overall_passed = False
+            failure_reason = ws_reason
 
     # Gather cumulative metrics
     prompt_tokens = ctx.tokens.total_prompt
