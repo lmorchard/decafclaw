@@ -113,7 +113,23 @@ To be filed.
 
 ## PR-D — Pass-rate trend tracking
 
-_To fill in during execution._
+Branch: `evals-trend-tracking`, stacked on `evals-coverage-sweep`. One commit.
+
+- New `decafclaw.eval.history` module: `build_run_record` / `append_run` / `read_history` / `render_table`.
+- `__main__.py` now appends one record per `make eval` run to `evals/history.jsonl` (committed to git). JSONL append is fail-soft — a write failure prints a warning but doesn't fail the eval run.
+- `--history` flag + `make eval-history` target render the trend table (fixed-width, pass-rate + delta vs previous row + duration + tokens). Last 20 by default; `--history-limit N` overrides.
+- 12 unit tests in `test_eval_history.py` cover append/read, corrupt-line skipping, per-file aggregation (list + bare-string source forms), empty-history rendering, delta computation, limit handling, and large-number token formatting.
+
+### Decisions
+
+- **Per-file aggregation re-reads the source YAMLs.** The runner flattens cases across files into a single list before running; we don't carry the per-case file ownership back into `test_results`. Re-reading is cheap (YAML files are small) and deterministic.
+- **History on a single line, not nested.** Kept the record shape flat so `jq` queries stay simple (`jq -r '.pass_rate' evals/history.jsonl`).
+- **Fail-soft on write.** If `evals/history.jsonl` can't be written, the eval run still succeeds — history is a nice-to-have, not load-bearing.
+- **`history.jsonl` ships empty** in the PR. First real run after merge seeds it.
+
+### PR
+
+[#TBD](TBD)
 
 ## End-of-session retro
 
