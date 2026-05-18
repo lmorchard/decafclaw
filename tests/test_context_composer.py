@@ -810,6 +810,26 @@ class TestComposePreemptSkillMatches:
         assert hint.count("<preempt_skill_hint>") == 1
         assert hint.count("</preempt_skill_hint>") == 1
 
+    def test_hint_renders_bullets_per_skill(self, ctx, config):
+        """The hint lists matched skills as bullets, not a comma-joined
+        inline list — sharpens the visual cue for small models."""
+        config.discovered_skills = [
+            _make_skill_info("background", "Run things in the background"),
+            _make_skill_info("vault-search", "Search the background knowledge vault"),
+        ]
+        composer = ContextComposer()
+        _, hint = composer._compose_preempt_skill_matches(
+            ctx, config, "search background vault", [],
+            ComposerMode.INTERACTIVE,
+        )
+        assert hint is not None
+        assert "- background" in hint
+        assert "- vault-search" in hint
+        # The old inline comma-joined form must not appear.
+        assert "background, vault-search" not in hint
+        # New wording doesn't say "their tools are NOT loaded yet".
+        assert "NOT loaded" not in hint
+
 
 # -- Full compose() ------------------------------------------------------------
 
