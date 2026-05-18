@@ -223,7 +223,6 @@ def build_deferred_list_text(
 
     core_tools: list[dict] = []
     mcp_tools: dict[str, list[dict]] = {}
-    skill_tools: list[dict] = []
 
     for td in deferred_defs:
         name = td.get("function", {}).get("name", "")
@@ -234,8 +233,8 @@ def build_deferred_list_text(
             mcp_tools.setdefault(server, []).append(td)
         elif name in core_names:
             core_tools.append(td)
-        else:
-            skill_tools.append(td)
+        # Else: skill tools — kept in the deferred pool for tool_search
+        # to match against, but not rendered into the visible catalog.
 
     def _render(defs: list[dict]) -> list[str]:
         defs_sorted = sorted(defs, key=_deferred_sort_key)
@@ -251,10 +250,14 @@ def build_deferred_list_text(
         lines.extend(_render(core_tools))
         lines.append("")
 
-    if skill_tools:
-        lines.append("### Skills")
-        lines.extend(_render(skill_tools))
-        lines.append("")
+    # Skill tools are intentionally NOT rendered here. Skills are
+    # disclosed via the skill catalog (name + description in the
+    # system prompt) and their tools become visible only after
+    # activate_skill. The agent shouldn't see hidden tool names it
+    # cannot call — that produced consistent failed-tool errors with
+    # small parent models. Skill-tool defs remain in the deferred
+    # pool so tool_search can match against them and surface the
+    # owning skill.
 
     for server in sorted(mcp_tools):
         lines.append(f"### Tools from MCP server `{server}`")

@@ -417,8 +417,9 @@ def build_catalog_text(skills: list[SkillInfo]) -> str:
         lines.extend([
             "## Available Skills",
             "",
-            "The following skills can be activated. Their tools are NOT available until you "
-            "call activate_skill first. You MUST activate a skill before using any of its tools.",
+            "The following skills exist but are not yet loaded. Call "
+            "activate_skill(name) to load a skill's body and tools — "
+            "the tools are not visible until the skill is activated.",
             "",
         ])
         for skill in on_demand:
