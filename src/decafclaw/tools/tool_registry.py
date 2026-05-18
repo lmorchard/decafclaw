@@ -97,6 +97,7 @@ def classify_tools(
     fetched_names = fetched_names or set()
     skill_tool_names = skill_tool_names or set()
     preempt_matches = preempt_matches or set()
+    skill_tool_owners = getattr(config, "skill_tool_owners", {}) or {}
 
     # Build the "force critical" set
     force_critical = get_critical_names(config)
@@ -110,12 +111,23 @@ def classify_tools(
     # Bucket by resolved priority, preserving input order. Compute
     # each tool's token cost once up front — classify_tools runs every
     # agent iteration, so avoid re-encoding JSON per tool per fill loop.
+    # Skill tools from non-activated skills bypass the priority buckets
+    # entirely and go straight to deferred. They stay in the deferred
+    # pool so tool_search can match against them, but they MUST NOT
+    # appear in the active list (which becomes the LLM's tools parameter)
+    # because seeing the schema there teaches the agent to call the tool
+    # directly, skipping the skill body that documents how to use it.
+    hidden_skill_tools: list[dict] = []
     critical: list[dict] = []
     normal: list[dict] = []
     low: list[dict] = []
     token_cost: dict[int, int] = {}
     for td in all_tool_defs:
+        name = td.get("function", {}).get("name", "")
         token_cost[id(td)] = estimate_tool_tokens([td])
+        if name in skill_tool_owners and name not in skill_tool_names:
+            hidden_skill_tools.append(td)
+            continue
         prio = get_priority(td, config, force_critical)
         if prio == Priority.CRITICAL.value:
             critical.append(td)
@@ -151,10 +163,16 @@ def classify_tools(
     _fill(normal)
     _fill(low)
 
+    # Hidden skill tools (from non-activated skills) always land in
+    # deferred regardless of budget — they're for tool_search lookup,
+    # never for direct callability via the active set.
+    deferred.extend(hidden_skill_tools)
+
     if deferred:
         log.info(
-            "Tool classification: %d active (%d tokens), %d deferred",
-            len(active), active_tokens, len(deferred),
+            "Tool classification: %d active (%d tokens), %d deferred "
+            "(%d hidden skill tools)",
+            len(active), active_tokens, len(deferred), len(hidden_skill_tools),
         )
     return active, deferred
 
@@ -223,7 +241,6 @@ def build_deferred_list_text(
 
     core_tools: list[dict] = []
     mcp_tools: dict[str, list[dict]] = {}
-    skill_tools: list[dict] = []
 
     for td in deferred_defs:
         name = td.get("function", {}).get("name", "")
@@ -234,8 +251,8 @@ def build_deferred_list_text(
             mcp_tools.setdefault(server, []).append(td)
         elif name in core_names:
             core_tools.append(td)
-        else:
-            skill_tools.append(td)
+        # Else: skill tools — kept in the deferred pool for tool_search
+        # to match against, but not rendered into the visible catalog.
 
     def _render(defs: list[dict]) -> list[str]:
         defs_sorted = sorted(defs, key=_deferred_sort_key)
@@ -251,10 +268,14 @@ def build_deferred_list_text(
         lines.extend(_render(core_tools))
         lines.append("")
 
-    if skill_tools:
-        lines.append("### Skills")
-        lines.extend(_render(skill_tools))
-        lines.append("")
+    # Skill tools are intentionally NOT rendered here. Skills are
+    # disclosed via the skill catalog (name + description in the
+    # system prompt) and their tools become visible only after
+    # activate_skill. The agent shouldn't see hidden tool names it
+    # cannot call — that produced consistent failed-tool errors with
+    # small parent models. Skill-tool defs remain in the deferred
+    # pool so tool_search can match against them and surface the
+    # owning skill.
 
     for server in sorted(mcp_tools):
         lines.append(f"### Tools from MCP server `{server}`")

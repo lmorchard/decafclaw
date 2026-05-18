@@ -296,8 +296,10 @@ class TestBuildDeferredListText:
         assert text.endswith("\n</deferred_tools>")
 
     def test_inner_markdown_preserved(self):
-        """The wrapping is additive: all the existing section headings
-        (## Available tools, ### Core, etc.) remain visible inside."""
+        """The wrapping is additive: the existing section headings
+        for Core and MCP remain visible inside. Skill tools are
+        intentionally not rendered — they're disclosed via the skill
+        catalog, not the deferred-tool list."""
         tools = [
             _make_tool_def("workspace_edit", "Edit a file"),
             _make_tool_def("vault_read", "Read a file"),
@@ -306,8 +308,10 @@ class TestBuildDeferredListText:
         text = build_deferred_list_text(tools, core_names={"workspace_edit"})
         assert "## Available tools (use tool_search to load)" in text
         assert "### Core" in text
-        assert "### Skills" in text
+        assert "### Skills" not in text
         assert "### Tools from MCP server `github`" in text
+        # Skill tool name must not leak into the visible catalog.
+        assert "vault_read" not in text
 
     def test_core_tools(self):
         core_names = {"workspace_edit", "checklist_create"}
@@ -330,13 +334,17 @@ class TestBuildDeferredListText:
         assert "### Tools from MCP server `playwright`" in text
         assert "### Tools from MCP server `slack`" in text
 
-    def test_skill_tools(self):
+    def test_skill_tools_hidden(self):
+        """Skill tools never render to the visible catalog. They stay in
+        the deferred pool so tool_search can match against them and
+        surface the owning skill, but the agent doesn't see tool names
+        it cannot call without first activating the skill."""
         tools = [
             _make_tool_def("vault_read", "Read a file"),
         ]
         text = build_deferred_list_text(tools, core_names=set())
-        assert "### Skills" in text
-        assert "vault_read" in text
+        assert "### Skills" not in text
+        assert "vault_read" not in text
 
     def test_core_sorted_by_priority_desc_then_name(self):
         """Within Core, priority desc then alpha by name."""
@@ -370,8 +378,85 @@ class TestBuildDeferredListText:
         b_idx = github_section.index("issue_b")
         assert a_idx < b_idx
 
-    def test_skill_tools_cluster_by_source_skill(self):
-        """When _source_skill is set, skill tools cluster by skill name."""
+    def test_classify_hidden_skill_tools_forced_to_deferred(self):
+        """Skill tools whose owning skill is not in the activated set
+        must NEVER land in the active list, even when budget would allow
+        them. The active list becomes the LLM's tools parameter; seeing
+        a skill tool there teaches the agent to call it directly,
+        bypassing the skill body."""
+        from decafclaw.tools.tool_registry import classify_tools
+
+        class _FakeAgentConfig:
+            critical_tools: list[str] = []
+            max_active_tools = 40
+
+        class _FakeConfig:
+            agent = _FakeAgentConfig()
+            tool_context_budget = 1_000_000  # generous; would normally fit
+            discovered_skills: list = []
+            skill_tool_owners = {"edit_with_strunk": "writing-clearly"}
+
+        config = _FakeConfig()
+
+        skill_tool = _make_tool_def(
+            "edit_with_strunk",
+            "Revise a prose draft.",
+            priority="normal",
+        )
+        core_tool = _make_tool_def(
+            "workspace_read", "Read a file.", priority="critical",
+        )
+
+        # skill_tool_names is empty → owning skill 'writing-clearly' is
+        # NOT activated. edit_with_strunk should be force-deferred.
+        active, deferred = classify_tools(
+            [skill_tool, core_tool],
+            config,
+            fetched_names=set(),
+            skill_tool_names=set(),
+        )
+        active_names = {td["function"]["name"] for td in active}
+        deferred_names = {td["function"]["name"] for td in deferred}
+
+        assert "edit_with_strunk" not in active_names, (
+            "hidden skill tool leaked into active list — LLM would see "
+            "its schema and call it directly"
+        )
+        assert "edit_with_strunk" in deferred_names
+        assert "workspace_read" in active_names
+
+    def test_classify_activated_skill_tools_stay_critical(self):
+        """When a skill IS activated (its tool names appear in
+        skill_tool_names), its tools enter the active set normally —
+        the hidden-tool gate only applies to non-activated skills."""
+        from decafclaw.tools.tool_registry import classify_tools
+
+        class _FakeAgentConfig:
+            critical_tools: list[str] = []
+            max_active_tools = 40
+
+        class _FakeConfig:
+            agent = _FakeAgentConfig()
+            tool_context_budget = 1_000_000
+            discovered_skills: list = []
+            skill_tool_owners = {"edit_with_strunk": "writing-clearly"}
+
+        config = _FakeConfig()
+        skill_tool = _make_tool_def("edit_with_strunk", "Revise prose.")
+
+        active, deferred = classify_tools(
+            [skill_tool],
+            config,
+            fetched_names=set(),
+            skill_tool_names={"edit_with_strunk"},  # skill activated
+        )
+        active_names = {td["function"]["name"] for td in active}
+        assert "edit_with_strunk" in active_names
+
+    def test_skill_tools_never_in_visible_output(self):
+        """Even when _source_skill is set and multiple skill tools exist,
+        none of them appear in the visible deferred-tool list. (Previously
+        they were clustered under '### Skills'; that section is gone.)"""
         def with_source(td, skill):
             return {**td, "_source_skill": skill}
 
@@ -381,13 +466,9 @@ class TestBuildDeferredListText:
             with_source(_make_tool_def("tool_b"), "skill_alpha"),
         ]
         text = build_deferred_list_text(tools, core_names=set())
-        skills_section = text.split("### Skills")[1].split("###")[0]
-        # skill_alpha tools should appear before skill_beta tools
-        # within skill_alpha: tool_b before tool_z (alphabetical)
-        b_idx = skills_section.index("tool_b")
-        z_idx = skills_section.index("tool_z")
-        a_idx = skills_section.index("tool_a")
-        assert b_idx < z_idx < a_idx
+        assert "### Skills" not in text
+        for name in ("tool_a", "tool_b", "tool_z"):
+            assert name not in text
 
 
 # -- Fetched tools helpers -----------------------------------------------------

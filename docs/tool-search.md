@@ -40,28 +40,35 @@ Use `CRITICAL_TOOLS` to force-promote additional tools (extends, does not replac
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `query` | string | (required) | Keyword, or `select:name1,name2` for exact selection |
-| `max_results` | integer | 10 | Max tools returned for keyword search |
+| `query` | string | (required) | Keyword, or `select:name1,name2` for exact selection by skill or tool name |
+| `max_results` | integer | 10 | Max combined skill + tool matches for keyword search |
 
-**Keyword search**: case-insensitive substring match on tool name and description.
+**Keyword search** matches against three sources, case-insensitive substring on names and descriptions:
 
-**Exact selection**: `select:vault_read,vault_show_sections` fetches those specific tools.
+1. Non-skill deferred tools (core demoted + MCP) — returns the tool schema and fetches the tool.
+2. Skill catalog entries (skill name + description) — returns the skill name, NOT the individual tools. The agent must call `activate_skill(name)` to load the skill's body and tools.
+3. Hidden skill-tool inventory (tool names + descriptions of tools provided by unactivated skills) — surfaces the OWNING SKILL, so an agent that recalled a specific tool name still gets routed to `activate_skill` rather than a bypass-load that would skip the skill body.
 
-Returns full JSON schema definitions. Tools become callable on the next LLM iteration.
+**Exact selection**: `select:writing-clearly,workspace_edit` accepts both skill names (returns skill) and tool names. Hidden skill-tool names also surface their owning skill.
+
+Tools become callable on the next LLM iteration. Skills must be explicitly activated via `activate_skill`.
 
 ## Deferred Catalog Layout
 
 The deferred tool list sent to the LLM is grouped into sections:
 
 - `### Core` — core tools deferred by priority
-- `### Skills` — tools from activated skills that were deferred (rare; skill tools are usually critical)
 - `### MCP: <server>` — one section per connected MCP server
 
-Within each section, tools sort by `(priority desc, source asc, name asc)` so that high-priority tools appear first and tools from the same skill or MCP server cluster together.
+Skill-owned tools are NOT rendered in the deferred list — they remain in the deferred pool (so `tool_search` can match against them and surface the owning skill) but their names are never advertised directly to the agent. This is the skill-level progressive disclosure model: the catalog (in the main system prompt, not the deferred list) advertises skills, not individual tools.
+
+Within each rendered section, tools sort by `(priority desc, source asc, name asc)`.
 
 ## Auto-Fetch
 
-If the model calls a deferred tool without searching first (by inferring the name from the deferred list), `execute_tool` auto-fetches it — the call succeeds and the tool is added to the fetched set.
+If the model calls a deferred non-skill tool without searching first, `execute_tool` auto-fetches it — the call succeeds and the tool is added to the fetched set.
+
+**Skill-owned tools are exempt from auto-fetch.** Calling a skill tool directly produces a targeted error naming the owning skill and suggesting `activate_skill(...)`. This preserves the invariant that the skill body lands in context before any of the skill's tools execute.
 
 ## Child Agents
 
