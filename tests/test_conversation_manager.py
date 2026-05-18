@@ -16,6 +16,7 @@ from decafclaw.conversation_manager import (
     _CTX_DRIVEN_FIELDS,
     _PERSISTED_BINDINGS,
     CANCEL_MARKER_TEXT,
+    TURN_ABORTED_MARKER_TEXT,
     ConversationManager,
     ConversationState,
     PersistedTurnState,
@@ -636,6 +637,190 @@ async def test_partial_assistant_chunks_resets_each_turn(manager):
     # by the integration tests above.
     state.partial_assistant_chunks = []
     assert state.partial_assistant_chunks == []
+
+
+# -- Turn-aborted archive marker (issue #517) ----------------------------------
+
+
+def test_write_turn_aborted_marker_once_latches(manager, config):
+    """Two consecutive calls produce only one marker row and set the
+    latch."""
+    conv_id = "conv-aborted-latch"
+    state = manager._get_or_create(conv_id)
+
+    manager._write_turn_aborted_marker_once(conv_id, state)
+    manager._write_turn_aborted_marker_once(conv_id, state)
+
+    messages = read_archive(config, conv_id)
+    assert len(messages) == 1
+    assert messages[0]["role"] == "turn_aborted"
+    assert messages[0]["content"] == TURN_ABORTED_MARKER_TEXT
+    assert state.turn_aborted_marker_written is True
+
+
+@pytest.mark.asyncio
+async def test_exception_during_turn_archives_marker(
+    manager, config, monkeypatch,
+):
+    """End-to-end: a turn that archives the user prompt then raises a
+    non-CancelledError exception must leave a turn_aborted marker in
+    the archive (issue #517)."""
+    from decafclaw.archive import append_message
+    conv_id = "c1-aborted-no-partial"
+
+    async def fake_run_agent_turn(ctx, user_message, history, **kwargs):
+        append_message(ctx.config, ctx.conv_id, {
+            "role": "user", "content": user_message,
+        })
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(
+        "decafclaw.agent.run_agent_turn", fake_run_agent_turn,
+    )
+
+    future = await manager.enqueue_turn(
+        conv_id=conv_id,
+        kind=TurnKind.USER,
+        prompt="please do the thing",
+        user_id="u",
+    )
+    await asyncio.wait_for(future, timeout=2.0)
+
+    messages = read_archive(config, conv_id)
+    roles = [m["role"] for m in messages]
+    assert roles == ["user", "turn_aborted"]
+    assert messages[0]["content"] == "please do the thing"
+    assert messages[1]["content"] == TURN_ABORTED_MARKER_TEXT
+
+
+@pytest.mark.asyncio
+async def test_exception_during_turn_archives_partial_then_marker(
+    manager, config, monkeypatch,
+):
+    """When a partial assistant stream was captured before the
+    exception, the archive order is user → assistant(partial) →
+    turn_aborted, preserving any delivered text."""
+    from decafclaw.archive import append_message
+    conv_id = "c1-aborted-with-partial"
+
+    async def fake_run_agent_turn(ctx, user_message, history, **kwargs):
+        append_message(ctx.config, ctx.conv_id, {
+            "role": "user", "content": user_message,
+        })
+        assert ctx.on_stream_chunk is not None
+        await ctx.on_stream_chunk("text", "Sure, here goes: ")
+        await ctx.on_stream_chunk("text", "the answer is...")
+        raise RuntimeError("LLM provider crashed mid-stream")
+
+    monkeypatch.setattr(
+        "decafclaw.agent.run_agent_turn", fake_run_agent_turn,
+    )
+
+    future = await manager.enqueue_turn(
+        conv_id=conv_id,
+        kind=TurnKind.USER,
+        prompt="write me a poem",
+        user_id="u",
+    )
+    await asyncio.wait_for(future, timeout=2.0)
+
+    messages = read_archive(config, conv_id)
+    roles = [m["role"] for m in messages]
+    assert roles == ["user", "assistant", "turn_aborted"]
+    assert messages[1]["content"] == "Sure, here goes: the answer is..."
+    assert messages[2]["content"] == TURN_ABORTED_MARKER_TEXT
+
+
+@pytest.mark.asyncio
+async def test_exception_partial_already_archived_no_duplicate(
+    manager, config, monkeypatch,
+):
+    """When the agent loop already archived the assistant content
+    before raising, the marker is appended but no duplicate partial
+    row is written."""
+    from decafclaw.archive import append_message
+    conv_id = "c1-aborted-dedupe"
+
+    async def fake_run_agent_turn(ctx, user_message, history, **kwargs):
+        append_message(ctx.config, ctx.conv_id, {
+            "role": "user", "content": user_message,
+        })
+        assert ctx.on_stream_chunk is not None
+        await ctx.on_stream_chunk("text", "Hello ")
+        await ctx.on_stream_chunk("text", "world")
+        append_message(ctx.config, ctx.conv_id, {
+            "role": "assistant", "content": "Hello world",
+        })
+        ctx.manager.note_partial_assistant_archived(ctx.conv_id)
+        raise RuntimeError("boom after partial archive")
+
+    monkeypatch.setattr(
+        "decafclaw.agent.run_agent_turn", fake_run_agent_turn,
+    )
+
+    future = await manager.enqueue_turn(
+        conv_id=conv_id,
+        kind=TurnKind.USER,
+        prompt="say hi",
+        user_id="u",
+    )
+    await asyncio.wait_for(future, timeout=2.0)
+
+    messages = read_archive(config, conv_id)
+    assert [m["role"] for m in messages] == [
+        "user", "assistant", "turn_aborted",
+    ]
+    assert messages[1]["content"] == "Hello world"
+
+
+@pytest.mark.asyncio
+async def test_turn_aborted_latch_resets_between_failing_turns(
+    manager, config, monkeypatch,
+):
+    """Two consecutive failing turns in the same conversation must
+    each leave a turn_aborted marker in the archive — the
+    `turn_aborted_marker_written` latch has to reset at the start of
+    the second turn. Guards against a regression where the reset is
+    accidentally removed from _start_turn (Copilot review on #549)."""
+    from decafclaw.archive import append_message
+    conv_id = "c1-aborted-two-turns"
+
+    call_count = {"n": 0}
+
+    async def fake_run_agent_turn(ctx, user_message, history, **kwargs):
+        call_count["n"] += 1
+        append_message(ctx.config, ctx.conv_id, {
+            "role": "user", "content": user_message,
+        })
+        raise RuntimeError(f"boom turn {call_count['n']}")
+
+    monkeypatch.setattr(
+        "decafclaw.agent.run_agent_turn", fake_run_agent_turn,
+    )
+
+    first = await manager.enqueue_turn(
+        conv_id=conv_id, kind=TurnKind.USER,
+        prompt="first", user_id="u",
+    )
+    await asyncio.wait_for(first, timeout=2.0)
+
+    second = await manager.enqueue_turn(
+        conv_id=conv_id, kind=TurnKind.USER,
+        prompt="second", user_id="u",
+    )
+    await asyncio.wait_for(second, timeout=2.0)
+
+    messages = read_archive(config, conv_id)
+    roles = [m["role"] for m in messages]
+    # Both turns must have produced a marker. If the reset were
+    # removed from _start_turn, the second marker would be suppressed
+    # by the latch carried over from the first turn.
+    assert roles == [
+        "user", "turn_aborted",
+        "user", "turn_aborted",
+    ], f"expected a marker after each failing turn; got roles={roles}"
+    assert messages[1]["content"] == TURN_ABORTED_MARKER_TEXT
+    assert messages[3]["content"] == TURN_ABORTED_MARKER_TEXT
 
 
 # -- Send message with mocked agent turn ---------------------------------------
