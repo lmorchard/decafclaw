@@ -258,6 +258,155 @@ async def test_history_route(authed_client, http_config):
     assert data["has_more"] is False
 
 
+# -- Export endpoint tests ----------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_export_jsonl_returns_raw_archive(authed_client, http_config):
+    http_config.workspace_path.mkdir(parents=True, exist_ok=True)
+    create_resp = await authed_client.post(
+        "/api/conversations", json={"title": "Export test"}
+    )
+    conv_id = create_resp.json()["conv_id"]
+    append_message(http_config, conv_id, {"role": "user", "content": "hello"})
+    append_message(http_config, conv_id, {"role": "assistant", "content": "hi"})
+
+    resp = await authed_client.get(
+        f"/api/conversations/{conv_id}/export?format=jsonl"
+    )
+    assert resp.status_code == 200
+    assert "application/x-ndjson" in resp.headers["content-type"]
+    # Body should match the archive file byte-for-byte.
+    from decafclaw.archive import archive_path
+    expected = archive_path(http_config, conv_id).read_bytes()
+    assert resp.content == expected
+
+
+@pytest.mark.asyncio
+async def test_export_markdown_renders(authed_client, http_config):
+    http_config.workspace_path.mkdir(parents=True, exist_ok=True)
+    create_resp = await authed_client.post(
+        "/api/conversations", json={"title": "Markdown test"}
+    )
+    conv_id = create_resp.json()["conv_id"]
+    append_message(http_config, conv_id, {"role": "user", "content": "ping"})
+    append_message(http_config, conv_id, {"role": "assistant", "content": "pong"})
+
+    resp = await authed_client.get(
+        f"/api/conversations/{conv_id}/export?format=markdown"
+    )
+    assert resp.status_code == 200
+    assert "text/markdown" in resp.headers["content-type"]
+    body = resp.text
+    assert body.startswith(f"# Conversation {conv_id}")
+    assert "## User\n\nping" in body
+    assert "## Assistant\n\npong" in body
+
+
+@pytest.mark.asyncio
+async def test_export_missing_format_is_400(authed_client, http_config):
+    http_config.workspace_path.mkdir(parents=True, exist_ok=True)
+    create_resp = await authed_client.post(
+        "/api/conversations", json={"title": "x"}
+    )
+    conv_id = create_resp.json()["conv_id"]
+    resp = await authed_client.get(f"/api/conversations/{conv_id}/export")
+    assert resp.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_export_unknown_format_is_400(authed_client, http_config):
+    http_config.workspace_path.mkdir(parents=True, exist_ok=True)
+    create_resp = await authed_client.post(
+        "/api/conversations", json={"title": "x"}
+    )
+    conv_id = create_resp.json()["conv_id"]
+    resp = await authed_client.get(
+        f"/api/conversations/{conv_id}/export?format=html"
+    )
+    assert resp.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_export_unknown_conv_is_404(authed_client):
+    resp = await authed_client.get(
+        "/api/conversations/web-testuser-doesnotexist/export?format=jsonl"
+    )
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_export_cross_user_is_404(app, http_config):
+    """Another user can't read a conversation they don't own."""
+    http_config.workspace_path.mkdir(parents=True, exist_ok=True)
+    # Create a conv as alice, then try to fetch it as bob.
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as alice:
+        token = create_token(http_config, "alice")
+        resp = await alice.post("/api/auth/login", json={"token": token})
+        alice.cookies = resp.cookies
+        create_resp = await alice.post(
+            "/api/conversations", json={"title": "alice's"}
+        )
+        conv_id = create_resp.json()["conv_id"]
+        append_message(http_config, conv_id, {"role": "user", "content": "secret"})
+
+    async with AsyncClient(transport=transport, base_url="http://test") as bob:
+        token = create_token(http_config, "bob")
+        resp = await bob.post("/api/auth/login", json={"token": token})
+        bob.cookies = resp.cookies
+        resp = await bob.get(
+            f"/api/conversations/{conv_id}/export?format=jsonl"
+        )
+        assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_export_no_archive_file_is_404(authed_client):
+    """Conv exists in the index but no archive file written yet -> 404."""
+    create_resp = await authed_client.post(
+        "/api/conversations", json={"title": "Empty"}
+    )
+    conv_id = create_resp.json()["conv_id"]
+    resp = await authed_client.get(
+        f"/api/conversations/{conv_id}/export?format=jsonl"
+    )
+    assert resp.status_code == 404
+    resp = await authed_client.get(
+        f"/api/conversations/{conv_id}/export?format=markdown"
+    )
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_export_empty_archive_file_renders_header(authed_client, http_config):
+    """Archive file exists but is empty (e.g. corrupt or never appended-to):
+    JSONL returns the empty bytes, markdown returns the header-only doc.
+    Either way it's a 200, not a 404 — the conversation exists."""
+    http_config.workspace_path.mkdir(parents=True, exist_ok=True)
+    create_resp = await authed_client.post(
+        "/api/conversations", json={"title": "Empty file"}
+    )
+    conv_id = create_resp.json()["conv_id"]
+    # Touch the archive file so it exists but is empty.
+    from decafclaw.archive import archive_path
+    path = archive_path(http_config, conv_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.touch()
+
+    resp = await authed_client.get(
+        f"/api/conversations/{conv_id}/export?format=jsonl"
+    )
+    assert resp.status_code == 200
+    assert resp.content == b""
+
+    resp = await authed_client.get(
+        f"/api/conversations/{conv_id}/export?format=markdown"
+    )
+    assert resp.status_code == 200
+    assert resp.text.startswith(f"# Conversation {conv_id}")
+
+
 # -- Folder-aware listing tests -----------------------------------------------
 
 

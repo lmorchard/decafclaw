@@ -10,7 +10,7 @@ from pathlib import Path
 
 from starlette.applications import Starlette
 from starlette.requests import Request
-from starlette.responses import FileResponse, JSONResponse
+from starlette.responses import FileResponse, JSONResponse, Response
 from starlette.routing import Mount, Route, WebSocketRoute
 from starlette.staticfiles import StaticFiles
 
@@ -575,6 +575,43 @@ async def get_context_diagnostics(request: Request, username: str) -> JSONRespon
     if data is None:
         return JSONResponse({"error": "no context data"}, status_code=404)
     return JSONResponse(data)
+
+
+@_authenticated
+async def export_conversation(request: Request, username: str) -> Response:
+    """Export a conversation as raw JSONL or rendered markdown.
+
+    Query param ``format`` must be ``jsonl`` or ``markdown``. 400 on missing
+    or unknown format, 404 if the conversation isn't owned by the user or
+    no archive exists.
+    """
+    from .archive import archive_path, read_archive
+    from .conversation_export import render_markdown
+    from .web.conversations import ConversationIndex
+    config = request.app.state.config
+    conv_id = request.path_params["id"]
+    fmt = request.query_params.get("format", "")
+    if fmt not in ("jsonl", "markdown"):
+        return JSONResponse(
+            {"error": "format must be 'jsonl' or 'markdown'"},
+            status_code=400,
+        )
+    index = ConversationIndex(config)
+    conv = index.get(conv_id)
+    if not conv or conv.user_id != username:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    # Both formats gate on the archive file existing; an empty or corrupt
+    # file is still a legitimate (if uninteresting) export — the markdown
+    # form just becomes the header-only document.
+    path = archive_path(config, conv_id)
+    if not path.exists():
+        return JSONResponse({"error": "no archive"}, status_code=404)
+    if fmt == "jsonl":
+        body = path.read_bytes()
+        return Response(body, media_type="application/x-ndjson; charset=utf-8")
+    messages = read_archive(config, conv_id)
+    text = render_markdown(messages, conv_id)
+    return Response(text, media_type="text/markdown; charset=utf-8")
 
 
 @_authenticated
@@ -1789,6 +1826,7 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> Starlette:
         Route("/api/conversations/{id}", rename_conversation, methods=["PATCH"]),
         Route("/api/conversations/{id}/history", get_conversation_history, methods=["GET"]),
         Route("/api/conversations/{id}/context", get_context_diagnostics, methods=["GET"]),
+        Route("/api/conversations/{id}/export", export_conversation, methods=["GET"]),
         Route("/api/conversations/folders", create_conv_folder, methods=["POST"]),
         Route("/api/conversations/folders/{path:path}", delete_conv_folder, methods=["DELETE"]),
         Route("/api/conversations/folders/{path:path}", rename_conv_folder, methods=["PUT"]),

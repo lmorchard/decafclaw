@@ -72,6 +72,22 @@ Click the context usage bar in the sidebar to see a popover with:
 
 See [Context Composer](context-composer.md#context-inspection) for details.
 
+### Copy conversation
+
+A floating `📋 Copy ▾` button in the upper-right of the chat area opens a
+small menu with two items: **Copy as JSONL** and **Copy as markdown**. JSONL
+is the raw archive bytes (lossless — paste into another LLM for diagnosis).
+Markdown is a rendered transcript suitable for Obsidian, sharing, or PR
+descriptions. Both are server-rendered via
+`GET /api/conversations/{id}/export?format=jsonl|markdown` and written to
+the clipboard via `navigator.clipboard`. A toast confirms success or
+surfaces the failure reason. The menu hides when no conversation is active.
+
+The markdown form includes `user`, `assistant`, and `tool` turns plus a
+short `> [background event]` blockquote for scheduled-task wakes;
+metadata-only roles (system prompt, model markers, reflection,
+confirmation prompts/responses, cancel/wake markers) are skipped.
+
 ### Config editor
 
 Edit admin config files (`SOUL.md`, `AGENT.md`, `HEARTBEAT.md`, etc.) directly in the browser. Changes are written to `data/{agent_id}/`.
@@ -244,6 +260,7 @@ Conversation management is REST-only. WebSocket handles only real-time operation
 | `DELETE` | `/api/conversations/{id}` | Delete a conversation |
 | `GET` | `/api/conversations/{id}/history` | Get conversation history (paginated) |
 | `GET` | `/api/conversations/{id}/context` | Get context diagnostics sidecar |
+| `GET` | `/api/conversations/{id}/export?format=jsonl\|markdown` | Export raw archive or rendered transcript |
 | `POST` | `/api/conversations/{id}/archive` | Archive a conversation |
 | `POST` | `/api/conversations/{id}/unarchive` | Unarchive a conversation |
 

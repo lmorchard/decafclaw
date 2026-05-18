@@ -11,6 +11,78 @@ chat-view {
   position: relative;
 }
 
+/* Floating action cluster anchored to the upper-right of #chat-main.
+   Holds the Canvas resummon pill and the Copy menu side-by-side. The
+   right offset clears chat-view's scrollbar on platforms that use
+   classic (non-overlay) scrollbars. */
+#chat-main { position: relative; }
+.dc-chat-actions {
+  position: absolute;
+  top: 0.5rem;
+  right: 1.5rem;
+  z-index: 5;
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+}
+
+@media (max-width: 639px) {
+  .dc-chat-actions {
+    top: 0.4rem;
+    right: 0.4rem;
+  }
+}
+
+/* Copy ▾ menu lives inside .dc-chat-actions alongside the Canvas pill.
+   Trigger matches the pill's sizing; the dropdown list floats below
+   it with the same border/shadow vocabulary as .dc-floating-btn. */
+.copy-menu-wrap { position: relative; }
+.copy-menu-trigger {
+  padding: 0 0.85rem;
+  font-size: 0.85rem;
+}
+.copy-menu-list {
+  position: absolute;
+  top: calc(100% + 0.3rem);
+  right: 0;
+  margin: 0;
+  padding: 0.25rem 0;
+  list-style: none;
+  background: var(--pico-card-background-color);
+  border: 1px solid var(--pico-muted-border-color);
+  border-radius: 0.4rem;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+  min-width: 12rem;
+  z-index: 6;
+}
+/* Pico's `ul li { list-style: square }` outranks list-style on the
+   parent ul (specificity 0,0,2 vs inherited none), so clear it on the
+   li directly. */
+.copy-menu-list li { margin: 0; padding: 0; list-style: none; }
+.copy-menu-item {
+  display: block;
+  width: 100%;
+  padding: 0.4rem 0.85rem;
+  cursor: pointer;
+  white-space: nowrap;
+  font-size: 0.9rem;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  font: inherit;
+}
+.copy-menu-item:hover,
+.copy-menu-item:focus-visible {
+  background: var(--pico-secondary-background-color, rgba(127, 127, 127, 0.12));
+  outline: none;
+}
+
+@media (max-width: 639px) {
+  .copy-menu-trigger { padding: 0.25rem 0.85rem; }
+  .copy-menu-trigger .copy-label { display: none; }
+}
+
 /* Uses .dc-floating-btn for border/radius/shadow/tap-target.
    Local styles cover sticky positioning + sizing. */
 chat-view .scroll-to-bottom {

@@ -9,6 +9,7 @@ import { WebSocketClient } from './lib/websocket-client.js';
 import { ConversationStore } from './lib/conversation-store.js';
 import { MESSAGE_TYPES, KNOWN_MESSAGE_TYPES } from './lib/message-types.js';
 import { setupResizeHandle } from './lib/utils.js';
+import { showToast } from './lib/toast.js';
 import {
   setActiveConv,
   applyEvent,
@@ -28,6 +29,7 @@ import './components/theme-toggle.js';
 import './components/wiki-page.js';
 import './components/file-page.js';
 import './components/config-panel.js';
+import './components/copy-conversation-menu.js';
 
 // -- Services -----------------------------------------------------------------
 
@@ -393,19 +395,6 @@ document.addEventListener('config-open', () => showConfigPanel());
 // Close config panel
 configPanelEl?.addEventListener('close', () => hideConfigPanel());
 
-// -- Toast notifications ------------------------------------------------------
-
-/** @param {string} message @param {number} [duration] */
-function showToast(message, duration = 5000) {
-  const container = document.getElementById('toast-container');
-  if (!container) return;
-  const toast = document.createElement('div');
-  toast.className = 'toast';
-  toast.textContent = message;
-  container.appendChild(toast);
-  setTimeout(() => toast.remove(), duration);
-}
-
 // Surface store errors as toasts
 store.addEventListener('change', () => {
   // The store clears errors after emitting, so we check via a custom approach
@@ -684,20 +673,36 @@ if (canvasResizeHandle && canvasMainEl) {
   });
 }
 
-function setupCanvasResummonPill() {
-  // Pill floats absolutely in the upper-right of #chat-main on both
-  // desktop and mobile — no dedicated header strip, so the pill never
-  // pushes chat content down or reserves a dead row when canvas isn't
-  // dismissed. Position offsets in canvas.css adjust for the fixed
-  // hamburger at top-left in mobile mode.
+/**
+ * Lazily create / fetch the floating action cluster anchored to the
+ * upper-right of #chat-main. Buttons (Canvas pill, Copy menu, ...) live
+ * inside it so they don't fight each other for absolute offsets.
+ *
+ * @returns {HTMLElement | null}
+ */
+function getChatActions() {
   const host = document.getElementById('chat-main');
-  if (!host) return;
+  if (!host) return null;
+  let actions = host.querySelector(':scope > .dc-chat-actions');
+  if (!actions) {
+    actions = document.createElement('div');
+    actions.className = 'dc-chat-actions';
+    host.appendChild(actions);
+  }
+  return /** @type {HTMLElement} */ (actions);
+}
 
+function setupCanvasResummonPill() {
+  // Pill lives inside .dc-chat-actions (upper-right of #chat-main). The
+  // container handles positioning; the pill only contributes its own
+  // sizing / unread-dot styling.
   /**
    * @param {{tabs: any[], activeTab: any, visible: boolean, unreadDot: boolean}} snapshot
    */
   const renderTo = (snapshot) => {
-    host.querySelector('.canvas-resummon-pill')?.remove();
+    const actions = getChatActions();
+    if (!actions) return;
+    actions.querySelector('.canvas-resummon-pill')?.remove();
     if (!snapshot.tabs || snapshot.tabs.length === 0) return;
     if (snapshot.visible) return;
     const btn = document.createElement('button');
@@ -714,10 +719,26 @@ function setupCanvasResummonPill() {
       btn.setAttribute('aria-label', 'Canvas');
     }
     btn.addEventListener('click', () => resummon());
-    host.appendChild(btn);
+    actions.appendChild(btn);
   };
 
   subscribeCanvas(renderTo);
 }
 
 setupCanvasResummonPill();
+
+function setupCopyConversationMenu() {
+  // Mount once inside the chat-action cluster. The element hides itself
+  // when convId is empty, so we don't need to add/remove it on every
+  // conversation switch — just keep its convId attribute in sync.
+  const actions = getChatActions();
+  if (!actions) return;
+  const menu = /** @type {any} */ (document.createElement('copy-conversation-menu'));
+  menu.convId = store.currentConvId || '';
+  actions.appendChild(menu);
+  store.addEventListener('change', () => {
+    menu.convId = store.currentConvId || '';
+  });
+}
+
+setupCopyConversationMenu();
