@@ -26,12 +26,16 @@ For each remaining skill, score is `|input_tokens ∩ tokenize(name + descriptio
 
 ```
 <preempt_skill_hint>
-These skills look relevant to the current message: project, ingest.
-Their tools are NOT loaded yet — call activate_skill(name) before trying to use any of their tools.
+These skills look relevant to the current message. Call activate_skill(name) to load their tools.
+
+- project
+- ingest
 </preempt_skill_hint>
 ```
 
-Unlike the tool match, this is purely a **hint** — no auto-activation. The agent still calls `activate_skill` (which respects the user-confirmation flow for non-`auto-approve` skills). The hint just means the agent doesn't have to call a skill-provided tool, hit "unknown tool", search, then activate. The skill name is right there with a directive to activate it.
+Unlike the tool match, this is purely a **hint** — no auto-activation. The agent still calls `activate_skill` (which is frictionless for trusted-tier skills; workspace-tier skills still route through the user confirmation flow). The hint pairs with the skill-level progressive disclosure model from [skills.md](skills.md): the catalog tells the agent which skills exist, the preempt hint flags which look relevant for the current message, and `activate_skill` is the loading mechanism.
+
+The wording is intentionally bulleted (one skill per line) rather than comma-joined inline — small parent models attend to visual structure more reliably than to running prose, and the activation directive sits at the top where the model is most likely to read it.
 
 Diagnostics surface as a parallel source entry, `preempt_skill_matches`, with the same shape as `preempt_matches` (matched skills with score and matched tokens).
 

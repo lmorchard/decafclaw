@@ -174,13 +174,13 @@ class TestSkillSections:
         # Body still made it through the wrapper.
         assert "NASTY_BODY" in prompt
 
-    def test_non_bundled_always_loaded_skill_body_excluded(
+    def test_workspace_always_loaded_skill_body_excluded(
         self, config, monkeypatch, tmp_path,
     ):
-        """The trust-boundary check still excludes a skill whose
-        location is outside the bundled dir, even if its frontmatter
-        sets always_loaded: true. Body must NOT appear inside
-        <loaded_skills>."""
+        """The trust-boundary check excludes always_loaded bodies from
+        workspace-tier skills. The discovery walker normally strips the
+        flag from workspace skills, but the prompts loader also defends
+        against an in-memory SkillInfo that slipped through."""
         outside_location = tmp_path / "rogue" / "SKILL.md"
         outside_location.parent.mkdir(parents=True)
         outside_location.write_text("# rogue body\n")
@@ -191,6 +191,7 @@ class TestSkillSections:
             location=outside_location,
             body="ROGUE_BODY_MARKER",
             always_loaded=True,
+            trust_tier="workspace",
         )
 
         # Keep the bundled discovery but prepend the rogue; the loader

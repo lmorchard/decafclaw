@@ -55,6 +55,15 @@ class SkillInfo:
     schedule: str = ""  # cron expression, empty = not scheduled
     enabled: bool = True  # can be disabled via frontmatter
     auto_approve: bool = False  # bundled-only — skip activation confirmation
+    # Trust tier derived from placement at discovery time:
+    #   "bundled" — src/decafclaw/skills/ (project author)
+    #   "admin"   — data/{agent_id}/skills/ (user placed)
+    #   "extra"   — extra_skill_paths entries (user configured)
+    #   "workspace" — data/{agent_id}/workspace/skills/ (agent writable)
+    # The bundled/admin/extra tiers are "trusted" — activation skips
+    # confirmation, always-loaded is permitted. Workspace remains the
+    # security boundary requiring explicit user approval.
+    trust_tier: str = "bundled"
 
 
 def parse_skill_md(path: Path) -> SkillInfo | None:
@@ -265,18 +274,20 @@ def discover_skills(config) -> list[SkillInfo]:
     `extra_skill_paths`, where deployments opt into shared skills
     from `contrib/skills/` by referencing them directly.
     """
-    scan_paths = [
-        config.workspace_path / "skills",
-        config.agent_path / "skills",
-        _BUNDLED_SKILLS_DIR,
-        *_resolve_extra_skill_paths(config),
+    # Each scan entry carries its trust tier so SkillInfo can record
+    # where the skill came from. Extra-paths entries all share the
+    # "extra" tier regardless of how many were configured.
+    scan_entries: list[tuple[str, Path]] = [
+        ("workspace", config.workspace_path / "skills"),
+        ("admin", config.agent_path / "skills"),
+        ("bundled", _BUNDLED_SKILLS_DIR),
+        *(("extra", p) for p in _resolve_extra_skill_paths(config)),
     ]
 
     seen_names: dict[str, Path] = {}
     skills: list[SkillInfo] = []
-    bundled_dir = _BUNDLED_SKILLS_DIR.resolve()
 
-    for base_path in scan_paths:
+    for tier, base_path in scan_entries:
         for skill_dir in _iter_skill_dirs(base_path):
             skill_md = skill_dir / "SKILL.md"
             if not skill_md.exists():
@@ -286,26 +297,39 @@ def discover_skills(config) -> list[SkillInfo]:
             if info is None:
                 continue
 
-            # auto-approve and always-loaded are bundled-only (trust
-            # boundary). Admin, workspace, and external skills declaring
-            # them get the flag stripped and a warning logged so the
-            # documented "bundled-only" trust posture is enforced
-            # uniformly (catalog text + activation-time tool caching).
-            is_bundled = skill_dir.resolve().is_relative_to(bundled_dir)
-            if info.auto_approve and not is_bundled:
+            info.trust_tier = tier
+
+            # auto-approve and always-loaded are allowed for trusted
+            # tiers (bundled / admin / extra) but denied for workspace —
+            # workspace skills could be agent-authored, so they can't
+            # self-approve or force themselves into the system prompt.
+            if info.auto_approve and tier == "workspace":
                 log.warning(
-                    "Ignoring 'auto-approve: true' on non-bundled skill "
-                    "'%s' at %s — only bundled skills may auto-approve.",
+                    "Ignoring 'auto-approve: true' on workspace skill "
+                    "'%s' at %s — workspace skills cannot auto-approve.",
                     info.name, skill_dir,
                 )
                 info.auto_approve = False
-            if info.always_loaded and not is_bundled:
+            if info.always_loaded and tier == "workspace":
                 log.warning(
-                    "Ignoring 'always-loaded: true' on non-bundled skill "
-                    "'%s' at %s — only bundled skills may always-load.",
+                    "Ignoring 'always-loaded: true' on workspace skill "
+                    "'%s' at %s — workspace skills cannot always-load.",
                     info.name, skill_dir,
                 )
                 info.always_loaded = False
+
+            # `skills_always_loaded` config: opt a trusted-tier skill
+            # into always-loaded without editing its SKILL.md. Same
+            # workspace restriction applies.
+            if info.name in (config.skills_always_loaded or []):
+                if tier == "workspace":
+                    log.warning(
+                        "Ignoring config.skills_always_loaded entry for "
+                        "workspace skill '%s' — workspace skills cannot "
+                        "always-load.", info.name,
+                    )
+                else:
+                    info.always_loaded = True
 
             # Check requires.env
             missing_env = [v for v in info.requires_env if not os.environ.get(v)]
@@ -327,17 +351,52 @@ def discover_skills(config) -> list[SkillInfo]:
     return skills
 
 
+def build_skill_tool_owners(skills: list[SkillInfo]) -> dict[str, str]:
+    """Map every skill-provided tool name to its owning skill name.
+
+    Imports each skill's ``tools.py`` (only for skills with
+    ``has_native_tools``) and indexes their ``TOOL_DEFINITIONS``. Used
+    by the unknown-tool error path and by ``tool_search`` to route
+    hidden-tool-name guesses back to the skill that owns the tool.
+
+    Importing tools.py here has a startup cost — same work as
+    ``_load_native_tools`` (which the activation path runs eventually
+    anyway), just front-loaded. ``init()`` is NOT called during the
+    indexing; only the module is imported and ``TOOL_DEFINITIONS``
+    is read.
+    """
+    owners: dict[str, str] = {}
+    for skill in skills:
+        if not skill.has_native_tools:
+            continue
+        try:
+            from ..tools.skill_tools import _load_native_tools
+            _, tool_defs, _ = _load_native_tools(skill)
+        except Exception as exc:
+            log.warning(
+                "build_skill_tool_owners: failed to import tools.py for "
+                "skill '%s': %s",
+                skill.name, exc,
+            )
+            continue
+        for td in tool_defs:
+            tool_name = td.get("function", {}).get("name", "")
+            if tool_name:
+                # First-discovered wins on duplicate names (matches the
+                # runtime resolution order).
+                owners.setdefault(tool_name, skill.name)
+    return owners
+
+
 def build_catalog_text(skills: list[SkillInfo]) -> str:
     """Build the skill catalog text for injection into the system prompt."""
     if not skills:
         return ""
 
-    # Separate always-loaded (bundled only) from on-demand skills
-    bundled_dir = _BUNDLED_SKILLS_DIR.resolve()
-    always_loaded = [
-        s for s in skills
-        if s.always_loaded and Path(s.location).resolve().is_relative_to(bundled_dir)
-    ]
+    # Separate always-loaded skills from on-demand. Always-loaded is
+    # available to any trusted-tier skill (bundled / admin / extra);
+    # workspace skills have already had the flag stripped at discovery.
+    always_loaded = [s for s in skills if s.always_loaded]
     always_loaded_names = {s.name for s in always_loaded}
     on_demand = [s for s in skills if s.name not in always_loaded_names]
 
@@ -358,8 +417,9 @@ def build_catalog_text(skills: list[SkillInfo]) -> str:
         lines.extend([
             "## Available Skills",
             "",
-            "The following skills can be activated. Their tools are NOT available until you "
-            "call activate_skill first. You MUST activate a skill before using any of its tools.",
+            "The following skills exist but are not yet loaded. Call "
+            "activate_skill(name) to load a skill's body and tools — "
+            "the tools are not visible until the skill is activated.",
             "",
         ])
         for skill in on_demand:

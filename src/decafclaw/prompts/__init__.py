@@ -85,19 +85,19 @@ def load_system_prompt(config):
     if wrapped:
         sections.append(wrapped)
 
-    # Append always-loaded skill bodies to system prompt (bundled only —
-    # trust boundary). Each body nests inside <loaded_skills> as a
-    # <skill name="…"> block so the model can tell which body goes with
-    # which skill.
-    from ..skills import _BUNDLED_SKILLS_DIR
-    bundled_dir = _BUNDLED_SKILLS_DIR.resolve()
+    # Append always-loaded skill bodies to system prompt. Trusted
+    # tiers (bundled / admin / extra) are eligible; workspace skills
+    # already had the always-loaded flag stripped at discovery, but
+    # the trust_tier check below also defends against a workspace
+    # skill that slipped through. Each body nests inside
+    # <loaded_skills> as a <skill name="…"> block.
     skill_blocks: list[str] = []
     for skill in skills:
         if not skill.always_loaded or not skill.body:
             continue
-        if not Path(skill.location).resolve().is_relative_to(bundled_dir):
-            log.warning(f"Ignoring always-loaded on non-bundled skill '{skill.name}' "
-                        f"at {skill.location}")
+        if skill.trust_tier == "workspace":
+            log.warning(f"Ignoring always-loaded on workspace skill "
+                        f"'{skill.name}' at {skill.location}")
             continue
         # Escape the name for XML attribute safety. Skill names come from
         # YAML frontmatter with no character validation at ingest today,

@@ -241,17 +241,64 @@ async def execute_tool(ctx, name: str, arguments: dict) -> ToolResult:
     extra_tools = ctx.tools.extra
     fn = extra_tools.get(name) or TOOLS.get(name) or SEARCH_TOOLS.get(name)
     if fn is None:
-        # Check if tool is in the deferred pool — auto-fetch if so
+        # Check if tool is in the deferred pool — auto-fetch if so.
+        # Exception: skill-owned tools are NOT auto-fetched. The skill
+        # body documents how to use them; bypassing activation would
+        # let the agent call a tool without ever reading the body.
+        # Phase 3 hides skill tools from the visible deferred list;
+        # this guard hides them from auto-fetch too.
         deferred_pool = ctx.tools.deferred_pool
         deferred_names = {td.get("function", {}).get("name") for td in deferred_pool}
-        if name in deferred_names:
+        skill_tool_owners = getattr(ctx.config, "skill_tool_owners", {}) or {}
+        is_skill_tool = name in skill_tool_owners
+        if name in deferred_names and not is_skill_tool:
             log.debug(f"Auto-fetching deferred tool: {name}")
             from .tool_registry import add_fetched_tools
             add_fetched_tools(ctx, {name})
             fn = extra_tools.get(name) or TOOLS.get(name)
         if fn is None:
-            # Unknown tool — suggest close matches from everything the
-            # agent could reach: active, skill, deferred pool, and MCP.
+            # Tool name belongs to a discovered skill — surface that
+            # specifically rather than suggesting close matches, since
+            # the agent guessed the right name but the skill isn't
+            # loaded yet.
+            if is_skill_tool:
+                owning_skill = skill_tool_owners[name]
+                # Determine the skill's status for a tailored message.
+                from ..tools.skill_tools import _load_permissions
+                perms = _load_permissions(ctx.config)
+                if perms.get(owning_skill) == "deny":
+                    return ToolResult(
+                        text=(
+                            f"[error: '{name}' is provided by skill "
+                            f"'{owning_skill}', which has been denied. "
+                            f"Tool unavailable.]"
+                        )
+                    )
+                # Look up tier to phrase the recovery accurately.
+                tier = "workspace"
+                for s in ctx.config.discovered_skills:
+                    if s.name == owning_skill:
+                        tier = s.trust_tier
+                        break
+                if tier == "workspace" and perms.get(owning_skill) != "always":
+                    return ToolResult(
+                        text=(
+                            f"[error: '{name}' is provided by the workspace "
+                            f"skill '{owning_skill}', which has not been "
+                            f"approved. Call activate_skill('{owning_skill}') "
+                            f"to request user approval.]"
+                        )
+                    )
+                return ToolResult(
+                    text=(
+                        f"[error: '{name}' is provided by the "
+                        f"'{owning_skill}' skill, which is not activated. "
+                        f"Call activate_skill('{owning_skill}') first.]"
+                    )
+                )
+
+            # Unknown tool name — suggest close matches from everything
+            # the agent could reach: active, skill, deferred pool, MCP.
             candidates: set[str] = set()
             candidates.update(extra_tools.keys())
             candidates.update(TOOLS.keys())

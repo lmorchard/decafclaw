@@ -15,7 +15,6 @@ import contextlib
 import logging
 import re as _re
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -393,15 +392,17 @@ async def _setup_turn_state(ctx, config, history) -> dict[str, str]:
         ctx.skills.data = {**persisted_data, **existing_data}
     await restore_skills(ctx)
 
-    # Auto-activate always-loaded skills (bundled only — trust boundary)
-    from .skills import _BUNDLED_SKILLS_DIR
-    bundled_dir = _BUNDLED_SKILLS_DIR.resolve()
+    # Auto-activate always-loaded skills. Trusted tiers (bundled /
+    # admin / extra) are eligible; workspace skills already had the
+    # always-loaded flag stripped at discovery, so the check below
+    # also defends against a workspace skill that somehow slipped
+    # through.
     discovered = config.discovered_skills
     for skill_info in discovered:
         if not skill_info.always_loaded or skill_info.name in ctx.skills.activated:
             continue
-        if not Path(skill_info.location).resolve().is_relative_to(bundled_dir):
-            continue  # only bundled skills can be always-loaded
+        if skill_info.trust_tier == "workspace":
+            continue
         from .tools.skill_tools import activate_skill_internal
         try:
             await activate_skill_internal(ctx, skill_info)

@@ -339,7 +339,9 @@ async def run_test(config: Config, test_case: dict) -> dict:
     """
     # Populate discovered_skills so dispatch_command can resolve `/foo` triggers.
     if not config.discovered_skills:
+        from ..skills import build_skill_tool_owners
         config.discovered_skills = _discover_skills_fn(config)
+        config.skill_tool_owners = build_skill_tool_owners(config.discovered_skills)
 
     bus = EventBus()
     ctx = Context(config=config, event_bus=bus)

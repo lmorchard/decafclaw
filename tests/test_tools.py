@@ -26,6 +26,115 @@ async def test_execute_tool_unknown(ctx):
 
 
 @pytest.mark.asyncio
+async def test_execute_tool_unknown_skill_tool_names_owning_skill(ctx, tmp_path):
+    """A tool that belongs to a non-activated trusted-tier skill produces
+    an error that names the owning skill and suggests activate_skill."""
+    from decafclaw.skills import SkillInfo
+
+    skill = SkillInfo(
+        name="writing-clearly",
+        description="Edit prose.",
+        location=tmp_path / "writing-clearly",
+        trust_tier="extra",
+    )
+    skill.location.mkdir()
+    ctx.config.discovered_skills = [skill]
+    ctx.config.skill_tool_owners = {"edit_with_strunk": "writing-clearly"}
+
+    result = await execute_tool(ctx, "edit_with_strunk", {})
+    assert "writing-clearly" in result.text
+    assert "activate_skill('writing-clearly')" in result.text
+    # The agent shouldn't be told to call tool_search — the recovery
+    # is direct.
+    assert "tool_search" not in result.text
+
+
+@pytest.mark.asyncio
+async def test_execute_tool_unknown_workspace_skill_tool_unapproved(
+    ctx, tmp_path,
+):
+    """An unapproved workspace-tier skill's tool produces a 'request user
+    approval' error."""
+    from decafclaw.skills import SkillInfo
+
+    skill = SkillInfo(
+        name="ws-skill",
+        description="Workspace.",
+        location=tmp_path / "ws-skill",
+        trust_tier="workspace",
+    )
+    skill.location.mkdir()
+    ctx.config.discovered_skills = [skill]
+    ctx.config.skill_tool_owners = {"ws_tool": "ws-skill"}
+
+    result = await execute_tool(ctx, "ws_tool", {})
+    assert "workspace skill 'ws-skill'" in result.text
+    assert "approval" in result.text
+    assert "activate_skill('ws-skill')" in result.text
+
+
+@pytest.mark.asyncio
+async def test_execute_tool_unknown_denied_skill_tool(ctx, tmp_path):
+    """A denied skill's tool produces a tool-unavailable error."""
+    from decafclaw.skills import SkillInfo
+    from decafclaw.tools.skill_tools import _save_permission
+
+    skill = SkillInfo(
+        name="denied-skill",
+        description="Denied.",
+        location=tmp_path / "denied-skill",
+        trust_tier="extra",
+    )
+    skill.location.mkdir()
+    ctx.config.discovered_skills = [skill]
+    ctx.config.skill_tool_owners = {"denied_tool": "denied-skill"}
+    _save_permission(ctx.config, "denied-skill", "deny")
+
+    result = await execute_tool(ctx, "denied_tool", {})
+    assert "denied-skill" in result.text
+    assert "denied" in result.text.lower()
+    assert "unavailable" in result.text
+
+
+@pytest.mark.asyncio
+async def test_execute_tool_skill_tool_not_auto_fetched_from_deferred_pool(
+    ctx, tmp_path,
+):
+    """Skill tools in the deferred pool are NOT auto-fetched. The agent
+    must go through activate_skill so the skill body lands in context."""
+    from decafclaw.skills import SkillInfo
+
+    skill = SkillInfo(
+        name="my-skill",
+        description="My skill.",
+        location=tmp_path / "my-skill",
+        trust_tier="extra",
+    )
+    skill.location.mkdir()
+    ctx.config.discovered_skills = [skill]
+    ctx.config.skill_tool_owners = {"my_skill_tool": "my-skill"}
+    # Put the tool in the deferred pool — pre-Phase 6 this would have
+    # triggered auto-fetch and silent execution.
+    ctx.tools.deferred_pool = [
+        {
+            "type": "function",
+            "function": {
+                "name": "my_skill_tool",
+                "description": "A tool from my-skill.",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        },
+    ]
+
+    result = await execute_tool(ctx, "my_skill_tool", {})
+    # The error should name the owning skill, not execute the tool.
+    assert "my-skill" in result.text
+    assert "activate_skill" in result.text
+    # The tool should NOT have been added to the active set.
+    assert "my_skill_tool" not in ctx.tools.extra
+
+
+@pytest.mark.asyncio
 async def test_execute_tool_unknown_suggests_close_match(ctx):
     """When the unknown name is close to a real tool, the error includes it as a suggestion."""
     # workspace_read is a real core tool; try a typo.

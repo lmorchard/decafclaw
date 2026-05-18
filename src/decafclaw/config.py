@@ -166,6 +166,11 @@ class Config:
     model_configs: dict[str, ModelConfig] = field(default_factory=dict)
     default_model: str = ""
     extra_skill_paths: list[str] = field(default_factory=list)
+    # Skill names to treat as always-loaded regardless of frontmatter.
+    # Lets a user opt a trusted-tier skill (bundled / admin / extra)
+    # into the system prompt without editing its SKILL.md. Workspace
+    # skills are ignored — they cannot self-elevate via either path.
+    skills_always_loaded: list[str] = field(default_factory=list)
     vault_retrieval: VaultRetrievalConfig = field(default_factory=VaultRetrievalConfig)
     relevance: RelevanceConfig = field(default_factory=RelevanceConfig)
     vault: VaultConfig = field(default_factory=VaultConfig)
@@ -180,6 +185,11 @@ class Config:
     system_prompt: str = ""
     discovered_skills: list = field(default_factory=list)
     always_loaded_skill_tools: set[str] = field(default_factory=set)
+    # Tool name → owning skill name. Built at skill discovery for the
+    # subset of skills with has_native_tools. Used by the unknown-tool
+    # error path and by tool_search to route hidden-tool-name guesses
+    # back to the skill that owns the tool.
+    skill_tool_owners: dict[str, str] = field(default_factory=dict)
 
     def apply_env(self) -> None:
         """Apply env vars from the config. Only sets vars not already in the environment.
@@ -457,6 +467,16 @@ def load_config() -> Config:
             [str(p) for p in raw_extra] if isinstance(raw_extra, list) else []
         )
 
+    env_always_loaded = os.getenv("SKILLS_ALWAYS_LOADED", "")
+    if env_always_loaded:
+        skills_always_loaded = _parse_list(env_always_loaded)
+    else:
+        raw_always_loaded = file_data.get("skills_always_loaded", [])
+        skills_always_loaded = (
+            [str(s) for s in raw_always_loaded]
+            if isinstance(raw_always_loaded, list) else []
+        )
+
     # Migration: if no providers/model_configs but old-style llm config exists,
     # auto-generate a "default" openai-compat provider + model config
     from .llm.types import PROVIDER_OPENAI_COMPAT
@@ -498,6 +518,7 @@ def load_config() -> Config:
         model_configs=model_configs,
         default_model=default_model,
         extra_skill_paths=extra_skill_paths,
+        skills_always_loaded=skills_always_loaded,
         vault_retrieval=vault_retrieval,
         relevance=relevance,
         vault=vault,

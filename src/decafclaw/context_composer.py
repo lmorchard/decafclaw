@@ -986,12 +986,12 @@ class ContextComposer:
         # An unescaped `</preempt_skill_hint>` (or stray newline) in a
         # name could break out of the wrapper and inject prompt content.
         safe_names = sorted(html.escape(name, quote=False) for name in matched_names)
-        name_list = ", ".join(safe_names)
+        bullets = "\n".join(f"- {n}" for n in safe_names)
         hint_text = (
             "<preempt_skill_hint>\n"
-            f"These skills look relevant to the current message: {name_list}.\n"
-            "Their tools are NOT loaded yet — call activate_skill(name) "
-            "before trying to use any of their tools.\n"
+            "These skills look relevant to the current message. "
+            "Call activate_skill(name) to load their tools.\n\n"
+            f"{bullets}\n"
             "</preempt_skill_hint>"
         )
 

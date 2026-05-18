@@ -45,7 +45,9 @@ def main():
 
     # Assemble system prompt from markdown files (bundled + workspace overrides)
     from .prompts import load_system_prompt
+    from .skills import build_skill_tool_owners
     config.system_prompt, config.discovered_skills = load_system_prompt(config)
+    config.skill_tool_owners = build_skill_tool_owners(config.discovered_skills)
 
     bus = EventBus()
     app_ctx = Context(config=config, event_bus=bus)
