@@ -251,7 +251,9 @@ def tool_refresh_skills(ctx) -> str | ToolResult:
     # object that the agent loop holds. dataclasses.replace() would create
     # a disconnected copy.
     config = ctx.config
+    from ..skills import build_skill_tool_owners
     config.system_prompt, config.discovered_skills = load_system_prompt(config)
+    config.skill_tool_owners = build_skill_tool_owners(config.discovered_skills)
     invalidate_skill_cache(config)
     # List all discovered skills — text-only, native-tools, and user-invocable
     # are all valid activatable skills

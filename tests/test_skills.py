@@ -319,18 +319,18 @@ def test_discover_strips_auto_approve_from_workspace_skill(config, caplog):
     assert any("auto-approve" in r.message for r in caplog.records)
 
 
-def test_discover_strips_auto_approve_from_admin_skill(config, caplog):
-    """auto-approve on an admin-level skill is ignored with a warning."""
+def test_discover_keeps_auto_approve_on_admin_skill(config):
+    """Admin-tier skills are trusted by placement; auto-approve is honored."""
     skills_dir = config.agent_path / "skills"
     _write_skill(
         skills_dir / "admin-auto",
         "name: admin-auto\ndescription: Admin.\nauto-approve: true",
     )
-    with caplog.at_level("WARNING"):
-        skills = discover_skills(config)
+    skills = discover_skills(config)
     matching = [s for s in skills if s.name == "admin-auto"]
     assert len(matching) == 1
-    assert matching[0].auto_approve is False
+    assert matching[0].auto_approve is True
+    assert matching[0].trust_tier == "admin"
 
 
 def test_discover_honors_auto_approve_on_bundled(config):
@@ -349,43 +349,69 @@ def test_discover_honors_auto_approve_on_bundled(config):
     )
 
 
-def test_discover_strips_auto_approve_from_extra_path_skill(tmp_path, config, caplog):
-    """auto-approve on an external-path skill is stripped, same as workspace."""
+def test_discover_keeps_auto_approve_on_extra_path_skill(tmp_path, config):
+    """Extra-path skills are trusted by user config; auto-approve is honored."""
     extra = tmp_path / "external"
     _write_skill(
         extra / "ext-auto",
         "name: ext-auto\ndescription: External.\nauto-approve: true",
     )
     config.extra_skill_paths = [str(extra)]
-    with caplog.at_level("WARNING"):
-        skills = discover_skills(config)
+    skills = discover_skills(config)
     matching = [s for s in skills if s.name == "ext-auto"]
     assert len(matching) == 1
-    assert matching[0].auto_approve is False
-    assert any("auto-approve" in r.message for r in caplog.records)
+    assert matching[0].auto_approve is True
+    assert matching[0].trust_tier == "extra"
 
 
-def test_discover_strips_always_loaded_from_extra_path_skill(tmp_path, config, caplog):
-    """always-loaded on an external-path skill is stripped at discovery so
-    activation-time tool caching also treats the skill as on-demand, not
-    just the catalog text."""
+def test_discover_keeps_always_loaded_on_extra_path_skill(tmp_path, config):
+    """Extra-path skills can declare always-loaded; tier is trusted."""
     extra = tmp_path / "external"
     _write_skill(
         extra / "ext-al",
-        "name: ext-al\ndescription: Pretender.\nalways-loaded: true",
+        "name: ext-al\ndescription: Always-on contrib.\nalways-loaded: true",
     )
     config.extra_skill_paths = [str(extra)]
-    with caplog.at_level("WARNING"):
-        skills = discover_skills(config)
+    skills = discover_skills(config)
     matching = [s for s in skills if s.name == "ext-al"]
     assert len(matching) == 1
-    assert matching[0].always_loaded is False
-    assert any("always-loaded" in r.message for r in caplog.records)
+    assert matching[0].always_loaded is True
     catalog = build_catalog_text(skills)
-    assert "ext-al" in catalog
-    if "## Active Skills" in catalog:
-        active_block = catalog.split("## Active Skills")[1].split("##")[0]
-        assert "ext-al" not in active_block
+    # Should appear under Active Skills, not Available Skills.
+    assert "## Active Skills" in catalog
+    active_block = catalog.split("## Active Skills")[1].split("##")[0]
+    assert "ext-al" in active_block
+
+
+def test_skills_always_loaded_config_promotes_extra_skill(tmp_path, config):
+    """config.skills_always_loaded promotes a trusted-tier skill into the
+    always-loaded set without editing its frontmatter."""
+    extra = tmp_path / "external"
+    _write_skill(
+        extra / "promoted",
+        "name: promoted\ndescription: Default on-demand contrib.",
+    )
+    config.extra_skill_paths = [str(extra)]
+    config.skills_always_loaded = ["promoted"]
+    skills = discover_skills(config)
+    matching = [s for s in skills if s.name == "promoted"]
+    assert matching[0].always_loaded is True
+
+
+def test_skills_always_loaded_config_denied_for_workspace(config, caplog):
+    """config.skills_always_loaded entry for a workspace skill is rejected
+    with a warning."""
+    _write_skill(
+        config.workspace_path / "skills" / "ws-promo",
+        "name: ws-promo\ndescription: Workspace.",
+    )
+    config.skills_always_loaded = ["ws-promo"]
+    with caplog.at_level("WARNING"):
+        skills = discover_skills(config)
+    matching = [s for s in skills if s.name == "ws-promo"]
+    assert matching[0].always_loaded is False
+    assert any("workspace skill" in r.message and "always-load" in r.message
+               for r in caplog.records)
 
 
 def test_discover_strips_always_loaded_from_workspace_skill(config, caplog):
@@ -562,6 +588,62 @@ def test_contrib_follows_explicit_decafclaw_repo(
     config.extra_skill_paths = ["$CONTRIB/skills/alt-skill"]
     skills = discover_skills(config)
     assert any(s.name == "alt-skill" for s in skills)
+
+
+def test_trust_tier_assigned_per_scan_path(tmp_path, config):
+    """Each skill gets a trust_tier reflecting which scan path produced it."""
+    # workspace tier
+    _write_skill(
+        config.workspace_path / "skills" / "ws-skill",
+        "name: ws-skill\ndescription: Workspace skill.",
+    )
+    # admin tier
+    _write_skill(
+        config.agent_path / "skills" / "admin-skill",
+        "name: admin-skill\ndescription: Admin skill.",
+    )
+    # extra tier
+    extra = tmp_path / "extra-root"
+    _write_skill(extra / "extra-skill", "name: extra-skill\ndescription: Extra.")
+    config.extra_skill_paths = [str(extra)]
+
+    skills = {s.name: s for s in discover_skills(config)}
+    assert skills["ws-skill"].trust_tier == "workspace"
+    assert skills["admin-skill"].trust_tier == "admin"
+    assert skills["extra-skill"].trust_tier == "extra"
+    # Bundled skills come from src/decafclaw/skills/ — at least one
+    # should be present and tagged "bundled".
+    bundled = [s for s in skills.values() if s.trust_tier == "bundled"]
+    assert bundled, "expected at least one bundled skill discovered"
+
+
+def test_skill_tool_owners_built_from_native_tools(tmp_path, config):
+    """build_skill_tool_owners maps each tool name to its owning skill."""
+    from decafclaw.skills import build_skill_tool_owners
+
+    skill_dir = tmp_path / "skills-root" / "ownertest"
+    _write_skill(
+        skill_dir,
+        "name: ownertest\ndescription: Owner test.",
+        tools_py=False,
+    )
+    (skill_dir / "tools.py").write_text(
+        "TOOLS = {'foo_one': lambda ctx: None, 'foo_two': lambda ctx: None}\n"
+        "TOOL_DEFINITIONS = ["
+        "{'type': 'function', 'function': {'name': 'foo_one'}},"
+        "{'type': 'function', 'function': {'name': 'foo_two'}},"
+        "]\n"
+    )
+    config.extra_skill_paths = [str(tmp_path / "skills-root")]
+    skills = discover_skills(config)
+    owners = build_skill_tool_owners(skills)
+    assert owners.get("foo_one") == "ownertest"
+    assert owners.get("foo_two") == "ownertest"
+
+
+def test_skills_always_loaded_config_field_default(config):
+    """config.skills_always_loaded defaults to empty list."""
+    assert config.skills_always_loaded == []
 
 
 def test_contrib_explicit_env_wins(tmp_path, config, monkeypatch):
