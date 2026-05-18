@@ -4,11 +4,26 @@ DecafClaw supports the [Agent Skills](https://agentskills.io) open standard for 
 
 ## How skills work
 
-1. **Discovery**: on startup, DecafClaw scans skill directories for `SKILL.md` files
-2. **Catalog**: skill names and descriptions are injected into the system prompt
-3. **Activation**: the agent calls `activate_skill("name")` when it needs a skill's tools
-4. **Confirmation**: user must approve activation (yes/no/always)
-5. **Loading**: native Python skills register structured tools; shell-based skills provide instructions for the `shell` tool
+1. **Discovery**: on startup, DecafClaw scans skill directories for `SKILL.md` files. Each discovered skill is tagged with a **trust tier** (see below) based on which directory it came from.
+2. **Catalog**: skill names and descriptions (only) are injected into the system prompt. The agent does NOT see the names of tools provided by unactivated skills — progressive disclosure happens at the skill level, not the tool level.
+3. **Activation**: the agent calls `activate_skill("name")` when it needs a skill's tools.
+4. **Confirmation**: required only for workspace-tier skills (which the agent itself could have written). Trusted-tier skills (bundled / admin / extra) activate without a prompt — placement is the trust signal.
+5. **Loading**: native Python skills register structured tools; shell-based skills provide instructions for the `shell` tool. The skill body lands as the `activate_skill` tool result so the agent reads it before using the tools.
+
+## Trust tiers
+
+Each discovered skill is annotated with a `trust_tier` based on where it was found:
+
+| Tier | Location | Trust source | Activation flow |
+|---|---|---|---|
+| `bundled` | `src/decafclaw/skills/` | Project author | No confirmation — trusted by project |
+| `admin` | `data/{agent_id}/skills/` | User placed the file | No confirmation — trusted by placement |
+| `extra` | `extra_skill_paths` entries (e.g. `contrib/skills/`) | User edited config | No confirmation — trusted by config |
+| `workspace` | `data/{agent_id}/workspace/skills/` | **Agent could have authored this** | Confirmation required on first use |
+
+The trust tier determines whether the activation confirmation flow runs. Workspace skills remain the security boundary — the agent can write into `workspace/`, so it could mint a SKILL.md and grant itself capabilities. Confirmation is the user's gate against that.
+
+Trusted-tier skills declaring `always-loaded: true` or `auto-approve: true` in frontmatter have those flags honored. Workspace-tier skills declaring either flag get it stripped at discovery with a warning logged.
 
 ## Skill format
 
@@ -53,11 +68,23 @@ These are loaded into context only when the skill is activated.
 | `allowed-tools` | No | Comma-separated tool names pre-approved for this skill. |
 | `model` | No | Named model config for `context: fork` skills. See [Model Selection](model-selection.md). |
 | `argument-hint` | No | Hint text for command argument substitution. |
-| `always-loaded` | No | Bool, default false. **Bundled-only.** Skill is auto-activated at startup and its tools are always present. |
+| `always-loaded` | No | Bool, default false. **Trusted-tier-only** (bundled / admin / extra). Skill is auto-activated at startup and its tools are always present in the system prompt. |
 | `schedule` | No | Cron expression. **Bundled and admin-only.** Runs the skill on a schedule. |
-| `auto-approve` | No | Bool, default false. **Bundled-only.** Skill activates without a user confirmation prompt. User's explicit `"deny"` in `skill_permissions.json` still overrides. |
+| `auto-approve` | No | Bool, default false. **Effectively shadowed** by the trust-tier check — trusted-tier skills already skip confirmation, so the flag matters only for the (currently unsupported) case of forcing confirmation on a trusted-tier skill. Workspace skills declaring it get the flag stripped. |
 
-**Trust boundary:** `always-loaded`, `schedule`, and `auto-approve` are only honored for skills bundled under `src/decafclaw/skills/`. Admin-level (`data/{agent_id}/skills/`) and workspace-level skills declaring these fields get them silently stripped with a warning log. This prevents escalation from less-trusted skill locations.
+**Trust boundary:** `always-loaded` and `auto-approve` are honored for skills in trusted tiers (bundled / admin / extra). Workspace-level skills declaring them get them stripped with a warning log. This prevents an agent-authored skill from elevating itself.
+
+### `config.skills_always_loaded`
+
+Top-level config field (also `SKILLS_ALWAYS_LOADED` env, comma-separated): a list of skill names to treat as always-loaded regardless of frontmatter. Lets a user opt a contrib skill into always-loaded without editing its source file (which `git pull` would clobber):
+
+```json
+{
+  "skills_always_loaded": ["writing-clearly", "tabstack"]
+}
+```
+
+A skill is always-loaded if EITHER its frontmatter declares `always-loaded: true` OR its name appears in `skills_always_loaded`, AND its trust tier is non-workspace. Workspace skills are denied via either path.
 
 ### Native Python tools (tools.py)
 
