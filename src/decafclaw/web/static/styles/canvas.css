@@ -98,27 +98,13 @@ canvas-panel {
   font-weight: bold;
 }
 
-/* When mounted directly inside #chat-main (desktop), float in the
-   upper-right corner so we don't reserve a dead header strip when no
-   canvas state exists. The right offset clears chat-view's scrollbar
-   on platforms that use classic (non-overlay) scrollbars. */
-#chat-main { position: relative; }
-#chat-main > .canvas-resummon-pill {
-  position: absolute;
-  top: 0.5rem;
-  right: 1.5rem;
-  z-index: 5;
-}
+/* Positioning lives on the .dc-chat-actions cluster (see chat.css).
+   The pill only contributes its own sizing. */
 
 @media (max-width: 639px) {
-  /* Mirror the hamburger's top/left offset on the opposite corner;
-     drop the label so the button is just a square doc icon, and pad
-     it out to a comfortable mobile tap-target width. */
-  #chat-main > .canvas-resummon-pill {
-    top: 0.4rem;
-    right: 0.4rem;
-    padding: 0.25rem 0.85rem;
-  }
+  /* Mobile: collapse the pill to icon-only and shrink padding to fit
+     the cluster comfortably alongside any other buttons. */
+  .canvas-resummon-pill { padding: 0.25rem 0.85rem; }
   .canvas-resummon-pill .resummon-label { display: none; }
 
   #canvas-main {
