@@ -37,6 +37,20 @@ The normal-path write is gated on the agent's explicit `cancel_observed_by_agent
 
 If the agent loop happened to archive a complete assistant message before the cancel propagated, the helper skips its partial write (tracked via `ConversationState.partial_assistant_archived`) so the archive doesn't carry a duplicate body.
 
+### Aborted turns (unexpected exceptions)
+
+When an agent turn aborts via an unexpected exception (issue #517, follow-up to #491), the generic `except Exception` branch in `_start_turn`'s run task persists the same shape as the cancel marker, with its own role and latch:
+
+1. Any streamed partial assistant text (skipped if the agent loop already archived it, same `partial_assistant_archived` flag as cancel).
+2. A `turn_aborted` row carrying `TURN_ABORTED_MARKER_TEXT`: `"[The previous turn failed unexpectedly. Treat the prior request as not fulfilled and wait for the user to clarify.]"`.
+
+The marker text deliberately does not echo the raw exception — that could leak internal state into the LLM-visible history. The write-once latch (`ConversationState.turn_aborted_marker_written`) is independent of `cancel_marker_written`: `CancelledError` is a `BaseException` (not `Exception`) so the two `except` branches never fire on the same turn in practice. Like `cancel_marker`, the composer remaps `turn_aborted` to `user` via `ROLE_REMAP` so the marker reaches the LLM at the right position across all providers.
+
+Two adjacent abort paths intentionally do **not** write this marker:
+
+- **Max-iterations exhaustion**: `_finalize_max_iterations` in `agent.py` already archives an `assistant` row with the limit-reached notice. That row is itself a clear LLM-visible closure signal — adding a marker on top would be double-signaling.
+- **Circuit breaker**: declines new turns but does not abort a turn mid-flight, so there is no half-archived turn to mark.
+
 ## Compaction
 
 When the conversation grows too large (exceeding the token budget), the agent automatically compacts older messages into a summary.

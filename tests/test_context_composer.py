@@ -1079,6 +1079,58 @@ class TestCancelMarker:
         )
 
 
+class TestTurnAbortedMarker:
+    """The turn_aborted role is archived when a turn aborts via an
+    unexpected exception (issue #517, follow-up to #491). Composer
+    remaps it to user-role so the LLM sees the marker between the
+    aborted-user-turn and the next user message at the correct
+    position."""
+
+    @pytest.mark.asyncio
+    async def test_turn_aborted_remapped_to_user(self, ctx, config):
+        config.system_prompt = "System."
+        config.agent.tool_context_budget_pct = 1.0
+        config.compaction.max_tokens = 1000000
+        history = [
+            {"role": "user", "content": "write me a 600-word essay"},
+            {"role": "assistant", "content": "Once upon a"},
+            {
+                "role": "turn_aborted",
+                "content": (
+                    "[The previous turn failed unexpectedly. Treat the "
+                    "prior request as not fulfilled and wait for the "
+                    "user to clarify.]"
+                ),
+            },
+        ]
+        with (
+            patch("decafclaw.tool_definitions.collect_all_tool_defs",
+                  return_value=[]),
+            patch("decafclaw.memory_context.retrieve_memory_context",
+                  new_callable=AsyncMock, return_value=[]),
+        ):
+            composer = ContextComposer()
+            result = await composer.compose(
+                ctx, "hello", history, mode=ComposerMode.INTERACTIVE,
+            )
+
+        # turn_aborted should appear as a user-role message with its
+        # content preserved.
+        aborted_msgs = [
+            m for m in result.messages
+            if m.get("role") == "user"
+            and "failed unexpectedly" in m.get("content", "")
+        ]
+        assert len(aborted_msgs) == 1, (
+            f"expected exactly one user-role turn_aborted marker in "
+            f"composed.messages; got {len(aborted_msgs)}"
+        )
+        # No turn_aborted role should leak through to the LLM.
+        assert not any(
+            m.get("role") == "turn_aborted" for m in result.messages
+        )
+
+
 # -- Relevance scoring ---------------------------------------------------------
 
 

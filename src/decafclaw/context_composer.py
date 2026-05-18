@@ -26,6 +26,7 @@ ROLE_REMAP: dict[str, str] = {
     "vault_references": "user",
     "conversation_notes": "user",
     "cancel_marker": "user",
+    "turn_aborted": "user",
 }
 
 

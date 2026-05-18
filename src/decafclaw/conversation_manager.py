@@ -36,6 +36,18 @@ CANCEL_MARKER_TEXT = (
 )
 
 
+# Canonical archive text written when an agent turn aborts via an
+# unexpected exception (issue #517, follow-up to #491). Same "turn
+# closed" signal shape as CANCEL_MARKER_TEXT but for the exception
+# path, so the next user turn doesn't see an open prior request and
+# re-fulfill it. Defensive wording — does not echo the raw exception,
+# which could leak internal state.
+TURN_ABORTED_MARKER_TEXT = (
+    "[The previous turn failed unexpectedly. Treat the prior request "
+    "as not fulfilled and wait for the user to clarify.]"
+)
+
+
 def _write_cancel_archive(
     config, conv_id: str, partial: str,
     *, partial_already_archived: bool = False,
@@ -234,10 +246,13 @@ class ConversationState:
     # cancel-observed path and the CancelledError handler funnel through
     # the same marker write; the latch prevents a double-write when
     # both fire.
+    # `turn_aborted_marker_written` is the parallel latch for the
+    # exception-path marker (issue #517).
     partial_assistant_chunks: list[str] = field(default_factory=list)
     partial_assistant_archived: bool = False
     cancel_observed_by_agent: bool = False
     cancel_marker_written: bool = False
+    turn_aborted_marker_written: bool = False
 
     # Per-conversation lock guarding the dispatch decision and the
     # confirmation lifecycle (issue #440). Held during:
@@ -846,6 +861,54 @@ class ConversationManager:
                 "Failed to write cancel marker for %s: %s", conv_id, exc,
             )
 
+    def _write_turn_aborted_marker_once(
+        self, conv_id: str, state: ConversationState,
+    ) -> None:
+        """Persist the canonical turn-aborted marker (and any streamed
+        partial) for this turn, exactly once (issue #517).
+
+        Parallel to `_write_cancel_marker_once`: same partial-then-marker
+        order, same fail-open posture on archive-write failures, same
+        latch-only-on-marker-success behavior so a future retry can
+        still land the marker without duplicating the partial.
+
+        Called from the generic `except Exception` handler in the agent
+        run task. `CancelledError` is a `BaseException` (not `Exception`)
+        so it never reaches this helper — the cancel and turn-aborted
+        latches stay independent in practice.
+        """
+        if state.turn_aborted_marker_written:
+            return
+        partial = "".join(state.partial_assistant_chunks)
+        # Step 1: persist any streamed partial that the agent loop
+        # didn't already archive itself.
+        if partial and not state.partial_assistant_archived:
+            try:
+                append_message(self.config, conv_id, {
+                    "role": "assistant",
+                    "content": partial,
+                })
+                state.partial_assistant_archived = True
+            except Exception as exc:
+                log.warning(
+                    "Failed to archive turn-aborted partial for %s: %s",
+                    conv_id, exc,
+                )
+        # Step 2: persist the canonical marker. If it fails we leave the
+        # latch unset so a later call can retry the marker (the
+        # partial-archived flag protects against duplicating the body).
+        try:
+            append_message(self.config, conv_id, {
+                "role": "turn_aborted",
+                "content": TURN_ABORTED_MARKER_TEXT,
+            })
+            state.turn_aborted_marker_written = True
+        except Exception as exc:
+            log.warning(
+                "Failed to write turn-aborted marker for %s: %s",
+                conv_id, exc,
+            )
+
     async def cancel_turn(self, conv_id: str) -> None:
         """Cancel an in-progress agent turn.
 
@@ -1318,6 +1381,7 @@ class ConversationManager:
         state.partial_assistant_archived = False
         state.cancel_observed_by_agent = False
         state.cancel_marker_written = False
+        state.turn_aborted_marker_written = False
 
         # Set up streaming callback that emits to subscribers.
         # WAKE turns don't stream: the agent may emit BACKGROUND_WAKE_OK to
@@ -1441,6 +1505,10 @@ class ConversationManager:
                 log.error("Agent turn failed for conv %s: %s",
                           conv_id[:8], e, exc_info=True)
                 response_text_holder.append(f"[error: {e}]")
+                # Persist a turn-closure marker so the next turn's LLM
+                # doesn't see an open prior request and re-fulfill it
+                # (issue #517, parallel to #491's cancel marker).
+                self._write_turn_aborted_marker_once(conv_id, state)
                 await self.emit(conv_id, {
                     "type": "error",
                     "message": f"Agent turn failed: {e}",
