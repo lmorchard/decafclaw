@@ -738,7 +738,7 @@ def test_save_permission_preserves_existing(config):
 
 
 def _make_skill_info(tmp_path, name="test-skill", body="Instructions here.",
-                     has_native_tools=False):
+                     has_native_tools=False, trust_tier="bundled"):
     """Create a SkillInfo for testing."""
     location = tmp_path / name
     location.mkdir(parents=True, exist_ok=True)
@@ -746,6 +746,7 @@ def _make_skill_info(tmp_path, name="test-skill", body="Instructions here.",
         name=name, description=f"{name} description",
         location=location, body=body,
         has_native_tools=has_native_tools,
+        trust_tier=trust_tier,
     )
 
 
@@ -806,6 +807,73 @@ async def test_auto_approve_blocked_by_explicit_deny(ctx, tmp_path):
 
     result = await tool_activate_skill(ctx, name=skill.name)
     assert "[error:" in _text(result)
+    assert "denied" in _text(result)
+    assert skill.name not in ctx.skills.activated
+
+
+@pytest.mark.asyncio
+async def test_activate_trusted_admin_tier_bypasses_confirmation(ctx, tmp_path):
+    """Admin-tier skill activates without confirmation (trust by placement)."""
+    skill = _make_skill_info(tmp_path, trust_tier="admin")
+    ctx.config.discovered_skills = [skill]
+    # No permission record, no auto_approve flag — only the trust tier
+    # should allow activation to proceed.
+    result = await tool_activate_skill(ctx, name=skill.name)
+    assert "Instructions here." in _text(result)
+    assert skill.name in ctx.skills.activated
+
+
+@pytest.mark.asyncio
+async def test_activate_trusted_extra_tier_bypasses_confirmation(ctx, tmp_path):
+    """Extra-path-tier skill activates without confirmation."""
+    skill = _make_skill_info(tmp_path, trust_tier="extra")
+    ctx.config.discovered_skills = [skill]
+    result = await tool_activate_skill(ctx, name=skill.name)
+    assert "Instructions here." in _text(result)
+    assert skill.name in ctx.skills.activated
+
+
+@pytest.mark.asyncio
+async def test_activate_trusted_tier_no_permission_write(ctx, tmp_path):
+    """Trusted-tier activation does NOT write to skill_permissions.json —
+    placement is implicit trust, no need to record it."""
+    skill = _make_skill_info(tmp_path, trust_tier="extra")
+    ctx.config.discovered_skills = [skill]
+    await tool_activate_skill(ctx, name=skill.name)
+    perms = _load_permissions(ctx.config)
+    assert skill.name not in perms
+
+
+@pytest.mark.asyncio
+async def test_deny_still_wins_over_trust_tier(ctx, tmp_path):
+    """A user's explicit 'deny' record overrides the trust-tier bypass."""
+    skill = _make_skill_info(tmp_path, trust_tier="extra")
+    ctx.config.discovered_skills = [skill]
+    _save_permission(ctx.config, skill.name, "deny")
+    result = await tool_activate_skill(ctx, name=skill.name)
+    assert "[error:" in _text(result)
+    assert "denied" in _text(result)
+    assert skill.name not in ctx.skills.activated
+
+
+@pytest.mark.asyncio
+async def test_workspace_skill_still_requires_confirmation(
+    ctx, tmp_path, monkeypatch,
+):
+    """Workspace-tier skill activation routes through the confirmation flow
+    even when no permission record exists. (Test mocks the confirmation
+    handler to deny, verifying activation does NOT proceed.)"""
+    skill = _make_skill_info(tmp_path, trust_tier="workspace")
+    ctx.config.discovered_skills = [skill]
+
+    async def fake_request(_ctx, _name):
+        return (False, False)  # denied, not always
+
+    monkeypatch.setattr(
+        "decafclaw.tools.skill_tools._request_skill_confirmation",
+        fake_request,
+    )
+    result = await tool_activate_skill(ctx, name=skill.name)
     assert "denied" in _text(result)
     assert skill.name not in ctx.skills.activated
 

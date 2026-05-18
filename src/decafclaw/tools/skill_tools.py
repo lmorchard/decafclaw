@@ -147,17 +147,24 @@ async def tool_activate_skill(ctx, name: str) -> str | ToolResult:
     # Permission resolution, highest precedence first:
     # 1. User's explicit "deny" in skill_permissions.json — always wins
     # 2. Admin heartbeat turns auto-approve
-    # 3. User's explicit "always" permission
-    # 4. Bundled skill with `auto-approve: true` frontmatter
-    # 5. Interactive confirmation
+    # 3. Trusted tier (bundled / admin / extra) — placement is trust
+    # 4. User's explicit "always" permission
+    # 5. Skill with `auto-approve: true` frontmatter
+    # 6. Interactive confirmation
+    # Trust by placement: bundled/admin/extra skills are pre-trusted
+    # because the user opted them in by editing source, placing files,
+    # or editing config. Workspace skills could be agent-authored, so
+    # they still require explicit confirmation.
     is_heartbeat = ctx.user_id == "heartbeat-admin"
+    is_trusted_tier = skill_info.trust_tier != "workspace"
     perms = _load_permissions(ctx.config)
     if perms.get(name) == "deny":
         return ToolResult(text=f"[error: activation of skill '{name}' was denied by user]")
     if (not is_heartbeat
+            and not is_trusted_tier
             and perms.get(name) != "always"
             and not skill_info.auto_approve):
-        # Need confirmation
+        # Need confirmation (workspace tier only at this point)
         approved, always = await _request_skill_confirmation(ctx, name)
         if not approved:
             return ToolResult(text=f"[error: activation of skill '{name}' was denied by user]")
