@@ -30,8 +30,12 @@ class ConfirmationRequest:
     action_type: ConfirmationAction
     action_data: dict = field(default_factory=dict)
     message: str = ""
-    approve_label: str = "Approve"
-    deny_label: str = "Deny"
+    # Empty defaults so the web UI can distinguish "no custom label set"
+    # from a tool-supplied label. confirm-view.js falls back to "Approve" /
+    # "Deny" at render time and gates the third (Allow / Always) button on
+    # `approve_label` being falsy — a truthy default here hides the button.
+    approve_label: str = ""
+    deny_label: str = ""
     tool_call_id: str = ""
     timeout: float | None = 300.0
     confirmation_id: str = field(default_factory=lambda: uuid4().hex[:12])
