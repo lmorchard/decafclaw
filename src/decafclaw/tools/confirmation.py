@@ -49,8 +49,8 @@ async def _request_via_manager(ctx, tool_name, command, message, timeout,
         message=message,
         tool_call_id=ctx.tools.current_call_id,
         timeout=timeout,
-        approve_label=extra_event_fields.get("approve_label", "Approve"),
-        deny_label=extra_event_fields.get("deny_label", "Deny"),
+        approve_label=extra_event_fields.get("approve_label", ""),
+        deny_label=extra_event_fields.get("deny_label", ""),
     )
 
     response = await ctx.request_confirmation(request)
