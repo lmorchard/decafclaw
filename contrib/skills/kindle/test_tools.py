@@ -1603,14 +1603,16 @@ async def test_kindle_sync_all_user_invocable_gate_bypassed(ctx, tmp_path, monke
 
 
 def test_skill_md_frontmatter_parses():
-    """SKILL.md frontmatter has all the expected fields wired for scheduled + user-invocable use."""
+    """SKILL.md frontmatter has the expected fields for user-invocable use.
+
+    Schedule fields have moved to SCHEDULE.md sidecar (see test_schedule_md_parses).
+    """
     from decafclaw.skills import parse_skill_md
 
     skill_md_path = _THIS_DIR / "SKILL.md"
     info = parse_skill_md(skill_md_path)
     assert info is not None, "Failed to parse SKILL.md"
     assert info.name == "kindle"
-    assert info.schedule == "0 5 * * *"
     assert info.user_invocable is True
     # Allowed-tools should contain all 4 kindle tools + the vault read/write/list/journal ones + current_time
     for required in (
@@ -1621,10 +1623,28 @@ def test_skill_md_frontmatter_parses():
         assert required in info.allowed_tools, f"missing {required} in allowed_tools: {info.allowed_tools}"
 
 
+def test_schedule_md_parses():
+    """SCHEDULE.md sidecar has the expected schedule fields."""
+    from decafclaw.schedules import parse_schedule_file
+
+    sched_md_path = _THIS_DIR / "SCHEDULE.md"
+    task = parse_schedule_file(sched_md_path)
+    assert task is not None, "Failed to parse SCHEDULE.md"
+    assert task.schedule == "0 5 * * *"
+    # Allowed-tools should contain all required tools
+    for required in (
+        "kindle_list_books", "kindle_fetch_highlights",
+        "kindle_sync_book", "kindle_sync_all",
+        "vault_read", "vault_write", "vault_list", "vault_journal_append", "current_time",
+    ):
+        assert required in task.allowed_tools, f"missing {required} in allowed_tools: {task.allowed_tools}"
+
+
 def test_skill_discovered_as_scheduled(monkeypatch, tmp_path):
-    """discover_schedules picks up the kindle contrib skill via extra_skill_paths.
+    """discover_schedules picks up the kindle contrib skill via SCHEDULE.md sidecar.
 
     Must patch run_schedule_task to a no-op per CLAUDE.md test-speed discipline.
+    Contrib (extra_skill_paths) SCHEDULE.md is forced to enabled=False.
     """
     from decafclaw.config import Config
     from decafclaw.config_types import AgentConfig
@@ -1642,3 +1662,5 @@ def test_skill_discovered_as_scheduled(monkeypatch, tmp_path):
     assert kindle is not None, f"kindle not found in schedules: {[s.name for s in schedules]}"
     assert kindle.schedule == "0 5 * * *"
     assert kindle.source == "extra"
+    # Contrib SCHEDULE.md is forced to enabled=False (user must opt in via overlay)
+    assert kindle.enabled is False

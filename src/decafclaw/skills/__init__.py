@@ -52,9 +52,9 @@ class SkillInfo:
     model: str = ""  # named model config, empty = inherit conversation model
     requires_skills: list[str] = field(default_factory=list)
     always_loaded: bool = False
-    schedule: str = ""  # cron expression, empty = not scheduled
-    enabled: bool = True  # can be disabled via frontmatter
     auto_approve: bool = False  # bundled-only — skip activation confirmation
+    # Scheduling: skills ship a SCHEDULE.md sidecar (not SKILL.md frontmatter).
+    # See docs/schedules.md for the sidecar layout and overlay precedence.
     # Trust tier derived from placement at discovery time:
     #   "bundled" — src/decafclaw/skills/ (project author)
     #   "admin"   — data/{agent_id}/skills/ (user placed)
@@ -122,8 +122,6 @@ def parse_skill_md(path: Path) -> SkillInfo | None:
         model=meta.get("model", meta.get("effort", "")),
         requires_skills=_coerce_str_list(meta.get("required-skills", [])),
         always_loaded=bool(meta.get("always-loaded", False)),
-        schedule=str(meta.get("schedule") or ""),
-        enabled=_coerce_bool(meta.get("enabled", True)),
         auto_approve=bool(meta.get("auto-approve", False)),
     )
 

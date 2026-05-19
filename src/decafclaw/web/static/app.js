@@ -29,6 +29,7 @@ import './components/theme-toggle.js';
 import './components/wiki-page.js';
 import './components/file-page.js';
 import './components/config-panel.js';
+import './components/schedule-page.js';
 import './components/copy-conversation-menu.js';
 
 // -- Services -----------------------------------------------------------------
@@ -132,15 +133,19 @@ const wikiResizeHandle = document.getElementById('wiki-resize-handle');
 const wikiPageEl = /** @type {any} */ (document.querySelector('#wiki-main wiki-page'));
 const filePageEl = /** @type {any} */ (document.querySelector('#wiki-main file-page'));
 const configPanelEl = /** @type {any} */ (document.querySelector('#wiki-main config-panel'));
+const schedulePageEl = /** @type {any} */ (document.querySelector('#wiki-main schedule-page'));
 
 /** Show a wiki page alongside chat. */
 function showWikiPage(page, { replace = false } = {}) {
   if (wikiPageEl) wikiPageEl.page = page;
   wikiPageEl?.classList.remove('hidden');
-  // Mutual exclusion: close any open file-page / config-panel.
+  // Mutual exclusion: close any open file-page / config-panel / schedule-page.
   filePageEl?.classList.add('hidden');
   if (filePageEl) filePageEl.path = '';
   configPanelEl?.classList.add('hidden');
+  schedulePageEl?.classList.add('hidden');
+  if (schedulePageEl) schedulePageEl.name = '';
+  if (sidebar) sidebar.clearOpenSchedule();
   if (sidebar) sidebar.clearOpenFile();
   wikiMainEl?.classList.remove('hidden');
   wikiResizeHandle?.classList.remove('hidden');
@@ -151,8 +156,9 @@ function showWikiPage(page, { replace = false } = {}) {
   }
   // Update URL for bookmarking — push history so back button works
   const params = new URLSearchParams(location.search);
-  // Dropping ?file= in favor of ?vault= when switching to a wiki page
+  // Dropping ?file= and ?schedule= in favor of ?vault= when switching to a wiki page
   params.delete('file');
+  params.delete('schedule');
   if (params.get('vault') !== page) {
     params.set('vault', page);
     const url = '?' + params.toString();
@@ -234,10 +240,13 @@ function showFilePage(detail, { replace = false } = {}) {
     void filePageEl.reload();
   }
   filePageEl.classList.remove('hidden');
-  // Mutual exclusion: close any open wiki-page / config-panel.
+  // Mutual exclusion: close any open wiki-page / config-panel / schedule-page.
   wikiPageEl?.classList.add('hidden');
   if (wikiPageEl) wikiPageEl.page = '';
   configPanelEl?.classList.add('hidden');
+  schedulePageEl?.classList.add('hidden');
+  if (schedulePageEl) schedulePageEl.name = '';
+  if (sidebar) sidebar.clearOpenSchedule();
   if (sidebar) sidebar.clearOpenPage();
   wikiMainEl?.classList.remove('hidden');
   wikiResizeHandle?.classList.remove('hidden');
@@ -248,6 +257,7 @@ function showFilePage(detail, { replace = false } = {}) {
   // Update URL for bookmarking
   const params = new URLSearchParams(location.search);
   params.delete('vault');
+  params.delete('schedule');
   if (params.get('file') !== detail.path) {
     params.set('file', detail.path);
     const url = '?' + params.toString();
@@ -287,10 +297,68 @@ function showConfigPanel() {
   wikiPageEl?.classList.add('hidden');
   filePageEl?.classList.add('hidden');
   if (filePageEl) filePageEl.path = '';
+  schedulePageEl?.classList.add('hidden');
+  if (schedulePageEl) schedulePageEl.name = '';
   if (sidebar) sidebar.clearOpenFile();
+  if (sidebar) sidebar.clearOpenSchedule();
   configPanelEl?.classList.remove('hidden');
   wikiMainEl?.classList.remove('hidden');
   wikiResizeHandle?.classList.remove('hidden');
+}
+
+/** Show a schedule in the wiki/side panel area. */
+function showSchedulePage(name, { replace = false } = {}) {
+  if (!schedulePageEl) return;
+  if (schedulePageEl.name === name && !schedulePageEl.classList.contains('hidden')) {
+    return; // already showing this schedule
+  }
+  schedulePageEl.name = name;
+  schedulePageEl.classList.remove('hidden');
+  // Mutual exclusion: close any open wiki-page / file-page / config-panel.
+  wikiPageEl?.classList.add('hidden');
+  if (wikiPageEl) wikiPageEl.page = '';
+  filePageEl?.classList.add('hidden');
+  if (filePageEl) filePageEl.path = '';
+  configPanelEl?.classList.add('hidden');
+  if (sidebar) sidebar.clearOpenPage();
+  if (sidebar) sidebar.clearOpenFile();
+  wikiMainEl?.classList.remove('hidden');
+  wikiResizeHandle?.classList.remove('hidden');
+  if (sidebar) sidebar.setOpenSchedule(name);
+  // Update URL for bookmarking
+  const params = new URLSearchParams(location.search);
+  params.delete('vault');
+  params.delete('file');
+  if (params.get('schedule') !== name) {
+    params.set('schedule', name);
+    const url = '?' + params.toString();
+    if (replace) {
+      history.replaceState(null, '', url);
+    } else {
+      history.pushState(null, '', url);
+    }
+  }
+}
+
+/** Hide the schedule page. */
+function hideSchedulePage() {
+  schedulePageEl?.classList.add('hidden');
+  if (schedulePageEl) schedulePageEl.name = '';
+  if (sidebar) sidebar.clearOpenSchedule();
+  const params = new URLSearchParams(location.search);
+  if (params.has('schedule')) {
+    params.delete('schedule');
+    const qs = params.toString();
+    history.replaceState(null, '', qs ? '?' + qs : location.pathname);
+  }
+  // If nothing else is visible in the side panel, hide it entirely.
+  const wikiVisible = wikiPageEl && !wikiPageEl.classList.contains('hidden');
+  const fileVisible = filePageEl && !filePageEl.classList.contains('hidden');
+  const configVisible = configPanelEl && !configPanelEl.classList.contains('hidden');
+  if (!wikiVisible && !fileVisible && !configVisible) {
+    wikiMainEl?.classList.add('hidden');
+    wikiResizeHandle?.classList.add('hidden');
+  }
 }
 
 /** Hide the config panel and the side panel area. */
@@ -356,18 +424,22 @@ wikiMainEl?.addEventListener('file-navigate-folder', (e) => {
   if (sidebar) sidebar.navigateToFilesFolder(folder);
 });
 
-// Handle browser back/forward for wiki/file navigation
+// Handle browser back/forward for wiki/file/schedule navigation
 window.addEventListener('popstate', () => {
   const params = new URLSearchParams(location.search);
   const wiki = params.get('vault');
   const file = params.get('file');
+  const schedule = params.get('schedule');
   if (wiki) {
     showWikiPage(wiki, { replace: true });
   } else if (file) {
     showFilePage({ path: file }, { replace: true });
+  } else if (schedule) {
+    showSchedulePage(schedule, { replace: true });
   } else {
     hideWikiView();
     hideFileView();
+    hideSchedulePage();
   }
 });
 
@@ -380,6 +452,7 @@ document.addEventListener('sidebar-tab-change', (e) => {
   if (tab === 'conversations') {
     hideWikiView();
     hideFileView();
+    hideSchedulePage();
   }
   if ((tab === 'wiki' || tab === 'files')
       && window.matchMedia('(max-width: 639px)').matches) {
@@ -394,6 +467,15 @@ document.addEventListener('config-open', () => showConfigPanel());
 
 // Close config panel
 configPanelEl?.addEventListener('close', () => hideConfigPanel());
+
+// Open schedule page from sidebar schedule row click
+document.addEventListener('schedule-open', (e) => {
+  const name = /** @type {CustomEvent} */ (e).detail?.name;
+  if (name) showSchedulePage(name);
+});
+
+// Close schedule page via back button
+schedulePageEl?.addEventListener('close', () => hideSchedulePage());
 
 // Surface store errors as toasts
 store.addEventListener('change', () => {
@@ -490,6 +572,11 @@ function getFileFromUrl() {
   return new URLSearchParams(location.search).get('file') || null;
 }
 
+/** Read ?schedule= on startup and open that schedule page */
+function getScheduleFromUrl() {
+  return new URLSearchParams(location.search).get('schedule') || null;
+}
+
 // -- Init ---------------------------------------------------------------------
 
 async function init() {
@@ -500,8 +587,10 @@ async function init() {
     // select the bookmarked conversation if any
     const savedWiki = getWikiFromUrl();
     const savedFile = getFileFromUrl();
+    const savedSchedule = getScheduleFromUrl();
     if (savedWiki) showWikiPage(savedWiki, { replace: true });
     else if (savedFile) showFilePage({ path: savedFile }, { replace: true });
+    else if (savedSchedule) showSchedulePage(savedSchedule, { replace: true });
     const savedConvId = getConvFromUrl();
     if (savedConvId) {
       const onOpen = () => {

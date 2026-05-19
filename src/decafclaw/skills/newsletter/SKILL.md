@@ -1,7 +1,6 @@
 ---
 name: newsletter
 description: Compose and deliver a narrative newsletter summarizing autonomous agent activity in the window.
-schedule: "0 7 * * *"
 user-invocable: true
 context: inline
 argument-hint: "[send] [window] e.g. `7d`, `send`, `send 48h`"

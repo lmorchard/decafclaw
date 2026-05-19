@@ -1,7 +1,6 @@
 ---
 name: garden
 description: Vault gardening sweep — merge, link, split, and tidy agent pages
-schedule: "0 3 * * 0"
 effort: strong
 required-skills:
   - vault

@@ -69,8 +69,9 @@ These are loaded into context only when the skill is activated.
 | `model` | No | Named model config for `context: fork` skills. See [Model Selection](model-selection.md). |
 | `argument-hint` | No | Hint text for command argument substitution. |
 | `always-loaded` | No | Bool, default false. **Trusted-tier-only** (bundled / admin / extra). Skill is auto-activated at startup and its tools are always present in the system prompt. |
-| `schedule` | No | Cron expression. **Bundled and admin-only.** Runs the skill on a schedule. |
 | `auto-approve` | No | Bool, default false. **Effectively shadowed** by the trust-tier check — trusted-tier skills already skip confirmation, so the flag matters only for the (currently unsupported) case of forcing confirmation on a trusted-tier skill. Workspace skills declaring it get the flag stripped. |
+
+Skills that want to self-schedule should ship a `SCHEDULE.md` sidecar (see [Scheduled Tasks](schedules.md#skill-schedulemd-sidecar)). The `schedule:` and `enabled:` fields previously present in SKILL.md frontmatter have been removed.
 
 **Trust boundary:** `always-loaded` and `auto-approve` are honored for skills in trusted tiers (bundled / admin / extra). Workspace-level skills declaring them get them stripped with a warning log. This prevents an agent-authored skill from elevating itself.
 
@@ -389,11 +390,11 @@ So the four canonical install locations are `~/.claude/skills/`, `~/.agents/skil
 
 Path entries support `~` and `$VAR` expansion. Relative paths resolve against `data/{agent_id}/` — useful for project-local installs (`.claude/skills`, `.agents/skills`) when you run decafclaw from a fixed working directory.
 
-**Trust posture for external skills.** External skills are treated identically to workspace skills:
+**Trust posture for external skills.** External (`extra`) skills are a trusted tier for activation but have a schedule safety gate:
 
-- `auto-approve: true` is ignored (warning logged) — every activation requires confirmation
-- `always-loaded: true` is ignored — externals stay lazy-loaded
-- `schedule:` frontmatter is ignored — only bundled and admin-level skills can self-schedule
+- `auto-approve: true` is honored (trusted by user config)
+- `always-loaded: true` is honored
+- `SCHEDULE.md` sidecars are discovered but forced `enabled: false` — a contrib skill cannot silently activate a cron job on install. Users opt in via the admin overlay (see [schedules.md](schedules.md#copy-on-write-overlay)).
 - `user-invocable: true` and Python `tools.py` work normally
 
 Skills authored against the standard Agent Skills format (`SKILL.md` only) work as-is. Skills authored for decafclaw with a `tools.py` extension are decafclaw-specific and won't run in other agents.

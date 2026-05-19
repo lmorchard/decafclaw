@@ -35,7 +35,8 @@ conversation-sidebar .conv-list {
    custom elements layout-transparent so .conv-list is the direct flex child
    of conversation-sidebar and the existing flex:1 rule above applies. */
 conversation-sidebar vault-sidebar,
-conversation-sidebar files-sidebar {
+conversation-sidebar files-sidebar,
+conversation-sidebar schedules-sidebar {
   display: contents;
 }
 
@@ -461,4 +462,113 @@ button.vault-breadcrumb-segment {
 
 .vault-breadcrumb-sep {
   margin: 0 0.2rem;
+}
+
+/* ── Schedules sidebar ──────────────────────────────────────────────────── */
+
+.schedule-row {
+  border-bottom: 1px solid var(--pico-muted-border-color);
+  padding: 0.4rem 0.75rem;
+}
+
+.schedule-row:last-child {
+  border-bottom: none;
+}
+
+.schedule-row-header {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  cursor: pointer;
+  padding: 0.15rem 0;
+}
+
+.schedule-row-header:hover .schedule-name {
+  color: var(--pico-primary);
+}
+
+.schedule-name {
+  font-size: 0.9rem;
+  font-weight: 500;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Source tier badges — reuse conv-type-badge shape */
+.schedule-tier-badge {
+  flex-shrink: 0;
+  font-size: 0.65rem;
+  padding: 0.1rem 0.3rem;
+  border-radius: 3px;
+  background: var(--pico-muted-border-color);
+  color: var(--pico-muted-color);
+  text-transform: uppercase;
+}
+
+.schedule-tier-badge.tier-bundled {
+  background: var(--pico-ins-color, #22c55e);
+  color: var(--pico-primary-inverse);
+}
+
+.schedule-tier-badge.tier-admin {
+  background: var(--pico-primary-background);
+  color: var(--pico-primary-inverse);
+}
+
+.schedule-tier-badge.tier-extra {
+  background: var(--pico-muted-border-color);
+  color: var(--pico-muted-color);
+}
+
+.schedule-tier-badge.tier-workspace {
+  background: var(--pico-muted-border-color);
+  color: var(--pico-muted-color);
+  font-style: italic;
+}
+
+.schedule-overlay-badge {
+  flex-shrink: 0;
+  font-size: 0.65rem;
+  padding: 0.1rem 0.3rem;
+  border-radius: 3px;
+  background: var(--pico-color-amber-500, #f59e0b);
+  color: var(--pico-primary-inverse);
+  text-transform: uppercase;
+}
+
+/* Enabled toggle — inline checkbox, no extra margin */
+input.schedule-enabled-toggle {
+  flex-shrink: 0;
+  margin: 0;
+  cursor: pointer;
+  width: 1rem;
+  height: 1rem;
+}
+
+.schedule-row-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.15rem;
+  font-size: 0.75rem;
+  color: var(--pico-muted-color);
+}
+
+.schedule-cron {
+  font-size: 0.75rem;
+  background: none;
+  padding: 0;
+  color: var(--pico-muted-color);
+}
+
+.schedule-next {
+  font-size: 0.75rem;
+  color: var(--pico-muted-color);
+}
+
+/* Row open indicator (row whose schedule is open in side panel) */
+.schedule-row.open .schedule-name {
+  color: var(--pico-primary);
 }

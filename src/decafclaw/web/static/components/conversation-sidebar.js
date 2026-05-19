@@ -3,6 +3,7 @@ import './context-inspector.js';
 import './notification-inbox.js';
 import './vault-sidebar.js';
 import './files-sidebar.js';
+import './schedules-sidebar.js';
 
 export class ConversationSidebar extends LitElement {
   static properties = {
@@ -23,6 +24,7 @@ export class ConversationSidebar extends LitElement {
     _sidebarTab: { type: String, state: true },
     _contextInspectorOpen: { type: Boolean, state: true },
     _contextVersion: { type: Number, state: true },
+    _openSchedule: { type: String, state: true },
   };
 
   createRenderRoot() { return this; }
@@ -49,6 +51,7 @@ export class ConversationSidebar extends LitElement {
     this._sidebarTab = 'conversations';
     this._contextInspectorOpen = false;
     this._contextVersion = 0;
+    this._openSchedule = '';
   }
 
   openMobile() {
@@ -183,6 +186,24 @@ export class ConversationSidebar extends LitElement {
   clearOpenFile() {
     const fs = /** @type {any} */ (this.querySelector('files-sidebar'));
     fs?.clearOpenFile();
+  }
+
+  /** Public: switch to schedules tab and highlight the given schedule name. */
+  setOpenSchedule(name) {
+    this._openSchedule = name;
+    this.switchToSchedules();
+  }
+
+  /** Public: clear the open schedule highlight (called when schedule pane is closed). */
+  clearOpenSchedule() {
+    this._openSchedule = '';
+  }
+
+  /** Public: switch to the schedules tab. */
+  switchToSchedules() {
+    if (this._sidebarTab !== 'schedules') {
+      this._sidebarTab = 'schedules';
+    }
   }
 
   /** @param {CustomEvent} _e */
@@ -471,6 +492,8 @@ export class ConversationSidebar extends LitElement {
             @click=${() => this.#switchTab('wiki')}>Vault</button>
           <button class="sidebar-tab ${this._sidebarTab === 'files' ? 'active' : ''}"
             @click=${() => this.#switchTab('files')}>Files</button>
+          <button class="sidebar-tab ${this._sidebarTab === 'schedules' ? 'active' : ''}"
+            @click=${() => this.#switchTab('schedules')}>Schedules</button>
         </div>
         <button class="mobile-close-btn dc-overlay-close-x" @click=${() => this.closeMobile()} title="Close sidebar">×</button>
         <button class="collapse-btn dc-icon-btn" @click=${this.#toggleCollapse} title="Collapse sidebar" aria-label="Collapse sidebar">‹</button>
@@ -485,6 +508,11 @@ export class ConversationSidebar extends LitElement {
         style="${this._sidebarTab !== 'files' ? 'display:none' : ''}"
         @file-open=${(e) => this.#handleFileOpen(e)}
       ></files-sidebar>
+      <schedules-sidebar
+        .active=${this._sidebarTab === 'schedules'}
+        .openName=${this._openSchedule}
+        style="${this._sidebarTab !== 'schedules' ? 'display:none' : ''}"
+      ></schedules-sidebar>
       <div class="conv-list" style="${this._sidebarTab !== 'conversations' ? 'display:none' : ''}">
         ${this._chatSection === '' ? html`
           <div class="vault-action-btns">

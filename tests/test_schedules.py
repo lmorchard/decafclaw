@@ -159,7 +159,7 @@ class TestDiscoverSchedules:
         assert matching[0].source == "admin"
 
     def test_empty_dirs_still_finds_bundled(self, config):
-        """With no file-based schedules, bundled skills with schedules still appear."""
+        """With no file-based schedules, bundled skills with SCHEDULE.md still appear."""
         tasks = discover_schedules(config)
         sources = {t.source for t in tasks}
         # Only bundled skills should appear (no admin/workspace file-based)
@@ -177,29 +177,31 @@ class TestDiscoverSchedules:
         assert "good" in names
         assert "bad" not in names
 
-    def test_discovers_bundled_skill_schedules(self, config):
-        """Bundled skills with schedule field appear in discover_schedules."""
+    def test_bundled_skill_schedule_md_discovered(self, config):
+        """Bundled skills with SCHEDULE.md appear in discover_schedules."""
         tasks = discover_schedules(config)
         names = {t.name for t in tasks}
-        # The real bundled dream skill has a schedule in its SKILL.md
+        # dream has a SCHEDULE.md sidecar
         assert "dream" in names
         task = [t for t in tasks if t.name == "dream"][0]
         assert task.source == "bundled"
 
-    def test_ignores_workspace_skill_schedules(self, config):
-        """Workspace skills with schedule field are ignored (trust boundary)."""
+    def test_ignores_workspace_skill_schedule_md(self, config):
+        """Workspace skills with SCHEDULE.md are ignored (trust boundary)."""
         skill_dir = config.workspace_path / "skills" / "sneaky"
         skill_dir.mkdir(parents=True)
         (skill_dir / "SKILL.md").write_text(
-            "---\nname: sneaky\ndescription: Sneaky\n"
-            "schedule: '* * * * *'\n---\nI should not run.\n"
+            "---\nname: sneaky\ndescription: Sneaky\n---\nI should not run.\n"
+        )
+        (skill_dir / "SCHEDULE.md").write_text(
+            "---\nschedule: '* * * * *'\n---\nI should not run.\n"
         )
         tasks = discover_schedules(config)
         names = {t.name for t in tasks}
         assert "sneaky" not in names
 
-    def test_file_schedule_overrides_skill_schedule(self, config):
-        """File-based schedules take precedence over skill frontmatter."""
+    def test_admin_standalone_overrides_skill_schedule_md(self, config):
+        """File-based admin schedules take precedence over skill SCHEDULE.md."""
         admin = config.agent_path / "schedules"
         admin.mkdir(parents=True)
         (admin / "dream.md").write_text(
@@ -209,14 +211,17 @@ class TestDiscoverSchedules:
         dream = [t for t in tasks if t.name == "dream"][0]
         assert dream.schedule == "0 3 * * *"
         assert "File version" in dream.body
+        assert dream.source == "admin"
 
-    def test_admin_skill_schedules_discovered(self, config):
-        """Admin-level skills with schedule are discovered from disk."""
+    def test_admin_skill_schedule_md_discovered(self, config):
+        """Admin-level skills with SCHEDULE.md are discovered from disk."""
         skill_dir = config.agent_path / "skills" / "admin-job"
         skill_dir.mkdir(parents=True)
         (skill_dir / "SKILL.md").write_text(
-            "---\nname: admin-job\ndescription: Admin scheduled job\n"
-            "schedule: '0 6 * * *'\neffort: fast\n---\nDo admin things.\n"
+            "---\nname: admin-job\ndescription: Admin scheduled job\n---\nDo admin things.\n"
+        )
+        (skill_dir / "SCHEDULE.md").write_text(
+            "---\nschedule: '0 6 * * *'\neffort: fast\n---\nDo admin things.\n"
         )
         tasks = discover_schedules(config)
         names = {t.name for t in tasks}
@@ -225,13 +230,15 @@ class TestDiscoverSchedules:
         assert task.source == "admin"
         assert task.model == "fast"
 
-    def test_skill_allowed_tools_propagated(self, config):
-        """Skill allowed-tools are propagated to the ScheduleTask."""
+    def test_schedule_md_allowed_tools_propagated(self, config):
+        """SCHEDULE.md allowed-tools are propagated to the ScheduleTask."""
         skill_dir = config.agent_path / "skills" / "ingest-job"
         skill_dir.mkdir(parents=True)
         (skill_dir / "SKILL.md").write_text(
-            "---\nname: ingest-job\ndescription: Ingest job\n"
-            "schedule: '0 */4 * * *'\n"
+            "---\nname: ingest-job\ndescription: Ingest job\n---\nRun the ingest.\n"
+        )
+        (skill_dir / "SCHEDULE.md").write_text(
+            "---\nschedule: '0 */4 * * *'\n"
             "allowed-tools: shell, wiki_read, wiki_write\n"
             "---\nRun the ingest.\n"
         )
@@ -239,42 +246,45 @@ class TestDiscoverSchedules:
         task = [t for t in tasks if t.name == "ingest-job"][0]
         assert task.allowed_tools == ["shell", "wiki_read", "wiki_write"]
 
-    def test_disabled_skill_schedule(self, config):
-        """Skills with enabled: false are discovered but marked disabled."""
+    def test_disabled_schedule_md(self, config):
+        """SCHEDULE.md with enabled: false is discovered but marked disabled."""
         skill_dir = config.agent_path / "skills" / "paused-job"
         skill_dir.mkdir(parents=True)
         (skill_dir / "SKILL.md").write_text(
-            "---\nname: paused-job\ndescription: Paused\n"
-            "schedule: '0 * * * *'\nenabled: false\n---\nPaused.\n"
+            "---\nname: paused-job\ndescription: Paused\n---\nPaused.\n"
+        )
+        (skill_dir / "SCHEDULE.md").write_text(
+            "---\nschedule: '0 * * * *'\nenabled: false\n---\nPaused.\n"
         )
         tasks = discover_schedules(config)
         task = [t for t in tasks if t.name == "paused-job"][0]
         assert task.enabled is False
 
-    def test_skill_precedence_admin_over_extra_over_bundled(self, config, tmp_path, monkeypatch):
-        """Skill-based schedule precedence is admin > extra > bundled.
+    def test_skill_schedule_md_precedence_admin_over_extra_over_bundled(
+        self, config, tmp_path
+    ):
+        """SCHEDULE.md precedence is admin > extra > bundled.
 
-        Admin is explicit per-deployment customization; extra is opt-in third-party;
-        bundled is the default. Uses `dream` (a real bundled skill) as the collision
-        target — its bundled schedule is `0 3 * * *`. Asserts that admin and extra
-        copies with different schedules correctly shadow it.
+        Uses `dream` (a real bundled skill) as the collision target.
         """
-        monkeypatch.setattr("decafclaw.schedules.run_schedule_task", lambda *a, **kw: None)
-
-        # Admin copy of `dream` with a distinct schedule.
+        # Admin copy of `dream` SCHEDULE.md with a distinct schedule.
         admin_dream = config.agent_path / "skills" / "dream"
         admin_dream.mkdir(parents=True)
         (admin_dream / "SKILL.md").write_text(
-            "---\nname: dream\ndescription: Admin override\n"
-            "schedule: '15 4 * * *'\n---\nAdmin dream body.\n"
+            "---\nname: dream\ndescription: Admin override\n---\nAdmin dream body.\n"
+        )
+        (admin_dream / "SCHEDULE.md").write_text(
+            "---\nschedule: '15 4 * * *'\n---\nAdmin dream body.\n"
         )
 
         # Extra copy with yet another distinct schedule.
         extra_dream = tmp_path / "dream"
         extra_dream.mkdir()
         (extra_dream / "SKILL.md").write_text(
-            "---\nname: dream\ndescription: Extra-paths override\n"
-            "schedule: '30 5 * * *'\n---\nExtra dream body.\n"
+            "---\nname: dream\ndescription: Extra-paths override\n---\nExtra dream body.\n"
+        )
+        (extra_dream / "SCHEDULE.md").write_text(
+            "---\nschedule: '30 5 * * *'\n---\nExtra dream body.\n"
         )
         config.extra_skill_paths = [str(extra_dream)]
 
@@ -286,6 +296,7 @@ class TestDiscoverSchedules:
         assert dream_tasks[0].schedule == "15 4 * * *"
 
         # Now remove the admin copy and re-check — extra should win over bundled.
+        (admin_dream / "SCHEDULE.md").unlink()
         (admin_dream / "SKILL.md").unlink()
         admin_dream.rmdir()
 
@@ -293,21 +304,19 @@ class TestDiscoverSchedules:
         dream_tasks = [t for t in tasks if t.name == "dream"]
         assert len(dream_tasks) == 1
         assert dream_tasks[0].source == "extra"
-        assert dream_tasks[0].schedule == "30 5 * * *"
+        # Extra SCHEDULE.md is forced disabled
+        assert dream_tasks[0].enabled is False
 
-    def test_discovers_extra_skill_path_schedules(self, config, tmp_path, monkeypatch):
-        """Skills in extra_skill_paths with schedule field are discovered with source='extra'.
-
-        Patches run_schedule_task so discovered skills don't fire real agent turns.
-        """
-        monkeypatch.setattr("decafclaw.schedules.run_schedule_task", lambda *a, **kw: None)
-
+    def test_discovers_extra_skill_path_schedule_md(self, config, tmp_path):
+        """Skills in extra_skill_paths with SCHEDULE.md are discovered with source='extra'."""
         # Create a minimal scheduled skill in an isolated tmp dir.
         skill_dir = tmp_path / "ext-job"
         skill_dir.mkdir()
         (skill_dir / "SKILL.md").write_text(
-            "---\nname: ext-job\ndescription: External scheduled job\n"
-            "schedule: '0 7 * * *'\n---\nDo external things.\n"
+            "---\nname: ext-job\ndescription: External scheduled job\n---\nDo external things.\n"
+        )
+        (skill_dir / "SCHEDULE.md").write_text(
+            "---\nschedule: '0 7 * * *'\n---\nDo external things.\n"
         )
         config.extra_skill_paths = [str(skill_dir)]
 
@@ -317,6 +326,8 @@ class TestDiscoverSchedules:
         task = next(t for t in tasks if t.name == "ext-job")
         assert task.source == "extra"
         assert task.schedule == "0 7 * * *"
+        # Extra path schedules are forced disabled
+        assert task.enabled is False
 
 
 # -- Last-run tracking --------------------------------------------------------
@@ -605,3 +616,90 @@ class TestRunScheduleTimer:
             asyncio.create_task(stop_soon())
             await run_schedule_timer(config, EventBus(), manager, shutdown,
                                      poll_interval=0.02)
+
+
+# -- SCHEDULE.md sidecar discovery --------------------------------------------
+
+
+class TestSkillScheduleFiles:
+    """SCHEDULE.md sidecar discovery.
+
+    These tests call ``discover_schedules`` directly — no timer loop runs and
+    ``run_schedule_task`` is never invoked, so no patching is needed.
+    """
+
+    def test_bundled_skill_schedule_discovered(self, config):
+        # Pre-condition: dream/garden/newsletter SCHEDULE.md exist in src/.
+        tasks = {t.name: t for t in discover_schedules(config)}
+        assert "dream" in tasks
+        assert tasks["dream"].schedule == "0 3 * * *"
+        assert tasks["dream"].source == "bundled"
+        assert tasks["dream"].enabled is True
+
+    def test_contrib_skill_schedule_forced_disabled(self, config, tmp_path):
+        contrib_skill = tmp_path / "contrib_skills" / "news-monitor"
+        contrib_skill.mkdir(parents=True)
+        (contrib_skill / "SKILL.md").write_text(
+            "---\nname: news-monitor\ndescription: Watch news.\n---\nDo it.\n"
+        )
+        (contrib_skill / "SCHEDULE.md").write_text(
+            "---\nschedule: '0 * * * *'\nenabled: true\n---\nHourly check.\n"
+        )
+        config.extra_skill_paths = [str(tmp_path / "contrib_skills" / "news-monitor")]
+        tasks = {t.name: t for t in discover_schedules(config)}
+        assert "news-monitor" in tasks
+        assert tasks["news-monitor"].enabled is False  # forced
+
+    def test_admin_overlay_shadows_skill_schedule(self, config):
+        overlay_dir = config.agent_path / "schedules"
+        overlay_dir.mkdir(parents=True, exist_ok=True)
+        (overlay_dir / "dream.md").write_text(
+            "---\nschedule: '0 4 * * *'\nenabled: false\n---\nUser-edited.\n"
+        )
+        tasks = {t.name: t for t in discover_schedules(config)}
+        assert tasks["dream"].schedule == "0 4 * * *"
+        assert tasks["dream"].enabled is False
+        assert tasks["dream"].body == "User-edited."
+        assert tasks["dream"].source == "admin"
+
+    def test_workspace_standalone_shadows_skill_schedule(self, config):
+        ws_dir = config.workspace_path / "schedules"
+        ws_dir.mkdir(parents=True, exist_ok=True)
+        (ws_dir / "dream.md").write_text(
+            "---\nschedule: '0 5 * * *'\n---\nWorkspace version.\n"
+        )
+        tasks = {t.name: t for t in discover_schedules(config)}
+        assert tasks["dream"].source == "workspace"
+        assert tasks["dream"].schedule == "0 5 * * *"
+
+    def test_admin_overlay_beats_workspace_standalone(self, config):
+        admin_dir = config.agent_path / "schedules"
+        admin_dir.mkdir(parents=True, exist_ok=True)
+        ws_dir = config.workspace_path / "schedules"
+        ws_dir.mkdir(parents=True, exist_ok=True)
+        (admin_dir / "dream.md").write_text(
+            "---\nschedule: '0 4 * * *'\n---\nAdmin overlay.\n"
+        )
+        (ws_dir / "dream.md").write_text(
+            "---\nschedule: '0 5 * * *'\n---\nWorkspace.\n"
+        )
+        tasks = {t.name: t for t in discover_schedules(config)}
+        assert tasks["dream"].source == "admin"
+        assert tasks["dream"].schedule == "0 4 * * *"
+
+    def test_workspace_skill_schedule_md_skipped(self, config):
+        ws_skill = config.workspace_path / "skills" / "sneaky"
+        ws_skill.mkdir(parents=True)
+        (ws_skill / "SKILL.md").write_text(
+            "---\nname: sneaky\ndescription: x\n---\nDo it.\n"
+        )
+        (ws_skill / "SCHEDULE.md").write_text(
+            "---\nschedule: '* * * * *'\n---\nShould not run.\n"
+        )
+        tasks = {t.name: t for t in discover_schedules(config)}
+        assert "sneaky" not in tasks
+
+    def test_skill_with_no_schedule_md_not_scheduled(self, config):
+        tasks = {t.name: t for t in discover_schedules(config)}
+        assert "vault" not in tasks
+        assert "tabstack" not in tasks

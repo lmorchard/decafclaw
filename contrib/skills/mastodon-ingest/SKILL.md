@@ -1,7 +1,6 @@
 ---
 name: mastodon-ingest
 description: Fetch recent Mastodon posts and record interesting content to the vault
-schedule: "30 */12 * * *"
 effort: default
 allowed-tools: shell($SKILL_DIR/fetch.sh*), vault_read, vault_write, vault_search, vault_list, vault_backlinks, vault_journal_append, current_time
 user-invocable: true
