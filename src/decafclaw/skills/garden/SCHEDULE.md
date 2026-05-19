@@ -2,55 +2,8 @@
 schedule: "0 3 * * 0"
 model: strong
 required-skills:
+  - garden
   - vault
 ---
 
-# Vault Gardening Sweep
-
-Perform a holistic maintenance pass over your agent pages in the vault. This is about structural quality, not adding new information. Only read and write within `agent/`.
-
-## Step 1: Survey
-
-1. Use `vault_list` with `folder=agent/pages` to get all your pages.
-2. Read through pages, noting structural issues.
-
-## Step 2: Merge Overlapping Pages
-
-- Look for pages that cover similar or overlapping topics.
-- If two pages are about the same thing, consolidate into one well-organized page.
-- Redirect the merged page's content and update any `[[wiki-links]]` that pointed to it.
-
-## Step 3: Fix Broken Links
-
-- Scan pages for `[[wiki-links]]` that point to non-existent pages.
-- For each broken link, decide:
-  - Create a stub page if the topic deserves one
-  - Remove the link if it's not useful
-  - Fix a typo in the link if the target exists under a different name
-
-## Step 4: Add Missing Connections
-
-- Read through pages and look for topics mentioned in the text that have their own pages but aren't linked.
-- Add `[[wiki-links]]` where they're missing.
-- Use `vault_backlinks` on key pages to check their connectivity.
-
-## Step 5: Update tl;dr Summaries
-
-- For pages longer than ~20 lines, check if they have a `> tl;dr:` summary after the title.
-- Add one if missing, update if the page content has changed significantly.
-
-## Step 6: Split Oversized Pages
-
-- If a page has grown very long (100+ lines), consider splitting into sub-pages.
-- Create a summary parent page that links to the sub-pages.
-- Move detailed sections into their own pages.
-
-## Step 7: Review Orphan Pages
-
-- Use `vault_backlinks` to find pages with no incoming links.
-- For each orphan, find related pages and add links to it.
-- If a page is truly disconnected and has little value, note it for review.
-
-## Finishing Up
-
-End with a short narrative summary of what you tidied: pages merged, links fixed, summaries added, etc. If the vault was already in good shape and nothing needed attention, begin your summary with `HEARTBEAT_OK` on its own line followed by a brief quiet-cycle note — the leading marker lets the scheduler log a tidy line, and the narrative keeps the archive readable for the newsletter.
+Time for the weekly garden pass. Follow the garden skill instructions to completion.
