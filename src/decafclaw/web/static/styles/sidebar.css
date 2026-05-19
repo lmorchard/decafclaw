@@ -538,6 +538,34 @@ button.vault-breadcrumb-segment {
   text-transform: uppercase;
 }
 
+/* Run-now button in row — small icon, sits next to the enabled toggle */
+button.schedule-row-run {
+  flex-shrink: 0;
+  width: 1.4rem;
+  height: 1.4rem;
+  padding: 0;
+  font-size: 0.7rem;
+  line-height: 1;
+  color: inherit;
+}
+
+/* Transient status indicator next to the run button after a click */
+.schedule-row-run-status {
+  flex-shrink: 0;
+  font-size: 0.75rem;
+  color: var(--pico-muted-color);
+  min-width: 0.85rem;
+  text-align: center;
+}
+
+.schedule-row-run-status.ok {
+  color: var(--pico-ins-color);
+}
+
+.schedule-row-run-status.error {
+  color: var(--pico-del-color);
+}
+
 /* Enabled toggle — inline checkbox, no extra margin */
 input.schedule-enabled-toggle {
   flex-shrink: 0;
