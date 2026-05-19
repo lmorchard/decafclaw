@@ -1,7 +1,7 @@
 ---
 name: linkding-ingest
 description: Fetch recent Linkding bookmarks, analyze their content in child agents, and record insights to the vault
-schedule: "45 */4 * * *"
+schedule: "45 */12 * * *"
 effort: default
 required-skills:
   - tabstack
