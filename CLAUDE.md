@@ -60,7 +60,7 @@ See [docs/skills.md](docs/skills.md).
 - **Skills must use absolute imports** (`from decafclaw.skills.X.Y import ...`). The loader uses `importlib.spec_from_file_location` without package context, so relative imports fail at runtime.
 - **Skill config via `SkillConfig` dataclass in `tools.py`.** Resolved at activation by `load_sub_config` (env + `config.skills[name]` + defaults). `init(config, skill_config)` receives both.
 - **User-invokable commands** (`user-invocable: true`) trigger via `!name` (Mattermost) / `/name` (web UI). Supports `$ARGUMENTS`/`$0`/`$1`, `context: fork`, `allowed-tools`.
-- **`schedule:` frontmatter** turns a skill into a scheduled task. Bundled, admin-level, and `extra_skill_paths`-loaded skills can self-schedule — workspace skills cannot.
+- **`SCHEDULE.md` sidecar** turns a skill into a scheduled task. Bundled and admin-level skills have their SCHEDULE.md honored as-is; `extra_skill_paths` (contrib) SCHEDULE.md is forced `enabled: false` so a third-party install never silently activates a cron job — the user opts in via a copy-on-write overlay at `data/{agent_id}/schedules/{name}.md`. Workspace skills cannot self-schedule (no SCHEDULE.md scanning in workspace skill dirs). See [docs/schedules.md](docs/schedules.md).
 - **Permissions at `data/{agent_id}/skill_permissions.json`** — outside the workspace, so the agent can't grant itself permission.
 - **Dynamic per-turn tools:** export `get_tools(ctx) -> (dict, list)` to vary tools by state.
 
