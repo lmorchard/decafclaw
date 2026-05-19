@@ -52,40 +52,56 @@ Standard 5-field format: `minute hour day-of-month month day-of-week`
 
 Powered by [croniter](https://github.com/kiorky/croniter). Invalid expressions are logged as warnings and the task is skipped.
 
-## File locations
+## Discovery
+
+### Standalone schedule files
 
 Schedule files are discovered from two directories:
 
 | Location | Writable by agent | Purpose |
 |----------|-------------------|---------|
-| `data/{agent_id}/schedules/*.md` | No | Admin-managed scheduled tasks |
+| `data/{agent_id}/schedules/*.md` | No | Admin-managed standalone tasks; also serves as the overlay store for skill SCHEDULE.md (see below) |
 | `data/{agent_id}/workspace/schedules/*.md` | Yes | Agent-managed tasks (created via `workspace_write`) |
 
 - Task name is derived from the filename (minus `.md`)
-- Admin tasks take precedence when names collide
 - Both directories are scanned on every poll tick (changes take effect within 60 seconds)
 
-### Skill schedule frontmatter
+### Skill SCHEDULE.md sidecar
 
-Skills can also declare schedules in their SKILL.md frontmatter:
+Any skill (bundled, admin-level, or contrib/`extra_skill_paths`) may ship a `SCHEDULE.md` file alongside its `SKILL.md`. The sidecar uses the same frontmatter format as a standalone schedule file (`schedule`, `enabled`, `model`, `allowed-tools`, `required-skills`, `email-recipients`) with a markdown body that is the prompt.
 
-```yaml
+```markdown
 ---
-name: dream
-schedule: "0 * * * *"
-model: gemini-pro
+schedule: "0 3 * * *"
+model: strong
 required-skills:
-  - wiki
-user-invocable: true
-context: fork
+  - vault
 ---
+
+# Memory Consolidation
+
+Review recent journal entries ...
 ```
 
-This makes a skill both a user command (`!dream`) and a scheduled task — no separate schedule file needed.
+The three bundled skills `dream`, `garden`, and `newsletter` each ship a `SCHEDULE.md` this way.
 
-**Trust boundary:** bundled skills (`src/decafclaw/skills/`), admin-level skills (`data/{agent_id}/skills/`), and `extra_skill_paths`-loaded skills can declare schedules. Workspace skills are ignored.
+**Contrib default-disable:** Skills discovered from `extra_skill_paths` have their `enabled` flag forced to `false` regardless of what the SCHEDULE.md says. Installing a contrib skill should not silently activate a cron job. Users opt in via the admin overlay (see below).
 
-File-based schedules take precedence over skill schedules when names collide.
+**Workspace skills excluded:** Workspace skill directories (`workspace/skills/`) are not scanned for SCHEDULE.md — parallels the existing rule that workspace skills cannot self-schedule.
+
+### Discovery precedence
+
+When multiple sources define a task with the same name, the highest-precedence source wins entirely (no field-level merging):
+
+1. `data/{agent_id}/schedules/{name}.md` — admin standalone; also acts as an overlay that shadows a same-named skill SCHEDULE.md
+2. `workspace/schedules/{name}.md` — workspace standalone (agent-written)
+3. Skill SCHEDULE.md, with internal precedence admin > extra > bundled
+
+### Copy-on-write overlay
+
+To customize a skill's SCHEDULE.md without editing the source file, write a full markdown file to `data/{agent_id}/schedules/{skill_name}.md`. This admin standalone file shadows the skill's SCHEDULE.md for as long as it exists. To revert to the skill's defaults, delete the overlay file.
+
+The overlay is a full-file replacement — it is not merged with the original. All frontmatter fields must be present if they are needed (the overlay round-trips `allowed-tools`, `required-skills`, `model`, etc.).
 
 ## How it works
 
@@ -207,6 +223,146 @@ enabled: false
 
 This task is disabled but the file is kept so it's easy to re-enable.
 ```
+
+## HTTP API
+
+Four REST endpoints allow listing and editing schedules without touching files directly. All endpoints require authentication (same session cookie as the web UI).
+
+### `GET /api/schedules`
+
+Returns all discovered schedules with metadata.
+
+**Response:**
+
+```json
+{
+  "schedules": [
+    {
+      "name": "dream",
+      "source_tier": "bundled",
+      "source_path": "/path/to/skills/dream/SCHEDULE.md",
+      "has_overlay": false,
+      "enabled": true,
+      "schedule": "0 3 * * *",
+      "channel": "",
+      "model": "strong",
+      "allowed_tools": [],
+      "required_skills": ["vault"],
+      "body": "# Memory Consolidation\n...",
+      "modified": 1747598400.0,
+      "next_run_iso": "2026-05-20T03:00:00+00:00",
+      "last_run_iso": "2026-05-19T03:00:00+00:00"
+    }
+  ]
+}
+```
+
+**`source_tier`** values: `bundled`, `admin`, `extra`, `workspace`.
+
+**`has_overlay`** is `true` when an admin standalone file at `data/{agent_id}/schedules/{name}.md` is shadowing a same-named skill SCHEDULE.md. `false` for workspace-tier or pure standalone admin entries.
+
+**`modified`** is the Unix mtime (float seconds) of the source file. Used by the body editor for conflict detection.
+
+**`last_run_iso`** is `null` if the task has never run.
+
+### `GET /api/schedules/{name}`
+
+Returns a single schedule entry by name. Same shape as a list entry wrapped in `{"schedule": ...}`.
+
+**Error codes:**
+- `404` — name not found
+
+### `PUT /api/schedules/{name}`
+
+Apply a partial update to a schedule. Writes the full effective state (current resolved values merged with the patch).
+
+- If the source was a skill SCHEDULE.md, this creates an admin overlay at `data/{agent_id}/schedules/{name}.md`.
+- If the source was already an admin standalone file, this updates it in place.
+- If the source is a workspace-tier file (`workspace/schedules/{name}.md`), this edits it in place — workspace schedules are user-editable.
+
+**Request body** (all fields optional):
+
+```json
+{
+  "enabled": false,
+  "schedule": "0 4 * * *",
+  "body": "New prompt body.",
+  "channel": "abc123channelid",
+  "allowed_tools": ["workspace_read"],
+  "required_skills": ["vault"],
+  "model": "gemini-flash"
+}
+```
+
+The `content` key is accepted as an alias for `body` — this is the shape wiki-editor sends (`{content, modified}`). The `modified` key is accepted and silently discarded (wiki-editor sends it for conflict detection; the server does not enforce it yet).
+
+Fields not included in the request body are preserved from the current effective state.
+
+**Response:** `{"schedule": <schedule object>, "modified": <float>}` — the updated entry with the new file mtime. The top-level `modified` field mirrors `schedule.modified` for wiki-editor's conflict-detection contract.
+
+**Error codes:**
+- `400` — unsafe or invalid name, or invalid cron expression
+- `404` — name not found
+
+### `POST /api/schedules/{name}/run`
+
+Fire a schedule immediately, regardless of its `enabled` flag or cron expression. Manual invocation is treated as explicit intent. Writes the `last_run` timestamp so the cron timer does not double-fire shortly after.
+
+The task runs in the background; the response returns immediately with the conv_id of the new conversation. Find the run in the system conversations list.
+
+**Response (202 Accepted):**
+
+```json
+{
+  "conv_id": "schedule-dream-20260519-114230",
+  "task_name": "dream",
+  "started_at": "2026-05-19T11:42:30.123456+00:00"
+}
+```
+
+**Error codes:**
+- `404` — name not found
+
+### `DELETE /api/schedules/{name}/overlay`
+
+Revert a schedule to its skill SCHEDULE.md default by deleting the admin overlay file.
+
+Only meaningful when `has_overlay: true`. If no overlay exists, returns **404**.
+
+**Response:** `{"schedule": <schedule object>}` — the post-revert entry reflecting the original skill SCHEDULE.md values.
+
+**Error codes:**
+- `404` — no overlay exists for this name, or name not found after overlay removal
+
+## Sidebar UI
+
+The **Schedules** tab in the conversation sidebar (`schedules-sidebar.js`) provides a point-and-click interface for the REST API described above. Open it by clicking "Schedules" in the sidebar tab strip.
+
+### List view
+
+Each row displays:
+- **Name** — the schedule's task name (directory basename for skill SCHEDULE.md sidecars, filename stem for standalone files). Click to open the side-panel editor.
+- **Source tier badge** — one of `bundled`, `admin`, `extra`, or `workspace`. Color-coded: bundled = green, admin = primary accent, extra/workspace = muted.
+- **"overridden" pill** — shown when an admin overlay is shadowing a skill SCHEDULE.md; disappears after a reset.
+- **Enabled toggle** — a checkbox that calls `PUT /api/schedules/{name}` with `{enabled: !current}`.
+- **Cron expression** and **estimated next run** (`in Xm / in Xh / in Xd / overdue`) below the header row.
+
+### Side-panel editor
+
+Clicking a row opens the schedule in the `#wiki-main` side panel — the same surface used by vault pages, workspace files, and agent config. The panel shows:
+
+- **Header**: back arrow (closes the panel), name, source tier badge, "overridden" pill, a **"Run now"** button, and a "Reset to default" button when `has_overlay: true`.
+- **Form row**: cron expression input, channel input, and enabled checkbox. Each field saves on `change` — no separate Save button.
+- **Body editor**: a `<wiki-editor>` (Milkdown) for the prompt body. Autosaves after 1 second of inactivity or on Ctrl+S / focus-out. Conflict detection via file mtime.
+- **URL deep-linking**: opening a schedule sets `?schedule={name}` in the URL; the panel restores on page reload or direct link.
+
+### Workspace-tier entries
+
+Schedules sourced from `workspace/schedules/` (agent-written) are fully editable. Saves write in-place to `workspace/schedules/{name}.md`. No "Reset to default" button (workspace files have no skill SCHEDULE.md to fall back to).
+
+### Refresh behavior
+
+The list fetches fresh data from `/api/schedules` each time the tab becomes active. After any save or reset within the session, a `schedule-saved` window event triggers an immediate re-fetch so the list stays current without a manual page reload.
 
 ## Differences from heartbeat
 

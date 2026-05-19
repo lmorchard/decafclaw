@@ -1,11 +1,8 @@
 ---
-name: dream
-description: Review recent journal entries and conversations, distill insights into vault pages
-effort: strong
+schedule: "0 3 * * *"
+model: strong
 required-skills:
   - vault
-user-invocable: true
-context: fork
 ---
 
 # Memory Consolidation

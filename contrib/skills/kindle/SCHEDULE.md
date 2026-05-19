@@ -1,11 +1,8 @@
 ---
-name: kindle
-description: Sync highlights & notes from your Kindle library (read.amazon.com/notebook) into per-book vault pages.
-user-invocable: true
-context: inline
-argument-hint: "[asin-or-title]"
+schedule: "0 5 * * *"
 allowed-tools: kindle_list_books, kindle_fetch_highlights, kindle_sync_book, kindle_sync_all, vault_read, vault_list, vault_write, vault_journal_append, current_time
-required-skills: [kindle]
+required-skills:
+  - kindle
 ---
 
 # Kindle sync

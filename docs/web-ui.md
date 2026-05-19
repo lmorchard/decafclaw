@@ -58,6 +58,35 @@ WYSIWYG markdown editor for vault pages, accessible from the sidebar:
 - Open pages are automatically injected as context in the active conversation
 - `@[[PageName]]` mentions in messages also inject page content
 
+### Files tab
+
+The **Files** tab in the sidebar exposes the agent's workspace as a browsable file tree. See [Files tab](files-tab.md) for in-depth coverage.
+
+- **Browse** workspace files and folders with breadcrumb navigation
+- **Recent files** list sorted by last modification time
+- Click a file to open it in the file viewer (text, image, markdown)
+- Show/hide dotfiles with the "Show hidden" toggle
+- Auto-refreshes on agent turn completion so newly-written files appear without manual reload
+
+### Schedules tab
+
+The **Schedules** tab lists all discovered scheduled tasks and lets you manage them without touching files directly:
+
+- **List view**: each row shows the schedule name, a source tier badge (`bundled` / `admin` / `extra` / `workspace`), an "overridden" pill when a copy-on-write overlay is active, the cron expression, and the next estimated run time.
+- **Enabled toggle**: a checkbox on each row lets you enable or disable a schedule instantly. Toggling writes a copy-on-write overlay at `data/{agent_id}/schedules/{name}.md` for skill-sourced schedules, or edits the standalone file in place for admin-standalone and workspace-tier schedules.
+- **Row click → side panel editor**: clicking a row name opens the schedule in the `#wiki-main` side panel (the same surface as vault pages, workspace files, and agent config). The panel is mutually exclusive with those other views.
+
+**Side panel editor** (`<schedule-page>`):
+- **Header**: back arrow (closes the panel), name, source tier badge, "overridden" pill, a **"Run now"** button (fires the task immediately, bypassing the enabled flag and cron timer), and a "Reset to default" button when an overlay is shadowing a skill SCHEDULE.md.
+- **Form row**: cron expression input, channel input, and an enabled checkbox. Each field saves on `change` — no separate Save button needed.
+- **Body editor**: a full `<wiki-editor>` for the prompt body. Autosaves after 1 second of inactivity or on Ctrl+S / focus-out. The editor sends the file's `mtime` as a `modified` field, but the server does not enforce conflict detection — concurrent edits are last-write-wins. Refresh before editing if you need the latest version.
+- **Workspace-tier schedules**: fully editable. Changes write in-place to `workspace/schedules/{name}.md`.
+- **URL deep-linking**: opening a schedule sets `?schedule={name}` in the URL. Pasting the URL in a new tab opens the same schedule page directly.
+
+The tab auto-refreshes on activation. Save/reset actions dispatch a `schedule-saved` window event that triggers an immediate silent list refresh.
+
+See [Schedules](schedules.md) for the full model, overlay semantics, and API.
+
 ### Model picker
 
 When multiple model configs are defined, a dropdown in the sidebar lets you switch models per-conversation. See [Model Selection](model-selection.md).

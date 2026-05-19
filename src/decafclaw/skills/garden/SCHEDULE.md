@@ -1,11 +1,8 @@
 ---
-name: garden
-description: Vault gardening sweep — merge, link, split, and tidy agent pages
-effort: strong
+schedule: "0 3 * * 0"
+model: strong
 required-skills:
   - vault
-user-invocable: true
-context: fork
 ---
 
 # Vault Gardening Sweep

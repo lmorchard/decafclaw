@@ -4,13 +4,20 @@ import asyncio
 import logging
 import re
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 
+import yaml
 from croniter import croniter
 
-from .skills import _parse_allowed_tools, _split_frontmatter
+from .skills import (
+    _BUNDLED_SKILLS_DIR,
+    _iter_skill_dirs,
+    _parse_allowed_tools,
+    _resolve_extra_skill_paths,
+    _split_frontmatter,
+)
 
 log = logging.getLogger(__name__)
 
@@ -21,7 +28,7 @@ class ScheduleTask:
     name: str
     schedule: str  # 5-field cron expression
     body: str
-    source: str  # "admin" or "workspace"
+    source: str  # "admin" | "workspace" | "bundled" | "extra"
     path: Path
     channel: str = ""
     enabled: bool = True
@@ -96,16 +103,71 @@ def parse_schedule_file(path: Path) -> ScheduleTask | None:
 # -- Discovery ----------------------------------------------------------------
 
 
-def discover_schedules(config) -> list[ScheduleTask]:
-    """Discover schedule files from admin and workspace directories.
+def _discover_skill_schedule_files(config) -> dict[str, ScheduleTask]:
+    """Discover SCHEDULE.md sidecars in skill directories.
 
-    Admin tasks take precedence when names collide.
+    Scans: admin > extra > bundled (no workspace — workspace skills
+    cannot self-schedule, matching the long-standing rule).
+
+    Contrib (extra-path) SCHEDULE.md is forced to enabled=False so
+    third-party skills don't silently activate cron jobs on install.
+
+    Returns a {name -> ScheduleTask} dict. Caller decides how to
+    merge with file-based schedules (currently: file-based wins).
+    """
+    bundled_dir = _BUNDLED_SKILLS_DIR.resolve()
+    admin_skills_dir = (config.agent_path / "skills").resolve()
+    extra_paths = _resolve_extra_skill_paths(config)
+
+    sources: list[tuple[str, Path]] = [
+        ("admin", admin_skills_dir),
+        *(("extra", p) for p in extra_paths),
+        ("bundled", bundled_dir),
+    ]
+
+    result: dict[str, ScheduleTask] = {}
+    for tier, base_dir in sources:
+        for skill_dir in _iter_skill_dirs(base_dir):
+            sched_md = skill_dir / "SCHEDULE.md"
+            if not sched_md.exists():
+                continue
+            task = parse_schedule_file(sched_md)
+            if task is None:
+                continue
+            task.source = tier
+            # Use the skill's directory name as the task name so the
+            # overlay file at data/{agent_id}/schedules/{name}.md can
+            # shadow it by simple name match.
+            task.name = skill_dir.name
+            if tier == "extra":
+                task.enabled = False  # contrib opts-in via overlay
+            # First-found wins (admin > extra > bundled)
+            result.setdefault(task.name, task)
+    return result
+
+
+def discover_schedules(config) -> list[ScheduleTask]:
+    """Discover schedule files from admin/workspace dirs and skill
+    SCHEDULE.md sidecars.
+
+    Precedence (highest wins on name collision):
+      1. data/{agent_id}/schedules/{name}.md  (admin standalone; also
+         acts as the overlay for skill SCHEDULE.md of the same name)
+      2. workspace/schedules/{name}.md        (workspace standalone)
+      3. Skill SCHEDULE.md (admin > extra > bundled)
     """
     tasks_by_name: dict[str, ScheduleTask] = {}
 
+    # Skill SCHEDULE.md sidecars (lowest precedence — populated first
+    # so that standalone files can shadow them).
+    skill_tasks = _discover_skill_schedule_files(config)
+    tasks_by_name.update(skill_tasks)
+
+    # File-based standalone schedules: workspace then admin. Admin
+    # wins over workspace, both win over skill SCHEDULE.md.
     for source, base_dir in [
-        ("admin", config.agent_path / "schedules"),
         ("workspace", config.workspace_path / "schedules"),
+        ("admin", config.agent_path / "schedules"),
     ]:
         if not base_dir.is_dir():
             continue
@@ -114,60 +176,127 @@ def discover_schedules(config) -> list[ScheduleTask]:
             if task is None:
                 continue
             task.source = source
-            # Admin takes precedence
-            if task.name not in tasks_by_name or source == "admin":
-                tasks_by_name[task.name] = task
-
-    # Also discover scheduled skills from disk (bundled, admin, and extra_skill_paths).
-    # Re-reads SKILL.md files each poll so edits (e.g. enabled: false) take
-    # effect without restart.
-    from .skills import _BUNDLED_SKILLS_DIR, _iter_skill_dirs, _resolve_extra_skill_paths, parse_skill_md
-    bundled_dir = _BUNDLED_SKILLS_DIR.resolve()
-    admin_skills_dir = (config.agent_path / "skills").resolve()
-    extra_paths = _resolve_extra_skill_paths(config)
-
-    # Sources: list of (label, scan_base_path). For bundled/admin, _iter_skill_dirs
-    # yields their subdirectories; for extra_skill_paths, each entry is itself a
-    # single skill directory (SKILL.md at its root) — _iter_skill_dirs handles both.
-    #
-    # Precedence (first wins via the `skill.name in tasks_by_name` guard below):
-    # admin > extra > bundled. Admin is explicit per-deployment customization
-    # and always wins. `extra_skill_paths` is opt-in third-party — beats bundled
-    # because the user took explicit action to enable it. Bundled is the default.
-    skill_sources: list[tuple[str, Path]] = [
-        ("admin", admin_skills_dir),
-        *[("extra", p) for p in extra_paths],
-        ("bundled", bundled_dir),
-    ]
-
-    for source_label, base_dir in skill_sources:
-        for skill_dir in _iter_skill_dirs(base_dir):
-            skill_md = skill_dir / "SKILL.md"
-            if not skill_md.exists():
-                continue
-            skill = parse_skill_md(skill_md)
-            if skill is None or not skill.schedule:
-                continue
-            if not croniter.is_valid(skill.schedule):
-                log.warning(f"Invalid cron in skill '{skill.name}': {skill.schedule!r}")
-                continue
-            # File-based schedules take precedence
-            if skill.name in tasks_by_name:
-                continue
-            tasks_by_name[skill.name] = ScheduleTask(
-                name=skill.name,
-                schedule=skill.schedule,
-                body=skill.body,
-                source=source_label,
-                path=skill_md,
-                enabled=skill.enabled,
-                model=skill.model or "",
-                allowed_tools=skill.allowed_tools,
-                shell_patterns=skill.shell_patterns,
-                required_skills=skill.requires_skills,
-            )
+            tasks_by_name[task.name] = task  # later sources override
 
     return list(tasks_by_name.values())
+
+
+# -- Overlay helpers ----------------------------------------------------------
+
+
+def serialize_to_markdown(task: ScheduleTask) -> str:
+    """Render a ScheduleTask as a SCHEDULE.md-format markdown string.
+
+    Frontmatter includes only fields with values. Field order:
+    schedule, enabled (only if false), channel, model, allowed-tools,
+    required-skills, email-recipients.
+    """
+    fm: dict = {"schedule": task.schedule}
+    if not task.enabled:
+        fm["enabled"] = False
+    if task.channel:
+        fm["channel"] = task.channel
+    if task.model:
+        fm["model"] = task.model
+    if task.allowed_tools or task.shell_patterns:
+        entries = list(task.allowed_tools)
+        entries.extend(f"shell({p})" for p in task.shell_patterns)
+        fm["allowed-tools"] = ", ".join(entries)
+    if task.required_skills:
+        fm["required-skills"] = list(task.required_skills)
+    if task.email_recipients:
+        fm["email-recipients"] = list(task.email_recipients)
+    fm_text = yaml.safe_dump(fm, sort_keys=False).rstrip()
+    return f"---\n{fm_text}\n---\n\n{task.body}\n"
+
+
+def _overlay_path(config, name: str) -> Path:
+    """Path where an overlay would live; validated against safe name."""
+    safe = _safe_task_name(name)
+    if safe != name:
+        raise ValueError(f"unsafe schedule name: {name!r}")
+    return config.agent_path / "schedules" / f"{name}.md"
+
+
+def write_overlay(config, name: str, patch: dict) -> ScheduleTask:
+    """Apply patch to current effective state and write full resolved
+    task to disk. Returns the newly resolved task.
+
+    Patch keys (all optional): enabled (bool), schedule (str), body (str),
+    channel (str), allowed_tools (list[str]), required_skills (list[str]),
+    model (str).
+
+    Write targets:
+    - workspace source → workspace/schedules/{name}.md (in-place edit)
+    - admin source (standalone) → data/{agent_id}/schedules/{name}.md (in-place edit)
+    - skill SCHEDULE.md source (bundled/admin/extra) → data/{agent_id}/schedules/{name}.md (creates overlay)
+
+    Raises KeyError if the schedule name is not found.
+    Raises ValueError if the name is unsafe or the cron expression is invalid.
+    """
+    tasks = {t.name: t for t in discover_schedules(config)}
+    base = tasks.get(name)
+    if base is None:
+        raise KeyError(name)
+
+    # Treat null (None) values as "leave unchanged" rather than overwriting.
+    patch = {k: v for k, v in patch.items() if v is not None}
+
+    # Validate cron expression before touching disk.
+    if "schedule" in patch:
+        if not isinstance(patch["schedule"], str):
+            raise ValueError(
+                f"schedule must be a string, got {type(patch['schedule']).__name__}"
+            )
+        if not croniter.is_valid(patch["schedule"]):
+            raise ValueError(f"invalid cron expression: {patch['schedule']!r}")
+
+    # Validate list fields — reject non-list values (e.g. comma-separated strings)
+    # rather than silently iterating characters.
+    for list_field in ("allowed_tools", "required_skills"):
+        if list_field in patch and not isinstance(patch[list_field], list):
+            raise ValueError(f"{list_field} must be a list of strings")
+
+    updated = replace(
+        base,
+        enabled=patch.get("enabled", base.enabled),
+        schedule=patch.get("schedule", base.schedule),
+        body=patch.get("body", base.body),
+        channel=patch.get("channel", base.channel),
+        allowed_tools=list(patch.get("allowed_tools", base.allowed_tools)),
+        required_skills=list(patch.get("required_skills", base.required_skills)),
+        model=patch.get("model", base.model),
+    )
+
+    if base.source == "workspace":
+        safe = _safe_task_name(name)
+        if safe != name:
+            raise ValueError(f"unsafe schedule name: {name!r}")
+        path = config.workspace_path / "schedules" / f"{name}.md"
+    else:
+        path = _overlay_path(config, name)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(serialize_to_markdown(updated))
+
+    return {t.name: t for t in discover_schedules(config)}[name]
+
+
+def delete_overlay(config, name: str) -> ScheduleTask:
+    """Delete the admin standalone file for `name`. Returns the
+    post-delete resolved task (which must still exist via a SCHEDULE.md
+    fallback — caller validates).
+
+    Raises FileNotFoundError if no overlay file exists.
+    Raises KeyError if after delete no SCHEDULE.md remains.
+    """
+    path = _overlay_path(config, name)
+    if not path.exists():
+        raise FileNotFoundError(name)
+    path.unlink()
+    tasks = {t.name: t for t in discover_schedules(config)}
+    if name not in tasks:
+        raise KeyError(name)
+    return tasks[name]
 
 
 # -- Last-run tracking --------------------------------------------------------
@@ -223,15 +352,18 @@ def is_due(config, task: ScheduleTask) -> bool:
 # -- Task execution -----------------------------------------------------------
 
 
-async def run_schedule_task(config, event_bus, manager, task: ScheduleTask) -> dict:
+async def run_schedule_task(config, event_bus, manager, task: ScheduleTask,
+                             conv_id: str | None = None) -> dict:
     """Run a single scheduled task as an agent turn via ConversationManager.
 
+    If conv_id is provided, use it; otherwise generate from task.name + now.
     Returns {"task_name", "channel", "response", "is_ok", "context_id"}.
     """
     from .conversation_manager import TurnKind
 
-    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    conv_id = f"schedule-{task.name}-{timestamp}"
+    if conv_id is None:
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        conv_id = f"schedule-{task.name}-{timestamp}"
     channel = task.channel or f"schedule:{task.name}"
 
     allowed_tools_set = None
