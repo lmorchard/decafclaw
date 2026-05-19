@@ -25,6 +25,7 @@ export class SchedulesSidebar extends LitElement {
     openName: { type: String },
     _schedules: { type: Array, state: true },
     _loading: { type: Boolean, state: true },
+    _runStatus: { type: Object, state: true },
   };
 
   createRenderRoot() { return this; }
@@ -36,6 +37,10 @@ export class SchedulesSidebar extends LitElement {
     /** @type {ScheduleEntry[]} */
     this._schedules = [];
     this._loading = false;
+    /** Per-schedule transient run state: 'running' | 'started' | 'error'.
+     * Reassigned (not mutated) on each change so Lit detects it.
+     * @type {Record<string, 'running'|'started'|'error'>} */
+    this._runStatus = {};
   }
 
   connectedCallback() {
@@ -92,6 +97,38 @@ export class SchedulesSidebar extends LitElement {
     this.#fetchSchedules();
   }
 
+  /**
+   * Fire a schedule immediately via POST /api/schedules/{name}/run.
+   * Shows a transient inline status indicator next to the row's button.
+   * @param {string} name
+   */
+  async #runNow(name) {
+    this._runStatus = { ...this._runStatus, [name]: 'running' };
+    try {
+      const res = await fetch(
+        `/api/schedules/${encodeURIComponent(name)}/run`,
+        { method: 'POST' },
+      );
+      if (!res.ok) {
+        console.warn(`schedules-sidebar: run failed for ${name}:`, res.status);
+        this._runStatus = { ...this._runStatus, [name]: 'error' };
+        return;
+      }
+      this._runStatus = { ...this._runStatus, [name]: 'started' };
+      // Clear after a short window unless a subsequent run replaced it.
+      setTimeout(() => {
+        if (this._runStatus[name] === 'started') {
+          const copy = { ...this._runStatus };
+          delete copy[name];
+          this._runStatus = copy;
+        }
+      }, 2500);
+    } catch (e) {
+      console.warn(`schedules-sidebar: run error for ${name}:`, e);
+      this._runStatus = { ...this._runStatus, [name]: 'error' };
+    }
+  }
+
   /** @param {string} name */
   #openSchedule(name) {
     this.dispatchEvent(new CustomEvent('schedule-open', {
@@ -123,6 +160,7 @@ export class SchedulesSidebar extends LitElement {
   #renderRow(s) {
     const isOpen = this.openName === s.name;
     const nextRun = this.#formatNextRun(s.next_run_iso);
+    const runStatus = this._runStatus[s.name];
     return html`
       <div class="schedule-row ${isOpen ? 'open' : ''}">
         <div class="schedule-row-header"
@@ -130,6 +168,16 @@ export class SchedulesSidebar extends LitElement {
           <span class="schedule-name">${s.name}</span>
           <span class="schedule-tier-badge tier-${s.source_tier}">${s.source_tier}</span>
           ${s.has_overlay ? html`<span class="schedule-overlay-badge">overridden</span>` : nothing}
+          <button class="dc-icon-btn schedule-row-run"
+                  @click=${(/** @type {Event} */ e) => { e.stopPropagation(); this.#runNow(s.name); }}
+                  title="Run now"
+                  aria-label=${`Run ${s.name} now`}>
+            ▶
+          </button>
+          ${runStatus === 'running' ? html`<span class="schedule-row-run-status">…</span>` :
+            runStatus === 'started' ? html`<span class="schedule-row-run-status ok">✓</span>` :
+            runStatus === 'error' ? html`<span class="schedule-row-run-status error">!</span>` :
+            nothing}
           <input type="checkbox"
                  class="schedule-enabled-toggle"
                  .checked=${s.enabled}
