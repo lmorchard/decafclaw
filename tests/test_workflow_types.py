@@ -72,7 +72,7 @@ def test_run_state_json_round_trip():
         workflow="weeknotes",
         slug="w20",
         run_id="2026-05-19-1402-weeknotes-w20",
-        status=RunStatus.RUNNING,
+        status=RunStatus.PAUSED_GATE,
         current_phase="draft",
         created_at="2026-05-19T14:02:00+00:00",
         updated_at="2026-05-19T14:35:12+00:00",
@@ -81,14 +81,14 @@ def test_run_state_json_round_trip():
              "gate_response": None, "reason": "initial",
              "timestamp": "2026-05-19T14:02:00+00:00"}
         ],
-        pending_gate=None,
+        pending_gate={"edge_target": "review", "on_deny": "draft"},
         pending_subagent=None,
         error=None,
     )
     raw = state.to_json()
     parsed = json.loads(raw)
     assert parsed["workflow"] == "weeknotes"
-    assert parsed["status"] == "running"
+    assert parsed["status"] == "paused-gate"
     back = RunState.from_json(raw)
     assert back == state
 

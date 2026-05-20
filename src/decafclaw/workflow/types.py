@@ -103,6 +103,9 @@ class RunState:
 
     def to_json(self) -> str:
         d = asdict(self)
+        # str-Enum already serializes as its value via json.dumps, but
+        # we set it explicitly so round-trip stays correct if RunStatus
+        # is ever changed to not inherit from str.
         d["status"] = self.status.value
         return json.dumps(d, indent=2)
 
