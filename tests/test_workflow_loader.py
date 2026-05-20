@@ -246,6 +246,43 @@ def test_load_fails_when_phase_id_has_uppercase(tmp_path):
         load_workflow(d)
 
 
+def test_load_fails_when_outputs_contains_null(tmp_path):
+    """outputs: must be a list of non-empty strings — null rejected."""
+    bad_gather = """---
+kind: subagent
+tools: [vault_read]
+outputs:
+  - null
+  - sources.md
+next-phases:
+  - id: draft
+---
+"""
+    d = _write_workflow(tmp_path, {
+        "SKILL.md": _SKILL_MD,
+        "phases/gather.md": bad_gather,
+        "phases/draft.md": _DRAFT,
+        "phases/review.md": _REVIEW,
+        "phases/publish.md": _PUBLISH,
+    })
+    with pytest.raises(LoaderError, match="outputs"):
+        load_workflow(d)
+
+
+def test_load_fails_when_gate_type_unsupported(tmp_path):
+    """Only gate type 'review' is supported in v1."""
+    bad_review = _REVIEW.replace("type: review", "type: input")
+    d = _write_workflow(tmp_path, {
+        "SKILL.md": _SKILL_MD,
+        "phases/gather.md": _GATHER,
+        "phases/draft.md": _DRAFT,
+        "phases/review.md": bad_review,
+        "phases/publish.md": _PUBLISH,
+    })
+    with pytest.raises(LoaderError, match="gate type"):
+        load_workflow(d)
+
+
 def test_load_subagent_skill_escape_hatch(tmp_path):
     """A subagent phase with subagent-skill: doesn't need outputs:
     because the referenced skill owns its own output contract."""

@@ -23,6 +23,7 @@ from .types import (
 log = logging.getLogger(__name__)
 
 _PHASE_ID_RE = re.compile(r"^[a-z][a-z0-9_-]*$")
+_SUPPORTED_GATE_TYPES = {"review"}
 
 
 class LoaderError(ValueError):
@@ -39,7 +40,7 @@ def _split_frontmatter(text: str) -> tuple[dict, str]:
     if end == -1:
         raise LoaderError("unterminated YAML frontmatter")
     fm_str = stripped[3:end].strip()
-    body = stripped[end + 4:].lstrip("\n")
+    body = stripped[end + 4:].lstrip()
     try:
         meta = yaml.safe_load(fm_str) or {}
     except yaml.YAMLError as exc:
@@ -49,9 +50,15 @@ def _split_frontmatter(text: str) -> tuple[dict, str]:
     return meta, body
 
 
-def _parse_gate(raw: dict) -> GateDef:
+def _parse_gate(raw: dict, phase_id: str, edge_target: str) -> GateDef:
+    gate_type = raw.get("type", "review")
+    if gate_type not in _SUPPORTED_GATE_TYPES:
+        supported = ", ".join(sorted(_SUPPORTED_GATE_TYPES))
+        raise LoaderError(
+            f"phase '{phase_id}': edge to '{edge_target}': "
+            f"unsupported gate type '{gate_type}' (supported: {supported})")
     return GateDef(
-        type=raw.get("type", "review"),
+        type=gate_type,
         message=raw.get("message", ""),
         approve_label=raw.get("approve-label", "Approve"),
         deny_label=raw.get("deny-label", "Deny"),
@@ -75,7 +82,7 @@ def _parse_edges(raw: list, phase_id: str) -> list[EdgeDef]:
             raise LoaderError(
                 f"phase '{phase_id}': next-phases[{i}] missing 'id'")
         gate_raw = entry.get("gate")
-        gate = _parse_gate(gate_raw) if gate_raw else None
+        gate = _parse_gate(gate_raw, phase_id, target) if gate_raw else None
         edges.append(EdgeDef(
             id=target,
             when=entry.get("when", "") or "",
@@ -109,7 +116,12 @@ def _parse_phase(path: Path) -> PhaseDef:
     if not isinstance(outputs_raw, list):
         raise LoaderError(
             f"phase '{phase_id}': outputs must be a list")
-    outputs = tuple(str(o) for o in outputs_raw)
+    for i, entry in enumerate(outputs_raw):
+        if not isinstance(entry, str) or not entry.strip():
+            raise LoaderError(
+                f"phase '{phase_id}': outputs[{i}] must be a "
+                "non-empty string")
+    outputs = tuple(outputs_raw)
 
     edges = _parse_edges(meta.get("next-phases") or [], phase_id)
     context_profile = meta.get("context-profile") or {}
