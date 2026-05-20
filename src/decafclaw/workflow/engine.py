@@ -175,6 +175,92 @@ def _apply_transition(workspace: Path, wf: WorkflowDef,
     return AdvanceResult(new_phase=target, end_turn_signal=None)
 
 
+async def dispatch_and_finalize_subagent(ctx, workspace: Path,
+                                         state: RunState,
+                                         phase_id: str) -> None:
+    """Run a subagent phase end-to-end: spawn the child, verify its
+    outputs, and either auto-advance along the single ``next-phases``
+    edge or set ``RunStatus.ERROR``.
+
+    Called by the tool layer (workflow_advance) when a transition
+    lands on a SUBAGENT phase. Holds the per-run lock for the full
+    dispatch + verify + advance sequence so concurrent operations on
+    the same run serialize correctly.
+
+    Failure modes (all persisted to ``state.error``):
+    - workflow / phase not registered: ``ValueError`` propagated to caller
+    - child crashes / times out: ``RunStatus.ERROR``, current_phase unchanged
+    - declared outputs missing after child returns: ``RunStatus.ERROR``
+    - subagent phase doesn't have exactly one edge: ``RunStatus.ERROR``
+      (loader should already enforce this, but we double-check)
+    """
+    from . import subagent as wf_subagent
+
+    wf = registry.get(state.workflow)
+    if wf is None:
+        raise ValueError(f"workflow '{state.workflow}' not registered")
+    phase = wf.phase(phase_id)
+    if phase is None:
+        raise ValueError(
+            f"phase '{phase_id}' not in workflow '{state.workflow}'")
+
+    async with run_lock(state.run_id):
+        try:
+            await wf_subagent._run_child(
+                ctx=ctx, workspace=workspace,
+                state=state, phase=phase,
+            )
+        except Exception as exc:
+            log.exception(
+                "[workflow] subagent crashed for run=%s phase=%s",
+                state.run_id, phase_id)
+            state.status = RunStatus.ERROR
+            state.error = f"subagent crashed: {exc}"
+            save_run(workspace, state)
+            return
+
+        missing = verify_subagent_outputs(workspace, state, phase_id)
+        if missing:
+            state.status = RunStatus.ERROR
+            state.error = (
+                "subagent did not produce required outputs: "
+                + ", ".join(missing)
+            )
+            save_run(workspace, state)
+            log.warning(
+                "[workflow] subagent for run=%s phase=%s missing "
+                "outputs: %s",
+                state.run_id, phase_id, missing)
+            return
+
+        # Subagent phases must have exactly one next edge (loader
+        # enforces this; check again here so a hand-edited workflow
+        # surfaces a clear error rather than an arbitrary pick).
+        if len(phase.next_phases) != 1:
+            state.status = RunStatus.ERROR
+            state.error = (
+                f"subagent phase '{phase_id}' must have exactly one "
+                f"next-phases edge for auto-advance "
+                f"(found {len(phase.next_phases)})"
+            )
+            save_run(workspace, state)
+            log.error(
+                "[workflow] subagent phase=%s has %d edges, expected 1",
+                phase_id, len(phase.next_phases))
+            return
+
+        target = phase.next_phases[0].id
+        _apply_transition(
+            workspace, wf, state, edge_idx=0,
+            target=target,
+            reason="subagent complete",
+            gate_response=None,
+        )
+        log.info(
+            "[workflow] subagent complete for run=%s phase=%s → %s",
+            state.run_id, phase_id, target)
+
+
 def verify_subagent_outputs(workspace: Path, state: RunState,
                             phase_id: str) -> list[str]:
     """Return the list of expected outputs that are MISSING from artifacts.

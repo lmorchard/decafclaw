@@ -243,3 +243,98 @@ async def test_finalize_gate_response_uses_fresh_state(tmp_path: Path):
     # PAUSED_GATE.
     with pytest.raises(ValueError, match="not paused on a gate"):
         await finalize_gate_response(ws, captured, approved=True)
+
+
+@pytest.mark.asyncio
+async def test_subagent_dispatch_happy_path(tmp_path: Path, monkeypatch):
+    """Dispatching a subagent phase writes the artifact and advances
+    to the next phase."""
+    from types import SimpleNamespace
+
+    from decafclaw.workflow import subagent as wf_subagent
+    from decafclaw.workflow.engine import dispatch_and_finalize_subagent
+
+    wf = _subagent_workflow()
+    registry.register(wf)
+    ws = tmp_path / "workspace"
+    ws.mkdir()
+    state = create_run(ws, workflow="sub", slug="x",
+                       initial_phase="g")
+
+    # Stub the child-agent runner to "produce" the output file
+    async def fake_run_child(*, ctx, workspace, state, phase):
+        artifacts_dir = (workspace / "workflows" / state.workflow
+                         / "runs" / state.run_id / "artifacts"
+                         / phase.id)
+        artifacts_dir.mkdir(parents=True, exist_ok=True)
+        (artifacts_dir / "sources.md").write_text("fetched")
+        return "done"
+
+    monkeypatch.setattr(wf_subagent, "_run_child", fake_run_child)
+
+    ctx = SimpleNamespace(config=SimpleNamespace(workspace_path=ws))
+    await dispatch_and_finalize_subagent(ctx, ws, state, phase_id="g")
+    reloaded = load_run(ws, state.run_id)
+    assert reloaded.current_phase == "d"
+    assert reloaded.status == RunStatus.DONE
+    assert reloaded.history[-1]["from"] == "g"
+    assert reloaded.history[-1]["to"] == "d"
+
+
+@pytest.mark.asyncio
+async def test_subagent_dispatch_missing_output_sets_error(
+        tmp_path: Path, monkeypatch):
+    from types import SimpleNamespace
+
+    from decafclaw.workflow import subagent as wf_subagent
+    from decafclaw.workflow.engine import dispatch_and_finalize_subagent
+
+    wf = _subagent_workflow()
+    registry.register(wf)
+    ws = tmp_path / "workspace"
+    ws.mkdir()
+    state = create_run(ws, workflow="sub", slug="x",
+                       initial_phase="g")
+
+    async def fake_run_child(*, ctx, workspace, state, phase):
+        # Subagent "completes" but doesn't write the output
+        return "incomplete"
+
+    monkeypatch.setattr(wf_subagent, "_run_child", fake_run_child)
+
+    ctx = SimpleNamespace(config=SimpleNamespace(workspace_path=ws))
+    await dispatch_and_finalize_subagent(ctx, ws, state, phase_id="g")
+    reloaded = load_run(ws, state.run_id)
+    assert reloaded.status == RunStatus.ERROR
+    assert "sources.md" in (reloaded.error or "")
+    assert reloaded.current_phase == "g"  # didn't advance
+
+
+@pytest.mark.asyncio
+async def test_subagent_dispatch_child_crash_sets_error(
+        tmp_path: Path, monkeypatch):
+    """If _run_child raises, dispatch_and_finalize_subagent should set
+    RunStatus.ERROR with the exception text rather than propagating."""
+    from types import SimpleNamespace
+
+    from decafclaw.workflow import subagent as wf_subagent
+    from decafclaw.workflow.engine import dispatch_and_finalize_subagent
+
+    wf = _subagent_workflow()
+    registry.register(wf)
+    ws = tmp_path / "workspace"
+    ws.mkdir()
+    state = create_run(ws, workflow="sub", slug="x",
+                       initial_phase="g")
+
+    async def boom(*, ctx, workspace, state, phase):
+        raise RuntimeError("LLM exploded")
+
+    monkeypatch.setattr(wf_subagent, "_run_child", boom)
+
+    ctx = SimpleNamespace(config=SimpleNamespace(workspace_path=ws))
+    await dispatch_and_finalize_subagent(ctx, ws, state, phase_id="g")
+    reloaded = load_run(ws, state.run_id)
+    assert reloaded.status == RunStatus.ERROR
+    assert "LLM exploded" in (reloaded.error or "")
+    assert reloaded.current_phase == "g"
