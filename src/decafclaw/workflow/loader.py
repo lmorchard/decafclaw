@@ -7,6 +7,7 @@ skips the workflow.
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
 
 import yaml
@@ -20,6 +21,8 @@ from .types import (
 )
 
 log = logging.getLogger(__name__)
+
+_PHASE_ID_RE = re.compile(r"^[a-z][a-z0-9_-]*$")
 
 
 class LoaderError(ValueError):
@@ -83,10 +86,9 @@ def _parse_edges(raw: list, phase_id: str) -> list[EdgeDef]:
 
 def _parse_phase(path: Path) -> PhaseDef:
     phase_id = path.stem
-    if not phase_id.replace("_", "").replace("-", "").isalnum() \
-            or not phase_id[0].isalpha():
+    if not _PHASE_ID_RE.match(phase_id):
         raise LoaderError(
-            f"phase '{phase_id}': id must be [a-z][a-z0-9_-]*")
+            f"phase '{phase_id}': id must match [a-z][a-z0-9_-]*")
     text = path.read_text()
     meta, body = _split_frontmatter(text)
 

@@ -232,11 +232,26 @@ def test_load_fails_when_no_phases_directory(tmp_path):
         load_workflow(skill_dir)
 
 
+def test_load_fails_when_phase_id_has_uppercase(tmp_path):
+    """Phase ids must match [a-z][a-z0-9_-]*. Uppercase rejected."""
+    d = _write_workflow(tmp_path, {
+        "SKILL.md": _SKILL_MD.replace(
+            "initial-phase: gather", "initial-phase: Gather"),
+        "phases/Gather.md": _GATHER,
+        "phases/draft.md": _DRAFT,
+        "phases/review.md": _REVIEW,
+        "phases/publish.md": _PUBLISH,
+    })
+    with pytest.raises(LoaderError, match=r"\[a-z\]"):
+        load_workflow(d)
+
+
 def test_load_subagent_skill_escape_hatch(tmp_path):
+    """A subagent phase with subagent-skill: doesn't need outputs:
+    because the referenced skill owns its own output contract."""
     gather_with_skill = """---
 kind: subagent
 subagent-skill: my-worker
-outputs: [report.md]
 next-phases:
   - id: draft
 ---
@@ -251,3 +266,4 @@ unused body
     })
     wf = load_workflow(d)
     assert wf.phases["gather"].subagent_skill == "my-worker"
+    assert wf.phases["gather"].outputs == ()
