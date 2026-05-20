@@ -97,6 +97,29 @@ def list_system_conversations(config, username: str = "",
     return results[:limit]
 
 
+def can_read_conversation(config, index: "ConversationIndex", conv_id: str,
+                          username: str) -> bool:
+    """Whether ``username`` may read the conversation ``conv_id``.
+
+    Web conversations (those tracked in ``web_conversations.json``) are
+    gated by ``user_id``; another user's web conversation is rejected
+    even if its archive happens to exist on disk. System conversations
+    (schedule, heartbeat, delegated children) live only as archive
+    files — they're readable by any authenticated user as long as the
+    archive exists, mirroring the on-disk discovery model used by
+    ``list_system_conversations``.
+    """
+    from ..archive import archive_path
+    conv = index.get(conv_id)
+    if conv and conv.user_id == username:
+        return True
+    # A `web-` prefix without `--child-` is a top-level web conversation
+    # owned by some other user — never fall through to the on-disk check.
+    if conv_id.startswith("web-") and "--child-" not in conv_id:
+        return False
+    return archive_path(config, conv_id).exists()
+
+
 @dataclass
 class ConversationMeta:
     """Metadata for a web UI conversation."""
