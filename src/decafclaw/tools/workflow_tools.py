@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from ..media import ToolResult
+from ..media import EndTurnConfirm, ToolResult
 from ..workflow import engine, registry
 from ..workflow.runs import create_run, list_runs, load_run
 
@@ -100,10 +100,14 @@ def build_phase_advance_definition(ctx) -> dict | None:
 
 
 def refresh_workflow_tools(ctx) -> None:
-    """Per-turn dynamic refresh — called from refresh_dynamic_tools().
+    """Per-turn dynamic refresh: injects phase_advance into
+    ctx.tools.extra / ctx.tools.extra_definitions when a workflow
+    run is active, removes it when no run is active.
 
-    Injects the dynamic phase_advance into ctx.tools.extra_definitions
-    (and ctx.tools.extra) when a workflow run is active.
+    Wiring into the per-turn refresh path (tool_definitions.py's
+    refresh_dynamic_tools) lands in Task 6. Until that wiring is
+    in place, phase_advance is not visible to the LLM at runtime —
+    only the static workflow_* tools appear.
     """
     definition = build_phase_advance_definition(ctx)
     if definition is None:
@@ -215,9 +219,14 @@ async def tool_phase_advance(ctx, target_phase_id: str,
         return ToolResult(text=f"[error: {exc}]")
 
     if result.end_turn_signal is not None:
-        from ..media import EndTurnConfirm
         confirm = result.end_turn_signal
-        assert isinstance(confirm, EndTurnConfirm)
+        if not isinstance(confirm, EndTurnConfirm):
+            log.warning(
+                "[workflow] unexpected end_turn_signal type %r from "
+                "engine.advance — expected EndTurnConfirm",
+                type(confirm).__name__)
+            return ToolResult(
+                text="[error: unexpected gate signal type from engine]")
         run_id = state.run_id
         workspace = ctx.config.workspace_path
 

@@ -121,7 +121,10 @@ async def finalize_gate_response(workspace: Path, state: RunState,
             raise ValueError("run is not paused on a gate")
         state = fresh
 
+        # Guard above ensures pending_gate is non-None; assign to a
+        # local so pyright can narrow the type for the dict accesses.
         pending = state.pending_gate
+        assert pending is not None  # invariant from guard above
         target = pending["edge_target"] if approved else pending["on_deny"]
         phase = wf.phase(state.current_phase)
         if phase is None:
