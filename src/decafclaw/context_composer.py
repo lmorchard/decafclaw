@@ -101,6 +101,11 @@ class ComposerState:
     # represents a fresh in-memory view.
     cleanup_cleared_count: int = 0
     cleanup_cleared_bytes: int = 0
+    # Index of the most-recently cleared workflow_phase_boundary marker.
+    # -1 means no marker has been cleared yet. Used by
+    # _apply_phase_boundary_clear to avoid re-clearing the same range
+    # on every turn while a workflow phase is active.
+    last_cleared_workflow_boundary_idx: int = -1
 
 
 # -- Sidecar persistence ------------------------------------------------------
@@ -578,11 +583,18 @@ class ContextComposer:
         if marker_idx is None:
             return
 
+        # If this marker has already been cleared, skip the range clear.
+        # A cleared boundary is stable: the same index won't need re-clearing
+        # until a new (higher-index) marker is written by the engine.
+        if marker_idx <= self.state.last_cleared_workflow_boundary_idx:
+            return
+
         preserve = set(getattr(config.cleanup, "preserve_tools", []) or [])
         stats = clear_tool_results_in_range(
             history, start_idx=0, end_idx=marker_idx,
             preserve_tools=preserve,
         )
+        self.state.last_cleared_workflow_boundary_idx = marker_idx
         if stats.cleared_count:
             self.state.cleanup_cleared_count += stats.cleared_count
             self.state.cleanup_cleared_bytes += stats.cleared_bytes

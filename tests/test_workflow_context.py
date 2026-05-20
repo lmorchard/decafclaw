@@ -94,6 +94,51 @@ def test_overlay_includes_when_clauses(tmp_path: Path):
     assert "ready" in overlay.phase_prompt_section
 
 
+def test_phase_boundary_marker_clears_once(tmp_path: Path):
+    """Phase-boundary marker should clear tool results on the first call,
+    then be a no-op on subsequent calls at the same marker index."""
+    from types import SimpleNamespace
+
+    from decafclaw.context_composer import ComposerState, ContextComposer
+
+    composer = ContextComposer(state=ComposerState())
+    config = SimpleNamespace(cleanup=SimpleNamespace(preserve_tools=[]))
+
+    big_content = "huge tool output" * 200
+    history = [
+        {"role": "tool", "name": "search", "content": big_content,
+         "tool_call_id": "t1"},
+        {"role": "workflow_phase_boundary"},
+        {"role": "tool", "name": "notes_append", "content": "kept",
+         "tool_call_id": "t2"},
+    ]
+
+    # First call — should clear t1 (before the marker)
+    composer._apply_phase_boundary_clear(config, history)
+    assert "tool output cleared" in history[0]["content"]
+    assert history[2]["content"] == "kept"  # post-marker untouched
+    assert composer.state.last_cleared_workflow_boundary_idx == 1
+    cleared_count_after_first = composer.state.cleanup_cleared_count
+
+    # Restore the cleared entry to a large value to verify it is NOT re-cleared
+    history[0]["content"] = big_content
+
+    # Second call at the same marker — should be a no-op
+    composer._apply_phase_boundary_clear(config, history)
+    assert history[0]["content"] == big_content  # not re-cleared
+    assert composer.state.cleanup_cleared_count == cleared_count_after_first
+    assert composer.state.last_cleared_workflow_boundary_idx == 1  # unchanged
+
+    # Add a new (later) marker — should clear up to the new marker
+    history.append({"role": "tool", "name": "x", "content": big_content,
+                    "tool_call_id": "t3"})
+    history.append({"role": "workflow_phase_boundary"})
+    new_marker_idx = len(history) - 1
+
+    composer._apply_phase_boundary_clear(config, history)
+    assert composer.state.last_cleared_workflow_boundary_idx == new_marker_idx
+
+
 def test_clear_tool_results_in_range_stubs_targeted_messages(tmp_path: Path):
     from decafclaw.context_cleanup import clear_tool_results_in_range
 
