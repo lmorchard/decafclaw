@@ -1,6 +1,6 @@
 ---
 kind: subagent
-tools: [tabstack_research, tabstack_extract_markdown, vault_read]
+tools: [tabstack_research, tabstack_extract_markdown, vault_read, workflow_artifact_write]
 outputs: [sources.md]
 next-phases:
   - id: draft
