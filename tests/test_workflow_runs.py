@@ -1,6 +1,7 @@
 """Tests for workflow run persistence and discovery."""
 
 import asyncio
+import re
 from pathlib import Path
 
 import pytest
@@ -38,11 +39,12 @@ def test_create_run_id_timestamp_prefix(tmp_path):
     ws = _workspace(tmp_path)
     state = create_run(ws, workflow="weeknotes", slug="w20",
                        initial_phase="gather")
-    # Format: YYYY-MM-DD-HHMM-{workflow}-{slug}
-    parts = state.run_id.split("-")
-    assert len(parts) >= 5
-    assert parts[-2] == "weeknotes"
-    assert parts[-1] == "w20"
+    # Format: YYYY-MM-DD-HHMM[SS[uuuuuu]]-{workflow}-{slug}
+    # Timestamp prefix is the YYYY-MM-DD-HHMM part; seconds and
+    # microseconds may be appended on collision.
+    pattern = r"^\d{4}-\d{2}-\d{2}-\d{4}(\d{2}(\d{6})?)?-weeknotes-w20$"
+    assert re.match(pattern, state.run_id), \
+        f"run_id {state.run_id!r} does not match expected format"
 
 
 def test_load_run_round_trip(tmp_path):

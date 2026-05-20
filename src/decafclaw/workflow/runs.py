@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -47,12 +48,21 @@ def create_run(workspace: Path, workflow: str, slug: str,
     ts = _ts_prefix()
     run_id = f"{ts}-{workflow}-{slug}"
     run_dir = _run_dir(workspace, workflow, run_id)
+    # On collision (rare — same-minute creation), disambiguate with
+    # seconds, then microseconds if even that collides.
     if run_dir.exists():
-        # Add seconds to avoid collisions when starting multiple runs
-        # within the same minute
-        secs = datetime.now(timezone.utc).strftime("%S")
+        now = datetime.now(timezone.utc)
+        secs = now.strftime("%S")
         run_id = f"{ts}{secs}-{workflow}-{slug}"
         run_dir = _run_dir(workspace, workflow, run_id)
+        if run_dir.exists():
+            usecs = f"{now.microsecond:06d}"
+            run_id = f"{ts}{secs}{usecs}-{workflow}-{slug}"
+            run_dir = _run_dir(workspace, workflow, run_id)
+            if run_dir.exists():
+                raise RuntimeError(
+                    f"run id collision for {workflow}/{slug} "
+                    "even after microsecond disambiguation")
     run_dir.mkdir(parents=True)
     (run_dir / "artifacts").mkdir()
 
@@ -88,7 +98,7 @@ def save_run(workspace: Path, state: RunState) -> None:
 
 def _write_state(run_dir: Path, state: RunState) -> None:
     path = _state_path(run_dir)
-    tmp = path.with_suffix(".json.tmp")
+    tmp = path.parent / (path.name + ".tmp")
     tmp.write_text(state.to_json())
     os.replace(tmp, path)
 
@@ -136,13 +146,13 @@ def list_runs(workspace: Path, workflow: str = "",
 
 
 # Per-run lock registry. Locks are created lazily on first acquire and
-# held by run_id. Cleanup is bounded by the run's lifetime — runs are
-# few enough that we don't need to GC.
+# keyed by run_id. Entries accumulate for the process lifetime — there
+# is no GC. Acceptable because concurrent workflow runs are few.
 _run_locks: dict[str, asyncio.Lock] = {}
 
 
 @asynccontextmanager
-async def run_lock(run_id: str):
+async def run_lock(run_id: str) -> AsyncIterator[None]:
     """Async context manager that serializes operations on a single run."""
     lock = _run_locks.setdefault(run_id, asyncio.Lock())
     async with lock:
