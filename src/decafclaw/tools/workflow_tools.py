@@ -104,10 +104,8 @@ def refresh_workflow_tools(ctx) -> None:
     ctx.tools.extra / ctx.tools.extra_definitions when a workflow
     run is active, removes it when no run is active.
 
-    Wiring into the per-turn refresh path (tool_definitions.py's
-    refresh_dynamic_tools) lands in Task 6. Until that wiring is
-    in place, phase_advance is not visible to the LLM at runtime —
-    only the static workflow_* tools appear.
+    Called from tool_definitions.refresh_dynamic_tools() after the
+    skill providers have registered their dynamic tools.
     """
     definition = build_phase_advance_definition(ctx)
     if definition is None:

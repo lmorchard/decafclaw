@@ -9,6 +9,9 @@ from pathlib import Path
 
 import yaml
 
+from decafclaw.workflow import registry as workflow_registry
+from decafclaw.workflow.loader import LoaderError, load_workflow
+
 log = logging.getLogger(__name__)
 
 # Bundled skills directory (this package directory itself)
@@ -102,16 +105,14 @@ def parse_skill_md(path: Path) -> SkillInfo | None:
     # Failures are logged and the registry stays untouched; the
     # SkillInfo is still returned so the skill loader stays lenient.
     if meta.get("kind") == "workflow":
-        from decafclaw.workflow import registry as _wf_registry
-        from decafclaw.workflow.loader import LoaderError, load_workflow
         try:
             wf_def = load_workflow(skill_dir)
-        except LoaderError as exc:
+        except (LoaderError, OSError) as exc:
             log.warning(
                 "[workflow] skipping '%s' — invalid workflow: %s",
                 name, exc)
         else:
-            _wf_registry.register(wf_def)
+            workflow_registry.register(wf_def)
 
     # Parse requires.env
     requires = meta.get("requires", {})

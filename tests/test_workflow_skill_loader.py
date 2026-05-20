@@ -83,9 +83,11 @@ next-phases:
         "b.md": _PHASE_B,
     })
     with caplog.at_level("WARNING"):
-        parse_skill_md(path)
+        info = parse_skill_md(path)
     # SkillInfo still returned (skill loader is lenient), but the
     # workflow registry is NOT populated for an invalid workflow
+    assert info is not None
+    assert info.name == "test-wf"
     assert registry.get("test-wf") is None
     assert any("workflow" in rec.message.lower()
                for rec in caplog.records)

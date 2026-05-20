@@ -22,6 +22,7 @@ from .tools.tool_registry import (
     classify_tools,
     get_fetched_tools,
 )
+from .tools.workflow_tools import refresh_workflow_tools
 
 log = logging.getLogger(__name__)
 
@@ -83,7 +84,6 @@ def refresh_dynamic_tools(ctx) -> None:
 
     # Workflow engine per-turn tool refresh — injects the dynamic
     # phase_advance schema reflecting the current run's current phase.
-    from .tools.workflow_tools import refresh_workflow_tools
     refresh_workflow_tools(ctx)
 
 
