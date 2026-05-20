@@ -188,3 +188,27 @@ async def test_workflow_list_and_switch(tmp_path: Path):
 
     await tool_workflow_switch(ctx, run_id=first)
     assert ctx.skills.data["current_workflow_run"] == first
+
+
+@pytest.mark.asyncio
+async def test_refresh_workflow_tools_injects_phase_advance(tmp_path: Path):
+    """After workflow_start, refresh_workflow_tools should add
+    phase_advance to ctx.tools.extra_definitions with the right enum."""
+    from decafclaw.tools.workflow_tools import refresh_workflow_tools
+
+    registry.register(_two_phase_wf())
+    ctx = _ctx_for(tmp_path)
+    ctx.tools = SimpleNamespace(extra={}, extra_definitions=[])
+
+    refresh_workflow_tools(ctx)
+    assert "phase_advance" not in ctx.tools.extra
+
+    await tool_workflow_start(ctx, name="demo", slug="t1")
+    refresh_workflow_tools(ctx)
+    assert "phase_advance" in ctx.tools.extra
+    defs = [d for d in ctx.tools.extra_definitions
+            if d["function"]["name"] == "phase_advance"]
+    assert len(defs) == 1
+    enum_vals = defs[0]["function"]["parameters"]["properties"][
+        "target_phase_id"]["enum"]
+    assert set(enum_vals) == {"b", "c"}

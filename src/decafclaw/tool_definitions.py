@@ -81,6 +81,11 @@ def refresh_dynamic_tools(ctx) -> None:
         ctx.tools.extra.update(tools)
         ctx.tools.extra_definitions.extend(tool_defs)
 
+    # Workflow engine per-turn tool refresh — injects the dynamic
+    # phase_advance schema reflecting the current run's current phase.
+    from .tools.workflow_tools import refresh_workflow_tools
+    refresh_workflow_tools(ctx)
+
 
 def collect_all_tool_defs(ctx) -> list:
     """Gather all available tool definitions (core + skill + MCP + extra).

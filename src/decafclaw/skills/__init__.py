@@ -98,6 +98,21 @@ def parse_skill_md(path: Path) -> SkillInfo | None:
     skill_dir = path.parent
     has_native_tools = (skill_dir / "tools.py").exists()
 
+    # If this is a workflow skill, attempt to load+register it.
+    # Failures are logged and the registry stays untouched; the
+    # SkillInfo is still returned so the skill loader stays lenient.
+    if meta.get("kind") == "workflow":
+        from decafclaw.workflow import registry as _wf_registry
+        from decafclaw.workflow.loader import LoaderError, load_workflow
+        try:
+            wf_def = load_workflow(skill_dir)
+        except LoaderError as exc:
+            log.warning(
+                "[workflow] skipping '%s' — invalid workflow: %s",
+                name, exc)
+        else:
+            _wf_registry.register(wf_def)
+
     # Parse requires.env
     requires = meta.get("requires", {})
     requires_env = requires.get("env", []) if isinstance(requires, dict) else []
