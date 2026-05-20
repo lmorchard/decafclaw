@@ -271,6 +271,7 @@ class ContextComposer:
         from .archive import LLM_ROLES
         from .attachments import resolve_attachments
         from .util import estimate_tokens
+        from .workflow.context import consult_workflow_overlay
 
         config = ctx.config
         sources: list[SourceEntry] = []
@@ -290,9 +291,42 @@ class ContextComposer:
         if attachments:
             user_msg["attachments"] = attachments
 
+        # -- Workflow overlay (only in INTERACTIVE mode) --
+        # Workflow phases override default composer behavior via a per-phase
+        # context-profile dict: skip memory/notes, swap vault retrieval
+        # mode, append a <workflow_phase> section to the system prompt,
+        # and flag phase-boundary tool clearing. See docs/workflows.md.
+        wf_overlay = None
+        if mode == ComposerMode.INTERACTIVE:
+            wf_overlay = consult_workflow_overlay(ctx)
+
         # -- System prompt --
         system_text, system_entry = self._compose_system_prompt(config)
+        if wf_overlay is not None:
+            system_text = (
+                f"{system_text}\n\n{wf_overlay.phase_prompt_section}"
+            )
+            # Recompute the size estimate so the budget reflects the
+            # appended section (additive, mirrors how skill-catalog and
+            # loaded-skills are folded into config.system_prompt).
+            system_entry.tokens_estimated = estimate_tokens(system_text)
+            system_entry.details = {
+                **system_entry.details,
+                "workflow_run": wf_overlay.run_id,
+                "workflow_phase": wf_overlay.phase_id,
+            }
         sources.append(system_entry)
+
+        # -- Phase-boundary tool clearing --
+        # When the current phase opts in (the default), stub any tool
+        # messages from prior phases so the model isn't paying attention
+        # budget on stale phase output. We look for the most recent
+        # ``workflow_phase_boundary`` marker in history and clear tool
+        # messages strictly before it. If no marker is present yet (the
+        # engine writes them on transition; first phase of a run has no
+        # boundary), this is a no-op — which is the correct behavior.
+        if wf_overlay is not None and wf_overlay.phase_boundary:
+            self._apply_phase_boundary_clear(config, history)
 
         # -- Wiki context (injected before user message in history) --
         # Explicit @[[Page]] references are fixed costs — always included.
@@ -307,12 +341,19 @@ class ContextComposer:
 
         # -- Per-conversation scratchpad notes (#299) --
         # Auto-inject the recent notes block so the agent doesn't pay a
-        # tool call per turn to read them.
-        notes_msgs, notes_entry = self._compose_notes(ctx, config, mode)
-        for nm in notes_msgs:
-            to_archive.append(nm)
-        if notes_entry:
-            sources.append(notes_entry)
+        # tool call per turn to read them. Workflow phases can opt out
+        # of this injection via context-profile notes-injection: off.
+        notes_msgs: list[dict] = []
+        notes_entry: SourceEntry | None = None
+        if wf_overlay is None or (
+            wf_overlay.context_profile_overrides.get("notes-injection")
+            != "off"
+        ):
+            notes_msgs, notes_entry = self._compose_notes(ctx, config, mode)
+            for nm in notes_msgs:
+                to_archive.append(nm)
+            if notes_entry:
+                sources.append(notes_entry)
 
         # -- Pre-emptive tool search (populate ctx.tools.preempt_matches) --
         # Runs before tool classification so matches promote into the active
@@ -387,14 +428,37 @@ class ContextComposer:
         # else: None → _compose_vault_retrieval falls back to max_tokens
 
         # -- Memory context (injected before user message in history) --
-        memory_msgs, retrieved_context_text, mc_results, memory_entry = await self._compose_vault_retrieval(
-            ctx, config, user_message, mode,
-            token_budget=memory_budget,
+        # Workflow phases can disable memory retrieval (memory-retrieval:
+        # off) or override the injection mode (vault-injection-mode:
+        # headlines | on_demand | always).
+        memory_msgs: list[dict] = []
+        retrieved_context_text = ""
+        mc_results: list[dict] = []
+        memory_entry: SourceEntry | None = None
+        skip_memory = (
+            wf_overlay is not None
+            and wf_overlay.context_profile_overrides.get(
+                "memory-retrieval") == "off"
         )
-        for mm in memory_msgs:
-            to_archive.append(mm)
-        if memory_entry:
-            sources.append(memory_entry)
+        vault_mode_override = (
+            wf_overlay.context_profile_overrides.get("vault-injection-mode")
+            if wf_overlay is not None else None
+        )
+        if not skip_memory:
+            (
+                memory_msgs,
+                retrieved_context_text,
+                mc_results,
+                memory_entry,
+            ) = await self._compose_vault_retrieval(
+                ctx, config, user_message, mode,
+                token_budget=memory_budget,
+                retrieval_mode_override=vault_mode_override,
+            )
+            for mm in memory_msgs:
+                to_archive.append(mm)
+            if memory_entry:
+                sources.append(memory_entry)
 
         # -- User message (archived; appended to history at the end) --
         to_archive.append(user_msg)
@@ -489,6 +553,45 @@ class ContextComposer:
             memory_results=mc_results,
         )
 
+    def _apply_phase_boundary_clear(self, config, history: list) -> None:
+        """Stub tool messages from prior workflow phases.
+
+        Scans ``history`` backwards for the most recent
+        ``{"role": "workflow_phase_boundary"}`` marker. If found, calls
+        ``clear_tool_results_in_range`` from the start of history up to
+        (but not including) that marker, preserving the configured
+        ``cleanup.preserve_tools`` allowlist so essential context
+        (notes_append, checklist_*, activate_skill, etc.) survives. If
+        no marker is present (first phase of a run, or the engine has
+        not yet emitted markers), this is a no-op.
+
+        The engine is responsible for writing markers into history at
+        transition time; this method only consumes them.
+        """
+        from .context_cleanup import clear_tool_results_in_range
+
+        marker_idx: int | None = None
+        for i in range(len(history) - 1, -1, -1):
+            if history[i].get("role") == "workflow_phase_boundary":
+                marker_idx = i
+                break
+        if marker_idx is None:
+            return
+
+        preserve = set(getattr(config.cleanup, "preserve_tools", []) or [])
+        stats = clear_tool_results_in_range(
+            history, start_idx=0, end_idx=marker_idx,
+            preserve_tools=preserve,
+        )
+        if stats.cleared_count:
+            self.state.cleanup_cleared_count += stats.cleared_count
+            self.state.cleanup_cleared_bytes += stats.cleared_bytes
+            log.info(
+                "Workflow phase-boundary clear: %d tool message(s), "
+                "%d bytes (marker at history[%d])",
+                stats.cleared_count, stats.cleared_bytes, marker_idx,
+            )
+
     def _compose_system_prompt(self, config) -> tuple[str, SourceEntry]:
         """Build the system prompt message content and track it as a source.
 
@@ -548,12 +651,17 @@ class ContextComposer:
     async def _compose_vault_retrieval(
         self, ctx, config, user_message: str, mode: ComposerMode,
         token_budget: int | None = None,
+        retrieval_mode_override: str | None = None,
     ) -> tuple[list[dict], str, list[dict], SourceEntry | None]:
         """Retrieve and format memory context for injection.
 
         Args:
             token_budget: Dynamic budget from composer. If None, falls back
                 to config.vault_retrieval.max_tokens for backward compatibility.
+            retrieval_mode_override: Per-turn override of
+                ``vault_retrieval.mode`` (set by the workflow overlay).
+                One of ``always`` / ``headlines`` / ``on_demand``;
+                anything else falls back to the config value.
 
         Returns (messages_to_inject, formatted_text, raw_results, source_entry).
         Retrieval candidates are scored by composite relevance and selected
@@ -578,8 +686,13 @@ class ContextComposer:
             return [], "", [], None
 
         # Resolve retrieval mode early so the on_demand path can
-        # short-circuit before any retrieval work runs.
-        retrieval_mode = self._resolve_retrieval_mode(config)
+        # short-circuit before any retrieval work runs. A per-turn
+        # override (from the workflow overlay) wins over the config
+        # default; unrecognized override values fall through to config.
+        if retrieval_mode_override in ("always", "headlines", "on_demand"):
+            retrieval_mode = retrieval_mode_override
+        else:
+            retrieval_mode = self._resolve_retrieval_mode(config)
 
         if retrieval_mode == "on_demand":
             entry = SourceEntry(

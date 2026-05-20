@@ -150,3 +150,70 @@ def clear_old_tool_results(history: list[dict], config) -> ClearStats:
         )
 
     return stats
+
+
+def clear_tool_results_in_range(
+    history: list[dict],
+    start_idx: int,
+    end_idx: int,
+    preserve_tools: set[str] | None = None,
+) -> ClearStats:
+    """Stub tool-result messages within ``[start_idx, end_idx)``.
+
+    Sibling to :func:`clear_old_tool_results`: same in-memory editing
+    pattern, but scoped to a specific index range instead of the
+    "old enough by user-turn count" heuristic. Used by the workflow
+    engine to clear prior-phase tool outputs at phase boundaries — the
+    engine writes a ``workflow_phase_boundary`` marker into history at
+    transition time, and the composer calls this with the range from
+    the start of the run (or prior marker) up to that marker.
+
+    Preservation rules (skip the message, leave content intact):
+
+    1. ``role != "tool"`` — only tool messages are stubbed.
+    2. ``msg["name"]`` (when present) is in ``preserve_tools``.
+       Tool-result dicts may carry a ``name`` field directly (workflow
+       boundary markers, synthetic injections); when absent, the
+       message is eligible regardless of which tool produced it.
+    3. ``content`` is not a string (provider-specific shapes are left
+       alone rather than guessed at).
+    4. ``content`` is already empty.
+    5. ``content`` already starts with the stub prefix (idempotent).
+
+    Returns a ``ClearStats`` with the per-call deltas. End index is
+    clamped to ``len(history)``; ``start_idx >= end_idx`` is a no-op.
+    """
+    preserve = preserve_tools or set()
+    stats = ClearStats()
+    end_idx = min(end_idx, len(history))
+    start_idx = max(0, start_idx)
+    for i in range(start_idx, end_idx):
+        msg = history[i]
+        if msg.get("role") != "tool":
+            continue
+        name = msg.get("name")
+        if name and name in preserve:
+            continue
+        content = msg.get("content", "")
+        if not isinstance(content, str):
+            continue
+        if not content:
+            continue
+        if _is_already_cleared(content):
+            continue
+        size = len(content.encode("utf-8"))
+        stub = f"{_STUB_PREFIX} {size} bytes]"
+        reclaimed = size - len(stub.encode("utf-8"))
+        if reclaimed <= 0:
+            # Stub would not actually save bytes (rare; only for tiny
+            # tool outputs). Skip rather than enlarge the message.
+            continue
+        msg["content"] = stub
+        stats.cleared_count += 1
+        stats.cleared_bytes += reclaimed
+        log.debug(
+            "Cleared tool message at history[%d] (range tier, tool=%s, "
+            "%d bytes)",
+            i, name or "?", size,
+        )
+    return stats
