@@ -199,18 +199,12 @@ async def _handle_load_history(ws_send: WSSendCallable, index, username, msg, st
     if not _is_safe_conv_id(conv_id):
         await ws_send({"type": WSMessageType.ERROR, "message": "Invalid conversation ID"})
         return
+    from .conversations import can_read_conversation
     conv = index.get(conv_id)
-    is_owner = conv and conv.user_id == username
-    if not is_owner:
-        # Reject other users' web conversations
-        if conv_id.startswith("web-") and "--child-" not in conv_id:
-            await ws_send({"type": WSMessageType.ERROR, "message": "Conversation not found"})
-            return
-        # Allow read-only access if archive exists on disk (system conversations)
-        from ..archive import archive_path
-        if not archive_path(config, conv_id).exists():
-            await ws_send({"type": WSMessageType.ERROR, "message": "Conversation not found"})
-            return
+    is_owner = bool(conv and conv.user_id == username)
+    if not can_read_conversation(config, index, conv_id, username):
+        await ws_send({"type": WSMessageType.ERROR, "message": "Conversation not found"})
+        return
     try:
         limit = min(max(1, int(msg.get("limit", 50))), 500)
     except (TypeError, ValueError):

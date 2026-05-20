@@ -379,6 +379,97 @@ async def test_export_no_archive_file_is_404(authed_client):
 
 
 @pytest.mark.asyncio
+async def test_export_system_conv_with_archive(authed_client, http_config):
+    """System conversations (schedule/heartbeat) live on disk without a
+    ConversationIndex entry. Export should still work — read access is
+    granted by archive-on-disk for non-`web-` conv IDs, mirroring the
+    behavior of the WS load_history handler."""
+    conv_dir = http_config.workspace_path / "conversations"
+    conv_dir.mkdir(parents=True, exist_ok=True)
+    conv_id = "schedule-mastodon-ingest-20260520-053002"
+    archive = conv_dir / f"{conv_id}.jsonl"
+    archive.write_text(
+        '{"role":"user","content":"run the ingest","timestamp":"2026-05-20T05:30:02Z"}\n'
+        '{"role":"assistant","content":"done","timestamp":"2026-05-20T05:30:10Z"}\n'
+    )
+
+    resp = await authed_client.get(
+        f"/api/conversations/{conv_id}/export?format=jsonl"
+    )
+    assert resp.status_code == 200
+    assert resp.content == archive.read_bytes()
+
+    resp = await authed_client.get(
+        f"/api/conversations/{conv_id}/export?format=markdown"
+    )
+    assert resp.status_code == 200
+    assert resp.text.startswith(f"# Conversation {conv_id}")
+    assert "run the ingest" in resp.text
+
+
+@pytest.mark.asyncio
+async def test_history_system_conv_with_archive(authed_client, http_config):
+    """REST /history should also serve system conversations (same access
+    model as WS load_history and /export)."""
+    conv_dir = http_config.workspace_path / "conversations"
+    conv_dir.mkdir(parents=True, exist_ok=True)
+    conv_id = "heartbeat-20260520-053000-0"
+    (conv_dir / f"{conv_id}.jsonl").write_text(
+        '{"role":"user","content":"tick"}\n'
+    )
+
+    resp = await authed_client.get(f"/api/conversations/{conv_id}/history")
+    assert resp.status_code == 200
+    assert len(resp.json()["messages"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_context_diagnostics_system_conv(authed_client, http_config):
+    """REST /context should also serve system conversations."""
+    conv_dir = http_config.workspace_path / "conversations"
+    conv_dir.mkdir(parents=True, exist_ok=True)
+    conv_id = "schedule-newsletter-20260520-080000"
+    (conv_dir / f"{conv_id}.jsonl").write_text("{}\n")
+    # /context reads a sidecar; write a minimal one so the endpoint returns 200.
+    import json
+    (conv_dir / f"{conv_id}.context.json").write_text(
+        json.dumps({"messages": [], "tools": [], "diagnostics": {}})
+    )
+
+    resp = await authed_client.get(f"/api/conversations/{conv_id}/context")
+    assert resp.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_export_other_user_web_conv_is_404(app, http_config):
+    """A `web-` conv owned by someone else must remain inaccessible even
+    if the archive happens to exist on disk — the system-conv fallback
+    must not leak cross-user web conversations."""
+    http_config.workspace_path.mkdir(parents=True, exist_ok=True)
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as alice:
+        token = create_token(http_config, "alice")
+        resp = await alice.post("/api/auth/login", json={"token": token})
+        alice.cookies = resp.cookies
+        create_resp = await alice.post(
+            "/api/conversations", json={"title": "alice's"}
+        )
+        conv_id = create_resp.json()["conv_id"]
+        append_message(http_config, conv_id, {"role": "user", "content": "secret"})
+
+    async with AsyncClient(transport=transport, base_url="http://test") as bob:
+        token = create_token(http_config, "bob")
+        resp = await bob.post("/api/auth/login", json={"token": token})
+        bob.cookies = resp.cookies
+        # Archive exists on disk, but the conv is owned by alice — bob
+        # must not get read access via the system-conv fallback.
+        resp = await bob.get(
+            f"/api/conversations/{conv_id}/export?format=jsonl"
+        )
+        assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
 async def test_export_empty_archive_file_renders_header(authed_client, http_config):
     """Archive file exists but is empty (e.g. corrupt or never appended-to):
     JSONL returns the empty bytes, markdown returns the header-only doc.

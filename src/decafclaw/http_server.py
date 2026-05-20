@@ -559,12 +559,11 @@ async def rename_conversation(request: Request, username: str) -> JSONResponse:
 @_authenticated
 async def get_conversation_history(request: Request, username: str) -> JSONResponse:
     """Load paginated conversation history."""
-    from .web.conversations import ConversationIndex
+    from .web.conversations import ConversationIndex, can_read_conversation
     config = request.app.state.config
     conv_id = request.path_params["id"]
     index = ConversationIndex(config)
-    conv = index.get(conv_id)
-    if not conv or conv.user_id != username:
+    if not can_read_conversation(config, index, conv_id, username):
         return JSONResponse({"error": "not found"}, status_code=404)
     limit = int(request.query_params.get("limit", "50"))
     before = request.query_params.get("before", "")
@@ -576,12 +575,11 @@ async def get_conversation_history(request: Request, username: str) -> JSONRespo
 async def get_context_diagnostics(request: Request, username: str) -> JSONResponse:
     """Return context composer diagnostics for a conversation."""
     from .context_composer import read_context_sidecar
-    from .web.conversations import ConversationIndex
+    from .web.conversations import ConversationIndex, can_read_conversation
     config = request.app.state.config
     conv_id = request.path_params["id"]
     index = ConversationIndex(config)
-    conv = index.get(conv_id)
-    if not conv or conv.user_id != username:
+    if not can_read_conversation(config, index, conv_id, username):
         return JSONResponse({"error": "not found"}, status_code=404)
     data = read_context_sidecar(config, conv_id)
     if data is None:
@@ -599,7 +597,7 @@ async def export_conversation(request: Request, username: str) -> Response:
     """
     from .archive import archive_path, read_archive
     from .conversation_export import render_markdown
-    from .web.conversations import ConversationIndex
+    from .web.conversations import ConversationIndex, can_read_conversation
     config = request.app.state.config
     conv_id = request.path_params["id"]
     fmt = request.query_params.get("format", "")
@@ -609,8 +607,7 @@ async def export_conversation(request: Request, username: str) -> Response:
             status_code=400,
         )
     index = ConversationIndex(config)
-    conv = index.get(conv_id)
-    if not conv or conv.user_id != username:
+    if not can_read_conversation(config, index, conv_id, username):
         return JSONResponse({"error": "not found"}, status_code=404)
     # Both formats gate on the archive file existing; an empty or corrupt
     # file is still a legitimate (if uninteresting) export — the markdown
