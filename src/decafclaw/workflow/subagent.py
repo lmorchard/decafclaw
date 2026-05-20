@@ -32,17 +32,15 @@ log = logging.getLogger(__name__)
 # they don't activate skills, don't fan out further sub-tasks, and
 # don't manipulate workflow state.
 _BLOCKED_FOR_CHILDREN = frozenset({
-    "delegate_task",
-    "delegate_tasks",
-    "activate_skill",
-    "refresh_skills",
-    "tool_search",
-    "workflow_start",
-    "workflow_switch",
-    "workflow_list",
-    "workflow_status",
-    "workflow_advance",
-    "workflow_abort",
+    # Children must not orchestrate further work
+    "delegate_task", "delegate_tasks",
+    # Children inherit parent's activated skill set; they don't manage it
+    "activate_skill", "refresh_skills", "tool_search",
+    # Children must not start/switch/list workflow runs (they run within
+    # one) and must not advance the parent's transition state machine —
+    # phase_advance is the dynamic transition tool injected per turn.
+    "workflow_start", "workflow_switch", "workflow_list",
+    "workflow_status", "phase_advance",
 })
 
 
@@ -82,9 +80,13 @@ async def _run_child(*, ctx, workspace: Path, state: RunState,
     The child runs to completion before this function returns — the
     caller relies on that to verify outputs synchronously.
     """
-    # Deferred imports — these modules import workflow types indirectly
-    # via the tool registry, so importing at module level would risk
-    # circular imports during the workflow package init.
+    # Function-local: tools/__init__.py imports workflow_tools which imports
+    # workflow.engine; if engine imports subagent at module level and subagent
+    # imports tools at module level, the chain is:
+    #   tools -> workflow_tools -> workflow.engine -> workflow.subagent -> tools
+    # Python sees tools as a partial module at that point — ImportError.
+    # Both this import and the `from . import subagent` in engine.py's
+    # dispatch_and_finalize_subagent must remain function-local.
     from ..conversation_manager import TurnKind
     from ..tools import TOOLS
 
@@ -101,7 +103,11 @@ async def _run_child(*, ctx, workspace: Path, state: RunState,
             raise ValueError(
                 f"subagent-skill '{skill_to_activate}' not found in "
                 "discovered skills")
-        prompt = skill.body or ""
+        if not skill.body:
+            raise ValueError(
+                f"subagent-skill '{skill_to_activate}' has an empty "
+                "body — skill may be lazy-loaded and not yet activated")
+        prompt = skill.body
     else:
         prompt = phase.prompt or ""
 

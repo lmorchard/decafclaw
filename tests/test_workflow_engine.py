@@ -310,6 +310,17 @@ async def test_subagent_dispatch_missing_output_sets_error(
     assert reloaded.current_phase == "g"  # didn't advance
 
 
+def test_blocked_for_children_includes_phase_advance():
+    """Children must not be able to call phase_advance — it would let
+    them advance the parent's workflow state machine."""
+    from decafclaw.workflow.subagent import _BLOCKED_FOR_CHILDREN
+    assert "phase_advance" in _BLOCKED_FOR_CHILDREN
+    # Sanity: also confirm the workflow_* admin tools are blocked
+    for t in ("workflow_start", "workflow_switch", "workflow_list",
+              "workflow_status"):
+        assert t in _BLOCKED_FOR_CHILDREN, f"{t} should be blocked"
+
+
 @pytest.mark.asyncio
 async def test_subagent_dispatch_child_crash_sets_error(
         tmp_path: Path, monkeypatch):

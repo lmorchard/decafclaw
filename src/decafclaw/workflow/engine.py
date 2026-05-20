@@ -194,6 +194,8 @@ async def dispatch_and_finalize_subagent(ctx, workspace: Path,
     - subagent phase doesn't have exactly one edge: ``RunStatus.ERROR``
       (loader should already enforce this, but we double-check)
     """
+    # Function-local: see subagent.py for the full cycle explanation.
+    # tools -> workflow_tools -> workflow.engine -> workflow.subagent -> tools
     from . import subagent as wf_subagent
 
     wf = registry.get(state.workflow)
