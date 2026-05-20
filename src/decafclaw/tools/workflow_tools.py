@@ -309,6 +309,7 @@ WORKFLOW_TOOLS = {
 WORKFLOW_TOOL_DEFINITIONS = [
     {
         "type": "function",
+        "priority": "normal",
         "function": {
             "name": "workflow_start",
             "description": (
@@ -326,6 +327,7 @@ WORKFLOW_TOOL_DEFINITIONS = [
     },
     {
         "type": "function",
+        "priority": "normal",
         "function": {
             "name": "workflow_list",
             "description": (
@@ -342,6 +344,7 @@ WORKFLOW_TOOL_DEFINITIONS = [
     },
     {
         "type": "function",
+        "priority": "normal",
         "function": {
             "name": "workflow_switch",
             "description": (
@@ -357,6 +360,7 @@ WORKFLOW_TOOL_DEFINITIONS = [
     },
     {
         "type": "function",
+        "priority": "normal",
         "function": {
             "name": "workflow_status",
             "description": (
@@ -367,6 +371,7 @@ WORKFLOW_TOOL_DEFINITIONS = [
     },
     {
         "type": "function",
+        "priority": "normal",
         "function": {
             "name": "workflow_artifact_write",
             "description": (
@@ -384,6 +389,7 @@ WORKFLOW_TOOL_DEFINITIONS = [
     },
     {
         "type": "function",
+        "priority": "normal",
         "function": {
             "name": "workflow_artifact_read",
             "description": (

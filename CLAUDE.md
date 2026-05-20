@@ -63,6 +63,7 @@ See [docs/skills.md](docs/skills.md).
 - **`SCHEDULE.md` sidecar** turns a skill into a scheduled task. Bundled and admin-level skills have their SCHEDULE.md honored as-is; `extra_skill_paths` (contrib) SCHEDULE.md is forced `enabled: false` so a third-party install never silently activates a cron job — the user opts in via a copy-on-write overlay at `data/{agent_id}/schedules/{name}.md`. Workspace skills cannot self-schedule (no SCHEDULE.md scanning in workspace skill dirs). See [docs/schedules.md](docs/schedules.md).
 - **Permissions at `data/{agent_id}/skill_permissions.json`** — outside the workspace, so the agent can't grant itself permission.
 - **Dynamic per-turn tools:** export `get_tools(ctx) -> (dict, list)` to vary tools by state.
+- **Workflow skills** ([docs/workflows.md](docs/workflows.md)) — `kind: workflow` in SKILL.md plus `phases/*.md` files declare a graph-based multi-phase task. Engine constrains tools + context per phase, dispatches subagents for `kind: subagent` phases, and routes edges via a dynamically-generated `phase_advance` enum. Bundled example: `skills/workflow_demo/` (`research_brief`).
 
 ### Config and data
 

@@ -1,0 +1,55 @@
+# Workflow engine routing — LLM edge-selection in a branching phase.
+# Guards the dynamic phase_advance enum + when: annotation behavior
+# introduced in feat/255-workflow-engine.
+#
+# The draft phase of research_brief has two edges:
+#   → review   when: draft is written and ready for user review
+#   → gather   when: source material is too thin to draft from
+#
+# These two cases verify the agent picks the correct edge.
+# Note: expect_tool verifies the agent calls phase_advance; the scenario
+# framing is constructed so only one target is plausible for each case.
+
+- name: route_to_review_when_draft_complete
+  setup:
+    system_prompt_extra: |
+      You are in the draft phase of a research_brief workflow run.
+      The workflow has two possible next phases from draft:
+      - review: when the draft is written, covers the topic clearly, and
+        is ready for the user to review.
+      - gather: when the source material is too thin to support a clear
+        brief — go back and fetch more research before drafting can finish.
+      Use phase_advance to transition to the appropriate next phase.
+  input: |
+    You are in the draft phase of a research_brief workflow on the topic
+    "the history of movable type". The gather phase produced a rich
+    sources.md with 6 sources and 4 clearly identified themes. You have
+    written a complete 500-word brief covering the topic with two strong
+    thematic sections and a closing open-questions list. The brief is
+    polished and ready. What do you do next?
+  expect:
+    max_tool_calls: 3
+    max_tool_errors: 1
+    expect_tool: phase_advance
+
+- name: route_to_gather_when_sources_thin
+  setup:
+    system_prompt_extra: |
+      You are in the draft phase of a research_brief workflow run.
+      The workflow has two possible next phases from draft:
+      - review: when the draft is written, covers the topic clearly, and
+        is ready for the user to review.
+      - gather: when the source material is too thin to support a clear
+        brief — go back and fetch more research before drafting can finish.
+      Use phase_advance to transition to the appropriate next phase.
+  input: |
+    You are in the draft phase of a research_brief workflow on "the
+    cultural impact of movable type printing". You read the sources.md
+    from the gather phase and found only 2 sources, both narrowly about
+    the mechanical engineering of the press with nothing about cultural
+    impact. There is no way to write a meaningful brief about cultural
+    impact from this material. What do you do next?
+  expect:
+    max_tool_calls: 3
+    max_tool_errors: 1
+    expect_tool: phase_advance
