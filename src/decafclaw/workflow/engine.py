@@ -10,12 +10,11 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path
 
 from ..media import EndTurnConfirm
 from . import registry
-from .runs import run_lock, save_run
+from .runs import _now_iso, load_run, run_lock, save_run
 from .types import (
     EdgeDef,
     PhaseDef,
@@ -28,16 +27,17 @@ from .types import (
 log = logging.getLogger(__name__)
 
 
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
-
-
 @dataclass
 class AdvanceResult:
-    """Returned by advance(): new phase, optional end_turn signal."""
+    """Returned by advance(): new phase, optional end_turn signal.
+
+    end_turn_signal is None for non-gated transitions, or an
+    EndTurnConfirm for gated edges (caller wires on_approve/on_deny
+    to finalize_gate_response and surfaces the buttons).
+    """
 
     new_phase: str
-    end_turn_signal: EndTurnConfirm | bool | None = None
+    end_turn_signal: EndTurnConfirm | None = None
 
 
 def _find_edge(phase: PhaseDef, target: str) -> tuple[int, EdgeDef] | None:
@@ -102,24 +102,41 @@ def _enter_gate(workspace: Path, state: RunState, edge_idx: int,
 
 async def finalize_gate_response(workspace: Path, state: RunState,
                                  approved: bool) -> AdvanceResult:
-    """Apply a gate's approve/deny response and resume."""
+    """Apply a gate's approve/deny response and resume.
+
+    Re-loads state from disk inside the lock to avoid TOCTOU between
+    the caller's load_run and the lock acquisition: a concurrent
+    advance could otherwise have cleared pending_gate already.
+    """
     wf = registry.get(state.workflow)
     if wf is None:
         raise ValueError(f"workflow '{state.workflow}' not registered")
-    if state.status != RunStatus.PAUSED_GATE or state.pending_gate is None:
-        raise ValueError("run is not paused on a gate")
 
     async with run_lock(state.run_id):
+        fresh = load_run(workspace, state.run_id)
+        if fresh is None:
+            raise ValueError(f"run '{state.run_id}' not found")
+        if fresh.status != RunStatus.PAUSED_GATE \
+                or fresh.pending_gate is None:
+            raise ValueError("run is not paused on a gate")
+        state = fresh
+
         pending = state.pending_gate
         target = pending["edge_target"] if approved else pending["on_deny"]
-        # Find edge index for history (approve path uses original edge)
         phase = wf.phase(state.current_phase)
+        if phase is None:
+            raise ValueError(
+                f"current phase '{state.current_phase}' not in workflow")
         edge_idx = -1
-        if phase is not None:
-            for i, e in enumerate(phase.next_phases):
-                if e.id == pending["edge_target"]:
-                    edge_idx = i
-                    break
+        for i, e in enumerate(phase.next_phases):
+            if e.id == pending["edge_target"]:
+                edge_idx = i
+                break
+        if edge_idx < 0:
+            raise ValueError(
+                f"gate edge target '{pending['edge_target']}' is no "
+                f"longer in phase '{state.current_phase}' — workflow "
+                "definition changed mid-run?")
         state.pending_gate = None
         return _apply_transition(
             workspace, wf, state, edge_idx, target,
@@ -159,7 +176,11 @@ def verify_subagent_outputs(workspace: Path, state: RunState,
                             phase_id: str) -> list[str]:
     """Return the list of expected outputs that are MISSING from artifacts.
 
-    Empty list means all outputs are present.
+    Empty list means all outputs are present (or the phase isn't a
+    subagent phase / the workflow isn't registered — fail-open by
+    design, since the caller is the subagent dispatcher which already
+    knows it landed on a SUBAGENT phase. Out-of-band callers get a
+    no-op rather than an exception.).
     """
     wf = registry.get(state.workflow)
     if wf is None:

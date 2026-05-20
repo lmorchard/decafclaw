@@ -218,3 +218,28 @@ async def test_verify_subagent_outputs_missing_returns_list(tmp_path: Path):
 
     missing = verify_subagent_outputs(ws, state, phase_id="g")
     assert missing == ["sources.md"]
+
+
+@pytest.mark.asyncio
+async def test_finalize_gate_response_uses_fresh_state(tmp_path: Path):
+    """If state has been mutated on disk since the caller loaded it,
+    finalize_gate_response should use the fresh state from inside the
+    lock rather than the stale passed-in state."""
+    wf = _gated_workflow()
+    registry.register(wf)
+    ws = tmp_path / "workspace"
+    ws.mkdir()
+    state = create_run(ws, workflow="gated", slug="x",
+                       initial_phase="a")
+    # Caller advance triggers the gate; state is now PAUSED_GATE on disk.
+    await advance(ws, state, target="b", reason="ok")
+    captured = load_run(ws, state.run_id)
+
+    # Simulate: another process finalized the gate first
+    await finalize_gate_response(ws, captured, approved=True)
+
+    # Now a second finalize call with the SAME (now-stale) `captured`
+    # state should raise — because the on-disk state is no longer
+    # PAUSED_GATE.
+    with pytest.raises(ValueError, match="not paused on a gate"):
+        await finalize_gate_response(ws, captured, approved=True)
