@@ -501,6 +501,114 @@ class TestRunScheduleTask:
         assert result["channel"] == "#reports"
 
     @pytest.mark.asyncio
+    async def test_required_skill_body_injected_into_prompt(self, config):
+        """Thin-trigger SCHEDULE.md must deliver the required-skill body to the LLM.
+
+        Regression test for #558: pre-activated required-skills were being
+        marked activated but their body was discarded, so the LLM saw only
+        the one-line trigger.
+        """
+        from decafclaw.conversation_manager import ConversationManager
+        from decafclaw.skills import SkillInfo
+
+        config.discovered_skills = [
+            SkillInfo(
+                name="mastodon-ingest",
+                description="Mastodon ingest",
+                location=Path("/fake/skill/dir"),
+                body="MASTODON-SKILL-BODY-MARKER\nFetch and summarize posts.",
+            ),
+        ]
+
+        manager = ConversationManager(config, EventBus())
+        task = ScheduleTask(
+            name="mastodon-ingest", schedule="* * * * *",
+            body="Time for the scheduled Mastodon ingestion. "
+                 "Follow the mastodon-ingest skill instructions to completion.",
+            source="extra", path=Path("/fake"),
+            required_skills=["mastodon-ingest"],
+        )
+
+        captured: dict = {}
+
+        async def fake_run(ctx, user_message, history, **kwargs):
+            from decafclaw.media import ToolResult
+            captured["user_message"] = user_message
+            return ToolResult(text="done")
+
+        with patch("decafclaw.agent.run_agent_turn", side_effect=fake_run):
+            await run_schedule_task(config, EventBus(), manager, task)
+
+        prompt = captured["user_message"]
+        assert "MASTODON-SKILL-BODY-MARKER" in prompt
+        assert "<loaded_skills>" in prompt
+        assert '<skill name="mastodon-ingest">' in prompt
+        # Trigger text still present, body comes before trigger
+        assert "Follow the mastodon-ingest skill instructions" in prompt
+        assert prompt.index("MASTODON-SKILL-BODY-MARKER") < prompt.index(
+            "Follow the mastodon-ingest skill instructions"
+        )
+
+    @pytest.mark.asyncio
+    async def test_unknown_required_skill_skipped_gracefully(self, config):
+        """Missing required-skill name logs a warning but doesn't raise."""
+        from decafclaw.conversation_manager import ConversationManager
+
+        config.discovered_skills = []  # nothing resolves
+        manager = ConversationManager(config, EventBus())
+        task = ScheduleTask(
+            name="ghost-task", schedule="* * * * *",
+            body="trigger", source="admin", path=Path("/fake"),
+            required_skills=["does-not-exist"],
+        )
+
+        captured: dict = {}
+
+        async def fake_run(ctx, user_message, history, **kwargs):
+            from decafclaw.media import ToolResult
+            captured["user_message"] = user_message
+            return ToolResult(text="done")
+
+        with patch("decafclaw.agent.run_agent_turn", side_effect=fake_run):
+            result = await run_schedule_task(config, EventBus(), manager, task)
+
+        # No body to inject, but no crash and no <loaded_skills> wrapper
+        assert "<loaded_skills>" not in captured["user_message"]
+        assert result["response"] == "done"
+
+    @pytest.mark.asyncio
+    async def test_escape_hatch_tools_exempt_from_allow_list(self, config):
+        """tool_search + activate_skill must pass the schedule allow-list filter.
+
+        Regression test for #558: without this exemption the model has no way
+        to recover from an under-spec'd task.
+        """
+        from decafclaw.conversation_manager import ConversationManager
+
+        manager = ConversationManager(config, EventBus())
+        task = ScheduleTask(
+            name="locked-down", schedule="* * * * *",
+            body="trigger", source="admin", path=Path("/fake"),
+            allowed_tools=["vault_read", "current_time"],
+        )
+
+        captured: dict = {}
+
+        async def fake_run(ctx, user_message, history, **kwargs):
+            captured["allowed"] = set(ctx.tools.allowed or set())
+            from decafclaw.media import ToolResult
+            return ToolResult(text="done")
+
+        with patch("decafclaw.agent.run_agent_turn", side_effect=fake_run):
+            await run_schedule_task(config, EventBus(), manager, task)
+
+        assert "tool_search" in captured["allowed"]
+        assert "activate_skill" in captured["allowed"]
+        # Original allow-list entries preserved
+        assert "vault_read" in captured["allowed"]
+        assert "current_time" in captured["allowed"]
+
+    @pytest.mark.asyncio
     async def test_routes_through_manager(self, config):
         """run_schedule_task routes turns through ConversationManager.enqueue_turn."""
         from decafclaw.conversation_manager import ConversationManager, TurnKind
