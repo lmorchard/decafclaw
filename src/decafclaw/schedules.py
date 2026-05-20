@@ -1,6 +1,7 @@
 """Scheduled tasks — cron-style task files with per-task scheduling."""
 
 import asyncio
+import html
 import logging
 import re
 import time
@@ -352,6 +353,44 @@ def is_due(config, task: ScheduleTask) -> bool:
 # -- Task execution -----------------------------------------------------------
 
 
+# tool_search lets the model recover deferred tools; activate_skill lets it
+# load additional skill bodies. Scheduled tasks pre-activate required-skills
+# and ship a tight allowed-tools list, so without this exemption the model
+# has no escape hatch if the task is under-spec'd or the body fails to land.
+_SCHEDULE_ESCAPE_HATCH_TOOLS = frozenset({"tool_search", "activate_skill"})
+
+
+def _render_required_skill_bodies(config, skill_names: list[str]) -> str:
+    """Render `<loaded_skills>` block for pre-activated required-skills.
+
+    Scheduled tasks ship a thin trigger in SCHEDULE.md and rely on
+    `required-skills` to bring the SKILL.md body into context. Always-loaded
+    skill bodies make it into the prompt via `prompts/__init__.py`, but
+    per-conversation activated bodies normally arrive as `activate_skill`
+    tool-result messages — a path that doesn't fire for scheduled tasks
+    (no prior turn). This helper builds the equivalent block so a thin
+    trigger has something to act on. Returns "" if nothing resolves.
+    """
+    if not skill_names:
+        return ""
+    skill_map = {s.name: s for s in (config.discovered_skills or [])}
+    blocks: list[str] = []
+    for name in skill_names:
+        info = skill_map.get(name)
+        if info is None:
+            log.warning(f"Schedule references unknown required-skill {name!r}; "
+                        f"skipping body injection")
+            continue
+        if not info.body:
+            continue
+        body = info.body.replace("$SKILL_DIR", str(info.location.resolve()))
+        safe_name = html.escape(info.name, quote=True)
+        blocks.append(f'<skill name="{safe_name}">\n{body}\n</skill>')
+    if not blocks:
+        return ""
+    return "<loaded_skills>\n" + "\n".join(blocks) + "\n</loaded_skills>"
+
+
 async def run_schedule_task(config, event_bus, manager, task: ScheduleTask,
                              conv_id: str | None = None) -> dict:
     """Run a single scheduled task as an agent turn via ConversationManager.
@@ -372,6 +411,10 @@ async def run_schedule_task(config, event_bus, manager, task: ScheduleTask,
         allowed_tools_set = set(task.allowed_tools)
         if task.shell_patterns:
             allowed_tools_set.add("shell")  # ensure shell tool is visible
+        # Keep tool_search / activate_skill reachable so the model has
+        # an escape hatch if the task is under-spec'd. They don't grant
+        # capabilities on their own.
+        allowed_tools_set |= _SCHEDULE_ESCAPE_HATCH_TOOLS
         preapproved = set(task.allowed_tools)
 
     skill_dir = str(task.path.parent.resolve())
@@ -419,7 +462,8 @@ async def run_schedule_task(config, event_bus, manager, task: ScheduleTask,
 
     preamble = build_task_preamble("scheduled task", task.name)
     body = substitute_body(task.body, skill_dir=str(task.path.parent.resolve()))
-    prompt = preamble + body
+    loaded_skills = _render_required_skill_bodies(config, required_skills)
+    prompt = preamble + (f"{loaded_skills}\n\n" if loaded_skills else "") + body
 
     try:
         future = await manager.enqueue_turn(

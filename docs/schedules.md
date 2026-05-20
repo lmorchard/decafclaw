@@ -165,7 +165,11 @@ required-skills:
   - health
 ```
 
-Skills are activated without permission checks (same as heartbeat admin sections).
+Skills are activated without permission checks (same as heartbeat admin sections). The full `SKILL.md` body of each listed skill is rendered as a `<loaded_skills><skill name="…">…</skill></loaded_skills>` block prepended to the task prompt, so a thin trigger body (e.g. *"Time for the scheduled Mastodon ingestion. Follow the mastodon-ingest skill instructions to completion."*) has the skill's instructions inline rather than relying on the LLM to ask for them. `$SKILL_DIR` is substituted to the skill's absolute location, matching `activate_skill`.
+
+### Allow-list escape hatch
+
+When a schedule supplies `allowed-tools`, the resulting allow-list is automatically extended with `tool_search` and `activate_skill`. Both are no-cost meta-tools that let the model recover if a task is under-spec'd (e.g. a required skill body fails to inject, or the allow-list misses a needed dependency). They do not grant capabilities by themselves.
 
 ## Examples
 
