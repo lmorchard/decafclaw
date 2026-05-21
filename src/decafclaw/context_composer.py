@@ -306,15 +306,16 @@ class ContextComposer:
             wf_overlay = consult_workflow_overlay(ctx)
 
         # -- System prompt --
+        # The workflow overlay's phase_prompt_section used to be
+        # appended here at turn start, but that broke when a workflow
+        # was started mid-turn (e.g. by workflow_start in iteration 1):
+        # iteration 2's system text still came from compose() and had
+        # no overlay. The overlay is now managed per-iteration by the
+        # agent loop as a separate workflow_msg (mirroring the
+        # deferred_msg pattern), so the LLM always sees the current
+        # phase regardless of which iteration started the run.
         system_text, system_entry = self._compose_system_prompt(config)
         if wf_overlay is not None:
-            system_text = (
-                f"{system_text}\n\n{wf_overlay.phase_prompt_section}"
-            )
-            # Recompute the size estimate so the budget reflects the
-            # appended section (additive, mirrors how skill-catalog and
-            # loaded-skills are folded into config.system_prompt).
-            system_entry.tokens_estimated = estimate_tokens(system_text)
             system_entry.details = {
                 **system_entry.details,
                 "workflow_run": wf_overlay.run_id,

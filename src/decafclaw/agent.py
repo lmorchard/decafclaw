@@ -477,6 +477,11 @@ class TurnRunner:
 
     messages: list = field(default_factory=list)
     deferred_msg: dict | None = None
+    # Per-iteration workflow overlay system message. Inserted/updated
+    # by _run_iteration after refresh_dynamic_tools when a workflow
+    # run is active; removed when no run is active. Mirrors the
+    # deferred_msg pattern.
+    workflow_msg: dict | None = None
     prompt_tokens: int = 0
     empty_retries: int = 0
     reflection_retries: int = 0
@@ -575,6 +580,46 @@ class TurnRunner:
 
         self.turn_start_index = len(self.history)
 
+    def _refresh_workflow_msg(self) -> None:
+        """Consult the workflow overlay and update the workflow_msg
+        slot in self.messages. Mirrors deferred_msg management:
+        insert when active, update if changed, remove when cleared.
+
+        Skipped for non-INTERACTIVE modes (child agents, heartbeats,
+        scheduled turns don't run workflows).
+        """
+        if self.ctx.is_child:
+            return
+        if self.ctx.task_mode in _TASK_MODE_TO_COMPOSER:
+            # HEARTBEAT / SCHEDULED — skip workflow overlay
+            return
+
+        from .workflow.context import consult_workflow_overlay
+
+        wf_overlay = consult_workflow_overlay(self.ctx)
+        if wf_overlay is None or not wf_overlay.phase_prompt_section:
+            if (self.workflow_msg is not None
+                    and self.workflow_msg in self.messages):
+                self.messages.remove(self.workflow_msg)
+            self.workflow_msg = None
+            return
+
+        new_msg = {
+            "role": "system",
+            "content": wf_overlay.phase_prompt_section,
+        }
+        if self.workflow_msg is not None and self.workflow_msg in self.messages:
+            idx = self.messages.index(self.workflow_msg)
+            self.messages[idx] = new_msg
+        else:
+            # Insert after deferred_msg if it exists, otherwise at index 1.
+            if self.deferred_msg is not None and self.deferred_msg in self.messages:
+                idx = self.messages.index(self.deferred_msg) + 1
+            else:
+                idx = 1
+            self.messages.insert(idx, new_msg)
+        self.workflow_msg = new_msg
+
     async def _run_iteration(self, iteration: int) -> IterationOutcome:
         """Run one LLM iteration: cancel-check, tool refresh, deferred-list
         injection, the LLM call, and dispatch to tool-calls or no-tool-calls
@@ -600,6 +645,12 @@ class TurnRunner:
         elif self.deferred_msg is not None and self.deferred_msg in self.messages:
             self.messages.remove(self.deferred_msg)
             self.deferred_msg = None
+
+        # Workflow overlay (only in INTERACTIVE mode). Refreshed every
+        # iteration so a workflow started mid-turn (e.g. via
+        # workflow_start in iteration 1) is reflected in iteration 2's
+        # system context. See workflow/context.py.
+        self._refresh_workflow_msg()
 
         response = await _call_llm_with_events(
             self.ctx, self.config, self.messages, all_tools,
