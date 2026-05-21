@@ -149,11 +149,22 @@ def build_tool_list(ctx) -> tuple[list, str | None]:
         preempt_matches=ctx.tools.preempt_matches,
     )
 
-    # Apply allowed_tools filter to the active set only
+    # Apply allowed_tools filter to BOTH active AND deferred. Filtering
+    # only `active` was a latent bug: the deferred pool could still
+    # contain tools that aren't in `allowed`, which caused `tool_search`
+    # to be added to the catalog (since `deferred` was non-empty), and
+    # the agent would then call `tool_search` only to be rejected at
+    # execution time by the same `allowed` check. With both lists
+    # filtered, `tool_search` only appears when there are deferred
+    # tools the agent could *actually* promote.
     allowed = ctx.tools.allowed
     if allowed is not None:
         active = [
             t for t in active
+            if t.get("function", {}).get("name") in allowed
+        ]
+        deferred = [
+            t for t in deferred
             if t.get("function", {}).get("name") in allowed
         ]
 

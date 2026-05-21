@@ -158,13 +158,24 @@ async def _run_child(*, ctx, workspace: Path, state: RunState,
         # tools). The phase loader already validated that every name
         # resolves to at least one registered tool.
         child_ctx.tools.allowed = allowed
-        # Children get a fresh tool extras surface — no inherited
-        # skill-attached tools beyond what the phase explicitly
-        # whitelisted.
-        child_ctx.tools.extra = {}
-        child_ctx.tools.extra_definitions = []
-        child_ctx.skills.activated = set()
-        child_ctx.skills.data = {}
+        # Carry over the parent's dynamic (skill-attached) tool extras.
+        # Skills like `tabstack` register tools via `get_tools(ctx)` on
+        # the parent at activate-time; the child needs those tool
+        # callables and definitions to be in its catalog, otherwise a
+        # phase whitelist that references e.g. `tabstack_research`
+        # would be a paper tiger (name in allowed, no implementation).
+        # Pattern matches tools/delegate.py:_run_child_turn.
+        child_ctx.tools.extra = dict(getattr(ctx.tools, "extra", {}))
+        child_ctx.tools.extra_definitions = list(
+            getattr(ctx.tools, "extra_definitions", []))
+        # Carry skill data too (e.g. tabstack config) but reset the
+        # activated set — children should not be able to activate new
+        # skills mid-phase. `allow_tools` already excludes
+        # `activate_skill`.
+        child_ctx.skills.activated = set(
+            getattr(ctx.skills, "activated", set()))
+        child_ctx.skills.data = dict(
+            getattr(ctx.skills, "data", {}))
 
         child_ctx.on_stream_chunk = None
         child_ctx.is_child = True
