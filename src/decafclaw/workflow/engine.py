@@ -286,3 +286,56 @@ def verify_subagent_outputs(workspace: Path, state: RunState,
         if not (artifacts / output).is_file():
             missing.append(output)
     return missing
+
+
+# Cap to prevent infinite loops if subagent dispatch lands on another
+# subagent and the chain doesn't terminate. The loader rejects
+# subagent → subagent chains in normal use, but a hand-edited workflow
+# could create one.
+_SUBAGENT_DISPATCH_CHAIN_CAP = 8
+
+
+async def dispatch_subagent_if_needed(ctx, state: RunState) -> RunState:
+    """Synchronously dispatch the subagent for the current phase if
+    it's a subagent phase, and recursively if dispatch advances to
+    another subagent. Returns the (possibly-advanced) state.
+
+    No-op when the current phase is inline, terminal, or the run is
+    in a non-running status (DONE / ERROR / PAUSED_GATE — the gate
+    case is handled by the tool layer separately).
+
+    Called by the tool layer after operations that may have landed
+    the run on a subagent phase: ``tool_workflow_start`` (initial
+    phase is a subagent) and ``tool_phase_advance`` (target is a
+    subagent).
+    """
+    workspace: Path = ctx.config.workspace_path
+    for _ in range(_SUBAGENT_DISPATCH_CHAIN_CAP):
+        wf = registry.get(state.workflow)
+        if wf is None:
+            return state
+        phase = wf.phase(state.current_phase)
+        if phase is None or phase.kind != PhaseKind.SUBAGENT:
+            return state
+        # Only RUNNING / PAUSED_SUBAGENT states are dispatchable; DONE
+        # and ERROR end the chain, PAUSED_GATE is the tool layer's
+        # problem (not ours).
+        if state.status in (RunStatus.DONE, RunStatus.ERROR,
+                            RunStatus.PAUSED_GATE):
+            return state
+
+        await dispatch_and_finalize_subagent(
+            ctx, workspace, state, state.current_phase)
+
+        # Reload state after dispatch; the engine wrote new state to disk.
+        from .runs import load_run
+        fresh = load_run(workspace, state.run_id)
+        if fresh is None:
+            return state
+        state = fresh
+
+    log.warning(
+        "[workflow] subagent dispatch chain hit cap (%d) for run=%s — "
+        "stopping to avoid infinite loop",
+        _SUBAGENT_DISPATCH_CHAIN_CAP, state.run_id)
+    return state

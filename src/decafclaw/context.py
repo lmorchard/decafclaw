@@ -26,6 +26,11 @@ class ToolState:
     extra_definitions: list[dict] = field(default_factory=list)
     deferred_pool: list[dict] = field(default_factory=list)
     allowed: set[str] | None = None
+    # True when `allowed` was set by the workflow engine's per-phase
+    # catalog restriction. Lets refresh_workflow_tools clear the
+    # restriction safely when the workflow ends without clobbering
+    # an unrelated restriction set by other code paths.
+    workflow_restricted: bool = False
     preapproved: set[str] = field(default_factory=set)
     preapproved_shell_patterns: list[str] = field(default_factory=list)
     # Scheduled-task overlay: addresses + `@domain.com` suffix patterns

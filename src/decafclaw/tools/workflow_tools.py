@@ -18,6 +18,7 @@ from pathlib import Path
 from ..media import EndTurnConfirm, ToolResult
 from ..workflow import engine, registry
 from ..workflow.runs import create_run, list_runs, load_run
+from ..workflow.types import PhaseKind
 
 log = logging.getLogger(__name__)
 
@@ -100,13 +101,25 @@ def build_phase_advance_definition(ctx) -> dict | None:
 
 
 def refresh_workflow_tools(ctx) -> None:
-    """Per-turn dynamic refresh: injects phase_advance into
-    ctx.tools.extra / ctx.tools.extra_definitions when a workflow
-    run is active, removes it when no run is active.
+    """Per-iteration dynamic refresh, called from
+    tool_definitions.refresh_dynamic_tools() after the skill providers
+    have run.
 
-    Called from tool_definitions.refresh_dynamic_tools() after the
-    skill providers have registered their dynamic tools.
+    Two responsibilities:
+
+    1. **Inject the dynamic phase_advance** into ctx.tools.extra /
+       ctx.tools.extra_definitions when a workflow run is active and
+       its current phase has outgoing edges; remove it otherwise.
+
+    2. **Restrict the tool catalog per phase**: when an inline phase
+       is active, set ctx.tools.allowed to the union of the phase's
+       declared tool whitelist, the workflow admin tools, and the
+       critical-priority baseline. Clears the restriction when no
+       workflow is active (only if it was set by this function).
     """
+    state, wf = _get_run(ctx)
+
+    # Always handle phase_advance injection/removal first
     definition = build_phase_advance_definition(ctx)
     if definition is None:
         if hasattr(ctx, "tools"):
@@ -115,19 +128,91 @@ def refresh_workflow_tools(ctx) -> None:
                 d for d in ctx.tools.extra_definitions
                 if d["function"]["name"] != "phase_advance"
             ]
-        return
-    ctx.tools.extra["phase_advance"] = tool_phase_advance
-    ctx.tools.extra_definitions = [
-        d for d in ctx.tools.extra_definitions
-        if d["function"]["name"] != "phase_advance"
-    ] + [definition]
+    else:
+        ctx.tools.extra["phase_advance"] = tool_phase_advance
+        ctx.tools.extra_definitions = [
+            d for d in ctx.tools.extra_definitions
+            if d["function"]["name"] != "phase_advance"
+        ] + [definition]
+
+    # Now handle per-phase tool catalog restriction
+    phase = wf.phase(state.current_phase) if state and wf else None
+
+    # We restrict only when in an INLINE phase. Subagent phases run
+    # synchronously via dispatch from the tool layer, so the main
+    # agent shouldn't normally see one. If something has us in a
+    # subagent phase between iterations (e.g. ERROR / paused dispatch),
+    # the safer default is NOT to restrict so the agent can recover.
+    should_restrict = (
+        state is not None and wf is not None
+        and phase is not None
+        and phase.kind == PhaseKind.INLINE
+    )
+
+    if should_restrict:
+        ctx.tools.allowed = _build_phase_allowed_set(ctx, phase)
+        ctx.tools.workflow_restricted = True
+    elif getattr(ctx.tools, "workflow_restricted", False):
+        # Only clear if WE set it — don't clobber an unrelated
+        # restriction (e.g. from delegate_task's child setup).
+        ctx.tools.allowed = None
+        ctx.tools.workflow_restricted = False
+
+
+def _build_phase_allowed_set(ctx, phase) -> set[str]:
+    """Compute the tool-allowed set for an inline workflow phase:
+    phase whitelist (glob-expanded) ∪ workflow admin tools ∪
+    critical-priority baseline.
+
+    Critical-priority tools (notes_*, checklist_*, etc.) are always
+    included so conversation-infra tools still work inside a workflow.
+    """
+    import fnmatch
+
+    from . import TOOLS as ALL_TOOLS
+    from .tool_registry import get_critical_names
+
+    all_tool_names = set(ALL_TOOLS.keys()) | set(
+        getattr(ctx.tools, "extra", {}).keys())
+
+    # 1. Phase whitelist. Literal names pass through as-is (they may
+    # come from a skill that isn't activated at this exact moment but
+    # could be later in the turn). Glob patterns expand against the
+    # currently-registered tools.
+    phase_tools: set[str] = set()
+    for pat in phase.tools:
+        if "*" in pat or "?" in pat:
+            phase_tools |= {n for n in all_tool_names
+                            if fnmatch.fnmatch(n, pat)}
+        else:
+            phase_tools.add(pat)
+
+    # 2. Workflow admin baseline (always available so the agent can
+    # check status, read/write artifacts, advance, etc.)
+    admin = set(WORKFLOW_TOOLS.keys()) | {"phase_advance"}
+
+    # 3. Critical-priority infra (notes_*, checklist_*) — these are
+    # conversation infrastructure that should survive any restriction.
+    try:
+        critical = get_critical_names(ctx.config)
+    except Exception:  # noqa: BLE001 — fail-open
+        critical = set()
+
+    return phase_tools | admin | critical
 
 
 # --------------------------------------------------------------- tools
 
 async def tool_workflow_start(ctx, name: str, slug: str = ""
                               ) -> str | ToolResult:
-    """Create a new run of a workflow."""
+    """Create a new run of a workflow.
+
+    If the workflow's initial phase is a subagent phase, the engine
+    dispatches the subagent synchronously before this tool returns —
+    the run advances to the next inline phase before the LLM sees the
+    tool result. Subagent dispatch may chain if its target is also a
+    subagent (bounded).
+    """
     wf = registry.get(name)
     if wf is None:
         return ToolResult(
@@ -140,9 +225,15 @@ async def tool_workflow_start(ctx, name: str, slug: str = ""
         initial_phase=wf.initial_phase,
     )
     _set_current_run(ctx, state.run_id)
+
+    # If we landed on a subagent phase, dispatch synchronously so the
+    # run advances past it before the LLM continues.
+    state = await engine.dispatch_subagent_if_needed(ctx, state)
+
     return (
         f"Started workflow '{name}' (run {state.run_id}). "
         f"Current phase: {state.current_phase}. "
+        f"Status: {state.status.value}. "
         f"Use phase_advance to move forward."
     )
 
@@ -245,6 +336,16 @@ async def tool_phase_advance(ctx, target_phase_id: str,
         return ToolResult(text="Submitted for review.",
                           end_turn=confirm)
 
+    # If the transition landed on a subagent phase, dispatch
+    # synchronously so the run advances past it before the LLM sees
+    # the tool result.
+    fresh = load_run(ctx.config.workspace_path, state.run_id)
+    if fresh is not None:
+        fresh = await engine.dispatch_subagent_if_needed(ctx, fresh)
+        return ToolResult(
+            text=f"Advanced to phase '{fresh.current_phase}' "
+                 f"(status: {fresh.status.value}).",
+            end_turn=False)
     return ToolResult(
         text=f"Advanced to phase '{result.new_phase}'.",
         end_turn=False)
