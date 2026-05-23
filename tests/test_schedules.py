@@ -609,6 +609,119 @@ class TestRunScheduleTask:
         assert "current_time" in captured["allowed"]
 
     @pytest.mark.asyncio
+    async def test_overlay_resolves_skill_dir_via_required_skill(self, config):
+        """$SKILL_DIR in overlay shell_patterns resolves to the original skill dir.
+
+        Regression test: when an admin overlay at
+        ``data/{agent_id}/schedules/{name}.md`` shadows a contrib skill's
+        SCHEDULE.md, ``task.path.parent`` is the schedules dir — not where
+        the skill's scripts live. ``_render_required_skill_bodies`` expands
+        ``$SKILL_DIR`` in the SKILL.md body via ``info.location``, so the
+        agent runs the real script path, but the preapproval pattern was
+        anchored to the schedules dir and never matched — confirmation
+        popped and the scheduled turn denied it.
+        """
+        from decafclaw.conversation_manager import ConversationManager
+        from decafclaw.skills import SkillInfo
+
+        real_skill_dir = Path("/real/contrib/skills/mastodon-ingest")
+        config.discovered_skills = [
+            SkillInfo(
+                name="mastodon-ingest",
+                description="Mastodon ingest",
+                location=real_skill_dir,
+                body="Run $SKILL_DIR/fetch.sh and ingest posts.",
+            ),
+        ]
+
+        manager = ConversationManager(config, EventBus())
+        overlay_path = config.agent_path / "schedules" / "mastodon-ingest.md"
+        task = ScheduleTask(
+            name="mastodon-ingest", schedule="* * * * *",
+            body="Run the scheduled cycle.",
+            source="admin", path=overlay_path,
+            required_skills=["mastodon-ingest"],
+            shell_patterns=["$SKILL_DIR/fetch.sh*"],
+            allowed_tools=["vault_read"],
+        )
+
+        captured: dict = {}
+
+        async def fake_run(ctx, user_message, history, **kwargs):
+            from decafclaw.media import ToolResult
+            captured["shell_patterns"] = list(
+                ctx.tools.preapproved_shell_patterns or []
+            )
+            captured["prompt"] = user_message
+            return ToolResult(text="done")
+
+        with patch("decafclaw.agent.run_agent_turn", side_effect=fake_run):
+            await run_schedule_task(config, EventBus(), manager, task)
+
+        # Pattern anchored on the actual skill dir, not the overlay's parent.
+        assert captured["shell_patterns"] == [
+            f"{real_skill_dir}/fetch.sh*"
+        ]
+        # SCHEDULE.md body substitution uses the same anchor — important once
+        # SCHEDULE.md bodies start referencing $SKILL_DIR themselves.
+        assert "fetch.sh and ingest posts." in captured["prompt"]
+        assert str(overlay_path.parent) not in captured["prompt"].split(
+            "Run the scheduled cycle."
+        )[0]
+
+    @pytest.mark.asyncio
+    async def test_skill_dir_iterates_required_skills_for_first_resolvable(
+        self, config,
+    ):
+        """`$SKILL_DIR` resolution skips unresolvable required-skill entries.
+
+        `_render_required_skill_bodies` iterates all `required-skills` and
+        silently skips names that aren't in `discovered_skills` (logging a
+        warning). If `required_skills[0]` is missing but `required_skills[1]`
+        resolves, the body still gets injected — so the shell-pattern and
+        body-substitution `$SKILL_DIR` anchor must follow the same rule, or
+        a body successfully expanded to a real skill dir would land next to
+        a preapproval pattern anchored on the schedule file's parent.
+        """
+        from decafclaw.conversation_manager import ConversationManager
+        from decafclaw.skills import SkillInfo
+
+        secondary_dir = Path("/real/contrib/skills/tabstack")
+        # Only the second required-skill is discovered.
+        config.discovered_skills = [
+            SkillInfo(
+                name="tabstack",
+                description="Tabstack",
+                location=secondary_dir,
+                body="Tabstack body.",
+            ),
+        ]
+
+        manager = ConversationManager(config, EventBus())
+        task = ScheduleTask(
+            name="missing-primary", schedule="* * * * *",
+            body="trigger", source="admin", path=Path("/fake"),
+            required_skills=["never-discovered", "tabstack"],
+            shell_patterns=["$SKILL_DIR/run.sh*"],
+        )
+
+        captured: dict = {}
+
+        async def fake_run(ctx, user_message, history, **kwargs):
+            from decafclaw.media import ToolResult
+            captured["shell_patterns"] = list(
+                ctx.tools.preapproved_shell_patterns or []
+            )
+            return ToolResult(text="done")
+
+        with patch("decafclaw.agent.run_agent_turn", side_effect=fake_run):
+            await run_schedule_task(config, EventBus(), manager, task)
+
+        # Anchored on tabstack's location (the first resolvable required-skill),
+        # not the unresolvable primary and not the schedule file's parent.
+        assert captured["shell_patterns"] == [f"{secondary_dir}/run.sh*"]
+
+    @pytest.mark.asyncio
     async def test_routes_through_manager(self, config):
         """run_schedule_task routes turns through ConversationManager.enqueue_turn."""
         from decafclaw.conversation_manager import ConversationManager, TurnKind
