@@ -373,13 +373,23 @@ def _resolve_skill_dir(config, task: "ScheduleTask") -> str:
 
     Resolution order: discovered SkillInfo matching `task.name` (which
     equals the original skill dir name for skill-derived schedules,
-    including overlays) > first `required-skills` entry > task file's
-    parent dir as fallback for genuinely skill-independent schedules.
+    including overlays) > first `required-skills` entry that resolves
+    against `discovered_skills` > task file's parent dir as fallback for
+    genuinely skill-independent schedules.
+
+    Iterating all `required-skills` (not just the first) matches
+    `_render_required_skill_bodies`, which silently skips unresolvable
+    names and injects whatever else resolves. Stopping at index 0 here
+    would let an unresolvable primary entry quietly desync the shell
+    pattern from a body that still got injected from a later entry.
     """
     skill_map = {s.name: s for s in (config.discovered_skills or [])}
     info = skill_map.get(task.name)
-    if info is None and task.required_skills:
-        info = skill_map.get(task.required_skills[0])
+    if info is None:
+        for name in task.required_skills:
+            info = skill_map.get(name)
+            if info is not None:
+                break
     if info is not None:
         return str(info.location.resolve())
     return str(task.path.parent.resolve())

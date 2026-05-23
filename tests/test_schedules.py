@@ -670,6 +670,58 @@ class TestRunScheduleTask:
         )[0]
 
     @pytest.mark.asyncio
+    async def test_skill_dir_iterates_required_skills_for_first_resolvable(
+        self, config,
+    ):
+        """`$SKILL_DIR` resolution skips unresolvable required-skill entries.
+
+        `_render_required_skill_bodies` iterates all `required-skills` and
+        silently skips names that aren't in `discovered_skills` (logging a
+        warning). If `required_skills[0]` is missing but `required_skills[1]`
+        resolves, the body still gets injected — so the shell-pattern and
+        body-substitution `$SKILL_DIR` anchor must follow the same rule, or
+        a body successfully expanded to a real skill dir would land next to
+        a preapproval pattern anchored on the schedule file's parent.
+        """
+        from decafclaw.conversation_manager import ConversationManager
+        from decafclaw.skills import SkillInfo
+
+        secondary_dir = Path("/real/contrib/skills/tabstack")
+        # Only the second required-skill is discovered.
+        config.discovered_skills = [
+            SkillInfo(
+                name="tabstack",
+                description="Tabstack",
+                location=secondary_dir,
+                body="Tabstack body.",
+            ),
+        ]
+
+        manager = ConversationManager(config, EventBus())
+        task = ScheduleTask(
+            name="missing-primary", schedule="* * * * *",
+            body="trigger", source="admin", path=Path("/fake"),
+            required_skills=["never-discovered", "tabstack"],
+            shell_patterns=["$SKILL_DIR/run.sh*"],
+        )
+
+        captured: dict = {}
+
+        async def fake_run(ctx, user_message, history, **kwargs):
+            from decafclaw.media import ToolResult
+            captured["shell_patterns"] = list(
+                ctx.tools.preapproved_shell_patterns or []
+            )
+            return ToolResult(text="done")
+
+        with patch("decafclaw.agent.run_agent_turn", side_effect=fake_run):
+            await run_schedule_task(config, EventBus(), manager, task)
+
+        # Anchored on tabstack's location (the first resolvable required-skill),
+        # not the unresolvable primary and not the schedule file's parent.
+        assert captured["shell_patterns"] == [f"{secondary_dir}/run.sh*"]
+
+    @pytest.mark.asyncio
     async def test_routes_through_manager(self, config):
         """run_schedule_task routes turns through ConversationManager.enqueue_turn."""
         from decafclaw.conversation_manager import ConversationManager, TurnKind
