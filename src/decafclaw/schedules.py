@@ -360,6 +360,31 @@ def is_due(config, task: ScheduleTask) -> bool:
 _SCHEDULE_ESCAPE_HATCH_TOOLS = frozenset({"tool_search", "activate_skill"})
 
 
+def _resolve_skill_dir(config, task: "ScheduleTask") -> str:
+    """Resolve `$SKILL_DIR` substitutions for a scheduled task.
+
+    Overlay schedules at `data/{agent_id}/schedules/{name}.md` shadow a
+    skill's SCHEDULE.md but no longer sit next to the skill's scripts,
+    so `task.path.parent` is the wrong anchor for `$SKILL_DIR` — the
+    pattern would whitelist the schedules dir while the SKILL.md body
+    (expanded via `info.location` in `_render_required_skill_bodies`)
+    points the agent at the original skill dir, and the preapproval
+    check fails to match.
+
+    Resolution order: discovered SkillInfo matching `task.name` (which
+    equals the original skill dir name for skill-derived schedules,
+    including overlays) > first `required-skills` entry > task file's
+    parent dir as fallback for genuinely skill-independent schedules.
+    """
+    skill_map = {s.name: s for s in (config.discovered_skills or [])}
+    info = skill_map.get(task.name)
+    if info is None and task.required_skills:
+        info = skill_map.get(task.required_skills[0])
+    if info is not None:
+        return str(info.location.resolve())
+    return str(task.path.parent.resolve())
+
+
 def _render_required_skill_bodies(config, skill_names: list[str]) -> str:
     """Render `<loaded_skills>` block for pre-activated required-skills.
 
@@ -417,7 +442,7 @@ async def run_schedule_task(config, event_bus, manager, task: ScheduleTask,
         allowed_tools_set |= _SCHEDULE_ESCAPE_HATCH_TOOLS
         preapproved = set(task.allowed_tools)
 
-    skill_dir = str(task.path.parent.resolve())
+    skill_dir = _resolve_skill_dir(config, task)
     shell_patterns = None
     if task.shell_patterns:
         shell_patterns = [
@@ -461,7 +486,7 @@ async def run_schedule_task(config, event_bus, manager, task: ScheduleTask,
     from .polling import build_task_preamble
 
     preamble = build_task_preamble("scheduled task", task.name)
-    body = substitute_body(task.body, skill_dir=str(task.path.parent.resolve()))
+    body = substitute_body(task.body, skill_dir=skill_dir)
     loaded_skills = _render_required_skill_bodies(config, required_skills)
     prompt = preamble + (f"{loaded_skills}\n\n" if loaded_skills else "") + body
 
