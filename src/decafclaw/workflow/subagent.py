@@ -20,9 +20,8 @@ import fnmatch
 import logging
 import secrets
 from dataclasses import replace
-from pathlib import Path
 
-from .types import PhaseDef, RunState
+from .types import PhaseDef, WorkflowState
 
 log = logging.getLogger(__name__)
 
@@ -63,7 +62,7 @@ def _resolve_phase_tools(all_names: set[str],
     return matched
 
 
-async def _run_child(*, ctx, workspace: Path, state: RunState,
+async def _run_child(*, ctx, state: WorkflowState,
                      phase: PhaseDef) -> str:
     """Spawn a child agent to execute the phase. Returns child's text.
 
@@ -196,9 +195,9 @@ async def _run_child(*, ctx, workspace: Path, state: RunState,
     timeout = config.agent.child_timeout_sec
 
     log.info(
-        "[workflow] dispatching subagent for run=%s phase=%s "
-        "(tools=%d, timeout=%ds)",
-        state.run_id, phase.id, len(allowed), timeout,
+        "[workflow] dispatching subagent for conv=%s workflow=%s "
+        "phase=%s (tools=%d, timeout=%ds)",
+        parent_conv, state.workflow, phase.id, len(allowed), timeout,
     )
 
     future = await manager.enqueue_turn(

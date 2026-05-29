@@ -1,18 +1,22 @@
 """Tests for workflow engine transitions and dispatch."""
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from decafclaw.media import EndTurnConfirm
 from decafclaw.workflow import registry
+from decafclaw.workflow.conv_state import (
+    init_workflow_state,
+    load_workflow_state,
+)
 from decafclaw.workflow.engine import (
     AdvanceResult,
     advance,
     finalize_gate_response,
     verify_subagent_outputs,
 )
-from decafclaw.workflow.runs import create_run, load_run
 from decafclaw.workflow.types import (
     EdgeDef,
     GateDef,
@@ -28,6 +32,15 @@ def _clean_registry():
     registry.clear()
     yield
     registry.clear()
+
+
+def _ctx_for(tmp_path: Path,
+             conv_id: str = "conv-engine-test") -> SimpleNamespace:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    config = SimpleNamespace(workspace_path=workspace)
+    return SimpleNamespace(config=config, conv_id=conv_id,
+                           manager=None)
 
 
 def _simple_workflow(name: str = "demo") -> WorkflowDef:
@@ -101,16 +114,15 @@ def _subagent_workflow() -> WorkflowDef:
 async def test_advance_simple_no_gate(tmp_path: Path):
     wf = _simple_workflow()
     registry.register(wf)
-    ws = tmp_path / "workspace"
-    ws.mkdir()
-    state = create_run(ws, workflow="demo", slug="x",
-                       initial_phase="a")
+    ctx = _ctx_for(tmp_path)
+    state = init_workflow_state(ctx, workflow="demo", initial_phase="a")
 
-    result = await advance(ws, state, target="b", reason="done")
+    result = await advance(ctx, state, target="b", reason="done")
     assert isinstance(result, AdvanceResult)
     assert result.new_phase == "b"
     assert result.end_turn_signal is None
-    reloaded = load_run(ws, state.run_id)
+    reloaded = load_workflow_state(ctx)
+    assert reloaded is not None
     assert reloaded.current_phase == "b"
     assert reloaded.status == RunStatus.DONE  # b is terminal
     assert reloaded.history[-1]["from"] == "a"
@@ -122,15 +134,14 @@ async def test_advance_simple_no_gate(tmp_path: Path):
 async def test_advance_rejects_invalid_target(tmp_path: Path):
     wf = _simple_workflow()
     registry.register(wf)
-    ws = tmp_path / "workspace"
-    ws.mkdir()
-    state = create_run(ws, workflow="demo", slug="x",
-                       initial_phase="a")
+    ctx = _ctx_for(tmp_path)
+    state = init_workflow_state(ctx, workflow="demo", initial_phase="a")
 
     with pytest.raises(ValueError, match="not a valid next phase"):
-        await advance(ws, state, target="ghost", reason="")
+        await advance(ctx, state, target="ghost", reason="")
     # State unchanged
-    reloaded = load_run(ws, state.run_id)
+    reloaded = load_workflow_state(ctx)
+    assert reloaded is not None
     assert reloaded.current_phase == "a"
 
 
@@ -138,15 +149,14 @@ async def test_advance_rejects_invalid_target(tmp_path: Path):
 async def test_advance_with_gate_returns_end_turn_confirm(tmp_path: Path):
     wf = _gated_workflow()
     registry.register(wf)
-    ws = tmp_path / "workspace"
-    ws.mkdir()
-    state = create_run(ws, workflow="gated", slug="x",
-                       initial_phase="a")
+    ctx = _ctx_for(tmp_path)
+    state = init_workflow_state(ctx, workflow="gated", initial_phase="a")
 
-    result = await advance(ws, state, target="b", reason="ok")
+    result = await advance(ctx, state, target="b", reason="ok")
     assert isinstance(result.end_turn_signal, EndTurnConfirm)
     # State should be paused-gate, current phase still 'a'
-    reloaded = load_run(ws, state.run_id)
+    reloaded = load_workflow_state(ctx)
+    assert reloaded is not None
     assert reloaded.status == RunStatus.PAUSED_GATE
     assert reloaded.current_phase == "a"
     assert reloaded.pending_gate == {"edge_target": "b", "on_deny": "a"}
@@ -156,15 +166,15 @@ async def test_advance_with_gate_returns_end_turn_confirm(tmp_path: Path):
 async def test_finalize_gate_approve(tmp_path: Path):
     wf = _gated_workflow()
     registry.register(wf)
-    ws = tmp_path / "workspace"
-    ws.mkdir()
-    state = create_run(ws, workflow="gated", slug="x",
-                       initial_phase="a")
-    await advance(ws, state, target="b", reason="ok")
-    state = load_run(ws, state.run_id)
+    ctx = _ctx_for(tmp_path)
+    state = init_workflow_state(ctx, workflow="gated", initial_phase="a")
+    await advance(ctx, state, target="b", reason="ok")
+    state = load_workflow_state(ctx)
+    assert state is not None
 
-    await finalize_gate_response(ws, state, approved=True)
-    reloaded = load_run(ws, state.run_id)
+    await finalize_gate_response(ctx, state, approved=True)
+    reloaded = load_workflow_state(ctx)
+    assert reloaded is not None
     assert reloaded.current_phase == "b"
     assert reloaded.status == RunStatus.DONE
     assert reloaded.pending_gate is None
@@ -175,15 +185,15 @@ async def test_finalize_gate_approve(tmp_path: Path):
 async def test_finalize_gate_deny(tmp_path: Path):
     wf = _gated_workflow()
     registry.register(wf)
-    ws = tmp_path / "workspace"
-    ws.mkdir()
-    state = create_run(ws, workflow="gated", slug="x",
-                       initial_phase="a")
-    await advance(ws, state, target="b", reason="ok")
-    state = load_run(ws, state.run_id)
+    ctx = _ctx_for(tmp_path)
+    state = init_workflow_state(ctx, workflow="gated", initial_phase="a")
+    await advance(ctx, state, target="b", reason="ok")
+    state = load_workflow_state(ctx)
+    assert state is not None
 
-    await finalize_gate_response(ws, state, approved=False)
-    reloaded = load_run(ws, state.run_id)
+    await finalize_gate_response(ctx, state, approved=False)
+    reloaded = load_workflow_state(ctx)
+    assert reloaded is not None
     # on_deny was "a" — stayed in phase a (but transitioned through gate)
     assert reloaded.current_phase == "a"
     assert reloaded.status == RunStatus.RUNNING
@@ -194,16 +204,14 @@ async def test_finalize_gate_deny(tmp_path: Path):
 async def test_verify_subagent_outputs_present(tmp_path: Path):
     wf = _subagent_workflow()
     registry.register(wf)
-    ws = tmp_path / "workspace"
-    ws.mkdir()
-    state = create_run(ws, workflow="sub", slug="x",
-                       initial_phase="g")
-    artifacts = ws / "workflows" / "sub" / "runs" / state.run_id \
-        / "artifacts" / "g"
+    ctx = _ctx_for(tmp_path)
+    state = init_workflow_state(ctx, workflow="sub", initial_phase="g")
+    artifacts = (ctx.config.workspace_path / "conversations"
+                 / ctx.conv_id / "artifacts" / "g")
     artifacts.mkdir(parents=True)
     (artifacts / "sources.md").write_text("data")
 
-    missing = verify_subagent_outputs(ws, state, phase_id="g")
+    missing = verify_subagent_outputs(ctx, state, phase_id="g")
     assert missing == []
 
 
@@ -211,12 +219,10 @@ async def test_verify_subagent_outputs_present(tmp_path: Path):
 async def test_verify_subagent_outputs_missing_returns_list(tmp_path: Path):
     wf = _subagent_workflow()
     registry.register(wf)
-    ws = tmp_path / "workspace"
-    ws.mkdir()
-    state = create_run(ws, workflow="sub", slug="x",
-                       initial_phase="g")
+    ctx = _ctx_for(tmp_path)
+    state = init_workflow_state(ctx, workflow="sub", initial_phase="g")
 
-    missing = verify_subagent_outputs(ws, state, phase_id="g")
+    missing = verify_subagent_outputs(ctx, state, phase_id="g")
     assert missing == ["sources.md"]
 
 
@@ -227,54 +233,48 @@ async def test_finalize_gate_response_uses_fresh_state(tmp_path: Path):
     lock rather than the stale passed-in state."""
     wf = _gated_workflow()
     registry.register(wf)
-    ws = tmp_path / "workspace"
-    ws.mkdir()
-    state = create_run(ws, workflow="gated", slug="x",
-                       initial_phase="a")
+    ctx = _ctx_for(tmp_path)
+    state = init_workflow_state(ctx, workflow="gated", initial_phase="a")
     # Caller advance triggers the gate; state is now PAUSED_GATE on disk.
-    await advance(ws, state, target="b", reason="ok")
-    captured = load_run(ws, state.run_id)
+    await advance(ctx, state, target="b", reason="ok")
+    captured = load_workflow_state(ctx)
+    assert captured is not None
 
     # Simulate: another process finalized the gate first
-    await finalize_gate_response(ws, captured, approved=True)
+    await finalize_gate_response(ctx, captured, approved=True)
 
     # Now a second finalize call with the SAME (now-stale) `captured`
     # state should raise — because the on-disk state is no longer
     # PAUSED_GATE.
     with pytest.raises(ValueError, match="not paused on a gate"):
-        await finalize_gate_response(ws, captured, approved=True)
+        await finalize_gate_response(ctx, captured, approved=True)
 
 
 @pytest.mark.asyncio
 async def test_subagent_dispatch_happy_path(tmp_path: Path, monkeypatch):
     """Dispatching a subagent phase writes the artifact and advances
     to the next phase."""
-    from types import SimpleNamespace
-
     from decafclaw.workflow import subagent as wf_subagent
     from decafclaw.workflow.engine import dispatch_and_finalize_subagent
 
     wf = _subagent_workflow()
     registry.register(wf)
-    ws = tmp_path / "workspace"
-    ws.mkdir()
-    state = create_run(ws, workflow="sub", slug="x",
-                       initial_phase="g")
+    ctx = _ctx_for(tmp_path)
+    state = init_workflow_state(ctx, workflow="sub", initial_phase="g")
 
     # Stub the child-agent runner to "produce" the output file
-    async def fake_run_child(*, ctx, workspace, state, phase):
-        artifacts_dir = (workspace / "workflows" / state.workflow
-                         / "runs" / state.run_id / "artifacts"
-                         / phase.id)
-        artifacts_dir.mkdir(parents=True, exist_ok=True)
-        (artifacts_dir / "sources.md").write_text("fetched")
+    async def fake_run_child(*, ctx, state, phase):
+        artifacts = (ctx.config.workspace_path / "conversations"
+                     / ctx.conv_id / "artifacts" / phase.id)
+        artifacts.mkdir(parents=True, exist_ok=True)
+        (artifacts / "sources.md").write_text("fetched")
         return "done"
 
     monkeypatch.setattr(wf_subagent, "_run_child", fake_run_child)
 
-    ctx = SimpleNamespace(config=SimpleNamespace(workspace_path=ws))
-    await dispatch_and_finalize_subagent(ctx, ws, state, phase_id="g")
-    reloaded = load_run(ws, state.run_id)
+    await dispatch_and_finalize_subagent(ctx, state, phase_id="g")
+    reloaded = load_workflow_state(ctx)
+    assert reloaded is not None
     assert reloaded.current_phase == "d"
     assert reloaded.status == RunStatus.DONE
     assert reloaded.history[-1]["from"] == "g"
@@ -284,27 +284,23 @@ async def test_subagent_dispatch_happy_path(tmp_path: Path, monkeypatch):
 @pytest.mark.asyncio
 async def test_subagent_dispatch_missing_output_sets_error(
         tmp_path: Path, monkeypatch):
-    from types import SimpleNamespace
-
     from decafclaw.workflow import subagent as wf_subagent
     from decafclaw.workflow.engine import dispatch_and_finalize_subagent
 
     wf = _subagent_workflow()
     registry.register(wf)
-    ws = tmp_path / "workspace"
-    ws.mkdir()
-    state = create_run(ws, workflow="sub", slug="x",
-                       initial_phase="g")
+    ctx = _ctx_for(tmp_path)
+    state = init_workflow_state(ctx, workflow="sub", initial_phase="g")
 
-    async def fake_run_child(*, ctx, workspace, state, phase):
+    async def fake_run_child(*, ctx, state, phase):
         # Subagent "completes" but doesn't write the output
         return "incomplete"
 
     monkeypatch.setattr(wf_subagent, "_run_child", fake_run_child)
 
-    ctx = SimpleNamespace(config=SimpleNamespace(workspace_path=ws))
-    await dispatch_and_finalize_subagent(ctx, ws, state, phase_id="g")
-    reloaded = load_run(ws, state.run_id)
+    await dispatch_and_finalize_subagent(ctx, state, phase_id="g")
+    reloaded = load_workflow_state(ctx)
+    assert reloaded is not None
     assert reloaded.status == RunStatus.ERROR
     assert "sources.md" in (reloaded.error or "")
     assert reloaded.current_phase == "g"  # didn't advance
@@ -326,26 +322,22 @@ async def test_subagent_dispatch_child_crash_sets_error(
         tmp_path: Path, monkeypatch):
     """If _run_child raises, dispatch_and_finalize_subagent should set
     RunStatus.ERROR with the exception text rather than propagating."""
-    from types import SimpleNamespace
-
     from decafclaw.workflow import subagent as wf_subagent
     from decafclaw.workflow.engine import dispatch_and_finalize_subagent
 
     wf = _subagent_workflow()
     registry.register(wf)
-    ws = tmp_path / "workspace"
-    ws.mkdir()
-    state = create_run(ws, workflow="sub", slug="x",
-                       initial_phase="g")
+    ctx = _ctx_for(tmp_path)
+    state = init_workflow_state(ctx, workflow="sub", initial_phase="g")
 
-    async def boom(*, ctx, workspace, state, phase):
+    async def boom(*, ctx, state, phase):
         raise RuntimeError("LLM exploded")
 
     monkeypatch.setattr(wf_subagent, "_run_child", boom)
 
-    ctx = SimpleNamespace(config=SimpleNamespace(workspace_path=ws))
-    await dispatch_and_finalize_subagent(ctx, ws, state, phase_id="g")
-    reloaded = load_run(ws, state.run_id)
+    await dispatch_and_finalize_subagent(ctx, state, phase_id="g")
+    reloaded = load_workflow_state(ctx)
+    assert reloaded is not None
     assert reloaded.status == RunStatus.ERROR
     assert "LLM exploded" in (reloaded.error or "")
     assert reloaded.current_phase == "g"

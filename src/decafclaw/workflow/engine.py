@@ -10,21 +10,30 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from pathlib import Path
+from datetime import datetime, timezone
 
 from ..media import EndTurnConfirm
 from . import registry
-from .runs import _now_iso, load_run, run_lock, save_run
+from .conv_state import (
+    artifacts_dir,
+    conv_lock,
+    load_workflow_state,
+    save_workflow_state,
+)
 from .types import (
     EdgeDef,
     PhaseDef,
     PhaseKind,
-    RunState,
     RunStatus,
     WorkflowDef,
+    WorkflowState,
 )
 
 log = logging.getLogger(__name__)
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
 @dataclass
@@ -47,9 +56,9 @@ def _find_edge(phase: PhaseDef, target: str) -> tuple[int, EdgeDef] | None:
     return None
 
 
-async def advance(workspace: Path, state: RunState, target: str,
+async def advance(ctx, state: WorkflowState, target: str,
                   reason: str) -> AdvanceResult:
-    """Advance the run along the matching edge.
+    """Advance the workflow along the matching edge.
 
     If the edge has a gate, returns an AdvanceResult with an
     EndTurnConfirm in end_turn_signal — the caller surfaces the
@@ -59,7 +68,7 @@ async def advance(workspace: Path, state: RunState, target: str,
     if wf is None:
         raise ValueError(f"workflow '{state.workflow}' not registered")
 
-    async with run_lock(state.run_id):
+    async with conv_lock(ctx):
         phase = wf.phase(state.current_phase)
         if phase is None:
             raise ValueError(
@@ -73,21 +82,21 @@ async def advance(workspace: Path, state: RunState, target: str,
         edge_idx, edge = found
 
         if edge.gate is not None:
-            return _enter_gate(workspace, state, edge_idx, edge, reason)
+            return _enter_gate(ctx, state, edge_idx, edge, reason)
 
         return _apply_transition(
-            workspace, wf, state, edge_idx, target, reason,
+            ctx, wf, state, edge_idx, target, reason,
             gate_response=None)
 
 
-def _enter_gate(workspace: Path, state: RunState, edge_idx: int,
+def _enter_gate(ctx, state: WorkflowState, edge_idx: int,
                 edge: EdgeDef, reason: str) -> AdvanceResult:
     gate = edge.gate
     assert gate is not None
     on_deny = gate.on_deny or state.current_phase
     state.status = RunStatus.PAUSED_GATE
     state.pending_gate = {"edge_target": edge.id, "on_deny": on_deny}
-    save_run(workspace, state)
+    save_workflow_state(ctx, state)
 
     confirm = EndTurnConfirm(
         message=gate.message,
@@ -100,25 +109,25 @@ def _enter_gate(workspace: Path, state: RunState, edge_idx: int,
                          end_turn_signal=confirm)
 
 
-async def finalize_gate_response(workspace: Path, state: RunState,
+async def finalize_gate_response(ctx, state: WorkflowState,
                                  approved: bool) -> AdvanceResult:
     """Apply a gate's approve/deny response and resume.
 
     Re-loads state from disk inside the lock to avoid TOCTOU between
-    the caller's load_run and the lock acquisition: a concurrent
+    the caller's load and the lock acquisition: a concurrent
     advance could otherwise have cleared pending_gate already.
     """
     wf = registry.get(state.workflow)
     if wf is None:
         raise ValueError(f"workflow '{state.workflow}' not registered")
 
-    async with run_lock(state.run_id):
-        fresh = load_run(workspace, state.run_id)
+    async with conv_lock(ctx):
+        fresh = load_workflow_state(ctx)
         if fresh is None:
-            raise ValueError(f"run '{state.run_id}' not found")
+            raise ValueError("no workflow active in conversation")
         if fresh.status != RunStatus.PAUSED_GATE \
                 or fresh.pending_gate is None:
-            raise ValueError("run is not paused on a gate")
+            raise ValueError("workflow is not paused on a gate")
         state = fresh
 
         # Guard above ensures pending_gate is non-None; assign to a
@@ -142,13 +151,13 @@ async def finalize_gate_response(workspace: Path, state: RunState,
                 "definition changed mid-run?")
         state.pending_gate = None
         return _apply_transition(
-            workspace, wf, state, edge_idx, target,
+            ctx, wf, state, edge_idx, target,
             reason=("user approved" if approved else "user denied"),
             gate_response=("approved" if approved else "denied"))
 
 
-def _apply_transition(workspace: Path, wf: WorkflowDef,
-                      state: RunState, edge_idx: int, target: str,
+def _apply_transition(ctx, wf: WorkflowDef,
+                      state: WorkflowState, edge_idx: int, target: str,
                       reason: str, gate_response: str | None
                       ) -> AdvanceResult:
     prev = state.current_phase
@@ -171,21 +180,20 @@ def _apply_transition(workspace: Path, wf: WorkflowDef,
         state.status = RunStatus.PAUSED_SUBAGENT
     else:
         state.status = RunStatus.RUNNING
-    save_run(workspace, state)
+    save_workflow_state(ctx, state)
     return AdvanceResult(new_phase=target, end_turn_signal=None)
 
 
-async def dispatch_and_finalize_subagent(ctx, workspace: Path,
-                                         state: RunState,
+async def dispatch_and_finalize_subagent(ctx, state: WorkflowState,
                                          phase_id: str) -> None:
     """Run a subagent phase end-to-end: spawn the child, verify its
     outputs, and either auto-advance along the single ``next-phases``
     edge or set ``RunStatus.ERROR``.
 
     Called by the tool layer (workflow_advance) when a transition
-    lands on a SUBAGENT phase. Holds the per-run lock for the full
-    dispatch + verify + advance sequence so concurrent operations on
-    the same run serialize correctly.
+    lands on a SUBAGENT phase. Holds the per-conversation lock for
+    the full dispatch + verify + advance sequence so concurrent
+    operations on the same conv serialize correctly.
 
     Failure modes (all persisted to ``state.error``):
     - workflow / phase not registered: ``ValueError`` propagated to caller
@@ -206,33 +214,32 @@ async def dispatch_and_finalize_subagent(ctx, workspace: Path,
         raise ValueError(
             f"phase '{phase_id}' not in workflow '{state.workflow}'")
 
-    async with run_lock(state.run_id):
+    async with conv_lock(ctx):
         try:
             await wf_subagent._run_child(
-                ctx=ctx, workspace=workspace,
-                state=state, phase=phase,
+                ctx=ctx, state=state, phase=phase,
             )
         except Exception as exc:
             log.exception(
-                "[workflow] subagent crashed for run=%s phase=%s",
-                state.run_id, phase_id)
+                "[workflow] subagent crashed for conv=%s phase=%s",
+                ctx.conv_id, phase_id)
             state.status = RunStatus.ERROR
             state.error = f"subagent crashed: {exc}"
-            save_run(workspace, state)
+            save_workflow_state(ctx, state)
             return
 
-        missing = verify_subagent_outputs(workspace, state, phase_id)
+        missing = verify_subagent_outputs(ctx, state, phase_id)
         if missing:
             state.status = RunStatus.ERROR
             state.error = (
                 "subagent did not produce required outputs: "
                 + ", ".join(missing)
             )
-            save_run(workspace, state)
+            save_workflow_state(ctx, state)
             log.warning(
-                "[workflow] subagent for run=%s phase=%s missing "
+                "[workflow] subagent for conv=%s phase=%s missing "
                 "outputs: %s",
-                state.run_id, phase_id, missing)
+                ctx.conv_id, phase_id, missing)
             return
 
         # Subagent phases must have exactly one next edge (loader
@@ -245,7 +252,7 @@ async def dispatch_and_finalize_subagent(ctx, workspace: Path,
                 f"next-phases edge for auto-advance "
                 f"(found {len(phase.next_phases)})"
             )
-            save_run(workspace, state)
+            save_workflow_state(ctx, state)
             log.error(
                 "[workflow] subagent phase=%s has %d edges, expected 1",
                 phase_id, len(phase.next_phases))
@@ -253,17 +260,17 @@ async def dispatch_and_finalize_subagent(ctx, workspace: Path,
 
         target = phase.next_phases[0].id
         _apply_transition(
-            workspace, wf, state, edge_idx=0,
+            ctx, wf, state, edge_idx=0,
             target=target,
             reason="subagent complete",
             gate_response=None,
         )
         log.info(
-            "[workflow] subagent complete for run=%s phase=%s → %s",
-            state.run_id, phase_id, target)
+            "[workflow] subagent complete for conv=%s phase=%s → %s",
+            ctx.conv_id, phase_id, target)
 
 
-def verify_subagent_outputs(workspace: Path, state: RunState,
+def verify_subagent_outputs(ctx, state: WorkflowState,
                             phase_id: str) -> list[str]:
     """Return the list of expected outputs that are MISSING from artifacts.
 
@@ -279,11 +286,10 @@ def verify_subagent_outputs(workspace: Path, state: RunState,
     phase = wf.phase(phase_id)
     if phase is None or phase.kind != PhaseKind.SUBAGENT:
         return []
-    artifacts = (workspace / "workflows" / state.workflow / "runs"
-                 / state.run_id / "artifacts" / phase_id)
+    art_root = artifacts_dir(ctx)
     missing: list[str] = []
     for output in phase.outputs:
-        if not (artifacts / output).is_file():
+        if not (art_root / phase_id / output).is_file():
             missing.append(output)
     return missing
 
@@ -295,21 +301,22 @@ def verify_subagent_outputs(workspace: Path, state: RunState,
 _SUBAGENT_DISPATCH_CHAIN_CAP = 8
 
 
-async def dispatch_subagent_if_needed(ctx, state: RunState) -> RunState:
+async def dispatch_subagent_if_needed(ctx,
+                                      state: WorkflowState
+                                      ) -> WorkflowState:
     """Synchronously dispatch the subagent for the current phase if
     it's a subagent phase, and recursively if dispatch advances to
     another subagent. Returns the (possibly-advanced) state.
 
-    No-op when the current phase is inline, terminal, or the run is
-    in a non-running status (DONE / ERROR / PAUSED_GATE — the gate
-    case is handled by the tool layer separately).
+    No-op when the current phase is inline, terminal, or the workflow
+    is in a non-running status (DONE / ERROR / ABORTED / PAUSED_GATE —
+    the gate case is handled by the tool layer separately).
 
     Called by the tool layer after operations that may have landed
-    the run on a subagent phase: ``tool_workflow_start`` (initial
+    the workflow on a subagent phase: ``tool_workflow_start`` (initial
     phase is a subagent) and ``tool_phase_advance`` (target is a
     subagent).
     """
-    workspace: Path = ctx.config.workspace_path
     for _ in range(_SUBAGENT_DISPATCH_CHAIN_CAP):
         wf = registry.get(state.workflow)
         if wf is None:
@@ -317,25 +324,24 @@ async def dispatch_subagent_if_needed(ctx, state: RunState) -> RunState:
         phase = wf.phase(state.current_phase)
         if phase is None or phase.kind != PhaseKind.SUBAGENT:
             return state
-        # Only RUNNING / PAUSED_SUBAGENT states are dispatchable; DONE
-        # and ERROR end the chain, PAUSED_GATE is the tool layer's
-        # problem (not ours).
+        # Only RUNNING / PAUSED_SUBAGENT states are dispatchable; DONE,
+        # ERROR, and ABORTED end the chain, PAUSED_GATE is the tool
+        # layer's problem (not ours).
         if state.status in (RunStatus.DONE, RunStatus.ERROR,
-                            RunStatus.PAUSED_GATE):
+                            RunStatus.ABORTED, RunStatus.PAUSED_GATE):
             return state
 
         await dispatch_and_finalize_subagent(
-            ctx, workspace, state, state.current_phase)
+            ctx, state, state.current_phase)
 
         # Reload state after dispatch; the engine wrote new state to disk.
-        from .runs import load_run
-        fresh = load_run(workspace, state.run_id)
+        fresh = load_workflow_state(ctx)
         if fresh is None:
             return state
         state = fresh
 
     log.warning(
-        "[workflow] subagent dispatch chain hit cap (%d) for run=%s — "
+        "[workflow] subagent dispatch chain hit cap (%d) for conv=%s — "
         "stopping to avoid infinite loop",
-        _SUBAGENT_DISPATCH_CHAIN_CAP, state.run_id)
+        _SUBAGENT_DISPATCH_CHAIN_CAP, ctx.conv_id)
     return state
