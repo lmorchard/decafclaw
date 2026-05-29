@@ -41,6 +41,26 @@ workflow:
 Optional command-handler prose. Use `$ARGUMENTS` for command args.
 ```
 
+### `required-skills:` (optional)
+
+Workflows can declare skills they depend on:
+
+```yaml
+---
+name: research_brief
+kind: workflow
+required-skills: [tabstack]
+workflow:
+  initial-phase: gather
+---
+```
+
+`workflow_start` activates each named skill before initializing
+state. If any skill fails to activate (denied, missing env vars,
+not found), `workflow_start` returns an error and no state is
+written. Activated skills stay active for the rest of the
+conversation.
+
 ### Phase files
 
 Each `phases/<stem>.md` defines a phase with `id: <stem>`. Frontmatter
@@ -114,10 +134,9 @@ Always loaded:
 
 | Tool | Purpose |
 |---|---|
-| `workflow_start(name, slug)` | Start a new run. |
-| `workflow_list(workflow, status)` | List runs across all conversations. |
-| `workflow_switch(run_id)` | Set the conversation's current run. |
+| `workflow_start(name)` | Start a new run. |
 | `workflow_status` | Show current run, valid transitions with `when:` text, recent history. |
+| `workflow_abort` | Abort the current workflow and archive its state. |
 | `workflow_artifact_read/write` | I/O scoped to the run's `artifacts/` directory. |
 
 Dynamically injected when a run is active:
@@ -139,10 +158,23 @@ The loader rejects (logs warning, skips the workflow):
 
 ## Run state
 
-Each run lives at `workspace/workflows/{name}/runs/{run-id}/` with
-`state.json` (current phase, transition history, status) and
-`artifacts/` (phase outputs). Runs survive across conversations —
-`workflow_switch <run-id>` reattaches.
+Workflow state for a conversation lives at:
+
+```
+data/{agent_id}/workspace/
+  conversations/
+    {conv_id}.jsonl                          # conversation archive
+    {conv_id}/                               # workflow directory
+      workflow.json                          # state, history, phase
+      artifacts/                             # phase outputs
+        gather/sources.md
+        draft/brief.md
+```
+
+One active workflow per conversation. Reaching a terminal phase
+(done / error / aborted) archives `workflow.json` to
+`workflow-<terminated-timestamp>.json`, freeing the slot for a fresh
+workflow_start. Artifacts persist across these archive transitions.
 
 ## Cross-phase context
 
@@ -157,5 +189,3 @@ tool clearing and compaction.
 - Only `gate: review` is supported (no input widgets yet)
 - Edges use LLM-routed `when:` strings; no code-evaluated conditions
 - Workflows can't nest (no sub-workflows)
-- `workflow_list` walks the filesystem — fine for tens of runs, not
-  hundreds
