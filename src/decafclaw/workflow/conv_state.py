@@ -52,6 +52,10 @@ def init_workflow_state(ctx, workflow: str,
     Raises ValueError if a workflow is already active in this conv
     (status is not done/error/aborted). Call archive_workflow_state
     first to start a successor.
+
+    Callers should hold ``conv_lock(ctx)`` if there is any chance of
+    concurrent ``init_workflow_state`` invocations on the same conv —
+    the active-workflow check and the write are not internally locked.
     """
     existing = load_workflow_state(ctx)
     if existing is not None and existing.status not in (
@@ -117,16 +121,24 @@ def load_workflow_state(ctx) -> WorkflowState | None:
 def archive_workflow_state(ctx) -> Path | None:
     """Rename the current workflow.json to workflow-<ts>.json so a
     successor workflow can start fresh. No-op if no workflow.json
-    exists. Returns the archived path or None."""
+    exists. Returns the archived path or None.
+
+    Raises RuntimeError if a microsecond-suffixed path also collides
+    (vanishingly unlikely in practice; failing loud beats silently
+    overwriting an existing archive)."""
     path = _workflow_path(ctx)
     if not path.is_file():
         return None
-    ts = datetime.now(timezone.utc).strftime("%Y-%m-%d-%H%M%S")
+    now = datetime.now(timezone.utc)
+    ts = now.strftime("%Y-%m-%d-%H%M%S")
     archived = path.parent / f"workflow-{ts}.json"
-    # On collision (rare), append microseconds
     if archived.exists():
-        us = f"{datetime.now(timezone.utc).microsecond:06d}"
+        us = f"{now.microsecond:06d}"
         archived = path.parent / f"workflow-{ts}{us}.json"
+        if archived.exists():
+            raise RuntimeError(
+                f"archive collision for conv={ctx.conv_id} at "
+                f"{archived} — refusing to overwrite existing archive")
     os.replace(path, archived)
     log.info("[workflow] archived %s → %s for conv=%s",
              path.name, archived.name, ctx.conv_id)
