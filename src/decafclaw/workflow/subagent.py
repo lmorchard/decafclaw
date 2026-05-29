@@ -35,11 +35,11 @@ _BLOCKED_FOR_CHILDREN = frozenset({
     "delegate_task", "delegate_tasks",
     # Children inherit parent's activated skill set; they don't manage it
     "activate_skill", "refresh_skills", "tool_search",
-    # Children must not start/switch/list workflow runs (they run within
-    # one) and must not advance the parent's transition state machine —
+    # Children must not start or abort the workflow they run inside,
+    # and must not advance the parent's transition state machine —
     # phase_advance is the dynamic transition tool injected per turn.
-    "workflow_start", "workflow_switch", "workflow_list",
-    "workflow_status", "phase_advance",
+    "workflow_start", "workflow_abort", "workflow_status",
+    "phase_advance",
 })
 
 

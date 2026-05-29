@@ -312,8 +312,7 @@ def test_blocked_for_children_includes_phase_advance():
     from decafclaw.workflow.subagent import _BLOCKED_FOR_CHILDREN
     assert "phase_advance" in _BLOCKED_FOR_CHILDREN
     # Sanity: also confirm the workflow_* admin tools are blocked
-    for t in ("workflow_start", "workflow_switch", "workflow_list",
-              "workflow_status"):
+    for t in ("workflow_start", "workflow_abort", "workflow_status"):
         assert t in _BLOCKED_FOR_CHILDREN, f"{t} should be blocked"
 
 

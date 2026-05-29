@@ -74,7 +74,7 @@ def _format_phase_section(state, phase, wf, run_id: str = "") -> str:
             f"  - status is '{RunStatus.ERROR.value}': subagent crashed",
             "    or produced incomplete outputs. Use workflow_status",
             "    for the error message and consider phase_advance to a",
-            "    recovery target if one is declared, or workflow_switch",
+            "    recovery target if one is declared, or workflow_abort",
             "    to abandon this run.",
             f"  - status is '{RunStatus.PAUSED_SUBAGENT.value}': dispatch",
             "    is still in progress (rare — should resolve before",
