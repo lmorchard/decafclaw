@@ -5,21 +5,20 @@ from types import SimpleNamespace
 
 import pytest
 
-from decafclaw.media import EndTurnConfirm, ToolResult
+from decafclaw.media import ToolResult
 from decafclaw.tools.workflow_tools import (
     build_phase_advance_definition,
     tool_phase_advance,
+    tool_workflow_abort,
     tool_workflow_artifact_read,
     tool_workflow_artifact_write,
-    tool_workflow_list,
     tool_workflow_start,
     tool_workflow_status,
-    tool_workflow_switch,
 )
 from decafclaw.workflow import registry
+from decafclaw.workflow.conv_state import load_workflow_state
 from decafclaw.workflow.types import (
     EdgeDef,
-    GateDef,
     PhaseDef,
     PhaseKind,
     WorkflowDef,
@@ -33,12 +32,15 @@ def _clean_registry():
     registry.clear()
 
 
-def _ctx_for(tmp_path: Path) -> SimpleNamespace:
+def _ctx_for(tmp_path: Path,
+             conv_id: str = "conv-tool-test") -> SimpleNamespace:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
-    config = SimpleNamespace(workspace_path=workspace)
-    skills = SimpleNamespace(data={})
-    return SimpleNamespace(config=config, skills=skills)
+    config = SimpleNamespace(workspace_path=workspace,
+                             discovered_skills=[])
+    skills = SimpleNamespace(data={}, activated=set())
+    return SimpleNamespace(config=config, skills=skills,
+                           conv_id=conv_id, manager=None)
 
 
 def _two_phase_wf() -> WorkflowDef:
@@ -74,26 +76,137 @@ def _two_phase_wf() -> WorkflowDef:
 async def test_workflow_start_creates_run(tmp_path: Path):
     registry.register(_two_phase_wf())
     ctx = _ctx_for(tmp_path)
-    result = await tool_workflow_start(ctx, name="demo", slug="t1")
+    result = await tool_workflow_start(ctx, name="demo")
     assert isinstance(result, (str, ToolResult))
     text = result.text if isinstance(result, ToolResult) else result
     assert "demo" in text
-    assert ctx.skills.data["current_workflow_run"]
+    state = load_workflow_state(ctx)
+    assert state is not None
+    assert state.workflow == "demo"
 
 
 @pytest.mark.asyncio
 async def test_workflow_start_unknown_workflow(tmp_path: Path):
     ctx = _ctx_for(tmp_path)
-    result = await tool_workflow_start(ctx, name="ghost", slug="")
+    result = await tool_workflow_start(ctx, name="ghost")
     assert isinstance(result, ToolResult)
     assert "not found" in result.text.lower()
+
+
+@pytest.mark.asyncio
+async def test_workflow_start_no_active_workflow_initializes(
+        tmp_path: Path):
+    registry.register(_two_phase_wf())
+    ctx = _ctx_for(tmp_path)
+    result = await tool_workflow_start(ctx, name="demo")
+    text = result.text if isinstance(result, ToolResult) else result
+    assert "demo" in text
+    state = load_workflow_state(ctx)
+    assert state is not None
+    assert state.workflow == "demo"
+
+
+@pytest.mark.asyncio
+async def test_workflow_start_with_active_workflow_errors(
+        tmp_path: Path):
+    registry.register(_two_phase_wf())
+    ctx = _ctx_for(tmp_path)
+    await tool_workflow_start(ctx, name="demo")
+    second = await tool_workflow_start(ctx, name="demo")
+    assert isinstance(second, ToolResult)
+    assert "already active" in second.text
+
+
+@pytest.mark.asyncio
+async def test_workflow_abort_when_active(tmp_path: Path):
+    registry.register(_two_phase_wf())
+    ctx = _ctx_for(tmp_path)
+    await tool_workflow_start(ctx, name="demo")
+    result = await tool_workflow_abort(ctx, reason="user requested")
+    text = result.text if isinstance(result, ToolResult) else result
+    assert "abort" in text.lower()
+    # workflow.json archived → load_workflow_state returns None
+    assert load_workflow_state(ctx) is None
+
+
+@pytest.mark.asyncio
+async def test_workflow_abort_when_no_workflow_errors(tmp_path: Path):
+    ctx = _ctx_for(tmp_path)
+    result = await tool_workflow_abort(ctx, reason="")
+    assert isinstance(result, ToolResult)
+    assert "no workflow" in result.text.lower()
+
+
+@pytest.mark.asyncio
+async def test_workflow_start_activates_required_skills(
+        tmp_path: Path, monkeypatch):
+    """workflow_start auto-activates every skill in required_skills."""
+    activated: list[str] = []
+
+    async def fake_activate(ctx, name):
+        activated.append(name)
+        return ToolResult(text=f"Activated {name}")
+
+    monkeypatch.setattr(
+        "decafclaw.tools.workflow_tools._activate_skill_for_workflow",
+        fake_activate)
+
+    wf = WorkflowDef(
+        name="needs_tabstack", description="", initial_phase="a",
+        phases={
+            "a": PhaseDef(
+                id="a", kind=PhaseKind.INLINE, prompt="", tools=[],
+                next_phases=[], gate=None, outputs=(),
+                subagent_skill=None, context_profile={},
+            ),
+        },
+        user_invocable=False, argument_hint="",
+        required_skills=["tabstack", "vault"],
+    )
+    registry.register(wf)
+    ctx = _ctx_for(tmp_path)
+    await tool_workflow_start(ctx, name="needs_tabstack")
+    assert activated == ["tabstack", "vault"]
+
+
+@pytest.mark.asyncio
+async def test_workflow_start_fails_when_required_skill_fails(
+        tmp_path: Path, monkeypatch):
+    async def fake_activate(ctx, name):
+        if name == "tabstack":
+            return ToolResult(text="[error: tabstack: denied]")
+        return ToolResult(text=f"Activated {name}")
+
+    monkeypatch.setattr(
+        "decafclaw.tools.workflow_tools._activate_skill_for_workflow",
+        fake_activate)
+
+    wf = WorkflowDef(
+        name="needs_tabstack", description="", initial_phase="a",
+        phases={
+            "a": PhaseDef(
+                id="a", kind=PhaseKind.INLINE, prompt="", tools=[],
+                next_phases=[], gate=None, outputs=(),
+                subagent_skill=None, context_profile={},
+            ),
+        },
+        user_invocable=False, argument_hint="",
+        required_skills=["tabstack"],
+    )
+    registry.register(wf)
+    ctx = _ctx_for(tmp_path)
+    result = await tool_workflow_start(ctx, name="needs_tabstack")
+    assert isinstance(result, ToolResult)
+    assert "tabstack" in result.text
+    # State NOT initialized on activation failure
+    assert load_workflow_state(ctx) is None
 
 
 @pytest.mark.asyncio
 async def test_phase_advance_unknown_target_errors(tmp_path: Path):
     registry.register(_two_phase_wf())
     ctx = _ctx_for(tmp_path)
-    await tool_workflow_start(ctx, name="demo", slug="t1")
+    await tool_workflow_start(ctx, name="demo")
     result = await tool_phase_advance(ctx, target_phase_id="ghost",
                                        reason="")
     assert isinstance(result, ToolResult)
@@ -104,7 +217,7 @@ async def test_phase_advance_unknown_target_errors(tmp_path: Path):
 async def test_phase_advance_valid_target(tmp_path: Path):
     registry.register(_two_phase_wf())
     ctx = _ctx_for(tmp_path)
-    await tool_workflow_start(ctx, name="demo", slug="t1")
+    await tool_workflow_start(ctx, name="demo")
     result = await tool_phase_advance(ctx, target_phase_id="b",
                                        reason="ready")
     assert isinstance(result, ToolResult)
@@ -117,7 +230,7 @@ async def test_phase_advance_dynamic_enum_reflects_current_phase(
     """The phase_advance schema enum lists only the current phase's targets."""
     registry.register(_two_phase_wf())
     ctx = _ctx_for(tmp_path)
-    await tool_workflow_start(ctx, name="demo", slug="t1")
+    await tool_workflow_start(ctx, name="demo")
     definition = build_phase_advance_definition(ctx)
     assert definition is not None
     enum_vals = definition["function"]["parameters"]["properties"][
@@ -136,10 +249,26 @@ async def test_phase_advance_definition_none_when_no_run_active(
 
 
 @pytest.mark.asyncio
+async def test_phase_advance_definition_has_critical_priority(
+        tmp_path: Path):
+    """Root-cause fix: phase_advance must declare critical priority so
+    it stays in the active catalog under load (deferred mode otherwise
+    drops it, and the LLM sees 'unknown tool' errors)."""
+    registry.register(_two_phase_wf())
+    ctx = _ctx_for(tmp_path)
+    ctx.tools = SimpleNamespace(extra={}, extra_definitions=[],
+                                allowed=None, workflow_restricted=False)
+    await tool_workflow_start(ctx, name="demo")
+    definition = build_phase_advance_definition(ctx)
+    assert definition is not None
+    assert definition.get("priority") == "critical"
+
+
+@pytest.mark.asyncio
 async def test_workflow_artifact_write_and_read(tmp_path: Path):
     registry.register(_two_phase_wf())
     ctx = _ctx_for(tmp_path)
-    await tool_workflow_start(ctx, name="demo", slug="t1")
+    await tool_workflow_start(ctx, name="demo")
     await tool_workflow_artifact_write(
         ctx, relative_path="notes.txt", content="hello")
     result = await tool_workflow_artifact_read(
@@ -153,7 +282,7 @@ async def test_workflow_artifact_write_rejects_path_traversal(
         tmp_path: Path):
     registry.register(_two_phase_wf())
     ctx = _ctx_for(tmp_path)
-    await tool_workflow_start(ctx, name="demo", slug="t1")
+    await tool_workflow_start(ctx, name="demo")
     result = await tool_workflow_artifact_write(
         ctx, relative_path="../../escape.txt", content="hi")
     assert isinstance(result, ToolResult)
@@ -164,30 +293,11 @@ async def test_workflow_artifact_write_rejects_path_traversal(
 async def test_workflow_status_shows_valid_targets(tmp_path: Path):
     registry.register(_two_phase_wf())
     ctx = _ctx_for(tmp_path)
-    await tool_workflow_start(ctx, name="demo", slug="t1")
+    await tool_workflow_start(ctx, name="demo")
     result = await tool_workflow_status(ctx)
     text = result.text if isinstance(result, ToolResult) else result
     assert "when ready" in text
     assert "when stuck" in text
-
-
-@pytest.mark.asyncio
-async def test_workflow_list_and_switch(tmp_path: Path):
-    registry.register(_two_phase_wf())
-    ctx = _ctx_for(tmp_path)
-    await tool_workflow_start(ctx, name="demo", slug="one")
-    first = ctx.skills.data["current_workflow_run"]
-    await tool_workflow_start(ctx, name="demo", slug="two")
-    second = ctx.skills.data["current_workflow_run"]
-    assert first != second
-
-    listing = await tool_workflow_list(ctx, workflow="", status="")
-    text = listing.text if isinstance(listing, ToolResult) else listing
-    assert "one" in text
-    assert "two" in text
-
-    await tool_workflow_switch(ctx, run_id=first)
-    assert ctx.skills.data["current_workflow_run"] == first
 
 
 @pytest.mark.asyncio
@@ -203,7 +313,7 @@ async def test_refresh_workflow_tools_injects_phase_advance(tmp_path: Path):
     refresh_workflow_tools(ctx)
     assert "phase_advance" not in ctx.tools.extra
 
-    await tool_workflow_start(ctx, name="demo", slug="t1")
+    await tool_workflow_start(ctx, name="demo")
     refresh_workflow_tools(ctx)
     assert "phase_advance" in ctx.tools.extra
     defs = [d for d in ctx.tools.extra_definitions
@@ -279,14 +389,17 @@ async def test_workflow_start_dispatches_subagent_initial_phase(
     workflow_start should synchronously dispatch the subagent and
     return with the run already advanced past it."""
     from decafclaw.workflow import subagent as wf_subagent
-    from decafclaw.workflow.runs import load_run
+    from decafclaw.workflow.conv_state import (
+        artifacts_dir,
+        load_workflow_state,
+    )
     from decafclaw.workflow.types import RunStatus
 
     registry.register(_subagent_initial_wf())
 
-    async def fake_run_child(*, ctx, workspace, state, phase):
-        artifacts = (workspace / "workflows" / state.workflow
-                     / "runs" / state.run_id / "artifacts" / phase.id)
+    async def fake_run_child(*, ctx, state, phase):
+        # New layout: per-conv artifacts/<phase>/...
+        artifacts = artifacts_dir(ctx) / phase.id
         artifacts.mkdir(parents=True, exist_ok=True)
         (artifacts / "sources.md").write_text("fetched")
         return "done"
@@ -294,10 +407,9 @@ async def test_workflow_start_dispatches_subagent_initial_phase(
     monkeypatch.setattr(wf_subagent, "_run_child", fake_run_child)
 
     ctx = _ctx_for(tmp_path)
-    await tool_workflow_start(ctx, name="sub_init", slug="t1")
+    await tool_workflow_start(ctx, name="sub_init")
 
-    run_id = ctx.skills.data["current_workflow_run"]
-    state = load_run(ctx.config.workspace_path, run_id)
+    state = load_workflow_state(ctx)
     assert state is not None
     # The subagent should have run, and the state should now be on
     # the inline phase past it (draft is terminal → DONE).
@@ -314,14 +426,16 @@ async def test_phase_advance_dispatches_subagent_target(
     subagent should be dispatched synchronously and the run should
     advance past it before the tool returns."""
     from decafclaw.workflow import subagent as wf_subagent
-    from decafclaw.workflow.runs import load_run
+    from decafclaw.workflow.conv_state import (
+        artifacts_dir,
+        load_workflow_state,
+    )
     from decafclaw.workflow.types import RunStatus
 
     registry.register(_mid_subagent_wf())
 
-    async def fake_run_child(*, ctx, workspace, state, phase):
-        artifacts = (workspace / "workflows" / state.workflow
-                     / "runs" / state.run_id / "artifacts" / phase.id)
+    async def fake_run_child(*, ctx, state, phase):
+        artifacts = artifacts_dir(ctx) / phase.id
         artifacts.mkdir(parents=True, exist_ok=True)
         (artifacts / "out.md").write_text("done")
         return "ok"
@@ -329,11 +443,10 @@ async def test_phase_advance_dispatches_subagent_target(
     monkeypatch.setattr(wf_subagent, "_run_child", fake_run_child)
 
     ctx = _ctx_for(tmp_path)
-    await tool_workflow_start(ctx, name="mid_sub", slug="t1")
+    await tool_workflow_start(ctx, name="mid_sub")
     await tool_phase_advance(ctx, target_phase_id="b", reason="go")
 
-    state = load_run(ctx.config.workspace_path,
-                     ctx.skills.data["current_workflow_run"])
+    state = load_workflow_state(ctx)
     assert state is not None
     assert state.current_phase == "c", (
         f"phase_advance did not dispatch subagent — still in "
@@ -378,7 +491,7 @@ async def test_refresh_workflow_tools_restricts_catalog_per_phase(
     refresh_workflow_tools(ctx)
     assert ctx.tools.allowed is None
 
-    await tool_workflow_start(ctx, name="restricted", slug="t1")
+    await tool_workflow_start(ctx, name="restricted")
     refresh_workflow_tools(ctx)
 
     # Now allowed should be a restricted set, including phase tools +

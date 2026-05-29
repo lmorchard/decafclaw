@@ -1,13 +1,16 @@
 """Always-loaded workflow engine tools.
 
-- workflow_start / list / switch / status — run lifecycle
+- workflow_start / abort / status — run lifecycle
 - phase_advance — canonical transition (dynamically regenerated per turn
-  with a current-phase enum + when: clause descriptions)
+  with a current-phase enum + when: clause descriptions). Declared at
+  priority "critical" so it stays in the active catalog even under
+  deferral pressure (the previous "normal" priority caused the demo's
+  "unknown tool 'phase_advance'" loop).
 - workflow_artifact_read / write — scoped artifact I/O
 
 The dynamic provider ``refresh_workflow_tools(ctx)`` is called from
 tool_definitions.refresh_dynamic_tools() to inject the per-turn
-phase_advance schema reflecting the current run's current phase.
+phase_advance schema reflecting the current workflow's current phase.
 """
 
 from __future__ import annotations
@@ -17,43 +20,62 @@ from pathlib import Path
 
 from ..media import EndTurnConfirm, ToolResult
 from ..workflow import engine, registry
-from ..workflow.runs import create_run, list_runs, load_run
-from ..workflow.types import PhaseKind
+from ..workflow.conv_state import (
+    archive_workflow_state,
+    artifacts_dir,
+    init_workflow_state,
+    load_workflow_state,
+    save_workflow_state,
+)
+from ..workflow.types import PhaseKind, RunStatus
 
 log = logging.getLogger(__name__)
 
 _BASE_ADVANCE_DESC = (
-    "Advance the current workflow run to its next phase. You MUST "
+    "Advance the current workflow to its next phase. You MUST "
     "pick a target_phase_id from the enum — other values will be "
     "rejected by the engine. The 'reason' parameter is a 1-2 "
     "sentence justification for the routing choice."
 )
 
 
-def _get_run(ctx):
-    run_id = (ctx.skills.data or {}).get("current_workflow_run")
-    if not run_id:
-        return None, None
-    state = load_run(ctx.config.workspace_path, run_id)
+def _get_workflow(ctx):
+    """Return (state, wf) or (None, None) if no workflow is active or
+    the registered workflow definition is gone."""
+    state = load_workflow_state(ctx)
     if state is None:
         return None, None
     wf = registry.get(state.workflow)
+    if wf is None:
+        return None, None
     return state, wf
 
 
-def _set_current_run(ctx, run_id: str) -> None:
-    if ctx.skills.data is None:
-        ctx.skills.data = {}
-    ctx.skills.data["current_workflow_run"] = run_id
+async def _activate_skill_for_workflow(ctx, name: str) -> ToolResult:
+    """Activate a skill required by a workflow definition.
+
+    Delegates to the standard skill activation path so user-tier
+    skills hit the same approval gate they would for a direct
+    activate_skill call. Returns a ToolResult — success carries the
+    skill body text; failure carries '[error: ...]'.
+
+    Wrapped in a separate helper so tests can monkeypatch this
+    function without touching tool_activate_skill internals.
+    """
+    from .skill_tools import tool_activate_skill
+    result = await tool_activate_skill(ctx, name=name)
+    if isinstance(result, ToolResult):
+        return result
+    return ToolResult(text=result)
 
 
 def build_phase_advance_definition(ctx) -> dict | None:
     """Return the per-turn JSON-Schema function definition for
     phase_advance, with the enum + descriptions populated from the
-    current run's current phase. Returns None when no run is active
-    (the tool is hidden until a workflow starts).
+    current workflow's current phase. Returns None when no workflow is
+    active (the tool is hidden until a workflow starts).
     """
-    state, wf = _get_run(ctx)
+    state, wf = _get_workflow(ctx)
     if state is None or wf is None:
         return None
     phase = wf.phase(state.current_phase)
@@ -77,6 +99,7 @@ def build_phase_advance_definition(ctx) -> dict | None:
 
     return {
         "type": "function",
+        "priority": "critical",
         "function": {
             "name": "phase_advance",
             "description": description,
@@ -108,8 +131,8 @@ def refresh_workflow_tools(ctx) -> None:
     Two responsibilities:
 
     1. **Inject the dynamic phase_advance** into ctx.tools.extra /
-       ctx.tools.extra_definitions when a workflow run is active and
-       its current phase has outgoing edges; remove it otherwise.
+       ctx.tools.extra_definitions when a workflow is active and its
+       current phase has outgoing edges; remove it otherwise.
 
     2. **Restrict the tool catalog per phase**: when an inline phase
        is active, set ctx.tools.allowed to the union of the phase's
@@ -117,7 +140,7 @@ def refresh_workflow_tools(ctx) -> None:
        critical-priority baseline. Clears the restriction when no
        workflow is active (only if it was set by this function).
     """
-    state, wf = _get_run(ctx)
+    state, wf = _get_workflow(ctx)
 
     # Always handle phase_advance injection/removal first
     definition = build_phase_advance_definition(ctx)
@@ -203,76 +226,93 @@ def _build_phase_allowed_set(ctx, phase) -> set[str]:
 
 # --------------------------------------------------------------- tools
 
-async def tool_workflow_start(ctx, name: str, slug: str = ""
-                              ) -> str | ToolResult:
-    """Create a new run of a workflow.
+async def tool_workflow_start(ctx, name: str) -> str | ToolResult:
+    """Start a fresh workflow for the current conversation.
 
-    If the workflow's initial phase is a subagent phase, the engine
-    dispatches the subagent synchronously before this tool returns —
-    the run advances to the next inline phase before the LLM sees the
-    tool result. Subagent dispatch may chain if its target is also a
-    subagent (bounded).
+    Activates each skill in ``wf.required_skills`` first (errors if any
+    fails); then initializes conversation-scoped state. If the initial
+    phase is a subagent, dispatches it synchronously before returning.
+
+    Errors if a workflow is already active in this conversation (the
+    user must call workflow_abort first, or wait for the current
+    workflow to finish).
     """
     wf = registry.get(name)
     if wf is None:
-        return ToolResult(
-            text=f"[error: workflow '{name}' not found]")
-    slug = slug or "run"
-    state = create_run(
-        ctx.config.workspace_path,
-        workflow=name,
-        slug=slug,
-        initial_phase=wf.initial_phase,
-    )
-    _set_current_run(ctx, state.run_id)
+        return ToolResult(text=f"[error: workflow '{name}' not found]")
 
-    # If we landed on a subagent phase, dispatch synchronously so the
-    # run advances past it before the LLM continues.
+    existing = load_workflow_state(ctx)
+    if existing is not None and existing.status not in (
+            RunStatus.DONE, RunStatus.ERROR, RunStatus.ABORTED):
+        return ToolResult(text=(
+            f"[error: workflow '{existing.workflow}' is already "
+            f"active in this conversation (status: "
+            f"{existing.status.value}). Call workflow_abort first, or "
+            f"wait for it to finish.]"))
+
+    # Archive a previous terminal workflow so the new one starts clean.
+    if existing is not None:
+        archive_workflow_state(ctx)
+
+    # Activate required skills BEFORE initializing state, so a partial
+    # init doesn't leave a dead workflow.json on activation failure.
+    for skill_name in wf.required_skills:
+        result = await _activate_skill_for_workflow(ctx, skill_name)
+        text = result.text if isinstance(result, ToolResult) else result
+        if isinstance(text, str) and text.startswith("[error"):
+            return ToolResult(text=(
+                f"[error: required skill '{skill_name}' failed to "
+                f"activate: {text}. Cannot start workflow '{name}'.]"))
+
+    state = init_workflow_state(
+        ctx, workflow=name, initial_phase=wf.initial_phase)
+
+    # If the initial phase is a subagent, dispatch synchronously so the
+    # workflow advances past it before the LLM continues.
     state = await engine.dispatch_subagent_if_needed(ctx, state)
 
     return (
-        f"Started workflow '{name}' (run {state.run_id}). "
+        f"Started workflow '{name}'. "
         f"Current phase: {state.current_phase}. "
         f"Status: {state.status.value}. "
         f"Use phase_advance to move forward."
     )
 
 
-async def tool_workflow_list(ctx, workflow: str = "",
-                             status: str = "") -> str | ToolResult:
-    """List workflow runs across all conversations."""
-    runs = list_runs(ctx.config.workspace_path,
-                     workflow=workflow, status=status)
-    if not runs:
-        return "No workflow runs."
-    lines = ["| Run ID | Workflow | Phase | Status | Updated |",
-             "| --- | --- | --- | --- | --- |"]
-    for r in runs:
-        lines.append(
-            f"| {r.run_id} | {r.workflow} | {r.current_phase} "
-            f"| {r.status.value} | {r.updated_at} |")
-    return "\n".join(lines)
+async def tool_workflow_abort(ctx, reason: str = "") -> str | ToolResult:
+    """Abort the current workflow in this conversation.
 
-
-async def tool_workflow_switch(ctx, run_id: str) -> str | ToolResult:
-    """Set the current workflow run for this conversation."""
-    state = load_run(ctx.config.workspace_path, run_id)
+    Marks the workflow as aborted, archives its workflow.json to
+    workflow-<timestamp>.json in the same directory, and clears the
+    conversation's active-workflow state. Artifacts remain on disk
+    for reference but the workflow is no longer the conversation's
+    active context.
+    """
+    state = load_workflow_state(ctx)
     if state is None:
-        return ToolResult(text=f"[error: run '{run_id}' not found]")
-    _set_current_run(ctx, run_id)
-    return f"Switched to run {run_id} (phase: {state.current_phase})."
+        return ToolResult(text="[error: no workflow active to abort]")
+
+    state.status = RunStatus.ABORTED
+    state.error = reason.strip() or "user aborted"
+    save_workflow_state(ctx, state)
+    archive_workflow_state(ctx)
+    return (
+        f"Aborted workflow '{state.workflow}' "
+        f"(was at phase '{state.current_phase}'). "
+        f"Reason: {state.error}"
+    )
 
 
 async def tool_workflow_status(ctx) -> str | ToolResult:
-    """Show the current run's state, valid next phases with when:
+    """Show the current workflow's state, valid next phases with when:
     annotations, and recent transition history."""
-    state, wf = _get_run(ctx)
+    state, wf = _get_workflow(ctx)
     if state is None or wf is None:
-        return "No workflow run active. Use workflow_start to begin."
+        return ("No workflow active in this conversation. "
+                "Use workflow_start to begin.")
     phase = wf.phase(state.current_phase)
     lines = [
         f"# Workflow: {state.workflow}",
-        f"**Run:** {state.run_id}",
         f"**Phase:** {state.current_phase}",
         f"**Status:** {state.status.value}",
         f"**Updated:** {state.updated_at}",
@@ -297,13 +337,12 @@ async def tool_phase_advance(ctx, target_phase_id: str,
                               reason: str = "") -> str | ToolResult:
     """Canonical workflow transition. Dynamically gated per turn — the
     schema only allows current-phase target ids."""
-    state, wf = _get_run(ctx)
+    state, wf = _get_workflow(ctx)
     if state is None or wf is None:
-        return ToolResult(text="[error: no active workflow run]")
+        return ToolResult(text="[error: no active workflow]")
     try:
         result = await engine.advance(
-            ctx.config.workspace_path, state, target=target_phase_id,
-            reason=reason)
+            ctx, state, target=target_phase_id, reason=reason)
     except ValueError as exc:
         return ToolResult(text=f"[error: {exc}]")
 
@@ -316,19 +355,17 @@ async def tool_phase_advance(ctx, target_phase_id: str,
                 type(confirm).__name__)
             return ToolResult(
                 text="[error: unexpected gate signal type from engine]")
-        run_id = state.run_id
-        workspace = ctx.config.workspace_path
 
         async def _on_approve():
-            s = load_run(workspace, run_id)
+            s = load_workflow_state(ctx)
             if s is not None:
-                await engine.finalize_gate_response(workspace, s,
+                await engine.finalize_gate_response(ctx, s,
                                                    approved=True)
 
         async def _on_deny():
-            s = load_run(workspace, run_id)
+            s = load_workflow_state(ctx)
             if s is not None:
-                await engine.finalize_gate_response(workspace, s,
+                await engine.finalize_gate_response(ctx, s,
                                                    approved=False)
 
         confirm.on_approve = _on_approve
@@ -337,9 +374,9 @@ async def tool_phase_advance(ctx, target_phase_id: str,
                           end_turn=confirm)
 
     # If the transition landed on a subagent phase, dispatch
-    # synchronously so the run advances past it before the LLM sees
-    # the tool result.
-    fresh = load_run(ctx.config.workspace_path, state.run_id)
+    # synchronously so the workflow advances past it before the LLM
+    # sees the tool result.
+    fresh = load_workflow_state(ctx)
     if fresh is not None:
         fresh = await engine.dispatch_subagent_if_needed(ctx, fresh)
         return ToolResult(
@@ -352,11 +389,10 @@ async def tool_phase_advance(ctx, target_phase_id: str,
 
 
 def _resolve_artifact_path(ctx, relative_path: str) -> Path | None:
-    state, _wf = _get_run(ctx)
+    state, _wf = _get_workflow(ctx)
     if state is None:
         return None
-    base = (ctx.config.workspace_path / "workflows" / state.workflow
-            / "runs" / state.run_id / "artifacts").resolve()
+    base = artifacts_dir(ctx).resolve()
     candidate = (base / relative_path).resolve()
     try:
         candidate.relative_to(base)
@@ -367,14 +403,14 @@ def _resolve_artifact_path(ctx, relative_path: str) -> Path | None:
 
 async def tool_workflow_artifact_write(ctx, relative_path: str,
                                         content: str) -> str | ToolResult:
-    """Write content to a path under the current run's artifacts/."""
+    """Write content to a path under the current workflow's artifacts/."""
     path = _resolve_artifact_path(ctx, relative_path)
     if path is None:
-        state, _ = _get_run(ctx)
+        state, _ = _get_workflow(ctx)
         if state is None:
-            return ToolResult(text="[error: no active workflow run]")
+            return ToolResult(text="[error: no active workflow]")
         return ToolResult(
-            text=f"[error: '{relative_path}' is outside the run's "
+            text=f"[error: '{relative_path}' is outside the workflow's "
             "artifacts directory]")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content)
@@ -383,11 +419,11 @@ async def tool_workflow_artifact_write(ctx, relative_path: str,
 
 async def tool_workflow_artifact_read(ctx, relative_path: str
                                        ) -> str | ToolResult:
-    """Read content from a path under the current run's artifacts/."""
+    """Read content from a path under the current workflow's artifacts/."""
     path = _resolve_artifact_path(ctx, relative_path)
     if path is None:
         return ToolResult(
-            text=f"[error: '{relative_path}' is outside the run's "
+            text=f"[error: '{relative_path}' is outside the workflow's "
             "artifacts directory]")
     if not path.is_file():
         return ToolResult(text=f"[error: '{relative_path}' not found]")
@@ -398,13 +434,12 @@ async def tool_workflow_artifact_read(ctx, relative_path: str
 
 WORKFLOW_TOOLS = {
     "workflow_start": tool_workflow_start,
-    "workflow_list": tool_workflow_list,
-    "workflow_switch": tool_workflow_switch,
     "workflow_status": tool_workflow_status,
+    "workflow_abort": tool_workflow_abort,
     "workflow_artifact_write": tool_workflow_artifact_write,
     "workflow_artifact_read": tool_workflow_artifact_read,
     # phase_advance is dynamic — injected per turn by
-    # refresh_workflow_tools when a run is active.
+    # refresh_workflow_tools when a workflow is active.
 }
 
 WORKFLOW_TOOL_DEFINITIONS = [
@@ -414,13 +449,13 @@ WORKFLOW_TOOL_DEFINITIONS = [
         "function": {
             "name": "workflow_start",
             "description": (
-                "Start a new run of a workflow. The workflow must be "
-                "registered (i.e., a kind:workflow skill is installed)."),
+                "Start a fresh workflow in the current conversation. "
+                "Activates the workflow's required-skills first, then "
+                "initializes per-conversation state."),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "name": {"type": "string"},
-                    "slug": {"type": "string"},
                 },
                 "required": ["name"],
             },
@@ -430,44 +465,31 @@ WORKFLOW_TOOL_DEFINITIONS = [
         "type": "function",
         "priority": "normal",
         "function": {
-            "name": "workflow_list",
-            "description": (
-                "List workflow runs across all conversations. Filter "
-                "by workflow name or status."),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "workflow": {"type": "string"},
-                    "status": {"type": "string"},
-                },
-            },
-        },
-    },
-    {
-        "type": "function",
-        "priority": "normal",
-        "function": {
-            "name": "workflow_switch",
-            "description": (
-                "Set the current workflow run for this conversation."),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "run_id": {"type": "string"},
-                },
-                "required": ["run_id"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "priority": "normal",
-        "function": {
             "name": "workflow_status",
             "description": (
-                "Show the current run: phase, status, valid next "
+                "Show the current workflow: phase, status, valid next "
                 "phases with their when: annotations, recent history."),
             "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "priority": "normal",
+        "function": {
+            "name": "workflow_abort",
+            "description": (
+                "Abort the currently-active workflow in this "
+                "conversation. Archives state and clears the active-"
+                "workflow context. Errors if no workflow is active."),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "reason": {
+                        "type": "string",
+                        "description": "Why the workflow is being aborted.",
+                    },
+                },
+            },
         },
     },
     {
@@ -477,7 +499,7 @@ WORKFLOW_TOOL_DEFINITIONS = [
             "name": "workflow_artifact_write",
             "description": (
                 "Write content to a relative path under the current "
-                "run's artifacts/ directory."),
+                "workflow's artifacts/ directory."),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -495,7 +517,7 @@ WORKFLOW_TOOL_DEFINITIONS = [
             "name": "workflow_artifact_read",
             "description": (
                 "Read content from a relative path under the current "
-                "run's artifacts/ directory."),
+                "workflow's artifacts/ directory."),
             "parameters": {
                 "type": "object",
                 "properties": {
