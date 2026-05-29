@@ -341,3 +341,101 @@ async def test_subagent_dispatch_child_crash_sets_error(
     assert reloaded.status == RunStatus.ERROR
     assert "LLM exploded" in (reloaded.error or "")
     assert reloaded.current_phase == "g"
+
+
+@pytest.mark.asyncio
+async def test_run_child_setup_overrides_conv_id_to_parent(
+        tmp_path: Path):
+    """The child's setup callback must set conv_id to the parent's so
+    workflow_artifact_write resolves to the parent's artifacts/ dir."""
+    from decafclaw.config import Config
+    from decafclaw.config_types import AgentConfig
+    from decafclaw.workflow import subagent as wf_subagent
+
+    captured: dict = {}
+
+    # enqueue_turn returns an asyncio.Future in production; returning a
+    # coroutine here lets the `await manager.enqueue_turn(...)` call
+    # complete and capture setup before asyncio.wait_for raises (it
+    # expects a Future, not a coroutine result).  We catch that below.
+    class FakeManager:
+        async def enqueue_turn(self, child_conv_id, *, kind, prompt,
+                               history, context_setup, user_id, **kwargs):
+            captured["setup"] = context_setup
+            captured["child_conv_id"] = child_conv_id
+            return "fake-child-output"
+
+    # _run_child calls dataclasses.replace(config, ...) and
+    # replace(config.agent, ...), so both must be real dataclass instances.
+    # Use Config with data_home pointing at tmp_path so workspace_path
+    # resolves to a real directory without extra mkdir calls.
+    cfg = Config(
+        agent=AgentConfig(
+            data_home=str(tmp_path),
+            id="test-agent",
+            child_max_tool_iterations=8,
+            child_timeout_sec=60,
+        ),
+    )
+    (tmp_path / "test-agent" / "workspace").mkdir(parents=True, exist_ok=True)
+
+    parent_ctx = SimpleNamespace(
+        config=cfg,
+        conv_id="parent-conv-id",
+        channel_id="parent-channel",
+        tools=SimpleNamespace(extra={}, extra_definitions=[], allowed=None),
+        skills=SimpleNamespace(activated=set(), data={}),
+        manager=FakeManager(),
+        event_context_id="evt",
+        context_id="ctx-id",
+        cancelled=None,
+        request_confirmation=None,
+        active_model="",
+        user_id="",
+    )
+
+    phase = PhaseDef(
+        id="gather", kind=PhaseKind.SUBAGENT,
+        prompt="do research", tools=[],
+        next_phases=[], gate=None,
+        outputs=("sources.md",),
+        subagent_skill=None, context_profile={},
+    )
+
+    wf = _subagent_workflow()
+    registry.register(wf)
+    state = init_workflow_state(parent_ctx, workflow="sub",
+                                initial_phase="g")
+
+    try:
+        await wf_subagent._run_child(
+            ctx=parent_ctx, state=state, phase=phase)
+    except Exception:
+        # asyncio.wait_for receives a plain string from FakeManager (not a
+        # real Future) and raises TypeError.  That's fine — we only need
+        # setup to be captured before that point.
+        pass
+
+    assert "setup" in captured, (
+        "_run_child should call manager.enqueue_turn with a "
+        "context_setup callback")
+
+    child_ctx = SimpleNamespace(
+        config=parent_ctx.config,
+        conv_id="some-child-conv-id",
+        tools=SimpleNamespace(extra={}, extra_definitions=[], allowed=None),
+        skills=SimpleNamespace(activated=set(), data={}),
+        cancelled=None,
+        request_confirmation=None,
+        event_context_id="",
+        on_stream_chunk=None,
+        is_child=False,
+        skip_reflection=False,
+        skip_vault_retrieval=False,
+        active_model="",
+    )
+    captured["setup"](child_ctx)
+    assert child_ctx.conv_id == "parent-conv-id", (
+        f"setup should override child conv_id to parent's, got "
+        f"{child_ctx.conv_id!r}"
+    )

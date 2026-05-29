@@ -153,6 +153,20 @@ async def _run_child(*, ctx, state: WorkflowState,
         # is visible in the parent conversation.
         child_ctx.event_context_id = parent_event_id
 
+        # Override the child's conv_id to the parent's so that
+        # workflow_artifact_write (and other conv-scoped tools) called
+        # from inside the subagent resolve against the parent's
+        # conversations/{conv_id}/artifacts/ directory — which is where
+        # verify_subagent_outputs reads after the child returns.
+        # Without this override the child would write to its own
+        # child_conv_id-scoped directory and the engine would never find
+        # the declared outputs, causing "subagent did not produce
+        # required outputs" failures.
+        # The child's archive (separate JSONL) is still keyed by the
+        # child_conv_id passed to manager.enqueue_turn; this override
+        # only affects ctx.conv_id-dependent path resolution in tools.
+        child_ctx.conv_id = getattr(ctx, "conv_id", "")
+
         # Lock the child to the phase whitelist (minus orchestration
         # tools). The phase loader already validated that every name
         # resolves to at least one registered tool.
