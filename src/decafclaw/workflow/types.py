@@ -2,7 +2,7 @@
 
 Pure data — no I/O, no engine logic. Loader builds these from SKILL.md
 + phases/*.md; engine consumes them. Round-trip-safe via to_json /
-from_json on RunState.
+from_json on WorkflowState.
 """
 
 from __future__ import annotations
