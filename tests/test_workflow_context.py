@@ -10,7 +10,7 @@ from decafclaw.workflow.context import (
     WorkflowOverlay,
     consult_workflow_overlay,
 )
-from decafclaw.workflow.runs import create_run
+from decafclaw.workflow.conv_state import init_workflow_state
 from decafclaw.workflow.types import (
     EdgeDef,
     PhaseDef,
@@ -52,26 +52,27 @@ def _wf_with_profile() -> WorkflowDef:
     )
 
 
-def test_consult_returns_none_when_no_run(tmp_path: Path):
-    ws = tmp_path / "ws"
-    ws.mkdir()
-    ctx = SimpleNamespace(
-        config=SimpleNamespace(workspace_path=ws),
-        skills=SimpleNamespace(data={}),
-    )
+def _ctx_for(tmp_path: Path,
+             conv_id: str = "conv-overlay-test") -> SimpleNamespace:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    config = SimpleNamespace(workspace_path=workspace)
+    skills = SimpleNamespace(data={}, activated=set())
+    return SimpleNamespace(config=config, skills=skills,
+                           conv_id=conv_id)
+
+
+def test_consult_returns_none_when_no_workflow(tmp_path: Path):
+    """Without an active workflow in the conversation, the overlay
+    returns None (composer falls through to default behavior)."""
+    ctx = _ctx_for(tmp_path)
     assert consult_workflow_overlay(ctx) is None
 
 
 def test_consult_returns_overlay_with_phase_prompt(tmp_path: Path):
     registry.register(_wf_with_profile())
-    ws = tmp_path / "ws"
-    ws.mkdir()
-    state = create_run(ws, workflow="demo", slug="x", initial_phase="a")
-    ctx = SimpleNamespace(
-        config=SimpleNamespace(workspace_path=ws),
-        skills=SimpleNamespace(
-            data={"current_workflow_run": state.run_id}),
-    )
+    ctx = _ctx_for(tmp_path)
+    init_workflow_state(ctx, workflow="demo", initial_phase="a")
     overlay = consult_workflow_overlay(ctx)
     assert isinstance(overlay, WorkflowOverlay)
     assert "You are in phase A" in overlay.phase_prompt_section
@@ -82,14 +83,8 @@ def test_consult_returns_overlay_with_phase_prompt(tmp_path: Path):
 
 def test_overlay_includes_when_clauses(tmp_path: Path):
     registry.register(_wf_with_profile())
-    ws = tmp_path / "ws"
-    ws.mkdir()
-    state = create_run(ws, workflow="demo", slug="x", initial_phase="a")
-    ctx = SimpleNamespace(
-        config=SimpleNamespace(workspace_path=ws),
-        skills=SimpleNamespace(
-            data={"current_workflow_run": state.run_id}),
-    )
+    ctx = _ctx_for(tmp_path)
+    init_workflow_state(ctx, workflow="demo", initial_phase="a")
     overlay = consult_workflow_overlay(ctx)
     assert "ready" in overlay.phase_prompt_section
 

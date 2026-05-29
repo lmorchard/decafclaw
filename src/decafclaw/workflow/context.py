@@ -18,10 +18,9 @@ and the composer behaves as if the workflow engine weren't present.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from pathlib import Path
 
 from . import registry
-from .runs import load_run
+from .conv_state import load_workflow_state
 from .types import PhaseKind, RunStatus
 
 
@@ -37,8 +36,12 @@ class WorkflowOverlay:
     run_id: str = ""
 
 
-def _format_phase_section(state, phase, wf) -> str:
+def _format_phase_section(state, phase, wf, run_id: str = "") -> str:
     """Render the ``<workflow_phase>`` block appended to the system prompt.
+
+    ``run_id`` is the identifier rendered into the XML opening tag —
+    callers pass ``ctx.conv_id`` (the conv-scoped identifier in the
+    new architecture).
 
     For INLINE phases: includes the phase prompt body so the LLM has
     its phase-specific instructions, plus a list of outgoing edges with
@@ -53,7 +56,7 @@ def _format_phase_section(state, phase, wf) -> str:
     the subagent's instructions itself.
     """
     parts = [
-        f"<workflow_phase run=\"{state.run_id}\" "
+        f"<workflow_phase run=\"{run_id}\" "
         f"phase=\"{phase.id}\" kind=\"{phase.kind.value}\" "
         f"status=\"{state.status.value}\">",
         f"You are in phase '{phase.id}' of workflow '{wf.name}'.",
@@ -104,23 +107,14 @@ def _format_phase_section(state, phase, wf) -> str:
 
 
 def consult_workflow_overlay(ctx) -> WorkflowOverlay | None:
-    """Return the workflow overlay for the current turn, or ``None``
-    when no run is active.
+    """Return the workflow overlay for the current conversation, or
+    ``None`` when no workflow is active.
 
-    Fail-open: missing/corrupt run, missing workflow def, or missing
+    Fail-open: missing/corrupt state, missing workflow def, or missing
     phase all return ``None`` so the composer falls through to its
     default behavior.
     """
-    skills = getattr(ctx, "skills", None)
-    if skills is None:
-        return None
-    data = getattr(skills, "data", None) or {}
-    run_id = data.get("current_workflow_run")
-    if not run_id:
-        return None
-
-    workspace: Path = ctx.config.workspace_path
-    state = load_run(workspace, run_id)
+    state = load_workflow_state(ctx)
     if state is None:
         return None
     wf = registry.get(state.workflow)
@@ -135,10 +129,11 @@ def consult_workflow_overlay(ctx) -> WorkflowOverlay | None:
     )
 
     return WorkflowOverlay(
-        phase_prompt_section=_format_phase_section(state, phase, wf),
+        phase_prompt_section=_format_phase_section(
+            state, phase, wf, run_id=ctx.conv_id),
         context_profile_overrides=dict(phase.context_profile),
         phase_boundary=phase_boundary,
         phase_id=phase.id,
         workflow_name=wf.name,
-        run_id=state.run_id,
+        run_id=ctx.conv_id,  # conv_id serves as the run identifier
     )
