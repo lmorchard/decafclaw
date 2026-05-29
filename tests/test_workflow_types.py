@@ -7,9 +7,9 @@ from decafclaw.workflow.types import (
     GateDef,
     PhaseDef,
     PhaseKind,
-    RunState,
     RunStatus,
     WorkflowDef,
+    WorkflowState,
 )
 
 
@@ -20,7 +20,8 @@ def test_phase_kind_values():
 
 def test_run_status_values():
     assert {s.value for s in RunStatus} == {
-        "running", "paused-gate", "paused-subagent", "done", "error"
+        "running", "paused-gate", "paused-subagent", "done", "error",
+        "aborted",
     }
 
 
@@ -67,11 +68,9 @@ def test_edge_def_with_gate():
     assert edge.gate is gate
 
 
-def test_run_state_json_round_trip():
-    state = RunState(
+def test_workflow_state_json_round_trip():
+    state = WorkflowState(
         workflow="weeknotes",
-        slug="w20",
-        run_id="2026-05-19-1402-weeknotes-w20",
         status=RunStatus.PAUSED_GATE,
         current_phase="draft",
         created_at="2026-05-19T14:02:00+00:00",
@@ -89,7 +88,7 @@ def test_run_state_json_round_trip():
     parsed = json.loads(raw)
     assert parsed["workflow"] == "weeknotes"
     assert parsed["status"] == "paused-gate"
-    back = RunState.from_json(raw)
+    back = WorkflowState.from_json(raw)
     assert back == state
 
 
@@ -111,3 +110,32 @@ def test_workflow_def_lookup_phase():
     )
     assert wf.phase("a") is p1
     assert wf.phase("missing") is None
+
+
+def test_workflow_def_required_skills_default_empty():
+    p = PhaseDef(
+        id="a", kind=PhaseKind.INLINE, prompt="", tools=[],
+        next_phases=[], gate=None, outputs=(),
+        subagent_skill=None, context_profile={},
+    )
+    wf = WorkflowDef(
+        name="t", description="", initial_phase="a",
+        phases={"a": p},
+        user_invocable=False, argument_hint="",
+    )
+    assert wf.required_skills == []
+
+
+def test_workflow_def_required_skills_populated():
+    p = PhaseDef(
+        id="a", kind=PhaseKind.INLINE, prompt="", tools=[],
+        next_phases=[], gate=None, outputs=(),
+        subagent_skill=None, context_profile={},
+    )
+    wf = WorkflowDef(
+        name="t", description="", initial_phase="a",
+        phases={"a": p},
+        user_invocable=False, argument_hint="",
+        required_skills=["tabstack", "vault"],
+    )
+    assert wf.required_skills == ["tabstack", "vault"]

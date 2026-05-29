@@ -23,6 +23,7 @@ class RunStatus(str, Enum):
     PAUSED_SUBAGENT = "paused-subagent"
     DONE = "done"
     ERROR = "error"
+    ABORTED = "aborted"
 
 
 @dataclass(frozen=True)
@@ -80,18 +81,19 @@ class WorkflowDef:
     phases: dict[str, PhaseDef]
     user_invocable: bool
     argument_hint: str
+    required_skills: list[str] = field(default_factory=list)
 
     def phase(self, phase_id: str) -> PhaseDef | None:
         return self.phases.get(phase_id)
 
 
 @dataclass
-class RunState:
-    """A workflow run's durable state — serialized to state.json."""
+class WorkflowState:
+    """A workflow's durable state for one conversation — serialized to
+    {workspace}/conversations/{conv_id}/workflow.json. The conv_id is
+    the implicit identifier; no run_id field needed."""
 
     workflow: str
-    slug: str
-    run_id: str
     status: RunStatus
     current_phase: str
     created_at: str  # ISO 8601
@@ -110,7 +112,7 @@ class RunState:
         return json.dumps(d, indent=2)
 
     @classmethod
-    def from_json(cls, raw: str) -> RunState:
+    def from_json(cls, raw: str) -> WorkflowState:
         d = json.loads(raw)
         d["status"] = RunStatus(d["status"])
         return cls(**d)
