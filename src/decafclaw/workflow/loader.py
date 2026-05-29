@@ -189,6 +189,19 @@ def load_workflow(skill_dir: Path) -> WorkflowDef:
 
     _validate_phases(phases)
 
+    # Parse required-skills: must be a list of non-empty strings, or absent.
+    required_skills_raw = meta.get("required-skills", [])
+    if not isinstance(required_skills_raw, list):
+        raise LoaderError(
+            "required-skills must be a list of skill names "
+            f"(got {type(required_skills_raw).__name__})")
+    required_skills: list[str] = []
+    for i, entry in enumerate(required_skills_raw):
+        if not isinstance(entry, str) or not entry.strip():
+            raise LoaderError(
+                f"required-skills[{i}] must be a non-empty string")
+        required_skills.append(entry.strip())
+
     return WorkflowDef(
         name=name,
         description=description,
@@ -196,6 +209,7 @@ def load_workflow(skill_dir: Path) -> WorkflowDef:
         phases=phases,
         user_invocable=bool(meta.get("user-invocable", False)),
         argument_hint=meta.get("argument-hint", ""),
+        required_skills=required_skills,
     )
 
 

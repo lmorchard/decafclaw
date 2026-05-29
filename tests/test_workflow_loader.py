@@ -304,3 +304,83 @@ unused body
     wf = load_workflow(d)
     assert wf.phases["gather"].subagent_skill == "my-worker"
     assert wf.phases["gather"].outputs == ()
+
+
+def test_load_parses_required_skills(tmp_path):
+    skill_md = """---
+name: demo
+description: test workflow
+kind: workflow
+user-invocable: true
+required-skills: [tabstack, vault]
+workflow:
+  initial-phase: gather
+---
+body
+"""
+    d = _write_workflow(tmp_path, {
+        "SKILL.md": skill_md,
+        "phases/gather.md": _GATHER,
+        "phases/draft.md": _DRAFT,
+        "phases/review.md": _REVIEW,
+        "phases/publish.md": _PUBLISH,
+    })
+    wf = load_workflow(d)
+    assert wf.required_skills == ["tabstack", "vault"]
+
+
+def test_load_required_skills_defaults_empty(tmp_path):
+    """When required-skills is absent, default to empty list."""
+    d = _write_workflow(tmp_path, {
+        "SKILL.md": _SKILL_MD,  # no required-skills
+        "phases/gather.md": _GATHER,
+        "phases/draft.md": _DRAFT,
+        "phases/review.md": _REVIEW,
+        "phases/publish.md": _PUBLISH,
+    })
+    wf = load_workflow(d)
+    assert wf.required_skills == []
+
+
+def test_load_fails_when_required_skills_not_a_list(tmp_path):
+    skill_md = """---
+name: demo
+description: test workflow
+kind: workflow
+user-invocable: true
+required-skills: tabstack
+workflow:
+  initial-phase: gather
+---
+"""
+    d = _write_workflow(tmp_path, {
+        "SKILL.md": skill_md,
+        "phases/gather.md": _GATHER,
+        "phases/draft.md": _DRAFT,
+        "phases/review.md": _REVIEW,
+        "phases/publish.md": _PUBLISH,
+    })
+    with pytest.raises(LoaderError, match="required-skills"):
+        load_workflow(d)
+
+
+def test_load_fails_when_required_skills_contains_non_string(tmp_path):
+    skill_md = """---
+name: demo
+description: test workflow
+kind: workflow
+user-invocable: true
+required-skills: [tabstack, null]
+workflow:
+  initial-phase: gather
+---
+"""
+    d = _write_workflow(tmp_path, {
+        "SKILL.md": skill_md,
+        "phases/gather.md": _GATHER,
+        "phases/draft.md": _DRAFT,
+        "phases/review.md": _REVIEW,
+        "phases/publish.md": _PUBLISH,
+    })
+    with pytest.raises(LoaderError, match="required-skills"):
+        load_workflow(d)
