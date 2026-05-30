@@ -182,6 +182,70 @@ def refresh_workflow_tools(ctx) -> None:
         ctx.tools.workflow_restricted = False
 
 
+def _render_phase_handoff(state, wf, lead_in: str) -> str:
+    """Strongly-framed tool result for a workflow phase handoff.
+
+    Used by tool_workflow_start (on first landing in an inline phase) and
+    tool_phase_advance (after transitioning to a new inline phase). Gives
+    the LLM enough framing to drive the phase forward in the same turn:
+    phase identity, the phase body verbatim, the tool whitelist, the
+    `next-phases` options with their `when:` annotations, and an
+    imperative "do not stop" directive.
+
+    Caller is responsible for the gate / DONE / ERROR branches — this
+    function assumes ``state`` is in an inline phase with workflow
+    status RUNNING.
+    """
+    phase = wf.phase(state.current_phase)
+    if phase is None:
+        return f"{lead_in} Current phase: {state.current_phase}."
+
+    body = phase.prompt.strip()
+    lines: list[str] = [lead_in.rstrip(".") + "."]
+    lines.append("")
+    lines.append(f"=== ACTIVE PHASE: '{state.current_phase}' ===")
+    lines.append("")
+    if body:
+        lines.append("YOUR TASK FOR THIS PHASE:")
+        lines.append("")
+        lines.append(body)
+        lines.append("")
+
+    if phase.tools:
+        lines.append("TOOLS AVAILABLE IN THIS PHASE:")
+        for t in phase.tools:
+            lines.append(f"  - {t}")
+        lines.append("")
+
+    if phase.next_phases:
+        lines.append(
+            "WHEN THE PHASE TASK IS COMPLETE, call `phase_advance` "
+            "with one of these targets:")
+        for edge in phase.next_phases:
+            when = (edge.when or "").strip() or \
+                "(only option — call this when the phase is done)"
+            gated = " [REQUIRES USER REVIEW via gate]" if edge.gate else ""
+            lines.append(f"  - target_phase_id=\"{edge.id}\"{gated}")
+            for wl in when.splitlines():
+                lines.append(f"      {wl}")
+        lines.append("")
+    else:
+        lines.append(
+            "This is a TERMINAL phase. Complete the work; no "
+            "`phase_advance` call is needed — the workflow ends "
+            "when this phase finishes.")
+        lines.append("")
+
+    lines.append(
+        "IMPORTANT: Do not stop after reading this message. Begin "
+        "executing the phase task immediately. End the turn only when "
+        "the phase task is complete (then call `phase_advance`) or "
+        "you need specific user input (then ask a specific question). "
+        "Do not narrate what you plan to do — do it.")
+
+    return "\n".join(lines)
+
+
 def _build_phase_allowed_set(ctx, phase) -> set[str]:
     """Compute the tool-allowed set for an inline workflow phase:
     phase whitelist (glob-expanded) ∪ workflow admin tools ∪
@@ -271,12 +335,23 @@ async def tool_workflow_start(ctx, name: str) -> str | ToolResult:
     # workflow advances past it before the LLM continues.
     state = await engine.dispatch_subagent_if_needed(ctx, state)
 
-    return (
-        f"Started workflow '{name}'. "
-        f"Current phase: {state.current_phase}. "
-        f"Status: {state.status.value}. "
-        f"Use phase_advance to move forward."
-    )
+    lead_in = f"Started workflow '{name}'."
+
+    if state.status == RunStatus.DONE:
+        return (
+            f"{lead_in} The workflow reached a terminal phase "
+            f"('{state.current_phase}') during startup and is complete.")
+    if state.status == RunStatus.ERROR:
+        return ToolResult(text=(
+            f"[error: workflow '{name}' errored during startup: "
+            f"{state.error or 'unknown'}]"))
+    if state.status == RunStatus.PAUSED_SUBAGENT:
+        # Dispatcher didn't complete — surface for diagnosis.
+        return ToolResult(text=(
+            f"[error: subagent dispatch did not complete for workflow "
+            f"'{name}': {state.error or 'unknown'}]"))
+
+    return _render_phase_handoff(state, wf, lead_in)
 
 
 async def tool_workflow_abort(ctx, reason: str = "") -> str | ToolResult:
@@ -340,6 +415,7 @@ async def tool_phase_advance(ctx, target_phase_id: str,
     state, wf = _get_workflow(ctx)
     if state is None or wf is None:
         return ToolResult(text="[error: no active workflow]")
+    prior_phase = state.current_phase
     try:
         result = await engine.advance(
             ctx, state, target=target_phase_id, reason=reason)
@@ -377,14 +453,34 @@ async def tool_phase_advance(ctx, target_phase_id: str,
     # synchronously so the workflow advances past it before the LLM
     # sees the tool result.
     fresh = load_workflow_state(ctx)
-    if fresh is not None:
-        fresh = await engine.dispatch_subagent_if_needed(ctx, fresh)
+    if fresh is None:
         return ToolResult(
-            text=f"Advanced to phase '{fresh.current_phase}' "
-                 f"(status: {fresh.status.value}).",
+            text=f"Advanced to phase '{result.new_phase}'.",
             end_turn=False)
+    fresh = await engine.dispatch_subagent_if_needed(ctx, fresh)
+
+    lead_in = f"Advanced from phase '{prior_phase}' to '{fresh.current_phase}'."
+
+    if fresh.status == RunStatus.DONE:
+        return ToolResult(
+            text=(f"{lead_in} Workflow '{fresh.workflow}' is complete "
+                  f"(terminal phase)."),
+            end_turn=False)
+    if fresh.status == RunStatus.ERROR:
+        return ToolResult(
+            text=(f"[error: workflow '{fresh.workflow}' errored after "
+                  f"transition to '{fresh.current_phase}': "
+                  f"{fresh.error or 'unknown'}]"),
+            end_turn=False)
+    if fresh.status == RunStatus.PAUSED_SUBAGENT:
+        return ToolResult(
+            text=(f"[error: subagent dispatch did not complete after "
+                  f"advance to '{fresh.current_phase}': "
+                  f"{fresh.error or 'unknown'}]"),
+            end_turn=False)
+
     return ToolResult(
-        text=f"Advanced to phase '{result.new_phase}'.",
+        text=_render_phase_handoff(fresh, wf, lead_in),
         end_turn=False)
 
 

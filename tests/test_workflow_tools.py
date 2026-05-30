@@ -225,6 +225,71 @@ async def test_phase_advance_valid_target(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+async def test_workflow_start_handoff_includes_phase_framing(tmp_path: Path):
+    """workflow_start's tool result frames the active phase: identity,
+    body, next-phase options, and the do-not-stop directive. Guards the
+    cheap-experiment fix against quiet weakening."""
+    registry.register(_two_phase_wf())
+    ctx = _ctx_for(tmp_path)
+    result = await tool_workflow_start(ctx, name="demo")
+    text = result.text if isinstance(result, ToolResult) else result
+    assert "ACTIVE PHASE: 'a'" in text
+    assert "YOUR TASK FOR THIS PHASE" in text
+    # Demo's phase 'a' body is the literal "A" — present after stripping.
+    assert "\nA\n" in text
+    assert 'target_phase_id="b"' in text
+    assert 'target_phase_id="c"' in text
+    assert "when ready" in text
+    assert "when stuck" in text
+    assert "Do not stop" in text
+
+
+@pytest.mark.asyncio
+async def test_phase_advance_handoff_includes_phase_framing(tmp_path: Path):
+    """phase_advance into an inline non-terminal phase returns the same
+    strong handoff as workflow_start (the demo's _two_phase_wf has only
+    terminal targets, so use a 3-phase variant)."""
+    wf = WorkflowDef(
+        name="three", description="d", initial_phase="a",
+        phases={
+            "a": PhaseDef(
+                id="a", kind=PhaseKind.INLINE, prompt="A",
+                tools=["notes_append"],
+                next_phases=[EdgeDef(id="b", when="ready", gate=None)],
+                gate=None, outputs=(), subagent_skill=None,
+                context_profile={},
+            ),
+            "b": PhaseDef(
+                id="b", kind=PhaseKind.INLINE, prompt="Body of B",
+                tools=["vault_read"],
+                next_phases=[EdgeDef(id="c", when="done", gate=None)],
+                gate=None, outputs=(), subagent_skill=None,
+                context_profile={},
+            ),
+            "c": PhaseDef(
+                id="c", kind=PhaseKind.INLINE, prompt="",
+                tools=[], next_phases=[], gate=None, outputs=(),
+                subagent_skill=None, context_profile={},
+            ),
+        },
+        user_invocable=True, argument_hint="",
+    )
+    registry.register(wf)
+    ctx = _ctx_for(tmp_path)
+    await tool_workflow_start(ctx, name="three")
+    result = await tool_phase_advance(ctx, target_phase_id="b",
+                                       reason="ready")
+    assert isinstance(result, ToolResult)
+    text = result.text
+    assert "Advanced from phase 'a' to 'b'" in text
+    assert "ACTIVE PHASE: 'b'" in text
+    assert "Body of B" in text
+    assert "vault_read" in text
+    assert 'target_phase_id="c"' in text
+    assert "Do not stop" in text
+
+
+@pytest.mark.asyncio
 async def test_phase_advance_dynamic_enum_reflects_current_phase(
         tmp_path: Path):
     """The phase_advance schema enum lists only the current phase's targets."""
