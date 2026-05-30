@@ -53,6 +53,18 @@ A workflow runs to completion within a single conversation, walking phase-by-pha
 
 ## Architecture overview
 
+### The split: engine drives flow, LLM drives routing
+
+The two responsibilities the prior iterations conflated:
+
+- **Driving flow** — what keeps the workflow moving from one phase to the next, what schedules the next iteration when a phase isn't yet done, what handles the mechanics of subagent dispatch / gate buttons / state persistence. This is **engine-owned**. The LLM doesn't have to remember it's in a workflow or decide "I should keep iterating." If the LLM stops feeling productive, the engine still drives.
+
+- **Deciding routing** — when a phase has multiple `next-phases`, which target to advance to (or which backward edge to loop to). This is **LLM-owned and inherent**. Only the LLM can read the situation and choose "review" vs. "gather" or "back to research." The engine has no business making this call.
+
+The seam between them is `phase_advance(target_phase_id, reason)`. The LLM picks the target — that's its routing decision, schema-constrained to the phase's `next-phases`. The engine then carries out the mechanics: applies the transition, enqueues the next phase turn, dispatches subagents, fires gate UIs.
+
+Everything else in this spec implements that split.
+
 ### The phase-turn model
 
 The conversation is a sequence of agent turns. A workflow is a sequence of phase turns interleaved with optional user turns. Each phase corresponds to **one or more turns** of kind `WORKFLOW_PHASE`. The engine enqueues these turns; the user can interject by typing into the same conversation.
@@ -147,6 +159,68 @@ def _enqueue_phase_turn(ctx, state, phase):
 
 The manager processes turns one at a time per conversation (existing constraint). User messages interleave naturally — they queue behind any in-flight phase turn.
 
+### Phase-internal loop: "are you done?" before exiting
+
+The phase-turn model so far covers transitions BETWEEN phases. But there's a within-phase failure mode that the smoke test ran into: the LLM completes (or thinks it completes) the phase's work, ends the turn with a text response, but never calls `phase_advance`. In a strict "phase = one turn" model this stalls the phase indefinitely — the engine has no signal that the LLM is done, just that the LLM stopped tool-calling.
+
+The fix is to make the agent loop inside a `WORKFLOW_PHASE` turn phase-aware. The existing `TurnRunner` agent loop exits when the LLM returns a response with no tool calls. For a phase turn, that exit gets one extra check before bailing: **did `phase_advance` fire this turn?**
+
+- **Yes** — the LLM explicitly signaled "done, route me here." Turn ends. Engine enqueues the next phase turn per `phase_advance`'s target.
+
+- **No, and the loop has iterations left** — inject a synthetic user-role message: "Looks like you've stopped working on this phase, but you haven't called `phase_advance` yet. If the phase is complete, call `phase_advance` with the right target (review / gather / etc.). If not, finish the remaining work." Continue the loop with this prompt.
+
+- **No, and we've hit the phase-internal iteration cap** — mark the phase as `error` with a clear message ("Phase X ended without calling `phase_advance` after N nudges"). State persists; user can `workflow_abort` or manually intervene.
+
+The cap is small (default 2 nudges, so 3 total attempts at the phase before bailing). Workflows can override per phase via a `max_continuations:` field in the phase frontmatter. The default lives on `config.workflow.max_phase_continuations`.
+
+**For subagent phases, the "are you done?" check is mechanical, not LLM-based.** When the child agent's turn ends, the engine checks declared `outputs:` files. If all present, the engine auto-fires `phase_advance` against the single `next-phases` edge (subagent phases only have one). If missing, mark `error`. This is already the conv-scoped rework's behavior — no LLM nudge needed for subagents.
+
+**Why in-turn rather than across-turn:** the alternative would be to end the turn cleanly and enqueue a fresh follow-on turn with a "continue" prompt. That works but is more expensive (fresh compose, fresh archive entry) and surfaces to the user as "the agent stalled, then re-engaged" — uglier than the in-turn version where the phase appears as one continuous activity that took a couple iterations to complete.
+
+**Why "are you done?" rather than just continuing silently:** the synthetic prompt explicitly frames the LLM's choice as "signal done via `phase_advance` OR keep working." Without the prompt, just iterating with no new input invites the LLM to repeat what it already said. The framing forces the binary decision.
+
+**Pseudocode for TurnRunner's extended exit:**
+
+```python
+# Inside TurnRunner.run, when an iteration returns no tool calls:
+if not response_has_tool_calls:
+    workflow_state = load_workflow_state(self.ctx)
+    is_phase_turn = self.ctx.task_mode == TaskMode.WORKFLOW_PHASE
+    advanced_this_turn = self.workflow_advanced_this_turn  # tracked by tool_phase_advance
+
+    if is_phase_turn and not advanced_this_turn and workflow_state \
+            and workflow_state.status == RunStatus.RUNNING \
+            and self.phase_continuations < self.config.workflow.max_phase_continuations:
+        # Inject the synthetic nudge, increment counter, continue loop.
+        nudge = {
+            "role": "user",
+            "content": (
+                "You've stopped working on this phase, but haven't called "
+                "phase_advance yet. If the phase is complete, call "
+                "phase_advance with the right target. If not, finish the "
+                "remaining work."
+            ),
+        }
+        self.messages.append(nudge)
+        self.phase_continuations += 1
+        continue  # back to top of loop
+
+    if is_phase_turn and not advanced_this_turn and \
+            self.phase_continuations >= self.config.workflow.max_phase_continuations:
+        # Mark phase error and exit.
+        workflow_state.status = RunStatus.ERROR
+        workflow_state.error = (
+            f"phase '{workflow_state.current_phase}' ended without "
+            f"phase_advance after {self.phase_continuations} continuations"
+        )
+        save_workflow_state(self.ctx, workflow_state)
+        # Fall through to normal turn end.
+
+    # ... normal turn-end code ...
+```
+
+The `workflow_advanced_this_turn` flag is set by `tool_phase_advance` when it fires. TurnRunner reads it to decide whether to nudge or exit.
+
 ### `parent_conv_id` field
 
 Added to `Context` as a separate field from `conv_id`:
@@ -193,6 +267,10 @@ For phases that explicitly need user input (interview-style), the phase prompt s
 - `ContextComposer` mode `WORKFLOW_PHASE` (and updated `CHILD_AGENT` to also apply phase-as-system-prompt when invoked from workflow dispatch).
 - `_enqueue_phase_turn` helper on the engine.
 - Detection inside `compose()` for "workflow is active in this conversation; apply phase context even though the turn is USER kind."
+- **Phase-internal loop** — `TurnRunner` extended for `WORKFLOW_PHASE` turns to inject a "you stopped without `phase_advance`" nudge and continue iterating, bounded by `config.workflow.max_phase_continuations` (default 2). After cap, the phase is marked `error`.
+- `workflow_advanced_this_turn` flag on `TurnRunner` set by `tool_phase_advance` so the loop knows whether to nudge or exit.
+- Optional `max_continuations:` field in phase frontmatter for per-phase overrides.
+- `config.workflow.max_phase_continuations: int = 2` config field.
 
 ### What survives unchanged from the conv-scoped rework
 
@@ -217,11 +295,12 @@ For phases that explicitly need user input (interview-style), the phase prompt s
 ### Wins
 
 1. **The workflow actually runs.** Each phase fires as its own turn. The LLM in each turn has one focused job — complete this phase, call `phase_advance`. Stalls would now be diagnosable to a specific phase rather than "the LLM just stopped after one tool call."
-2. **Clean separation between subagent and parent archives.** With `parent_conv_id`, child agents archive to their own JSONL; workflow tools still resolve to the parent's directory. Bug 2 from the smoke test goes away cleanly.
-3. **Phase prompts are load-bearing.** Replacing (not appending) the system prompt means the phase prompt actually shapes the LLM's behavior, not just nudges it.
-4. **User interruption is free.** Users can interject at any phase boundary or even within a phase, and the agent in that interruption sees the right context.
-5. **Phases can span multiple turns naturally.** Interview-style phases work without special infrastructure: the phase just doesn't call `phase_advance` until it has what it needs.
-6. **Observability.** Each phase shows up as a separate turn in the conversation UI. Users can see "the agent is in the gather phase" rather than mysterious tool calls happening inside `workflow_start`.
+2. **The "LLM forgot to call `phase_advance`" failure mode is bounded.** The phase-internal loop nudges the LLM up to `max_phase_continuations` times before bailing. A phase either completes (LLM calls `phase_advance`), explicitly errors (cap exhausted), or gets aborted by the user. No silent indefinite stalls.
+3. **Clean separation between subagent and parent archives.** With `parent_conv_id`, child agents archive to their own JSONL; workflow tools still resolve to the parent's directory. Bug 2 from the smoke test goes away cleanly.
+4. **Phase prompts are load-bearing.** Replacing (not appending) the system prompt means the phase prompt actually shapes the LLM's behavior, not just nudges it.
+5. **User interruption is free.** Users can interject at any phase boundary or between phase-internal iterations (within the cap), and the agent in that interruption sees the right context.
+6. **Phases can span multiple turns naturally.** Interview-style phases work without special infrastructure: the phase just doesn't call `phase_advance` until it has what it needs.
+7. **Observability.** Each phase shows up as a separate turn in the conversation UI. Users can see "the agent is in the gather phase" rather than mysterious tool calls happening inside `workflow_start`. Phase-internal continuations show as the same turn with multiple agent responses.
 
 ### Tradeoffs / costs
 
