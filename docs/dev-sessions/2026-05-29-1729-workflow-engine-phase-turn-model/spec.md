@@ -1,5 +1,7 @@
 # Workflow Engine — Phase-Turn Model
 
+> **⚠ Superseded as the implementation target.** Sophie's PR #557 analysis (<https://github.com/lmorchard/decafclaw/pull/557#issuecomment-4587813874>) reframed the diagnosis: `phase_advance` as an LLM-emitted tool is itself the failure mode, not something to wrap in a nudge loop. New direction = code-driven engine spike — see [`../2026-05-31-1223-code-driven-engine-spike/notes.md`](../2026-05-31-1223-code-driven-engine-spike/notes.md). This spec stays useful as the "engine drives turn scheduling" framing — that part survives; what doesn't is `phase_advance` as the tool the LLM must remember to emit.
+
 **Issue:** [#255 — Design: first-class workflow abstraction (LangGraph-inspired)](https://github.com/lmorchard/decafclaw/issues/255)
 **Prior specs (informing this one, not superseded conceptually):**
 - [`../2026-05-19-2121-workflow-engine/spec.md`](../2026-05-19-2121-workflow-engine/spec.md) — original cross-conv design.

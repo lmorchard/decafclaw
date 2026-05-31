@@ -1,5 +1,8 @@
 # Workflow Engine — Phase-Turn Model Implementation Plan
 
+> **⚠ SUPERSEDED — do not execute.**
+> Sophie's analysis on PR #557 (<https://github.com/lmorchard/decafclaw/pull/557#issuecomment-4587813874>) reframed the problem: the LLM-emitted `phase_advance` crank is itself the bug, not the thing to wrap in a nudge loop. The phase-turn rework solves turn-scheduling but keeps the broken crank. New direction is the code-driven engine spike — see [`../2026-05-31-1223-code-driven-engine-spike/notes.md`](../2026-05-31-1223-code-driven-engine-spike/notes.md). This plan is kept as documentation of the design that almost shipped, not as a target for execution.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Replace the conv-scoped workflow engine's "LLM drives flow / tool calls handle transitions" model with an "engine drives flow / LLM drives routing only" model where each phase fires as its own scheduled turn via the existing `ConversationManager`. Resolves the narrate-stall failure mode the cheap experiment confirmed is general.
