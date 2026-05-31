@@ -27,19 +27,19 @@ This is the third iteration on issue #255 (workflow engine). Capturing session s
 - **`parent_conv_id` field on `Context`** separates archive identity (child's own) from workflow path resolution (parent's). Resolves Bug 2 cleanly.
 - **Phase prompt replaces system prompt** in `WORKFLOW_PHASE` turns (not appended as overlay). Layer 1 from the original brainstorming, finally implemented as replacement.
 
-## Open questions in spec (need user input before plan)
+## Open questions in spec — triage status
 
-Listed in spec.md's "Open questions for review" section. Specifically:
+Triaged 2026-05-30 after the cheap experiment ([../2026-05-29-1803-workflow-tool-result-framing/notes.md](../2026-05-29-1803-workflow-tool-result-framing/notes.md)) concluded prompt-only is insufficient.
 
-1. Phase context for USER-kind mid-workflow turns — full replace, or lighter overlay?
-2. Timeout on `paused-subagent` — needed, or rely on existing child timeout?
-3. `params:` arg on `workflow_start` for topic-passing (smoke test's Bug 1) — land here or follow-up?
-4. Phase-prompt-as-system-prompt — preserve any general preamble, or full replace?
-5. Token cost for many-phase workflows — worth addressing now, or premature?
+### All settled (2026-05-30)
 
-Plus the phase-internal-loop addition raises:
-6. Default `max_phase_continuations` value — proposed 2 (so 3 total LLM attempts at a phase). Configurable per phase via frontmatter `max_continuations:` field.
-7. Should phase-internal nudges be archived as visible messages, or silently injected (system messages, not user)? Lean: visible as user-role messages so the LLM-and-user trace is consistent.
+1. **USER-turn context** — **same as WORKFLOW_PHASE — phase context dominates.** User interjection is treated as a user message inside the current phase frame. Agent stays in worker mode. Off-topic chat works through `workflow_abort` if needed.
+2. **`paused-subagent` timeout** — **rely on existing child timeout.** `delegate.py`'s `child_timeout_sec` already bounds CHILD_AGENT turns; engine relies on that. No separate engine-level wall-clock timeout. User can `workflow_abort` if state seems stuck.
+3. **`params:` arg on `workflow_start`** — **land in this PR.** `workflow_start(name, params={...})` stored on `WorkflowState`, exposed to phase prompts via `{{params.X}}` interpolation. Bug 1 has been deferred through two iterations and bit every smoke. The WIP's `_latest_parent_user_message` heuristic gets superseded.
+4. **Phase-prompt-as-system-prompt** — **full replace.** General preamble (SOUL.md, AGENT.md, USER.md) is suppressed inside a WORKFLOW_PHASE turn. System prompt is the phase body wrapped in a `<workflow_phase>` block with a one-line "you are operating in workflow mode" frame.
+5. **Token cost for many-phase workflows** — **premature; measure first.** Ship without per-workflow consolidation directives. ~3-4K tokens of system prompt per turn for a typical phase; prompt caching amortizes. Revisit if real workflows hit cost ceilings.
+6. **Default `max_phase_continuations`** — **2** (= 3 total LLM attempts at a phase). Configurable per-phase via `max_continuations:` frontmatter.
+7. **Phase-internal nudges archival** — **visible user-role messages.** Nudges appear in the JSONL archive and the UI transcript as user-role messages so the loop mechanism is honest to the user. Slight archive bloat accepted.
 
 ## What survives across iterations (will remain in any v1)
 
