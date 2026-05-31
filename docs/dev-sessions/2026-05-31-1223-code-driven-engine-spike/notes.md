@@ -99,3 +99,68 @@ When starting the fresh session for this work:
 - What schema should the routing call use, exactly? `Enum` from `next_phases` IDs + free-form `reason` string is the obvious shape — verify the LLM client supports JSON-Schema enums in structured output.
 
 These questions don't block the spike — they just shape its implementation. Answer them by reading code, not by speculation.
+
+## Spike retro (2026-05-31)
+
+**The spike walked end-to-end first try.** That bar — `gather → draft → review → publish` against `vertex-gemini-flash`, no stall — is what no iteration had cleared. This one cleared it in ~18s wall clock, five Vertex API calls (one per phase + a routing call after `draft`), zero retries on any structured-output call.
+
+### What it does
+
+Bundled skill at `src/decafclaw/skills/spike_research_brief/` (SKILL.md + tools.py, ~409 lines together):
+
+- `/spike_brief <topic>` is a user-invokable command. Body is a one-tool directive ("call `spike_brief_run(topic=...)` immediately, do not narrate"). Gemini Flash complies — the LLM kickoff is one constrained decision with one tool in scope.
+- `spike_brief_run` is a single tool whose implementation IS the orchestrator. Inside:
+  - `_call_structured(...)` — helper that exposes ONE tool with the phase's output schema and a "you MUST call this" description. Parses the tool-call args. Retries once with a stricter nudge if the model narrates. Provider-agnostic — no vertex.py changes.
+  - 4 phase functions: `_gather`, `_draft`, `_draft_route`, `_review`. Each is a single `_call_structured` call.
+  - `_publish` is pure Python — writes a file to `workspace/spike_briefs/<slug>.md`. No LLM call.
+  - `tool_spike_brief_run` sequences phases with a bounded draft → back-to-gather loop (`MAX_GATHER_REVISITS = 1`), publishes `tool_status` events per phase, threads structured results forward as return values, returns `ToolResult(text=..., end_turn=True)` with the full transcript and rendered brief.
+
+### Smoke
+
+`make dev` in the worktree → web UI → new conv → `/spike_brief tide pools along the oregon coast` → Playwright drove the chat. Sequence in logs:
+
+```
+12:46:02  starting orchestrator (topic=…, model=vertex-gemini-flash)
+12:46:02  [phase: gather] researching sources...
+12:46:09  [phase: draft] writing brief (attempt 1)...    ← 7s
+12:46:16  [phase: draft → route] choosing next step...   ← 7s
+12:46:18  [phase: review] critiquing draft...            ← 2s (route → review)
+12:46:20  [phase: publish] writing to workspace...       ← 2s
+12:46:20  complete — published to spike_briefs/tide-pools-along-the-oregon-coast.md
+```
+
+Final artifact: `data/decafclaw/workspace/spike_briefs/tide-pools-along-the-oregon-coast.md` — a real 400-word brief, structured framing + 2 themed sections + open questions + review summary. Coherent, plausible. Plenty good enough for "the mechanism works."
+
+Web UI rendered the full transcript inline (tool-result block) plus a final assistant message with the brief markdown-formatted. The expected `end_turn=True` extra LLM hop fired (one more Vertex call) — it produced a wrap-up assistant message echoing the brief. Six LLM calls total, not five.
+
+### What this confirmed (vs. the prior three iterations)
+
+- **Forced-tool structured output is reliable on Flash.** Every phase's `_call_structured` got a clean tool call with valid JSON on first attempt. The "you MUST call this" framing on a single tool with one schema is structurally equivalent to Sophie's zod-schema mode — the model has nowhere else to go.
+- **Code-driven sequencing eliminated every stall mode the prior iterations hit.** No `phase_advance` to forget. No `workflow_artifact_write` to mis-route through prose. The orchestrator threads state forward as return values; there is no "did the model remember to fire X" failure surface.
+- **The routing decision at `draft` (review vs. gather) worked as a structured call.** Model returned `{target: "review", reason: "..."}`. Code consumed it deterministically.
+- **The bounded `MAX_GATHER_REVISITS` loop didn't trigger this run** — Flash routed straight to review, which is the realistic case for a thin topic. The branch is exercised in code but not in this smoke; a topic that forces a gap-driven revisit would prove that path.
+
+### Residual / nice-to-haves (not blockers)
+
+- **Interruptibility was implemented (via `_check_cancel`) but not smoked.** The orchestrator polls `ctx.cancelled` between phases. The default `agent.turn_on_new_message` is `"queue"`, not `"cancel"` — so a new user message *queues* instead of cancelling. The mechanism is correct, but exercising it requires either flipping that config or sending an explicit cancel.
+- **The `end_turn=True` final-no-tools LLM call is a wart.** It echoes the brief once more (15,285 in / 14 out tokens this run). For a long-running orchestrator that already returned a fully-formed result, an "end the turn without one more LLM hop" signal would be cleaner — see CLAUDE.md note on `end_turn` semantics. Worth raising as a follow-up; not blocking.
+- **The spike's `_gather` is "hallucinate plausible sources from training data," not real research.** Faithful enough for proving the orchestrator pattern. A real engine integration would swap in `tabstack_research` via direct call (NOT via LLM tool call) inside the gather phase.
+- **No review gate** in the spike (skipped to keep plumbing minimal). The existing engine's `EndTurnConfirm` pattern is the right home for that — would slot in cleanly after `_review`.
+
+### What to fold back into PR #557
+
+The whole point of this throwaway was to validate the mechanism before generalizing. The Sophie-style pieces to lift back into the existing engine (per the salvage triage above):
+
+1. **Generalize the `dispatch_and_finalize_subagent → verify_outputs → auto-advance` pattern from `engine.py` to all single-edge phases.** Inline phases stop emitting `phase_advance`; the engine auto-advances after each phase function returns.
+2. **Replace multi-edge `phase_advance` with a structured routing call** — `_call_structured(target: Enum[<next_phase_ids>], reason: str)`, modeled on `_draft_route` in this spike. The existing `EdgeDef.when` annotations are already the perfect enum-option descriptions.
+3. **Phase output as return value, captured by the engine** — not "model remembers `workflow_artifact_write`." Inline phases return structured output; the engine writes the artifact file from the returned object.
+4. **Don't build the `max_phase_continuations` nudge loop** from the phase-turn spec. The spike confirms the crank is removable — no patch needed.
+
+The declarative authoring layer (loader/types/registry/conv_state) doesn't have to change.
+
+### Files added on this branch
+
+- `src/decafclaw/skills/spike_research_brief/SKILL.md`
+- `src/decafclaw/skills/spike_research_brief/tools.py`
+
+Both are throwaway. When the engine is reworked, drop the skill (or keep it as a worked-example test fixture for the new pattern).
