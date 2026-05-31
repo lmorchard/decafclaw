@@ -21,6 +21,7 @@ import logging
 import secrets
 from dataclasses import replace
 
+from ..archive import read_archive
 from .types import PhaseDef, WorkflowState
 
 log = logging.getLogger(__name__)
@@ -41,6 +42,109 @@ _BLOCKED_FOR_CHILDREN = frozenset({
     "workflow_start", "workflow_abort", "workflow_status",
     "phase_advance",
 })
+
+
+def _latest_parent_user_message(parent_ctx) -> str:
+    """Best-effort: pull the parent's most-recent user-role message text.
+
+    Used to convey the user's task (e.g. the workflow topic) to a
+    subagent that would otherwise have no way to receive it — the
+    bundled phase prompt is static and `workflow_start` accepts no
+    free-form params yet. Falls back to "" on any failure (no
+    archive, malformed entry, IO error) — subagent then runs without
+    parent-context, same as before this helper existed.
+    """
+    parent_conv = getattr(parent_ctx, "conv_id", "") or ""
+    config = getattr(parent_ctx, "config", None)
+    if not parent_conv or config is None:
+        return ""
+    try:
+        messages = read_archive(config, parent_conv)
+    except Exception as exc:  # noqa: BLE001 — fail-open
+        log.debug("[workflow] couldn't read parent archive for "
+                  "subagent context: %s", exc)
+        return ""
+    for m in reversed(messages):
+        if m.get("role") != "user":
+            continue
+        text = m.get("content") or ""
+        if isinstance(text, str) and text.strip():
+            return text.strip()
+    return ""
+
+
+def _render_subagent_user_prompt(parent_ctx, state: WorkflowState,
+                                  phase: PhaseDef, body: str) -> str:
+    """Wrap the phase body (or subagent-skill body) with strong framing
+    for the child's user-role initial message.
+
+    Three jobs:
+
+    1. **Strong framing** — explicit "you are a subagent, no human to
+       query, execute the task, do not narrate" directive. Matches
+       the parent-side `_render_phase_handoff` in tone but tailored
+       to the no-human-in-loop autonomous-child case.
+
+    2. **Topic passing** — inject the parent's most-recent user message
+       so the child can pick up the actual research topic (or
+       equivalent input) that the parent-side workflow author can't
+       reliably thread through `workflow_start` yet. Bug 1 from the
+       failing smoke.
+
+    3. **Output checklist** — list the declared `outputs:` so the LLM
+       has a concrete "you are done when" signal beyond the procedural
+       prose of the phase body.
+
+    The phase body stays as-authored — this just provides a
+    no-narrate / topic-aware envelope around it.
+    """
+    user_msg = _latest_parent_user_message(parent_ctx)
+
+    parts = [
+        f"=== WORKFLOW SUBAGENT — phase '{phase.id}' of '{state.workflow}' ===",
+        "",
+        "You are an autonomous subagent. There is no human user "
+        "reachable during this turn. Do not ask questions or wait "
+        "for clarification — act on the information provided below.",
+        "",
+    ]
+
+    if user_msg:
+        parts.extend([
+            "PARENT AGENT'S MOST-RECENT USER MESSAGE (use this as the "
+            "input/topic for the phase task):",
+            "",
+            "```",
+            user_msg,
+            "```",
+            "",
+        ])
+
+    parts.extend([
+        "YOUR TASK FOR THIS PHASE:",
+        "",
+        body.strip(),
+        "",
+    ])
+
+    if phase.outputs:
+        parts.append(
+            "REQUIRED OUTPUTS (call `workflow_artifact_write` once per "
+            "file; paths are relative to the workflow's `artifacts/` "
+            "root, so pass them exactly as listed):")
+        for o in phase.outputs:
+            parts.append(f'  - relative_path="{phase.id}/{o}"')
+        parts.append("")
+
+    parts.append(
+        "IMPORTANT: Do not narrate what you plan to do — call the "
+        "tools and do it. Do not end the turn without producing the "
+        "required outputs. If a tool you'd prefer is unavailable, "
+        "make a reasonable substitute (e.g. write a brief stub note "
+        "via `workflow_artifact_write` rather than ending with no "
+        "tool call). Begin now.")
+
+    return "\n".join(parts)
 
 
 def _resolve_phase_tools(all_names: set[str],
@@ -214,10 +318,20 @@ async def _run_child(*, ctx, state: WorkflowState,
         parent_conv, state.workflow, phase.id, len(allowed), timeout,
     )
 
+    # The system_prompt for the child is the bare phase body (or
+    # subagent-skill body) — same as before. The user-role kickoff
+    # prompt is the strong-framed wrapper that adds topic-passing
+    # and the no-narrate directive. This is what fixes the
+    # observed subagent stall pattern: the LLM was treating the
+    # phase prompt alone as "describe what you'd do" rather than
+    # "do it now."
+    kickoff_prompt = _render_subagent_user_prompt(
+        parent_ctx=ctx, state=state, phase=phase, body=prompt)
+
     future = await manager.enqueue_turn(
         child_conv_id,
         kind=TurnKind.CHILD_AGENT,
-        prompt=prompt,
+        prompt=kickoff_prompt,
         history=[],
         context_setup=setup,
         user_id=getattr(ctx, "user_id", ""),
