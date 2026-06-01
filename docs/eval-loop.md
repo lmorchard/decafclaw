@@ -64,6 +64,7 @@ Tests are YAML files with a list of test cases. Single-turn form:
 | `expect_tool` | str / list[str] | **OR semantics.** Fail if none of the listed tools were called this turn. |
 | `expect_no_tool` | str / list[str] | **AND semantics.** Fail if any of the listed tools were called this turn. |
 | `expect_tool_count_by_name` | dict[str, int] | Fail if any listed tool's call count this turn does not equal the mapped int. Tools not listed are unconstrained. Count `0` is allowed (overlaps `expect_no_tool`). |
+| `expect_tool_args` | list[{tool, args}] (or single dict) | The only argument-level assertion. Each spec passes if at least one call to `tool` this turn has matching values for **every** key in `args` (subset match — other args ignored). Use to disambiguate same-tool variants, e.g. `canvas_new_tab` with `widget_type: map` vs `iframe_sandbox`. |
 
 Note that `response_contains` with a list uses OR semantics — to require several strings, use `response_contains_all`, a single `re:(?s).*foo.*bar.*` regex, or multiple test cases.
 

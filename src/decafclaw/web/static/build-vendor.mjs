@@ -59,6 +59,11 @@ const bundles = [
     outfile: join(outdir, 'highlight.js'),
     external: [],
   },
+  {
+    name: 'leaflet',
+    entry: join(__dirname, 'leaflet-entry.js'),
+    outfile: join(outdir, 'leaflet.js'),
+  },
 ];
 
 for (const bundle of bundles) {
@@ -82,5 +87,22 @@ const picoSrc = join(__dirname, 'node_modules', '@picocss', 'pico', 'css', 'pico
 const picoDst = join(outdir, 'pico.min.css');
 cpSync(picoSrc, picoDst);
 console.log('Copied pico.min.css');
+
+// Copy Leaflet CSS (panes, controls, zoom buttons; not imported by the JS).
+const leafletCssSrc = join(__dirname, 'node_modules', 'leaflet', 'dist', 'leaflet.css');
+const leafletCssDst = join(outdir, 'leaflet.css');
+cpSync(leafletCssSrc, leafletCssDst);
+console.log('Copied leaflet.css');
+
+// Copy Leaflet's image assets. leaflet.css references them via relative
+// url(images/...) (layers control, default marker icons). The map widget
+// uses an SVG divIcon and no layers control today, so nothing requests them
+// yet — but shipping the CSS without its images leaves dangling refs that
+// would 404 the moment a layers control or default marker is used. Keep the
+// vendored CSS self-contained. Resolves to /static/vendor/bundle/images/.
+const leafletImagesSrc = join(__dirname, 'node_modules', 'leaflet', 'dist', 'images');
+const leafletImagesDst = join(outdir, 'images');
+cpSync(leafletImagesSrc, leafletImagesDst, { recursive: true });
+console.log('Copied leaflet images');
 
 console.log('Vendor bundle complete!');

@@ -59,8 +59,10 @@ class WidgetRegistry:
     Admin-tier widgets override bundled on name collision.
     """
 
-    def __init__(self, descriptors: dict[str, WidgetDescriptor] | None = None):
+    def __init__(self, descriptors: dict[str, WidgetDescriptor] | None = None,
+                 config=None):
         self._descriptors: dict[str, WidgetDescriptor] = descriptors or {}
+        self._config = config
 
     def get(self, name: str) -> WidgetDescriptor | None:
         return self._descriptors.get(name)
@@ -99,7 +101,7 @@ class WidgetRegistry:
         desc = self._descriptors.get(name)
         if desc is not None and desc.tier != "bundled":
             return data
-        return fn(data)
+        return fn(data, self._config)
 
     def validate(self, name: str, data: dict) -> tuple[bool, str | None]:
         """Validate widget payload against the widget's data_schema.
@@ -199,7 +201,7 @@ def load_widget_registry(config,
         merged[name] = desc
 
     log.info("widget registry loaded: %d widget(s)", len(merged))
-    return WidgetRegistry(merged)
+    return WidgetRegistry(merged, config=config)
 
 
 # Module-level global registry — populated at startup.
@@ -227,10 +229,13 @@ def _reset_registry_for_tests() -> None:
 # ---------------------------------------------------------------------------
 # Per-widget normalizers
 #
-# A normalizer is a pure function ``(input_data) -> normalized_data`` invoked
-# AFTER successful schema validation. Used for server-controlled fields the
-# agent shouldn't be trusted to author. iframe_sandbox uses it to wrap
-# agent-supplied body content into a CSP-locked HTML document.
+# A normalizer is a pure function ``(input_data, config) -> normalized_data``
+# invoked AFTER successful schema validation. Used for server-controlled
+# fields the agent shouldn't be trusted to author. iframe_sandbox uses it to
+# wrap agent-supplied body content into a CSP-locked HTML document; map uses
+# it to inject the configured tile source. ``config`` is the registry's
+# Config (may be None for a bare registry); normalizers that don't need it
+# accept and ignore the argument.
 #
 # Normalizers must be idempotent: ``normalize(normalize(d))`` should equal
 # ``normalize(d)`` for the same input. They typically achieve this by
@@ -238,7 +243,7 @@ def _reset_registry_for_tests() -> None:
 # preserving prior derived state.
 # ---------------------------------------------------------------------------
 
-_NORMALIZERS: dict[str, Callable[[dict], dict]] = {}
+_NORMALIZERS: dict[str, Callable[[dict, Any], dict]] = {}
 
 
 # Locked CSP for iframe_sandbox documents. ``default-src 'none'`` blocks all
@@ -260,7 +265,7 @@ _IFRAME_SANDBOX_BASE_STYLE = (
 )
 
 
-def _normalize_iframe_sandbox(data: dict) -> dict:
+def _normalize_iframe_sandbox(data: dict, config=None) -> dict:
     """Wrap agent-provided body into a CSP-locked HTML document.
 
     Input shape: ``{body: str, title?: str}`` (validated by the data_schema
@@ -303,3 +308,27 @@ def _normalize_iframe_sandbox(data: dict) -> dict:
 
 
 _NORMALIZERS["iframe_sandbox"] = _normalize_iframe_sandbox
+
+
+def _normalize_map(data: dict, config=None) -> dict:
+    """Inject server-controlled tile config into a map widget's data.
+
+    The agent supplies markers/center/zoom/title; the tile source is NOT
+    agent-authorable. Overwrites any agent-supplied ``tile_url`` /
+    ``tile_attribution`` with the resolved config values. Idempotent —
+    regenerates the injected fields from config every call.
+
+    Falls back to ``MapWidgetConfig`` defaults when no config is available
+    (e.g. a registry built without one), so it never crashes.
+    """
+    from .config_types import MapWidgetConfig
+    map_cfg = getattr(getattr(config, "widgets", None), "map", None) \
+        or MapWidgetConfig()
+    out = dict(data)
+    out["tile_url"] = map_cfg.tile_url
+    out["tile_attribution"] = map_cfg.tile_attribution
+    out["max_zoom"] = map_cfg.max_zoom
+    return out
+
+
+_NORMALIZERS["map"] = _normalize_map

@@ -65,6 +65,7 @@ Phase 4:
 Post-Phase 4 (#358 part B):
 
 - **`iframe_sandbox`** — agent-authored HTML/CSS/JS rendered in a CSP-locked sandboxed iframe; inline + canvas modes. Data shape (input): `{body: string, title?: string}`. See [iframe_sandbox](#iframe_sandbox-widget).
+- **`map`** — interactive geographic map (Leaflet + OSM tiles). Trusted first-party widget: the agent supplies structured data only; the tile source is server config (`config.widgets.map`), injected server-side. Data shape (input): `{markers: [{lat, lng, label?, popup?}], center?: {lat, lng}, zoom?, title?}`. See [map](#map-widget).
 
 ## Adding a new widget
 
@@ -358,6 +359,12 @@ agent-authored HTML/CSS/JS in a sandboxed iframe with **no network
 access**. Use for interactive demos, charts, small visualizations, or
 anywhere text alone won't do.
 
+For content that genuinely needs the network — map tiles, remote data,
+a charting library from a CDN — `iframe_sandbox` is the wrong tool: the
+CSP blocks all of it. Use a purpose-built first-party widget instead
+(e.g. [`map`](#map-widget) for geographic maps), which renders trusted
+vendored code and can reach the network.
+
 ### Trust model
 
 Two layers of defense, applied independently:
@@ -442,8 +449,103 @@ the iframe, add a `postMessage` handler in `widget.js` that validates
 sandboxed-without-same-origin iframes, so source-equality is the trust
 check). Filed as a follow-up if/when needed.
 
+## `map` widget
+
+Bundled at `src/decafclaw/web/static/widgets/map/`. Renders an
+interactive geographic map (Leaflet + OpenStreetMap tiles) from
+structured data. Inline + canvas modes.
+
+Unlike `iframe_sandbox`, this is a **trusted first-party widget**: the
+agent supplies data only — never code — so it renders directly in the
+page light DOM (like `data_table`) and is allowed to load map tiles over
+the network. The threat model is the same as any other data-driven
+widget; there's no agent-authored markup or script to sandbox.
+
+### Trust model — why network access is safe here
+
+`iframe_sandbox` blocks the network because the agent authors the HTML
+and JS that runs inside it. The `map` widget runs **only vendored
+Leaflet**; the agent's contribution is a validated JSON payload of
+coordinates and strings. Tile requests go to a server-configured tile
+URL, not an agent-chosen one (see below). So "network access" here means
+"Leaflet fetches map tiles from a host the operator configured," not
+"agent-controlled code can call out to arbitrary origins."
+
+### Data shape
+
+**Input** (what tools and the agent provide):
+
+- `markers` (array) — each `{lat, lng, label?, popup?}`. `lat`/`lng` are
+  range-validated (`-90..90`, `-180..180`). `label` shows as a hover
+  tooltip; `popup` shows on click.
+- `center` (optional) — `{lat, lng}` to center on.
+- `zoom` (optional, int `0..20`).
+- `title` (optional, string) — rendered as a header above the map.
+
+View resolution (client-side, in order): explicit `center` + `zoom` →
+auto-fit bounds to markers → single-marker default zoom (13) → `center`
+alone at zoom 10 → world view (`{0,0}`, zoom 1). All fields are optional;
+an empty `{markers: []}` is valid and renders the world view.
+
+**Server-injected** (post-normalization, agent cannot author):
+
+- `tile_url`, `tile_attribution`, `max_zoom` — overwritten by
+  `widgets.py::_normalize_map` from `config.widgets.map` (defaults to
+  OpenStreetMap's public tiles). Any agent-supplied values are discarded.
+  Idempotent, like the iframe_sandbox wrapper.
+
+### Configuration
+
+`config.widgets.map` (`MapWidgetConfig`):
+
+- `tile_url` — XYZ tile template. Default
+  `https://tile.openstreetmap.org/{z}/{x}/{y}.png`. Env:
+  `WIDGETS_MAP_TILE_URL`.
+- `tile_attribution` — attribution HTML. Env: `WIDGETS_MAP_TILE_ATTRIBUTION`.
+- `max_zoom` — default `19`.
+
+OSM's public tiles are fine for low-volume personal use; point `tile_url`
+at your own tile server (or a keyed provider) for anything heavier.
+
+### Rendering notes
+
+Markers use an inline SVG `L.divIcon` rather than Leaflet's default PNG
+marker images — the default icon's asset paths break when Leaflet is
+bundled, and the SVG pin sidesteps that entirely. Only `leaflet.css`
+(panes, controls, zoom buttons) is served, injected once into the
+document head on first map render. Leaflet itself is vendored through the
+esbuild + import-map pipeline (`leaflet-entry.js` → `vendor/bundle/leaflet.js`).
+
+Marker `popup`/`label` text is bound as DOM nodes via `textContent`, never
+as strings — Leaflet renders string popup/tooltip content as **HTML**, and
+this widget runs in the host page's light DOM (not a sandboxed iframe), so
+binding strings would let agent-supplied data inject markup/JS. The widget
+forces text rendering to keep the "agent supplies data, not code" boundary.
+
+### Usage
+
+```python
+return ToolResult(
+    text="Showed the route on a map",
+    widget=WidgetRequest(
+        widget_type="map",
+        data={
+            "markers": [
+                {"lat": 37.81, "lng": -122.48, "label": "Start", "popup": "Golden Gate"},
+                {"lat": 37.80, "lng": -122.41, "popup": "Ferry Building"},
+            ],
+            "title": "SF waypoints",
+        },
+        target="canvas",
+    ),
+)
+```
+
+Or `canvas_new_tab(widget_type="map", data={"markers": [...]})`.
+
 ## Out-of-scope
 
+- Polylines/polygons, GeoJSON overlays, routing, marker clustering for `map` — v1 is markers + popups only; follow-on if needed.
 - Diff view, line numbers/highlighting for `code_block` — follow-on issues.
 - Drag-to-reorder tabs — follow-on.
 - Tab limit / cap — currently unbounded; horizontal scroll handles overflow.
@@ -467,7 +569,9 @@ check). Filed as a follow-up if/when needed.
 - `src/decafclaw/tools/canvas_tools.py` — canvas tools
 - `src/decafclaw/web/static/lib/canvas-state.js` — frontend state
 - `src/decafclaw/web/static/components/canvas-panel.js` — panel component
-- `src/decafclaw/web/static/widgets/` — bundled widgets (data_table, multiple_choice, text_input, markdown_document, code_block, iframe_sandbox)
+- `src/decafclaw/web/static/widgets/` — bundled widgets (data_table, multiple_choice, text_input, markdown_document, code_block, iframe_sandbox, map)
+- `src/decafclaw/web/static/widgets/map/` — map widget descriptor + Lit component (Leaflet)
+- `src/decafclaw/web/static/leaflet-entry.js` — Leaflet vendor entry (ESM/UMD interop → default export)
 - `src/decafclaw/web/static/widgets/markdown_document/` — markdown_document widget descriptor + Lit component
 - `src/decafclaw/web/static/widgets/code_block/` — code_block widget descriptor + Lit component
 - `src/decafclaw/web/static/widgets/iframe_sandbox/` — iframe_sandbox widget descriptor + Lit component

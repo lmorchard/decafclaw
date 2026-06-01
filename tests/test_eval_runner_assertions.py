@@ -5,7 +5,13 @@ assertions added for issue #349: `expect_tool`, `expect_no_tool`, and
 `expect_tool_count_by_name`.
 """
 
-from decafclaw.eval.runner import _check_assertions, _collect_tool_names
+import json
+
+from decafclaw.eval.runner import (
+    _check_assertions,
+    _collect_tool_calls,
+    _collect_tool_names,
+)
 
 
 def _assistant(tool_names):
@@ -20,17 +26,32 @@ def _assistant(tool_names):
     }
 
 
+def _assistant_with_args(calls):
+    """Build a synthetic assistant message from (name, args_dict) tuples."""
+    return {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [
+            {"id": f"call_{i}",
+             "function": {"name": n, "arguments": json.dumps(a)}}
+            for i, (n, a) in enumerate(calls)
+        ],
+    }
+
+
 def _tool_result(call_id="call_0", content="ok"):
     return {"role": "tool", "tool_call_id": call_id, "content": content}
 
 
 def _check(test_case, history, response="response text", tool_calls=0,
            tool_errors=0):
-    """Convenience wrapper: derive tool_names from history and call _check_assertions."""
-    tool_names = _collect_tool_names(history)
+    """Convenience wrapper: derive tool names/args from history and call
+    _check_assertions."""
     return _check_assertions(
         test_case, response, tool_calls,
-        tool_errors=tool_errors, tool_names=tool_names,
+        tool_errors=tool_errors,
+        tool_names=_collect_tool_names(history),
+        tool_calls_detail=_collect_tool_calls(history),
     )
 
 
@@ -138,6 +159,66 @@ def test_expect_no_tool_list_and_semantics_fails_when_one_called():
     passed, reason = _check(test_case, history)
     assert not passed
     assert "b" in reason
+
+
+# --- _collect_tool_calls + expect_tool_args ---
+
+def test_collect_tool_calls_parses_args():
+    history = [
+        _assistant_with_args([
+            ("canvas_new_tab", {"widget_type": "map", "data": {"markers": []}}),
+            ("workspace_read", {"path": "x"}),
+        ]),
+    ]
+    detail = _collect_tool_calls(history)
+    assert detail == [
+        ("canvas_new_tab", {"widget_type": "map", "data": {"markers": []}}),
+        ("workspace_read", {"path": "x"}),
+    ]
+
+
+def test_collect_tool_calls_tolerates_bad_json():
+    history = [{
+        "role": "assistant", "content": "",
+        "tool_calls": [
+            {"id": "c0", "function": {"name": "t", "arguments": "{not json"}},
+        ],
+    }]
+    # Unparseable args degrade to {} rather than raising.
+    assert _collect_tool_calls(history) == [("t", {})]
+
+
+def test_expect_tool_args_subset_match_passes():
+    test_case = {"expect": {
+        "expect_tool_args": [{"tool": "canvas_new_tab",
+                              "args": {"widget_type": "map"}}]}}
+    history = [_assistant_with_args([
+        ("canvas_new_tab", {"widget_type": "map", "data": {"markers": []}}),
+    ])]
+    passed, reason = _check(test_case, history)
+    assert passed, reason
+
+
+def test_expect_tool_args_wrong_value_fails():
+    test_case = {"expect": {
+        "expect_tool_args": [{"tool": "canvas_new_tab",
+                              "args": {"widget_type": "map"}}]}}
+    history = [_assistant_with_args([
+        ("canvas_new_tab", {"widget_type": "iframe_sandbox", "data": {}}),
+    ])]
+    passed, reason = _check(test_case, history)
+    assert not passed
+    assert "widget_type" in reason
+
+
+def test_expect_tool_args_tool_not_called_fails():
+    test_case = {"expect": {
+        "expect_tool_args": [{"tool": "canvas_new_tab",
+                              "args": {"widget_type": "map"}}]}}
+    history = [_assistant(["workspace_write"]), _tool_result()]
+    passed, reason = _check(test_case, history)
+    assert not passed
+    assert "canvas_new_tab" in reason
 
 
 # --- expect_tool_count_by_name ---

@@ -150,6 +150,38 @@ def _collect_tool_names(history: list) -> list[str]:
     return names
 
 
+def _collect_tool_calls(history: list) -> list[tuple[str, dict]]:
+    """List (tool_name, parsed_args) for each tool call, in call order.
+
+    Tool-call ``arguments`` are JSON strings on the wire; unparseable args
+    degrade to an empty dict rather than raising, so assertion checks stay
+    robust against malformed model output.
+    """
+    import json
+    calls: list[tuple[str, dict]] = []
+    for msg in history:
+        if msg.get("role") != "assistant":
+            continue
+        for call in msg.get("tool_calls") or []:
+            fn = call.get("function") or {}
+            name = fn.get("name")
+            if not name:
+                continue
+            raw = fn.get("arguments")
+            args: dict = {}
+            if isinstance(raw, dict):
+                args = raw
+            elif isinstance(raw, str) and raw.strip():
+                try:
+                    parsed = json.loads(raw)
+                    if isinstance(parsed, dict):
+                        args = parsed
+                except (ValueError, TypeError):
+                    args = {}
+            calls.append((name, args))
+    return calls
+
+
 def _count_tool_errors(history: list) -> int:
     """Count tool results that contain error indicators."""
     count = 0
@@ -242,7 +274,9 @@ def _check_workspace_assertions(test_case: dict,
 
 def _check_assertions(test_case: dict, response: str, tool_calls: int,
                       tool_errors: int = 0,
-                      tool_names: list[str] | None = None) -> tuple[bool, str]:
+                      tool_names: list[str] | None = None,
+                      tool_calls_detail: list[tuple[str, dict]] | None = None,
+                      ) -> tuple[bool, str]:
     """Check test assertions. Returns (passed, failure_reason)."""
     import re
 
@@ -322,6 +356,39 @@ def _check_assertions(test_case: dict, response: str, tool_calls: int,
                 paren = f"called tools: {called_list}" if names else "no tools were called"
                 return False, (
                     f"Tool count mismatch for '{name}': expected {want}, got {got} ({paren})"
+                )
+
+    # expect_tool_args: assert a tool was called with specific argument
+    # values. Each spec is {tool: <name>, args: {k: v, ...}}; it passes if at
+    # least one call to that tool has matching values for every listed key
+    # (subset match — other args are ignored). This is the only assertion
+    # that inspects call arguments rather than just names; needed to
+    # disambiguate same-tool variants (e.g. canvas_new_tab widget_type).
+    expect_args = expect.get("expect_tool_args")
+    if expect_args is not None:
+        detail = tool_calls_detail or []
+        specs = [expect_args] if isinstance(expect_args, dict) else list(expect_args)
+        for spec in specs:
+            want_tool = spec.get("tool")
+            want_args = spec.get("args") or {}
+            matched = any(
+                name == want_tool
+                and all(args.get(k) == v for k, v in want_args.items())
+                for name, args in detail
+            )
+            if not matched:
+                got = [
+                    {k: a.get(k) for k in want_args}
+                    for n, a in detail if n == want_tool
+                ]
+                if got:
+                    return False, (
+                        f"Expected {want_tool} called with {want_args}, but "
+                        f"matching-key args were {got}"
+                    )
+                return False, (
+                    f"Expected {want_tool} called with {want_args}, but "
+                    f"{want_tool} was not called (called: {called_list})"
                 )
 
     return True, ""
@@ -460,9 +527,11 @@ async def run_test(config: Config, test_case: dict) -> dict:
         expect = turn.get("expect", {})
         if expect:
             tool_errors = _count_tool_errors(history) - pre_turn_tool_errors
-            tool_names = _collect_tool_names(history[pre_turn_history_len:])
+            turn_slice = history[pre_turn_history_len:]
+            tool_names = _collect_tool_names(turn_slice)
             passed, reason = _check_assertions(turn, response, tool_calls, tool_errors,
-                                               tool_names=tool_names)
+                                               tool_names=tool_names,
+                                               tool_calls_detail=_collect_tool_calls(turn_slice))
             if not passed:
                 overall_passed = False
                 # Collect errors from this turn's messages only
