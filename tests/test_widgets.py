@@ -488,3 +488,119 @@ def test_bundled_code_block_is_registered(fake_config):
     # additionalProperties: false rejects unknown keys
     bad, _ = reg.validate("code_block", {"code": "x", "extra": "field"})
     assert not bad
+
+
+# ---------------- normalizer config threading + map widget ----------------
+
+
+def test_normalize_passes_config_to_normalizer(fake_config):
+    """Registry threads its config into normalizers."""
+    import decafclaw.widgets as widgets_mod
+    seen = {}
+
+    def _spy(data, config):
+        seen["config"] = config
+        return data
+
+    reg = load_widget_registry(fake_config,
+                               admin_dir=Path("/nonexistent/admin"))
+    # iframe_sandbox is bundled, so its normalizer runs; temporarily swap it.
+    orig = widgets_mod._NORMALIZERS.get("iframe_sandbox")
+    widgets_mod._NORMALIZERS["iframe_sandbox"] = _spy
+    try:
+        reg.normalize("iframe_sandbox", {"body": "x"})
+    finally:
+        widgets_mod._NORMALIZERS["iframe_sandbox"] = orig
+    assert seen["config"] is fake_config
+
+
+def test_bundled_map_is_registered(fake_config):
+    reg = load_widget_registry(fake_config,
+                               admin_dir=Path("/nonexistent/admin"))
+    desc = reg.get("map")
+    assert desc is not None
+    assert desc.tier == "bundled"
+    assert "inline" in desc.modes
+    assert "canvas" in desc.modes
+    assert desc.accepts_input is False
+
+    # Valid: a single marker.
+    ok, err = reg.validate("map", {"markers": [{"lat": 37.8, "lng": -122.3}]})
+    assert ok is True, err
+    # Valid: marker with label + popup, explicit center/zoom.
+    ok, err = reg.validate("map", {
+        "markers": [{"lat": 1.0, "lng": 2.0, "label": "A", "popup": "hi"}],
+        "center": {"lat": 1.0, "lng": 2.0}, "zoom": 10, "title": "Map",
+    })
+    assert ok is True, err
+    # Valid: empty map (no markers, no center) — forgiving.
+    ok, err = reg.validate("map", {"markers": []})
+    assert ok is True, err
+    # Invalid: latitude out of range.
+    bad, _ = reg.validate("map", {"markers": [{"lat": 200, "lng": 0}]})
+    assert not bad
+    # Invalid: longitude out of range.
+    bad, _ = reg.validate("map", {"markers": [{"lat": 0, "lng": 999}]})
+    assert not bad
+    # Invalid: unknown top-level key (additionalProperties: false).
+    bad, _ = reg.validate("map", {"markers": [], "nope": 1})
+    assert not bad
+
+
+def _map_config_stub(tmp_path, tile_url, attribution, max_zoom=11):
+    """Config stub carrying a custom widgets.map config — proves the tile
+    settings thread from config through the registry into the normalizer
+    (rather than coincidentally matching the OSM fallback defaults)."""
+    from decafclaw.config_types import MapWidgetConfig, WidgetsConfig
+
+    class _Cfg:
+        agent_path = tmp_path / "agent"
+        widgets = WidgetsConfig(map=MapWidgetConfig(
+            tile_url=tile_url, tile_attribution=attribution, max_zoom=max_zoom))
+    return _Cfg()
+
+
+def test_map_normalize_injects_tile_config(tmp_path):
+    cfg = _map_config_stub(tmp_path,
+                           "https://custom.test/{z}/{x}/{y}.png", "custom attr",
+                           max_zoom=11)
+    reg = load_widget_registry(cfg, admin_dir=Path("/nonexistent/admin"))
+    out = reg.normalize("map", {"markers": [{"lat": 1.0, "lng": 2.0}]})
+    assert out["tile_url"] == "https://custom.test/{z}/{x}/{y}.png"
+    assert out["tile_attribution"] == "custom attr"
+    # max_zoom threads through too (not just hard-coded client-side).
+    assert out["max_zoom"] == 11
+    # Markers preserved.
+    assert out["markers"] == [{"lat": 1.0, "lng": 2.0}]
+
+
+def test_map_normalize_overwrites_agent_supplied_tile(tmp_path):
+    cfg = _map_config_stub(tmp_path,
+                           "https://custom.test/{z}/{x}/{y}.png", "custom attr")
+    out = load_widget_registry(
+        cfg, admin_dir=Path("/nonexistent/admin")
+    ).normalize("map", {
+        "markers": [],
+        "tile_url": "https://evil.test/{z}/{x}/{y}.png",
+        "tile_attribution": "spoof",
+    })
+    assert out["tile_url"] == "https://custom.test/{z}/{x}/{y}.png"
+    assert out["tile_attribution"] == "custom attr"
+
+
+def test_map_normalize_idempotent(fake_config):
+    reg = load_widget_registry(fake_config, admin_dir=Path("/nonexistent/admin"))
+    once = reg.normalize("map", {"markers": [{"lat": 1.0, "lng": 2.0}]})
+    twice = reg.normalize("map", once)
+    assert once == twice
+
+
+def test_map_normalize_falls_back_to_defaults_without_config():
+    """Registry built without config (e.g. WidgetRegistry()) still injects
+    sane OSM defaults rather than crashing."""
+    import decafclaw.widgets as widgets_mod
+    from decafclaw.config_types import MapWidgetConfig
+    out = widgets_mod._normalize_map({"markers": []}, None)
+    assert out["tile_url"] == MapWidgetConfig().tile_url
+    assert out["tile_attribution"] == MapWidgetConfig().tile_attribution
+    assert out["max_zoom"] == MapWidgetConfig().max_zoom

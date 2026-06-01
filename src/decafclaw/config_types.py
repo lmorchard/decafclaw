@@ -156,6 +156,26 @@ class PreemptiveSearchConfig:
 
 
 @dataclass
+class MapWidgetConfig:
+    """Tile source for the bundled `map` canvas widget. Server-controlled —
+    injected into widget data by the registry normalizer so the agent can't
+    author it. Default is OpenStreetMap's public tile server (fine for
+    low-volume personal use; point at your own server for anything heavier)."""
+    tile_url: str = "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
+    tile_attribution: str = (
+        '&copy; <a href="https://www.openstreetmap.org/copyright">'
+        'OpenStreetMap</a> contributors'
+    )
+    max_zoom: int = 19
+
+
+@dataclass
+class WidgetsConfig:
+    """Per-widget server-side configuration."""
+    map: MapWidgetConfig = field(default_factory=MapWidgetConfig)
+
+
+@dataclass
 class AgentConfig:
     data_home: str = "./data"
     id: str = "decafclaw"

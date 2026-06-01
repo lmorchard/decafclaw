@@ -149,6 +149,36 @@ class TestJsonFileLoading:
         assert c.agent.preemptive_search.enabled is False
         assert c.agent.preemptive_search.max_matches == 5
 
+    def test_widgets_map_config_defaults(self):
+        """MapWidgetConfig defaults to OpenStreetMap public tiles."""
+        from decafclaw.config_types import MapWidgetConfig, WidgetsConfig
+        w = WidgetsConfig()
+        assert isinstance(w.map, MapWidgetConfig)
+        assert w.map.tile_url == "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
+        assert "OpenStreetMap" in w.map.tile_attribution
+        assert w.map.max_zoom == 19
+
+    def test_widgets_map_config_env_override(self, tmp_path, monkeypatch):
+        """Systematic env prefix WIDGETS_MAP_* overrides the tile config."""
+        monkeypatch.setenv(
+            "WIDGETS_MAP_TILE_URL", "https://example.test/{z}/{x}/{y}.png")
+        monkeypatch.setenv("DATA_HOME", str(tmp_path))
+        c = load_config()
+        assert c.widgets.map.tile_url == "https://example.test/{z}/{x}/{y}.png"
+
+    def test_widgets_malformed_type_falls_back_to_defaults(self, tmp_path, monkeypatch):
+        """A non-dict `widgets` (or `widgets.map`) in config.json degrades to
+        defaults instead of raising — matches how other sections tolerate
+        unexpected types."""
+        agent_dir = tmp_path / "decafclaw"
+        agent_dir.mkdir()
+        (agent_dir / "config.json").write_text(json.dumps({
+            "widgets": "not-a-dict",
+        }))
+        monkeypatch.setenv("DATA_HOME", str(tmp_path))
+        c = load_config()  # must not raise
+        assert c.widgets.map.tile_url == "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
+
     def test_loads_notifications_from_json(self, tmp_path, monkeypatch):
         """NotificationsConfig fields load from JSON."""
         agent_dir = tmp_path / "decafclaw"

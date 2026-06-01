@@ -1,0 +1,24 @@
+# Map widget — LLM picks the purpose-built `map` widget for geographic
+# display, not a hand-built Leaflet page inside `iframe_sandbox` (whose CSP
+# blocks the CDN scripts + tiles a map needs). The map vs iframe_sandbox
+# choice is a widget_type within the same canvas_new_tab tool, so name-level
+# assertions can't see it — this relies on `expect_tool_args` to inspect the
+# widget_type argument. Widget registration/validation/normalization are
+# covered by unit tests in tests/test_widgets.py; this isolates the LLM's
+# widget-selection behavior.
+
+- name: "shows locations on a map via the map widget, not iframe_sandbox"
+  input: >
+    Show me a map with pins for these three cities: San Francisco
+    (37.77, -122.42), Portland (45.52, -122.68), and Seattle (47.61, -122.33).
+  expect:
+    max_tool_calls: 4
+    max_tool_errors: 1
+    expect_tool: canvas_new_tab
+    # The load-bearing assertion: canvas_new_tab must use widget_type='map'.
+    # If the agent hand-builds a Leaflet map in iframe_sandbox instead, the
+    # widget_type won't be 'map' and this fails.
+    expect_tool_args:
+      - tool: canvas_new_tab
+        args:
+          widget_type: map
