@@ -67,9 +67,15 @@ async def run_all(app_ctx):
             )
             log.info(f"HTTP server enabled on {config.http.host}:{config.http.port}")
 
-        # Start Mattermost client
+        # Start Mattermost client (skipped when disabled — lets the web gateway
+        # run standalone without connecting to Mattermost, e.g. for the decafclaw client)
+        mm_active = bool(
+            config.mattermost.enabled
+            and config.mattermost.url
+            and config.mattermost.token
+        )
         mm_client = None
-        if config.mattermost.url and config.mattermost.token:
+        if mm_active:
             from .mattermost import MattermostClient
             mm_client = MattermostClient(config)
             mattermost_task = asyncio.create_task(
@@ -90,7 +96,7 @@ async def run_all(app_ctx):
         # Start heartbeat timer
         if parse_interval(config.heartbeat.interval) is not None:
             # Use Mattermost heartbeat cycle if available, otherwise basic
-            if config.mattermost.url and config.mattermost.token:
+            if mm_active:
                 from .tools.heartbeat_tools import _guarded_heartbeat
 
                 async def on_cycle():

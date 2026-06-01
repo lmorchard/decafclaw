@@ -18,6 +18,7 @@ These docs are as much for me as they are for agents working on this project. Th
 - [Streaming](streaming.md) — Stream LLM tokens as they arrive, configurable throttle
 - [HTTP Server & Interactive Buttons](http-server.md) — Mattermost button confirmations, HTTP callback server
 - [WebSocket Message Types](websocket-messages.md) — Generated wire-protocol reference for messages exchanged between server and browser
+- [Headless client](client.md) — Headless `decafclaw-client` CLI for driving a running instance over `/ws/chat` (agent smoke testing without the web UI)
 
 ## Knowledge & Memory
 

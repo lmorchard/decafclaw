@@ -24,6 +24,10 @@ class LlmConfig:
 
 @dataclass
 class MattermostConfig:
+    # Master switch. When false, the Mattermost client is not started even if
+    # url + token are configured — lets the web gateway run standalone (e.g.
+    # for the decafclaw client) without stealing a deployed bot's websocket.
+    enabled: bool = True
     url: str = ""
     token: str = field(default="", metadata={"secret": True})
     bot_username: str = ""

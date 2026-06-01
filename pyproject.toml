@@ -37,6 +37,7 @@ decafclaw-reindex = "decafclaw.embeddings:reindex_cli"
 decafclaw-prune-embeddings = "decafclaw.embeddings:prune_embeddings_cli"
 decafclaw-search = "decafclaw.embeddings:search_cli"
 decafclaw-token = "decafclaw.web.auth:token_cli"
+decafclaw-client = "decafclaw.client:main"
 
 [build-system]
 requires = ["hatchling"]

@@ -39,6 +39,7 @@ class TestDefaults:
         assert c.llm.model == "gemini-2.5-flash"
         assert c.llm.streaming is True
         assert c.mattermost.url == ""
+        assert c.mattermost.enabled is True
         assert c.mattermost.channel_blocklist == []
         assert c.agent.data_home == "./data"
         assert c.agent.id == "decafclaw"
@@ -113,6 +114,25 @@ class TestJsonFileLoading:
         c = load_config()
         assert c.llm.model == "test-model"
         assert c.mattermost.url == "https://mm.test.com"
+
+    def test_mattermost_enabled_env_override(self, tmp_path, monkeypatch):
+        """MATTERMOST_ENABLED=false disables MM even with url+token in JSON.
+
+        This is the web-only path the decafclaw client relies on: run the
+        gateway without connecting to Mattermost.
+        """
+        agent_dir = tmp_path / "decafclaw"
+        agent_dir.mkdir()
+        (agent_dir / "config.json").write_text(json.dumps({
+            "mattermost": {"url": "https://mm.test.com", "token": "tok"},
+        }))
+        monkeypatch.setenv("DATA_HOME", str(tmp_path))
+        monkeypatch.setenv("MATTERMOST_ENABLED", "false")
+        c = load_config()
+        assert c.mattermost.enabled is False
+        # url/token still load — only the master switch is off
+        assert c.mattermost.url == "https://mm.test.com"
+        assert c.mattermost.token == "tok"
 
     def test_loads_nested_dataclass(self, tmp_path, monkeypatch):
         """Nested dataclass fields (e.g. agent.preemptive_search) load from JSON."""
