@@ -65,10 +65,14 @@ Legacy LLM endpoint settings. **Prefer `providers` + `model_configs` for new set
 
 ### `mattermost`
 
-Mattermost bot connection and behavior.
+Mattermost bot connection and behavior. Set `enabled` to `false` (e.g.
+`MATTERMOST_ENABLED=false`) to run the web gateway standalone without connecting
+to Mattermost — useful for local web-only runs and the
+[decafclaw client](client.md) without stealing a deployed bot's websocket.
 
 | Field | Type | Default | Env Var | Secret |
 |-------|------|---------|---------|--------|
+| `enabled` | bool | `true` | `MATTERMOST_ENABLED` | |
 | `url` | str | `""` | `MATTERMOST_URL` | |
 | `token` | str | `""` | `MATTERMOST_TOKEN` | yes |
 | `bot_username` | str | `""` | `MATTERMOST_BOT_USERNAME` | |
