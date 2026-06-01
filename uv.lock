@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.13"
 
 [[package]]
@@ -377,7 +377,7 @@ requires-dist = [
     { name = "requests", specifier = ">=2.0.0" },
     { name = "sqlite-vec", specifier = ">=0.1.7" },
     { name = "starlette", specifier = ">=0.52.1" },
-    { name = "tabstack", specifier = ">=2.3.0" },
+    { name = "tabstack", specifier = ">=2.6.1" },
     { name = "uvicorn", specifier = ">=0.41.0" },
     { name = "watchfiles", marker = "extra == 'dev'", specifier = ">=1.0.0" },
     { name = "websockets", specifier = ">=16.0" },
@@ -1118,7 +1118,7 @@ wheels = [
 
 [[package]]
 name = "tabstack"
-version = "2.3.0"
+version = "2.6.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
@@ -1128,9 +1128,9 @@ dependencies = [
     { name = "sniffio" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/25/08/6198d1bd5b23ac40a199db6e26a74cdb2a66e0ef99a572a6ab7e971e1c43/tabstack-2.3.0.tar.gz", hash = "sha256:a323dc2573d910b132f4fbbc3ed83b026a3eac4aea8ca0f18f6b2c439b73f668", size = 230017, upload-time = "2026-03-12T21:29:25.908Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/a6/ba/8c407b9db5ba0a86c810c3d1615d38a215fe2c660cd2a96638f9ceef596b/tabstack-2.6.1.tar.gz", hash = "sha256:cef80d66d663f75b4ea475395a5f419316897acabead9665ac5fd32d789759af", size = 251429, upload-time = "2026-05-05T16:29:42.619Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/5d/43/43ea9e7d98436d069c967d8340253e3e1a98c2a9847e76d393e0c1ac5274/tabstack-2.3.0-py3-none-any.whl", hash = "sha256:bbe2dc88bafcdeb79b5d1d2154a6029da2739b23f0645e8bb3f43840c930e19e", size = 86404, upload-time = "2026-03-12T21:29:24.698Z" },
+    { url = "https://files.pythonhosted.org/packages/c4/dc/c19318c8e0a26ea0b99ecc6aaf3ea1b01f0df126e62144f1299b095e906d/tabstack-2.6.1-py3-none-any.whl", hash = "sha256:00fa099929a5e12347633883ca14ba2f98fef42baca428c1e564d3fd3151a362", size = 106914, upload-time = "2026-05-05T16:29:44.139Z" },
 ]
 
 [[package]]

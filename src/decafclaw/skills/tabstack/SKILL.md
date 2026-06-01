@@ -30,6 +30,22 @@ Best for: tasks needing real browser interaction — clicking, navigating across
 
 Takes 30-120 seconds.
 
+**Interactive form-fill.** To let the browser agent fill a form that needs personal data, set `interactive: true` and pass the values in `data`, keyed by field label:
+
+```json
+{"task": "Sign up for the newsletter", "url": "https://example.com",
+ "interactive": true,
+ "data": {"Email": "ada@example.com", "Full name": "Ada Lovelace"}}
+```
+
+When the browser hits a form it answers from `data`. Each submission is shown to the user for **confirmation** before any personal data is sent — so don't put secrets you wouldn't want surfaced in a prompt into `data`. Behavior:
+
+- **Match by field label** (case-insensitive). `data` keys should mirror the form's field labels.
+- **Missing required field** → that form request is cancelled and the missing field name(s) are reported back in the result. Gather the values (ask the user) and re-run with them added to `data`.
+- **User declines the confirmation** → the submission is cancelled and reported.
+
+Gather the data you can up front (from the user, USER.md, or the vault) before calling — the missing-field report is a fallback, not the happy path. Without `interactive: true`, `tabstack_automate` never prompts and behaves as a normal read/search/click task.
+
 ### 5. `tabstack_research` — AI-powered deep web research
 
 Searches the web, analyzes multiple sources, and synthesizes a comprehensive answer with citations. For simple factual lookups, `tabstack_automate` without a URL is faster and cheaper. Use `tabstack_research` when you need depth, multiple perspectives, or cited sources.

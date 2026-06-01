@@ -23,7 +23,7 @@ dependencies = [
     "requests>=2.0.0",
     "sqlite-vec>=0.1.7",
     "starlette>=0.52.1",
-    "tabstack>=2.3.0",
+    "tabstack>=2.6.1",
     "uvicorn>=0.41.0",
     "websockets>=16.0",
 ]

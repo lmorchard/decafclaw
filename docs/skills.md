@@ -317,9 +317,11 @@ Activated skills and their tools are scoped to the current conversation. Other c
 
 ### tabstack
 
-Web browsing, content extraction, research, and browser automation via the Tabstack API. Requires `TABSTACK_API_KEY`.
+Web browsing, content extraction, research, and browser automation via the Tabstack API (SDK >= 2.6.1). Requires `TABSTACK_API_KEY`.
 
 Tools: `tabstack_extract_markdown`, `tabstack_extract_json`, `tabstack_generate`, `tabstack_automate`, `tabstack_research`
+
+`tabstack_automate` supports **interactive form-fill**: pass `interactive: true` plus a `data` dict (keyed by form field label) and the browser agent's form-data requests are answered from `data`, gated by a per-submission user confirmation. Missing required fields cancel the request and are reported back for a retry. See the skill's `SKILL.md` for details.
 
 ### claude_code
 
