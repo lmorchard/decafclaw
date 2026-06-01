@@ -159,6 +159,30 @@
     The "PREFER canvas_new_tab" guidance applies to interactive web
     content the user wants displayed, not to authoring file artifacts.
 
+# -- tabstack_automate vs tabstack_research ----------------------------------
+
+- name: tabstack-automate-vs-research-form-fill
+  scenario: "Go to https://example.com/signup and submit the newsletter signup form for me — use the email ada@example.com and the name Ada Lovelace."
+  expected: tabstack_automate
+  near_miss: [tabstack_research]
+  notes: |
+    Submitting a web form on a specific URL is browser interaction —
+    tabstack_automate (with interactive form-fill). tabstack_research only
+    searches and synthesizes sources; it can't click or submit a form. The
+    data is given inline so the model has no reason to pause and ask for it
+    first — keep concrete values in the scenario, or the model reasonably
+    answers with a question instead of a tool call.
+
+- name: tabstack-research-vs-automate-multi-source
+  scenario: "Research and write me a cited comparison of the privacy practices of Signal, Telegram, and WhatsApp, drawing on multiple expert sources."
+  expected: tabstack_research
+  near_miss: [tabstack_automate]
+  notes: |
+    Multi-source synthesis with explicit citations is the deep-research
+    case. No URL and "drawing on multiple expert sources" pushes past
+    tabstack_automate's built-in single search — automate has no synthesis
+    or citation step.
+
 # -- ask_user_multiple_choice vs ask_user_text -------------------------------
 
 - name: ask-text-vs-choice-free-form-name
