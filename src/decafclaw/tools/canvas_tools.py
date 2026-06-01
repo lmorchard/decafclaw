@@ -134,13 +134,19 @@ CANVAS_TOOL_DEFINITIONS = [
                 "Currently supports widget_type='markdown_document' "
                 "with data={content: <markdown>}, widget_type='code_block' "
                 "with data={code: <string>, language?: <string>, filename?: <string>}, "
+                "widget_type='map' with data={markers: [{lat, lng, label?, popup?}], center?: {lat, lng}, zoom?: <int>, title?: <string>} "
+                "for showing locations/places on an interactive geographic map, "
                 "and widget_type='iframe_sandbox' with data={body: <html>, title?: <string>} — "
                 "PREFER this over workspace_write whenever the user asks you to 'show', "
                 "'display', 'render', or 'demo' interactive HTML/CSS/JS content (3D demos, "
                 "charts, visualizations, mini-apps, animations); it renders the page directly "
                 "in their UI instead of producing a file they have to open. Runs in a "
                 "CSP-locked sandboxed iframe (no network access — fetch, external scripts, "
-                "remote images/fonts all blocked; inline <style> and <script> are allowed)."
+                "remote images/fonts all blocked; inline <style> and <script> are allowed). "
+                "For maps or anything needing the network (map tiles, external data), use "
+                "widget_type='map' or another purpose-built widget — iframe_sandbox CANNOT "
+                "load external scripts, stylesheets, images, fonts, or fetch from CDNs (e.g. "
+                "unpkg); everything in it must be inline or a data: URI."
             ),
             "parameters": {
                 "type": "object",

@@ -26,6 +26,7 @@ from .config_types import (
     HeartbeatConfig,
     HttpConfig,
     LlmConfig,
+    MapWidgetConfig,
     MattermostConfig,
     ModelConfig,
     NotesConfig,
@@ -35,6 +36,7 @@ from .config_types import (
     RelevanceConfig,
     VaultConfig,
     VaultRetrievalConfig,
+    WidgetsConfig,
 )
 from .skills.vault._grants import normalize_folder
 
@@ -177,6 +179,7 @@ class Config:
     notifications: NotificationsConfig = field(default_factory=NotificationsConfig)
     email: EmailConfig = field(default_factory=EmailConfig)
     background: BackgroundConfig = field(default_factory=BackgroundConfig)
+    widgets: WidgetsConfig = field(default_factory=WidgetsConfig)
 
     # Custom environment variables from config.json "env" section
     env: dict[str, str] = field(default_factory=dict)
@@ -453,6 +456,19 @@ def load_config() -> Config:
     background = load_sub_config(
         BackgroundConfig, file_data.get("background", {}), "BACKGROUND")
 
+    # Build the doubly-nested widgets.map leaf explicitly so its systematic
+    # env vars (WIDGETS_MAP_*) resolve. load_sub_config only recurses into a
+    # nested dataclass field when that key is present in JSON, so a bare
+    # load_sub_config(WidgetsConfig, ...) would never read WIDGETS_MAP_TILE_URL.
+    widgets_data = file_data.get("widgets", {})
+    if not isinstance(widgets_data, dict):
+        widgets_data = {}
+    map_data = widgets_data.get("map", {})
+    if not isinstance(map_data, dict):
+        map_data = {}
+    map_widget = load_sub_config(MapWidgetConfig, map_data, "WIDGETS_MAP")
+    widgets = WidgetsConfig(map=map_widget)
+
     # Providers — named provider connection configs
     providers = _load_providers(file_data.get("providers", {}))
     model_configs = _load_model_configs(file_data.get("model_configs", {}))
@@ -525,6 +541,7 @@ def load_config() -> Config:
         notifications=notifications,
         email=email,
         background=background,
+        widgets=widgets,
         env=env_vars,
         system_prompt=system_prompt,
     )

@@ -1,6 +1,6 @@
 {
   "name": "iframe_sandbox",
-  "description": "Renders agent-authored HTML/CSS/JS inside a sandboxed iframe with no network access. Use for interactive demos, charts, small visualizations, or any UI where text alone won't do. The agent supplies HTML body content; the backend wraps it in a CSP-locked document. Inline `<style>` and `<script>` are permitted; external scripts, fetch, and remote images/fonts are blocked. Sandbox attributes deny same-origin access, top-navigation, forms, popups, and modals.",
+  "description": "Renders agent-authored HTML/CSS/JS inside a sandboxed iframe with no network access. Use for interactive demos, charts, small visualizations, or any UI where text alone won't do. The agent supplies HTML body content; the backend wraps it in a CSP-locked document. Inline `<style>` and `<script>` are permitted; external scripts, fetch, and remote images/fonts are blocked. Sandbox attributes deny same-origin access, top-navigation, forms, popups, and modals. NO NETWORK: external scripts/CSS/images/fonts (including CDNs like unpkg) and fetch are all blocked by CSP — content must be fully inline or a data: URI. For maps, use widget_type='map'.",
   "modes": ["inline", "canvas"],
   "accepts_input": false,
   "data_schema": {

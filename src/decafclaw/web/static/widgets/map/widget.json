@@ -1,0 +1,40 @@
+{
+  "name": "map",
+  "description": "Render an interactive geographic map with pin markers. Use when the user wants to see locations, places, or coordinates on a map. The agent supplies structured data (markers with lat/lng and optional popup text); the map renders with real tiles over the network. Do NOT hand-build a map with iframe_sandbox — that widget has no network access.",
+  "modes": ["inline", "canvas"],
+  "accepts_input": false,
+  "data_schema": {
+    "type": "object",
+    "properties": {
+      "markers": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["lat", "lng"],
+          "properties": {
+            "lat": { "type": "number", "minimum": -90, "maximum": 90 },
+            "lng": { "type": "number", "minimum": -180, "maximum": 180 },
+            "label": { "type": "string", "maxLength": 200 },
+            "popup": { "type": "string", "maxLength": 2000 }
+          },
+          "additionalProperties": false
+        }
+      },
+      "center": {
+        "type": "object",
+        "required": ["lat", "lng"],
+        "properties": {
+          "lat": { "type": "number", "minimum": -90, "maximum": 90 },
+          "lng": { "type": "number", "minimum": -180, "maximum": 180 }
+        },
+        "additionalProperties": false
+      },
+      "zoom": { "type": "integer", "minimum": 0, "maximum": 20 },
+      "title": { "type": "string", "maxLength": 200 },
+      "tile_url": { "type": "string" },
+      "tile_attribution": { "type": "string" },
+      "max_zoom": { "type": "integer" }
+    },
+    "additionalProperties": false
+  }
+}
