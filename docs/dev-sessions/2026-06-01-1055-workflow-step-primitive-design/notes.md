@@ -1,6 +1,6 @@
 # Workflow engine: step-primitive redesign (cold-restart handoff)
 
-**Status:** Brainstorm not yet run. This document is a context-priming handoff so a fresh session can pick up the design conversation without re-reading the full thread that produced the pivot.
+**Status:** Brainstorm complete (2026-06-01). See [spec.md](./spec.md) for the finalized design. Original cold-restart handoff content preserved below for historical context.
 
 **Issue:** [#255](https://github.com/lmorchard/decafclaw/issues/255) · **Branch:** `feat/255-workflow-engine` (PR #557 still open, not merged)
 
@@ -119,3 +119,27 @@ These are entangled — picking one informs the others. The brainstorm should re
 - Not committing to scope size for the eventual PR. The redesign is potentially large; we'll know after the brainstorm closes whether it's one PR or staged across several.
 - Not migrating PR #557's history — the prior commits stay on the branch as record of what didn't work, same convention as the cheap-experiment commits.
 - Not yet deciding whether to land this as a follow-up to #557 or as a fresh PR. Decide after the brainstorm.
+
+---
+
+## Brainstorm session outcome (2026-06-01)
+
+Worked through the 9 entangled questions in the recommended order. Full design in [spec.md](./spec.md).
+
+Headline decisions:
+
+1. **Phases dissolved entirely.** Workflow = graph of steps. No phase concept at the abstraction layer.
+2. **Six step kinds in MVP:** `llm_call`, `tool_call`, `user_input`, `route`, `subagent`, `python`. Defer `loop`, `set`, `branch`.
+3. **State** = flat dict keyed by step id; **latest-wins** on re-execution; subagent file outputs stored as **paths**, content read via explicit `tool_call: vault_read`.
+4. **Graph** uses per-step `next:` with polymorphic forms (string for linear, `[{if, to}, ...]` for conditional, `choices: [{id, to, when}]` inline on `route`). Single entry (`initial-step:`), multiple exits, cycles allowed.
+5. **Authoring** = single `workflow.yaml` + optional `prompts/` side dir; SKILL.md interface unchanged.
+6. **Subagent in MVP**; subflow composition deferred.
+7. **`user_input`** (text + choice) **fully replaces** edge-level `gate:`; implementation builds on existing `EndTurnConfirm` / `WidgetInputPause`.
+8. **Fresh branch off `main`** with selective carry-forward (`subagent.py`, `conv_state.py` helpers, `RunStatus`, spike code as reference, dev-session docs). PR #557 closed-as-superseded when new PR lands.
+9. **Two smoke targets** as `evals/workflows.yaml` cases: `research_brief` (migrates the spike) + `interview` (proves the pivot case — cycles, user_input, state accumulation).
+
+Key principle clarified mid-brainstorm: **the thesis is about runtime LLM behavior, not author-time YAML expressiveness.** Templates and edge conditions can use real Jinja2 expressions; authors aren't agents and don't need to be constrained at the syntax level.
+
+Key architectural shift: **the engine bypasses the agent loop for non-subagent steps.** LLM sees no tool catalog during `llm_call` / `route` / `tool_call` / `python` / `user_input` execution — the engine drives directly. This eliminates the surface that broke iterations 1–3 and drastically simplifies tool-restriction logic.
+
+Next phase: `/dev-session plan`.
