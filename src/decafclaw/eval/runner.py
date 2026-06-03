@@ -1,5 +1,6 @@
 """Eval runner — execute test cases against the agent."""
 
+import asyncio
 import logging
 import time
 from datetime import datetime
@@ -13,6 +14,57 @@ from ..events import EventBus
 from ..skills import discover_skills as _discover_skills_fn
 
 log = logging.getLogger(__name__)
+
+
+class _EvalConversationManager:
+    """Minimal ConversationManager stub for the eval harness.
+
+    Subagent dispatch (workflow engine, delegate_task) requires a
+    ConversationManager on ctx.manager.  The real ConversationManager
+    owns the asyncio server, DB connections, and Mattermost transport —
+    none of which are present in the eval process.
+
+    This stub satisfies the interface used by
+    ``decafclaw.workflow.subagent.run_subagent_step``:
+    ``enqueue_turn(conv_id, *, kind, prompt, history, context_setup,
+    user_id, ...)`` returns an awaitable Future that resolves to the
+    child's text response.  The child turn is run inline (synchronously
+    in the same event loop) via ``run_agent_turn``.
+    """
+
+    def __init__(self, parent_ctx):
+        self._parent_ctx = parent_ctx
+
+    async def enqueue_turn(
+        self,
+        conv_id: str,
+        *,
+        kind,  # TurnKind — ignored here, child always runs immediately
+        prompt: str,
+        history: list | None = None,
+        context_setup=None,
+        user_id: str = "",
+        **_kwargs,
+    ) -> asyncio.Future:
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future = loop.create_future()
+
+        async def _run():
+            import copy
+
+            child_ctx = copy.copy(self._parent_ctx)
+            child_ctx.conv_id = conv_id
+            child_ctx.channel_id = conv_id
+            child_ctx.manager = None  # children don't spawn further children
+
+            if context_setup is not None:
+                context_setup(child_ctx)
+
+            result = await run_agent_turn(child_ctx, prompt, list(history or []))
+            future.set_result(result.text or "")
+
+        loop.create_task(_run())
+        return future
 
 
 async def _setup_skills(ctx, test_case: dict):
@@ -417,6 +469,11 @@ async def run_test(config: Config, test_case: dict) -> dict:
     ctx.channel_name = "eval"
     ctx.thread_id = ""
     ctx.user_id = config.agent.user_id
+
+    # Inject a minimal ConversationManager stub so that tools that
+    # require ctx.manager (e.g. workflow subagent dispatch) work in
+    # the eval harness without the full HTTP/WS server.
+    ctx.manager = _EvalConversationManager(ctx)
 
     # Set allowed tools if specified (disallowed tools return an error)
     allowed_tools = test_case.get("allowed_tools")

@@ -19,8 +19,9 @@ This module provides:
   ``ConfirmationRegistry`` instance at startup.
 """
 
+import inspect
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from .confirmations import (
@@ -37,7 +38,7 @@ log = logging.getLogger(__name__)
 # Populated by the agent loop when it promotes an input widget into
 # a WidgetInputPause signal; consumed once the user submits. Cleared
 # in a finally block so crashes don't leak entries.
-pending_callbacks: dict[str, Callable[[dict], str]] = {}
+pending_callbacks: dict[str, Callable[[dict], str | Awaitable[str]]] = {}
 
 
 def default_inject_message(response_data: dict) -> str:
@@ -82,6 +83,8 @@ class WidgetResponseHandler:
         if callback is not None:
             try:
                 content = callback(response.data)
+                if inspect.iscoroutine(content):
+                    content = await content
             except Exception as exc:
                 log.warning(
                     "widget on_response callback raised for %s: %s",

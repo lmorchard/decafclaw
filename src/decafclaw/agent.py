@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import inspect
 import logging
 import re as _re
 from dataclasses import dataclass, field
@@ -276,7 +277,9 @@ async def _handle_widget_input_pause(ctx, signal: WidgetInputPause
 
     if callback is not None:
         try:
-            return callback(response.data)
+            raw = callback(response.data)
+            result: str = await raw if inspect.iscoroutine(raw) else raw  # type: ignore[assignment]
+            return result
         except Exception as exc:
             log.warning(
                 "widget on_response callback raised for %s: %s",

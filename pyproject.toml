@@ -26,6 +26,7 @@ dependencies = [
     "tabstack>=2.6.1",
     "uvicorn>=0.41.0",
     "websockets>=16.0",
+    "jinja2>=3.1.6",
 ]
 
 [project.optional-dependencies]

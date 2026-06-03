@@ -1,0 +1,90 @@
+initial-step: gather
+
+steps:
+  - id: gather
+    kind: subagent
+    description: "Enumerate plausible sources on the topic from training knowledge."
+    prompt-from: gather.md
+    skill: vault
+    tools: [workflow_artifact_write]
+    outputs: [sources.md]
+    context-profile:
+      memory-retrieval: off
+    next: read_sources
+
+  - id: read_sources
+    kind: tool_call
+    tool: workspace_read
+    args:
+      path: "{{ state.gather.outputs['sources.md'] }}"
+    next: outline
+
+  - id: outline
+    kind: llm_call
+    prompt-from: outline.md
+    schema:
+      type: object
+      properties:
+        title: {type: string}
+        bullets: {type: array, items: {type: string}}
+      required: [title, bullets]
+    next: draft
+
+  - id: draft
+    kind: llm_call
+    prompt-from: draft.md
+    schema:
+      type: object
+      properties:
+        body: {type: string}
+      required: [body]
+    next: word_count
+
+  - id: word_count
+    kind: python
+    fn: count_draft_words
+    # state.word_count = {"count": <int>}
+    next:
+      - if: "state.word_count.count > 800"
+        to: shorten
+      - to: critique
+
+  - id: shorten
+    kind: llm_call
+    prompt: "Shorten this draft to under 800 words while preserving all main sections and structure:\n\n{{ state.draft.body }}"
+    schema:
+      type: object
+      properties:
+        body: {type: string}
+      required: [body]
+    next: critique
+
+  - id: critique
+    kind: route
+    prompt-from: critique.md
+    choices:
+      - {id: approve, to: publish, when: "draft satisfies the brief"}
+      - {id: revise, to: outline, when: "structural rework needed"}
+      - {id: abort, to: "", when: "fundamentally broken"}
+
+  - id: publish
+    kind: tool_call
+    tool: workflow_artifact_write
+    args:
+      path: "briefs/{{ state.outline.title | lower | replace(' ', '-') | replace('/', '-') }}.md"
+      # NOTE: This content uses state.shorten if it exists, but `state.shorten`
+      # persists across critique-revise cycles per the engine's latest-wins state
+      # model. In a 3+ cycle revise where shorten ran in cycle 2 but not cycle 3,
+      # this would render cycle 2's shortened body instead of cycle 3's fresh
+      # draft. Acceptable for MVP (single-cycle is the common case). Future:
+      # revisit state semantics if multi-cycle workflows become load-bearing.
+      content: |
+        # {{ state.outline.title }}
+
+        {{ state.shorten.body if 'shorten' in state else state.draft.body }}
+
+        ## Outline
+
+        {% for b in state.outline.bullets %}- {{ b }}
+        {% endfor %}
+    # terminal

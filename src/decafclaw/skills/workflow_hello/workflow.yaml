@@ -1,0 +1,22 @@
+initial-step: greet
+
+steps:
+  - id: greet
+    kind: llm_call
+    prompt: "Generate a 3-word greeting for the topic: {{ state.topic | default('agent testbed') }}"
+    schema:
+      type: object
+      properties:
+        greeting:
+          type: string
+          description: A short 3-word greeting phrase.
+      required:
+        - greeting
+    next: list_workspace
+
+  - id: list_workspace
+    kind: tool_call
+    tool: workspace_list
+    args:
+      path: ""
+    # no next: → terminal step

@@ -1,0 +1,42 @@
+initial-step: pick_question
+
+steps:
+  - id: pick_question
+    kind: llm_call
+    prompt-from: pick_next.md
+    schema:
+      type: object
+      properties:
+        question: {type: string}
+        remaining_topics: {type: array, items: {type: string}}
+      required: [question, remaining_topics]
+    next: ask_user
+
+  - id: ask_user
+    kind: user_input
+    prompt: "{{ state.pick_question.question }}"
+    input: text
+    next: log_qa
+
+  - id: log_qa
+    kind: python
+    fn: log_qa
+    next: assess
+
+  - id: assess
+    kind: route
+    prompt-from: assess.md
+    choices:
+      - {id: clarify,       to: ask_user,      when: "answer too vague — re-prompt same question"}
+      - {id: next_question, to: pick_question,  when: "good answer; more topics remain"}
+      - {id: summarize,     to: final_summary,  when: "all topics covered"}
+
+  - id: final_summary
+    kind: llm_call
+    prompt-from: summarize.md
+    schema:
+      type: object
+      properties:
+        summary: {type: string}
+      required: [summary]
+    # terminal

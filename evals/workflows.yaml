@@ -1,0 +1,48 @@
+# Step-primitive workflow engine — end-to-end smoke cases.
+#
+# These evals exercise the LLM-driven tool-routing decision (agent
+# decides to call workflow_start) and confirm the workflow runs without
+# error. They do NOT exercise the internal LLM calls inside the engine
+# (those are unit-tested with mocks in tests/workflow/).
+#
+# Per CLAUDE.md eval conventions:
+#   - reflection_enabled: false avoids self-reflection retry noise (#534)
+#   - max_tool_iterations bounds the eval cost
+#   - expect_tool asserts the agent routes to the right tool
+
+- name: "workflow_hello completes via workflow_start"
+  setup:
+    reflection_enabled: false
+    max_tool_iterations: 5
+  input: "Run the workflow_hello workflow."
+  expect:
+    expect_tool: workflow_start
+    max_tool_calls: 5
+    max_tool_errors: 0
+
+- name: "research_brief full workflow completes via workflow_start"
+  setup:
+    reflection_enabled: false
+    # The gather step spawns a child agent; allow more iterations for
+    # the full multi-step run (gather → outline → draft → critique → publish).
+    # The critique step may choose revise (one cycle back to outline) before
+    # approving or may go directly to publish — both are valid outcomes.
+    max_tool_iterations: 5
+  input: "Start the research_brief workflow."
+  expect:
+    expect_tool: workflow_start
+    max_tool_calls: 5
+    max_tool_errors: 0
+
+- name: "interview workflow reaches PAUSED_USER_INPUT after pick_question"
+  setup:
+    reflection_enabled: false
+    # The interview workflow: agent calls workflow_start, engine runs
+    # pick_question (llm_call) then hits ask_user (user_input) and suspends
+    # with PAUSED_USER_INPUT. The agent loop ends; no multi-turn needed.
+    max_tool_iterations: 5
+  input: "Start the interview workflow."
+  expect:
+    expect_tool: workflow_start
+    max_tool_calls: 5
+    max_tool_errors: 0

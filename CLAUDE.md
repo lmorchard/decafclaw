@@ -63,6 +63,7 @@ See [docs/skills.md](docs/skills.md).
 - **`SCHEDULE.md` sidecar** turns a skill into a scheduled task. Bundled and admin-level skills have their SCHEDULE.md honored as-is; `extra_skill_paths` (contrib) SCHEDULE.md is forced `enabled: false` so a third-party install never silently activates a cron job — the user opts in via a copy-on-write overlay at `data/{agent_id}/schedules/{name}.md`. Workspace skills cannot self-schedule (no SCHEDULE.md scanning in workspace skill dirs). See [docs/schedules.md](docs/schedules.md).
 - **Permissions at `data/{agent_id}/skill_permissions.json`** — outside the workspace, so the agent can't grant itself permission.
 - **Dynamic per-turn tools:** export `get_tools(ctx) -> (dict, list)` to vary tools by state.
+- **Workflow skills** (`kind: workflow` in SKILL.md) run via the step-primitive engine (`src/decafclaw/workflow/`). Six step kinds: `llm_call`, `tool_call`, `user_input`, `route`, `subagent`, `python`. The engine drives the graph directly — no agent loop for non-subagent steps. `subagent.py` (carried forward from PR #557) handles child-agent dispatch. See [docs/workflows.md](docs/workflows.md) for the full reference including state model, edge conditions, and bundled workflow examples.
 
 ### Config and data
 
