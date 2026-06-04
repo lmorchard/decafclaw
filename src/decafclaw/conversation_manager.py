@@ -78,6 +78,7 @@ class TurnKind(Enum):
     SCHEDULED_TASK = "scheduled_task"
     CHILD_AGENT = "child_agent"
     WAKE = "wake"
+    WORKFLOW_RUN = "workflow_run"  # Dispatches to the workflow engine; bypasses agent loop
 
 
 # Kinds that use Context.for_task (sensible skip defaults for background work).
@@ -404,7 +405,7 @@ class ConversationManager:
         conv_id: str,
         *,
         kind: TurnKind,
-        prompt: str,
+        prompt: str = "",
         history: list | None = None,
         task_mode: str | None = None,
         context_setup: Callable | None = None,
@@ -414,9 +415,16 @@ class ConversationManager:
         command_ctx: Any = None,
         wiki_page: str | None = None,
         metadata: dict | None = None,
+        workflow_name: str = "",
+        initial_state: dict | None = None,
     ) -> asyncio.Future:
         """Submit a turn of any kind. Returns an awaitable that resolves
-        when the turn completes."""
+        when the turn completes.
+
+        For ``kind=TurnKind.WORKFLOW_RUN``, set ``workflow_name`` and
+        ``initial_state`` instead of ``prompt``. The engine is invoked
+        directly; the agent loop is NOT called.
+        """
         state = self._get_or_create(conv_id)
         future: asyncio.Future = asyncio.get_running_loop().create_future()
 
@@ -482,6 +490,8 @@ class ConversationManager:
                     "task_mode": task_mode,
                     "history": history,
                     "metadata": metadata,
+                    "workflow_name": workflow_name,
+                    "initial_state": initial_state,
                     "future": future,
                 })
                 log.info("Conv %s busy, queued message (%d pending)",
@@ -501,6 +511,8 @@ class ConversationManager:
                 task_mode=task_mode,
                 history=history,
                 metadata=metadata,
+                workflow_name=workflow_name,
+                initial_state=initial_state,
                 future=future,
             )
         return future
@@ -1297,6 +1309,8 @@ class ConversationManager:
         task_mode: str | None = None,
         history: list | None = None,
         metadata: dict | None = None,
+        workflow_name: str = "",
+        initial_state: dict | None = None,
         future: asyncio.Future | None = None,
     ) -> None:
         """Start an agent turn as an asyncio task.
@@ -1308,6 +1322,10 @@ class ConversationManager:
         schedules ``run()`` and returns immediately. The finally
         block inside ``run()`` re-acquires the lock to reset
         ``busy`` / ``agent_task`` / ``cancel_event`` (issue #440).
+
+        When ``kind == TurnKind.WORKFLOW_RUN``, the workflow engine is
+        invoked instead of the agent loop. ``workflow_name`` and
+        ``initial_state`` are passed to ``engine.start_workflow``.
         """
         from .context import Context
 
@@ -1448,6 +1466,21 @@ class ConversationManager:
 
         async def run():
             try:
+                if kind is TurnKind.WORKFLOW_RUN:
+                    from .workflow import engine as _wf_engine
+                    await _wf_engine.start_workflow(
+                        ctx, workflow_name, initial_state=initial_state or {}
+                    )
+                    response_text_holder.append("")
+                    await self.emit(conv_id, {
+                        "type": "message_complete",
+                        "role": "workflow_run",
+                        "text": "",
+                        "final": True,
+                        "suppress_user_message": False,
+                    })
+                    return
+
                 from .agent import run_agent_turn
                 result = await run_agent_turn(
                     ctx, text, history,
@@ -1722,6 +1755,8 @@ class ConversationManager:
                     task_mode=q.get("task_mode"),
                     history=q.get("history"),
                     metadata=q.get("metadata"),
+                    workflow_name=q.get("workflow_name", ""),
+                    initial_state=q.get("initial_state"),
                     future=q.get("future"),
                 )
 

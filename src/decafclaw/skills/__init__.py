@@ -53,6 +53,7 @@ class SkillInfo:
     requires_skills: list[str] = field(default_factory=list)
     always_loaded: bool = False
     auto_approve: bool = False  # bundled-only — skip activation confirmation
+    kind: str = "skill"  # "skill" or "workflow"
     # Scheduling: skills ship a SCHEDULE.md sidecar (not SKILL.md frontmatter).
     # See docs/schedules.md for the sidecar layout and overlay precedence.
     # Trust tier derived from placement at discovery time:
@@ -123,6 +124,7 @@ def parse_skill_md(path: Path) -> SkillInfo | None:
         requires_skills=_coerce_str_list(meta.get("required-skills", [])),
         always_loaded=bool(meta.get("always-loaded", False)),
         auto_approve=bool(meta.get("auto-approve", False)),
+        kind=str(meta.get("kind", "skill")),
     )
 
 
@@ -343,6 +345,25 @@ def discover_skills(config) -> list[SkillInfo]:
                 continue
 
             seen_names[info.name] = skill_dir
+
+            # Workflow skills: register with the workflow engine in addition
+            # to adding to the regular skill catalog (so the engine can be
+            # dispatched via the command mode by name).
+            if info.kind == "workflow":
+                try:
+                    from ..workflow import loader as wf_loader
+                    from ..workflow import registry as wf_registry
+                    wf = wf_loader.load_workflow(skill_dir)
+                    wf_registry.register(wf)
+                    log.info(
+                        "Registered workflow '%s' from %s", wf.name, skill_dir
+                    )
+                except Exception as exc:
+                    log.warning(
+                        "Failed to load workflow '%s' from %s: %s",
+                        info.name, skill_dir, exc,
+                    )
+
             skills.append(info)
 
     log.info(f"Discovered {len(skills)} skills: {[s.name for s in skills]}")

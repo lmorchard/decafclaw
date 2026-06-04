@@ -169,6 +169,31 @@ def _parse_positional_args(arguments: str) -> list[str]:
         return arguments.split()
 
 
+def _parse_args(arg_string: str) -> dict:
+    """Parse ``key=value key2=value2`` tokens into a dict.
+
+    Bare tokens (no ``=``) are collected under the ``_positional`` key as a
+    list. Empty arg string returns {}.
+
+    Examples::
+
+        _parse_args("topic=sleep hygiene")  # {"topic": "sleep", "_positional": ["hygiene"]}
+        _parse_args("topic=sleep")           # {"topic": "sleep"}
+        _parse_args("")                      # {}
+    """
+    result: dict = {}
+    positional: list[str] = []
+    for token in arg_string.split():
+        if "=" in token:
+            key, _, value = token.partition("=")
+            result[key.strip()] = value.strip()
+        else:
+            positional.append(token)
+    if positional:
+        result["_positional"] = positional
+    return result
+
+
 # -- Centralized command dispatch ----------------------------------------------
 
 
@@ -182,12 +207,19 @@ class CommandResult:
     - "unknown": unknown command, display error directly
     - "fork": command ran in forked context, display response directly
     - "inline": command body substituted, run as agent turn with ctx setup done
+    - "workflow": workflow skill — transport should enqueue WORKFLOW_RUN turn
     - "error": command failed, display error directly
     """
     mode: str
     text: str = ""
     display_text: str = ""  # short version for archive/display (inline commands)
     skill: SkillInfo | None = None
+    workflow_name: str = ""
+    args: dict = None  # type: ignore[assignment]  # noqa: RUF012
+
+    def __post_init__(self) -> None:
+        if self.args is None:
+            self.args = {}
 
 
 async def _execute_mcp_prompt_command(ctx, server_name: str, prompt_name: str,
@@ -335,6 +367,15 @@ async def dispatch_command(ctx, text: str, prefixes: list[str] | None = None,
         return CommandResult(
             mode="unknown",
             text=f"Unknown command: `{cmd_name}`. Type `{matched_prefix}help` for available commands.",
+        )
+
+    # Workflow skills dispatch via the workflow engine, bypassing the agent loop.
+    if skill.kind == "workflow":
+        return CommandResult(
+            mode="workflow",
+            workflow_name=skill.name,
+            args=_parse_args(cmd_args),
+            skill=skill,
         )
 
     # Execute the command

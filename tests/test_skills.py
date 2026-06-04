@@ -1003,3 +1003,132 @@ def test_discover_admin_skill_shadows_direct_extra_path(tmp_path, config):
     matching = [s for s in skills if s.name == "shared-skill"]
     assert len(matching) == 1
     assert matching[0].description == "Local override."
+
+
+# -- workflow skill registration tests --
+
+
+def _write_workflow_skill(skill_dir, name, description, workflow_yaml):
+    """Write a minimal workflow skill (SKILL.md + workflow.yaml) to skill_dir."""
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    frontmatter = (
+        f"name: {name}\n"
+        f"description: {description}\n"
+        "kind: workflow\n"
+        "user-invocable: true\n"
+    )
+    (skill_dir / "SKILL.md").write_text(f"---\n{frontmatter}---\nWorkflow body.\n")
+    import yaml as _yaml
+    (skill_dir / "workflow.yaml").write_text(_yaml.dump(workflow_yaml))
+
+
+def test_discover_workflow_skill_registers_with_registry(tmp_path, config):
+    """A skill with kind: workflow is registered in the workflow registry."""
+    from decafclaw.workflow import registry as wf_registry
+    wf_registry.clear()
+
+    skills_dir = config.workspace_path / "skills"
+    _write_workflow_skill(
+        skills_dir / "my-wf",
+        name="my-wf",
+        description="A test workflow.",
+        workflow_yaml={
+            "initial-step": "step1",
+            "steps": [{"id": "step1", "kind": "llm_call", "prompt": "Hello"}],
+        },
+    )
+
+    skills = discover_skills(config)
+    assert any(s.name == "my-wf" for s in skills), "workflow skill must appear in catalog"
+    wf = wf_registry.get("my-wf")
+    assert wf is not None, "workflow must be registered in the workflow registry"
+    assert wf.name == "my-wf"
+    assert wf.initial_step == "step1"
+
+
+def test_discover_workflow_skill_kind_field(tmp_path, config):
+    """Parsed SkillInfo for a workflow skill has kind == 'workflow'."""
+    from decafclaw.workflow import registry as wf_registry
+    wf_registry.clear()
+
+    skills_dir = config.workspace_path / "skills"
+    _write_workflow_skill(
+        skills_dir / "wf-kind-check",
+        name="wf-kind-check",
+        description="Kind field check.",
+        workflow_yaml={
+            "initial-step": "s1",
+            "steps": [{"id": "s1", "kind": "llm_call", "prompt": "Hi"}],
+        },
+    )
+
+    skills = discover_skills(config)
+    matching = [s for s in skills if s.name == "wf-kind-check"]
+    assert len(matching) == 1
+    assert matching[0].kind == "workflow"
+
+
+def test_discover_workflow_skill_load_failure_is_fail_open(
+    tmp_path, config, caplog
+):
+    """A broken workflow.yaml logs a warning but does NOT abort skill discovery."""
+    from decafclaw.workflow import registry as wf_registry
+    wf_registry.clear()
+
+    skills_dir = config.workspace_path / "skills"
+    bad_skill_dir = skills_dir / "broken-wf"
+    bad_skill_dir.mkdir(parents=True)
+    (bad_skill_dir / "SKILL.md").write_text(
+        "---\nname: broken-wf\ndescription: Broken workflow.\nkind: workflow\n---\nBody.\n"
+    )
+    # workflow.yaml references a step that doesn't exist in initial-step
+    import yaml as _yaml
+    (bad_skill_dir / "workflow.yaml").write_text(
+        _yaml.dump({
+            "initial-step": "nonexistent",
+            "steps": [{"id": "step1", "kind": "llm_call", "prompt": "X"}],
+        })
+    )
+
+    # Also place a valid normal skill so we can confirm discovery didn't abort
+    _write_skill(skills_dir / "good-skill", "name: good-skill\ndescription: Good.")
+
+    with caplog.at_level("WARNING"):
+        skills = discover_skills(config)
+
+    # broken-wf appears in catalog (SkillInfo is still added)
+    assert any(s.name == "broken-wf" for s in skills)
+    # good-skill discovery was NOT aborted
+    assert any(s.name == "good-skill" for s in skills)
+    # Registry does NOT have the broken workflow
+    assert wf_registry.get("broken-wf") is None
+    # A warning was logged
+    assert any("broken-wf" in r.message for r in caplog.records if r.levelname == "WARNING")
+
+
+def test_discover_normal_skill_kind_defaults_to_skill(tmp_path, config):
+    """A normal skill without kind: in frontmatter has kind == 'skill'."""
+    skills_dir = config.workspace_path / "skills"
+    _write_skill(skills_dir / "plain", "name: plain\ndescription: Plain skill.")
+    skills = discover_skills(config)
+    matching = [s for s in skills if s.name == "plain"]
+    assert len(matching) == 1
+    assert matching[0].kind == "skill"
+
+
+def test_parse_skill_md_kind_workflow(tmp_path):
+    """parse_skill_md reads kind: workflow from frontmatter."""
+    skill_dir = tmp_path / "wf-skill"
+    _write_skill(skill_dir, "name: wf-skill\ndescription: Workflow.\nkind: workflow")
+    info = parse_skill_md(skill_dir / "SKILL.md")
+    assert info is not None
+    assert info.kind == "workflow"
+
+
+def test_parse_skill_md_kind_defaults_to_skill(tmp_path):
+    """parse_skill_md defaults kind to 'skill' when not present."""
+    skill_dir = tmp_path / "plain"
+    _write_skill(skill_dir, "name: plain\ndescription: Plain.")
+    info = parse_skill_md(skill_dir / "SKILL.md")
+    assert info is not None
+    assert info.kind == "skill"

@@ -22,6 +22,7 @@ from .notification_tools import (
 )
 from .shell_tools import SHELL_TOOL_DEFINITIONS, SHELL_TOOLS
 from .skill_tools import SKILL_TOOL_DEFINITIONS, SKILL_TOOLS
+from .workflow_tools import WORKFLOW_TOOL_DEFINITIONS, WORKFLOW_TOOLS
 from .workspace_tools import WORKSPACE_TOOL_DEFINITIONS, WORKSPACE_TOOLS
 
 log = logging.getLogger(__name__)
@@ -29,13 +30,16 @@ log = logging.getLogger(__name__)
 # Combined registry. External MCP server tools are registered via
 # decafclaw.mcp_client. The `background` and `mcp` skills carry their
 # own tools — loaded on activation.
+# Note: workflow_start is NOT registered here — workflows initiate only via
+# /command dispatch, scheduled tasks (kind: workflow), or subagent steps.
 TOOLS = {**CORE_TOOLS, **CHECKLIST_TOOLS,
          **CONVERSATION_TOOLS, **WORKSPACE_TOOLS, **SHELL_TOOLS,
          **HTTP_TOOLS,
          **SKILL_TOOLS,
          **HEARTBEAT_TOOLS, **HEALTH_TOOLS,
          **DELEGATE_TOOLS, **ATTACHMENT_TOOLS, **EMAIL_TOOLS,
-         **NOTIFICATION_TOOLS, **CANVAS_TOOLS, **NOTES_TOOLS}
+         **NOTIFICATION_TOOLS, **CANVAS_TOOLS, **NOTES_TOOLS,
+         **WORKFLOW_TOOLS}
 TOOL_DEFINITIONS = (CORE_TOOL_DEFINITIONS
                     + CHECKLIST_TOOL_DEFINITIONS
                     + CONVERSATION_TOOL_DEFINITIONS + WORKSPACE_TOOL_DEFINITIONS
@@ -47,7 +51,8 @@ TOOL_DEFINITIONS = (CORE_TOOL_DEFINITIONS
                     + EMAIL_TOOL_DEFINITIONS
                     + NOTIFICATION_TOOL_DEFINITIONS
                     + CANVAS_TOOL_DEFINITIONS
-                    + NOTES_TOOL_DEFINITIONS)
+                    + NOTES_TOOL_DEFINITIONS
+                    + WORKFLOW_TOOL_DEFINITIONS)
 
 
 async def _run_with_cancel(coro, cancel_event, timeout_sec=None, tool_name=""):

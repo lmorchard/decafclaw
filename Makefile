@@ -114,6 +114,10 @@ eval:
 eval-tools:
 	uv run python -m decafclaw.eval.tool_choice evals/tool_choice/
 
+# Run the workflow engine smoke evals against the default model
+eval-workflows:
+	uv run python -m decafclaw.eval evals/workflows.yaml
+
 # Print the eval-run trend table from evals/history.jsonl
 eval-history:
 	uv run python -m decafclaw.eval --history

@@ -322,6 +322,18 @@ async def _handle_send(ws_send: WSSendCallable, index, username, msg, state) -> 
         })
         return
 
+    if cmd_result.mode == "workflow":
+        from ..conversation_manager import TurnKind
+        _subscribe_to_conv(state, conv_id)
+        await manager.enqueue_turn(
+            conv_id=conv_id,
+            kind=TurnKind.WORKFLOW_RUN,
+            workflow_name=cmd_result.workflow_name,
+            initial_state=cmd_result.args,
+            user_id=username,
+        )
+        return
+
     command_ctx = None
     archive_text = ""
 

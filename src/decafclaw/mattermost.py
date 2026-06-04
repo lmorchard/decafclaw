@@ -348,6 +348,17 @@ class MattermostClient:
             await self.send(channel_id, cmd_result.text, root_id=root_id)
             return
 
+        if cmd_result.mode == "workflow":
+            from .conversation_manager import TurnKind
+            await manager.enqueue_turn(
+                conv_id=conv_id,
+                kind=TurnKind.WORKFLOW_RUN,
+                workflow_name=cmd_result.workflow_name,
+                initial_state=cmd_result.args,
+                user_id=app_ctx.config.agent.user_id,
+            )
+            return
+
         # Send placeholder
         placeholder_id = await self.send_placeholder(channel_id, root_id=root_id)
         await self.send_typing(channel_id)
