@@ -158,3 +158,64 @@ Headline decisions:
 **Load-bearing architectural principle:** the spec includes a "Where the LLM is allowed to be" table that names the only three surfaces where the LLM is admitted (inside `llm_call`, inside `route`, inside `subagent`'s CHILD_AGENT). Anywhere not on that list is code-territory. The table is the design's invariant.
 
 Next phase: `/dev-session plan`. Plan probably stages this as: conversation-manager refactor → command dispatch refactor → message wire shape + transport rendering → engine integration (user_input executor rewrite, on_response deletion) → scheduled-task workflow dispatch → live integration tests.
+
+---
+
+## Plan complete + Phase 1 executed
+
+Plan written and committed (`7c28ade docs(workflow): conversation-integration redesign — spec + plan`). Five vertical phases mapped to spec requirements. Plan checkpoint at `docs/dev-sessions/2026-06-03-1512-workflow-engine-conversation-integration/plan.md`.
+
+### Phase 1: foundation — DONE
+
+Branch: `feat/255-workflow-conv-integration` (fresh off `origin/main` aa36b5f).
+
+Commits on the branch:
+- `d170eb3` — Phase 1: foundation — WORKFLOW_RUN dispatch, command mode workflow, carry-forward
+- `12edfad` — Phase 1 spec-review fixes: emit.py stub + stale docstring
+
+What landed:
+- `TurnKind.WORKFLOW_RUN` added; `_start_turn` branches: if WORKFLOW_RUN, dispatches `engine.start_workflow(ctx, name, initial_state=...)`; else falls through to `run_agent_turn`.
+- `dispatch_command` returns `mode="workflow"` for `kind: workflow` skills; `_parse_args` parses `key=value` tokens to dict.
+- `web/websocket.py` + `mattermost.py` route `mode=workflow` → `manager.enqueue_turn(kind=TurnKind.WORKFLOW_RUN, workflow_name=..., initial_state=...)`.
+- `engine.start_workflow` signature accepts `initial_state` kwarg (top-level keys land in `state.state`).
+- `workflow_start` removed from LLM tool registration (function body still in `workflow_tools.py` — Phase 4 deletes).
+- `_execute_user_input` stubbed (raises `NotImplementedError("Phase 3 wiring")`).
+- Carry-forward complete: engine modules (8 files), three bundled workflows (workflow_hello/research_brief/interview), unit tests (126 in tests/workflow/), `tools/workflow_tools.py`, `skills/__init__.py` `kind: workflow` hook, `eval/runner.py` `_EvalConversationManager` stub, Makefile `eval-workflows` target, `pyproject.toml` jinja2 dep.
+- `emit.py` stub created (Phase 2 fills in).
+
+Test state: 2909 passing (baseline 2777 + carry-forward + 15 new Phase 1 tests). Lint, typecheck clean.
+
+Spec compliance review caught two minor issues (missing emit.py stub, stale docstring) — both fixed in `12edfad`. Code quality review was skipped for Phase 1 because the diff is dominated by carry-forward code already reviewed during PR #572's lifecycle; new code is ~150 lines of dispatch glue.
+
+### Phase 2 entry point (next session)
+
+Worktree: `/Users/lorchard/devel/decafclaw/.claude/worktrees/feat-255-workflow-conv-integration/`
+Branch: `feat/255-workflow-conv-integration`, HEAD `12edfad`
+
+Read `docs/dev-sessions/2026-06-03-1512-workflow-engine-conversation-integration/plan.md` Phase 2 section ("`workflow_message` role + step emissions"). The plan has full code sketches; follow them.
+
+Phase 2 deliverables:
+- `src/decafclaw/workflow/emit.py` — `emit_workflow_message(ctx, ...)` helper (stub exists; fill in)
+- `src/decafclaw/workflow/engine.py` — per-step emission hook after each completed step
+- `src/decafclaw/workflow/step_executors.py` — per-kind display rendering
+- `src/decafclaw/context_composer.py` — extend `ROLE_REMAP` for `workflow_message → user` with `[workflow:<name> step:<id>]` content prefix
+- `src/decafclaw/web/websocket.py` — verify `workflow_message` is NOT in `_HIDDEN_ROLES`
+- Tests for the above
+
+Phase 2 deliverable: `/workflow_hello` execution produces visible `workflow_message` records in the archive, one per step. Web UI history shows them. No user_input yet (Phase 3).
+
+### Phases 3-5 to come
+
+- **Phase 3** (most complex): `_execute_user_input` rewrite using `ctx.request_confirmation` directly; delete on_response/synthetic-message/callback machinery; `/interview` walks the full Q&A cycle.
+- **Phase 4**: thin `workflow_tools.py` (drop `workflow_start` function entirely); scheduled-task dispatch checks skill kind; heartbeat workflows rejected at load time.
+- **Phase 5**: live integration smoke via `decafclaw-client` (`make smoke-workflows-live`); docs (`docs/workflows.md`, `CLAUDE.md` bullet) updated to reflect peer architecture.
+
+Per-phase pattern: implementer → spec compliance review → code quality review → fix-ups → commit. Phase 3 is the highest-risk phase (architecturally novel); favor thorough review there. Phase 5's smoke target is the gate that would have caught PR #572's failures.
+
+### Gotchas the next session needs to know
+
+- **The architectural invariant is the "Where the LLM is allowed to be" table in `spec.md`.** The LLM is admitted only inside `llm_call` steps, `route` steps, and `subagent` step CHILD_AGENT turns. Anywhere else is code-territory. If a design choice admits an LLM surface elsewhere, reject it.
+- **The PR #572 retro lesson:** four patches each band-aided an LLM-as-control-flow failure mode. The fifth was the user pushing back: "we haven't gone far enough with the architecture." This redesign goes further. Don't relapse.
+- **Live integration testing is load-bearing.** Every PR #572 bug was visible only via live testing. The plan calls for smoke tests via `decafclaw-client` in Phase 5; that target IS the gate before merge — not a polish-phase nicety.
+- **`workflow_start` is NOT an LLM tool.** Workflows initiate only via `/command`, scheduled task (kind: workflow), or subagent step. Phase 1 already removed it from registration; Phase 4 deletes the function body.
+- **The two-records-per-pause model** (Phase 3): workflow_message for display + ConfirmationRequest for routing, sharing a `confirmation_id`. The engine awaits `ctx.request_confirmation` directly — NO on_response callback, NO synthetic user-message injection.
