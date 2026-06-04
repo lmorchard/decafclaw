@@ -119,10 +119,10 @@ def _apply_step_result(state: WorkflowState, step: StepDef,
     """Write step output to state; advance current_step or set status.
 
     Output is only written to state[step.id] when the step completes
-    (suspend_status is None). For suspended steps the entry is left absent;
-    resume_user_input / resume_after_subagent populate it on resumption.
-    This avoids a transient None slot that templates could read between the
-    save-on-suspend and the eventual resume.
+    (suspend_status is None). For suspended steps the entry is left absent
+    until the suspending executor itself populates it on completion
+    (per Phase 3 onward, user_input awaits ctx.request_confirmation inline
+    and returns a completed StepResult directly).
     """
     state.transitions.append({
         "step": step.id,
