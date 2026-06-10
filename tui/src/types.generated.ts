@@ -190,6 +190,7 @@ export interface CliConfirmResponse {
   approved: boolean;
   always: boolean;
   add_pattern: boolean;
+  data?: Record<string, unknown>;
 }
 
 export interface CliLoadHistory {

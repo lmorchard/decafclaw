@@ -82,11 +82,14 @@ async def run_respond(transport, args: SmokeArgs) -> list[TurnSummary]:
     conv_id = args.conv or ""
     await _select(transport, conv_id)
     recorder = TurnRecorder(conv_id)
-    await transport.send({
+    payload: dict = {
         "type": "confirm_response", "conv_id": conv_id,
         "confirmation_id": args.confirmation_id or "",
         "approved": args.approved, "always": False, "add_pattern": False,
-    })
+    }
+    if args.value:
+        payload["data"] = {"value": args.value}
+    await transport.send(payload)
     reason = await drive_turn(transport, recorder, timeout=args.timeout,
                               sink=_sink_for(args.fmt))
     return [recorder.finalize(reason)]

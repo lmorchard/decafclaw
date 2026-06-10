@@ -74,6 +74,19 @@ def test_respond_deny(monkeypatch):
     assert args.approved is False
 
 
+def test_respond_value_default_empty(monkeypatch):
+    monkeypatch.setenv("DECAFCLAW_TOKEN", "dfc_x")
+    args = parse_args(["respond", "--conv", "web-1", "--confirmation-id", "c1"])
+    assert args.value == ""
+
+
+def test_respond_value_captured(monkeypatch):
+    monkeypatch.setenv("DECAFCLAW_TOKEN", "dfc_x")
+    args = parse_args(["respond", "--conv", "web-1", "--confirmation-id", "c1",
+                       "--value", "tide pools"])
+    assert args.value == "tide pools"
+
+
 def test_respond_requires_conv(monkeypatch):
     monkeypatch.setenv("DECAFCLAW_TOKEN", "dfc_x")
     with pytest.raises(SystemExit):
