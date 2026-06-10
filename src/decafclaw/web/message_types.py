@@ -255,6 +255,7 @@ class CliConfirmResponse(TypedDict):
     approved: bool
     always: bool
     add_pattern: bool
+    data: NotRequired[dict[str, object]]
 
 class CliLoadHistory(TypedDict):
     type: Literal[WSMessageType.LOAD_HISTORY]

@@ -176,6 +176,9 @@ Full doc index: [docs/index.md](docs/index.md). Hot files for navigation:
 ### Skills (bundled)
 `skills/{vault,tabstack,dream,garden,project,claude_code,health,postmortem,ingest,background,mcp,newsletter}/`. `vault`, `background`, `mcp` are always-loaded. Contrib (opt-in) skills live in `contrib/skills/`.
 
+### Workflows
+`workflow/` — Durable replay engine ([docs/workflows.md](docs/workflows.md)): `registry.py` (`@workflow` decorator), `engine.py` (`run_workflow`), `journal.py` (positional keyed journal + fingerprint), `handle.py` (`WorkflowHandle` — the `wf` object with `llm_call`/`user_input` primitives), `llm.py` (forced-tool structured-output), `errors.py` (`WorkflowSuspended`, `WorkflowNonDeterministic`), `paths.py` (per-conv file paths), `resume.py` (harness glue: `run_workflow_turn` + `WorkflowUserInputHandler`), `workflows/interview.py` (hero orchestrator).
+
 ### Other
 - `prompts/` — System prompt assembly
 - `commands.py` — User-invokable commands

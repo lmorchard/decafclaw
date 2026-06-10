@@ -12,6 +12,7 @@ import re
 
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
+from decafclaw.conversation_manager import TurnKind
 from decafclaw.skills.vault._events import VAULT_CHANGED_EVENT_TYPE
 from decafclaw.web.message_types import (
     ServerMessage,
@@ -298,6 +299,37 @@ async def _handle_send(ws_send: WSSendCallable, index, username, msg, state) -> 
         await ws_send({"type": WSMessageType.ERROR, "message": "Chat service unavailable"})
         return
 
+    # -- Workflow-command interception (#255): workflows are first-class, not
+    # skills, so intercept /<name> before skill command dispatch.
+    from decafclaw.workflow.registry import workflow_commands
+    wf_trigger = None
+    if text.startswith("/"):
+        name = text[1:].split()[0] if len(text) > 1 else ""
+        if name in workflow_commands():
+            wf_trigger = name
+    if wf_trigger:
+        def context_setup(ctx):
+            from ..media import LocalFileMediaHandler
+            ctx.media_handler = LocalFileMediaHandler(state["config"])
+            ctx.channel_name = "web"
+            ctx.thread_id = ""
+        _subscribe_to_conv(state, conv_id)
+        # Persist the user's invocation so a conversation reload renders
+        # the typed command (the WORKFLOW turn path bypasses the agent
+        # loop's normal user-message archive write).
+        from ..archive import append_message
+        append_message(state["config"], conv_id,
+                       {"role": "user", "content": text})
+        await ws_send({
+            "type": WSMessageType.COMMAND_ACK, "conv_id": conv_id,
+            "command": f"/{wf_trigger}", "skill": wf_trigger,
+        })
+        await manager.enqueue_turn(
+            conv_id, kind=TurnKind.WORKFLOW, prompt="",
+            user_id=username, context_setup=context_setup,
+            metadata={"workflow_name": wf_trigger, "resume": False})
+        return
+
     # -- Command dispatch (centralized in commands.py) --
     from ..commands import dispatch_command
     from ..context import Context
@@ -451,6 +483,9 @@ async def _handle_confirm_response(ws_send: WSSendCallable, index, username, msg
     conv_id = msg.get("conv_id", "")
     confirmation_id = msg.get("confirmation_id", "")
 
+    raw_data = msg.get("data")
+    data = raw_data if isinstance(raw_data, dict) else None
+
     if manager and conv_id and confirmation_id:
         await manager.respond_to_confirmation(
             conv_id,
@@ -458,6 +493,7 @@ async def _handle_confirm_response(ws_send: WSSendCallable, index, username, msg
             approved=msg.get("approved", False),
             always=msg.get("always", False),
             add_pattern=msg.get("add_pattern", False),
+            data=data,
         )
     else:
         # Legacy fallback: publish to event bus for non-manager confirmations

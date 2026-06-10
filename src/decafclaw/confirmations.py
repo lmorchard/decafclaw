@@ -18,6 +18,7 @@ class ConfirmationAction(str, Enum):
     CONTINUE_TURN = "continue_turn"
     ADVANCE_PROJECT_PHASE = "advance_project_phase"
     WIDGET_RESPONSE = "widget_response"
+    WORKFLOW_USER_INPUT = "workflow_user_input"
 
 
 @dataclass

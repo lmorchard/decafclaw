@@ -126,7 +126,7 @@
     "confirm_response": {
       "direction": "client_to_server",
       "description": "User's decision on a pending confirm_request.",
-      "fields": {"conv_id": "string", "confirmation_id": "string", "approved": "boolean", "always": "boolean", "add_pattern": "boolean"}
+      "fields": {"conv_id": "string", "confirmation_id": "string", "approved": "boolean", "always": "boolean", "add_pattern": "boolean", "data": "object?"}
     },
     "load_history": {
       "direction": "client_to_server",

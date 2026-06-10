@@ -276,6 +276,7 @@ User's decision on a pending confirm_request.
 - `approved` — boolean
 - `always` — boolean
 - `add_pattern` — boolean
+- `data` — object?
 
 ### `load_history`
 

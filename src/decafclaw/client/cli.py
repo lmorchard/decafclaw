@@ -19,6 +19,7 @@ class SmokeArgs:
     prompts: list[str] | None = None
     confirmation_id: str | None = None
     approved: bool = True
+    value: str = ""
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -63,6 +64,10 @@ def build_parser() -> argparse.ArgumentParser:
                           default=True, help="Approve (default).")
     decision.add_argument("--deny", dest="approved", action="store_false",
                           help="Deny.")
+    p_resp.add_argument("--value", default="",
+                        help="Payload forwarded as data={'value': VALUE}. "
+                             "Required by workflow_user_input confirmations "
+                             "(the answer text); ignored when omitted.")
 
     return parser
 
@@ -91,5 +96,5 @@ def parse_args(argv: list[str] | None = None) -> SmokeArgs:
     return SmokeArgs(
         action="respond", token=token, host=host, timeout=ns.timeout,
         fmt=ns.fmt, conv=ns.conv, confirmation_id=ns.confirmation_id,
-        approved=ns.approved,
+        approved=ns.approved, value=ns.value,
     )
