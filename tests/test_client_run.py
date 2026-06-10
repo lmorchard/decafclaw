@@ -162,7 +162,20 @@ async def test_run_respond_sends_confirm_response():
     summaries = await run_respond(t, args)
     cr = [m for m in t.sent if m["type"] == "confirm_response"]
     assert cr and cr[0]["confirmation_id"] == "c1" and cr[0]["approved"] is True
+    # Default empty value → no data field (preserves existing behavior).
+    assert "data" not in cr[0]
     assert summaries[0].status == "complete"
+
+
+@pytest.mark.asyncio
+async def test_run_respond_forwards_value_as_data():
+    t = FakeTransport([[{"type": "turn_complete", "conv_id": "web-1"}]])
+    args = SmokeArgs(action="respond", token="dfc_x", host="http://h",
+                     timeout=5.0, fmt="summary", conv="web-1",
+                     confirmation_id="c1", approved=True, value="tide pools")
+    await run_respond(t, args)
+    cr = [m for m in t.sent if m["type"] == "confirm_response"]
+    assert cr[0]["data"] == {"value": "tide pools"}
 
 
 def test_exit_code_mapping():

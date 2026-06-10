@@ -16,6 +16,7 @@ from uuid import uuid4
 
 from .archive import append_message
 from .confirmations import (
+    ConfirmationAction,
     ConfirmationRegistry,
     ConfirmationRequest,
     ConfirmationResponse,
@@ -78,6 +79,7 @@ class TurnKind(Enum):
     SCHEDULED_TASK = "scheduled_task"
     CHILD_AGENT = "child_agent"
     WAKE = "wake"
+    WORKFLOW = "workflow"
 
 
 # Kinds that use Context.for_task (sensible skip defaults for background work).
@@ -348,6 +350,13 @@ class ConversationManager:
         self.config = config
         self.event_bus = event_bus
         self.confirmation_registry = confirmation_registry or ConfirmationRegistry()
+
+        # Workflow user-input resumes via the confirmation recovery path.
+        from .workflow.resume import WorkflowUserInputHandler
+        self.confirmation_registry.register(
+            ConfirmationAction.WORKFLOW_USER_INPUT,
+            WorkflowUserInputHandler(self))
+
         self._conversations: dict[str, ConversationState] = {}
 
         # Circuit breaker config (from Mattermost config for now —
@@ -1280,6 +1289,47 @@ class ConversationManager:
 
         return response
 
+    async def post_confirmation(
+        self,
+        conv_id: str,
+        request: ConfirmationRequest,
+    ) -> None:
+        """Post a pending confirmation WITHOUT awaiting it.
+
+        Used by workflow suspends: the workflow turn ENDS at a user_input,
+        so there is no live waiter. We persist + install the request as the
+        active confirmation but deliberately leave ``confirmation_event``
+        None, so ``respond_to_confirmation`` routes resolution through the
+        recovery dispatch path (registered handler), not a waiter wake.
+        """
+        from .archive import append_message
+        state = self._get_or_create(conv_id)
+        async with state.lock:
+            if state.pending_confirmation is not None:
+                # Unreachable by design: a workflow suspend ENDS the turn and
+                # the per-conversation busy flag serializes turns, so the slot
+                # is always free when a workflow posts. If we somehow get here,
+                # fail loudly — queuing a no-waiter confirmation would let
+                # promotion install a live event and route resolution to the
+                # waiter-wake branch (nobody listening), silently stalling the
+                # workflow. A loud error is diagnosable; a silent stall is not.
+                raise RuntimeError(
+                    f"post_confirmation: conversation {conv_id[:8]} already has "
+                    f"a pending confirmation; workflow-turn serialization "
+                    f"invariant violated")
+            # Archive under the lock so the durable record is installed
+            # atomically with the in-memory state — never one without the
+            # other. Without this, the busy-raise branch above would leave
+            # an orphan confirmation_request row that startup_scan would
+            # later recover as a ghost pending confirmation with no backing
+            # workflow (Copilot review on PR #573, mirroring the prior fix
+            # to respond_to_confirmation from review on PR #484).
+            append_message(self.config, conv_id, request.to_archive_message())
+            state.pending_confirmation = request
+            state.confirmation_event = None  # no waiter — recovery path
+            state.confirmation_response = None
+        await self.emit(conv_id, _confirmation_request_payload(request))
+
     # -- Internal methods ------------------------------------------------------
 
     async def _start_turn(
@@ -1351,7 +1401,12 @@ class ConversationManager:
             if kind is TurnKind.WAKE:
                 self._restore_per_conv_state(state, ctx)
         else:
-            # USER turn — existing behavior.
+            # USER (and WORKFLOW) turns — full interactive Context with
+            # per-conv state restored. WORKFLOW deliberately reuses this path
+            # for now: the orchestrator only needs ctx.config + ctx.conv_id,
+            # and running on the user conv keeps phases visible in the timeline.
+            # (Revisit after live smoke: WORKFLOW may want Context.for_task
+            # semantics — if so, add it to TASK_KINDS with a KIND_TASK_MODE entry.)
             ctx = Context(config=self.config, event_bus=self.event_bus)
             ctx.user_id = user_id
             ctx.channel_id = conv_id
@@ -1448,12 +1503,20 @@ class ConversationManager:
 
         async def run():
             try:
-                from .agent import run_agent_turn
-                result = await run_agent_turn(
-                    ctx, text, history,
-                    archive_text=archive_text,
-                    attachments=attachments,
-                )
+                if kind is TurnKind.WORKFLOW:
+                    from .workflow.resume import run_workflow_turn
+                    md = metadata or {}
+                    result = await run_workflow_turn(
+                        ctx, self,
+                        workflow_name=md.get("workflow_name", ""),
+                        resume=md.get("resume", False))
+                else:
+                    from .agent import run_agent_turn
+                    result = await run_agent_turn(
+                        ctx, text, history,
+                        archive_text=archive_text,
+                        attachments=attachments,
+                    )
 
                 response_text = result.text if hasattr(result, "text") else str(result)
                 response_text_holder.append(response_text)
