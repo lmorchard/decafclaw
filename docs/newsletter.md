@@ -6,7 +6,7 @@ The newsletter is a periodic narrative recap of autonomous agent activity — wo
 
 A bundled scheduled skill (`newsletter`) runs daily at 7am (cron `0 7 * * *`). It:
 
-1. Lists scheduled-task conversations from the last 24 hours by globbing `workspace/conversations/schedule-*.jsonl` — this naturally excludes interactive (`web-*`), heartbeat, and child-agent conversations, which use different filename prefixes. Newsletter's own runs (`schedule-newsletter-*`) are explicitly excluded to avoid self-reference.
+1. Lists scheduled-task conversations from the last 24 hours by iterating conversation archives (`iter_conversation_archives`) and keeping those whose `conv_id` starts with `schedule-` — this naturally excludes interactive (`web-*`), heartbeat, and child-agent conversations, which use different `conv_id` prefixes. Newsletter's own runs (`schedule-newsletter-*`) are explicitly excluded to avoid self-reference.
 2. Lists vault pages added or modified in the same window.
 3. Composes a conversational narrative in SOUL voice using those two inputs.
 4. Writes a local archive to `workspace/newsletter/archive/YYYY-MM-DD.md`.

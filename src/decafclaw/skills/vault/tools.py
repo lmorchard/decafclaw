@@ -512,7 +512,7 @@ async def tool_vault_grant_folder(ctx, folder: str, reason: str) -> ToolResult:
 
     After user approval, vault_write/delete/rename under the granted folder
     skip per-call confirmation for the rest of the conversation. The grant is
-    persisted as a sidecar at workspace/conversations/{conv_id}.vault_grants.json.
+    persisted as a sidecar at workspace/conversations/{conv_id}/vault_grants.json.
     """
     log.info(f"[tool:vault_grant_folder] folder={folder!r}")
 

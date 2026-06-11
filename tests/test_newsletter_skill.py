@@ -143,6 +143,26 @@ def test_list_scheduled_activity_window_filter(ctx):
     assert result[0]["final_message"] == "Dream complete. Noted 3 patterns."
 
 
+def test_list_scheduled_activity_dir_layout(ctx):
+    """A schedule conv stored in the new {id}/archive.jsonl layout is found."""
+    ws = ctx.config.workspace_path
+    now = datetime.now(timezone.utc)
+    in_window = now - timedelta(hours=2)
+    conv_id = f"schedule-dream-{in_window.astimezone().strftime('%Y%m%d-%H%M%S')}"
+    conv_dir = ws / "conversations" / conv_id
+    conv_dir.mkdir(parents=True, exist_ok=True)
+    with (conv_dir / "archive.jsonl").open("w") as fh:
+        fh.write(json.dumps(
+            {"role": "assistant", "content": "Dir-layout dream done."}) + "\n")
+
+    result = _collect_scheduled_activity(ctx, hours=24)
+
+    assert len(result) == 1
+    assert result[0]["skill_name"] == "dream"
+    assert result[0]["conv_id"] == conv_id
+    assert result[0]["final_message"] == "Dir-layout dream done."
+
+
 def test_list_scheduled_activity_extracts_vault_pages(ctx):
     ws = ctx.config.workspace_path
     now = datetime.now(timezone.utc)

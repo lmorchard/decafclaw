@@ -107,11 +107,11 @@ History compaction settings. Empty `url`/`model`/`api_key` fall back to the `llm
 | `decisions_enabled` | bool | `true` | `COMPACTION_DECISIONS_ENABLED` | |
 | `decisions_max_per_category` | int | `30` | `COMPACTION_DECISIONS_MAX_PER_CATEGORY` | |
 
-`decisions_*` controls the structured decision slice that's threaded forward through every compaction (see [context-composer.md#decision-slice-through-compaction](context-composer.md#decision-slice-through-compaction) and #302). The slice persists at `{workspace}/conversations/{conv_id}.decisions.json`. `decisions_enabled: false` disables the prompt addendum, parse step, and sidecar write entirely. `decisions_max_per_category: 0` removes the FIFO cap.
+`decisions_*` controls the structured decision slice that's threaded forward through every compaction (see [context-composer.md#decision-slice-through-compaction](context-composer.md#decision-slice-through-compaction) and #302). The slice persists at `{workspace}/conversations/{conv_id}/decisions.json`. `decisions_enabled: false` disables the prompt addendum, parse step, and sidecar write entirely. `decisions_max_per_category: 0` removes the FIFO cap.
 
 ### `notes`
 
-Per-conversation scratchpad — always-loaded `notes_append` / `notes_read` tools backed by an append-only markdown file at `workspace/conversations/{conv_id}.notes.md`, colocated with the conversation archive and other sidecars. Recent entries auto-inject into context at turn start. See [notes.md](notes.md) and #299.
+Per-conversation scratchpad — always-loaded `notes_append` / `notes_read` tools backed by an append-only markdown file at `workspace/conversations/{conv_id}/notes.md`, colocated with the conversation archive and other sidecars. Recent entries auto-inject into context at turn start. See [notes.md](notes.md) and #299.
 
 | Field | Type | Default | Env Var |
 |-------|------|---------|---------|

@@ -101,23 +101,28 @@ class TestPersistence:
         s = load_slice(config, "broken")
         assert s.is_empty()
 
+    def test_slice_path_uses_dir_layout(self, config):
+        """Normal conv_id resolves to conversations/{id}/decisions.json."""
+        base = (config.workspace_path / "conversations").resolve()
+        path = _slice_path(config, "abc")
+        assert path == base / "abc" / "decisions.json"
+
     def test_slice_path_sandboxes_traversal(self, config):
         """Path traversal characters get stripped and the resolved
-        path is verified to stay within the conversations directory.
-        Mirrors `_context_sidecar_path`'s defense-in-depth."""
+        path is verified to stay within the conversations directory."""
         base = (config.workspace_path / "conversations").resolve()
 
-        # Empty after sanitization → sentinel.
+        # Empty after sanitization → sentinel dir.
         path_empty = _slice_path(config, "")
-        assert path_empty == base / "_invalid.decisions.json"
+        assert path_empty == base / "_invalid" / "decisions.json"
 
-        # Pure-traversal input → sentinel.
+        # Pure-traversal input → sentinel dir.
         path_traversal = _slice_path(config, "../..")
-        assert path_traversal == base / "_invalid.decisions.json"
+        assert path_traversal == base / "_invalid" / "decisions.json"
 
         # Slashes are stripped, the remainder lands inside the dir.
         path_slashed = _slice_path(config, "foo/bar")
-        assert path_slashed == base / "foobar.decisions.json"
+        assert path_slashed == base / "foobar" / "decisions.json"
         assert path_slashed.is_relative_to(base)
 
 

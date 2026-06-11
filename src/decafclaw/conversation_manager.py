@@ -21,6 +21,7 @@ from .confirmations import (
     ConfirmationRequest,
     ConfirmationResponse,
 )
+from .conversation_paths import iter_conversation_archives
 from .heartbeat import is_background_wake_ok
 
 log = logging.getLogger(__name__)
@@ -1810,15 +1811,10 @@ class ConversationManager:
         stale_cutoff = (datetime.now() - timedelta(hours=24)).isoformat()
         recovered = 0
 
-        for archive_file in conversations_dir.glob("*.jsonl"):
-            # Skip compacted sidecar files
-            if archive_file.stem.endswith(".compacted"):
-                continue
-
-            conv_id = archive_file.stem
+        for conv_id, archive_file in iter_conversation_archives(self.config):
             try:
                 pending = self._scan_archive_for_pending(
-                    archive_file, stale_cutoff)
+                    archive_file, stale_cutoff, conv_id)
                 if pending:
                     state = self._get_or_create(conv_id)
                     state.pending_confirmation = pending
@@ -1833,7 +1829,8 @@ class ConversationManager:
                      recovered)
         return recovered
 
-    def _scan_archive_for_pending(self, archive_path, stale_cutoff: str
+    def _scan_archive_for_pending(self, archive_path, stale_cutoff: str,
+                                  conv_id: str
                                   ) -> ConfirmationRequest | None:
         """Read the tail of an archive file looking for an unresolved confirmation."""
         import json
@@ -1890,7 +1887,7 @@ class ConversationManager:
         ts = last_request.get("timestamp", "")
         if ts and ts < stale_cutoff:
             log.debug("Skipping stale confirmation in %s (from %s)",
-                      archive_path.stem, ts)
+                      conv_id, ts)
             return None
 
         return ConfirmationRequest.from_archive_message(last_request)

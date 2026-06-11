@@ -35,26 +35,48 @@ class TestNote:
 
 
 class TestNotesPath:
-    def test_returns_path_under_conversations_dir(self, config):
+    def test_returns_path_in_conversation_dir(self, config):
         p = notes_path(config, "abc")
-        assert p.parent.name == "conversations"
-        assert p.name == "abc.notes.md"
+        assert p.parent.name == "abc"
+        assert p.parent.parent.name == "conversations"
+        assert p.name == "notes.md"
 
     def test_traversal_strips_to_safe_name(self, config):
         """`/` and `..` get stripped, the leftover letters land
         inside the conversations dir — not outside."""
+        root = (config.workspace_path / "conversations").resolve()
         p = notes_path(config, "../../etc/passwd")
         # ../../etc/passwd → etcpasswd (slashes + dots stripped) → safe
-        assert p.parent.name == "conversations"
-        assert p.is_relative_to(p.parent.parent)
-        assert p.name == "etcpasswd.notes.md"
+        assert p.is_relative_to(root)
+        assert p.parent.name == "etcpasswd"
+        assert p.name == "notes.md"
 
     def test_pure_traversal_falls_back_to_sentinel(self, config):
-        """Input that sanitizes to empty → sentinel filename."""
-        assert notes_path(config, "../..").name == "_invalid.notes.md"
+        """Input that sanitizes to empty → sentinel dir."""
+        p = notes_path(config, "../..")
+        assert p.parent.name == "_invalid"
+        assert p.name == "notes.md"
 
     def test_empty_falls_back_to_sentinel(self, config):
-        assert notes_path(config, "").name == "_invalid.notes.md"
+        p = notes_path(config, "")
+        assert p.parent.name == "_invalid"
+        assert p.name == "notes.md"
+
+    def test_legacy_flat_file_wins_until_migrated(self, config):
+        """While a flat ``{id}.notes.md`` exists and the dir layout
+        does not, reads/writes stay on the legacy file. Once the dir
+        file exists too, the dir layout wins."""
+        root = (config.workspace_path / "conversations").resolve()
+        root.mkdir(parents=True, exist_ok=True)
+        legacy = root / "leg.notes.md"
+        legacy.write_text("- 2026-01-01T00:00:00Z — old\n")
+        # legacy present, new absent → legacy path
+        assert notes_path(config, "leg") == legacy
+        # create the dir-layout file → dir layout wins
+        new_dir = root / "leg"
+        new_dir.mkdir(parents=True, exist_ok=True)
+        (new_dir / "notes.md").write_text("- 2026-01-02T00:00:00Z — new\n")
+        assert notes_path(config, "leg") == new_dir / "notes.md"
 
 
 # -- Append + read -------------------------------------------------------------

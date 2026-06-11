@@ -20,6 +20,8 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .conversation_paths import sidecar_path
+
 log = logging.getLogger(__name__)
 
 CATEGORIES = ("decisions", "open_questions", "artifacts")
@@ -79,23 +81,7 @@ class DecisionSlice:
 
 
 def _slice_path(config, conv_id: str) -> Path:
-    """Resolve the sidecar path for a given conv_id, sandboxed to the
-    conversations directory.
-
-    Mirrors ``_context_sidecar_path`` in ``context_composer.py``:
-    strips path traversal characters, falls back to a sentinel name
-    if the result is empty, and returns the sentinel if the resolved
-    path escapes the conversations directory. This is defense-in-depth
-    since ``conv_id`` originates from user-controlled web routes.
-    """
-    base_dir = (config.workspace_path / "conversations").resolve()
-    safe_name = conv_id.replace("/", "").replace("\\", "").replace("..", "")
-    if not safe_name:
-        return base_dir / "_invalid.decisions.json"
-    path = (base_dir / f"{safe_name}.decisions.json").resolve()
-    if not path.is_relative_to(base_dir):
-        return base_dir / "_invalid.decisions.json"
-    return path
+    return sidecar_path(config, conv_id, "decisions.json", ".decisions.json")
 
 
 def load_slice(config, conv_id: str) -> DecisionSlice:

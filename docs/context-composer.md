@@ -360,7 +360,7 @@ Compaction's prose summary is lossy for high-signal facts — architectural deci
 
 **Flow on each compaction:**
 
-1. Load the existing slice from `{workspace}/conversations/{conv_id}.decisions.json` (empty when missing).
+1. Load the existing slice from `{workspace}/conversations/{conv_id}/decisions.json` (empty when missing).
 2. If non-empty, prepend `Current state slice:\n<formatted>` to the prompt input so the LLM sees what's already captured.
 3. The LLM emits its prose summary plus a fenced ```json block with the new state of the three lists. The prompt instructs it to **reuse existing entries verbatim** when they still apply (so timestamps survive), add new entries, and drop entries that have been obsoleted.
 4. `parse_slice_from_response` extracts the JSON; `merge_slice` reconciles old + new (preserve verbatim entries' `created_at`, add new entries with `now`, drop missing entries, FIFO cap per category).
@@ -392,7 +392,7 @@ Earlier turns covered ... (prose summary)
 
 ## Context inspection
 
-After each turn, the agent writes a diagnostics sidecar file (`workspace/conversations/{conv_id}.context.json`) with per-source token estimates, scoring details, memory candidate breakdowns, and cumulative cleanup stats from the lightweight clear tier (see above).
+After each turn, the agent writes a diagnostics sidecar file (`workspace/conversations/{conv_id}/context.json`) with per-source token estimates, scoring details, memory candidate breakdowns, and cumulative cleanup stats from the lightweight clear tier (see above).
 
 **REST endpoint:** `GET /api/conversations/{id}/context` returns the sidecar data.
 
@@ -424,7 +424,7 @@ no-id `canvas_update`) are removed.
 Each successful call emits a `canvas_update` WebSocket event (with a `kind`
 field: `new_tab`, `update`, `close_tab`, `set_active`, or `clear`) to
 connected clients. The canvas state persists in
-`workspace/conversations/{conv_id}.canvas.json`.
+`workspace/conversations/{conv_id}/canvas.json`.
 
 ## Key files
 

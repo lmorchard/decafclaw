@@ -654,7 +654,7 @@ async def unarchive_conversation(request: Request, username: str) -> JSONRespons
 @_authenticated
 async def delete_conversation(request: Request, username: str) -> JSONResponse:
     """Permanently delete a conversation and all associated files."""
-    from .attachments import delete_conversation_uploads
+    from .conversation_paths import delete_conversation_files
     from .web.conversation_folders import ConversationFolderIndex
     from .web.conversations import ConversationIndex
     config = request.app.state.config
@@ -664,16 +664,9 @@ async def delete_conversation(request: Request, username: str) -> JSONResponse:
     if not conv or conv.user_id != username:
         return JSONResponse({"error": "not found"}, status_code=404)
 
-    # Delete sidecar files on disk (with path sandboxing).
-    conv_dir = config.workspace_path / "conversations"
-    for suffix in [".jsonl", ".compacted.jsonl", ".context.json", ".decisions.json", ".notes.md"]:
-        path = (conv_dir / f"{conv_id}{suffix}").resolve()
-        if not path.is_relative_to(conv_dir.resolve()):
-            continue  # path traversal guard
-        if path.exists():
-            path.unlink()
-
-    delete_conversation_uploads(config, conv_id)
+    # Remove the {id}/ dir (archive, sidecars, uploads, workflow.json) and
+    # any leftover flat legacy sidecar files.
+    delete_conversation_files(config, conv_id)
     index.delete(conv_id)
     folder_index = ConversationFolderIndex(config, username)
     await folder_index.remove_assignment(conv_id)
