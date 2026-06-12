@@ -96,6 +96,14 @@ migrate-vault:
 migrate-vault-dry:
 	uv run python scripts/migrate_to_vault.py --dry-run
 
+# Migrate flat conversation sidecars into per-conversation dirs
+migrate-sidecars:
+	uv run python scripts/migrate_sidecars_to_dirs.py
+
+# Dry-run sidecar migration (show what would change)
+migrate-sidecars-dry:
+	uv run python scripts/migrate_sidecars_to_dirs.py --dry-run
+
 # Build web UI vendor bundle (npm + esbuild)
 # Run after changing JS dependencies in src/decafclaw/web/static/package.json
 # Requires Node.js. Output is committed to git, so only needed for dev.

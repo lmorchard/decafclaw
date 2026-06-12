@@ -1,7 +1,7 @@
 """Per-conversation canvas state — sidecar persistence + state operations.
 
 The canvas is a web-only display surface backed by a JSON sidecar at
-``workspace/conversations/{conv_id}.canvas.json``. State shape:
+``workspace/conversations/{conv_id}/canvas.json``. State shape:
 
     {
       "schema_version": 1,
@@ -26,6 +26,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Awaitable, Callable
 
+from .conversation_paths import sidecar_path
 from .widgets import get_widget_registry
 
 log = logging.getLogger(__name__)
@@ -39,15 +40,7 @@ def empty_canvas_state() -> dict:
 
 
 def _canvas_sidecar_path(config, conv_id: str) -> Path:
-    """Path to the canvas JSON sidecar; guarded against directory traversal."""
-    base_dir = (config.workspace_path / "conversations").resolve()
-    # Reject empty or any conv_id that contains path separators or dotdot.
-    if not conv_id or "/" in conv_id or "\\" in conv_id or ".." in conv_id:
-        return base_dir / "_invalid.canvas.json"
-    path = (base_dir / f"{conv_id}.canvas.json").resolve()
-    if not path.is_relative_to(base_dir):
-        return base_dir / "_invalid.canvas.json"
-    return path
+    return sidecar_path(config, conv_id, "canvas.json", ".canvas.json")
 
 
 def _derive_next_tab_id(tabs: list) -> int:

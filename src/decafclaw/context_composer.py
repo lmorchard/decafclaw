@@ -16,6 +16,8 @@ from pathlib import Path
 
 from decafclaw.skills.background.tools import format_status_text
 
+from .conversation_paths import sidecar_path
+
 log = logging.getLogger(__name__)
 
 # Roles that are remapped to "user" before sending to the LLM.
@@ -107,15 +109,7 @@ class ComposerState:
 
 
 def _context_sidecar_path(config, conv_id: str) -> Path:
-    """Path to the context diagnostics sidecar file."""
-    base_dir = (config.workspace_path / "conversations").resolve()
-    safe_name = conv_id.replace("/", "").replace("\\", "").replace("..", "")
-    if not safe_name:
-        return base_dir / "_invalid.context.json"
-    path = (base_dir / f"{safe_name}.context.json").resolve()
-    if not path.is_relative_to(base_dir):
-        return base_dir / "_invalid.context.json"
-    return path
+    return sidecar_path(config, conv_id, "context.json", ".context.json")
 
 
 def write_context_sidecar(config, conv_id: str, diagnostics: dict) -> None:

@@ -151,7 +151,7 @@ The wiki panel and canvas panel can both be open simultaneously on desktop;
 each occupies a draggable column to the right of chat.
 
 **State:** per-conversation, persisted in
-`workspace/conversations/{conv_id}.canvas.json` (sidecar). Loaded on
+`workspace/conversations/{conv_id}/canvas.json` (sidecar). Loaded on
 conversation-select via `GET /api/canvas/{conv_id}`.
 
 **Tabs (Phase 4 multi-tab):** the panel holds multiple tabs. The agent

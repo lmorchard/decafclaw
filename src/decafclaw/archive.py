@@ -5,6 +5,8 @@ import logging
 from datetime import datetime
 from pathlib import Path
 
+from .conversation_paths import sidecar_path
+
 log = logging.getLogger(__name__)
 
 # Roles that are valid in LLM message history. Metadata roles (model,
@@ -15,7 +17,7 @@ LLM_ROLES = {"system", "user", "assistant", "tool"}
 
 def archive_path(config, conv_id: str) -> Path:
     """Compute the archive file path for a conversation."""
-    return config.workspace_path / "conversations" / f"{conv_id}.jsonl"
+    return sidecar_path(config, conv_id, "archive.jsonl", ".jsonl")
 
 
 def append_message(config, conv_id: str, message: dict):
@@ -30,7 +32,7 @@ def append_message(config, conv_id: str, message: dict):
 
 
 def _compacted_path(config, conv_id: str) -> Path:
-    return config.workspace_path / "conversations" / f"{conv_id}.compacted.jsonl"
+    return sidecar_path(config, conv_id, "compacted.jsonl", ".compacted.jsonl")
 
 
 def write_compacted_history(config, conv_id: str, messages: list[dict]):

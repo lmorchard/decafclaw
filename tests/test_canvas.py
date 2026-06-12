@@ -17,18 +17,23 @@ def config(tmp_path):
 
 def test_canvas_sidecar_path_basic(config):
     path = canvas._canvas_sidecar_path(config, "abc123")
-    expected = config.workspace_path / "conversations" / "abc123.canvas.json"
+    expected = (config.workspace_path / "conversations" / "abc123" / "canvas.json")
     assert path == expected.resolve()
 
 
 def test_canvas_sidecar_path_traversal_guard(config):
+    base = (config.workspace_path / "conversations").resolve()
     bad = canvas._canvas_sidecar_path(config, "../etc/passwd")
-    assert bad.name == "_invalid.canvas.json"
+    # ../etc/passwd → etcpasswd (slashes + dots stripped) → safe dir
+    assert bad.is_relative_to(base)
+    assert bad.parent.name == "etcpasswd"
+    assert bad.name == "canvas.json"
 
 
 def test_canvas_sidecar_path_empty(config):
     bad = canvas._canvas_sidecar_path(config, "")
-    assert bad.name == "_invalid.canvas.json"
+    assert bad.parent.name == "_invalid"
+    assert bad.name == "canvas.json"
 
 
 def test_read_canvas_state_missing_file(config):

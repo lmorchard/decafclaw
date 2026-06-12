@@ -7,7 +7,7 @@ DecafClaw persists all conversations to disk and compacts them when they grow to
 Every message in every conversation is appended to a JSONL file:
 
 ```
-data/{agent_id}/workspace/conversations/{conv_id}.jsonl
+data/{agent_id}/workspace/conversations/{conv_id}/archive.jsonl
 ```
 
 Each line is a JSON object with `role`, `content`, optional `tool_calls`/`tool_call_id`, and a `timestamp`.

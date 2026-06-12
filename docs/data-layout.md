@@ -30,10 +30,19 @@ data/{agent_id}/                    # Admin-level (read-only to agent)
       agent/
         pages/                      # Curated wiki pages (revised over time)
         journal/                    # Daily journal entries (append-only)
-    conversations/                  # Conversation archives (JSONL)
-      {conv_id}.jsonl
-      {conv_id}.context.json        # Per-turn context diagnostics sidecar
-      {conv_id}/uploads/            # User-uploaded file attachments
+    conversations/                  # One directory per conversation
+      {conv_id}/                    # All state for a single conversation
+        archive.jsonl               # Message archive (JSONL)
+        compacted.jsonl             # Pre-compaction history snapshot
+        notes.md                    # Per-conversation scratchpad
+        decisions.json              # Compaction decision slice
+        context.json                # Per-turn context diagnostics sidecar
+        canvas.json                 # Canvas panel state
+        skills.json                 # Activated-skill state
+        skill_data.json             # Per-skill persisted data
+        vault_grants.json           # Per-conversation vault folder grants
+        workflow.json               # Durable workflow journal
+        uploads/                    # User-uploaded file attachments
     projects/                       # Project skill working directories
       {YYYY-MM-DD-HHMM}-{slug}/
     todos/                          # Per-conversation checklists (markdown checkboxes)
@@ -49,6 +58,38 @@ data/{agent_id}/                    # Admin-level (read-only to agent)
     debug_context_summary.txt       # Debug summary
     debug_system_prompt.md          # Debug system prompt dump
 ```
+
+## Per-conversation sidecar directories
+
+Everything belonging to a single conversation lives under one directory,
+`workspace/conversations/{conv_id}/`. One listing shows all of a
+conversation's state, and one `rm -rf` (or one `delete_conversation_files`
+call) removes it.
+
+`src/decafclaw/conversation_paths.py` is the single chokepoint for these
+paths: `conversation_dir(config, conv_id, *, create=False)`,
+`sidecar_path(config, conv_id, filename, legacy_suffix)`,
+`iter_conversation_archives(config)`, and `delete_conversation_files(config,
+conv_id)`, plus the `SIDECAR_FILENAMES` / `SIDECAR_LEGACY_SUFFIXES`
+constants. `workflow/paths.py` delegates to it. New sidecars get a filename
+in this module rather than a new flat-suffix convention.
+
+### Legacy flat layout and the deprecation-window fallback
+
+The previous layout was flat — each sidecar was a sibling file named
+`conversations/{conv_id}.SUFFIX` (e.g. `{conv_id}.jsonl`,
+`{conv_id}.notes.md`, `{conv_id}.context.json`). For one deprecation cycle,
+`sidecar_path` keeps reading **and** writing an existing flat legacy file in
+place when the new-layout file is absent, so a conversation's data never
+splits across the two layouts. No code path moves files; only the migration
+script does. (A future change removes this fallback.)
+
+### Migration
+
+`make migrate-sidecars` runs `scripts/migrate_sidecars_to_dirs.py`, which
+moves existing flat sidecars into their per-conversation directories. It is
+idempotent. Preview the moves first with `make migrate-sidecars-dry`. Run it
+once after upgrading to relocate existing conversations.
 
 ## Trust boundary
 

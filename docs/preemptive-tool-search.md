@@ -93,7 +93,7 @@ Heartbeat and scheduled tasks pass `history=[]`, so the prior-assistant heuristi
 preemptive match: promoted 2 tool(s) for conv ws-abc123: vault_backlinks(2), vault_search(1)
 ```
 
-**Context diagnostics sidecar** — after each turn, DecafClaw writes `workspace/conversations/{conv_id}.context.json` containing the source breakdown. Look for the `preempt_matches` source entry:
+**Context diagnostics sidecar** — after each turn, DecafClaw writes `workspace/conversations/{conv_id}/context.json` containing the source breakdown. Look for the `preempt_matches` source entry:
 
 ```json
 {

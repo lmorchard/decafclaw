@@ -34,7 +34,7 @@ def test_writes_archive_jsonl_at_eval_conv_path(tmp_path: Path):
         }
     }
     out = _seed_conversation_history(cfg, test_case)
-    archive = tmp_path / "conversations" / "eval.jsonl"
+    archive = tmp_path / "conversations" / "eval" / "archive.jsonl"
     assert archive.exists()
     lines = archive.read_text().splitlines()
     assert len(lines) == 2
@@ -54,7 +54,7 @@ def test_stamps_timestamps_when_missing(tmp_path: Path):
     out = _seed_conversation_history(cfg, test_case)
     assert "timestamp" in out[0]
     archived = json.loads(
-        (tmp_path / "conversations" / "eval.jsonl").read_text().strip()
+        (tmp_path / "conversations" / "eval" / "archive.jsonl").read_text().strip()
     )
     assert archived["timestamp"] == out[0]["timestamp"]
 
@@ -110,7 +110,7 @@ def test_passes_through_tool_call_messages(tmp_path: Path):
         }
     }
     out = _seed_conversation_history(cfg, test_case)
-    archive = tmp_path / "conversations" / "eval.jsonl"
+    archive = tmp_path / "conversations" / "eval" / "archive.jsonl"
     parsed = [json.loads(line) for line in archive.read_text().splitlines()]
     assert parsed[1]["tool_calls"][0]["function"]["name"] == "vault_search"
     assert parsed[2]["tool_call_id"] == "call_1"

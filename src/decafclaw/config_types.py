@@ -49,7 +49,7 @@ class MattermostConfig:
 class NotesConfig:
     """Per-conversation scratchpad (#299) — always-loaded
     ``notes_append`` / ``notes_read`` tools backed by an append-only
-    markdown file at ``workspace/conversations/{conv_id}.notes.md``,
+    markdown file at ``workspace/conversations/{conv_id}/notes.md``,
     colocated with the conversation archive and other sidecars. Recent
     entries auto-inject into context at turn start.
     """

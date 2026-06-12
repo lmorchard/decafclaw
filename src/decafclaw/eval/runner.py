@@ -38,7 +38,7 @@ async def _setup_skills(ctx, test_case: dict):
 
 
 def _seed_conversation_history(config, test_case: dict) -> list[dict]:
-    """Seed `{workspace}/conversations/eval.jsonl` from `setup.conversation_history`.
+    """Seed `{workspace}/conversations/eval/archive.jsonl` from `setup.conversation_history`.
 
     Returns the same list of messages (with timestamps filled in) so the
     caller can pre-populate the in-memory history passed to ``run_agent_turn``.

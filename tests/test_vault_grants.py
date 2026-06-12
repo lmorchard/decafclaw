@@ -75,24 +75,37 @@ class TestNormalizeFolder:
 class TestGrantsSidecarPath:
     def test_basic(self, grants_config):
         path = _grants._grants_sidecar_path(grants_config, "abc123")
-        expected = grants_config.workspace_path / "conversations" / "abc123.vault_grants.json"
+        expected = (
+            grants_config.workspace_path / "conversations" / "abc123" / "vault_grants.json"
+        )
         assert path == expected.resolve()
 
-    def test_rejects_path_traversal_in_conv_id(self, grants_config):
+    def test_strips_path_traversal_in_conv_id(self, grants_config):
+        base = (grants_config.workspace_path / "conversations").resolve()
         bad = _grants._grants_sidecar_path(grants_config, "../etc/passwd")
-        assert bad.name == "_invalid.vault_grants.json"
+        # ../etc/passwd → etcpasswd (slashes + dots stripped) → safe dir
+        assert bad.is_relative_to(base)
+        assert bad.parent.name == "etcpasswd"
+        assert bad.name == "vault_grants.json"
 
-    def test_rejects_slash_in_conv_id(self, grants_config):
+    def test_strips_slash_in_conv_id(self, grants_config):
+        base = (grants_config.workspace_path / "conversations").resolve()
         bad = _grants._grants_sidecar_path(grants_config, "foo/bar")
-        assert bad.name == "_invalid.vault_grants.json"
+        assert bad.is_relative_to(base)
+        assert bad.parent.name == "foobar"
+        assert bad.name == "vault_grants.json"
 
-    def test_rejects_backslash_in_conv_id(self, grants_config):
+    def test_strips_backslash_in_conv_id(self, grants_config):
+        base = (grants_config.workspace_path / "conversations").resolve()
         bad = _grants._grants_sidecar_path(grants_config, "foo\\bar")
-        assert bad.name == "_invalid.vault_grants.json"
+        assert bad.is_relative_to(base)
+        assert bad.parent.name == "foobar"
+        assert bad.name == "vault_grants.json"
 
     def test_returns_invalid_path_for_empty_conv_id(self, grants_config):
         bad = _grants._grants_sidecar_path(grants_config, "")
-        assert bad.name == "_invalid.vault_grants.json"
+        assert bad.parent.name == "_invalid"
+        assert bad.name == "vault_grants.json"
 
 
 class TestReadAddGrants:

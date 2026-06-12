@@ -3,6 +3,7 @@
 import json
 import logging
 
+from ..conversation_paths import iter_conversation_archives
 from ..media import ToolResult
 
 log = logging.getLogger(__name__)
@@ -12,16 +13,16 @@ def tool_conversation_search(ctx, query: str) -> str:
     """Search across conversation archives using substring matching."""
     log.info(f"[tool:conversation_search] query={query}")
 
-    conv_dir = ctx.config.workspace_path / "conversations"
-    if not conv_dir.exists():
+    archives = sorted(
+        iter_conversation_archives(ctx.config), key=lambda t: t[0], reverse=True)
+    if not archives:
         return f"No conversation history found matching '{query}'"
 
     query_lower = query.lower()
     results: list[str] = []
     max_results = 10
 
-    for filepath in sorted(conv_dir.glob("*.jsonl"), reverse=True):
-        conv_id = filepath.stem
+    for conv_id, filepath in archives:
         with filepath.open("r", encoding="utf-8") as f:
             for line in f:
                 line = line.strip()

@@ -39,7 +39,7 @@ The message has role `conversation_notes` (remapped to `user` for the LLM), so t
 
 ## Storage
 
-`{workspace}/conversations/{conv_id}.notes.md` — append-only markdown, one entry per line. Colocated with the conversation archive (`{conv_id}.jsonl`) and other sidecars (`.context.json`, `.decisions.json`):
+`{workspace}/conversations/{conv_id}/notes.md` — append-only markdown, one entry per line. Colocated with the conversation archive (`archive.jsonl`) and other sidecars (`context.json`, `decisions.json`) under the per-conversation directory:
 
 ```
 - 2026-04-27T15:30:42Z — User prefers concise replies

@@ -15,6 +15,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .conversation_paths import sidecar_path
+
 log = logging.getLogger(__name__)
 
 # Marker prefix for note lines. Same character we already use for
@@ -33,18 +35,10 @@ class Note:
 
 
 def notes_path(config, conv_id: str) -> Path:
-    """Resolve the per-conversation notes file. Colocated with the
-    conversation archive + sidecars under ``workspace/conversations/``
-    as ``{conv_id}.notes.md``. Sandboxed — strips traversal characters
-    and falls back to a sentinel name on empty input."""
-    base_dir = (config.workspace_path / "conversations").resolve()
-    safe = conv_id.replace("/", "").replace("\\", "").replace("..", "")
-    if not safe:
-        return base_dir / "_invalid.notes.md"
-    path = (base_dir / f"{safe}.notes.md").resolve()
-    if not path.is_relative_to(base_dir):
-        return base_dir / "_invalid.notes.md"
-    return path
+    """Resolve the per-conversation notes file at
+    conversations/{conv_id}/notes.md (legacy flat fallback during
+    the migration window)."""
+    return sidecar_path(config, conv_id, "notes.md", ".notes.md")
 
 
 def _now_iso() -> str:

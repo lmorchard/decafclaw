@@ -65,6 +65,25 @@ class TestListSystemConversations:
         assert "schedule-dream-20260324-125204" in conv_ids
         assert "web-user-abc123" not in conv_ids
 
+    def test_discovers_dir_layout_and_applies_filters(self, config):
+        conv_dir = config.workspace_path / "conversations"
+        conv_dir.mkdir(parents=True, exist_ok=True)
+        # Dir-layout schedule conv (should be discovered).
+        sched = conv_dir / "schedule-garden-20260324-130000"
+        sched.mkdir(parents=True, exist_ok=True)
+        (sched / "archive.jsonl").write_text(
+            json.dumps({"role": "user", "content": "x"}) + "\n")
+        # Dir-layout web conv (should be excluded by the web- filter).
+        web = conv_dir / "web-user-xyz789"
+        web.mkdir(parents=True, exist_ok=True)
+        (web / "archive.jsonl").write_text(
+            json.dumps({"role": "user", "content": "x"}) + "\n")
+
+        results = list_system_conversations(config)
+        conv_ids = [r["conv_id"] for r in results]
+        assert "schedule-garden-20260324-130000" in conv_ids
+        assert "web-user-xyz789" not in conv_ids
+
     def test_excludes_compacted_sidecars(self, config):
         conv_dir = config.workspace_path / "conversations"
         conv_dir.mkdir(parents=True, exist_ok=True)
