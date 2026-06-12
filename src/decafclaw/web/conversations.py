@@ -8,6 +8,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
+from ..conversation_paths import iter_conversation_archives
+
 log = logging.getLogger(__name__)
 
 
@@ -67,16 +69,8 @@ def list_system_conversations(config, username: str = "",
     (those are managed by ConversationIndex). Delegated children are
     filtered to only show those belonging to the given username.
     """
-    conv_dir = config.workspace_path / "conversations"
-    if not conv_dir.exists():
-        return []
-
     results = []
-    for path in conv_dir.glob("*.jsonl"):
-        # Skip compacted sidecars
-        if path.name.endswith(".compacted.jsonl"):
-            continue
-        conv_id = path.stem
+    for conv_id, path in iter_conversation_archives(config):
         # Skip web-originated conversations (managed by ConversationIndex)
         if conv_id.startswith("web-") and "--child-" not in conv_id:
             continue

@@ -1,7 +1,7 @@
 """Per-conversation vault folder grants — sidecar persistence.
 
 Each conversation that has been granted folder trust gets a JSON sidecar at
-{workspace}/conversations/{conv_id}.vault_grants.json. Stored as a sorted,
+{workspace}/conversations/{conv_id}/vault_grants.json. Stored as a sorted,
 deduped list of folder paths (vault-relative, trailing slash enforced).
 
 Sidecar shape:
@@ -18,21 +18,13 @@ import json
 import logging
 from pathlib import Path
 
+from decafclaw.conversation_paths import sidecar_path
+
 log = logging.getLogger(__name__)
 
 
 def _grants_sidecar_path(config, conv_id: str) -> Path:
-    """Path to the grants JSON sidecar; guarded against directory traversal.
-
-    Mirrors `_canvas_sidecar_path` in src/decafclaw/canvas.py:41-50.
-    """
-    base_dir = (config.workspace_path / "conversations").resolve()
-    if not conv_id or "/" in conv_id or "\\" in conv_id or ".." in conv_id:
-        return base_dir / "_invalid.vault_grants.json"
-    path = (base_dir / f"{conv_id}.vault_grants.json").resolve()
-    if not path.is_relative_to(base_dir):
-        return base_dir / "_invalid.vault_grants.json"
-    return path
+    return sidecar_path(config, conv_id, "vault_grants.json", ".vault_grants.json")
 
 
 def normalize_folder(folder: str, *, warn_on_invalid: bool = False) -> str:

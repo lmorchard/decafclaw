@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from decafclaw.conversation_paths import iter_conversation_archives
 from decafclaw.mail import send_mail
 from decafclaw.media import ToolResult
 
@@ -164,15 +165,14 @@ def _extract_activity(path: Path) -> tuple[str, list[str]]:
 def _collect_scheduled_activity(ctx, hours: int = 24) -> list[dict]:
     """Gather scheduled-task activity records. Returns the raw list
     used by newsletter_list_scheduled_activity."""
-    workspace = Path(ctx.config.workspace_path)
-    conv_dir = workspace / "conversations"
-    if not conv_dir.is_dir():
-        return []
-
     cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
     out: list[dict] = []
-    for path in sorted(conv_dir.glob("schedule-*.jsonl")):
-        parsed = _parse_conv_id(path.stem)
+    archives = sorted(
+        iter_conversation_archives(ctx.config), key=lambda t: t[0])
+    for conv_id, path in archives:
+        if not conv_id.startswith("schedule-"):
+            continue
+        parsed = _parse_conv_id(conv_id)
         if parsed is None:
             continue
         skill_name, ts = parsed
@@ -183,7 +183,7 @@ def _collect_scheduled_activity(ctx, hours: int = 24) -> list[dict]:
         final, touched = _extract_activity(path)
         out.append({
             "skill_name": skill_name,
-            "conv_id": path.stem,
+            "conv_id": conv_id,
             "started_at": ts.isoformat(),
             "final_message": final,
             "vault_pages_touched": touched,

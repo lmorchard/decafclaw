@@ -125,7 +125,7 @@ All vault tools validate that paths stay within the vault root. Path traversal a
 Writes/deletes/renames under the agent folder (`agent/`) execute directly. Operations on pages outside `agent/` go through a three-tier gate:
 
 1. **Static allowlist.** Folders listed in `vault.user_writable_paths` are pre-approved. Path matching is prefix-based on vault-relative paths (no globs). Example: `["creative/", "notes/"]`.
-2. **Per-conversation grants.** The agent can call `vault_grant_folder(folder, reason)` to request trust for a folder. After user approval, all writes/deletes/renames under that folder skip confirmation for the rest of the conversation. Grants persist as a sidecar at `{workspace}/conversations/{conv_id}.vault_grants.json` and reset between conversations.
+2. **Per-conversation grants.** The agent can call `vault_grant_folder(folder, reason)` to request trust for a folder. After user approval, all writes/deletes/renames under that folder skip confirmation for the rest of the conversation. Grants persist as a sidecar at `{workspace}/conversations/{conv_id}/vault_grants.json` and reset between conversations.
 3. **Per-call confirmation.** Anything else triggers a confirmation request showing the operation and a content preview. Approve to proceed; deny returns an error and no change is made.
 
 Heartbeat / scheduled / child-agent contexts can't display confirmations, so writes outside the agent folder fail with an error in those contexts.
