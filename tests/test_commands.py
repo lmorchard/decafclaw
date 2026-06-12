@@ -151,8 +151,8 @@ class TestExecuteCommand:
             body="Do $ARGUMENTS", context="fork",
             allowed_tools=["shell"],
         )
-        with patch("decafclaw.tools.delegate._run_child_turn", new_callable=AsyncMock) as mock:
-            mock.return_value = "child result"
+        with patch("decafclaw.tools.delegate.run_child_turn", new_callable=AsyncMock) as mock:
+            mock.return_value = ("child result", None)
             mode, result = await execute_command(ctx, skill, "the thing")
 
         assert mode == "fork"
@@ -208,8 +208,8 @@ class TestExecuteCommand:
         )
         with patch("decafclaw.tools.skill_tools.activate_skill_internal",
                     new_callable=AsyncMock, return_value="activated") as mock_activate, \
-             patch("decafclaw.tools.delegate._run_child_turn",
-                    new_callable=AsyncMock, return_value="child result"):
+             patch("decafclaw.tools.delegate.run_child_turn",
+                    new_callable=AsyncMock, return_value=("child result", None)):
             mode, result = await execute_command(ctx, skill, "")
 
         assert mode == "fork"
@@ -231,15 +231,15 @@ class TestExecuteCommand:
         )
         with patch("decafclaw.tools.skill_tools.activate_skill_internal",
                     new_callable=AsyncMock) as mock_activate, \
-             patch("decafclaw.tools.delegate._run_child_turn",
-                    new_callable=AsyncMock, return_value="done"):
+             patch("decafclaw.tools.delegate.run_child_turn",
+                    new_callable=AsyncMock, return_value=("done", None)):
             await execute_command(ctx, skill, "")
 
         mock_activate.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_fork_mode_propagates_manager_to_child_turn(self, ctx):
-        """The ctx handed to _run_child_turn MUST carry the manager from the
+        """The ctx handed to run_child_turn MUST carry the manager from the
         parent ctx — otherwise delegate.py bails and the fork never runs."""
         sentinel_manager = object()
         ctx.manager = sentinel_manager
@@ -249,14 +249,14 @@ class TestExecuteCommand:
             body="Do $ARGUMENTS", context="fork",
         )
         with patch(
-            "decafclaw.tools.delegate._run_child_turn",
+            "decafclaw.tools.delegate.run_child_turn",
             new_callable=AsyncMock,
         ) as mock:
-            mock.return_value = "child result"
+            mock.return_value = ("child result", None)
             mode, result = await execute_command(ctx, skill, "go")
 
         assert mode == "fork"
-        # First positional arg to _run_child_turn is parent_ctx
+        # First positional arg to run_child_turn is parent_ctx
         called_ctx = mock.call_args.args[0]
         assert called_ctx.manager is sentinel_manager
 
@@ -271,7 +271,7 @@ class TestExecuteCommand:
             name="test-cmd", description="Test", location=Path("."),
             body="Do $ARGUMENTS", context="fork",
         )
-        # Do NOT mock _run_child_turn — let the real function hit its own
+        # Do NOT mock run_child_turn — let the real function hit its own
         # bail-out so the error text is the one real users would see.
         mode, result = await execute_command(ctx, skill, "go")
 

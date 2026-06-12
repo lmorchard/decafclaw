@@ -101,7 +101,7 @@ async def test_workflow_turn_runs_and_suspends_end_to_end(make_manager):
     from decafclaw.confirmations import ConfirmationAction
     assert state.pending_confirmation.action_type is ConfirmationAction.WORKFLOW_USER_INPUT
     assert state.pending_confirmation.action_data["workflow_name"] == "interview"
-    assert state.pending_confirmation.action_data["seq"] == 0
+    assert state.pending_confirmation.action_data["seq"] == "0"
 
 
 @pytest.mark.asyncio
@@ -129,7 +129,7 @@ async def test_durable_resume_after_simulated_restart(tmp_path):
     # --- Process 1: start; suspends at the topic question; journal hits disk ---
     out1 = await run_workflow(fresh_ctx(), spec.fn, Journal(workflow_name="interview"))
     assert out1.status == "suspended"
-    assert out1.suspend.seq == 0
+    assert out1.suspend.seq == (0,)
 
     # --- "Restart": reconstruct ONLY from the on-disk journal ---
     reloaded = load_journal(cfg, conv_id)
@@ -162,8 +162,8 @@ async def test_durable_resume_after_simulated_restart(tmp_path):
     # The recovered answer was REPLAYED from the journal (user_input at seq 0 was
     # NOT re-raised as a suspension), and only llm_calls ran live:
     final = load_journal(cfg, conv_id)
-    assert final.get(0).kind == "user_input"
-    assert final.get(0).result == "tide pools"
+    assert final.get((0,)).kind == "user_input"
+    assert final.get((0,)).result == "tide pools"
     # Live calls were the decision + synth llm_calls only (2), never a user_input.
     # Trace: seq0 user_input → cached (no live call); seq1 llm_call decision →
     # live (done=True, break); seq2 llm_call synth → live (artifact). Total: 2.
