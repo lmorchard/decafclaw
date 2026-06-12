@@ -15,7 +15,7 @@ from decafclaw.confirmations import (
 from decafclaw.media import ToolResult
 
 from .engine import run_workflow
-from .journal import Journal, load_journal, save_journal
+from .journal import Journal, load_journal, path_from_any, path_to_str, save_journal
 from .registry import get_workflow
 
 log = logging.getLogger(__name__)
@@ -63,7 +63,10 @@ async def run_workflow_turn(ctx, manager, *,
             message=s.prompt,
             action_data={
                 "workflow_name": workflow_name,
-                "seq": s.seq,
+                # action_data is JSON-bound (lives in the archive). Serialize
+                # the tuple-path seq as a dotted string here; the on-approve
+                # handler parses it back via path_from_any.
+                "seq": path_to_str(s.seq),
                 "args_fingerprint": s.args_fingerprint,
                 "prompt": s.prompt,
                 "choices": s.choices,
@@ -90,7 +93,8 @@ class WorkflowUserInputHandler:
         if journal is None:
             log.error("workflow resume: no journal for conv %s", ctx.conv_id)
             return {"continue_loop": False}
-        journal.append(ad["seq"], "user_input", ad["args_fingerprint"], answer)
+        seq = path_from_any(ad["seq"])
+        journal.append(seq, "user_input", ad["args_fingerprint"], answer)
         journal.status = "running"
         save_journal(ctx.config, ctx.conv_id, journal)
 

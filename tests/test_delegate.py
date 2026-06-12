@@ -10,15 +10,19 @@ from decafclaw.events import EventBus
 from decafclaw.media import ToolResult
 from decafclaw.tools.delegate import (
     DEFAULT_CHILD_SYSTEM_PROMPT,
-    _run_child_turn,
+    run_child_turn,
     tool_delegate_task,
     tool_delegate_tasks,
 )
 
 
 def _text(result):
-    """Extract text from str or ToolResult."""
-    return result.text if isinstance(result, ToolResult) else result
+    """Extract text from a str / ToolResult / (text, data) tuple."""
+    if isinstance(result, ToolResult):
+        return result.text
+    if isinstance(result, tuple):
+        return result[0]
+    return result
 
 
 def _mock_llm_response(content="child result"):
@@ -47,13 +51,13 @@ def ctx(config):
 class TestRunChildTurn:
     @pytest.mark.asyncio
     async def test_basic_child_turn(self, ctx):
-        """Child agent runs and returns result text."""
+        """Child agent runs and returns (text, None) when no schema given."""
         with patch("decafclaw.agent.run_agent_turn", new_callable=AsyncMock) as mock_run:
             mock_run.return_value = ToolResult(text="child says hello")
 
-            result = await _run_child_turn(ctx, "say hello")
+            result = await run_child_turn(ctx, "say hello")
 
-        assert result == "child says hello"
+        assert result == ("child says hello", None)
         mock_run.assert_called_once()
 
         # Check the child context passed to run_agent_turn
@@ -68,7 +72,7 @@ class TestRunChildTurn:
         with patch("decafclaw.agent.run_agent_turn", new_callable=AsyncMock) as mock_run:
             mock_run.return_value = ToolResult(text="ok")
 
-            await _run_child_turn(ctx, "task")
+            await run_child_turn(ctx, "task")
 
         child_ctx = mock_run.call_args[0][0]
         assert "delegate_task" not in child_ctx.tools.allowed
@@ -84,7 +88,7 @@ class TestRunChildTurn:
         with patch("decafclaw.agent.run_agent_turn", new_callable=AsyncMock) as mock_run:
             mock_run.return_value = ToolResult(text="ok")
 
-            await _run_child_turn(ctx, "task")
+            await run_child_turn(ctx, "task")
 
         child_ctx = mock_run.call_args[0][0]
         assert child_ctx.skills.data == {"vault_base_path": "obsidian/main"}
@@ -99,7 +103,7 @@ class TestRunChildTurn:
         with patch("decafclaw.agent.run_agent_turn", new_callable=AsyncMock) as mock_run:
             mock_run.return_value = ToolResult(text="ok")
 
-            await _run_child_turn(ctx, "task")
+            await run_child_turn(ctx, "task")
 
         child_ctx = mock_run.call_args[0][0]
         assert "some_skill_tool" in child_ctx.tools.extra
@@ -114,7 +118,7 @@ class TestRunChildTurn:
         ctx.config.agent.child_timeout_sec = 0.1
 
         with patch("decafclaw.agent.run_agent_turn", new_callable=AsyncMock, side_effect=slow_turn):
-            result = await _run_child_turn(ctx, "slow task")
+            result = await run_child_turn(ctx, "slow task")
 
         assert "timed out" in _text(result)
 
@@ -123,7 +127,7 @@ class TestRunChildTurn:
         """Child that raises returns error text containing the exception message."""
         with patch("decafclaw.agent.run_agent_turn", new_callable=AsyncMock,
                    side_effect=Exception("boom")):
-            result = await _run_child_turn(ctx, "bad task")
+            result = await run_child_turn(ctx, "bad task")
 
         # _start_turn catches the exception and forwards it as [error: boom]
         assert "boom" in _text(result)
@@ -137,7 +141,7 @@ class TestRunChildTurn:
         with patch("decafclaw.agent.run_agent_turn", new_callable=AsyncMock) as mock_run:
             mock_run.return_value = ToolResult(text="ok")
 
-            await _run_child_turn(ctx, "task")
+            await run_child_turn(ctx, "task")
 
         child_ctx = mock_run.call_args[0][0]
         assert child_ctx.cancelled is cancel
@@ -147,7 +151,7 @@ class TestRunChildTurn:
         """Missing manager on parent ctx returns an error."""
         ctx.manager = None
 
-        result = await _run_child_turn(ctx, "task")
+        result = await run_child_turn(ctx, "task")
 
         assert "error" in _text(result)
         assert "manager" in _text(result).lower()
@@ -166,7 +170,7 @@ class TestRunChildTurn:
 
         with patch("decafclaw.agent.run_agent_turn", new_callable=AsyncMock,
                    side_effect=fake_run_agent_turn):
-            await _run_child_turn(ctx, "whatever")
+            await run_child_turn(ctx, "whatever")
 
         assert seen["user_id"] == "alice"
 
@@ -175,8 +179,8 @@ class TestToolDelegateTask:
     @pytest.mark.asyncio
     async def test_single_task(self, ctx):
         """Single task returns result wrapped in ToolResult."""
-        with patch("decafclaw.tools.delegate._run_child_turn",
-                   new_callable=AsyncMock, return_value="result one"):
+        with patch("decafclaw.tools.delegate.run_child_turn",
+                   new_callable=AsyncMock, return_value=("result one", None)):
             result = await tool_delegate_task(ctx, "do thing")
 
         assert isinstance(result, ToolResult)
@@ -261,22 +265,25 @@ class TestStructuredReturns:
     async def test_no_schema_text_only(self, ctx):
         """Without schema → text-only ToolResult, no data field
         (preserves byte-for-byte the existing single-task behaviour)."""
-        with patch("decafclaw.tools.delegate._run_child_turn",
-                   new_callable=AsyncMock, return_value="just prose"):
+        with patch("decafclaw.tools.delegate.run_child_turn",
+                   new_callable=AsyncMock, return_value=("just prose", None)):
             result = await tool_delegate_task(ctx, "do thing")
         assert result.text == "just prose"
         assert result.data is None
 
     @pytest.mark.asyncio
     async def test_schema_with_valid_json_populates_data(self, ctx):
-        child_response = (
-            "Analyzed the auth module — three issues found.\n\n"
-            "```json\n"
-            "{\"count\": 3, \"items\": [\"x\", \"y\", \"z\"]}\n"
-            "```"
-        )
-        with patch("decafclaw.tools.delegate._run_child_turn",
-                   new_callable=AsyncMock, return_value=child_response):
+        """With schema → prose lands on .text, parsed JSON on .data.
+        Parsing now happens inside run_child_turn, so the mock returns
+        the post-parsed tuple."""
+        with patch(
+            "decafclaw.tools.delegate.run_child_turn",
+            new_callable=AsyncMock,
+            return_value=(
+                "Analyzed the auth module — three issues found.",
+                {"count": 3, "items": ["x", "y", "z"]},
+            ),
+        ):
             result = await tool_delegate_task(
                 ctx, "audit auth",
                 return_schema={"count": "int", "items": "list[str]"},
@@ -288,9 +295,11 @@ class TestStructuredReturns:
 
     @pytest.mark.asyncio
     async def test_schema_with_no_json_falls_back_to_prose(self, ctx, caplog):
-        """Child forgot to emit JSON → silent fallback, debug log."""
-        with patch("decafclaw.tools.delegate._run_child_turn",
-                   new_callable=AsyncMock, return_value="forgot the json"):
+        """Child forgot to emit JSON → silent fallback, debug log.
+        With parsing moved into run_child_turn, the fallback shows up
+        as (raw_text, None)."""
+        with patch("decafclaw.tools.delegate.run_child_turn",
+                   new_callable=AsyncMock, return_value=("forgot the json", None)):
             result = await tool_delegate_task(
                 ctx, "audit", return_schema={"count": "int"},
             )
@@ -301,8 +310,8 @@ class TestStructuredReturns:
     async def test_schema_with_malformed_json_falls_back(self, ctx):
         """Bad JSON → silent fallback, raw text returned as-is."""
         bad = "prose\n```json\n{bad json,\n```"
-        with patch("decafclaw.tools.delegate._run_child_turn",
-                   new_callable=AsyncMock, return_value=bad):
+        with patch("decafclaw.tools.delegate.run_child_turn",
+                   new_callable=AsyncMock, return_value=(bad, None)):
             result = await tool_delegate_task(
                 ctx, "audit", return_schema={"count": "int"},
             )
@@ -311,15 +320,15 @@ class TestStructuredReturns:
 
     @pytest.mark.asyncio
     async def test_schema_passes_through_to_child_turn(self, ctx):
-        """Verify the schema reaches `_run_child_turn` so the addendum
+        """Verify the schema reaches `run_child_turn` so the addendum
         gets rendered into the child system prompt."""
         seen = {}
 
         async def fake_run(parent_ctx, task, model="", max_iterations=0, **kwargs):
             seen["schema"] = kwargs.get("return_schema")
-            return "ok"
+            return ("ok", None)
 
-        with patch("decafclaw.tools.delegate._run_child_turn",
+        with patch("decafclaw.tools.delegate.run_child_turn",
                    side_effect=fake_run):
             await tool_delegate_task(
                 ctx, "go", return_schema={"foo": "bar"},
@@ -419,7 +428,7 @@ class TestVaultAccessPolicy:
 
         with patch("decafclaw.agent.run_agent_turn", new_callable=AsyncMock) as mock_run:
             mock_run.return_value = ToolResult(text="ok")
-            await _run_child_turn(ctx, "task")
+            await run_child_turn(ctx, "task")
 
         child_ctx = mock_run.call_args[0][0]
         for tool in _VAULT_READ_TOOLS:
@@ -448,7 +457,7 @@ class TestVaultAccessPolicy:
 
         with patch("decafclaw.agent.run_agent_turn", new_callable=AsyncMock) as mock_run:
             mock_run.return_value = ToolResult(text="ok")
-            await _run_child_turn(ctx, "task", allow_vault_read=True)
+            await run_child_turn(ctx, "task", allow_vault_read=True)
 
         child_ctx = mock_run.call_args[0][0]
         for tool in _VAULT_READ_TOOLS:
@@ -465,7 +474,7 @@ class TestVaultAccessPolicy:
         """Opt-in for proactive retrieval flips skip_vault_retrieval off."""
         with patch("decafclaw.agent.run_agent_turn", new_callable=AsyncMock) as mock_run:
             mock_run.return_value = ToolResult(text="ok")
-            await _run_child_turn(ctx, "task", allow_vault_retrieval=True)
+            await run_child_turn(ctx, "task", allow_vault_retrieval=True)
 
         child_ctx = mock_run.call_args[0][0]
         assert child_ctx.skip_vault_retrieval is False
@@ -483,7 +492,7 @@ class TestVaultAccessPolicy:
 
         with patch("decafclaw.agent.run_agent_turn", new_callable=AsyncMock) as mock_run:
             mock_run.return_value = ToolResult(text="ok")
-            await _run_child_turn(
+            await run_child_turn(
                 ctx, "task",
                 allow_vault_retrieval=True, allow_vault_read=True,
             )
@@ -497,15 +506,15 @@ class TestVaultAccessPolicy:
 
     @pytest.mark.asyncio
     async def test_tool_wrapper_threads_flags_through(self, ctx):
-        """`tool_delegate_task` parameters reach `_run_child_turn`."""
+        """`tool_delegate_task` parameters reach `run_child_turn`."""
         seen = {}
 
         async def fake_run(parent_ctx, task, model="", max_iterations=0, **kwargs):
             seen["allow_vault_retrieval"] = kwargs.get("allow_vault_retrieval")
             seen["allow_vault_read"] = kwargs.get("allow_vault_read")
-            return ToolResult(text="ok")
+            return ("ok", None)
 
-        with patch("decafclaw.tools.delegate._run_child_turn", side_effect=fake_run):
+        with patch("decafclaw.tools.delegate.run_child_turn", side_effect=fake_run):
             await tool_delegate_task(
                 ctx, "task",
                 allow_vault_retrieval=True,
@@ -521,7 +530,7 @@ class TestVaultAccessPolicy:
 class TestDelegateTasks:
     """Parallel batch dispatch via `delegate_tasks` (#397).
 
-    These tests patch ``_run_child_turn`` so we can control per-task
+    These tests patch ``run_child_turn`` so we can control per-task
     return values, simulate failures, and observe concurrency without
     spinning up real child agents.
     """
@@ -539,10 +548,10 @@ class TestDelegateTasks:
         ctx.publish = fake_publish
 
         async def fake_run(parent_ctx, task, **kwargs):
-            return f"result for {task}"
+            return (f"result for {task}", None)
 
         with patch(
-            "decafclaw.tools.delegate._run_child_turn", side_effect=fake_run,
+            "decafclaw.tools.delegate.run_child_turn", side_effect=fake_run,
         ):
             result = await tool_delegate_tasks(ctx, ["a", "b", "c"])
 
@@ -569,11 +578,11 @@ class TestDelegateTasks:
             if task == "boom":
                 raise RuntimeError("kaboom")
             if task == "softfail":
-                return ToolResult(text="[error: subtask timed out]")
-            return f"ok for {task}"
+                return ("[error: subtask timed out]", None)
+            return (f"ok for {task}", None)
 
         with patch(
-            "decafclaw.tools.delegate._run_child_turn", side_effect=fake_run,
+            "decafclaw.tools.delegate.run_child_turn", side_effect=fake_run,
         ):
             result = await tool_delegate_tasks(
                 ctx, ["fine", "softfail", "boom", "alsofine"],
@@ -642,10 +651,10 @@ class TestDelegateTasks:
             await cap_full.wait()
             async with state_lock:
                 state["in_flight"] -= 1
-            return f"done {task}"
+            return (f"done {task}", None)
 
         with patch(
-            "decafclaw.tools.delegate._run_child_turn", side_effect=fake_run,
+            "decafclaw.tools.delegate.run_child_turn", side_effect=fake_run,
         ):
             result = await tool_delegate_tasks(
                 ctx, ["a", "b", "c", "d"],
@@ -657,17 +666,15 @@ class TestDelegateTasks:
     @pytest.mark.asyncio
     async def test_structured_return_parses_per_task(self, ctx):
         """When return_schema is supplied, each successful entry's
-        data is the parsed JSON and text is the prose."""
+        data is the parsed JSON and text is the prose.
+
+        Parsing happens inside run_child_turn now, so the mock returns
+        the post-parsed (prose, data) tuple."""
         async def fake_run(parent_ctx, task, **kwargs):
-            return (
-                f"prose for {task}\n\n"
-                "```json\n"
-                f'{{"task": "{task}", "score": 7}}\n'
-                "```\n"
-            )
+            return (f"prose for {task}", {"task": task, "score": 7})
 
         with patch(
-            "decafclaw.tools.delegate._run_child_turn", side_effect=fake_run,
+            "decafclaw.tools.delegate.run_child_turn", side_effect=fake_run,
         ):
             result = await tool_delegate_tasks(
                 ctx, ["x", "y"], return_schema={"task": "string", "score": 0},
@@ -681,16 +688,16 @@ class TestDelegateTasks:
 
     @pytest.mark.asyncio
     async def test_event_override_routed_to_child_id(self, ctx):
-        """Each child's _run_child_turn call gets a unique override
+        """Each child's run_child_turn call gets a unique override
         for `event_context_id`, so parent UI doesn't get flooded."""
         seen_overrides: list[str | None] = []
 
         async def fake_run(parent_ctx, task, **kwargs):
             seen_overrides.append(kwargs.get("event_context_id_override"))
-            return f"ok {task}"
+            return (f"ok {task}", None)
 
         with patch(
-            "decafclaw.tools.delegate._run_child_turn", side_effect=fake_run,
+            "decafclaw.tools.delegate.run_child_turn", side_effect=fake_run,
         ):
             await tool_delegate_tasks(ctx, ["a", "b", "c"])
 
@@ -701,13 +708,13 @@ class TestDelegateTasks:
     @pytest.mark.asyncio
     async def test_run_child_turn_event_override_kwarg(self, ctx):
         """The new `event_context_id_override` kwarg on
-        `_run_child_turn` reaches the setup callback that
+        `run_child_turn` reaches the setup callback that
         `enqueue_turn` invokes — so the singular path stays unaffected
         and the plural override actually lands on the child ctx."""
         with patch("decafclaw.agent.run_agent_turn", new_callable=AsyncMock) as mock_run:
             mock_run.return_value = ToolResult(text="ok")
 
-            await _run_child_turn(
+            await run_child_turn(
                 ctx, "task",
                 event_context_id_override="custom-override-id",
             )
@@ -723,7 +730,7 @@ class TestDelegateTasks:
         with patch("decafclaw.agent.run_agent_turn", new_callable=AsyncMock) as mock_run:
             mock_run.return_value = ToolResult(text="ok")
 
-            await _run_child_turn(ctx, "task")
+            await run_child_turn(ctx, "task")
 
         child_ctx = mock_run.call_args[0][0]
         assert child_ctx.event_context_id == "parent-subscriber-id"

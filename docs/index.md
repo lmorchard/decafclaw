@@ -45,7 +45,7 @@ These docs are as much for me as they are for agents working on this project. Th
 
 ## Agent Behavior
 
-- [Workflow Replay Engine](workflows.md) — Durable, human-in-the-loop workflows with deterministic replay; code owns control flow, LLM is a structured-output worker
+- [Workflow Replay Engine](workflows.md) — Durable, human-in-the-loop workflows with deterministic replay; code owns control flow, LLM is a structured-output worker; primitives include `llm_call`, `user_input`, `tool_call`, `subagent`, `parallel`, `pipeline`
 - [Self-Reflection](reflection.md) — Binary judge + critique + retry before delivering responses (Reflexion pattern)
 - [Sub-Agent Delegation](delegation.md) — Fork child agents for concurrent subtasks
 - [Heartbeat](heartbeat.md) — Periodic agent wake-up for monitoring and recurring tasks
