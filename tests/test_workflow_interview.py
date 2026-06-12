@@ -45,19 +45,19 @@ async def test_interview_replays_to_artifact(tmp_path):
         _ask_prompt,
         _synth_prompt,
     )
-    j.append(0, "user_input", fp_user("What should this interview be about?"),
+    j.append((0,), "user_input", fp_user("What should this interview be about?"),
              "tide pools")
     q1_prompt = _ask_prompt("tide pools", [])
-    j.append(1, "llm_call", fp_llm(q1_prompt, _DECISION_SCHEMA, _SYS_ASK),
+    j.append((1,), "llm_call", fp_llm(q1_prompt, _DECISION_SCHEMA, _SYS_ASK),
              {"done": False, "question": "What draws you to them?"})
-    j.append(2, "user_input", fp_user("What draws you to them?"), "the creatures")
+    j.append((2,), "user_input", fp_user("What draws you to them?"), "the creatures")
     q2_prompt = _ask_prompt(
         "tide pools", [{"q": "What draws you to them?", "a": "the creatures"}])
-    j.append(3, "llm_call", fp_llm(q2_prompt, _DECISION_SCHEMA, _SYS_ASK),
+    j.append((3,), "llm_call", fp_llm(q2_prompt, _DECISION_SCHEMA, _SYS_ASK),
              {"done": True, "question": ""})
     synth_prompt = _synth_prompt(
         "tide pools", [{"q": "What draws you to them?", "a": "the creatures"}])
-    j.append(4, "llm_call", fp_llm(synth_prompt, _ARTIFACT_SCHEMA, _SYS_SYNTH),
+    j.append((4,), "llm_call", fp_llm(synth_prompt, _ARTIFACT_SCHEMA, _SYS_SYNTH),
              {"title": "Tide Pools", "body": "..."})
 
     outcome = await run_workflow(_ctx(tmp_path), spec.fn, j)

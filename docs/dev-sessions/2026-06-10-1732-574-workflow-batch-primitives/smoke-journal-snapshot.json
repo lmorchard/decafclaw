@@ -1,0 +1,67 @@
+{
+  "workflow_name": "research",
+  "status": "running",
+  "entries": [
+    {
+      "seq": "0",
+      "kind": "user_input",
+      "args_fingerprint": "6dfb9c243a409066",
+      "result": "artificial coral reefs in the Mediterranean"
+    },
+    {
+      "seq": "1",
+      "kind": "user_input",
+      "args_fingerprint": "1d5831b730324642",
+      "result": "for a general audience; focus on ecological effectiveness"
+    },
+    {
+      "seq": "2",
+      "kind": "llm_call",
+      "args_fingerprint": "d1d0279b8437cddf",
+      "result": {
+        "queries": [
+          "artificial reefs Mediterranean ecological benefits for marine life",
+          "biodiversity impact of artificial coral reefs in Mediterranean",
+          "challenges and limitations of artificial reefs in the Mediterranean",
+          "successful artificial reef projects Mediterranean Sea examples"
+        ]
+      }
+    },
+    {
+      "seq": "3.0.0",
+      "kind": "tool_call",
+      "args_fingerprint": "1749650f5d2012e6",
+      "result": {
+        "text": "[error: unknown tool 'tabstack_research'. Did you mean: workspace_search. Use the exact name from your tool list. To discover available tools, call tool_search.]",
+        "data": null
+      }
+    },
+    {
+      "seq": "3.1.0",
+      "kind": "tool_call",
+      "args_fingerprint": "c3c185850106762f",
+      "result": {
+        "text": "[error: unknown tool 'tabstack_research'. Did you mean: workspace_search. Use the exact name from your tool list. To discover available tools, call tool_search.]",
+        "data": null
+      }
+    },
+    {
+      "seq": "3.2.0",
+      "kind": "tool_call",
+      "args_fingerprint": "97866325932182d2",
+      "result": {
+        "text": "[error: unknown tool 'tabstack_research'. Did you mean: workspace_search. Use the exact name from your tool list. To discover available tools, call tool_search.]",
+        "data": null
+      }
+    },
+    {
+      "seq": "3.3.0",
+      "kind": "tool_call",
+      "args_fingerprint": "e9f8044652346150",
+      "result": {
+        "text": "[error: unknown tool 'tabstack_research'. Did you mean: workspace_search. Use the exact name from your tool list. To discover available tools, call tool_search.]",
+        "data": null
+      }
+    }
+  ]
+}

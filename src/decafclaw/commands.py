@@ -417,16 +417,15 @@ async def execute_command(ctx, skill: SkillInfo, arguments: str) -> tuple[str, s
                            skill_dir=str(skill.location.resolve()))
 
     if skill.context == "fork":
-        from .tools.delegate import _run_child_turn
+        from .tools.delegate import run_child_turn
         # Fork mode: hard-restrict tools since the child turn is isolated
         if skill.allowed_tools:
             ctx.tools.allowed = set(skill.allowed_tools)
         # User-invoked commands use the full iteration limit, not the child limit
-        result = await _run_child_turn(
+        text, _data = await run_child_turn(
             ctx, body, model=skill.model or "",
             max_iterations=ctx.config.agent.max_tool_iterations)
-        from .media import ToolResult as _TR
-        return "fork", result.text if isinstance(result, _TR) else str(result)
+        return "fork", text
 
     # Inline mode: return the substituted body as the user message
     return "inline", body

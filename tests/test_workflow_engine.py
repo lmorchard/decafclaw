@@ -32,7 +32,7 @@ async def test_completes_when_journal_fully_seeded(tmp_path):
 
     j = Journal(workflow_name="t")
     fp = fingerprint("user_input", {"prompt": "topic?", "choices": None})
-    j.append(0, "user_input", fp, "tide pools")
+    j.append((0,), "user_input", fp, "tide pools")
 
     outcome = await run_workflow(_ctx(tmp_path), wf, j)
     assert outcome.status == "done"

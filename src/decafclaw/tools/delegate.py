@@ -20,6 +20,11 @@ DEFAULT_CHILD_SYSTEM_PROMPT = (
     "When a skill below shows bash/curl commands, run them with the shell tool."
 )
 
+# `run_child_turn` surfaces failure via text starting with this prefix.
+# Batch error classification (`_run_one_delegated`) and external callers rely
+# on this convention — keep all error returns in sync with the prefix.
+ERROR_TEXT_PREFIX = "[error:"
+
 # Vault-access policy for child agents (#396). Default is no-access;
 # the parent opts the child in via flags on ``delegate_task``. Vault
 # WRITE tools are categorically blocked — if a child's work should
@@ -109,19 +114,29 @@ def _parse_structured_output(text: str) -> tuple[Any | None, str]:
     return parsed, prose
 
 
-async def _run_child_turn(parent_ctx, task, model: str = "",
-                          max_iterations: int = 0,
-                          *,
-                          allow_vault_retrieval: bool = False,
-                          allow_vault_read: bool = False,
-                          return_schema: dict | None = None,
-                          event_context_id_override: str | None = None):
+async def run_child_turn(parent_ctx, task, model: str = "",
+                         max_iterations: int = 0,
+                         *,
+                         allowed_tools: list[str] | None = None,
+                         allow_vault_retrieval: bool = False,
+                         allow_vault_read: bool = False,
+                         return_schema: dict | None = None,
+                         event_context_id_override: str | None = None
+                         ) -> tuple[str, dict | None]:
     """Run a child agent turn via ConversationManager, preserving the
     parent's tools, skills, and event routing.
 
     Args:
         model: Override model for the child. Empty = inherit parent's.
         max_iterations: Override max tool iterations. 0 = use child_max_tool_iterations.
+        allowed_tools: Optional explicit allowlist for the child. When
+            provided, the child sees ONLY these tools (still minus the
+            categorical excludes: ``delegate_task``,
+            ``activate_skill``, ``refresh_skills``, ``tool_search``,
+            and the vault-write set). Use this from workflows to
+            constrain a child agent narrowly. ``None`` (default) means
+            the child inherits the parent's full tool set minus the
+            standard excludes.
         allow_vault_retrieval: When False (default), the child runs
             with ``skip_vault_retrieval=True`` — no proactive memory
             injection. Set True to opt the child INTO the parent's
@@ -135,15 +150,23 @@ async def _run_child_turn(parent_ctx, task, model: str = "",
         return_schema: Optional JSON-schema-shaped dict (#395). When
             supplied, the child system prompt gets an addendum
             instructing it to emit a fenced JSON block matching the
-            shape after any prose. The caller is responsible for
-            parsing the JSON out of the response.
+            shape after any prose. The fenced JSON block is parsed and
+            returned alongside the prose-only text.
         event_context_id_override: When non-None, the child's
             ``event_context_id`` is set to this value instead of
             inheriting the parent's subscriber id. Used by
             ``delegate_tasks`` (#397) to suppress per-child progress
             events from the parent UI.
 
-    Returns the child's text response, or an error string on failure.
+    Returns ``(text, data)``:
+        * On success without ``return_schema``: ``(child_text, None)``.
+        * On success WITH ``return_schema`` and a parseable JSON block:
+          ``(prose_with_block_stripped, parsed_dict)``.
+        * On success WITH ``return_schema`` but no parseable block:
+          ``(raw_text, None)`` (silent fallback).
+        * On timeout / missing manager / child exception: the text is
+          an ``[error: ...]`` string and data is ``None``. Callers can
+          detect the error path via that prefix.
     """
     from ..conversation_manager import TurnKind  # deferred: circular dep
     from . import TOOLS  # deferred: circular dep
@@ -198,6 +221,8 @@ async def _run_child_turn(parent_ctx, task, model: str = "",
 
         # Child inherits parent's tools minus delegation/activation.
         # If parent has restricted allowed_tools, respect that restriction.
+        # If an explicit `allowed_tools` was passed (workflow callers),
+        # that narrows further.
         excluded = {"delegate_task", "activate_skill", "refresh_skills", "tool_search"}
         # Vault policy (#396): writes are categorically blocked for
         # children regardless of flags; reads require explicit opt-in.
@@ -208,6 +233,8 @@ async def _run_child_turn(parent_ctx, task, model: str = "",
         parent_allowed = parent_ctx.tools.allowed
         if parent_allowed is not None:
             all_tools = all_tools & parent_allowed
+        if allowed_tools is not None:
+            all_tools = all_tools & set(allowed_tools)
         child_ctx.tools.allowed = all_tools - excluded
 
         # Carry over parent's activated skill tools and data
@@ -234,9 +261,10 @@ async def _run_child_turn(parent_ctx, task, model: str = "",
 
     manager = parent_ctx.manager
     if manager is None:
-        return ToolResult(
-            text="[error: delegate_task requires a ConversationManager; "
-                 "no manager on parent ctx]"
+        return (
+            "[error: delegate_task requires a ConversationManager; "
+            "no manager on parent ctx]",
+            None,
         )
 
     timeout = config.agent.child_timeout_sec
@@ -251,11 +279,22 @@ async def _run_child_turn(parent_ctx, task, model: str = "",
             user_id=parent_ctx.user_id,
         )
         result_text = await asyncio.wait_for(future, timeout=timeout)
-        return result_text or ""
     except asyncio.TimeoutError:
-        return ToolResult(text=f"[error: subtask timed out after {timeout}s]")
+        return (f"[error: subtask timed out after {timeout}s]", None)
     except Exception as e:
-        return ToolResult(text=f"[error: subtask failed: {e}]")
+        return (f"[error: subtask failed: {e}]", None)
+
+    raw_text = result_text or ""
+    if return_schema is None:
+        return (raw_text, None)
+    parsed, prose = _parse_structured_output(raw_text)
+    if parsed is None:
+        log.debug(
+            "run_child_turn: child response had no parseable JSON block; "
+            "falling back to prose-only return",
+        )
+        return (raw_text, None)
+    return (prose or raw_text, parsed)
 
 
 async def tool_delegate_task(
@@ -294,28 +333,19 @@ async def tool_delegate_task(
     if not task or not task.strip():
         return ToolResult(text="[error: task description is required]")
 
-    raw = await _run_child_turn(
+    text, data = await run_child_turn(
         ctx, task, model=model,
         allow_vault_retrieval=allow_vault_retrieval,
         allow_vault_read=allow_vault_read,
         return_schema=return_schema,
     )
-    # Error paths in _run_child_turn return ToolResult directly; pass through.
-    if isinstance(raw, ToolResult):
-        return raw
-
-    raw_text = raw or ""
-    if return_schema is None:
-        return ToolResult(text=raw_text)
-
-    parsed, prose = _parse_structured_output(raw_text)
-    if parsed is None:
-        log.debug(
-            "delegate_task: child response had no parseable JSON block; "
-            "falling back to prose-only return",
-        )
-        return ToolResult(text=raw_text)
-    return ToolResult(text=prose or raw_text, data=parsed)
+    # `run_child_turn` returns the error string in `text` (prefixed
+    # with "[error: ...]") and data=None for failures. Pass it through
+    # as a text-only ToolResult so the agent sees the same shape it
+    # always did.
+    if data is None:
+        return ToolResult(text=text)
+    return ToolResult(text=text, data=data)
 
 
 async def _run_one_delegated(
@@ -343,7 +373,7 @@ async def _run_one_delegated(
     """
     async with semaphore:
         try:
-            raw = await _run_child_turn(
+            text, data = await run_child_turn(
                 parent_ctx, task, model=model,
                 allow_vault_retrieval=allow_vault_retrieval,
                 allow_vault_read=allow_vault_read,
@@ -361,31 +391,19 @@ async def _run_one_delegated(
                 "error": f"delegate_tasks internal error: {exc}",
             }
         else:
-            if isinstance(raw, ToolResult):
-                # _run_child_turn surfaces failure as a ToolResult with
-                # an "[error: ...]" prefix; preserve it as the error
-                # field so callers can inspect it.
-                entry = {"index": idx, "ok": False, "error": raw.text or ""}
+            # `run_child_turn` surfaces failure via an ERROR_TEXT_PREFIX-tagged
+            # text + data=None; preserve it as the entry's error field.
+            if data is None and text.startswith(ERROR_TEXT_PREFIX):
+                entry = {"index": idx, "ok": False, "error": text}
+            elif data is None:
+                entry = {"index": idx, "ok": True, "text": text}
             else:
-                raw_text = raw or ""
-                if return_schema is None:
-                    entry = {"index": idx, "ok": True, "text": raw_text}
-                else:
-                    parsed, prose = _parse_structured_output(raw_text)
-                    if parsed is None:
-                        log.debug(
-                            "delegate_tasks: child %d had no parseable "
-                            "JSON block; falling back to prose-only.",
-                            idx,
-                        )
-                        entry = {"index": idx, "ok": True, "text": raw_text}
-                    else:
-                        entry = {
-                            "index": idx,
-                            "ok": True,
-                            "text": prose or raw_text,
-                            "data": parsed,
-                        }
+                entry = {
+                    "index": idx,
+                    "ok": True,
+                    "text": text,
+                    "data": data,
+                }
 
         async with progress_lock:
             progress["done"] += 1

@@ -43,7 +43,7 @@ async def test_handler_journals_answer_and_enqueues_resume(tmp_path):
     request = ConfirmationRequest(
         action_type=ConfirmationAction.WORKFLOW_USER_INPUT,
         message="What should this interview be about?",
-        action_data={"workflow_name": "interview", "seq": 0,
+        action_data={"workflow_name": "interview", "seq": "0",
                      "args_fingerprint": fp, "prompt": "...", "choices": None},
         timeout=None,
     )
@@ -61,8 +61,8 @@ async def test_handler_journals_answer_and_enqueues_resume(tmp_path):
     out = await handler.on_approve(_ctx(tmp_path), request, response)
 
     reloaded = load_journal(cfg, "convR")
-    assert reloaded.get(0).kind == "user_input"
-    assert reloaded.get(0).result == "tide pools"
+    assert reloaded.get((0,)).kind == "user_input"
+    assert reloaded.get((0,)).result == "tide pools"
     assert reloaded.status == "running"
     assert enqueued and enqueued[0][1]["metadata"]["resume"] is True
     assert enqueued[0][1]["metadata"]["workflow_name"] == "interview"
@@ -87,7 +87,8 @@ async def test_run_workflow_turn_fresh_start_suspends_and_posts(tmp_path):
         workflow_name="interview", resume=False)
     assert posted, "a confirmation should be posted on suspend"
     assert posted[0].action_type == ConfirmationAction.WORKFLOW_USER_INPUT
-    assert posted[0].action_data["seq"] == 0
+    # action_data carries the tuple-path seq as a dotted string for JSON safety.
+    assert posted[0].action_data["seq"] == "0"
     assert posted[0].action_data["workflow_name"] == "interview"
     from decafclaw.media import ToolResult
     assert isinstance(result, ToolResult)

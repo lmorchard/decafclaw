@@ -17,13 +17,24 @@ class WorkflowSuspended(Exception):
     response, journal the answer at the right position.
     """
 
-    def __init__(self, *, seq: int, args_fingerprint: str, prompt: str,
-                 choices: list[str] | None = None):
+    def __init__(self, *, seq: tuple[int, ...], args_fingerprint: str,
+                 prompt: str, choices: list[str] | None = None):
         super().__init__(f"workflow suspended at step {seq}: {prompt!r}")
-        self.seq = seq
+        self.seq: tuple[int, ...] = seq
         self.args_fingerprint = args_fingerprint
         self.prompt = prompt
         self.choices = choices
+
+
+class WorkflowToolNotAllowed(WorkflowError):
+    """Raised when `wf.tool_call` requests a tool not in ctx.tools.allowed.
+
+    A workflow's allowlist is a hard gate: a tool name missing from it is
+    a programming error in the orchestrator, not a workflow desync, so we
+    fail loud before consulting the journal. The check still fires during
+    replay — if the allowlist shrinks between turns, the caller should
+    hear about it.
+    """
 
 
 class WorkflowNonDeterministic(WorkflowError):
@@ -33,13 +44,13 @@ class WorkflowNonDeterministic(WorkflowError):
     orchestrator. Fail loudly rather than return a stale result.
     """
 
-    def __init__(self, seq: int, recorded_kind: str, recorded_fp: str,
-                 got_kind: str, got_fp: str):
+    def __init__(self, seq: tuple[int, ...], recorded_kind: str,
+                 recorded_fp: str, got_kind: str, got_fp: str):
         super().__init__(
             f"workflow non-deterministic at step {seq}: recorded "
             f"{recorded_kind}/{recorded_fp}, replay produced {got_kind}/{got_fp}"
         )
-        self.seq = seq
+        self.seq: tuple[int, ...] = seq
         self.recorded_kind = recorded_kind
         self.recorded_fp = recorded_fp
         self.got_kind = got_kind
