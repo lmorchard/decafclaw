@@ -10,7 +10,7 @@ log = logging.getLogger(__name__)
 
 
 def _skills_path(config, conv_id: str) -> Path:
-    return sidecar_path(config, conv_id, "skills.json", ".skills.json")
+    return sidecar_path(config, conv_id, "skills.json")
 
 
 def write_skills_state(config, conv_id: str, skills: set[str]) -> None:
@@ -32,7 +32,7 @@ def read_skills_state(config, conv_id: str) -> set[str]:
 
 
 def _skill_data_path(config, conv_id: str) -> Path:
-    return sidecar_path(config, conv_id, "skill_data.json", ".skill_data.json")
+    return sidecar_path(config, conv_id, "skill_data.json")
 
 
 def write_skill_data(config, conv_id: str, data: dict) -> None:

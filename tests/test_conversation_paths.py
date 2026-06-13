@@ -63,44 +63,21 @@ def test_conversation_dir_dotdot_only_resolves_to_invalid(tmp_path):
 # --- sidecar_path -----------------------------------------------------------
 
 
-def test_sidecar_path_new_when_neither_exists(tmp_path):
+def test_sidecar_path_returns_dir_path(tmp_path):
     cfg = _cfg(tmp_path)
     root = conversations_root(cfg)
-    p = sidecar_path(cfg, "abc", "notes.md", ".notes.md")
+    p = sidecar_path(cfg, "abc", "notes.md")
     assert p == root / "abc" / "notes.md"
 
 
-def test_sidecar_path_legacy_when_only_flat_exists(tmp_path):
-    cfg = _cfg(tmp_path)
-    root = conversations_root(cfg)
-    root.mkdir(parents=True)
-    legacy = root / "abc.notes.md"
-    legacy.write_text("hi")
-    p = sidecar_path(cfg, "abc", "notes.md", ".notes.md")
-    assert p == legacy
-
-
-def test_sidecar_path_new_when_only_new_exists(tmp_path):
+def test_sidecar_path_returns_dir_path_when_file_exists(tmp_path):
     cfg = _cfg(tmp_path)
     root = conversations_root(cfg)
     convdir = root / "abc"
     convdir.mkdir(parents=True)
     new = convdir / "notes.md"
     new.write_text("hi")
-    p = sidecar_path(cfg, "abc", "notes.md", ".notes.md")
-    assert p == new
-
-
-def test_sidecar_path_new_wins_when_both_exist(tmp_path):
-    cfg = _cfg(tmp_path)
-    root = conversations_root(cfg)
-    convdir = root / "abc"
-    convdir.mkdir(parents=True)
-    new = convdir / "notes.md"
-    new.write_text("new")
-    legacy = root / "abc.notes.md"
-    legacy.write_text("legacy")
-    p = sidecar_path(cfg, "abc", "notes.md", ".notes.md")
+    p = sidecar_path(cfg, "abc", "notes.md")
     assert p == new
 
 
@@ -135,33 +112,12 @@ def test_iter_archives_yields_dir_layout(tmp_path):
     assert list(iter_conversation_archives(cfg)) == [("abc", archive)]
 
 
-def test_iter_archives_yields_flat_layout(tmp_path):
-    cfg = _cfg(tmp_path)
-    root = conversations_root(cfg)
-    root.mkdir(parents=True)
-    flat = root / "abc.jsonl"
-    flat.write_text("{}")
-    assert list(iter_conversation_archives(cfg)) == [("abc", flat)]
-
-
-def test_iter_archives_dir_wins_when_both_layouts(tmp_path):
+def test_iter_archives_skips_compacted(tmp_path):
     cfg = _cfg(tmp_path)
     root = conversations_root(cfg)
     convdir = root / "abc"
     convdir.mkdir(parents=True)
-    dir_archive = convdir / "archive.jsonl"
-    dir_archive.write_text("{}")
-    flat = root / "abc.jsonl"
-    flat.write_text("{}")
-    results = list(iter_conversation_archives(cfg))
-    assert results == [("abc", dir_archive)]
-
-
-def test_iter_archives_skips_compacted(tmp_path):
-    cfg = _cfg(tmp_path)
-    root = conversations_root(cfg)
-    root.mkdir(parents=True)
-    (root / "abc.compacted.jsonl").write_text("{}")
+    (convdir / "compacted.jsonl").write_text("{}")
     assert list(iter_conversation_archives(cfg)) == []
 
 
@@ -190,30 +146,20 @@ def test_delete_removes_dir_with_nested_files(tmp_path):
     assert not convdir.exists()
 
 
-def test_delete_removes_flat_legacy_files(tmp_path):
+def test_delete_also_removes_leftover_flat_sidecars(tmp_path):
+    # Defense for a partially-migrated / migration-skipped instance: delete
+    # must still purge pre-#576 flat sidecars so "deleted" history doesn't
+    # linger on disk, even though the runtime no longer reads them.
     cfg = _cfg(tmp_path)
     root = conversations_root(cfg)
     root.mkdir(parents=True)
-    notes = root / "abc.notes.md"
-    notes.write_text("hi")
-    archive = root / "abc.jsonl"
-    archive.write_text("{}")
+    flat_archive = root / "abc.jsonl"
+    flat_notes = root / "abc.notes.md"
+    flat_archive.write_text("{}")
+    flat_notes.write_text("- note")
     delete_conversation_files(cfg, "abc")
-    assert not notes.exists()
-    assert not archive.exists()
-
-
-def test_delete_removes_both_dir_and_legacy(tmp_path):
-    cfg = _cfg(tmp_path)
-    root = conversations_root(cfg)
-    convdir = root / "abc"
-    convdir.mkdir(parents=True)
-    (convdir / "archive.jsonl").write_text("{}")
-    legacy = root / "abc.notes.md"
-    legacy.write_text("hi")
-    delete_conversation_files(cfg, "abc")
-    assert not convdir.exists()
-    assert not legacy.exists()
+    assert not flat_archive.exists()
+    assert not flat_notes.exists()
 
 
 def test_delete_is_noop_when_nothing_exists(tmp_path):

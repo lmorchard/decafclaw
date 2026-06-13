@@ -17,7 +17,7 @@ LLM_ROLES = {"system", "user", "assistant", "tool"}
 
 def archive_path(config, conv_id: str) -> Path:
     """Compute the archive file path for a conversation."""
-    return sidecar_path(config, conv_id, "archive.jsonl", ".jsonl")
+    return sidecar_path(config, conv_id, "archive.jsonl")
 
 
 def append_message(config, conv_id: str, message: dict):
@@ -32,7 +32,7 @@ def append_message(config, conv_id: str, message: dict):
 
 
 def _compacted_path(config, conv_id: str) -> Path:
-    return sidecar_path(config, conv_id, "compacted.jsonl", ".compacted.jsonl")
+    return sidecar_path(config, conv_id, "compacted.jsonl")
 
 
 def write_compacted_history(config, conv_id: str, messages: list[dict]):

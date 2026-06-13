@@ -40,7 +40,7 @@ def empty_canvas_state() -> dict:
 
 
 def _canvas_sidecar_path(config, conv_id: str) -> Path:
-    return sidecar_path(config, conv_id, "canvas.json", ".canvas.json")
+    return sidecar_path(config, conv_id, "canvas.json")
 
 
 def _derive_next_tab_id(tabs: list) -> int:

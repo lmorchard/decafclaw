@@ -1,17 +1,9 @@
-"""Tests for tool_conversation_search across both sidecar layouts."""
+"""Tests for tool_conversation_search over the dir sidecar layout."""
 
 import json
 
 from decafclaw.conversation_paths import conversations_root
 from decafclaw.tools.conversation_tools import tool_conversation_search
-
-
-def _write_flat(config, conv_id: str, messages: list[dict]) -> None:
-    root = conversations_root(config)
-    root.mkdir(parents=True, exist_ok=True)
-    with (root / f"{conv_id}.jsonl").open("w") as fh:
-        for m in messages:
-            fh.write(json.dumps(m) + "\n")
 
 
 def _write_dir(config, conv_id: str, messages: list[dict]) -> None:
@@ -36,22 +28,13 @@ def test_search_finds_match_in_dir_layout(ctx):
     assert "pelican migration" in out
 
 
-def test_search_finds_match_in_flat_layout(ctx):
-    _write_flat(ctx.config, "conv-flat", [
-        {"role": "assistant", "content": "the heron stood in the shallows"},
-    ])
-    out = tool_conversation_search(ctx, "heron")
-    assert "conv-flat" in out
-    assert "heron" in out
-
-
-def test_search_finds_across_both_layouts(ctx):
-    _write_dir(ctx.config, "conv-dir", [
+def test_search_finds_across_multiple_conversations(ctx):
+    _write_dir(ctx.config, "conv-one", [
         {"role": "user", "content": "osprey sighting"},
     ])
-    _write_flat(ctx.config, "conv-flat", [
+    _write_dir(ctx.config, "conv-two", [
         {"role": "user", "content": "osprey nesting"},
     ])
     out = tool_conversation_search(ctx, "osprey")
-    assert "conv-dir" in out
-    assert "conv-flat" in out
+    assert "conv-one" in out
+    assert "conv-two" in out
