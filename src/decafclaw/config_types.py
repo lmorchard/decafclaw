@@ -253,6 +253,20 @@ class VaultRetrievalConfig:
 
 
 @dataclass
+class VaultGuideConfig:
+    """Always-loaded vault guide (e.g. AGENTS.md).
+
+    When a guide file is present at ``<vault_root>/<path>``, its contents
+    are injected as an authoritative ``system`` section on every
+    interactive turn (#592). Independent of vault_retrieval — plain file
+    read, no embeddings.
+    """
+    enabled: bool = True
+    path: str = "AGENTS.md"      # relative to vault root
+    max_tokens: int = 2000       # AGENTS.md is ~500 tok; generous cap
+
+
+@dataclass
 class RelevanceConfig:
     w_similarity: float = 0.5
     w_recency: float = 0.3

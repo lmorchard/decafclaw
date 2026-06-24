@@ -425,6 +425,125 @@ class TestComposeWikiContext:
             assert entry.items_truncated == 1
 
 
+class TestComposeVaultGuide:
+    def _write_guide(self, config, tmp_path, text):
+        vault_dir = tmp_path / "vault"
+        vault_dir.mkdir(exist_ok=True)
+        config.vault.vault_path = str(vault_dir)
+        (vault_dir / config.vault_guide.path).write_text(text, encoding="utf-8")
+        return vault_dir
+
+    def test_returns_section_when_present(self, config, tmp_path):
+        self._write_guide(config, tmp_path, "# Vault Guide\nUser journals live in journals/.")
+        composer = ContextComposer()
+        text, entry = composer._compose_vault_guide(config, ComposerMode.INTERACTIVE)
+        assert text.startswith("<vault_guide>")
+        assert "journals/" in text
+        assert entry is not None
+        assert entry.source == "vault_guide"
+        assert entry.items_included == 1
+        assert entry.tokens_estimated > 0
+
+    def test_skips_when_disabled(self, config, tmp_path):
+        self._write_guide(config, tmp_path, "# Guide")
+        config.vault_guide.enabled = False
+        composer = ContextComposer()
+        text, entry = composer._compose_vault_guide(config, ComposerMode.INTERACTIVE)
+        assert text == ""
+        assert entry is None
+
+    def test_skips_when_file_absent(self, config, tmp_path):
+        vault_dir = tmp_path / "vault"
+        vault_dir.mkdir()
+        config.vault.vault_path = str(vault_dir)  # no AGENTS.md written
+        composer = ContextComposer()
+        text, entry = composer._compose_vault_guide(config, ComposerMode.INTERACTIVE)
+        assert text == ""
+        assert entry is None
+
+    def test_skips_when_file_empty(self, config, tmp_path):
+        self._write_guide(config, tmp_path, "   \n  ")
+        composer = ContextComposer()
+        text, entry = composer._compose_vault_guide(config, ComposerMode.INTERACTIVE)
+        assert text == ""
+        assert entry is None
+
+    @pytest.mark.parametrize("mode", [
+        ComposerMode.HEARTBEAT, ComposerMode.SCHEDULED, ComposerMode.CHILD_AGENT,
+    ])
+    def test_skips_background_modes(self, config, tmp_path, mode):
+        self._write_guide(config, tmp_path, "# Guide")
+        composer = ContextComposer()
+        text, entry = composer._compose_vault_guide(config, mode)
+        assert text == ""
+        assert entry is None
+
+    def test_skips_when_file_not_utf8(self, config, tmp_path):
+        vault_dir = tmp_path / "vault"
+        vault_dir.mkdir()
+        config.vault.vault_path = str(vault_dir)
+        # Latin-1 byte 0xff is invalid UTF-8 → read_text raises UnicodeDecodeError
+        (vault_dir / config.vault_guide.path).write_bytes(b"\xff\xfe guide")
+        composer = ContextComposer()
+        text, entry = composer._compose_vault_guide(config, ComposerMode.INTERACTIVE)
+        assert text == ""
+        assert entry is None
+
+    def test_truncates_oversized_guide(self, config, tmp_path):
+        config.vault_guide.max_tokens = 10  # ~40 char budget
+        self._write_guide(config, tmp_path, "WORD " * 200)  # ~1000 chars
+        composer = ContextComposer()
+        text, entry = composer._compose_vault_guide(config, ComposerMode.INTERACTIVE)
+        assert "[vault guide truncated]" in text
+        assert entry.items_truncated == 1
+
+    def test_skips_when_path_absolute(self, config, tmp_path):
+        vault_dir = tmp_path / "vault"
+        vault_dir.mkdir()
+        config.vault.vault_path = str(vault_dir)
+        # Create a file OUTSIDE the vault that an absolute path would read
+        secret = tmp_path / "secret.md"
+        secret.write_text("TOP SECRET", encoding="utf-8")
+        config.vault_guide.path = str(secret)  # absolute
+        composer = ContextComposer()
+        text, entry = composer._compose_vault_guide(config, ComposerMode.INTERACTIVE)
+        assert text == ""
+        assert entry is None
+
+    def test_skips_when_path_traverses_parent(self, config, tmp_path):
+        vault_dir = tmp_path / "vault"
+        vault_dir.mkdir()
+        config.vault.vault_path = str(vault_dir)
+        secret = tmp_path / "secret.md"
+        secret.write_text("TOP SECRET", encoding="utf-8")
+        config.vault_guide.path = "../secret.md"
+        composer = ContextComposer()
+        text, entry = composer._compose_vault_guide(config, ComposerMode.INTERACTIVE)
+        assert text == ""
+        assert entry is None
+
+    def test_skips_when_max_tokens_non_positive(self, config, tmp_path):
+        self._write_guide(config, tmp_path, "# Guide\nlots of content here")
+        config.vault_guide.max_tokens = 0
+        composer = ContextComposer()
+        text, entry = composer._compose_vault_guide(config, ComposerMode.INTERACTIVE)
+        assert text == ""
+        assert entry is None
+
+    def test_truncation_respects_token_cap(self, config, tmp_path):
+        from decafclaw.util import estimate_tokens
+        config.vault_guide.max_tokens = 20
+        self._write_guide(config, tmp_path, "WORD " * 300)
+        composer = ContextComposer()
+        text, entry = composer._compose_vault_guide(config, ComposerMode.INTERACTIVE)
+        assert entry.items_truncated == 1
+        # The truncated content (incl. marker) stays within the cap.
+        assert "[vault guide truncated]" in text
+        # Strip the XML wrapper lines to estimate the content portion.
+        inner = text[len("<vault_guide>\n"): -len("\n</vault_guide>")]
+        assert estimate_tokens(inner) <= config.vault_guide.max_tokens
+
+
 # -- Tool assembly -------------------------------------------------------------
 
 
@@ -928,6 +1047,50 @@ class TestCompose:
             composer = ContextComposer()
             result = await composer.compose(ctx, "hello", [], mode=ComposerMode.INTERACTIVE)
             assert result.retrieved_context_text == "formatted memory"
+
+
+class TestComposeVaultGuideIntegration:
+    @pytest.mark.asyncio
+    async def test_guide_injected_for_interactive(self, ctx, config, tmp_path):
+        vault_dir = tmp_path / "vault"
+        vault_dir.mkdir()
+        config.vault.vault_path = str(vault_dir)
+        (vault_dir / "AGENTS.md").write_text(
+            "# Vault Guide\nUser journals: journals/YYYY/.", encoding="utf-8")
+        config.agent.tool_context_budget_pct = 1.0
+        config.compaction.max_tokens = 1000000
+        with (
+            patch("decafclaw.tool_definitions.collect_all_tool_defs", return_value=[]),
+            patch("decafclaw.memory_context.retrieve_memory_context",
+                  new_callable=AsyncMock, return_value=[]),
+        ):
+            composer = ContextComposer()
+            result = await composer.compose(ctx, "hello", [], mode=ComposerMode.INTERACTIVE)
+        system_msgs = [m["content"] for m in result.messages if m["role"] == "system"]
+        assert any("<vault_guide>" in c and "journals/YYYY/" in c for c in system_msgs)
+        # Appears right after the main system prompt (index 0), before other sections.
+        guide_idx = next(i for i, m in enumerate(result.messages)
+                         if m["role"] == "system" and "<vault_guide>" in m["content"])
+        assert guide_idx == 1
+        assert any(s.source == "vault_guide" for s in result.sources)
+
+    @pytest.mark.asyncio
+    async def test_guide_skipped_for_heartbeat(self, ctx, config, tmp_path):
+        vault_dir = tmp_path / "vault"
+        vault_dir.mkdir()
+        config.vault.vault_path = str(vault_dir)
+        (vault_dir / "AGENTS.md").write_text("# Vault Guide", encoding="utf-8")
+        config.agent.tool_context_budget_pct = 1.0
+        config.compaction.max_tokens = 1000000
+        with (
+            patch("decafclaw.tool_definitions.collect_all_tool_defs", return_value=[]),
+            patch("decafclaw.memory_context.retrieve_memory_context",
+                  new_callable=AsyncMock, return_value=[]),
+        ):
+            composer = ContextComposer()
+            result = await composer.compose(ctx, "hello", [], mode=ComposerMode.HEARTBEAT)
+        system_msgs = [m["content"] for m in result.messages if m["role"] == "system"]
+        assert not any("<vault_guide>" in c for c in system_msgs)
 
 
 class TestHistoryArchivedRemap:
