@@ -1,7 +1,7 @@
 import { LitElement, html, nothing } from 'lit';
 import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 import { renderMarkdown } from '../../lib/markdown.js';
-import { formatTime } from '../../lib/utils.js';
+import { formatTime, copyToClipboard } from '../../lib/utils.js';
 import hljs from 'hljs';
 
 /** Assistant message — markdown-rendered, with optional streaming indicator and usage info. */
@@ -65,9 +65,15 @@ export class AssistantMessage extends LitElement {
       btn.className = 'copy-btn';
       btn.type = 'button';
       btn.textContent = 'Copy';
+      // Copy from the <code> element, not <pre> — the <pre> also holds the
+      // language label and Copy button, whose text would otherwise leak in.
+      const copySource = /** @type {HTMLElement} */ (anyCode ?? pre);
       btn.addEventListener('click', () => {
-        navigator.clipboard.writeText(/** @type {HTMLElement} */ (pre).innerText).then(() => {
+        copyToClipboard(copySource.innerText).then(() => {
           btn.textContent = 'Copied!';
+          setTimeout(() => { btn.textContent = 'Copy'; }, 2000);
+        }).catch(() => {
+          btn.textContent = 'Copy failed';
           setTimeout(() => { btn.textContent = 'Copy'; }, 2000);
         });
       });

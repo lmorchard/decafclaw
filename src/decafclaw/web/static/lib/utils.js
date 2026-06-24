@@ -39,6 +39,49 @@ export function formatRelativeTime(ts) {
 }
 
 /**
+ * Copy text to the clipboard, with a fallback for non-secure contexts.
+ *
+ * `navigator.clipboard` only exists in secure contexts (HTTPS or localhost).
+ * The deployed agent serves over plain http://, where `navigator.clipboard`
+ * is `undefined` — accessing `.writeText` throws. Localhost masks this because
+ * it counts as a secure context. So we fall back to the legacy
+ * `document.execCommand('copy')` path via a hidden textarea.
+ *
+ * @param {string} text
+ * @returns {Promise<void>} resolves on success, rejects on failure
+ */
+export async function copyToClipboard(text) {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return;
+    }
+  } catch (err) {
+    // Clipboard API present but rejected (e.g. permission / focus) — fall
+    // through to the legacy path rather than failing outright.
+    console.debug('clipboard API writeText failed, using fallback:', err);
+  }
+
+  // Legacy fallback: a hidden textarea + execCommand('copy').
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.setAttribute('readonly', '');
+  ta.style.position = 'fixed';
+  ta.style.top = '-9999px';
+  document.body.appendChild(ta);
+  const prevFocus = /** @type {HTMLElement | null} */ (document.activeElement);
+  ta.select();
+  try {
+    if (!document.execCommand('copy')) {
+      throw new Error('copy command was rejected by the browser');
+    }
+  } finally {
+    document.body.removeChild(ta);
+    if (prevFocus && typeof prevFocus.focus === 'function') prevFocus.focus();
+  }
+}
+
+/**
  * Set up a drag-to-resize handle that adjusts a CSS custom property.
  *
  * Restores the last saved width from localStorage on init, and persists
