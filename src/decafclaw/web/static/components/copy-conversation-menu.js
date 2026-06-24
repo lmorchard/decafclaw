@@ -1,5 +1,6 @@
 import { LitElement, html, nothing } from 'lit';
 import { showToast } from '../lib/toast.js';
+import { copyToClipboard } from '../lib/utils.js';
 
 /**
  * Floating "Copy ▾" menu for the active conversation. Fetches the
@@ -58,7 +59,7 @@ export class CopyConversationMenu extends LitElement {
         return;
       }
       const text = await res.text();
-      await navigator.clipboard.writeText(text);
+      await copyToClipboard(text);
       showToast(`Copied as ${format}`);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
