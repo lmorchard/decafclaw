@@ -1,8 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-
 # me-to-markdown is a separately-installed orchestrator (NOT a per-platform
 # binary bundled with this skill — it manages its own sub-tool binaries).
 # It is expected on PATH. See https://github.com/lmorchard/me-to-markdown
@@ -12,11 +10,10 @@ if ! command -v me-to-markdown >/dev/null 2>&1; then
     exit 1
 fi
 
-# State + per-source export output live alongside the skill (same idiom the
-# linkding-ingest / mastodon-ingest scripts use). The ../../workspace probe
-# resolves to the runtime workspace when this skill is installed there;
-# otherwise it falls back to the skill directory.
-WORKSPACE_DIR="$(cd "${SCRIPT_DIR}/../../workspace" 2>/dev/null && pwd || echo "${SCRIPT_DIR}")"
+# State + per-source export output live in the runtime workspace, NOT the
+# git checkout. The shell tool sets DECAFCLAW_WORKSPACE (and runs with cwd =
+# the workspace); fall back to the current directory if it's somehow unset.
+WORKSPACE_DIR="${DECAFCLAW_WORKSPACE:-$PWD}"
 STATE_DIR="${WORKSPACE_DIR}/skill-state/meta-ingest"
 EXPORT_DIR="${STATE_DIR}/export"
 LAST_RUN_FILE="${STATE_DIR}/last-run-time.txt"
