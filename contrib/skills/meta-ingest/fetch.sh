@@ -67,19 +67,20 @@ elif [ "$ADVANCE_TIMESTAMP" -eq 1 ]; then
     date -u +"%Y-%m-%dT%H:%M:%SZ" > "$LAST_RUN_FILE"
 fi
 
-# Emit each source's content inline, fenced with machine-parseable markers so
-# the skill can split the stream into one chunk per source for delegation.
+# Report a manifest of per-source files as workspace-relative paths (for
+# workspace_read) plus byte sizes. Content is NOT emitted here — each source
+# is handed to its own child agent, which reads its file directly, so source
+# text never enters the parent's context.
+REL_EXPORT="skill-state/meta-ingest/export"
 shopt -s nullglob
 FILES=("${EXPORT_DIR}"/*.md)
 if [ "${#FILES[@]}" -eq 0 ]; then
     echo "No source files produced."
     exit 0
 fi
+echo "Per-source files (workspace-relative paths for workspace_read):"
 for f in "${FILES[@]}"; do
     slug="$(basename "$f" .md)"
     bytes="$(wc -c < "$f" | tr -d ' ')"
-    echo "===== SOURCE: ${slug} (${bytes} bytes) ====="
-    cat "$f"
-    echo
+    printf '  %-12s %s  (%s bytes)\n' "$slug" "${REL_EXPORT}/${slug}.md" "$bytes"
 done
-echo "===== END ====="

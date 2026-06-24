@@ -4,7 +4,7 @@ description: Fetch recent activity across all me-to-markdown sources (Mastodon, 
 effort: default
 required-skills:
   - tabstack
-allowed-tools: shell($SKILL_DIR/fetch.sh), shell($SKILL_DIR/fetch.sh *), vault_read, vault_write, vault_search, vault_list, vault_backlinks, vault_journal_append, tabstack_extract_markdown, current_time, delegate_tasks
+allowed-tools: shell($SKILL_DIR/fetch.sh), shell($SKILL_DIR/fetch.sh *), workspace_read, vault_read, vault_write, vault_search, vault_list, vault_backlinks, vault_journal_append, tabstack_extract_markdown, current_time, delegate_tasks
 user-invocable: true
 ---
 
@@ -43,27 +43,31 @@ $SKILL_DIR/fetch.sh --since 168h --include mastodon,linkding
 $SKILL_DIR/fetch.sh --since 30d --exclude spotify,youtube
 ```
 
-The script writes one file per source then prints them inline, each fenced like:
+The script writes **one file per source** into the workspace and prints a manifest — workspace-relative paths plus byte sizes, **not** the content:
 
 ```
-===== SOURCE: mastodon (1092 bytes) =====
-<that source's markdown>
-===== SOURCE: linkding (1115 bytes) =====
-...
-===== END =====
+Per-source files (workspace-relative paths for workspace_read):
+  github       skill-state/meta-ingest/export/github.md       (2316 bytes)
+  linkding     skill-state/meta-ingest/export/linkding.md     (1115 bytes)
+  mastodon     skill-state/meta-ingest/export/mastodon.md     (641 bytes)
+  pocketcasts  skill-state/meta-ingest/export/pocketcasts.md  (3763 bytes)
+  spotify      skill-state/meta-ingest/export/spotify.md      (152 bytes)
+  youtube      skill-state/meta-ingest/export/youtube.md      (92 bytes)
 ```
 
-Split the output on these `===== SOURCE: <slug> =====` markers to get one chunk per source. **Skip any source whose chunk reports no activity** (e.g. "No liked videos in this window.", an empty body, or just a header) — don't waste a child on it.
+You do **not** read these files yourself — each is handed to its own child agent, which reads it directly so source text never enters your context. Use the manifest only to decide which sources to delegate: skip files that are obviously just an empty header (very small — roughly `< 200 bytes`, like the `spotify`/`youtube` rows above when there's no activity). Delegate a child for every remaining file; the child decides whether its content is worth recording.
 
-If every source is empty, start your final summary with `HEARTBEAT_OK` on its own line and stop.
+If the manifest is empty or every file is below the empty-header threshold, start your final summary with `HEARTBEAT_OK` on its own line and stop.
 
 ## Step 2: Delegate one child per source with `delegate_tasks`
 
-Call `delegate_tasks` once with:
+One `delegate_tasks` call, one task per source file. The children run **in parallel** and each writes to a **different** vault folder, so there are no cross-source conflicts. Call `delegate_tasks` with:
 
 - `allow_vault_read: true` — children must browse the vault for context.
 - `return_schema`: the shape shown below.
-- `tasks`: one entry per **non-empty** source, built from the per-source template. There are at most 6 sources, well under the 10-task cap, so a single call covers them all.
+- `tasks`: one entry per delegated source (from Step 1), built from the per-source template. At most 6 sources — well under the 10-task cap — so a single call covers them all.
+
+Each child reads its own source file with `workspace_read(<path from the manifest>)`; you never load the source content into this turn.
 
 ### `return_schema`
 
@@ -94,26 +98,26 @@ Each source writes to its own flat folder and warrants a different analysis dept
 
 ### Per-source task description
 
-Substitute `{source_slug}`, `{output_folder}`, `{focus}`, and `{source_content}` and send verbatim to the child:
+Substitute `{source_slug}`, `{source_path}` (the workspace-relative path from the manifest), `{output_folder}`, and `{focus}` and send verbatim to the child:
 
 ```
-Analyze this {source_slug} activity and return a vault-write plan in the structured JSON shape requested by the return_schema. You CANNOT call vault_write — the parent will apply your plan.
+Analyze recent {source_slug} activity and return a vault-write plan in the structured JSON shape requested by the return_schema. You CANNOT call vault_write — the parent will apply your plan.
+
+Your source data is in a workspace file. Read it first:
+  workspace_read("{source_path}")
 
 Focus: {focus}
 Output folder: {output_folder} (flat namespace — no subdirectories; use [[wiki-links]] for relationships)
 
---- SOURCE CONTENT ---
-{source_content}
---- END SOURCE CONTENT ---
-
 Tools available to you:
+- workspace_read(path) — read your source file (above), and re-read ranges if it's large
 - vault_search(query) — search the vault for related pages
 - vault_read(page) — read an existing vault page
 - vault_backlinks(page) — find pages linking to a page
-- tabstack_extract_markdown(url) — fetch full content for a URL (use ONLY if your focus says "Heavy"; otherwise work from the source content above)
+- tabstack_extract_markdown(url) — fetch full content for a URL (use ONLY if your focus says "Heavy"; otherwise work from the source file)
 
 Steps:
-1. Read the source content and pick the items worth recording. Drop low-signal, ephemeral, or routine items. If nothing is worth a page, return writes: [] with a one-line notes explaining why.
+1. Read your source file (workspace_read above) and pick the items worth recording. Drop low-signal, ephemeral, or routine items. If the file is empty / reports no activity, or nothing is worth a page, return writes: [] with a one-line notes explaining why.
 2. For each item worth keeping, search the vault (vault_search) for a related page. Read strong matches (vault_read) so you extend them rather than create duplicates.
 3. Decide the writes:
    - Prefer extending an existing page over creating a new one. If a strong match exists under agent/pages/, return its existing path and the FULL revised content.
