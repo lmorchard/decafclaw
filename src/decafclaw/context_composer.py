@@ -366,6 +366,12 @@ class ContextComposer:
         if preempt_skill_entry is not None:
             fixed_tokens += preempt_skill_entry.tokens_estimated
 
+        # -- Vault guide (always-loaded authored vault doc, e.g. AGENTS.md) --
+        vault_guide_text, vault_guide_entry = self._compose_vault_guide(config, mode)
+        if vault_guide_entry is not None:
+            sources.append(vault_guide_entry)
+            fixed_tokens += vault_guide_entry.tokens_estimated
+
         # Response reserve (leave room for the model's response)
         response_reserve = 4096
 
@@ -436,6 +442,8 @@ class ContextComposer:
 
         # -- Assemble final messages --
         messages = [{"role": "system", "content": system_text}]
+        if vault_guide_text:
+            messages.append({"role": "system", "content": vault_guide_text})
         if deferred_text:
             messages.append({"role": "system", "content": deferred_text})
         if preempt_skill_text:
@@ -764,6 +772,85 @@ class ContextComposer:
             items_truncated=skipped,
         )
         return messages, entry
+
+    def _compose_vault_guide(
+        self, config, mode: ComposerMode,
+    ) -> tuple[str, SourceEntry | None]:
+        """Inject the vault's authored guide (default ``AGENTS.md``) as an
+        always-loaded ``system`` section.
+
+        Read fresh each interactive turn from ``<vault_root>/<path>`` so the
+        single source of truth is the vault file itself (no duplication into
+        SOUL.md/AGENT.md/USER.md, no drift). Authoritative ``system`` role by
+        design (#592): unlike *retrieved* vault content — which the composer
+        remaps to ``user`` for prompt-injection posture — this is the user's
+        own protocol doc and the goal is reliable enforcement.
+
+        Fail-open: missing file / no vault / read error → ("", None).
+        Skipped for heartbeat / scheduled / child-agent modes and when
+        ``config.vault_guide.enabled`` is False. Returns (wrapped_text, entry).
+        """
+        from .prompts import wrap_xml
+        from .util import estimate_tokens
+
+        skip_modes = {
+            ComposerMode.HEARTBEAT, ComposerMode.SCHEDULED, ComposerMode.CHILD_AGENT,
+        }
+        if not config.vault_guide.enabled or mode in skip_modes:
+            return "", None
+
+        rel_path = config.vault_guide.path
+        if ".." in rel_path or rel_path.startswith("/") or Path(rel_path).is_absolute():
+            log.debug(
+                "vault guide path %r is not vault-relative; skipping", rel_path)
+            return "", None
+
+        try:
+            vault_root = config.vault_root.resolve()
+            guide_path = (vault_root / rel_path).resolve()
+            if not guide_path.is_relative_to(vault_root):
+                log.debug(
+                    "vault guide path %r escapes vault root; skipping", rel_path)
+                return "", None
+            if not guide_path.is_file():
+                return "", None
+            content = guide_path.read_text(encoding="utf-8").strip()
+        except (OSError, ValueError) as exc:
+            log.debug("vault guide read failed: %s", exc)
+            return "", None
+
+        if not content:
+            return "", None
+
+        max_tokens = config.vault_guide.max_tokens
+        if max_tokens <= 0:
+            # A non-positive cap means "do not inject" rather than
+            # "inject only the truncation marker".
+            return "", None
+
+        truncated = 0
+        if estimate_tokens(content) > max_tokens:
+            marker = "\n\n[vault guide truncated]"
+            # Reserve space for the marker so the truncated content stays
+            # within the configured token cap.
+            char_budget = max(0, max_tokens * 4 - len(marker))
+            full_len = len(content)
+            content = content[:char_budget].rstrip() + marker
+            truncated = 1
+            log.warning(
+                "vault guide %s exceeds max_tokens=%d; truncated from %d chars",
+                config.vault_guide.path, max_tokens, full_len,
+            )
+
+        text = wrap_xml("vault_guide", content)
+        entry = SourceEntry(
+            source="vault_guide",
+            tokens_estimated=estimate_tokens(text),
+            items_included=1,
+            items_truncated=truncated,
+            details={"path": str(config.vault_guide.path)},
+        )
+        return text, entry
 
     def _compose_notes(
         self, ctx, config, mode: ComposerMode,

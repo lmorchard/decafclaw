@@ -155,6 +155,7 @@ Users can share vault pages directly into conversation context:
 
 - **Open page in UI**: When a page is open in the web UI side panel, its content is automatically injected as context.
 - **@[[PageName]] mentions**: Reference pages in message text using `@[[PageName]]` or `@[[folder/PageName]]` syntax. Works across all channels.
+- **Vault guide (`AGENTS.md`)**: A guide file at the vault root (default `AGENTS.md`) is auto-injected into every interactive turn as an always-loaded `system` section — before any tool decisions. Use it for vault-layout and protocol rules the agent must always follow. See [Vault guide](context-composer.md#vault-guide) in the context-composer docs for configuration and skip conditions.
 
 Each page is injected **once per conversation**. If a referenced page doesn't exist, the agent sees an error note.
 

@@ -35,6 +35,7 @@ from .config_types import (
     ReflectionConfig,
     RelevanceConfig,
     VaultConfig,
+    VaultGuideConfig,
     VaultRetrievalConfig,
     WidgetsConfig,
 )
@@ -176,6 +177,7 @@ class Config:
     vault_retrieval: VaultRetrievalConfig = field(default_factory=VaultRetrievalConfig)
     relevance: RelevanceConfig = field(default_factory=RelevanceConfig)
     vault: VaultConfig = field(default_factory=VaultConfig)
+    vault_guide: VaultGuideConfig = field(default_factory=VaultGuideConfig)
     notifications: NotificationsConfig = field(default_factory=NotificationsConfig)
     email: EmailConfig = field(default_factory=EmailConfig)
     background: BackgroundConfig = field(default_factory=BackgroundConfig)
@@ -447,6 +449,9 @@ def load_config() -> Config:
     vault = load_sub_config(
         VaultConfig, file_data.get("vault", {}), "VAULT")
 
+    vault_guide = load_sub_config(
+        VaultGuideConfig, file_data.get("vault_guide", {}), "VAULT_GUIDE")
+
     notifications = load_sub_config(
         NotificationsConfig, file_data.get("notifications", {}), "NOTIFICATIONS")
 
@@ -538,6 +543,7 @@ def load_config() -> Config:
         vault_retrieval=vault_retrieval,
         relevance=relevance,
         vault=vault,
+        vault_guide=vault_guide,
         notifications=notifications,
         email=email,
         background=background,

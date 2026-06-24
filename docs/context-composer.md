@@ -75,6 +75,7 @@ the slice guidance still lives in the system prompt via the addendum.
 │ - USER.md (user context, if present)    │
 │ - Skill catalog (name + description)    │
 │ - Deferred tools list (if over budget)  │
+│ - Vault guide (AGENTS.md, if present)   │
 ├─────────────────────────────────────────┤
 │ TOOL DEFINITIONS (sent as `tools` param)│
 │ - Always-loaded: shell, workspace_*,    │
@@ -159,12 +160,12 @@ class ComposedContext:
 
 The composer is mode-aware via `ComposerMode`:
 
-| Mode | Memory | Wiki | Tools | Use case |
-|------|--------|------|-------|----------|
-| `INTERACTIVE` | Yes | Yes | Full | Mattermost, web UI, terminal |
-| `HEARTBEAT` | No | No | Full | Periodic heartbeat (set via `ctx.task_mode="heartbeat"`) |
-| `SCHEDULED` | No | No | Full | Scheduled tasks (set via `ctx.task_mode="scheduled"`) |
-| `CHILD_AGENT` | No | No | Full | `delegate_task` sub-agents (set via `ctx.is_child`) |
+| Mode | Memory | Wiki | Vault guide | Tools | Use case |
+|------|--------|------|-------------|-------|----------|
+| `INTERACTIVE` | Yes | Yes | Yes | Full | Mattermost, web UI, terminal |
+| `HEARTBEAT` | No | No | No | Full | Periodic heartbeat (set via `ctx.task_mode="heartbeat"`) |
+| `SCHEDULED` | No | No | No | Full | Scheduled tasks (set via `ctx.task_mode="scheduled"`) |
+| `CHILD_AGENT` | No | No | No | Full | `delegate_task` sub-agents (set via `ctx.is_child`) |
 
 `skip_vault_retrieval` on the context is an independent flag — it skips vault retrieval without affecting vault references or the composer mode.
 
@@ -324,6 +325,44 @@ By default, every interactive turn auto-injects scored full-body candidates from
 **Headlines format** uses each result's `summary` frontmatter field when present, falls back to a truncated body excerpt. Configurable cap via `vault_retrieval.headline_summary_max_chars` (default 120).
 
 **Unknown mode values** in config log a warning and fall back to `always`.
+
+## Vault guide
+
+When a guide file exists at the vault root (default `AGENTS.md`, configurable via `vault_guide.path`), `ContextComposer._compose_vault_guide` reads it fresh each interactive turn and injects it as a `<vault_guide>` system message immediately after the main system prompt — before the deferred-tools list and any preempt-skill content.
+
+### Purpose
+
+The vault guide carries always-applies rules: vault folder layout, which paths are the user's vs the agent's, and any protocols the agent must always follow. These rules must be present before the model makes any tool decision. Similarity-gated memory retrieval can miss a procedural rule when the user's message embeds far from it — the vault guide is not gated at all.
+
+### Role and trust
+
+The guide is injected as a **system** message, unlike retrieved vault content (remapped to `user`). This signals binding instructions, not advisory context. The trust assumption is that `AGENTS.md` is the user's own authored file — treat it the same way as `SOUL.md`/`AGENT.md`.
+
+### Independence from vault retrieval
+
+The vault guide is a plain file read — no embeddings, no semantic scoring. It works even when `vault_retrieval` is disabled or no embedding model is configured.
+
+### Skip conditions
+
+Skipped for HEARTBEAT, SCHEDULED, and CHILD_AGENT modes. Only interactive turns inject the guide.
+
+### Failure modes
+
+Fail-open: a missing file, unreadable path, or empty file produces no section. No error is surfaced to the model.
+
+### Token cap
+
+Oversized guides are truncated (head kept) at `vault_guide.max_tokens` (default 2000) with a logged warning. The cap protects against accidentally pointing the config at a large document.
+
+### Configuration
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `vault_guide.enabled` | bool | `true` | Enable/disable the feature |
+| `vault_guide.path` | string | `"AGENTS.md"` | Path relative to the vault root |
+| `vault_guide.max_tokens` | int | `2000` | Token cap; oversized guides are truncated at the head |
+
+Config dataclass: `VaultGuideConfig` in `config_types.py`. Settable in `data/{agent_id}/config.json` under the `vault_guide` key, or via the `VAULT_GUIDE_` env prefix (`VAULT_GUIDE_ENABLED`, `VAULT_GUIDE_PATH`, `VAULT_GUIDE_MAX_TOKENS`), following the standard resolution order (defaults → config.json → env).
 
 ## Tool-result clearing (lightweight tier)
 

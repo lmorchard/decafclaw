@@ -26,7 +26,7 @@ def _isolate_env(monkeypatch):
             "LLM_", "MATTERMOST_", "COMPACTION_", "EMBEDDING_",
             "HEARTBEAT_", "HTTP_", "TABSTACK_", "CLAUDE_CODE_",
             "SKILLS_", "MEMORY_SEARCH", "SYSTEM_PROMPT",
-            "NOTIFICATIONS_", "EMAIL_", "EXTRA_SKILL_",
+            "NOTIFICATIONS_", "EMAIL_", "EXTRA_SKILL_", "VAULT_GUIDE_",
         )):
             monkeypatch.delenv(key, raising=False)
 
@@ -95,6 +95,24 @@ class TestDefaults:
     def test_compaction_context_budget_fallback(self):
         c = Config(compaction=CompactionConfig(max_tokens=100000, llm_max_tokens=0))
         assert c.compaction_context_budget == 100000
+
+    def test_vault_guide_defaults(self):
+        """VaultGuideConfig defaults: enabled, AGENTS.md, 2000-token cap."""
+        from decafclaw.config_types import VaultGuideConfig
+        c = Config()
+        assert isinstance(c.vault_guide, VaultGuideConfig)
+        assert c.vault_guide.enabled is True
+        assert c.vault_guide.path == "AGENTS.md"
+        assert c.vault_guide.max_tokens == 2000
+
+    def test_vault_guide_env_override(self, tmp_path, monkeypatch):
+        """Env prefix VAULT_GUIDE_* overrides the guide config."""
+        monkeypatch.setenv("VAULT_GUIDE_ENABLED", "false")
+        monkeypatch.setenv("VAULT_GUIDE_PATH", "protocols/GUIDE.md")
+        monkeypatch.setenv("DATA_HOME", str(tmp_path))
+        c = load_config()
+        assert c.vault_guide.enabled is False
+        assert c.vault_guide.path == "protocols/GUIDE.md"
 
 
 class TestJsonFileLoading:
