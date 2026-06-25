@@ -76,11 +76,17 @@ shopt -s nullglob
 FILES=("${EXPORT_DIR}"/*.md)
 if [ "${#FILES[@]}" -eq 0 ]; then
     echo "No source files produced."
-    exit 0
+else
+    echo "Per-source files (workspace-relative paths for workspace_read):"
+    for f in "${FILES[@]}"; do
+        slug="$(basename "$f" .md)"
+        bytes="$(wc -c < "$f" | tr -d ' ')"
+        printf '  %-12s %s  (%s bytes)\n' "$slug" "${REL_EXPORT}/${slug}.md" "$bytes"
+    done
 fi
-echo "Per-source files (workspace-relative paths for workspace_read):"
-for f in "${FILES[@]}"; do
-    slug="$(basename "$f" .md)"
-    bytes="$(wc -c < "$f" | tr -d ' ')"
-    printf '  %-12s %s  (%s bytes)\n' "$slug" "${REL_EXPORT}/${slug}.md" "$bytes"
-done
+
+# Propagate me-to-markdown's status so the caller/scheduler can detect a
+# partial failure (a non-zero RC means at least one source errored; its file,
+# if any, holds an error section). The manifest above is printed regardless so
+# the agent can still process the sources that did succeed.
+exit "$RC"
