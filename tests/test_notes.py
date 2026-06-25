@@ -62,22 +62,6 @@ class TestNotesPath:
         assert p.parent.name == "_invalid"
         assert p.name == "notes.md"
 
-    def test_legacy_flat_file_wins_until_migrated(self, config):
-        """While a flat ``{id}.notes.md`` exists and the dir layout
-        does not, reads/writes stay on the legacy file. Once the dir
-        file exists too, the dir layout wins."""
-        root = (config.workspace_path / "conversations").resolve()
-        root.mkdir(parents=True, exist_ok=True)
-        legacy = root / "leg.notes.md"
-        legacy.write_text("- 2026-01-01T00:00:00Z — old\n")
-        # legacy present, new absent → legacy path
-        assert notes_path(config, "leg") == legacy
-        # create the dir-layout file → dir layout wins
-        new_dir = root / "leg"
-        new_dir.mkdir(parents=True, exist_ok=True)
-        (new_dir / "notes.md").write_text("- 2026-01-02T00:00:00Z — new\n")
-        assert notes_path(config, "leg") == new_dir / "notes.md"
-
 
 # -- Append + read -------------------------------------------------------------
 

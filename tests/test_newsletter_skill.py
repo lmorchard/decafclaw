@@ -67,9 +67,9 @@ def test_skill_config_defaults():
 def _write_sched_conv(ws: Path, skill: str, ts: datetime, records: list[dict]) -> str:
     """Helper: write a synthetic scheduled-task conversation archive."""
     conv_id = f"schedule-{skill}-{ts.strftime('%Y%m%d-%H%M%S')}"
-    conv_dir = ws / "conversations"
+    conv_dir = ws / "conversations" / conv_id
     conv_dir.mkdir(parents=True, exist_ok=True)
-    path = conv_dir / f"{conv_id}.jsonl"
+    path = conv_dir / "archive.jsonl"
     with path.open("w") as fh:
         for rec in records:
             fh.write(json.dumps(rec) + "\n")

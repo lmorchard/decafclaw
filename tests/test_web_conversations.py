@@ -385,9 +385,9 @@ async def test_export_system_conv_with_archive(authed_client, http_config):
     granted by archive-on-disk for non-`web-` conv IDs, mirroring the
     behavior of the WS load_history handler."""
     conv_dir = http_config.workspace_path / "conversations"
-    conv_dir.mkdir(parents=True, exist_ok=True)
     conv_id = "schedule-mastodon-ingest-20260520-053002"
-    archive = conv_dir / f"{conv_id}.jsonl"
+    (conv_dir / conv_id).mkdir(parents=True, exist_ok=True)
+    archive = conv_dir / conv_id / "archive.jsonl"
     archive.write_text(
         '{"role":"user","content":"run the ingest","timestamp":"2026-05-20T05:30:02Z"}\n'
         '{"role":"assistant","content":"done","timestamp":"2026-05-20T05:30:10Z"}\n'
@@ -412,9 +412,9 @@ async def test_history_system_conv_with_archive(authed_client, http_config):
     """REST /history should also serve system conversations (same access
     model as WS load_history and /export)."""
     conv_dir = http_config.workspace_path / "conversations"
-    conv_dir.mkdir(parents=True, exist_ok=True)
     conv_id = "heartbeat-20260520-053000-0"
-    (conv_dir / f"{conv_id}.jsonl").write_text(
+    (conv_dir / conv_id).mkdir(parents=True, exist_ok=True)
+    (conv_dir / conv_id / "archive.jsonl").write_text(
         '{"role":"user","content":"tick"}\n'
     )
 
@@ -427,12 +427,12 @@ async def test_history_system_conv_with_archive(authed_client, http_config):
 async def test_context_diagnostics_system_conv(authed_client, http_config):
     """REST /context should also serve system conversations."""
     conv_dir = http_config.workspace_path / "conversations"
-    conv_dir.mkdir(parents=True, exist_ok=True)
     conv_id = "schedule-newsletter-20260520-080000"
-    (conv_dir / f"{conv_id}.jsonl").write_text("{}\n")
+    (conv_dir / conv_id).mkdir(parents=True, exist_ok=True)
+    (conv_dir / conv_id / "archive.jsonl").write_text("{}\n")
     # /context reads a sidecar; write a minimal one so the endpoint returns 200.
     import json
-    (conv_dir / f"{conv_id}.context.json").write_text(
+    (conv_dir / conv_id / "context.json").write_text(
         json.dumps({"messages": [], "tools": [], "diagnostics": {}})
     )
 
@@ -586,9 +586,10 @@ async def test_list_system_convs(authed_client, http_config):
     """System conversations appear in /system endpoint with type sub-folders."""
     # Create some system conversation archive files
     conv_dir = http_config.workspace_path / "conversations"
-    conv_dir.mkdir(parents=True, exist_ok=True)
-    (conv_dir / "heartbeat-20260401-100000-0.jsonl").write_text("{}\n")
-    (conv_dir / "schedule-daily-20260401-090000.jsonl").write_text("{}\n")
+    (conv_dir / "heartbeat-20260401-100000-0").mkdir(parents=True, exist_ok=True)
+    (conv_dir / "heartbeat-20260401-100000-0" / "archive.jsonl").write_text("{}\n")
+    (conv_dir / "schedule-daily-20260401-090000").mkdir(parents=True, exist_ok=True)
+    (conv_dir / "schedule-daily-20260401-090000" / "archive.jsonl").write_text("{}\n")
 
     # Top level should show sub-folder types, no conversations
     resp = await authed_client.get("/api/conversations/system")
@@ -834,8 +835,8 @@ async def test_delete_conv_route(authed_client, http_config):
     # Add some archive content so we can verify file cleanup
     append_message(http_config, conv_id, {"role": "user", "content": "hello"})
     conv_dir = http_config.workspace_path / "conversations"
-    (conv_dir / f"{conv_id}.compacted.jsonl").write_text("{}\n")
-    (conv_dir / f"{conv_id}.context.json").write_text("{}\n")
+    (conv_dir / conv_id / "compacted.jsonl").write_text("{}\n")
+    (conv_dir / conv_id / "context.json").write_text("{}\n")
 
     resp = await authed_client.delete(f"/api/conversations/{conv_id}")
     assert resp.status_code == 200
@@ -847,9 +848,7 @@ async def test_delete_conv_route(authed_client, http_config):
     assert conv_id not in ids
 
     # Files should be gone
-    assert not (conv_dir / f"{conv_id}.jsonl").exists()
-    assert not (conv_dir / f"{conv_id}.compacted.jsonl").exists()
-    assert not (conv_dir / f"{conv_id}.context.json").exists()
+    assert not (conv_dir / conv_id).exists()
 
 
 @pytest.mark.asyncio

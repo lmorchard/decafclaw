@@ -2,10 +2,11 @@
 
 Convention (#576): every per-conversation sidecar lives in a directory
 named for the conversation id — conversations/{conv_id}/{file} — e.g.
-archive.jsonl, notes.md, decisions.json. Supersedes the legacy flat
-conversations/{conv_id}.SUFFIX layout. During the deprecation window
-code keeps reading AND writing an existing flat legacy file in place
-(no split data); only scripts/migrate_sidecars_to_dirs.py moves files.
+archive.jsonl, notes.md, decisions.json. This is the only layout.
+
+Instances upgrading from the old flat conversations/{conv_id}.SUFFIX
+layout run scripts/migrate_sidecars_to_dirs.py (`make migrate-sidecars`)
+once to move existing files into per-conversation directories.
 """
 from __future__ import annotations
 
@@ -29,7 +30,6 @@ SIDECAR_FILENAMES: tuple[tuple[str, str], ...] = (
     (".skill_data.json", "skill_data.json"),
     (".vault_grants.json", "vault_grants.json"),
 )
-SIDECAR_LEGACY_SUFFIXES: tuple[str, ...] = tuple(s for s, _ in SIDECAR_FILENAMES)
 
 
 def _safe_conv_id(conv_id: str) -> str:
@@ -51,36 +51,16 @@ def conversation_dir(config, conv_id: str, *, create: bool = False) -> Path:
     return d
 
 
-def _legacy_flat_path(config, conv_id: str, legacy_suffix: str) -> Path:
-    base = conversations_root(config)
-    p = (base / f"{_safe_conv_id(conv_id)}{legacy_suffix}").resolve()
-    if not p.is_relative_to(base):
-        return base / f"_invalid{legacy_suffix}"
-    return p
-
-
-def sidecar_path(config, conv_id: str, filename: str, legacy_suffix: str) -> Path:
-    """Resolve a per-conversation sidecar path. Prefers the directory
-    layout; while a flat legacy file still exists and the new path does
-    not, returns the legacy path so reads and writes stay on the existing
-    file until the migration script moves it. Callers mkdir the parent
-    before writing (the conversation dir is created lazily that way)."""
-    new = conversation_dir(config, conv_id) / filename
-    if not new.exists():
-        legacy = _legacy_flat_path(config, conv_id, legacy_suffix)
-        if legacy.exists():
-            return legacy
-    return new
+def sidecar_path(config, conv_id: str, filename: str) -> Path:
+    """Resolve a per-conversation sidecar at conversations/{conv_id}/{filename}."""
+    return conversation_dir(config, conv_id) / filename
 
 
 def iter_conversation_archives(config) -> Iterator[tuple[str, Path]]:
-    """Yield (conv_id, archive_path) across both layouts. Directory layout
-    ({id}/archive.jsonl) wins over flat ({id}.jsonl); a conv in both yields
-    once. Compacted sidecars are never yielded."""
+    """Yield (conv_id, archive_path) for every conversation directory."""
     base = conversations_root(config)
     if not base.exists():
         return
-    seen: set[str] = set()
     try:
         children = sorted(base.iterdir())
     except OSError as exc:
@@ -92,20 +72,19 @@ def iter_conversation_archives(config) -> Iterator[tuple[str, Path]]:
         if child.is_dir():
             archive = child / "archive.jsonl"
             if archive.exists():
-                seen.add(child.name)
                 yield child.name, archive
-    for child in children:
-        if (child.is_file() and child.name.endswith(".jsonl")
-                and not child.name.endswith(".compacted.jsonl")):
-            conv_id = child.name.removesuffix(".jsonl")
-            if conv_id not in seen:
-                yield conv_id, child
 
 
 def delete_conversation_files(config, conv_id: str) -> None:
     """Remove all on-disk state for a conversation: the {id}/ directory
-    (archive, sidecars, workflow.json, uploads) and any remaining flat
-    legacy sidecars."""
+    (archive, sidecars, workflow.json, uploads).
+
+    Also best-effort removes any leftover pre-#576 flat sidecars
+    (conversations/{id}.SUFFIX). The runtime no longer *reads* the flat
+    layout, but a delete must still be thorough on a partially-migrated or
+    migration-skipped instance — otherwise a "deleted" conversation could
+    leave readable history on disk. This is cleanup-only; it never makes a
+    flat file authoritative."""
     d = conversation_dir(config, conv_id)
     if d.exists():
         try:
@@ -114,8 +93,8 @@ def delete_conversation_files(config, conv_id: str) -> None:
             log.warning("Failed to remove conversation dir %s: %s", d, exc)
     base = conversations_root(config)
     safe = _safe_conv_id(conv_id)
-    for suffix in SIDECAR_LEGACY_SUFFIXES:
-        p = (base / f"{safe}{suffix}").resolve()
+    for legacy_suffix, _ in SIDECAR_FILENAMES:
+        p = (base / f"{safe}{legacy_suffix}").resolve()
         if p.is_relative_to(base) and p.exists():
             try:
                 p.unlink()

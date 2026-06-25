@@ -31,7 +31,7 @@ def test_restore_history_archive_only(config):
         {"role": "user", "content": "hello", "timestamp": "2026-01-01T00:00:00"},
         {"role": "assistant", "content": "hi", "timestamp": "2026-01-01T00:00:01"},
     ]
-    _write_jsonl(_conv_dir(config) / f"{CONV_ID}.jsonl", messages)
+    _write_jsonl(_conv_dir(config) / CONV_ID / "archive.jsonl", messages)
 
     result = restore_history(config, CONV_ID)
     assert result == messages
@@ -46,8 +46,8 @@ def test_restore_history_compacted_only(config):
     compacted_msgs = [
         {"role": "assistant", "content": "summary of conversation", "timestamp": "2026-01-01T00:00:01"},
     ]
-    _write_jsonl(_conv_dir(config) / f"{CONV_ID}.jsonl", archive_msgs)
-    _write_jsonl(_conv_dir(config) / f"{CONV_ID}.compacted.jsonl", compacted_msgs)
+    _write_jsonl(_conv_dir(config) / CONV_ID / "archive.jsonl", archive_msgs)
+    _write_jsonl(_conv_dir(config) / CONV_ID / "compacted.jsonl", compacted_msgs)
 
     result = restore_history(config, CONV_ID)
     # Should return only the compacted messages (no newer archive entries)
@@ -65,8 +65,8 @@ def test_restore_history_compacted_plus_newer(config):
         {"role": "user", "content": "new msg", "timestamp": "2026-01-01T00:00:06"},
         {"role": "assistant", "content": "new reply", "timestamp": "2026-01-01T00:00:07"},
     ]
-    _write_jsonl(_conv_dir(config) / f"{CONV_ID}.jsonl", archive_msgs)
-    _write_jsonl(_conv_dir(config) / f"{CONV_ID}.compacted.jsonl", compacted_msgs)
+    _write_jsonl(_conv_dir(config) / CONV_ID / "archive.jsonl", archive_msgs)
+    _write_jsonl(_conv_dir(config) / CONV_ID / "compacted.jsonl", compacted_msgs)
 
     result = restore_history(config, CONV_ID)
     assert result == [
@@ -78,7 +78,7 @@ def test_restore_history_compacted_plus_newer(config):
 
 def test_restore_history_empty_archive(config):
     """Returns None when archive file exists but is empty."""
-    path = _conv_dir(config) / f"{CONV_ID}.jsonl"
+    path = _conv_dir(config) / CONV_ID / "archive.jsonl"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("")
 

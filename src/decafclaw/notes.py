@@ -36,9 +36,8 @@ class Note:
 
 def notes_path(config, conv_id: str) -> Path:
     """Resolve the per-conversation notes file at
-    conversations/{conv_id}/notes.md (legacy flat fallback during
-    the migration window)."""
-    return sidecar_path(config, conv_id, "notes.md", ".notes.md")
+    conversations/{conv_id}/notes.md."""
+    return sidecar_path(config, conv_id, "notes.md")
 
 
 def _now_iso() -> str:

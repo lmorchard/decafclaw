@@ -109,7 +109,7 @@ class ComposerState:
 
 
 def _context_sidecar_path(config, conv_id: str) -> Path:
-    return sidecar_path(config, conv_id, "context.json", ".context.json")
+    return sidecar_path(config, conv_id, "context.json")
 
 
 def write_context_sidecar(config, conv_id: str, diagnostics: dict) -> None:

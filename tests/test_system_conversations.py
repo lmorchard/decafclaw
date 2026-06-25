@@ -18,6 +18,13 @@ from decafclaw.web.websocket import (
 )
 
 
+def _write_archive(conv_dir, conv_id: str, body: str) -> None:
+    """Write a dir-layout archive at conversations/{conv_id}/archive.jsonl."""
+    d = conv_dir / conv_id
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "archive.jsonl").write_text(body)
+
+
 class TestClassifyConvId:
     def test_schedule(self):
         conv_type, title = _classify_conv_id("schedule-dream-20260324-125204")
@@ -52,13 +59,11 @@ class TestListSystemConversations:
         conv_dir = config.workspace_path / "conversations"
         conv_dir.mkdir(parents=True, exist_ok=True)
         # Create a schedule archive
-        (conv_dir / "schedule-dream-20260324-125204.jsonl").write_text(
-            json.dumps({"role": "user", "content": "test"}) + "\n"
-        )
+        _write_archive(conv_dir, "schedule-dream-20260324-125204",
+                       json.dumps({"role": "user", "content": "test"}) + "\n")
         # Create a web archive (should be excluded)
-        (conv_dir / "web-user-abc123.jsonl").write_text(
-            json.dumps({"role": "user", "content": "test"}) + "\n"
-        )
+        _write_archive(conv_dir, "web-user-abc123",
+                       json.dumps({"role": "user", "content": "test"}) + "\n")
 
         results = list_system_conversations(config)
         conv_ids = [r["conv_id"] for r in results]
@@ -87,8 +92,10 @@ class TestListSystemConversations:
     def test_excludes_compacted_sidecars(self, config):
         conv_dir = config.workspace_path / "conversations"
         conv_dir.mkdir(parents=True, exist_ok=True)
-        (conv_dir / "schedule-foo-20260324-120000.jsonl").write_text("{}\n")
-        (conv_dir / "schedule-foo-20260324-120000.compacted.jsonl").write_text("{}\n")
+        d = conv_dir / "schedule-foo-20260324-120000"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "archive.jsonl").write_text("{}\n")
+        (d / "compacted.jsonl").write_text("{}\n")
 
         results = list_system_conversations(config)
         assert len(results) == 1
@@ -96,7 +103,7 @@ class TestListSystemConversations:
     def test_includes_delegated_children(self, config):
         conv_dir = config.workspace_path / "conversations"
         conv_dir.mkdir(parents=True, exist_ok=True)
-        (conv_dir / "web-user-abc123--child-def456.jsonl").write_text("{}\n")
+        _write_archive(conv_dir, "web-user-abc123--child-def456", "{}\n")
 
         results = list_system_conversations(config)
         assert len(results) == 1
@@ -106,10 +113,10 @@ class TestListSystemConversations:
         import os
         conv_dir = config.workspace_path / "conversations"
         conv_dir.mkdir(parents=True, exist_ok=True)
-        old = conv_dir / "schedule-old-20260101-120000.jsonl"
-        new = conv_dir / "schedule-new-20260324-120000.jsonl"
-        old.write_text("{}\n")
-        new.write_text("{}\n")
+        _write_archive(conv_dir, "schedule-old-20260101-120000", "{}\n")
+        _write_archive(conv_dir, "schedule-new-20260324-120000", "{}\n")
+        old = conv_dir / "schedule-old-20260101-120000" / "archive.jsonl"
+        new = conv_dir / "schedule-new-20260324-120000" / "archive.jsonl"
         # Force deterministic mtimes
         os.utime(old, (1000000, 1000000))
         os.utime(new, (2000000, 2000000))
@@ -144,8 +151,8 @@ class TestDelegatedFiltering:
     def test_filters_delegated_by_username(self, config):
         conv_dir = config.workspace_path / "conversations"
         conv_dir.mkdir(parents=True, exist_ok=True)
-        (conv_dir / "web-alice-abc123--child-def456.jsonl").write_text("{}\n")
-        (conv_dir / "web-bob-abc123--child-ghi789.jsonl").write_text("{}\n")
+        _write_archive(conv_dir, "web-alice-abc123--child-def456", "{}\n")
+        _write_archive(conv_dir, "web-bob-abc123--child-ghi789", "{}\n")
 
         results = list_system_conversations(config, username="alice")
         conv_ids = [r["conv_id"] for r in results]
@@ -155,8 +162,8 @@ class TestDelegatedFiltering:
     def test_no_filter_without_username(self, config):
         conv_dir = config.workspace_path / "conversations"
         conv_dir.mkdir(parents=True, exist_ok=True)
-        (conv_dir / "web-alice-abc123--child-def456.jsonl").write_text("{}\n")
-        (conv_dir / "web-bob-abc123--child-ghi789.jsonl").write_text("{}\n")
+        _write_archive(conv_dir, "web-alice-abc123--child-def456", "{}\n")
+        _write_archive(conv_dir, "web-bob-abc123--child-ghi789", "{}\n")
 
         results = list_system_conversations(config, username="")
         assert len(results) == 2
@@ -169,9 +176,8 @@ class TestSystemConvAccess:
         config = ws_state["config"]
         conv_dir = config.workspace_path / "conversations"
         conv_dir.mkdir(parents=True, exist_ok=True)
-        (conv_dir / "schedule-test-20260324-120000.jsonl").write_text(
-            json.dumps({"role": "user", "content": "hello"}) + "\n"
-        )
+        _write_archive(conv_dir, "schedule-test-20260324-120000",
+                       json.dumps({"role": "user", "content": "hello"}) + "\n")
 
         ws_send = AsyncMock()
         await _handle_select_conv(ws_send, index, "testuser",
