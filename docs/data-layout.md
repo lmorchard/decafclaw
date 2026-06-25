@@ -68,28 +68,26 @@ call) removes it.
 
 `src/decafclaw/conversation_paths.py` is the single chokepoint for these
 paths: `conversation_dir(config, conv_id, *, create=False)`,
-`sidecar_path(config, conv_id, filename, legacy_suffix)`,
+`sidecar_path(config, conv_id, filename)`,
 `iter_conversation_archives(config)`, and `delete_conversation_files(config,
-conv_id)`, plus the `SIDECAR_FILENAMES` / `SIDECAR_LEGACY_SUFFIXES`
-constants. `workflow/paths.py` delegates to it. New sidecars get a filename
-in this module rather than a new flat-suffix convention.
+conv_id)`, plus the `SIDECAR_FILENAMES` constant (the migration mapping).
+`workflow/paths.py` delegates to it. New sidecars get a filename in this
+module rather than a new flat-suffix convention.
 
-### Legacy flat layout and the deprecation-window fallback
+### Migrating from the legacy flat layout
 
-The previous layout was flat — each sidecar was a sibling file named
+Before #576 the layout was flat — each sidecar was a sibling file named
 `conversations/{conv_id}.SUFFIX` (e.g. `{conv_id}.jsonl`,
-`{conv_id}.notes.md`, `{conv_id}.context.json`). For one deprecation cycle,
-`sidecar_path` keeps reading **and** writing an existing flat legacy file in
-place when the new-layout file is absent, so a conversation's data never
-splits across the two layouts. No code path moves files; only the migration
-script does. (A future change removes this fallback.)
-
-### Migration
+`{conv_id}.notes.md`, `{conv_id}.context.json`). The code no longer reads
+that layout; an instance upgrading from it must relocate its existing
+sidecars once:
 
 `make migrate-sidecars` runs `scripts/migrate_sidecars_to_dirs.py`, which
-moves existing flat sidecars into their per-conversation directories. It is
-idempotent. Preview the moves first with `make migrate-sidecars-dry`. Run it
-once after upgrading to relocate existing conversations.
+moves flat sidecars into their per-conversation directories. It is
+idempotent and never deletes data (only moves). Preview the moves first with
+`make migrate-sidecars-dry`, then run `make migrate-sidecars` once after
+upgrading. (There is no runtime fallback — run the migration before relying
+on pre-#576 conversations.)
 
 ## Trust boundary
 

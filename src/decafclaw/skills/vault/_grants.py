@@ -24,7 +24,7 @@ log = logging.getLogger(__name__)
 
 
 def _grants_sidecar_path(config, conv_id: str) -> Path:
-    return sidecar_path(config, conv_id, "vault_grants.json", ".vault_grants.json")
+    return sidecar_path(config, conv_id, "vault_grants.json")
 
 
 def normalize_folder(folder: str, *, warn_on_invalid: bool = False) -> str:

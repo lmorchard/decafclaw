@@ -81,7 +81,7 @@ class DecisionSlice:
 
 
 def _slice_path(config, conv_id: str) -> Path:
-    return sidecar_path(config, conv_id, "decisions.json", ".decisions.json")
+    return sidecar_path(config, conv_id, "decisions.json")
 
 
 def load_slice(config, conv_id: str) -> DecisionSlice:

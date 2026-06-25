@@ -1,7 +1,5 @@
 """Tests for conversation archive."""
 
-import json
-
 from decafclaw.archive import (
     append_message,
     archive_path,
@@ -29,24 +27,6 @@ def test_archive_roundtrip_new_layout(config):
     msgs = read_archive(config, conv_id)
     assert len(msgs) == 1
     assert msgs[0]["content"] == "hello"
-
-
-def test_append_does_not_split_existing_flat_archive(config):
-    """If a flat legacy {id}.jsonl exists, appends MUST stay on it — no
-    new {id}/archive.jsonl is created (coherence invariant)."""
-    conv_id = "flat-legacy"
-    root = conversations_root(config)
-    root.mkdir(parents=True, exist_ok=True)
-    flat = root / f"{conv_id}.jsonl"
-    flat.write_text(json.dumps({"role": "user", "content": "first"}) + "\n")
-
-    append_message(config, conv_id, {"role": "assistant", "content": "second"})
-
-    lines = [ln for ln in flat.read_text().splitlines() if ln.strip()]
-    assert len(lines) == 2
-    assert not (root / conv_id / "archive.jsonl").exists()
-    msgs = read_archive(config, conv_id)
-    assert [m["content"] for m in msgs] == ["first", "second"]
 
 
 def test_compacted_roundtrip_new_layout(config):
