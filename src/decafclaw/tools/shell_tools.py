@@ -3,6 +3,7 @@
 import fnmatch
 import json
 import logging
+import os
 import subprocess
 from pathlib import Path
 
@@ -144,10 +145,16 @@ async def tool_shell(ctx, command: str) -> ToolResult:
 def _execute_command(ctx, command: str) -> ToolResult:
     """Execute a shell command and return the output."""
     log.info(f"[tool:shell] executing command: {command}")
+    # Expose the runtime workspace explicitly so skill scripts can place
+    # state there rather than guessing from $0. The cwd is already the
+    # workspace (see docs/skills.md), but a named env var is unambiguous and
+    # survives manual/out-of-cwd invocation. Sits alongside DECAFCLAW_REPO /
+    # CONTRIB, which the skill loader sets the same way.
+    env = {**os.environ, "DECAFCLAW_WORKSPACE": str(ctx.config.workspace_path)}
     try:
         result = subprocess.run(
             command, shell=True, capture_output=True, text=True, timeout=30,
-            cwd=str(ctx.config.workspace_path),
+            cwd=str(ctx.config.workspace_path), env=env,
         )
         output = result.stdout
         if result.stderr:

@@ -39,8 +39,10 @@ if [ "$#" -gt 0 ]; then
 fi
 
 # No args → auto-fetch since the last successful run.
-# State lives in workspace, not the skill directory.
-WORKSPACE_DIR="$(cd "${SCRIPT_DIR}/../../workspace" 2>/dev/null && pwd || echo "${SCRIPT_DIR}")"
+# State lives in the runtime workspace, NOT the git checkout. The shell tool
+# sets DECAFCLAW_WORKSPACE (and runs with cwd = the workspace); fall back to
+# the current directory if it's somehow unset.
+WORKSPACE_DIR="${DECAFCLAW_WORKSPACE:-$PWD}"
 LAST_RUN_DIR="${WORKSPACE_DIR}/skill-state/mastodon-ingest"
 mkdir -p "$LAST_RUN_DIR"
 LAST_RUN_FILE="${LAST_RUN_DIR}/last-run-time.txt"

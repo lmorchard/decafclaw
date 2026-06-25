@@ -401,6 +401,28 @@ Path entries support `~` and `$VAR` expansion. Relative paths resolve against `d
 
 Skills authored against the standard Agent Skills format (`SKILL.md` only) work as-is. Skills authored for decafclaw with a `tools.py` extension are decafclaw-specific and won't run in other agents.
 
+## Environment for shell-based skills
+
+A skill body can instruct the agent to run a bundled helper script via the
+`shell` tool (e.g. `allowed-tools: shell($SKILL_DIR/fetch.sh)`). Two kinds of
+path interpolation are available — don't confuse them:
+
+- **`$SKILL_DIR`** is **text-substituted into the SKILL.md body** before the
+  agent sees it (it resolves to the skill's own directory). It is *not* an
+  environment variable, so a script cannot read `$SKILL_DIR` from its own env
+  — derive the script's location from `$0` instead.
+- **Real environment variables** set on the `shell` subprocess:
+  - `DECAFCLAW_WORKSPACE` — absolute path to the runtime workspace. Use this
+    (not a `$0`/`../..` probe) to place skill state under
+    `$DECAFCLAW_WORKSPACE/skill-state/<name>/`. The subprocess cwd is also the
+    workspace, so `${DECAFCLAW_WORKSPACE:-$PWD}` is a safe idiom.
+  - `DECAFCLAW_REPO` / `CONTRIB` — source-checkout root and its `contrib/`
+    dir (set by the skill loader).
+
+Put durable per-skill state in the workspace, never in the skill directory —
+contrib skills load from the git checkout, so writing state there pollutes the
+working tree.
+
 ## Creating a skill
 
 1. Create a directory with a `SKILL.md`

@@ -340,6 +340,23 @@ async def test_scoped_pattern_rejects_backtick(ctx):
         assert "denied" in result.text
 
 
+# -- workspace env contract test --
+
+
+def test_execute_command_exposes_workspace_env(ctx):
+    """Shell-tool subprocesses get DECAFCLAW_WORKSPACE pointing at the workspace.
+
+    Skill scripts (e.g. the ingest fetch.sh helpers) rely on this to put
+    skill-state inside the runtime workspace rather than the git checkout.
+    """
+    from decafclaw.tools.shell_tools import _execute_command
+
+    ws = Path(ctx.config.workspace_path)
+    ws.mkdir(parents=True, exist_ok=True)
+    result = _execute_command(ctx, "echo $DECAFCLAW_WORKSPACE")
+    assert result.text.strip() == str(ws)
+
+
 # -- schedule null allowed-tools test --
 
 

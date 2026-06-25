@@ -102,6 +102,14 @@ Fetches recent posts from a Mastodon account and records interesting content to 
 
 **Schedule:** Every 4 hours (`:30`)
 
+### meta-ingest
+
+Unified successor to `linkding-ingest` + `mastodon-ingest`. Uses the [`me-to-markdown`](https://github.com/lmorchard/me-to-markdown) orchestrator to fetch **all** registered sources (Mastodon, Linkding, GitHub, Spotify, YouTube, Pocket Casts) over one shared time window, then fans out one child agent per source to analyze it and record insights to the vault (heavy content like article text stays in the children, never the parent).
+
+**Requires:** `me-to-markdown` on `$PATH` (run `me-to-markdown install` + `me-to-markdown auth`). Per-source credentials live in `me-to-markdown`'s own config/env — this skill doesn't read them. No bundled binary / `download-binary.sh`.
+
+**Schedule:** Every 12 hours (`:15`), **disabled by default** (contrib SCHEDULE.md is forced `enabled: false`). Coexists with `linkding-ingest` / `mastodon-ingest`; retire those schedules and enable this one once validated — see the skill's SCHEDULE.md.
+
 ### writing-clearly
 
 Edits prose drafts (docs, commit messages, replies, blog posts) using William Strunk Jr.'s *The Elements of Style* (1918). Exposes one tool, `edit_with_strunk(draft, focus="")`, which inlines the rulebook into a `delegate_task` child agent — the corpus (~12k tokens) never enters the parent conversation.
