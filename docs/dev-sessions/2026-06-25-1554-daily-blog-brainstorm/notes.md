@@ -28,6 +28,12 @@ Output lands at `agent/pages/blog-ideas/{ISO-week}.md` (under `agent/` to avoid 
 - A routing experiment briefly added a `context_composer.py` preempt-hint score-gap filter (cross-cutting, all skills) + an aggressive SKILL.md description + a "Routing note." All reverted when NL routing was descoped. The composer idea is filed separately as **issue #604** to be judged on its own merits.
 - The discovery test was narrowed (Task 4) from `build_skill_tool_owners` (which eagerly imports every skill's `tools.py`, including the subprocess-spawning `claude_code`/`background`) to `discover_skills` + the skill's own `TOOL_DEFINITIONS`. **Kept as an independent scoping improvement** (a per-skill test shouldn't import every other skill). It was initially believed to fix a `PytestUnraisableExceptionWarning`, but follow-up measurement disproved that: the warning appears intermittently on the suite **with our test file excluded too** (3/3 runs) — it's a pre-existing, flaky GC artifact (a leaked asyncio subprocess transport finalized late, attributed to whatever test is running at GC time), unrelated to this feature. Filed as **issue #605**, not fixed here.
 
+## Bugfix: `/blog-ideas` command had no vault access (`context: fork` → `inline`)
+
+First deployment smoke of `/blog-ideas` failed: *"vault_read tool is not available in this context."* Root cause (systematic-debugging): the SKILL.md had `context: fork`, which routes the `/command` through `run_child_turn` (delegate.py). Per the #396 child-agent vault policy, **child agents get no vault read access by default and vault writes are categorically blocked** — but this skill must read and write the weekly page. The `dream`/`garden` skills use `context: fork` too, but only ever run via the *scheduled* path (which ignores `context`); `/dream` as a command would hit the same wall. The working reference is `newsletter`: a user-invocable, vault-writing skill that uses **`context: inline`** (runs in the user's conversation with the full tool set). Fix: `context: fork` → `context: inline`, plus a regression test asserting it. The scheduled path is unaffected by `context`.
+
+> General gotcha: a `user-invocable` skill that needs the vault (especially writes) must use `context: inline`, not `fork`.
+
 ## Relocation to contrib (post-review)
 
 After the PR was opened, the skill was moved from a core bundled skill
