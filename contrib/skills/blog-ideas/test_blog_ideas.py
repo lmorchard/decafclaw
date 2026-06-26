@@ -69,3 +69,22 @@ def test_tool_registered():
     tool_names = {td["function"]["name"] for td in blog_ideas_tools.TOOL_DEFINITIONS}
     assert "blog_ideas_week" in tool_names, f"got {sorted(tool_names)}"
     assert "blog_ideas_week" in blog_ideas_tools.TOOLS
+
+
+def test_command_runs_inline_not_forked():
+    # `/blog-ideas` MUST run inline, not forked. A forked command runs as a
+    # child agent, which by the #396 vault-access policy gets no vault read
+    # access and cannot write to the vault — but this skill must read AND write
+    # the weekly page. (The scheduled path is unaffected by `context`.)
+    # Parse the YAML frontmatter so the check is on the `context` key, not a
+    # raw substring that body prose could trip.
+    import yaml
+
+    text = (_THIS_DIR / "SKILL.md").read_text()
+    _, frontmatter, _ = text.split("---", 2)
+    meta = yaml.safe_load(frontmatter)
+    assert meta.get("context") == "inline", (
+        f"blog-ideas /command must declare `context: inline` — fork runs it as "
+        f"a child agent with no vault read + blocked vault writes (#396); got "
+        f"{meta.get('context')!r}"
+    )

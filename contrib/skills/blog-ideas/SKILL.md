@@ -5,7 +5,7 @@ effort: strong
 required-skills:
   - vault
 user-invocable: true
-context: fork
+context: inline
 ---
 
 # Blog-idea brainstorm
