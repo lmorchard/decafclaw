@@ -37,6 +37,14 @@ class WorkflowToolNotAllowed(WorkflowError):
     """
 
 
+class WorkflowSkillActivationFailed(WorkflowError):
+    """Raised when an explicitly-requested skill (from
+    @workflow(requires_skills=...)) fails to activate at workflow-turn
+    start. Surfaces before run_workflow runs the orchestrator so the
+    workflow author hears about it loudly.
+    """
+
+
 class WorkflowNonDeterministic(WorkflowError):
     """Replay reached a journaled call whose args don't match the record.
 

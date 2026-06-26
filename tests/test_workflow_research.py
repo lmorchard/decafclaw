@@ -56,6 +56,19 @@ def test_research_registers_as_workflow():
     assert spec.name == "research"
 
 
+def test_research_declares_tabstack_requirement():
+    """The /research workflow declares the tabstack skill so its
+    tool_call invocations of `tabstack_research` reach a real tool."""
+    from decafclaw.workflow.workflows.research import _SEARCH_TOOL
+    spec = get_workflow("research")
+    assert spec is not None
+    assert "tabstack" in spec.requires_skills
+    # Sanity: the declared skill owns the search tool the orchestrator
+    # uses. Guards against a typo splitting the declaration from the
+    # tool name.
+    assert _SEARCH_TOOL.startswith("tabstack_")
+
+
 @pytest.mark.asyncio
 async def test_research_orchestrator_walks_to_completion(ctx):
     """Walk the whole orchestrator with mocked primitives. Verify it

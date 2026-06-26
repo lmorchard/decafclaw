@@ -13,8 +13,13 @@ from decafclaw.confirmations import (
     ConfirmationResponse,
 )
 from decafclaw.media import ToolResult
+from decafclaw.skills import (
+    activate_always_loaded,
+    activate_skills_for_workflow,
+)
 
 from .engine import run_workflow
+from .errors import WorkflowSkillActivationFailed
 from .journal import Journal, load_journal, path_from_any, path_to_str, save_journal
 from .registry import get_workflow
 
@@ -38,6 +43,21 @@ async def run_workflow_turn(ctx, manager, *,
         if resume:
             return ToolResult(text="[error: no workflow journal to resume]")
         journal = Journal(workflow_name=workflow_name)
+
+    # Skill activation: always-loaded for every workflow turn (matching
+    # USER-turn behavior); requires_skills as declared by the workflow.
+    # activate_always_loaded is fail-soft per skill; only
+    # activate_skills_for_workflow raises WorkflowSkillActivationFailed.
+    try:
+        await activate_always_loaded(ctx)
+        if spec.requires_skills:
+            await activate_skills_for_workflow(ctx, spec.requires_skills)
+    except WorkflowSkillActivationFailed as exc:
+        journal.status = "error"
+        save_journal(ctx.config, ctx.conv_id, journal)
+        log.error("Workflow %r: skill activation failed: %s",
+                  workflow_name, exc)
+        return ToolResult(text=f"[error: skill activation failed: {exc}]")
 
     await ctx.publish("tool_status", tool="workflow",
                       message=f"[workflow: {workflow_name}] running")

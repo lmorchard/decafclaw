@@ -3,7 +3,7 @@
 import logging
 import os
 import re
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -424,6 +424,69 @@ def build_catalog_text(skills: list[SkillInfo]) -> str:
             lines.append(f"- **{skill.name}**: {skill.description}")
 
     return "\n".join(lines)
+
+
+async def activate_always_loaded(ctx) -> None:
+    """Activate every always-loaded discovered skill against `ctx`.
+
+    Fail-soft per skill — a failed activation logs but does not block
+    the rest. Matches the existing USER-turn behavior verbatim. Skips
+    workspace-tier skills (defense in depth; workspace skills can't
+    self-mark always-loaded at discovery but the guard preserves the
+    invariant). Skips already-activated skills (idempotent).
+    """
+    from ..tools.skill_tools import activate_skill_internal  # noqa: PLC0415
+
+    for skill_info in ctx.config.discovered_skills:
+        if not skill_info.always_loaded or skill_info.name in ctx.skills.activated:
+            continue
+        if skill_info.trust_tier == "workspace":
+            continue
+        try:
+            await activate_skill_internal(ctx, skill_info)
+            log.debug("Auto-activated always-loaded skill %r", skill_info.name)
+        except Exception as exc:  # noqa: BLE001 — fail-soft per spec
+            log.error("Failed to auto-activate skill %r: %s",
+                      skill_info.name, exc)
+
+
+async def activate_skills_for_workflow(
+    ctx, names: Sequence[str],
+) -> None:
+    """Activate each named skill against `ctx`. Fail-loud:
+    - Unknown name -> WorkflowSkillActivationFailed.
+    - Skill's init() raises -> WorkflowSkillActivationFailed (wraps the
+      underlying exception via `from exc`).
+    Idempotent: skills already in ctx.skills.activated are skipped.
+    Workspace-tier skills ARE permitted here — the workflow author
+    opted in explicitly by name.
+    """
+    from ..tools.skill_tools import activate_skill_internal  # noqa: PLC0415 — symmetric with activate_always_loaded
+    from ..workflow.errors import WorkflowSkillActivationFailed  # noqa: PLC0415 — break workflow → skills cycle
+
+    by_name = {s.name: s for s in ctx.config.discovered_skills}
+    for name in names:
+        if name in ctx.skills.activated:
+            continue
+        skill_info = by_name.get(name)
+        if skill_info is None:
+            raise WorkflowSkillActivationFailed(
+                f"requires_skills entry {name!r} is not a discovered skill")
+        try:
+            result = await activate_skill_internal(ctx, skill_info)
+        except Exception as exc:
+            raise WorkflowSkillActivationFailed(
+                f"Skill {name!r} failed to activate: {exc}") from exc
+        # activate_skill_internal swallows tool-load failures and returns
+        # a ToolResult — see tools/skill_tools.py:228-230. Detect that
+        # silent path by checking ctx.skills.activated, which the
+        # successful branch populates on line 234.
+        if name not in ctx.skills.activated:
+            from ..media import ToolResult  # noqa: PLC0415 — symmetric with sibling imports
+            detail = result.text if isinstance(result, ToolResult) else str(result)
+            raise WorkflowSkillActivationFailed(
+                f"Skill {name!r} failed to activate: {detail}")
+        log.debug("Workflow-activated skill %r", name)
 
 
 def find_command(name: str, discovered_skills: list[SkillInfo]) -> SkillInfo | None:

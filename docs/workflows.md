@@ -361,6 +361,44 @@ Place new orchestrators in `src/decafclaw/workflow/workflows/` and ensure they a
 by the package (via `workflows/__init__.py`). Bundled orchestrators are discovered
 automatically on startup.
 
+### Skill activation
+
+Workflows can declare additional skills they need at decoration time:
+
+```python
+@workflow("research", requires_skills=("tabstack",))
+async def research(wf):
+    ...
+    await wf.tool_call("tabstack_research", query=q)
+```
+
+At workflow-turn start, `run_workflow_turn` activates:
+
+1. **Always-loaded skills** (e.g. `vault`, `background`, `mcp`) — the same set the agent
+   loop auto-activates via `_setup_turn_state`. Tools from these are reachable from
+   `wf.tool_call` without explicit declaration. Fail-soft per skill — a failed activation
+   logs and continues so one broken always-loaded skill doesn't take down every workflow.
+2. **`requires_skills` entries** — declared per-workflow. Activated against the same code
+   path as the agent loop's `activate_skill` tool. Workspace-tier skills ARE permitted here
+   (unlike always-loaded, where workspace skills can't self-mark). Fail-loud — see below.
+
+**Failure mode.** A missing skill name in `requires_skills`, or a skill whose `init()`
+raises, or a skill whose `tools.py` fails to import — any of these surfaces as
+`WorkflowSkillActivationFailed` BEFORE the orchestrator runs. The turn returns
+`ToolResult(text="[error: skill activation failed: …]")`; the journal status is marked
+`"error"`. The workflow author hears about typos and broken dependencies up front rather
+than discovering them when `wf.tool_call` returns an `[error: unknown tool]` response 30s
+into the run.
+
+**Idempotency.** Activation re-runs on every workflow turn (including post-`user_input`
+resumes), but the `ctx.skills.activated` set short-circuits already-activated skills —
+no observable difference.
+
+**Subagents inherit.** `wf.subagent` dispatches a child agent turn via
+`delegate.run_child_turn`, which inherits the parent's `ctx.tools.extra`. A workflow that
+activated `tabstack` makes `tabstack_research` reachable from the child too — no separate
+`requires_skills` on the subagent side.
+
 ### The interview workflow — a walkthrough
 
 `src/decafclaw/workflow/workflows/interview.py` is the hero example. The full orchestrator:
