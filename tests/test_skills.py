@@ -7,17 +7,25 @@ import pytest
 
 from decafclaw.media import ToolResult
 from decafclaw.skills import (
+    CheckResult,
     SkillInfo,
+    SkillRejection,
+    SkillValidation,
     activate_always_loaded,
     activate_skills_for_workflow,
     build_catalog_text,
+    build_skill_info,
     discover_skills,
     parse_skill_md,
+    validate_skill_md,
 )
 from decafclaw.tools.skill_tools import (
     _load_permissions,
+    _rejection_display_path,
     _save_permission,
     tool_activate_skill,
+    tool_refresh_skills,
+    tool_skill_validate,
 )
 from decafclaw.workflow.errors import WorkflowSkillActivationFailed
 
@@ -32,6 +40,83 @@ def _write_skill(skill_dir, frontmatter, body="Some instructions.", tools_py=Fal
 
 # -- parse_skill_md tests --
 
+
+# -- validate_skill_md tests --
+
+
+def _checks_by_name(result):
+    return {c.name: c for c in result.checks}
+
+
+def test_validate_ok(tmp_path):
+    skill_dir = tmp_path / "ok"
+    _write_skill(skill_dir, "name: ok\ndescription: Fine.")
+    result = validate_skill_md(skill_dir / "SKILL.md")
+    assert result.ok is True
+    assert result.first_failure is None
+    assert result.meta["name"] == "ok"
+    assert result.body.strip() == "Some instructions."
+
+
+def test_validate_no_frontmatter(tmp_path):
+    skill_dir = tmp_path / "no-fm"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text("# Heading, no frontmatter\n")
+    result = validate_skill_md(skill_dir / "SKILL.md")
+    assert result.ok is False
+    assert _checks_by_name(result)["frontmatter"].passed is False
+    assert "frontmatter" in result.first_failure.lower()
+
+
+def test_validate_malformed_yaml_is_frontmatter_failure(tmp_path):
+    """Malformed YAML inside the delimiters is reported as a frontmatter
+    failure, and the message doesn't claim the file merely fails to 'start
+    with' a block (it has delimiters — the YAML itself is invalid)."""
+    skill_dir = tmp_path / "bad-yaml"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text("---\n: : : invalid\n---\nBody.")
+    result = validate_skill_md(skill_dir / "SKILL.md")
+    assert result.ok is False
+    fm = _checks_by_name(result)["frontmatter"]
+    assert fm.passed is False
+    assert "yaml" in fm.message.lower()
+    assert "start with" not in fm.message.lower()
+
+
+def test_validate_missing_name(tmp_path):
+    skill_dir = tmp_path / "no-name"
+    _write_skill(skill_dir, "description: No name.")
+    result = validate_skill_md(skill_dir / "SKILL.md")
+    assert result.ok is False
+    assert _checks_by_name(result)["name"].passed is False
+    # frontmatter passed before name failed
+    assert _checks_by_name(result)["frontmatter"].passed is True
+
+
+def test_validate_missing_description(tmp_path):
+    skill_dir = tmp_path / "no-desc"
+    _write_skill(skill_dir, "name: no-desc")
+    result = validate_skill_md(skill_dir / "SKILL.md")
+    assert result.ok is False
+    assert _checks_by_name(result)["description"].passed is False
+
+
+def test_validate_unreadable(tmp_path):
+    missing = tmp_path / "gone" / "SKILL.md"
+    result = validate_skill_md(missing)
+    assert result.ok is False
+    assert _checks_by_name(result)["readable"].passed is False
+
+
+def test_build_skill_info_from_validation(tmp_path):
+    skill_dir = tmp_path / "full"
+    _write_skill(skill_dir, "name: full\ndescription: Full.", tools_py=True)
+    result = validate_skill_md(skill_dir / "SKILL.md")
+    info = build_skill_info(result)
+    assert info.name == "full"
+    assert info.description == "Full."
+    assert info.location == skill_dir
+    assert info.has_native_tools is True
 
 
 def _text(result):
@@ -1283,3 +1368,165 @@ async def test_activate_skills_for_workflow_permits_workspace_tier(
 
     assert calls == ["workspace-skill"]
     assert "workspace-skill" in ctx.skills.activated
+
+
+# -- discover_skills rejection accumulator --
+
+
+def test_discover_records_rejections(config, monkeypatch):
+    # Add one valid and one malformed skill to workspace skills directory.
+    ws_skills = config.workspace_path / "skills"
+    _write_skill(ws_skills / "good", "name: good\ndescription: Valid.")
+    (ws_skills / "bad").mkdir(parents=True)
+    (ws_skills / "bad" / "SKILL.md").write_text("# No frontmatter here\n")
+
+    rejections = []
+    skills = discover_skills(config, rejections=rejections)
+
+    names = [s.name for s in skills]
+    assert "good" in names
+    assert len(rejections) == 1
+    assert rejections[0].path.name == "SKILL.md"
+    assert "bad" in str(rejections[0].path)
+    assert "frontmatter" in rejections[0].reason.lower()
+
+
+def test_discover_without_accumulator_is_unchanged(config):
+    ws_skills = config.workspace_path / "skills"
+    (ws_skills / "bad").mkdir(parents=True)
+    (ws_skills / "bad" / "SKILL.md").write_text("# No frontmatter\n")
+    # No accumulator passed — must not raise, just drop the bad skill.
+    skills = discover_skills(config)
+    assert all(s.name != "bad" for s in skills)
+
+
+# -- tool_refresh_skills rejection reporting --
+
+
+def test_rejection_display_path_relative_to_workspace(config):
+    p = config.workspace_path / "skills" / "foo" / "SKILL.md"
+    assert _rejection_display_path(config, p) == "skills/foo/SKILL.md"
+
+
+def test_rejection_display_path_redacts_external_absolute(config):
+    """A rejected skill outside workspace/agent roots (e.g. an absolute
+    extra_skill_paths entry) must not leak its full host path — show only
+    the trailing <skill-dir>/SKILL.md segments."""
+    external = Path("/opt/elsewhere/contrib/skills/widget/SKILL.md")
+    shown = _rejection_display_path(config, external)
+    assert shown == "widget/SKILL.md"
+    assert not shown.startswith("/")
+    assert "/opt/elsewhere" not in shown
+
+
+def test_refresh_skills_reports_rejections(ctx):
+    ws_skills = ctx.config.workspace_path / "skills"
+    (ws_skills / "broken").mkdir(parents=True)
+    (ws_skills / "broken" / "SKILL.md").write_text("# missing frontmatter\n")
+
+    text = _text(tool_refresh_skills(ctx))
+    assert "Rejected (found but not loaded):" in text
+    assert "broken/SKILL.md" in text
+    assert "frontmatter" in text.lower()
+
+
+# -- skill_validate tool --
+
+
+def _write_ws_skill(ctx, name, frontmatter, body="Body.", tools_py=None):
+    """Create skills/<name>/ under the ctx workspace. tools_py is raw source."""
+    d = ctx.config.workspace_path / "skills" / name
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "SKILL.md").write_text(f"---\n{frontmatter}\n---\n{body}")
+    if tools_py is not None:
+        (d / "tools.py").write_text(tools_py)
+    return d
+
+
+def test_skill_validate_missing_skill_md(ctx):
+    d = ctx.config.workspace_path / "skills" / "empty"
+    d.mkdir(parents=True)
+    result = tool_skill_validate(ctx, path="skills/empty")
+    assert result.data["ok"] is False
+    names = {c["name"] for c in result.data["checks"]}
+    assert "skill_md_present" in names
+
+
+def test_skill_validate_no_frontmatter(ctx):
+    d = ctx.config.workspace_path / "skills" / "nofm"
+    d.mkdir(parents=True)
+    (d / "SKILL.md").write_text("# Heading only\n")
+    result = tool_skill_validate(ctx, path="skills/nofm")
+    assert result.data["ok"] is False
+    fm = next(c for c in result.data["checks"] if c["name"] == "frontmatter")
+    assert fm["passed"] is False
+
+
+def test_skill_validate_valid_text_only(ctx):
+    _write_ws_skill(ctx, "texty", "name: texty\ndescription: Text only.")
+    result = tool_skill_validate(ctx, path="skills/texty")
+    assert result.data["ok"] is True
+    # no tools.py → no tools checks
+    names = {c["name"] for c in result.data["checks"]}
+    assert "tools_import" not in names
+
+
+def test_skill_validate_valid_with_tools(ctx):
+    _write_ws_skill(
+        ctx, "withtools", "name: withtools\ndescription: Has tools.",
+        tools_py="def get_tools(ctx):\n    return {}, []\n",
+    )
+    result = tool_skill_validate(ctx, path="skills/withtools")
+    assert result.data["ok"] is True
+    sig = next(c for c in result.data["checks"] if c["name"] == "get_tools_signature")
+    assert sig["passed"] is True
+
+
+def test_skill_validate_tools_syntax_error(ctx):
+    _write_ws_skill(
+        ctx, "broken", "name: broken\ndescription: Bad tools.",
+        tools_py="def get_tools(ctx)\n    return {}, []\n",  # missing colon
+    )
+    result = tool_skill_validate(ctx, path="skills/broken")
+    assert result.data["ok"] is False
+    imp = next(c for c in result.data["checks"] if c["name"] == "tools_import")
+    assert imp["passed"] is False
+    assert "SyntaxError" in imp["message"]
+
+
+def test_skill_validate_tools_undefined_name(ctx):
+    _write_ws_skill(
+        ctx, "phantom", "name: phantom\ndescription: Phantom api.",
+        tools_py="TOOLS = {'x': default_api.shell}\n",  # NameError at import
+    )
+    result = tool_skill_validate(ctx, path="skills/phantom")
+    assert result.data["ok"] is False
+    imp = next(c for c in result.data["checks"] if c["name"] == "tools_import")
+    assert imp["passed"] is False
+    assert "NameError" in imp["message"]
+
+
+def test_skill_validate_get_tools_no_ctx(ctx):
+    _write_ws_skill(
+        ctx, "noctx", "name: noctx\ndescription: Bad signature.",
+        tools_py="def get_tools():\n    return {}, []\n",  # missing ctx
+    )
+    result = tool_skill_validate(ctx, path="skills/noctx")
+    assert result.data["ok"] is False
+    sig = next(c for c in result.data["checks"] if c["name"] == "get_tools_signature")
+    assert sig["passed"] is False
+    assert "ctx" in sig["message"]
+
+
+def test_skill_validate_stray_main_py(ctx):
+    d = _write_ws_skill(ctx, "mislabeled", "name: mislabeled\ndescription: Wrong file.")
+    (d / "main.py").write_text("def get_tools(ctx):\n    return {}, []\n")
+    result = tool_skill_validate(ctx, path="skills/mislabeled")
+    fn = next(c for c in result.data["checks"] if c["name"] == "tools_filename")
+    assert fn["passed"] is False
+    assert "main.py" in fn["message"]
+
+
+def test_skill_validate_outside_workspace(ctx):
+    result = tool_skill_validate(ctx, path="../../etc")
+    assert "outside the workspace" in _text(result)
