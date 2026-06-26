@@ -72,6 +72,14 @@ A skill at `data/{agent_id}/skills/<name>/` shadows any same-named entry in `ext
 
 ## Available Skills
 
+### blog-ideas
+
+A daily brainstorm pass: reviews the week-so-far across your ingested activity (`agent/pages/{bookmarks,mastodon,youtube,github,podcasts,music,kindle}`), your Obsidian daily journal (`journals/`), and your blog archive (`blog/drafts`, `blog/daily`, `blog/weeknotes`), then maintains a living tiered "blog ideas this week" page at `agent/pages/blog-ideas/{ISO-week}.md`. Exposes one tool, `blog_ideas_week`, that returns the deterministic ISO-week identity + page path so the agent never hand-computes weeks. Delivery rides the existing newsletter's scheduled-activity aggregation (no newsletter changes).
+
+**Requires:** Nothing — but it's only useful if the vault already holds ingested activity (e.g. via `meta-ingest`) and a synced Obsidian vault with journal + blog folders.
+
+**Schedule:** ships a `SCHEDULE.md` for a daily 06:00 UTC run, but as a contrib skill it's force-disabled — opt in by creating an overlay at `data/{agent_id}/schedules/blog-ideas.md` (copy the skill's `SCHEDULE.md` and set `enabled: true`). Also runs on demand via the `/blog-ideas` command.
+
 ### kindle
 
 Syncs highlights and notes from your Kindle library (`read.amazon.com/notebook`) into per-book vault pages under `agent/pages/kindle/`. Each book gets one page with frontmatter tracking the ASIN, title, author, and highlight count. Deleted highlights are moved to an `## Archived` section with a date stamp.
