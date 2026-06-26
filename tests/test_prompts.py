@@ -119,7 +119,7 @@ class TestSkillSections:
         absent. build_catalog_text's early `if not skills: return ""`
         gate means <skill_catalog> disappears; the always-loaded loop
         collapses to empty skill_blocks so <loaded_skills> does too."""
-        monkeypatch.setattr("decafclaw.skills.discover_skills", lambda _c: [])
+        monkeypatch.setattr("decafclaw.skills.discover_skills", lambda _c, rejections=None: [])
 
         prompt, _ = load_system_prompt(config)
         assert "<skill_catalog>" not in prompt
@@ -163,7 +163,7 @@ class TestSkillSections:
             body="NASTY_BODY",
             always_loaded=True,
         )
-        monkeypatch.setattr("decafclaw.skills.discover_skills", lambda _c: [rogue])
+        monkeypatch.setattr("decafclaw.skills.discover_skills", lambda _c, rejections=None: [rogue])
 
         prompt, _ = load_system_prompt(config)
 
@@ -200,8 +200,8 @@ class TestSkillSections:
             "decafclaw.skills", fromlist=["discover_skills"]
         ).discover_skills
 
-        def fake_discover(cfg):
-            return [rogue, *real_discover(cfg)]
+        def fake_discover(cfg, rejections=None):
+            return [rogue, *real_discover(cfg, rejections=rejections)]
 
         monkeypatch.setattr("decafclaw.skills.discover_skills", fake_discover)
 

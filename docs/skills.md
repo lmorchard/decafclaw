@@ -312,6 +312,34 @@ Activated skills and their tools are scoped to the current conversation. Other c
 
 - **`activate_skill(name)`** — activate a skill in the current conversation
 - **`refresh_skills`** — re-scan skill directories without restarting
+- **`skill_validate(path)`** — pre-flight lint a single workspace skill directory
+
+### Validating a skill before it loads
+
+When a skill you authored doesn't appear, it was almost certainly **rejected
+during discovery** — the loader requires a `SKILL.md` that starts with a `---`
+YAML frontmatter block containing both `name` and `description`. Two tools
+surface the reason instead of failing silently:
+
+- **`refresh_skills`** re-scans every skill directory and now lists any
+  found-but-rejected skills under `Rejected (found but not loaded):`, each with
+  the reason (e.g. *no valid YAML frontmatter*).
+- **`skill_validate('skills/<name>')`** is the pre-flight, single-skill check.
+  It reports a pass/fail checklist:
+  - `SKILL.md` present
+  - valid `---` frontmatter with `name` + `description`
+  - native tools live in **`tools.py`** (not `main.py` or another name)
+  - `tools.py` imports cleanly (catches `SyntaxError`, undefined names, bad imports)
+  - `tools.py` exports `get_tools(ctx)` (must accept `ctx`) **or**
+    `TOOLS` / `TOOL_DEFINITIONS`
+
+Minimal correct workspace skill:
+
+```
+skills/<name>/
+  SKILL.md      # --- frontmatter (name + description) --- then markdown body
+  tools.py      # def get_tools(ctx) -> (dict, list): ...   (optional)
+```
 
 ## Bundled skills
 

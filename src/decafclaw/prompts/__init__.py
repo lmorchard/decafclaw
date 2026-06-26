@@ -33,7 +33,7 @@ def wrap_xml(tag: str, body: str) -> str:
     return f"<{tag}>\n{body}\n</{tag}>"
 
 
-def load_system_prompt(config):
+def load_system_prompt(config, rejections: list | None = None):
     """Assemble the system prompt from markdown files.
 
     For each prompt file (SOUL.md, AGENT.md):
@@ -47,6 +47,9 @@ def load_system_prompt(config):
 
     Returns:
         (prompt_text, discovered_skills) tuple
+
+    Pass `rejections` (a list) to collect SkillRejection entries for
+    skills found-but-rejected during discovery (surfaced by refresh_skills).
     """
     from ..skills import build_catalog_text, discover_skills
 
@@ -79,7 +82,7 @@ def load_system_prompt(config):
             log.info("Loaded USER.md from workspace")
 
     # Discover skills and append catalog
-    skills = discover_skills(config)
+    skills = discover_skills(config, rejections=rejections)
     catalog = build_catalog_text(skills)
     wrapped = wrap_xml("skill_catalog", catalog)
     if wrapped:
