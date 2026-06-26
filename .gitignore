@@ -6,6 +6,7 @@ dist/
 *.egg-info/
 data/
 evals/results/
+evals/history.jsonl
 node_modules/
 .playwright-mcp/
 .claude/
