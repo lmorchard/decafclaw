@@ -29,6 +29,7 @@ from .iteration_budget import IterationBudget
 from .llm import call_llm
 from .media import EndTurnConfirm, ToolResult, WidgetInputPause, extract_workspace_media
 from .persistence import read_skill_data, read_skills_state, write_skill_data, write_skills_state
+from .skills import activate_always_loaded
 from .tool_definitions import build_tool_list, refresh_dynamic_tools
 from .tool_execution import execute_tool_calls
 
@@ -394,21 +395,9 @@ async def _setup_turn_state(ctx, config, history) -> dict[str, str]:
 
     # Auto-activate always-loaded skills. Trusted tiers (bundled /
     # admin / extra) are eligible; workspace skills already had the
-    # always-loaded flag stripped at discovery, so the check below
-    # also defends against a workspace skill that somehow slipped
-    # through.
-    discovered = config.discovered_skills
-    for skill_info in discovered:
-        if not skill_info.always_loaded or skill_info.name in ctx.skills.activated:
-            continue
-        if skill_info.trust_tier == "workspace":
-            continue
-        from .tools.skill_tools import activate_skill_internal
-        try:
-            await activate_skill_internal(ctx, skill_info)
-            log.debug(f"Auto-activated always-loaded skill '{skill_info.name}'")
-        except Exception as e:
-            log.error(f"Failed to auto-activate skill '{skill_info.name}': {e}")
+    # always-loaded flag stripped at discovery, so the helper also
+    # defends against a workspace skill that somehow slipped through.
+    await activate_always_loaded(ctx)
 
     # Restore active model from archive (scan reverse for last valid model message).
     if not ctx.active_model and conv_id:

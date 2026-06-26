@@ -134,7 +134,7 @@ def _make_search_thunk(query: str):
     return _thunk
 
 
-@workflow("research")
+@workflow("research", requires_skills=("tabstack",))
 async def research(wf):
     topic = await wf.user_input("What topic should I research?")
     scope = await wf.user_input(
