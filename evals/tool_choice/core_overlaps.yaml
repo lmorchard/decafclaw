@@ -210,3 +210,15 @@
   notes: |
     Multi-field form with free-form text per field — ask_user_text
     with fields=[name, email, bio]. Nothing to pick from a list.
+
+# -- skill_validate vs refresh_skills -----------------------------------------
+
+- name: skill-validate-vs-refresh-preflight
+  scenario: "I just finished writing a new skill at skills/meta-ingest. Before I reload anything, check that I set it up correctly."
+  expected: skill_validate
+  near_miss: [refresh_skills]
+  notes: |
+    skill_validate is the targeted, non-mutating pre-flight for ONE skill —
+    "check it's set up correctly" before reloading. refresh_skills re-scans
+    everything and mutates the live catalog; it reports rejections too, but
+    it's the broad/commit path, not the focused "did I author this right" check.

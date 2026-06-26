@@ -66,52 +66,112 @@ class SkillInfo:
     trust_tier: str = "bundled"
 
 
-def parse_skill_md(path: Path) -> SkillInfo | None:
-    """Parse a SKILL.md file into a SkillInfo, or None if invalid.
+@dataclass
+class CheckResult:
+    """One pass/fail check produced during skill validation."""
 
-    Lenient: warns on issues, returns None only if name/description
-    is missing or YAML is completely unparseable.
+    name: str  # "readable" | "frontmatter" | "name" | "description" | tools.py checks
+    passed: bool
+    message: str  # actionable on failure, descriptive on pass
+
+
+@dataclass
+class SkillValidation:
+    """Result of validating a SKILL.md — the discovery-level accept/reject decision.
+
+    `meta`/`body` carry the parsed frontmatter so callers (e.g.
+    build_skill_info) don't re-parse. Checks are appended in order and
+    short-circuit at the first failure.
     """
+
+    path: Path
+    checks: list[CheckResult]
+    meta: dict | None = None
+    body: str = ""
+
+    @property
+    def ok(self) -> bool:
+        return all(c.passed for c in self.checks)
+
+    @property
+    def first_failure(self) -> str | None:
+        for c in self.checks:
+            if not c.passed:
+                return c.message
+        return None
+
+
+@dataclass
+class SkillRejection:
+    """A skill directory found during discovery but rejected, with the reason."""
+
+    path: Path
+    reason: str
+
+
+def validate_skill_md(path: Path) -> SkillValidation:
+    """Run the discovery-level checks on a SKILL.md — THE accept/reject decision.
+
+    Checks run in order and short-circuit at the first failure (you can't
+    check `name` without frontmatter). Frontmatter is parsed exactly once
+    and returned via `meta`/`body` for build_skill_info to reuse.
+    """
+    checks: list[CheckResult] = []
+
     try:
         text = path.read_text()
     except OSError as e:
-        log.warning(f"Cannot read {path}: {e}")
-        return None
+        checks.append(CheckResult("readable", False, f"cannot read SKILL.md: {e}"))
+        return SkillValidation(path=path, checks=checks)
+    checks.append(CheckResult("readable", True, "SKILL.md is readable"))
 
-    # Split frontmatter from body
     meta, body = _split_frontmatter(text)
     if meta is None:
-        log.warning(f"No valid YAML frontmatter in {path}")
-        return None
+        checks.append(CheckResult(
+            "frontmatter", False,
+            "no valid YAML frontmatter — needs a '---' delimited block of "
+            "parseable YAML at the top (check the opening/closing '---' "
+            "delimiters and the YAML syntax between them)",
+        ))
+        return SkillValidation(path=path, checks=checks, body=text)
+    checks.append(CheckResult("frontmatter", True, "valid YAML frontmatter"))
 
-    name = meta.get("name")
-    description = meta.get("description")
+    if not meta.get("name"):
+        checks.append(CheckResult(
+            "name", False, "missing required 'name' field in frontmatter",
+        ))
+        return SkillValidation(path=path, checks=checks, meta=meta, body=body)
+    checks.append(CheckResult("name", True, f"name: {meta['name']}"))
 
-    if not name:
-        log.warning(f"Missing 'name' in {path}")
-        return None
-    if not description:
-        log.warning(f"Missing 'description' in {path}")
-        return None
+    if not meta.get("description"):
+        checks.append(CheckResult(
+            "description", False, "missing required 'description' field in frontmatter",
+        ))
+        return SkillValidation(path=path, checks=checks, meta=meta, body=body)
+    checks.append(CheckResult("description", True, "description present"))
 
-    # Check for tools.py in the same directory
-    skill_dir = path.parent
+    return SkillValidation(path=path, checks=checks, meta=meta, body=body)
+
+
+def build_skill_info(result: SkillValidation) -> SkillInfo:
+    """Build a SkillInfo from a validated (ok) result. Caller ensures result.ok.
+
+    trust_tier is left at its default and assigned by discover_skills.
+    """
+    meta = result.meta or {}
+    skill_dir = result.path.parent
     has_native_tools = (skill_dir / "tools.py").exists()
 
-    # Parse requires.env
     requires = meta.get("requires", {})
     requires_env = requires.get("env", []) if isinstance(requires, dict) else []
 
-    # Parse allowed-tools: comma-separated string → list
-    # Entries like "shell(pattern)" are scoped shell approvals
-    allowed_tools_raw = meta.get("allowed-tools", "")
-    allowed_tools, shell_patterns = _parse_allowed_tools(allowed_tools_raw)
+    allowed_tools, shell_patterns = _parse_allowed_tools(meta.get("allowed-tools", ""))
 
     return SkillInfo(
-        name=name,
-        description=description,
+        name=meta["name"],
+        description=meta["description"],
         location=skill_dir,
-        body=body.strip(),
+        body=result.body.strip(),
         has_native_tools=has_native_tools,
         requires_env=requires_env,
         user_invocable=meta.get("user-invocable", meta.get("user_invocable", True)),
@@ -124,6 +184,19 @@ def parse_skill_md(path: Path) -> SkillInfo | None:
         always_loaded=bool(meta.get("always-loaded", False)),
         auto_approve=bool(meta.get("auto-approve", False)),
     )
+
+
+def parse_skill_md(path: Path) -> SkillInfo | None:
+    """Parse a SKILL.md into a SkillInfo, or None if invalid.
+
+    Thin wrapper over validate_skill_md → build_skill_info so the
+    accept/reject decision lives in exactly one place.
+    """
+    result = validate_skill_md(path)
+    if not result.ok:
+        log.warning(f"Rejected skill {path}: {result.first_failure}")
+        return None
+    return build_skill_info(result)
 
 
 _SCOPED_SHELL_RE = re.compile(r"^shell\((.+)\)$")
@@ -255,7 +328,7 @@ def _iter_skill_dirs(base_path: Path) -> Iterator[Path]:
             yield entry
 
 
-def discover_skills(config) -> list[SkillInfo]:
+def discover_skills(config, rejections: list | None = None) -> list[SkillInfo]:
     """Scan skill directories and return discovered skills.
 
     Scan order (highest priority first):
@@ -271,6 +344,10 @@ def discover_skills(config) -> list[SkillInfo]:
     Both forms can be freely mixed in any scan entry — most useful for
     `extra_skill_paths`, where deployments opt into shared skills
     from `contrib/skills/` by referencing them directly.
+
+    When `rejections` is provided, SKILL.md files that fail validation
+    are appended as SkillRejection(path, reason) instead of being
+    silently dropped — surfaced by refresh_skills (#595).
     """
     # Each scan entry carries its trust tier so SkillInfo can record
     # where the skill came from. Extra-paths entries all share the
@@ -291,9 +368,14 @@ def discover_skills(config) -> list[SkillInfo]:
             if not skill_md.exists():
                 continue
 
-            info = parse_skill_md(skill_md)
-            if info is None:
+            result = validate_skill_md(skill_md)
+            if not result.ok:
+                reason = result.first_failure or "unknown validation failure"
+                log.warning(f"Rejected skill {skill_md}: {reason}")
+                if rejections is not None:
+                    rejections.append(SkillRejection(path=skill_md, reason=reason))
                 continue
+            info = build_skill_info(result)
 
             info.trust_tier = tier
 
