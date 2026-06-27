@@ -1,0 +1,76 @@
+{
+  "workflow_name": "research",
+  "status": "error",
+  "entries": [
+    {
+      "seq": "0",
+      "kind": "user_input",
+      "args_fingerprint": "6dfb9c243a409066",
+      "result": "kelp forest restoration techniques"
+    },
+    {
+      "seq": "1",
+      "kind": "user_input",
+      "args_fingerprint": "1d5831b730324642",
+      "result": "for a general audience"
+    },
+    {
+      "seq": "2",
+      "kind": "llm_call",
+      "args_fingerprint": "17cd39b77e7d69af",
+      "result": {
+        "queries": [
+          "What are the main methods for restoring kelp forests?",
+          "How does sea urchin removal help kelp forest recovery?",
+          "What are the techniques for planting kelp in restoration projects?"
+        ]
+      }
+    },
+    {
+      "seq": "3",
+      "kind": "parallel",
+      "args_fingerprint": "e0e08edf4fd2da03",
+      "result": [
+        {
+          "text": "[error: tool tabstack_research timed out after 180s]",
+          "data": null
+        },
+        {
+          "text": "[error: tool tabstack_research timed out after 180s]",
+          "data": null
+        },
+        {
+          "text": "[error: tool tabstack_research timed out after 180s]",
+          "data": null
+        }
+      ]
+    },
+    {
+      "seq": "3.0.0",
+      "kind": "tool_call",
+      "args_fingerprint": "a6c72019a4d1f00f",
+      "result": {
+        "text": "[error: tool tabstack_research timed out after 180s]",
+        "data": null
+      }
+    },
+    {
+      "seq": "3.1.0",
+      "kind": "tool_call",
+      "args_fingerprint": "65b3609dee9d6ba3",
+      "result": {
+        "text": "[error: tool tabstack_research timed out after 180s]",
+        "data": null
+      }
+    },
+    {
+      "seq": "3.2.0",
+      "kind": "tool_call",
+      "args_fingerprint": "fc647a897fa52207",
+      "result": {
+        "text": "[error: tool tabstack_research timed out after 180s]",
+        "data": null
+      }
+    }
+  ]
+}

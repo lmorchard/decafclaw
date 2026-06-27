@@ -233,6 +233,41 @@ async def test_parallel_cancels_inflight_on_ctx_cancelled(ctx):
 
 
 @pytest.mark.asyncio
+async def test_parallel_returns_when_all_thunks_complete_with_cancel_event_set_but_not_fired(
+    ctx,
+):
+    """Regression for #582: wf.parallel hung when ctx.cancelled was a
+    real asyncio.Event that never fired and all thunks completed
+    normally. The bug: asyncio.wait(FIRST_EXCEPTION) falls back to
+    ALL_COMPLETED when no future raises, and the cancel_watcher (await
+    Event.wait()) never completes — so the wait hung forever.
+
+    The fix races asyncio.gather against the watcher with FIRST_COMPLETED,
+    so the gather's completion (after all thunks return) ends the wait
+    immediately without depending on the watcher firing."""
+    # Real Event, deliberately never set.
+    ctx.cancelled = asyncio.Event()
+
+    async def quick(sub):
+        return "done"
+
+    j = Journal(workflow_name="t")
+    h = WorkflowHandle(ctx, j)
+
+    # Wrap in wait_for to fail loudly if the bug regresses.
+    results = await asyncio.wait_for(
+        h.parallel([quick, quick, quick]),
+        timeout=2.0,
+    )
+
+    assert results == ["done", "done", "done"]
+    # Outer parallel entry must have been written.
+    entry = j.get((0,))
+    assert entry is not None
+    assert entry.kind == "parallel"
+
+
+@pytest.mark.asyncio
 async def test_parallel_zero_thunks(ctx):
     """`parallel([])` returns [] immediately and journals an empty result."""
     j = Journal(workflow_name="t")

@@ -217,6 +217,36 @@ async def test_pipeline_cancels_inflight_on_ctx_cancelled(ctx):
 
 
 @pytest.mark.asyncio
+async def test_pipeline_returns_when_all_items_complete_with_cancel_event_set_but_not_fired(
+    ctx,
+):
+    """Regression for #582: wf.pipeline hung in the same way wf.parallel did
+    (mirror-image bug). Same root cause: asyncio.wait(FIRST_EXCEPTION) falls
+    back to ALL_COMPLETED when no future raises, so the never-firing
+    cancel_watcher kept the wait hung forever."""
+    # Real Event, deliberately never set.
+    ctx.cancelled = asyncio.Event()
+
+    async def stage(prev, item, idx, sub):
+        return f"done:{item}"
+
+    j = Journal(workflow_name="t")
+    h = WorkflowHandle(ctx, j)
+
+    # Wrap in wait_for to fail loudly if the bug regresses.
+    results = await asyncio.wait_for(
+        h.pipeline(["a", "b", "c"], stage),
+        timeout=2.0,
+    )
+
+    assert results == ["done:a", "done:b", "done:c"]
+    # Outer pipeline entry must have been written.
+    entry = j.get((0,))
+    assert entry is not None
+    assert entry.kind == "pipeline"
+
+
+@pytest.mark.asyncio
 async def test_pipeline_zero_items(ctx):
     """`pipeline([])` returns [] immediately and journals an empty result."""
     j = Journal(workflow_name="t")

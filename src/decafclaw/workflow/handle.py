@@ -260,11 +260,10 @@ class WorkflowHandle:
         # None` in contexts that never wire the event (e.g. unit tests that
         # don't exercise cancellation) — skip the watcher there.
         #
-        # We need the watcher to interrupt `asyncio.wait(..., FIRST_EXCEPTION)`
-        # so it raises after the event fires (FIRST_EXCEPTION ignores tasks
-        # that complete normally). The watcher raises an internal sentinel
-        # rather than CancelledError so the task transitions to "has exception"
-        # (not "cancelled"), which is what FIRST_EXCEPTION reacts to.
+        # The watcher's sentinel exception lets us distinguish "cancel fired"
+        # from "gather completed" in the FIRST_COMPLETED `done` set below.
+        # `CancelledError` would conflate with stragglers' cleanup; the
+        # internal sentinel is unambiguous and never escapes this method.
         cancel_event = self.ctx.cancelled
 
         class _CancelSignal(Exception):
@@ -286,11 +285,37 @@ class WorkflowHandle:
                 # case where cancellation never fires.)
                 results: list[Any] = []
             else:
-                wait_set = list(tasks)
+                # asyncio.gather(...) returns a _GatheringFuture (already
+                # scheduled on the loop) — do NOT wrap in asyncio.create_task.
+                # The Future itself goes into the wait_set; .cancel()
+                # propagates to inner tasks; .result() returns the results
+                # list (or raises the first thunk's exception).
+                #
+                # Why this shape (race gather vs watcher with FIRST_COMPLETED)
+                # instead of asyncio.wait(tasks + watcher, FIRST_EXCEPTION):
+                # FIRST_EXCEPTION ignores tasks that complete *normally*, so
+                # when no thunk raises it degrades to ALL_COMPLETED — but
+                # ALL_COMPLETED includes the cancel_watcher, which only
+                # finishes when the event fires. Result: the wait hung
+                # forever in the common happy-path case where every thunk
+                # returned cleanly and the cancel event never fired. (See
+                # #582.) FIRST_COMPLETED + gather sidesteps this because the
+                # _GatheringFuture completes the moment the last thunk
+                # returns OR the first thunk raises (return_exceptions=False).
+                #
+                # NOTE: return_exceptions=False is load-bearing. With
+                # return_exceptions=True, gather waits for ALL inner tasks
+                # to finish — so a fast_raiser + slow_hanger pair would hang
+                # forever (the slow thunk never returns; we have to cancel
+                # it ourselves below, *after* gather has surfaced the real
+                # exception).
+                gather_future = asyncio.gather(*tasks)
+                wait_set: list[asyncio.Future] = [gather_future]
                 if cancel_watcher is not None:
                     wait_set.append(cancel_watcher)
-                done, pending = await asyncio.wait(
-                    wait_set, return_when=asyncio.FIRST_EXCEPTION)
+
+                done, _ = await asyncio.wait(
+                    wait_set, return_when=asyncio.FIRST_COMPLETED)
 
                 cancel_fired = (
                     cancel_watcher is not None
@@ -298,46 +323,58 @@ class WorkflowHandle:
                     and not cancel_watcher.cancelled()
                     and isinstance(cancel_watcher.exception(), _CancelSignal)
                 )
+
                 if cancel_fired:
-                    # Cancellation fired: tear down any in-flight thunks and
-                    # surface CancelledError to the caller.
-                    for t in tasks:
-                        if not t.done():
-                            t.cancel()
-                    # `return_exceptions=True` swallows the CancelledErrors
-                    # raised by the cancelled tasks — we re-raise our own
-                    # below after cleanup.
-                    await asyncio.gather(*tasks, return_exceptions=True)
+                    # Cancelling the gather propagates to every inner task.
+                    # Drain it so any CancelledError / leftover exception is
+                    # retrieved and asyncio doesn't log "exception was never
+                    # retrieved" warnings.
+                    gather_future.cancel()
+                    try:
+                        await gather_future
+                    except asyncio.CancelledError:
+                        pass  # expected: we just cancelled it
+                    except Exception as exc:  # noqa: BLE001
+                        log.debug(
+                            "parallel gather cleanup error on cancel: %r",
+                            exc)
                     raise asyncio.CancelledError()
 
-                # No cancellation: either all tasks completed, or one raised
-                # and `pending` may still hold others (plus the cancel_watcher
-                # if no exception came from it). Cancel straggler thunks,
-                # drain them, then surface the first REAL exception (in
-                # thunk-index order). The cancel_watcher is cleaned up in
-                # the `finally` block, not gathered here.
-                stragglers = [t for t in pending if t is not cancel_watcher]
-                for t in stragglers:
-                    if not t.done():
+                # FIRST_COMPLETED with two futures in the wait_set guarantees
+                # at least one is in `done`. If the gather wasn't there, the
+                # watcher must have been — and `cancel_fired` would have been
+                # True above. Reaching here with neither in `done` would be
+                # an asyncio invariant violation; raise loudly rather than
+                # silently miscount.
+                if gather_future not in done:
+                    raise RuntimeError(
+                        "wf.parallel: wait returned with no completed future")
+
+                # gather_future is done — either every task succeeded
+                # (.result() returns the results list) or one raised
+                # (.result() re-raises that exception). In the raise case,
+                # other tasks may still be running — cancel any stragglers
+                # in `finally` is not enough because the finally block here
+                # only handles cancel_watcher. Cancel stragglers explicitly
+                # before .result() so the surfaced exception isn't masked
+                # and orphans can't leak.
+                stragglers = [t for t in tasks if not t.done()]
+                if stragglers:
+                    for t in stragglers:
                         t.cancel()
-                await asyncio.gather(*stragglers, return_exceptions=True)
-                # Locate the first task with a real (non-CancelledError)
-                # exception. Cancellation of pending tasks happens via our
-                # own cleanup gather above and must not mask the underlying
-                # failure: a naive `tasks[i].result()` in index order would
-                # raise the cleanup-induced CancelledError of a lower-index
-                # straggler instead of the higher-index thunk's real error.
-                first_exc: BaseException | None = None
-                for t in tasks:
-                    if t.done() and not t.cancelled():
-                        exc = t.exception()
-                        if exc is not None and not isinstance(
-                                exc, asyncio.CancelledError):
-                            first_exc = exc
-                            break
-                if first_exc is not None:
-                    raise first_exc
-                results = [t.result() for t in tasks]
+                    # Drain cancelled stragglers so CancelledErrors are
+                    # retrieved and don't log "never retrieved" warnings.
+                    await asyncio.gather(*stragglers, return_exceptions=True)
+
+                # .result() either returns the list (all succeeded) or
+                # re-raises the first thunk's exception. Matches the prior
+                # behavior of surfacing the first REAL (non-CancelledError)
+                # exception — gather's "first exception" is the first one
+                # raised in time, which is the real failure (stragglers
+                # only get CancelledError after we cancel them above, and
+                # they aren't part of gather_future's exception surface
+                # anymore because gather already completed).
+                results = gather_future.result()
         finally:
             if cancel_watcher is not None:
                 if not cancel_watcher.done():
@@ -413,8 +450,10 @@ class WorkflowHandle:
         ]
 
         # Cancel watcher mirrors `parallel`'s pattern. The watcher raises a
-        # private sentinel (not CancelledError) so the task transitions to
-        # "has exception", which is what FIRST_EXCEPTION reacts to.
+        # private sentinel (not CancelledError) so we can distinguish "cancel
+        # fired" from "gather completed" in the FIRST_COMPLETED `done` set
+        # below. `CancelledError` would conflate with stragglers' cleanup;
+        # the internal sentinel is unambiguous and never escapes this method.
         cancel_event = self.ctx.cancelled
 
         class _CancelSignal(Exception):
@@ -430,11 +469,37 @@ class WorkflowHandle:
             cancel_watcher = asyncio.create_task(_cancel_watcher_body())
 
         try:
-            wait_set = list(tasks)
+            # asyncio.gather(...) returns a _GatheringFuture (already
+            # scheduled on the loop) — do NOT wrap in asyncio.create_task.
+            # The Future itself goes into the wait_set; .cancel()
+            # propagates to inner tasks; .result() returns the results
+            # list (or raises the first item's exception).
+            #
+            # Why this shape (race gather vs watcher with FIRST_COMPLETED)
+            # instead of asyncio.wait(tasks + watcher, FIRST_EXCEPTION):
+            # FIRST_EXCEPTION ignores tasks that complete *normally*, so
+            # when no item raises it degrades to ALL_COMPLETED — but
+            # ALL_COMPLETED includes the cancel_watcher, which only
+            # finishes when the event fires. Result: the wait hung
+            # forever in the common happy-path case where every item
+            # returned cleanly and the cancel event never fired. (See
+            # #582.) FIRST_COMPLETED + gather sidesteps this because the
+            # _GatheringFuture completes the moment the last item
+            # returns OR the first item raises (return_exceptions=False).
+            #
+            # NOTE: return_exceptions=False is load-bearing. With
+            # return_exceptions=True, gather waits for ALL inner tasks
+            # to finish — so a fast_raiser + slow_hanger pair would hang
+            # forever (the slow item never returns; we have to cancel
+            # it ourselves below, *after* gather has surfaced the real
+            # exception).
+            gather_future = asyncio.gather(*tasks)
+            wait_set: list[asyncio.Future] = [gather_future]
             if cancel_watcher is not None:
                 wait_set.append(cancel_watcher)
-            done, pending = await asyncio.wait(
-                wait_set, return_when=asyncio.FIRST_EXCEPTION)
+
+            done, _ = await asyncio.wait(
+                wait_set, return_when=asyncio.FIRST_COMPLETED)
 
             cancel_fired = (
                 cancel_watcher is not None
@@ -442,35 +507,56 @@ class WorkflowHandle:
                 and not cancel_watcher.cancelled()
                 and isinstance(cancel_watcher.exception(), _CancelSignal)
             )
+
             if cancel_fired:
-                for t in tasks:
-                    if not t.done():
-                        t.cancel()
-                await asyncio.gather(*tasks, return_exceptions=True)
+                # Cancelling the gather propagates to every inner task.
+                # Drain it so any CancelledError / leftover exception is
+                # retrieved and asyncio doesn't log "exception was never
+                # retrieved" warnings.
+                gather_future.cancel()
+                try:
+                    await gather_future
+                except asyncio.CancelledError:
+                    pass  # expected: we just cancelled it
+                except Exception as exc:  # noqa: BLE001
+                    log.debug(
+                        "pipeline gather cleanup error on cancel: %r",
+                        exc)
                 raise asyncio.CancelledError()
 
-            # No cancellation: cancel any pending stragglers and surface
-            # the first REAL exception in item-index order. Naive
-            # `tasks[i].result()` would raise the cleanup-induced
-            # CancelledError of a lower-index straggler and mask a
-            # higher-index item's actual failure — see `parallel`'s
-            # post-fix shape for the regression guard.
-            stragglers = [t for t in pending if t is not cancel_watcher]
-            for t in stragglers:
-                if not t.done():
+            # FIRST_COMPLETED with two futures in the wait_set guarantees
+            # at least one is in `done`. If the gather wasn't there, the
+            # watcher must have been — and `cancel_fired` would have been
+            # True above. Reaching here with neither in `done` would be
+            # an asyncio invariant violation; raise loudly rather than
+            # silently miscount.
+            if gather_future not in done:
+                raise RuntimeError(
+                    "wf.pipeline: wait returned with no completed future")
+
+            # gather_future is done — either every item succeeded
+            # (.result() returns the results list) or one raised
+            # (.result() re-raises that exception). In the raise case,
+            # other items may still be running — cancel any stragglers
+            # explicitly before .result() so the surfaced exception
+            # isn't masked and orphans can't leak.
+            stragglers = [t for t in tasks if not t.done()]
+            if stragglers:
+                for t in stragglers:
                     t.cancel()
-            await asyncio.gather(*stragglers, return_exceptions=True)
-            first_exc: BaseException | None = None
-            for t in tasks:
-                if t.done() and not t.cancelled():
-                    exc = t.exception()
-                    if exc is not None and not isinstance(
-                            exc, asyncio.CancelledError):
-                        first_exc = exc
-                        break
-            if first_exc is not None:
-                raise first_exc
-            results = [t.result() for t in tasks]
+                # Drain cancelled stragglers so CancelledErrors are
+                # retrieved and don't log "never retrieved" warnings.
+                await asyncio.gather(*stragglers, return_exceptions=True)
+
+            # .result() either returns the list (all succeeded) or
+            # re-raises the first item's exception. Matches the prior
+            # behavior of surfacing the first REAL (non-CancelledError)
+            # exception — gather's "first exception" is the first one
+            # raised in time, which is the real failure (stragglers
+            # only get CancelledError after we cancel them above, and
+            # they aren't part of gather_future's exception surface
+            # anymore because gather already completed).
+            results = gather_future.result()
         finally:
             if cancel_watcher is not None:
                 if not cancel_watcher.done():
