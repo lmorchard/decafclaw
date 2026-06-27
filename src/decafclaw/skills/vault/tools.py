@@ -6,7 +6,7 @@ that supports curated pages, daily journal entries, and user content.
 
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 from pathlib import Path
 
@@ -881,6 +881,106 @@ async def tool_vault_list(ctx, folder: str = "", pattern: str = "") -> str | Too
     return f"{len(pages)} page(s):\n\n" + "\n".join(pages)
 
 
+def collect_recent_pages(config, cutoff_ts: float, folder: str = "",
+                         source_type: str = "") -> list[dict]:
+    """Vault ``.md`` pages modified at/after ``cutoff_ts`` (epoch seconds).
+
+    Returns ``[{path, mtime (float), source_type, size}]`` (unsorted; callers
+    sort). Symlink-safe: a file whose resolved path escapes the vault root is
+    skipped, so symlinked directories can't leak external files into the
+    listing. Shared by ``vault_recent`` and the newsletter's change scan.
+    """
+    search_root = _safe_folder(config, folder)
+    if search_root is None or not search_root.is_dir():
+        return []
+    vault = _vault_root(config)
+    vault_resolved = vault.resolve()
+
+    out: list[dict] = []
+    for path in search_root.rglob("*.md"):
+        try:
+            resolved = path.resolve()
+            if not resolved.is_relative_to(vault_resolved):
+                continue
+            stat = resolved.stat()
+        except OSError:
+            continue
+        if stat.st_mtime < cutoff_ts:
+            continue
+        st = _source_type_for_path(config, path)
+        if source_type and st != source_type:
+            continue
+        # Use the resolved pair consistently: when vault_root is a symlink and
+        # `folder` is given, search_root (and thus `path`) is resolved while
+        # `vault` is not, so `path.relative_to(vault)` would raise ValueError.
+        out.append({
+            "path": resolved.relative_to(vault_resolved).as_posix(),
+            "mtime": stat.st_mtime,
+            "source_type": st,
+            "size": stat.st_size,
+        })
+    return out
+
+
+async def tool_vault_recent(ctx, days: int = 7, folder: str = "",
+                            source_type: str = "") -> str | ToolResult:
+    """List vault pages modified within the last `days`, newest first."""
+    log.info(f"[tool:vault_recent] days={days} folder={folder} "
+             f"source_type={source_type}")
+    if days <= 0:
+        return ToolResult(text="[error: days must be a positive integer]")
+    safe = _safe_folder(ctx.config, folder)
+    if safe is None:
+        return ToolResult(text=f"[error: invalid folder path '{folder}']")
+    if not safe.is_dir():
+        if folder:
+            return ToolResult(text=f"[error: folder '{folder}' does not exist]")
+        return "Vault directory does not exist."
+    cutoff = (datetime.now(tz=timezone.utc) - timedelta(days=days)).timestamp()
+    rows = collect_recent_pages(ctx.config, cutoff, folder=folder,
+                                source_type=source_type)
+    rows.sort(key=lambda r: r["mtime"], reverse=True)
+
+    scope = f" in '{folder}'" if folder else ""
+    st_note = f" (source_type={source_type})" if source_type else ""
+    if not rows:
+        return f"No pages modified in the last {days} day(s){scope}{st_note}."
+
+    limit = 100
+    shown = rows[:limit]
+
+    def _fmt(ts):
+        return datetime.fromtimestamp(ts, tz=timezone.utc)
+
+    lines = [
+        f"- {r['path']} ({r['source_type']}, "
+        f"modified: {_fmt(r['mtime']).strftime('%Y-%m-%d %H:%M')})"
+        for r in shown
+    ]
+    header = (
+        f"{len(rows)} page(s) modified in the last {days} day(s){scope}{st_note}"
+    )
+    if len(rows) > limit:
+        header += f" (showing {limit} most recent)"
+    return ToolResult(
+        text=header + ":\n\n" + "\n".join(lines),
+        data={
+            "days": days,
+            "folder": folder,
+            "source_type": source_type,
+            "count": len(rows),
+            "pages": [
+                {
+                    "path": r["path"],
+                    "source_type": r["source_type"],
+                    "modified": _fmt(r["mtime"]).isoformat(),
+                }
+                for r in shown
+            ],
+        },
+    )
+
+
 _WIKI_LINK_RE = re.compile(r"\[\[([^\]]+)\]\]")
 
 
@@ -1149,6 +1249,7 @@ TOOLS = {
     "vault_journal_append": tool_vault_journal_append,
     "vault_search": tool_vault_search,
     "vault_list": tool_vault_list,
+    "vault_recent": tool_vault_recent,
     "vault_backlinks": tool_vault_backlinks,
     "vault_show_sections": tool_vault_show_sections,
     "vault_move_lines": tool_vault_move_lines,
@@ -1424,6 +1525,51 @@ TOOL_DEFINITIONS = [
                         "description": (
                             "Optional filter pattern "
                             "(e.g. 'project' to match pages with 'project' in the name)"
+                        ),
+                    },
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "vault_recent",
+            "description": (
+                "List vault pages MODIFIED in the last N days (newest first), "
+                "with each page's modified date and source_type. This is the "
+                "'what changed / what's new / recent activity' tool — use it to "
+                "review everything added or updated lately, whether from me or "
+                "from ingestion. Unlike vault_search (which needs a content "
+                "query and only returns matching pages) and vault_list (which "
+                "lists a folder regardless of date), vault_recent is purely "
+                "recency-based. Optionally scope by folder and/or source_type "
+                "(e.g. source_type='user' for my own notes/journal)."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "days": {
+                        "type": "integer",
+                        "description": (
+                            "Look back this many days (by modified time). "
+                            "Defaults to 7."
+                        ),
+                    },
+                    "folder": {
+                        "type": "string",
+                        "description": (
+                            "Optional subfolder to scope to (e.g. 'agent/pages', "
+                            "'journals'). Empty = entire vault."
+                        ),
+                    },
+                    "source_type": {
+                        "type": "string",
+                        "description": (
+                            "Optional filter: 'page' (agent pages), 'journal' "
+                            "(agent journal), or 'user' (my own notes/journal "
+                            "outside agent/). Empty = all."
                         ),
                     },
                 },

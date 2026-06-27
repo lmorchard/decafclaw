@@ -10,6 +10,7 @@ from pathlib import Path
 from decafclaw.conversation_paths import iter_conversation_archives
 from decafclaw.mail import send_mail
 from decafclaw.media import ToolResult
+from decafclaw.skills.vault.tools import collect_recent_pages
 
 log = logging.getLogger(__name__)
 
@@ -225,30 +226,22 @@ def _collect_vault_changes(ctx, hours: int = 24) -> list[dict]:
     Returns a list of {path (str, relative to vault root), mtime (ISO-8601), size (int)}.
     Excludes files under the newsletter output folder (self-references).
     """
-    vault_root = ctx.config.vault_root
-    if not vault_root.is_dir():
-        return []
-
     cutoff_ts = (datetime.now(timezone.utc) - timedelta(hours=hours)).timestamp()
     newsletter_folder = None
     if _skill_config is not None:
         newsletter_folder = _skill_config.vault_folder
 
     out: list[dict] = []
-    for path in vault_root.rglob("*.md"):
-        try:
-            stat = path.stat()
-        except OSError:
-            continue
-        if stat.st_mtime < cutoff_ts:
-            continue
-        rel = path.relative_to(vault_root).as_posix()
+    # Shared, symlink-safe recency scan (see vault.tools.collect_recent_pages).
+    for row in collect_recent_pages(ctx.config, cutoff_ts):
+        rel = row["path"]
         if newsletter_folder and rel.startswith(newsletter_folder.rstrip("/") + "/"):
             continue
         out.append({
             "path": rel,
-            "mtime": datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat(),
-            "size": stat.st_size,
+            "mtime": datetime.fromtimestamp(
+                row["mtime"], tz=timezone.utc).isoformat(),
+            "size": row["size"],
         })
     out.sort(key=lambda r: r["mtime"])
     return out

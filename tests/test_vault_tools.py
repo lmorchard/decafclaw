@@ -1,5 +1,7 @@
 """Tests for vault tools."""
 
+import os
+import time
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -15,6 +17,7 @@ from decafclaw.skills.vault.tools import (
     tool_vault_journal_append,
     tool_vault_list,
     tool_vault_read,
+    tool_vault_recent,
     tool_vault_rename,
     tool_vault_search,
     tool_vault_write,
@@ -1117,3 +1120,72 @@ class TestVaultGrantFolder:
             result = await tool_vault_write(ctx, "creative/foo", "content body")
         assert sentinel.call_count == 0
         assert "saved" in str(result)
+
+
+def _set_mtime(path, days_ago: float):
+    """Backdate a file's atime and mtime by `days_ago` days."""
+    when = time.time() - days_ago * 86400
+    os.utime(path, (when, when))
+
+
+class TestVaultRecent:
+    async def test_lists_only_recent_pages(self, ctx, agent_pages):
+        (agent_pages / "fresh.md").write_text("# Fresh")
+        old = agent_pages / "stale.md"
+        old.write_text("# Stale")
+        _set_mtime(old, 30)
+        result = await tool_vault_recent(ctx, days=7)
+        text = str(result)
+        assert "agent/pages/fresh" in text
+        assert "stale" not in text
+
+    async def test_source_type_filter_user_only(self, ctx, vault_dir, agent_pages):
+        # Human content lives outside agent/ → source_type "user".
+        journals = vault_dir / "journals" / "2026"
+        journals.mkdir(parents=True)
+        (journals / "2026-06-24.md").write_text("# Daily note")
+        (agent_pages / "ingested.md").write_text("# Ingested page")
+        result = await tool_vault_recent(ctx, days=7, source_type="user")
+        text = str(result)
+        assert "journals/2026/2026-06-24" in text
+        assert "agent/pages/ingested" not in text
+
+    async def test_folder_scope(self, ctx, vault_dir, agent_pages):
+        journals = vault_dir / "journals"
+        journals.mkdir(parents=True)
+        (journals / "note.md").write_text("# Note")
+        (agent_pages / "page.md").write_text("# Page")
+        result = await tool_vault_recent(ctx, days=7, folder="journals")
+        text = str(result)
+        assert "journals/note" in text
+        assert "agent/pages/page" not in text
+
+    async def test_no_recent_pages_message(self, ctx, agent_pages):
+        old = agent_pages / "ancient.md"
+        old.write_text("# Ancient")
+        _set_mtime(old, 90)
+        result = await tool_vault_recent(ctx, days=7)
+        assert "No pages modified" in str(result)
+
+    async def test_rejects_non_positive_days(self, ctx, agent_pages):
+        for d in (0, -1):
+            result = await tool_vault_recent(ctx, days=d)
+            assert "error" in str(result).lower()
+
+    async def test_excludes_symlinked_escape(self, ctx, vault_dir, agent_pages,
+                                              tmp_path):
+        # A symlinked dir inside the vault pointing outside must not leak its
+        # files into the listing (resolved path escapes the vault root).
+        (agent_pages / "real.md").write_text("# Real")
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (outside / "leak.md").write_text("# Leak")
+        os.symlink(outside, vault_dir / "sneaky")
+        result = await tool_vault_recent(ctx, days=7)
+        text = str(result)
+        assert "agent/pages/real" in text
+        assert "leak" not in text
+
+    async def test_missing_folder_errors(self, ctx, vault_dir):
+        result = await tool_vault_recent(ctx, days=7, folder="nope/missing")
+        assert "does not exist" in str(result).lower()
