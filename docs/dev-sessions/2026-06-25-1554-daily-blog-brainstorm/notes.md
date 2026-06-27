@@ -34,6 +34,74 @@ First deployment smoke of `/blog-ideas` failed: *"vault_read tool is not availab
 
 > General gotcha: a `user-invocable` skill that needs the vault (especially writes) must use `context: inline`, not `fork`.
 
+## Feedback from a weeknotes-composer session (cross-skill consumer)
+
+Another agent flagged issues while wanting to consume the living page. Applied:
+- **Contradiction fixed:** the intro said "read and write only within `agent/`",
+  contradicting Phase 2's reads of `journals/` + `blog/` (and likely contributing
+  to the journal-miss — a literal model avoiding non-`agent/` reads). Reworded to
+  **write** within `agent/`, **read** broadly.
+- **Incremental reads:** Phase 2 re-read all of Mon–Thu on every run (5× by
+  Friday). Now: first run of the week reads everything since `monday`; later runs
+  only `vault_read` entries modified after the page's `updated:` watermark and
+  trust the page for earlier material. Flat daily cost.
+- **Downstream contract:** Headliners now ordered strongest-first (headliner #1 =
+  the week's lead); page structure (Headliners/Seeds/Recurring + the headliner
+  field set) declared a stable contract other skills parse. The weeknotes composer
+  intends to use headliners as the post's lead/spine, recurring as continuity
+  callbacks, seeds as Miscellanea candidates.
+
+**Decided (Les): keep seeds ~1 month as a slow-burn theme tracker** (Phase 5).
+The motivating case: themes that develop across notes/bookmarks over a week or
+two before they're an obvious trend — a single week rarely makes them clear. So
+a standing `agent/pages/blog-ideas/parking-lot.md` (under `agent/`, writable by
+the cron run — `blog/drafts` is NOT, write gate) accumulates un-ripened seeds
+with `seen`/`reinforced` dates. Each run: reinforce parked themes with new
+evidence, graduate ripe ones to Headliners, add new seeds, prune anything that
+hasn't gained traction in ~1 month (≈4 weeks). Prompt-only, approximate
+date-eyeballing (a seed lingering 4 vs 5 weeks is harmless). Complements
+`Recurring` (which catches themes already repeating on weekly pages).
+
+## New core tool: `vault_recent` (the gather fix; skill surfaced a core gap)
+
+Building the gather phase exposed a real gap in the **core** vault toolset: there
+was `vault_search` (needs a content query) and `vault_list` (folder enumeration,
+no date filter) but **nothing for "what changed recently."** `newsletter` had
+even grown its own private `_collect_vault_changes` for exactly this. So instead
+of a blog-ideas-local helper, we added a general **`vault_recent(days=7,
+folder="", source_type="")`** to the always-loaded vault skill (newest-first,
+recency-based, optional folder/source_type scoping) with a unit test and a
+tool_choice eval disambiguating it from search/list. blog-ideas Phase 2 now calls
+`vault_recent(days=days_so_far)` to read *everything* changed this week across all
+ingest + distilled folders AND the Obsidian journal (`source_type=user`), then
+`vault_read`s the relevant entries. The scan logic is a shared, symlink-safe
+`collect_recent_pages(config, cutoff_ts, folder, source_type)` helper; both
+`vault_recent` and `newsletter._collect_vault_changes` use it (DRY — newsletter's
+private rglob is gone). `vault_recent` errors on non-positive `days` rather than
+silently coercing. (Copilot review on #611 prompted the symlink-safety + days
+fixes; the newsletter refactor was done in the same PR at Les's request.)
+
+## Bugfix: gather phase used the wrong tool (`vault_search` → `vault_recent`)
+
+Second deploy smoke: the skill ran but produced shallow, generic ideas and never
+touched the Obsidian daily journal. Root cause was the Phase 2 gather:
+- `vault_search` **requires a content query** and (on the deployment) runs in
+  substring mode — so it returns only pages *containing* the query text, not
+  "everything recent." The model searched `"blog ideas"`/`"entry"`, found almost
+  nothing, then errored on an empty query.
+- The journal step said `journals/…` but the model searched `folder=agent/journal`
+  (the agent's journal → newsletter pages), missing the human's daily notes.
+- Result: ideas synthesized from page *titles* quoted in newsletter recaps, not
+  real content.
+
+Fix (prompt-only): rewrote Phase 2 to **enumerate with `vault_list`** per folder
+(incl. `journals` explicitly = my Obsidian daily notes, NOT `agent/journal`) and
+`vault_read` entries modified on/after `monday`; `vault_search` is reserved for
+the published-archive dedup query only, with an explicit warning that it can't
+enumerate. (`vault_list` is the right tool — the model already used it correctly
+for `blog/drafts` in the smoke.) Helper-tool gather kept as a fallback if a
+re-smoke still struggles.
+
 ## Relocation to contrib (post-review)
 
 After the PR was opened, the skill was moved from a core bundled skill

@@ -222,3 +222,24 @@
     "check it's set up correctly" before reloading. refresh_skills re-scans
     everything and mutates the live catalog; it reports rejections too, but
     it's the broad/commit path, not the focused "did I author this right" check.
+
+# -- vault_recent vs vault_search / vault_list ---------------------------------
+
+- name: vault-recent-vs-search-whats-new
+  scenario: "What's been added or changed in my vault over the last week?"
+  expected: vault_recent
+  near_miss: [vault_search, vault_list]
+  notes: |
+    "Added or changed ... over the last week" is a pure recency query —
+    vault_recent. vault_search needs a content query (there's no topic here),
+    and vault_list enumerates a folder regardless of date. Recency is the whole
+    ask.
+
+- name: vault-recent-vs-list-recent-journal
+  scenario: "Show me the notes I've written in my journal in the past few days."
+  expected: vault_recent
+  near_miss: [vault_list, vault_search]
+  notes: |
+    Time-bounded ("past few days") + my own content points at vault_recent
+    (source_type=user). vault_list would dump the whole journal folder with no
+    date filter; vault_search needs a query string.
