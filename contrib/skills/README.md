@@ -80,6 +80,12 @@ A daily brainstorm pass: reviews the week-so-far across your ingested activity (
 
 **Schedule:** ships a `SCHEDULE.md` for a daily 06:00 UTC run, but as a contrib skill it's force-disabled — opt in by creating an overlay at `data/{agent_id}/schedules/blog-ideas.md` (copy the skill's `SCHEDULE.md` and set `enabled: true`). Also runs on demand via the `/blog-ideas` command.
 
+### blog-develop
+
+Develop any blog-post idea into a take-or-leave first draft via scout → interview → deep research → draft.
+
+**Requires:** `tabstack` skill configured (web research) and a vault. No extra binaries or API keys beyond what `tabstack` needs.
+
 ### kindle
 
 Syncs highlights and notes from your Kindle library (`read.amazon.com/notebook`) into per-book vault pages under `agent/pages/kindle/`. Each book gets one page with frontmatter tracking the ASIN, title, author, and highlight count. Deleted highlights are moved to an `## Archived` section with a date stamp.
