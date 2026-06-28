@@ -119,6 +119,18 @@ the #255 replay engine.
   context, fixed return contract) identified across SAW, the agentic-harness
   video, and our own #255 retro. Deliberately deferred from v1, not an oversight.
 
+- **Replace `tabstack_research` with an owned/local research workflow.** v1's
+  scout + deep-research workers call `tabstack_research`, a hosted external
+  service. v2 could swap it for a DecafClaw-owned research loop (e.g. a
+  delegate-orchestrated or #255-replay-engine research workflow over `web_fetch`
+  + a search primitive), reducing the external dependency and making the research
+  loop inspectable and tunable — the "own the rig" theme from this session.
+  Wrinkle: a fully-local loop needs a **search** primitive; DecafClaw currently
+  has only `web_fetch` locally (search comes via tabstack), so this means either
+  adding a local search tool or accepting fetch-only research. The worker
+  contracts (structured `return_schema`) stay the same; only the tool the worker
+  uses changes — so this is a localized swap, not a redesign.
+
 ## Open items
 
 - Identify the actual voice-doc paths in the vault to feed the drafter (the

@@ -461,6 +461,7 @@ Automated tests can't validate prompt quality or the multi-turn interview. Smoke
 ## Deferred to v2 (not in this plan)
 
 - **Reviewer agent** after the draft: a `delegate_task` phase running two quality lenses — a **"humanizer"** (scan/strip "AI tells") and an **"editor"** applying Strunk & White. Note: `contrib/skills/writing-clearly` already exists and is a likely fit for the editor lens — evaluate reusing it. This is the reliable reviewer-persona pattern; deliberately out of v1 scope.
+- **Replace `tabstack_research` with an owned/local research workflow** in the scout + deep-research workers (reduce the hosted-service dependency; make the research loop inspectable/tunable). Needs a local search primitive — only `web_fetch` exists locally today. Worker `return_schema` contracts stay; only the tool changes. Natural home: the #255 replay engine.
 
 ---
 
