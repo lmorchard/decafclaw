@@ -65,7 +65,22 @@ One `delegate_tasks` call, one task per source file. The children run **in paral
 
 - `allow_vault_read: true` — children must browse the vault for context.
 - `return_schema`: the shape shown below.
-- `tasks`: one entry per delegated source (from Step 1), built from the per-source template. At most 6 sources — well under the 10-task cap — so a single call covers them all.
+- `tasks`: a flat JSON **array of plain strings** — one string per delegated source, each being the fully-substituted per-source prompt from the template below. It is **NOT** a list of objects: pass `["<prompt for github>", "<prompt for linkding>", …]`, never `[{"prompt": "…"}]`. At most 6 sources — well under the 10-task cap — so a single call covers them all.
+
+The call looks like this (only `tasks` varies per source; the other three params are shared across the whole batch):
+
+```
+delegate_tasks(
+    allow_vault_read=true,
+    return_schema={ …the shape shown below… },
+    tasks=[
+        "<github prompt, fully substituted>",
+        "<linkding prompt, fully substituted>",
+        "<mastodon prompt, fully substituted>",
+        …one string per remaining source…
+    ],
+)
+```
 
 Each child reads its own source file with `workspace_read(<path from the manifest>)`; you never load the source content into this turn.
 
