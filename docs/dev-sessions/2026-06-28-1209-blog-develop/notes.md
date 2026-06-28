@@ -1,44 +1,67 @@
 # Dev Session Notes: blog-develop skill
 
-## Task 4: eval downgraded to manual smoke
+## Task 4: eval status (UPDATED after the fork→inline switch)
 
-### Why the harness cannot guard this
+> **Update (commit 63ca046):** Task 4 was originally downgraded because the skill
+> was `context: fork`, which the eval harness can't drive (see the superseded
+> reasoning below). The skill now ships as **`context: inline`**, which *reverses*
+> that conclusion — the eval is viable again. Read this section first; the
+> fork-era reasoning below is kept only as a record.
 
-`/blog-develop` is a `user-invocable: true`, `context: fork` command.
+### Inline makes the scout-via-delegate eval viable
 
-In the eval runner (`src/decafclaw/eval/runner.py`, lines 479–508), when
-`dispatch_command` returns `cmd.mode == "fork"`, the runner:
+In inline mode the orchestrator runs in the main turn via `run_agent_turn`, so its
+own `delegate_task` tool call (the scout) lands in the outer history the eval
+runner inspects. So `expect_tool: delegate_task` would now pass when the skill
+behaves correctly and fail if it narrates-instead-of-delegates — exactly the
+#557 guard we want.
 
-1. Captures `cmd.text` (the child agent's final response) as the turn response.
-2. Skips `run_agent_turn` entirely — no agent loop runs in the outer context.
-3. Records **zero tool calls** in the outer history, because all tool calls
-   happen inside `run_child_turn`'s isolated child context and are never
-   appended to the main `history` list the runner inspects.
-4. Fires assertions against `tool_names=[]`.
+Two useful properties:
+- **Resilient to missing tabstack creds.** The assertion is on the *parent-level*
+  `delegate_task` call. Even if the scout child can't actually web-search (no
+  creds in the eval env), `delegate_task` still returns (with an error string)
+  and counts as called — so the structural guard holds without a live web
+  dependency. Keep `max_tool_errors` lenient enough that a child-side failure
+  surfaced as a parent tool result doesn't fail the case spuriously.
+- **Cost caveat.** The `delegate_task` call still blocks on a real child turn, so
+  the case is not as cheap as a pure `tool_choice` case. Bound it tightly
+  (`max_tool_calls: 4`).
 
-This means `expect_tool: delegate_task` would unconditionally FAIL: the
-`delegate_task` call happens inside the forked child (which IS the
-blog-develop orchestrator), invisible to the outer harness's
-`_collect_tool_names`. The fork isolation that makes the skill reliable in
-production is exactly what makes it untestable via the current harness's
-structural assertions.
+Still NOT assertable via evals: anything that happens *inside* the child agents
+(e.g. "the deep-research child called tabstack_research") — child-internal tool
+calls are not propagated to the outer history. Only the orchestrator's own calls
+are visible. That's fine; the scout-via-delegate contract is an orchestrator-level
+property.
 
-An eval case added under these conditions would be permanently broken — not
-a false alarm, but structurally unable to pass. Per project convention
-(CLAUDE.md: "Do NOT ship a broken/un-runnable eval"), this case is
-downgraded.
+### Decision
 
-### What guards the scout-via-delegate contract instead
+The eval was **not added in this session** — adding it correctly means running it
+once against a live model to validate the exact schema and behavior, which pairs
+naturally with the Task 5 live-smoke session (running app + model available).
+Recommended follow-up: add `evals/blog_develop.yaml` with a
+`blog_develop_scouts_via_delegate` case (`input: "/blog-develop the sovereignty
+ladder as a mental model"`, `expect_tool: delegate_task`, `max_tool_calls: 4`),
+run it once to confirm green, then commit. Until then, the contract is guarded by
+the live smoke test (Task 5).
 
-The scout-first / delegate-not-narrate contract is instead verified by the
-**Task 5 live smoke test** against a running DecafClaw instance. That smoke
-test drives `/blog-develop <idea>` through the real UI or CLI, observes the
-first tool call the orchestrator makes, and confirms it is `delegate_task`
-(scout), not any inline web-research tool.
+---
 
-### Future path to an automated guard
+## Superseded (fork-era) reasoning — kept for the record
 
-If the harness is extended to propagate child-agent tool calls back into the
-outer result bundle (e.g. a `child_tool_calls` list on `CommandResult`),
-a structural eval assertion becomes possible. Until then, the smoke test is
-the right boundary.
+When the skill was `context: fork`: in the eval runner
+(`src/decafclaw/eval/runner.py`, lines 479–508), when `dispatch_command` returned
+`cmd.mode == "fork"`, the runner captured `cmd.text` as the response, skipped
+`run_agent_turn`, recorded zero outer tool calls (all calls happened inside the
+isolated child context), and fired assertions against `tool_names=[]`. So
+`expect_tool: delegate_task` would have unconditionally failed. That is why Task 4
+was downgraded at the time. The switch to `context: inline` removes this blocker.
+
+---
+
+## Task 5: live smoke test (pending — needs Les + running app)
+
+Not yet run. Checklist in `plan.md` Task 5. Verify: scout-via-`delegate_task`
+first (not inline research); one-question-at-a-time interview that waits;
+deep-research child; draft written to `blog/drafts/<slug>.md` with the frontmatter
+contract + `## Research notes`; take-or-leave summary with a link. Capture results
+and any prompt-tuning here.
