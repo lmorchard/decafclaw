@@ -23,7 +23,7 @@ def test_blog_develop_frontmatter_contract():
     meta = result.meta
     assert meta["name"] == "blog-develop"
     assert meta["user-invocable"] is True
-    assert meta["context"] == "fork"
+    assert meta["context"] == "inline"
     assert "vault" in meta["required-skills"]
     assert "tabstack" in meta["required-skills"]
     # Every tool a worker needs must be in allowed-tools (it constrains

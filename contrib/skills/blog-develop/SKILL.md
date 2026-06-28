@@ -6,7 +6,7 @@ required-skills:
   - vault
   - tabstack
 user-invocable: true
-context: fork
+context: inline
 allowed-tools: delegate_task, vault_read, vault_write, vault_list, vault_search, current_time, tabstack_research, tabstack_extract_markdown, web_fetch
 ---
 
@@ -17,14 +17,17 @@ Take **any** blog-post idea and develop it into a *take-or-leave first draft*:
 `blog-ideas` weekly page or from nowhere in particular — this skill does not
 depend on it.
 
-The heavy phases (scout, deep research, draft) run as **child agents** via
-`delegate_task`, so web-search noise and long source text never clog this
-context. **Children CANNOT write to the vault** — they return structured
-results and *you* (this orchestrator) write the final draft.
+You (the orchestrator) run in this conversation and drive the phases. The heavy
+phases (scout, deep research, draft) run as **child agents** via `delegate_task`,
+so web-search noise and long source text stay in the children and never clog
+this conversation. **Children CANNOT write to the vault** — they return
+structured results and *you* write the final draft. (Best run in a fresh
+conversation so the interview starts from a clean slate.)
 
 You MUST run the scout, research, and draft work through `delegate_task`. Do
-**NOT** do the web research or write the draft inline in this turn — keeping
-this context clean is what makes the workflow reliable.
+**NOT** do the web research or write the draft yourself in this conversation —
+delegating the heavy work is what keeps this context clean and the workflow
+reliable.
 
 ## The idea
 

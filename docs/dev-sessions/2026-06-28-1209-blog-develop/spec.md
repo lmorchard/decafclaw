@@ -31,7 +31,12 @@ the (not-yet-shipped) replay engine.
   Personal blogging workflow → contrib, like `blog-ideas`.
 - **Frontmatter:**
   - `user-invocable: true` — triggers via `/blog-develop` (web UI) / `!blog-develop` (Mattermost).
-  - `context: fork` — the "fresh session" requirement.
+  - `context: inline` — runs in the conversation with the full tool set. (NOTE:
+    originally specced as `context: fork`; corrected during implementation —
+    `fork` runs the orchestrator through `run_child_turn`, which strips
+    `delegate_task` + vault tools AND is a one-shot child turn that cannot
+    conduct the multi-turn interview. The "fresh session" intent is met by
+    running the command in a new conversation.)
   - `required-skills: [vault, tabstack]` — vault for read/write, tabstack for web research.
   - `effort: strong`.
   - **No** `SCHEDULE.md` — on-demand only.

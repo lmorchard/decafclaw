@@ -6,6 +6,14 @@
 
 **Architecture:** A pure prose **SKILL.md** orchestration skill (no `tools.py`) modeled on `contrib/skills/meta-ingest`. The forked command agent owns control flow: it dispatches `delegate_task` workers for the scout, deep-research, and draft phases (each returning structured JSON via `return_schema`), runs a human interview in between as ordinary multi-turn conversation, and — because **children cannot write the vault** — performs the final `vault_write` itself. Reliability rests on the human-driven interview plus bounded persona-workers, not on the LLM cranking a long-horizon state machine.
 
+> **Correction (during implementation):** this plan was written for `context: fork`.
+> Final review found `fork` runs the orchestrator through `run_child_turn`, which
+> strips `delegate_task` + vault tools and is a one-shot child turn that cannot run
+> the multi-turn interview. **The skill ships as `context: inline`** (full tool set,
+> interview works, heavy work still isolated in `delegate_task` children). Wherever
+> a task snippet below says `context: fork` / `assert meta["context"] == "fork"`,
+> read it as `inline`. The implemented files are correct.
+
 **Tech Stack:** DecafClaw skills system (`SKILL.md` frontmatter: `user-invocable`, `context: fork`, `required-skills`, `allowed-tools`), `delegate_task` (`return_schema`, `allow_vault_read`), tabstack web tools (`tabstack_research`, `tabstack_extract_markdown`), `web_fetch`, vault read/write tools. pytest for the structural/loader test; an evals YAML case for the structural guard.
 
 ---
