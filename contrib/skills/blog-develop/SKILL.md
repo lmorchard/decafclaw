@@ -79,6 +79,11 @@ scout:
 
 Do not start the deep research until the interview is done.
 
+When the interview is done, compose a tight `interview_summary` for yourself — a
+few sentences digesting the angle, audience, scope, and voice the author chose
+(a digest, **not** a transcript dump). You substitute this into the Phase 3 and
+Phase 4 task prompts below.
+
 ## Phase 3: Deep research (child agent)
 
 Now run the real research, steered by the idea + interview answers. Call
@@ -127,6 +132,10 @@ Call `delegate_task` with `allow_vault_read=true` and this `return_schema`:
   "sources_used": [{"title": "...", "url": "..."}]
 }
 ```
+
+When you build the draft prompt, paste the Phase 3 research-brief JSON verbatim
+where `{research_brief_json}` appears — embed it as a literal block exactly as
+the worker returned it; do not paraphrase, summarize, or hand-edit it.
 
 Draft task prompt (substitute `{idea}`, `{interview_summary}`, `{voice_path}`,
 and `{research_brief_json}` — the Phase 3 JSON):
