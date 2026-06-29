@@ -29,7 +29,7 @@ them with `tool_search` if they aren't already available.)
 
 ## Directory layout
 
-```
+```text
 workspace/skills/<name>/
   SKILL.md      # required: --- frontmatter --- then a markdown body
   tools.py      # optional: native Python tools (see contract below)
@@ -42,7 +42,7 @@ The file MUST start with a `---` YAML frontmatter block containing at least
 discovery.
 
 - `name` — ≤ 64 chars, lowercase letters/numbers and hyphens only, no leading,
-  trailing, or consecutive hyphens, and it **should match the directory name**.
+  trailing, or consecutive hyphens, and it **should match the directory name**. These are conventions from the Agent Skills standard; `skill_validate` checks that `name` is present but does not currently validate its format, so follow them yourself.
 - `description` — ≤ 1024 chars. State **what the skill does AND when to use it**,
   with concrete keywords — this is what the agent matches on to decide whether to
   activate the skill, so a vague description means it never fires.
@@ -50,7 +50,7 @@ discovery.
   - Poor: `Helps with PDFs.`
 
 Optional fields decaf understands include `user-invocable`, `context`,
-`argument-hint`, `required-skills`, and `allowed-tools` (see the tools section).
+`argument-hint`, `required-skills`, and `allowed-tools` (see the tools section). Note: `allowed-tools` only takes effect for user-invocable commands and only hard-restricts tools in `context: fork`; it is inert on ordinary inline activation.
 
 ## Native tools — the `tools.py` contract (decaf-specific)
 
@@ -76,7 +76,7 @@ Python in a file named exactly **`tools.py`**:
 ### Minimal correct skill with tools
 
 `SKILL.md`:
-```
+```markdown
 ---
 name: my-skill
 description: Does a specific useful thing. Use when the user asks to do that thing.
