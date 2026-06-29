@@ -38,13 +38,16 @@ context at authoring time.
 
 ### Approach: lazy bundled skill (issue option b)
 
-A new bundled skill at `src/decafclaw/skills/skill_creator/SKILL.md`. No `tools.py` — it's
+A new bundled skill at `src/decafclaw/skills/skill-creator/SKILL.md`. No `tools.py` — it's
 guidance only; the working tools (`workspace_write`, `skill_validate`, `refresh_skills`)
 already exist. Lazy-loaded like every other skill: its `name` + `description` sit in the
 always-present catalog; the full body loads on activation. Zero always-on context cost.
 
-Directory name `skill_creator` (underscore, matching the bundled `claude_code` convention);
-frontmatter `name: skill-creator`.
+Directory name `skill-creator` (hyphen) — it **matches** the frontmatter `name`, so the
+skill is self-exemplifying for the "name should match the directory" rule it teaches. (A
+text-only skill has no `tools.py`, so the directory is never imported as a Python module and
+a hyphen is safe. _Refined during planning — the spec originally proposed an underscore
+`skill_creator` dir._)
 
 ### Frontmatter
 
@@ -52,17 +55,19 @@ frontmatter `name: skill-creator`.
 ---
 name: skill-creator
 description: "How to author a decafclaw workspace skill — SKILL.md frontmatter, the tools.py contract, the get_tools(ctx) signature, and validating before load. Activate BEFORE creating or editing a skill under workspace/skills/, or when a skill you wrote isn't loading."
-allowed-tools: workspace_read, workspace_write, skill_validate, refresh_skills
+user-invocable: true
 ---
 ```
 
 - The `description` states **what + when** (per the Agent Skills description best-practice)
   and includes trigger keywords ("author", "create", "edit", "isn't loading").
-- `allowed-tools` surfaces the author's working set on activation, including the deferred
-  (`low`-priority) `skill_validate` / `refresh_skills` so the agent doesn't have to hunt for
-  them. **Open implementation question (resolve in planning):** confirm `allowed-tools`
-  actually promotes deferred tools on activation. If it does not, the body still names the
-  tools so the agent can `tool_search`; do not block the feature on this.
+- **No `allowed-tools` field.** _Resolved during planning:_ the spec originally proposed
+  `allowed-tools: workspace_read, workspace_write, skill_validate, refresh_skills` to surface
+  the author's working set. Code review found a skill's `allowed-tools` only hard-restricts in
+  `context: fork` command mode and otherwise just feeds `preapproved` — on ordinary inline
+  `activate_skill` it is inert and does **not** promote the deferred `skill_validate` /
+  `refresh_skills`. So it was dropped; the body names those tools instead and the agent fetches
+  them from the deferred catalog via `tool_search`. (See plan.md.)
 - Stays `user-invocable` (the default), so `/skill-creator` pulls the guide manually.
 
 ### Body content (the contract)
@@ -118,7 +123,7 @@ version tight and authoritative for the at-authoring-time moment.
 
 - `docs/skills.md`: add a short note that the in-context authoring guide is the
   `skill-creator` skill (activate it, or `/skill-creator`).
-- `CLAUDE.md`: add `skill_creator` to the bundled-skills list in the Skills key-files line.
+- `CLAUDE.md`: add `skill-creator` to the bundled-skills list in the Skills key-files line.
 
 ## Testing & evals
 
@@ -138,8 +143,9 @@ version tight and authoritative for the at-authoring-time moment.
 
 ## Acceptance criteria
 
-- [ ] Bundled `skill_creator/SKILL.md` exists; text-only (no `tools.py`); discovered with
-      `name: skill-creator`, sensible `description`, `allowed-tools` set.
+- [ ] Bundled `skill-creator/SKILL.md` exists; text-only (no `tools.py`); discovered with
+      `name: skill-creator`, sensible `description`, and no `allowed-tools` field (resolved
+      above — the body names `skill_validate` / `refresh_skills` instead).
 - [ ] Body states the decafclaw `tools.py` contract (filename, absolute imports, `get_tools(ctx)`
       / `TOOLS`, ctx-first, no `default_api`), the SKILL.md frontmatter rules + naming
       constraints, a minimal correct template, the validate→refresh→activate workflow, and the
