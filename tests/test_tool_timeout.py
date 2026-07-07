@@ -7,6 +7,9 @@ import time
 import pytest
 
 from decafclaw.media import ToolResult
+from decafclaw.skills.tabstack.tools import (
+    TOOL_DEFINITIONS as TABSTACK_TOOL_DEFINITIONS,
+)
 from decafclaw.tools import TOOL_DEFINITIONS, TOOLS, execute_tool
 
 
@@ -225,3 +228,23 @@ async def test_mcp_prefix_skipped_by_generic_wrapper(ctx, monkeypatch):
     result = await _safe_execute(ctx, "mcp__foo__bar")
     assert mcp_called["ran"] is True
     assert result.text == "mcp ok"
+
+
+def test_tabstack_research_has_configured_timeout():
+    """Regression guard for #613: tabstack_research's iterative research
+    takes longer than the 180s TOOL_TIMEOUT_SEC default; the definition
+    carries an explicit 600s timeout. If a future tabstack refactor
+    drops the override, this test flags it before /research silently
+    regresses to timing out again."""
+    entry = next(
+        (
+            d
+            for d in TABSTACK_TOOL_DEFINITIONS
+            if (d.get("function") or {}).get("name") == "tabstack_research"
+        ),
+        None,
+    )
+    assert entry is not None, "tabstack_research not in TOOL_DEFINITIONS"
+    assert entry.get("timeout") == 600, (
+        f"expected timeout=600, got {entry.get('timeout')!r}"
+    )
