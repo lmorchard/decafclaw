@@ -136,7 +136,7 @@ def test_journal_attempts_defaults_to_zero():
     assert j.attempts == 0
 
 
-def test_journal_attempts_round_trip(tmp_path):
+def test_journal_attempts_round_trip():
     """attempts must survive to_dict / from_dict so the counter persists
     across process restarts (that's the whole point — bounding replay
     storms across crashes)."""
