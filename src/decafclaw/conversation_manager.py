@@ -23,6 +23,8 @@ from .confirmations import (
 )
 from .conversation_paths import iter_conversation_archives
 from .heartbeat import is_background_wake_ok
+from .workflow.journal import load_journal, save_journal
+from .workflow.paths import workflow_path
 
 log = logging.getLogger(__name__)
 
@@ -1828,6 +1830,74 @@ class ConversationManager:
             log.info("Startup scan: recovered %d pending confirmation(s)",
                      recovered)
         return recovered
+
+    async def startup_scan_workflows(self) -> int:
+        """Recover workflows in status='running' by re-enqueueing them (#581).
+
+        Called on server startup after ``startup_scan()``. Walks each
+        conversation directory; for every ``workflow.json`` still marked
+        ``running``, bumps the persistent ``attempts`` counter and re-enqueues
+        a ``TurnKind.WORKFLOW`` turn so the durable replay engine can pick up
+        where it left off. If a run exceeds ``config.workflow.max_resume_attempts``
+        the journal is flipped to ``status='error'`` and left alone — the cap
+        bounds a crash loop from replaying forever.
+
+        Per-conversation errors (unreadable / corrupt journal) log a warning
+        and continue; fail-open on the loop itself keeps one bad row from
+        stalling startup. The persisted ``attempts`` increment happens before
+        ``enqueue_turn`` so a crash inside the turn still consumes an attempt.
+
+        Returns the number of workflows re-enqueued (not counting those that
+        hit the cap).
+        """
+        resumed = 0
+        cap = self.config.workflow.max_resume_attempts
+        for conv_id, _archive in iter_conversation_archives(self.config):
+            path = workflow_path(self.config, conv_id)
+            if not path.exists():
+                continue
+            try:
+                journal = load_journal(self.config, conv_id)
+            except Exception as exc:
+                log.warning(
+                    "Failed to load workflow journal for %s: %s", conv_id, exc)
+                continue
+            if journal is None:
+                continue
+
+            if journal.status != "running":
+                continue
+
+            if journal.attempts >= cap:
+                log.warning(
+                    "Workflow %r in %s exceeded resume attempts (%d), "
+                    "marked as error.",
+                    journal.workflow_name, conv_id, cap)
+                journal.status = "error"
+                save_journal(self.config, conv_id, journal)
+                continue
+
+            journal.attempts += 1
+            save_journal(self.config, conv_id, journal)
+
+            log.info(
+                "Resuming workflow %r in %s (attempt %d/%d)",
+                journal.workflow_name, conv_id, journal.attempts, cap)
+
+            await self.enqueue_turn(
+                conv_id,
+                kind=TurnKind.WORKFLOW,
+                prompt="",
+                metadata={
+                    "workflow_name": journal.workflow_name,
+                    "resume": True,
+                },
+            )
+            resumed += 1
+
+        if resumed:
+            log.info("Startup scan: resumed %d workflow(s)", resumed)
+        return resumed
 
     def _scan_archive_for_pending(self, archive_path, stale_cutoff: str,
                                   conv_id: str

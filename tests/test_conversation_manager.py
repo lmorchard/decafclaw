@@ -935,6 +935,189 @@ async def test_startup_scan_empty_archive(manager):
     assert recovered == 0
 
 
+# -- Workflow startup recovery -------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_startup_scan_workflows_resumes_running(manager):
+    """A workflow in status='running' should be re-enqueued with attempts bumped."""
+    from decafclaw.archive import append_message
+    from decafclaw.workflow.journal import Journal, load_journal, save_journal
+
+    conv_id = "conv-wf-running"
+    # iter_conversation_archives only yields dirs that contain archive.jsonl.
+    append_message(manager.config, conv_id, {"role": "user", "content": "hi"})
+    save_journal(manager.config, conv_id,
+                 Journal(workflow_name="interview", status="running"))
+
+    with patch.object(manager, "enqueue_turn", new_callable=AsyncMock) as mock_eq:
+        resumed = await manager.startup_scan_workflows()
+
+    assert resumed == 1
+    mock_eq.assert_awaited_once()
+    _, kwargs = mock_eq.call_args
+    assert kwargs["kind"] is TurnKind.WORKFLOW
+    assert kwargs["metadata"] == {"workflow_name": "interview", "resume": True}
+
+    reloaded = load_journal(manager.config, conv_id)
+    assert reloaded is not None
+    assert reloaded.attempts == 1
+    assert reloaded.status == "running"
+
+
+@pytest.mark.asyncio
+async def test_startup_scan_workflows_skips_non_running(manager):
+    """Journals in done/error/suspended are not re-enqueued."""
+    from decafclaw.archive import append_message
+    from decafclaw.workflow.journal import Journal, save_journal
+
+    for conv_id, status in (
+        ("conv-wf-done", "done"),
+        ("conv-wf-error", "error"),
+        ("conv-wf-suspended", "suspended"),
+    ):
+        append_message(manager.config, conv_id, {"role": "user", "content": "hi"})
+        save_journal(manager.config, conv_id,
+                     Journal(workflow_name="wf-" + status, status=status))
+
+    with patch.object(manager, "enqueue_turn", new_callable=AsyncMock) as mock_eq:
+        resumed = await manager.startup_scan_workflows()
+
+    assert resumed == 0
+    mock_eq.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_startup_scan_workflows_hits_attempt_cap(manager):
+    """A running journal at the cap flips to 'error' and is not re-enqueued."""
+    from decafclaw.archive import append_message
+    from decafclaw.workflow.journal import Journal, load_journal, save_journal
+
+    conv_id = "conv-wf-cap"
+    append_message(manager.config, conv_id, {"role": "user", "content": "hi"})
+    # Default cap is 3; attempts=3 means "already tried thrice" → next resume
+    # would exceed the cap.
+    save_journal(manager.config, conv_id,
+                 Journal(workflow_name="stuck", status="running", attempts=3))
+
+    with patch.object(manager, "enqueue_turn", new_callable=AsyncMock) as mock_eq:
+        resumed = await manager.startup_scan_workflows()
+
+    assert resumed == 0
+    mock_eq.assert_not_called()
+
+    reloaded = load_journal(manager.config, conv_id)
+    assert reloaded is not None
+    assert reloaded.status == "error"
+    assert reloaded.attempts == 3
+
+
+@pytest.mark.asyncio
+async def test_startup_scan_workflows_increments_before_enqueue(manager):
+    """If enqueue_turn raises, the incremented attempts must already be on disk.
+
+    This is the crash-safety guarantee: an attempt is 'spent' the moment the
+    scan commits to retrying, so a crash inside enqueue_turn cannot leak into
+    an infinite retry loop.
+    """
+    from decafclaw.archive import append_message
+    from decafclaw.workflow.journal import Journal, load_journal, save_journal
+
+    conv_id = "conv-wf-crash"
+    append_message(manager.config, conv_id, {"role": "user", "content": "hi"})
+    save_journal(manager.config, conv_id,
+                 Journal(workflow_name="explodes", status="running"))
+
+    async def _boom(*_args, **_kwargs):
+        raise RuntimeError("enqueue failed")
+
+    with patch.object(manager, "enqueue_turn", new=_boom):
+        with pytest.raises(RuntimeError, match="enqueue failed"):
+            await manager.startup_scan_workflows()
+
+    reloaded = load_journal(manager.config, conv_id)
+    assert reloaded is not None
+    assert reloaded.attempts == 1
+
+
+@pytest.mark.asyncio
+async def test_startup_scan_workflows_empty(manager):
+    """No conversations → zero resumes, no enqueues."""
+    with patch.object(manager, "enqueue_turn", new_callable=AsyncMock) as mock_eq:
+        resumed = await manager.startup_scan_workflows()
+
+    assert resumed == 0
+    mock_eq.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_startup_scan_workflows_missing_journal_file(manager):
+    """A conversation dir without workflow.json is silently skipped."""
+    from decafclaw.archive import append_message
+
+    conv_id = "conv-no-wf"
+    append_message(manager.config, conv_id, {"role": "user", "content": "hi"})
+
+    with patch.object(manager, "enqueue_turn", new_callable=AsyncMock) as mock_eq:
+        resumed = await manager.startup_scan_workflows()
+
+    assert resumed == 0
+    mock_eq.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_startup_scan_workflows_corrupt_journal(manager, caplog):
+    """A malformed workflow.json logs a warning and does not raise."""
+    import logging
+
+    from decafclaw.archive import append_message
+    from decafclaw.workflow.paths import workflow_dir, workflow_path
+
+    conv_id = "conv-wf-corrupt"
+    append_message(manager.config, conv_id, {"role": "user", "content": "hi"})
+    workflow_dir(manager.config, conv_id, create=True)
+    workflow_path(manager.config, conv_id).write_text("{not valid json")
+
+    with patch.object(manager, "enqueue_turn", new_callable=AsyncMock) as mock_eq:
+        with caplog.at_level(logging.WARNING, logger="decafclaw.conversation_manager"):
+            resumed = await manager.startup_scan_workflows()
+
+    assert resumed == 0
+    mock_eq.assert_not_called()
+    assert any("workflow" in rec.message.lower() and conv_id in rec.message
+               for rec in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_startup_scan_workflows_multiple_conversations(manager):
+    """Two running + one done → exactly the two running are re-enqueued."""
+    from decafclaw.archive import append_message
+    from decafclaw.workflow.journal import Journal, save_journal
+
+    for conv_id, name, status in (
+        ("conv-a", "flow-a", "running"),
+        ("conv-b", "flow-b", "done"),
+        ("conv-c", "flow-c", "running"),
+    ):
+        append_message(manager.config, conv_id, {"role": "user", "content": "hi"})
+        save_journal(manager.config, conv_id,
+                     Journal(workflow_name=name, status=status))
+
+    with patch.object(manager, "enqueue_turn", new_callable=AsyncMock) as mock_eq:
+        resumed = await manager.startup_scan_workflows()
+
+    assert resumed == 2
+    assert mock_eq.await_count == 2
+
+    seen = {
+        call.kwargs["metadata"]["workflow_name"]
+        for call in mock_eq.await_args_list
+    }
+    assert seen == {"flow-a", "flow-c"}
+    for call in mock_eq.await_args_list:
+        assert call.kwargs["kind"] is TurnKind.WORKFLOW
+        assert call.kwargs["metadata"]["resume"] is True
+
+
 @pytest.mark.asyncio
 async def test_drain_pending_resolves_all_queued_futures(
     manager, config, monkeypatch
