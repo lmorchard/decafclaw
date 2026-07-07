@@ -314,6 +314,16 @@ Activated skills and their tools are scoped to the current conversation. Other c
 - **`refresh_skills`** — re-scan skill directories without restarting
 - **`skill_validate(path)`** — pre-flight lint a single workspace skill directory
 
+### Authoring a skill (in-context guide)
+
+The bundled **`skill-creator`** skill is the in-context authoring guide. Activate
+it (or run `/skill-creator`) before creating or editing a workspace skill — its
+body carries the SKILL.md frontmatter rules, the decaf-specific `tools.py`
+contract (filename, absolute imports, `get_tools(ctx)` signature, no
+`default_api`), a minimal correct template, and the
+`skill_validate` → `refresh_skills` → `activate_skill` workflow. It deliberately
+flags where decaf diverges from the generic Agent Skills standard.
+
 ### Validating a skill before it loads
 
 When a skill you authored doesn't appear, it was almost certainly **rejected

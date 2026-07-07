@@ -422,6 +422,22 @@ def test_discover_honors_auto_approve_on_bundled(config):
     )
 
 
+def test_discover_includes_skill_creator(config):
+    """The bundled skill-creator authoring guide is discovered, text-only,
+    and lazy (not always-loaded)."""
+    skills = discover_skills(config)
+    by_name = {s.name: s for s in skills}
+    assert "skill-creator" in by_name, (
+        f"bundled skill-creator not discovered; got {sorted(by_name)}"
+    )
+    sc = by_name["skill-creator"]
+    assert sc.has_native_tools is False, "skill-creator must be text-only (no tools.py)"
+    assert sc.always_loaded is False, "skill-creator must stay lazy (not always-loaded)"
+    assert sc.trust_tier == "bundled"
+    assert sc.description.strip(), "skill-creator needs a non-empty description"
+    assert sc.body.strip(), "skill-creator needs a non-empty body"
+
+
 def test_discover_keeps_auto_approve_on_extra_path_skill(tmp_path, config):
     """Extra-path skills are trusted by user config; auto-approve is honored."""
     extra = tmp_path / "external"

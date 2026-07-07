@@ -1,0 +1,16 @@
+# skill-creator (#597) — LLM-driven angle only.
+# The skill's discovery/text-only properties are covered by a unit test in
+# tests/test_skills.py. This file isolates the eval-only question: when asked
+# to author a new skill, does the agent reach for the skill-creator guide
+# (i.e. activate a skill) rather than blindly writing files?
+#
+# NOTE: do NOT pre-activate skill-creator via setup.skills — the whole point is
+# that the catalog description triggers activation. Evals auto_confirm by
+# default, so the bundled-skill activation proceeds without a manual click.
+
+- name: "activates the authoring guide when asked to create a skill"
+  input: "I want to add a new workspace skill that fetches the weather for a city. Set it up correctly."
+  expect:
+    max_tool_calls: 10
+    max_tool_errors: 1
+    expect_tool: activate_skill
