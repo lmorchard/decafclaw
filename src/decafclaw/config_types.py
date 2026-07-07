@@ -394,6 +394,18 @@ class BackgroundConfig:
     default_completion_tail_lines: int = 50
 
 
+@dataclass
+class WorkflowConfig:
+    """Configuration for the durable workflow engine (#581).
+
+    ``max_resume_attempts`` caps how many times auto-resume will retry a
+    suspended workflow before the journal is marked errored. Each attempt
+    increments ``Journal.attempts``; on the (max+1)th failure the journal
+    transitions to an error state instead of being retried again.
+    """
+    max_resume_attempts: int = 3
+
+
 def is_secret(dc_class: type, field_name: str) -> bool:
     """Check if a dataclass field is marked as secret."""
     for f in dc_fields(dc_class):
