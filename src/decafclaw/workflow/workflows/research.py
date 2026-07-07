@@ -21,7 +21,7 @@ _SEARCH_TOOL = "tabstack_research"
 
 _SYS_PLAN = (
     "You plan focused research sweeps. Given a topic and any scope notes, "
-    "generate 3-5 search queries that together cover the topic without "
+    "generate 2-3 search queries that together cover the topic without "
     "overlap. Each query should be specific enough to return a useful "
     "single-page result."
 )
@@ -40,8 +40,8 @@ _PLAN_SCHEMA = {
         "queries": {
             "type": "array",
             "items": {"type": "string"},
-            "minItems": 3,
-            "maxItems": 5,
+            "minItems": 2,
+            "maxItems": 3,
             "description": "Search queries covering the topic.",
         },
     },
@@ -76,7 +76,7 @@ def _research_plan_prompt(topic: str, scope: str) -> str:
         lines.append(f"Scope / angle: {scope}")
     lines.append("")
     lines.append(
-        "Generate 3-5 search queries that together cover this topic.")
+        "Generate 2-3 search queries that together cover this topic.")
     return "\n".join(lines)
 
 

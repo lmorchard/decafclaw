@@ -524,9 +524,16 @@ TOOL_DEFINITIONS = [
     },
     {
         "type": "function",
+        # Iterative research (multi-query search + page analysis across
+        # multiple iterations) can take multiple minutes on broad topics;
+        # the 180s TOOL_TIMEOUT_SEC default fires mid-flight and returns
+        # "[error: timed out]" while the tool is still making progress.
+        # 600s gives ~3-5x headroom for typical runs while bounding
+        # runaway iteration bugs at 10 minutes. See #613 / #582 PR-610.
+        "timeout": 600,
         "function": {
             "name": "tabstack_research",
-            "description": "Deep multi-source web research with synthesis and citations. Use ONLY for complex questions that need analysis of multiple sources: comparisons, fact-checking across sources, topic deep-dives. For simple lookups (addresses, hours, single facts), use tabstack_automate instead — it's faster and cheaper. Takes 60-120 seconds.",
+            "description": "Deep multi-source web research with synthesis and citations. Use ONLY for complex questions that need analysis of multiple sources: comparisons, fact-checking across sources, topic deep-dives. For simple lookups (addresses, hours, single facts), use tabstack_automate instead — it's faster and cheaper. Iterative research; typically takes 2-5 minutes per call.",
             "parameters": {
                 "type": "object",
                 "properties": {
