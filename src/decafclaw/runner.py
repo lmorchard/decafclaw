@@ -57,6 +57,7 @@ async def run_all(app_ctx):
         manager = ConversationManager(config, app_ctx.event_bus)
         register_widget_handler(manager.confirmation_registry)
         await manager.startup_scan()
+        await manager.startup_scan_workflows()
 
         # Start HTTP server (button callbacks + web gateway)
         if config.http.enabled:

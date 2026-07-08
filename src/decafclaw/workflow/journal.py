@@ -43,6 +43,11 @@ class JournalEntry:
 class Journal:
     workflow_name: str
     status: str = "running"  # running | suspended | done | error
+    # Persistent replay-attempt counter. Bumped by the startup scan each time
+    # it auto-resumes this workflow; if the workflow keeps crashing at the
+    # same replay position, this bounds the storm — the scan flips status to
+    # "error" when attempts reach max_resume_attempts (before the bump).
+    attempts: int = 0
     entries: dict[tuple[int, ...], JournalEntry] = dataclasses.field(
         default_factory=dict)
 
@@ -68,6 +73,7 @@ class Journal:
         return {
             "workflow_name": self.workflow_name,
             "status": self.status,
+            "attempts": self.attempts,
             "entries": [
                 {"seq": path_to_str(e.seq), "kind": e.kind,
                  "args_fingerprint": e.args_fingerprint, "result": e.result}
@@ -78,7 +84,8 @@ class Journal:
     @classmethod
     def from_dict(cls, d: dict) -> "Journal":
         j = cls(workflow_name=d["workflow_name"],
-                status=d.get("status", "running"))
+                status=d.get("status", "running"),
+                attempts=d.get("attempts", 0))
         for entry_d in d.get("entries", []):
             seq = path_from_any(entry_d["seq"])
             if seq in j.entries:

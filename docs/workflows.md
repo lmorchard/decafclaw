@@ -468,6 +468,35 @@ the agent loop.
 This is what keeps the LLM off the crank. The confirmation round-trip is purely between the
 user and the harness; the LLM only runs when an orchestrator explicitly calls `wf.llm_call`.
 
+## Auto-resume on startup
+
+If the server crashes or is killed while an orchestrator is mid-execution (i.e. the journal
+`status` is still `"running"` — no pending `user_input` question, just interrupted work),
+`ConversationManager.startup_scan_workflows()` walks each conversation directory, finds every
+`workflow.json` still marked `running`, increments a persistent `attempts` counter, saves,
+and re-enqueues a `TurnKind.WORKFLOW` turn. The replay engine then short-circuits every
+cached primitive from the journal; only the un-journaled work re-runs. Per-conversation
+errors (unreadable or corrupt journal) log a warning and continue — fail-open so one bad row
+doesn't stall startup.
+
+To bound replay-storm risk (a workflow that crashes deterministically on the same primitive
+would otherwise loop forever), the scan caps retries at `config.workflow.max_resume_attempts`
+(default `3`, env override `WORKFLOW_MAX_RESUME_ATTEMPTS`). At the cap, the journal is flipped
+to `status="error"` and skipped. The `attempts` bump is persisted **before** the turn is
+enqueued, so a crash inside the resumed turn still consumes an attempt.
+
+**Terminal states:**
+
+- `done` — orchestrator returned; artifact rendered.
+- `error` — engine caught an exception (LLM/schema failure, `WorkflowNonDeterministic`, user
+  denied a confirmation), or the resume cap was exceeded on startup.
+
+**Cross-reference:** `status="suspended"` (waiting on a `wf.user_input` confirmation) is a
+distinct recovery path — the pending question is a persistent `ConfirmationRequest`, so
+`ConversationManager.startup_scan()` picks it up alongside every other pending confirmation.
+The two scans are siblings: `startup_scan()` handles the "waiting on the user" case and
+`startup_scan_workflows()` handles the "was running when we died" case.
+
 ## Invoking a workflow
 
 In the web UI, type `/interview` (or the name of any registered workflow). The WebSocket
