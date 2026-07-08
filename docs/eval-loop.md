@@ -51,6 +51,7 @@ Tests are YAML files with a list of test cases. Single-turn form:
 | `setup.embeddings_fixture` | Path to a pre-built embeddings.db to copy into the workspace |
 | `setup.auto_confirm` | Default `true`. Auto-approve (or deny) all tool confirmation requests (shell, email, `EndTurnConfirm`, etc.) |
 | `setup.max_tool_iterations` | Override `config.agent.max_tool_iterations` for this test only. Use for tests that need to exercise budget-exhaustion behavior (e.g., the grace turn) without changing the global default |
+| `setup.reflection_enabled` | Override `config.reflection.enabled` for this test only. Default: inherit from config. Set to `false` for tests that assert tool selection with `expect_no_tool` / tight `max_tool_calls` — reflection's judge can trigger retries that invoke unexpected tools and break those assertions. See [#534](https://github.com/lmorchard/decafclaw/issues/534) |
 
 ### Expect assertions
 

@@ -132,7 +132,7 @@ See [docs/eval-loop.md](docs/eval-loop.md). Evals exercise LLM-driven behavior w
 - **New or sharpened tool description → add a `tool_choice` case.** `evals/tool_choice/` covers tool-description disambiguation; `make eval-tools` is fast (~30s). PR #429's smoke test bit-rotted in three weeks because `notes_append` arrived later with no `tool_choice` case guarding the disambiguation — that's the rot vector this convention catches.
 - **Behavior-affecting feature → add a case in `evals/<theme>.yaml`.** New skill, new always-loaded tool, system-prompt change affecting routing, new command. Use `expect_tool` / `expect_no_tool` / `expect_tool_count_by_name` for rigorous assertions. Bound every test with `max_tool_calls` and `max_tool_errors`.
 - **Skip evals for non-LLM-visible work.** Pure refactors, storage changes, tool implementation tweaks. Each eval costs tokens and ~6-10 min of wall time.
-- **Avoid `expect_no_tool` where self-reflection might retry.** Reflection's judge can invoke unexpected tools on retries; positive `expect_tool` + tight `max_tool_calls` is more reliable. ([#534](https://github.com/lmorchard/decafclaw/issues/534) tracks a `setup.reflection_enabled: false` harness gate.)
+- **`expect_no_tool` + tight `max_tool_calls` needs `setup.reflection_enabled: false`.** Reflection's judge can invoke unexpected tools on retries and break those assertions. Set `reflection_enabled: false` on tests that assert tool selection (see [docs/eval-loop.md](docs/eval-loop.md) setup-fields table). Positive `expect_tool` alone is fine to run with reflection on.
 - **Check `make eval-history` after running the suite.** Trend deltas catch regressions that single-file smoke tests miss.
 
 ## Key files

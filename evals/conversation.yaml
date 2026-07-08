@@ -37,13 +37,13 @@
 # -- Recall from seeded history ----------------------------------------------
 #
 # Validates that setup.conversation_history is reachable by the agent end-to-
-# end. We don't assert tool-selection here — the self-reflection layer may
-# trigger an additional conversation_search retry even when the initial
-# response is correct, and that's an orthogonal behavior (reflection working
-# eagerly, not a bug in seeding).
+# end AND that the agent answers directly from history without reaching for
+# conversation_search. Reflection is disabled per #534 so the judge's retry
+# path can't invoke a spurious conversation_search and break the assertion.
 
 - name: "answers from seeded conversation history"
   setup:
+    reflection_enabled: false
     conversation_history:
       - role: user
         content: "I just got back from a trip to Reykjavik — first time in Iceland."
@@ -56,5 +56,6 @@
   input: "What city did I just visit?"
   expect:
     response_contains: "Reykjavik"
-    max_tool_calls: 5
+    expect_no_tool: conversation_search
+    max_tool_calls: 1
     max_tool_errors: 1
