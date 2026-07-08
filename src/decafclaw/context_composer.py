@@ -373,13 +373,19 @@ class ContextComposer:
         for m in history:
             role = m.get("role")
             if role == "background_event":
-                # Count the expanded content the LLM actually sees, not
-                # the raw archive record (which has no ``content`` field).
+                # Count the expanded content the LLM actually sees (an
+                # assistant tool_call + tool result pair), not the raw
+                # archive record (which has no ``content`` field and is
+                # not the shape sent to the LLM). ``history_msg_count``
+                # feeds the "N messages" status line and must match the
+                # LLM-visible count, so use ``len(expanded)`` — one
+                # archive record contributes two LLM messages here.
+                expanded = _expand_background_event(m)
                 history_tokens += sum(
                     estimate_tokens(str(em.get("content", "")))
-                    for em in _expand_background_event(m)
+                    for em in expanded
                 )
-                history_msg_count += 1
+                history_msg_count += len(expanded)
             elif role in countable_roles:
                 history_tokens += estimate_tokens(str(m.get("content", "")))
                 history_msg_count += 1

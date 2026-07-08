@@ -1269,6 +1269,13 @@ class TestHistoryArchivedRemap:
             f"history_entry.tokens_estimated={history_entry.tokens_estimated} "
             f"expected >= expanded background_event tokens {expanded_tokens}"
         )
+        # ``items_included`` feeds the "N messages" status line and must
+        # count LLM-visible messages after expansion. One user +
+        # one assistant + two expanded (tool_call + tool result) = 4.
+        assert history_entry.items_included == 4, (
+            f"history_entry.items_included={history_entry.items_included} "
+            f"expected 4 (user + assistant + 2 expanded background_event msgs)"
+        )
 
 
 class TestCancelMarker:
