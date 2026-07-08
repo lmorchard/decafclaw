@@ -12,11 +12,37 @@ import html
 import json
 import logging
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 
 from decafclaw.skills.background.tools import format_status_text
 
+from .archive import LLM_ROLES
+from .attachments import resolve_attachments
 from .conversation_paths import sidecar_path
+from .memory_context import (
+    _trim_to_token_budget,
+    format_memory_context,
+    format_memory_headlines,
+    get_already_injected_pages,
+    parse_wiki_references,
+    read_wiki_page,
+    retrieve_memory_context,
+)
+from .notes import format_notes_for_context, read_notes
+from .preempt_search import extract_last_assistant_text, match_tools, tokenize
+from .prompts import wrap_xml
+from .tool_definitions import collect_all_tool_defs
+from .tools import TOOL_DEFINITIONS
+from .tools.search_tools import SEARCH_TOOL_DEFINITIONS
+from .tools.tool_registry import (
+    build_deferred_list_text,
+    classify_tools,
+    estimate_tool_tokens,
+    get_critical_names,
+    get_fetched_tools,
+)
+from .util import estimate_tokens
 
 log = logging.getLogger(__name__)
 
@@ -262,10 +288,6 @@ class ContextComposer:
         Does NOT archive — the caller is responsible for persisting messages
         via the messages_to_archive list.
         """
-        from .archive import LLM_ROLES
-        from .attachments import resolve_attachments
-        from .util import estimate_tokens
-
         config = ctx.config
         sources: list[SourceEntry] = []
         to_archive: list[dict] = []
@@ -340,15 +362,33 @@ class ContextComposer:
         # History contains only archived prior-turn content at this point —
         # fresh wiki / notes / memory / user injections are appended after
         # all token accounting, at the end of compose(). Count messages whose
-        # role is sent to the LLM either directly (LLM_ROLES) or after remap
-        # (ROLE_REMAP keys). Other roles (e.g. confirmation_request, archive-only
-        # bookkeeping) are not sent and don't count.
+        # role is sent to the LLM either directly (LLM_ROLES), after remap
+        # (ROLE_REMAP keys), or after expansion (``background_event``, which
+        # ``_expand_background_event`` turns into a synthetic tool-call pair).
+        # Other roles (e.g. confirmation_request, archive-only bookkeeping)
+        # are not sent and don't count.
         countable_roles = LLM_ROLES | ROLE_REMAP.keys()
-        history_tokens = sum(
-            estimate_tokens(str(m.get("content", "")))
-            for m in history
-            if m.get("role") in countable_roles
-        )
+        history_tokens = 0
+        history_msg_count = 0
+        for m in history:
+            role = m.get("role")
+            if role == "background_event":
+                # Count the expanded content the LLM actually sees (an
+                # assistant tool_call + tool result pair), not the raw
+                # archive record (which has no ``content`` field and is
+                # not the shape sent to the LLM). ``history_msg_count``
+                # feeds the "N messages" status line and must match the
+                # LLM-visible count, so use ``len(expanded)`` — one
+                # archive record contributes two LLM messages here.
+                expanded = _expand_background_event(m)
+                history_tokens += sum(
+                    estimate_tokens(str(em.get("content", "")))
+                    for em in expanded
+                )
+                history_msg_count += len(expanded)
+            elif role in countable_roles:
+                history_tokens += estimate_tokens(str(m.get("content", "")))
+                history_msg_count += 1
         fixed_tokens += history_tokens
         # User message — has its own SourceEntry so the diagnostics
         # waffle chart and [Context: ...] status line account for the
@@ -427,11 +467,8 @@ class ContextComposer:
         llm_history = [resolve_attachments(config, m) for m in llm_history]
 
         # -- History source entry --
-        # history_tokens was computed above (budget side); reuse the same value
-        # so budget and diagnostics are a single source of truth.
-        history_msg_count = sum(
-            1 for m in history if m.get("role") in countable_roles
-        )
+        # history_tokens / history_msg_count were computed above (budget side);
+        # reuse them so budget and diagnostics are a single source of truth.
         history_entry = SourceEntry(
             source="history",
             tokens_estimated=history_tokens,  # computed earlier, single source of truth
@@ -498,8 +535,6 @@ class ContextComposer:
         always-loaded skill bodies). Per-conversation activated skill bodies
         are delivered as tool results, not injected into the system prompt.
         """
-        from .util import estimate_tokens
-
         text = config.system_prompt
         tokens = estimate_tokens(text)
         entry = SourceEntry(
@@ -514,8 +549,6 @@ class ContextComposer:
 
         Each candidate gets a composite_score field. Returns sorted descending.
         """
-        from datetime import datetime
-
         relevance = config.relevance
         now = datetime.now()
 
@@ -573,8 +606,6 @@ class ContextComposer:
         ``@[[Page]]`` mentions inject regardless of mode (handled
         separately by ``_compose_vault_references``).
         """
-        from .util import estimate_tokens
-
         skip_modes = {ComposerMode.HEARTBEAT, ComposerMode.SCHEDULED, ComposerMode.CHILD_AGENT}
         if ctx.skip_vault_retrieval or mode in skip_modes:
             return [], "", [], None
@@ -594,12 +625,6 @@ class ContextComposer:
             return [], "", [], entry
 
         try:
-            from .memory_context import (
-                format_memory_context,
-                format_memory_headlines,
-                retrieve_memory_context,
-            )
-
             results = await retrieve_memory_context(config, user_message)
             if not results:
                 entry = SourceEntry(
@@ -644,7 +669,6 @@ class ContextComposer:
                       total_candidates, budget,
                       "dynamic" if token_budget is not None else "fixed",
                       retrieval_mode)
-            from .memory_context import _trim_to_token_budget
             results = _trim_to_token_budget(results, budget)
             if results:
                 log.debug("Memory context: selected %d/%d candidates (scores %.3f–%.3f)",
@@ -720,17 +744,9 @@ class ContextComposer:
 
         Returns (messages_to_inject, source_entry).
         """
-        from .util import estimate_tokens
-
         skip_modes = {ComposerMode.HEARTBEAT, ComposerMode.SCHEDULED, ComposerMode.CHILD_AGENT}
         if mode in skip_modes:
             return [], None
-
-        from .memory_context import (
-            get_already_injected_pages,
-            parse_wiki_references,
-            read_wiki_page,
-        )
 
         vault_dir = config.vault_root
         if not vault_dir.exists():
@@ -790,9 +806,6 @@ class ContextComposer:
         Skipped for heartbeat / scheduled / child-agent modes and when
         ``config.vault_guide.enabled`` is False. Returns (wrapped_text, entry).
         """
-        from .prompts import wrap_xml
-        from .util import estimate_tokens
-
         skip_modes = {
             ComposerMode.HEARTBEAT, ComposerMode.SCHEDULED, ComposerMode.CHILD_AGENT,
         }
@@ -863,15 +876,12 @@ class ContextComposer:
         (heartbeat / scheduled / child agent) and when notes are
         disabled.
         """
-        from .util import estimate_tokens
-
         if not config.notes.enabled:
             return [], None
         skip_modes = {ComposerMode.HEARTBEAT, ComposerMode.SCHEDULED, ComposerMode.CHILD_AGENT}
         if mode in skip_modes:
             return [], None
 
-        from .notes import format_notes_for_context, read_notes
         conv_id = ctx.conv_id or ctx.channel_id or "default"
         items = read_notes(
             config, conv_id,
@@ -910,14 +920,6 @@ class ContextComposer:
         gating. Currently all composer-driven modes apply matching
         (reflection and compaction bypass the composer entirely).
         """
-        from .preempt_search import (
-            extract_last_assistant_text,
-            match_tools,
-            tokenize,
-        )
-        from .tool_definitions import collect_all_tool_defs
-        from .tools.tool_registry import get_critical_names, get_fetched_tools
-
         _ = mode  # reserved for future per-mode gating
 
         # Reset for this turn. The field lives on ctx.tools (a shared
@@ -983,7 +985,6 @@ class ContextComposer:
         # the promoted tool defs (not a true delta vs. the no-match
         # baseline — a true delta would require a second classification
         # pass, and this approximation is fine for the inspector).
-        from .tools.tool_registry import estimate_tool_tokens
         promoted_defs = [td for td in all_defs
                          if td.get("function", {}).get("name", "") in matched_names]
         tokens_added = estimate_tool_tokens(promoted_defs)
@@ -1015,12 +1016,6 @@ class ContextComposer:
         Returns ``(source_entry, hint_text)``. Both ``None`` if matching
         is disabled, the message tokenizes to nothing, or no skills match.
         """
-        from .preempt_search import (
-            extract_last_assistant_text,
-            tokenize,
-        )
-        from .util import estimate_tokens
-
         _ = mode  # reserved for future per-mode gating
 
         ctx.skills.preempt_matches = set()
@@ -1100,17 +1095,6 @@ class ContextComposer:
         Returns (active_tools, deferred_tools, deferred_text, source_entry).
         Replicates the logic in tool_definitions.build_tool_list() with diagnostics.
         """
-        from .tool_definitions import collect_all_tool_defs
-        from .tools import TOOL_DEFINITIONS
-        from .tools.search_tools import SEARCH_TOOL_DEFINITIONS
-        from .tools.tool_registry import (
-            build_deferred_list_text,
-            classify_tools,
-            estimate_tool_tokens,
-            get_fetched_tools,
-        )
-        from .util import estimate_tokens
-
         all_defs = collect_all_tool_defs(ctx)
         fetched = get_fetched_tools(ctx)
         # Skill tools (from activated skills) should never be deferred
@@ -1188,8 +1172,6 @@ class ContextComposer:
 
     def build_diagnostics(self, config, composed: ComposedContext) -> dict:
         """Build the full diagnostics dict for the context sidecar file."""
-        from datetime import datetime, timezone
-
         candidates = []
         for r in composed.memory_results:
             entry = {
