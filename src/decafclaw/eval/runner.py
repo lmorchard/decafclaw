@@ -2,6 +2,7 @@
 
 import logging
 import time
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 
@@ -394,6 +395,32 @@ def _check_assertions(test_case: dict, response: str, tool_calls: int,
     return True, ""
 
 
+def _build_test_config(config: Config, test_case: dict, tmp: str) -> Config:
+    """Apply per-test ``setup`` overrides on top of the base ``config``.
+
+    Keep the list of accepted overrides small — anything that genuinely
+    varies per test opts in here explicitly. Currently:
+
+    - ``setup.max_tool_iterations`` — override ``config.agent.max_tool_iterations``
+      (#448: grace-turn eval needs a small budget to force exhaustion).
+    - ``setup.reflection_enabled`` — override ``config.reflection.enabled``
+      (#534: reflection retries can invoke unexpected tools and break
+      ``expect_no_tool`` / tight ``max_tool_calls`` assertions).
+    """
+    agent_overrides = {"data_home": tmp, "id": "eval"}
+    reflection_overrides: dict = {}
+    setup = test_case.get("setup", {})
+    if "max_tool_iterations" in setup:
+        agent_overrides["max_tool_iterations"] = setup["max_tool_iterations"]
+    if "reflection_enabled" in setup:
+        reflection_overrides["enabled"] = setup["reflection_enabled"]
+    return replace(
+        config,
+        agent=replace(config.agent, **agent_overrides),
+        reflection=replace(config.reflection, **reflection_overrides),
+    )
+
+
 async def run_test(config: Config, test_case: dict) -> dict:
     """Run a single eval test case. Returns a result dict.
 
@@ -594,7 +621,6 @@ async def run_eval(yaml_data: list[dict], config: Config,
     """
     import asyncio
     import tempfile
-    from dataclasses import replace
 
     if model:
         # If model matches a model config, set it as the default
@@ -615,17 +641,7 @@ async def run_eval(yaml_data: list[dict], config: Config,
         nonlocal completed
         async with semaphore:
             with tempfile.TemporaryDirectory() as tmp:
-                # Per-test AgentConfig overrides from `setup`. Keep this list
-                # small — anything that genuinely varies per test should opt
-                # in here. Currently only `max_tool_iterations` (#448 grace
-                # turn eval needs a small budget to force exhaustion).
-                agent_overrides = {"data_home": tmp, "id": "eval"}
-                setup = test_case.get("setup", {})
-                if "max_tool_iterations" in setup:
-                    agent_overrides["max_tool_iterations"] = setup["max_tool_iterations"]
-                test_config = replace(config,
-                    agent=replace(config.agent, **agent_overrides),
-                )
+                test_config = _build_test_config(config, test_case, tmp)
                 result = await run_test(test_config, test_case)
                 completed += 1
                 status = "✓" if result["status"] == "pass" else "✗"
