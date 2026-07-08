@@ -27,6 +27,7 @@ def _isolate_env(monkeypatch):
             "HEARTBEAT_", "HTTP_", "TABSTACK_", "CLAUDE_CODE_",
             "SKILLS_", "MEMORY_SEARCH", "SYSTEM_PROMPT",
             "NOTIFICATIONS_", "EMAIL_", "EXTRA_SKILL_", "VAULT_GUIDE_",
+            "WORKFLOW_",
         )):
             monkeypatch.delenv(key, raising=False)
 
@@ -583,3 +584,33 @@ class TestCompatRemoved:
             _ = c.llm_model
         with pytest.raises(AttributeError):
             _ = c.data_home
+
+
+class TestWorkflowConfig:
+    """WorkflowConfig — settings for the durable workflow engine (#581)."""
+
+    def test_workflow_config_defaults(self, tmp_path, monkeypatch):
+        """load_config() with no env / no JSON → default max_resume_attempts."""
+        monkeypatch.setenv("DATA_HOME", str(tmp_path))
+        monkeypatch.delenv("WORKFLOW_MAX_RESUME_ATTEMPTS", raising=False)
+        c = load_config()
+        assert c.workflow.max_resume_attempts == 3
+
+    def test_workflow_config_env_override(self, tmp_path, monkeypatch):
+        """WORKFLOW_MAX_RESUME_ATTEMPTS env var overrides the default."""
+        monkeypatch.setenv("DATA_HOME", str(tmp_path))
+        monkeypatch.setenv("WORKFLOW_MAX_RESUME_ATTEMPTS", "5")
+        c = load_config()
+        assert c.workflow.max_resume_attempts == 5
+
+    def test_workflow_config_json_override(self, tmp_path, monkeypatch):
+        """config.json workflow.max_resume_attempts overrides the default."""
+        agent_dir = tmp_path / "decafclaw"
+        agent_dir.mkdir()
+        (agent_dir / "config.json").write_text(json.dumps({
+            "workflow": {"max_resume_attempts": 7},
+        }))
+        monkeypatch.setenv("DATA_HOME", str(tmp_path))
+        monkeypatch.delenv("WORKFLOW_MAX_RESUME_ATTEMPTS", raising=False)
+        c = load_config()
+        assert c.workflow.max_resume_attempts == 7

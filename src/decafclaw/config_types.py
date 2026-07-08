@@ -394,6 +394,19 @@ class BackgroundConfig:
     default_completion_tail_lines: int = 50
 
 
+@dataclass
+class WorkflowConfig:
+    """Configuration for the durable workflow engine (#581).
+
+    ``max_resume_attempts`` caps how many times the startup scan will
+    auto-resume a workflow left at ``status="running"`` after a server
+    crash. Each resume increments ``Journal.attempts``; once the counter
+    reaches ``max_resume_attempts``, the scan flips ``status="error"``
+    instead of retrying (bounds replay-storm risk).
+    """
+    max_resume_attempts: int = 3
+
+
 def is_secret(dc_class: type, field_name: str) -> bool:
     """Check if a dataclass field is marked as secret."""
     for f in dc_fields(dc_class):

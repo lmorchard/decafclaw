@@ -38,6 +38,7 @@ from .config_types import (
     VaultGuideConfig,
     VaultRetrievalConfig,
     WidgetsConfig,
+    WorkflowConfig,
 )
 from .skills.vault._grants import normalize_folder
 
@@ -181,6 +182,7 @@ class Config:
     notifications: NotificationsConfig = field(default_factory=NotificationsConfig)
     email: EmailConfig = field(default_factory=EmailConfig)
     background: BackgroundConfig = field(default_factory=BackgroundConfig)
+    workflow: WorkflowConfig = field(default_factory=WorkflowConfig)
     widgets: WidgetsConfig = field(default_factory=WidgetsConfig)
 
     # Custom environment variables from config.json "env" section
@@ -461,6 +463,9 @@ def load_config() -> Config:
     background = load_sub_config(
         BackgroundConfig, file_data.get("background", {}), "BACKGROUND")
 
+    workflow = load_sub_config(
+        WorkflowConfig, file_data.get("workflow", {}), "WORKFLOW")
+
     # Build the doubly-nested widgets.map leaf explicitly so its systematic
     # env vars (WIDGETS_MAP_*) resolve. load_sub_config only recurses into a
     # nested dataclass field when that key is present in JSON, so a bare
@@ -547,6 +552,7 @@ def load_config() -> Config:
         notifications=notifications,
         email=email,
         background=background,
+        workflow=workflow,
         widgets=widgets,
         env=env_vars,
         system_prompt=system_prompt,

@@ -129,6 +129,37 @@ def test_load_missing_returns_none(tmp_path):
     assert load_journal(_cfg(tmp_path), "nope") is None
 
 
+def test_journal_attempts_defaults_to_zero():
+    """A freshly-constructed Journal starts with attempts=0 so the
+    auto-resume counter has a well-defined baseline."""
+    j = Journal(workflow_name="t")
+    assert j.attempts == 0
+
+
+def test_journal_attempts_round_trip():
+    """attempts must survive to_dict / from_dict so the counter persists
+    across process restarts (that's the whole point — bounding replay
+    storms across crashes)."""
+    j = Journal(workflow_name="t")
+    j.attempts = 2
+    d = j.to_dict()
+    assert d["attempts"] == 2
+    restored = Journal.from_dict(d)
+    assert restored.attempts == 2
+
+
+def test_journal_backward_compatible_missing_attempts():
+    """Journal files written before this field existed load with
+    attempts=0 rather than raising a KeyError."""
+    d = {
+        "workflow_name": "t",
+        "status": "running",
+        "entries": [],
+    }
+    j = Journal.from_dict(d)
+    assert j.attempts == 0
+
+
 def test_from_dict_rejects_duplicate_seq(tmp_path):
     """A corrupted journal file with two entries that resolve to the same
     tuple-path seq must raise rather than silently overwrite — symmetric

@@ -1,5 +1,8 @@
 """Integration tests for workflow turn support in ConversationManager."""
 
+import asyncio
+from unittest.mock import patch
+
 import pytest
 
 from decafclaw.confirmations import ConfirmationAction, ConfirmationRequest
@@ -171,3 +174,112 @@ async def test_durable_resume_after_simulated_restart(tmp_path):
     # The replayed topic actually flowed into the LLM prompts (guards against a
     # wrong-replay-value regression that fake_llm would otherwise mask).
     assert any("tide pools" in (c.get("user_msg") or "") for c in live_calls)
+
+
+@pytest.mark.asyncio
+async def test_startup_scan_resumes_running_workflow_end_to_end(make_manager, config):
+    """A workflow left status='running' mid-execution (simulating a crash) is
+    resumed end-to-end by startup_scan_workflows: a fresh manager picks up the
+    journal, replays cached primitives without re-invoking them, runs only the
+    un-journaled primitive live, and drives the workflow to status='done'.
+
+    This is the whole loop that the Phase 3 unit tests stop short of: the
+    unit tests assert the scan enqueued a WORKFLOW turn; this one proves that
+    turn actually replays through the engine and reaches completion.
+    """
+    from decafclaw.archive import append_message
+    from decafclaw.workflow.journal import (
+        Journal,
+        fingerprint,
+        load_journal,
+        save_journal,
+    )
+    from decafclaw.workflow.registry import REGISTRY, workflow
+
+    # Sequential three-stage workflow. Each stage's llm_call has a stable
+    # prompt/system/schema so we can compute the journal fingerprint below.
+    _SCHEMA = {
+        "type": "object",
+        "properties": {"value": {"type": "string"}},
+        "required": ["value"],
+    }
+    _STAGE_PROMPTS = ("stage-1", "stage-2", "stage-3")
+    _STAGE_SYSTEM = "test-e2e-resume"
+    workflow_name = "_test_e2e_resume"
+
+    @workflow(workflow_name)
+    async def _three_stage(wf):
+        r1 = await wf.llm_call(
+            prompt=_STAGE_PROMPTS[0], schema=_SCHEMA, system=_STAGE_SYSTEM)
+        r2 = await wf.llm_call(
+            prompt=_STAGE_PROMPTS[1], schema=_SCHEMA, system=_STAGE_SYSTEM)
+        r3 = await wf.llm_call(
+            prompt=_STAGE_PROMPTS[2], schema=_SCHEMA, system=_STAGE_SYSTEM)
+        return {
+            "title": "combined",
+            "body": f"{r1['value']}|{r2['value']}|{r3['value']}",
+        }
+
+    try:
+        conv_id = "conv-e2e-resume"
+
+        # iter_conversation_archives only yields conv dirs that contain
+        # archive.jsonl — Phase 3 unit tests use the same pattern.
+        append_message(config, conv_id, {"role": "user", "content": "hi"})
+
+        # Arrange a journal that looks like: workflow ran past stages 1 and 2
+        # (both journaled with results), then the process crashed mid-stage-3
+        # before the third llm_call returned. status="running" is the crash
+        # signal that startup_scan_workflows recovers on.
+        def _fp(prompt: str) -> str:
+            return fingerprint("llm_call", {
+                "prompt": prompt, "schema": _SCHEMA, "system": _STAGE_SYSTEM})
+
+        j = Journal(workflow_name=workflow_name, status="running", attempts=0)
+        j.append((0,), "llm_call", _fp(_STAGE_PROMPTS[0]), {"value": "one"})
+        j.append((1,), "llm_call", _fp(_STAGE_PROMPTS[1]), {"value": "two"})
+        save_journal(config, conv_id, j)
+
+        # Fresh manager, simulating a process restart. Patch the default LLM
+        # caller so `wf.llm_call` uses this stub — cached entries hit the
+        # journal and never call it; only the un-journaled stage-3 will.
+        live_calls = []
+
+        async def stub_llm(ctx, **kw):
+            live_calls.append(kw)
+            return {"value": "three"}
+
+        manager = make_manager()
+
+        with patch("decafclaw.workflow.handle._default_llm_call", new=stub_llm):
+            resumed = await manager.startup_scan_workflows()
+            assert resumed == 1
+
+            # startup_scan_workflows internally calls enqueue_turn, which
+            # schedules the WORKFLOW turn as a task on the manager's state.
+            # Grab it and await completion — no sleeps.
+            state = manager._conversations[conv_id]
+            task = state.agent_task
+            assert task is not None
+            await asyncio.wait_for(task, timeout=5.0)
+
+        # (a) Journal reached status="done" on disk.
+        final = load_journal(config, conv_id)
+        assert final is not None
+        assert final.status == "done"
+        # attempts was bumped once by the scan before enqueue.
+        assert final.attempts == 1
+
+        # (b) Cached primitives were NOT re-invoked. Only stage-3 ran live.
+        assert len(live_calls) == 1
+        assert live_calls[0]["user_msg"] == _STAGE_PROMPTS[2]
+
+        # (c) All three stages ended up journaled, with the pre-existing
+        # results preserved verbatim (not overwritten by the resumed run).
+        assert final.get((0,)).result == {"value": "one"}
+        assert final.get((1,)).result == {"value": "two"}
+        assert final.get((2,)).result == {"value": "three"}
+    finally:
+        # Registry is process-global; other tests in the same worker would
+        # trip the "already registered" guard on a re-import.
+        REGISTRY.pop(workflow_name, None)
