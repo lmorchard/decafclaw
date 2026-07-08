@@ -1884,15 +1884,24 @@ class ConversationManager:
                 "Resuming workflow %r in %s (attempt %d/%d)",
                 journal.workflow_name, conv_id, journal.attempts, cap)
 
-            await self.enqueue_turn(
-                conv_id,
-                kind=TurnKind.WORKFLOW,
-                prompt="",
-                metadata={
-                    "workflow_name": journal.workflow_name,
-                    "resume": True,
-                },
-            )
+            try:
+                await self.enqueue_turn(
+                    conv_id,
+                    kind=TurnKind.WORKFLOW,
+                    prompt="",
+                    metadata={
+                        "workflow_name": journal.workflow_name,
+                        "resume": True,
+                    },
+                )
+            except Exception as exc:
+                # Fail-open per conversation: attempts already incremented on
+                # disk, so the crash-safety guarantee still holds. Skip to the
+                # next conversation rather than block startup.
+                log.warning(
+                    "Failed to enqueue workflow resume for %s: %s",
+                    conv_id, exc)
+                continue
             resumed += 1
 
         if resumed:

@@ -43,10 +43,10 @@ class JournalEntry:
 class Journal:
     workflow_name: str
     status: str = "running"  # running | suspended | done | error
-    # Persistent replay-attempt counter. Bumped each time the harness starts
-    # a run; if the workflow keeps crashing at the same replay position, this
-    # bounds the storm — the harness marks status="error" once it exceeds
-    # max_resume_attempts.
+    # Persistent replay-attempt counter. Bumped by the startup scan each time
+    # it auto-resumes this workflow; if the workflow keeps crashing at the
+    # same replay position, this bounds the storm — the scan flips status to
+    # "error" when attempts reach max_resume_attempts (before the bump).
     attempts: int = 0
     entries: dict[tuple[int, ...], JournalEntry] = dataclasses.field(
         default_factory=dict)

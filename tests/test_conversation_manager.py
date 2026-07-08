@@ -1012,13 +1012,18 @@ async def test_startup_scan_workflows_hits_attempt_cap(manager):
 
 
 @pytest.mark.asyncio
-async def test_startup_scan_workflows_increments_before_enqueue(manager):
-    """If enqueue_turn raises, the incremented attempts must already be on disk.
+async def test_startup_scan_workflows_increments_before_enqueue(
+        manager, caplog):
+    """If enqueue_turn raises, attempts must already be on disk and the scan
+    must fail-open to the next conversation.
 
-    This is the crash-safety guarantee: an attempt is 'spent' the moment the
-    scan commits to retrying, so a crash inside enqueue_turn cannot leak into
-    an infinite retry loop.
+    This is the crash-safety + fail-open guarantee: an attempt is 'spent' the
+    moment the scan commits to retrying (so a crash inside enqueue_turn cannot
+    leak into an infinite retry loop), and a single conversation's enqueue
+    failure must not block startup for other conversations.
     """
+    import logging
+
     from decafclaw.archive import append_message
     from decafclaw.workflow.journal import Journal, load_journal, save_journal
 
@@ -1031,12 +1036,15 @@ async def test_startup_scan_workflows_increments_before_enqueue(manager):
         raise RuntimeError("enqueue failed")
 
     with patch.object(manager, "enqueue_turn", new=_boom):
-        with pytest.raises(RuntimeError, match="enqueue failed"):
-            await manager.startup_scan_workflows()
+        with caplog.at_level(logging.WARNING):
+            resumed = await manager.startup_scan_workflows()
 
+    assert resumed == 0
     reloaded = load_journal(manager.config, conv_id)
     assert reloaded is not None
     assert reloaded.attempts == 1
+    assert any("Failed to enqueue workflow resume" in rec.message
+               for rec in caplog.records)
 
 
 @pytest.mark.asyncio
