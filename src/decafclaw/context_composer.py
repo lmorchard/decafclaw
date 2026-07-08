@@ -340,15 +340,27 @@ class ContextComposer:
         # History contains only archived prior-turn content at this point —
         # fresh wiki / notes / memory / user injections are appended after
         # all token accounting, at the end of compose(). Count messages whose
-        # role is sent to the LLM either directly (LLM_ROLES) or after remap
-        # (ROLE_REMAP keys). Other roles (e.g. confirmation_request, archive-only
-        # bookkeeping) are not sent and don't count.
+        # role is sent to the LLM either directly (LLM_ROLES), after remap
+        # (ROLE_REMAP keys), or after expansion (``background_event``, which
+        # ``_expand_background_event`` turns into a synthetic tool-call pair).
+        # Other roles (e.g. confirmation_request, archive-only bookkeeping)
+        # are not sent and don't count.
         countable_roles = LLM_ROLES | ROLE_REMAP.keys()
-        history_tokens = sum(
-            estimate_tokens(str(m.get("content", "")))
-            for m in history
-            if m.get("role") in countable_roles
-        )
+        history_tokens = 0
+        history_msg_count = 0
+        for m in history:
+            role = m.get("role")
+            if role == "background_event":
+                # Count the expanded content the LLM actually sees, not
+                # the raw archive record (which has no ``content`` field).
+                history_tokens += sum(
+                    estimate_tokens(str(em.get("content", "")))
+                    for em in _expand_background_event(m)
+                )
+                history_msg_count += 1
+            elif role in countable_roles:
+                history_tokens += estimate_tokens(str(m.get("content", "")))
+                history_msg_count += 1
         fixed_tokens += history_tokens
         # User message — has its own SourceEntry so the diagnostics
         # waffle chart and [Context: ...] status line account for the
@@ -427,11 +439,8 @@ class ContextComposer:
         llm_history = [resolve_attachments(config, m) for m in llm_history]
 
         # -- History source entry --
-        # history_tokens was computed above (budget side); reuse the same value
-        # so budget and diagnostics are a single source of truth.
-        history_msg_count = sum(
-            1 for m in history if m.get("role") in countable_roles
-        )
+        # history_tokens / history_msg_count were computed above (budget side);
+        # reuse them so budget and diagnostics are a single source of truth.
         history_entry = SourceEntry(
             source="history",
             tokens_estimated=history_tokens,  # computed earlier, single source of truth

@@ -1214,6 +1214,62 @@ class TestHistoryArchivedRemap:
             f"accounting is drifting."
         )
 
+    @pytest.mark.asyncio
+    async def test_archived_background_event_counted_in_history_entry(
+        self, ctx, config,
+    ):
+        """Regression coverage for #435 — an archived background_event
+        record is expanded into a synthetic assistant tool_call + tool
+        result pair the LLM sees, so history_entry.tokens_estimated
+        must include the expanded content."""
+        composer = ContextComposer()
+        # Use large tails so the expansion has measurable token weight
+        # and the assertion isn't lost in rounding noise.
+        stdout_tail = "expanded stdout " * 50
+        stderr_tail = "expanded stderr " * 50
+        bg_event = {
+            "role": "background_event",
+            "job_id": "job-435",
+            "command": "run something",
+            "status": "completed",
+            "exit_code": 0,
+            "stdout_tail": stdout_tail,
+            "stderr_tail": stderr_tail,
+            "elapsed_ms": 1234,
+            "completion_tail_lines": 50,
+        }
+        history = [
+            {"role": "user", "content": "start it"},
+            {"role": "assistant", "content": "ok"},
+            bg_event,
+        ]
+
+        with (
+            patch("decafclaw.tool_definitions.collect_all_tool_defs", return_value=[]),
+            patch("decafclaw.memory_context.retrieve_memory_context",
+                  new_callable=AsyncMock, return_value=[]),
+        ):
+            composed = await composer.compose(
+                ctx, "current user message", history,
+                mode=ComposerMode.INTERACTIVE,
+            )
+
+        history_entries = [s for s in composed.sources if s.source == "history"]
+        assert len(history_entries) == 1
+        history_entry = history_entries[0]
+
+        expanded_msgs = _expand_background_event(bg_event)
+        expanded_tokens = sum(
+            estimate_tokens(str(m.get("content", ""))) for m in expanded_msgs
+        )
+        # The plain user + assistant messages together are much smaller
+        # than the expanded background_event, so any correct accounting
+        # of the expansion has to exceed this floor.
+        assert history_entry.tokens_estimated >= expanded_tokens, (
+            f"history_entry.tokens_estimated={history_entry.tokens_estimated} "
+            f"expected >= expanded background_event tokens {expanded_tokens}"
+        )
+
 
 class TestCancelMarker:
     """The cancel_marker role is archived when a user cancels a turn;
