@@ -56,10 +56,15 @@ class _EvalConversationManager(ConversationManager):
     def _install_auto_confirm(self, conv_id: str) -> None:
         """Subscribe an auto-resolver to ``conv_id``'s event stream.
 
-        Fires on ``confirmation_request`` emits and calls
-        ``respond_to_confirmation`` with the configured verdict. Uses
-        ``asyncio.create_task`` so the resolver doesn't block the emit
-        chain (the manager awaits subscribers sequentially).
+        Fires on ``confirmation_request`` emits and awaits
+        ``respond_to_confirmation`` inline. Safe against deadlock because
+        ``ConversationManager.request_confirmation`` releases ``state.lock``
+        before it emits the request, so the resolver's own lock
+        acquisition inside ``respond_to_confirmation`` doesn't contend
+        with the caller. The manager runs subscribers concurrently via
+        ``asyncio.gather`` in ``emit`` — this resolver just needs to be
+        the one that lands ``state.confirmation_response`` before
+        ``request_confirmation`` returns to its ``event.wait()``.
         """
         approved = self._eval_auto_confirm
 

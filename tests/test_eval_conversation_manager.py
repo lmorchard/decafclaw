@@ -1,18 +1,20 @@
 """Unit tests for the eval-mode ConversationManager subclass (#536).
 
-Covers:
-- Every new conversation gets an auto-confirm subscriber installed.
+Covers the deterministic plumbing:
+- Every new conversation the manager tracks gets an auto-confirm
+  subscriber installed on first ``_get_or_create``.
 - The subscriber resolves ``confirmation_request`` emits with the
-  configured verdict.
-- ``ctx.manager`` is wired to the manager after ``run_test`` builds the
-  context.
+  verdict passed to the subclass constructor.
+- The resolver is defensive — errors from
+  ``respond_to_confirmation`` log and don't propagate out of the
+  emit gather.
 
-The full ``run_test`` end-to-end path with a real LLM is exercised by
-``evals/delegate.yaml`` under ``make eval``; here we cover the
-deterministic plumbing without spinning up the agent loop.
+``ctx.manager = manager`` wiring in ``run_test`` and the full LLM
+end-to-end are exercised by ``evals/delegate.yaml`` under
+``make eval`` — not this file.
 """
 
-import asyncio
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -91,24 +93,39 @@ async def test_resolver_ignores_non_confirmation_events():
 
 @pytest.mark.asyncio
 async def test_resolver_error_is_logged_not_raised(caplog):
-    """The resolver is defensive — errors from ``respond_to_confirmation``
-    log and don't crash the emit chain (which awaits subscribers)."""
+    """The resolver catches exceptions from ``respond_to_confirmation`` and
+    logs them — a raise would propagate out of the manager's emit gather
+    (which uses ``return_exceptions=True``) into stderr noise and mask
+    the real test failure."""
     manager = _EvalConversationManager(Config(), EventBus(), auto_confirm=True)
     state = manager._get_or_create("child-boom")
     resolver = next(iter(state.subscribers.values()))
-    # A request event whose confirmation_id doesn't match anything pending —
-    # ``respond_to_confirmation`` will just log a warning and return, so
-    # the resolver completes cleanly. This proves the defensive shape
-    # without needing to stub the underlying call.
-    await resolver({
-        "type": "confirmation_request",
-        "confirmation_id": "does-not-exist",
-    })
-    # Also cover the drop-events-with-no-cid path.
-    await resolver({"type": "confirmation_request"})
+
+    boom = AsyncMock(side_effect=RuntimeError("simulated failure"))
+    with patch.object(manager, "respond_to_confirmation", boom):
+        # Should not raise. The resolver's try/except catches and logs.
+        await resolver({
+            "type": "confirmation_request",
+            "confirmation_id": "abc123",
+        })
+
+    boom.assert_awaited_once()
+    assert any(
+        "Eval auto-confirm resolver failed" in rec.message
+        for rec in caplog.records
+    ), f"expected resolver failure log; got {[r.message for r in caplog.records]}"
 
 
-def test_asyncio_import_smoke():
-    """Guard against stray asyncio imports being dropped by refactors —
-    the resolver depends on the module being importable."""
-    assert asyncio is not None
+@pytest.mark.asyncio
+async def test_resolver_skips_events_missing_confirmation_id():
+    """A ``confirmation_request`` emit without a confirmation_id is
+    ignored — no exception, no call to ``respond_to_confirmation``."""
+    manager = _EvalConversationManager(Config(), EventBus(), auto_confirm=True)
+    state = manager._get_or_create("child-no-cid")
+    resolver = next(iter(state.subscribers.values()))
+
+    spy = AsyncMock()
+    with patch.object(manager, "respond_to_confirmation", spy):
+        await resolver({"type": "confirmation_request"})
+        await resolver({"type": "confirmation_request", "confirmation_id": ""})
+    spy.assert_not_called()
