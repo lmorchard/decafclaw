@@ -71,6 +71,8 @@ Note that `response_contains` with a list uses OR semantics — to require sever
 
 Tool-name assertions see only parent-agent tool calls; tools invoked inside child agents (via `delegate_task`) are not visible.
 
+The eval harness wires a `ConversationManager` onto the parent context (#536) so `delegate_task` executes end-to-end — the child agent runs a real turn and returns its result to the parent. Confirmations that route through the manager's typed path (child-side tool confirmations) are auto-resolved per `setup.auto_confirm`, mirroring the legacy event-bus shim's behavior for parent-side tools. Tests that only care about the parent's tool-choice angle don't need any special setup — `expect_tool: delegate_task` works as before; the difference is that the delegation no longer surfaces a `[error: requires a ConversationManager]` tool result.
+
 ### Post-turn workspace assertions
 
 `expect_workspace` sits at the test-case top level (parallel to `setup` / `expect`) and runs once at the end of the test, after all turns complete. Useful for tests that need to verify the agent's *side effects* rather than its response text.

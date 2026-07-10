@@ -10,10 +10,81 @@ from ..agent import run_agent_turn
 from ..commands import dispatch_command
 from ..config import Config
 from ..context import Context
+from ..conversation_manager import ConversationManager
 from ..events import EventBus
 from ..skills import discover_skills as _discover_skills_fn
 
 log = logging.getLogger(__name__)
+
+
+class _EvalConversationManager(ConversationManager):
+    """Eval-mode manager: auto-resolves confirmations routed through the
+    manager path.
+
+    In production, transports (mattermost, web UI) subscribe to per-conv
+    event streams and dispatch confirmation UIs. Eval mode has no UI, and
+    child conv_ids created by ``delegate_task`` never get a transport
+    subscriber. Without something in the loop, ``manager.request_confirmation``
+    would emit the request and then block on ``confirmation_event.wait()``
+    indefinitely.
+
+    We install an auto-resolver on every new conversation the manager
+    tracks (parent + all children, including nested delegates). The
+    resolver approves or denies per ``setup.auto_confirm``, matching the
+    existing legacy event-bus shim's behavior for parent tools.
+
+    Note the parent conversation ("eval") reaches this manager only if
+    ``run_test`` sets ``ctx.manager = self`` AND some parent tool routes
+    through the manager path. Today ``run_test`` calls ``run_agent_turn``
+    directly with ``ctx.request_confirmation = None``, so parent tools
+    take the event-bus fallback; child tools go through
+    ``manager._start_turn`` which overwrites ``child_ctx.request_confirmation``
+    to a manager-based closure (see ``conversation_manager.py::_start_turn``).
+    """
+
+    def __init__(self, config, event_bus, *, auto_confirm: bool):
+        super().__init__(config, event_bus)
+        self._eval_auto_confirm = auto_confirm
+
+    def _get_or_create(self, conv_id):
+        is_new = conv_id not in self._conversations
+        state = super()._get_or_create(conv_id)
+        if is_new:
+            self._install_auto_confirm(conv_id)
+        return state
+
+    def _install_auto_confirm(self, conv_id: str) -> None:
+        """Subscribe an auto-resolver to ``conv_id``'s event stream.
+
+        Fires on ``confirmation_request`` emits and awaits
+        ``respond_to_confirmation`` inline. Safe against deadlock because
+        ``ConversationManager.request_confirmation`` releases ``state.lock``
+        before it emits the request, so the resolver's own lock
+        acquisition inside ``respond_to_confirmation`` doesn't contend
+        with the caller. The manager runs subscribers concurrently via
+        ``asyncio.gather`` in ``emit`` — this resolver just needs to be
+        the one that lands ``state.confirmation_response`` before
+        ``request_confirmation`` returns to its ``event.wait()``.
+        """
+        approved = self._eval_auto_confirm
+
+        async def _resolver(event):
+            if event.get("type") != "confirmation_request":
+                return
+            cid = event.get("confirmation_id", "")
+            if not cid:
+                return
+            try:
+                await self.respond_to_confirmation(
+                    conv_id, cid, approved=approved,
+                )
+            except Exception:
+                log.exception(
+                    "Eval auto-confirm resolver failed for conv %s / cid %s",
+                    conv_id, cid,
+                )
+
+        self.subscribe(conv_id, _resolver)
 
 
 async def _setup_skills(ctx, test_case: dict):
@@ -437,13 +508,27 @@ async def run_test(config: Config, test_case: dict) -> dict:
         config.discovered_skills = _discover_skills_fn(config)
         config.skill_tool_owners = build_skill_tool_owners(config.discovered_skills)
 
+    # setup.auto_confirm: true (default) = auto-approve, false = auto-deny.
+    # Resolved early so both the manager (child confirmations via typed
+    # path) and the event-bus shim (parent confirmations via legacy path)
+    # see the same verdict.
+    auto_confirm = test_case.get("setup", {}).get("auto_confirm", True)
+
     bus = EventBus()
+    manager = _EvalConversationManager(config, bus, auto_confirm=auto_confirm)
     ctx = Context(config=config, event_bus=bus)
     ctx.conv_id = "eval"
     ctx.channel_id = "eval"
     ctx.channel_name = "eval"
     ctx.thread_id = ""
     ctx.user_id = config.agent.user_id
+    # Wire the manager onto the parent context so ``delegate_task`` can
+    # ``enqueue_turn`` a child agent (#536). We deliberately leave
+    # ``ctx.request_confirmation`` as None so parent tools take the
+    # event-bus fallback (handled by ``_handle_confirm`` below); the
+    # manager's ``_start_turn`` will set the child's own
+    # ``request_confirmation`` to the manager-based closure.
+    ctx.manager = manager
 
     # Set allowed tools if specified (disallowed tools return an error)
     allowed_tools = test_case.get("allowed_tools")
@@ -460,10 +545,6 @@ async def run_test(config: Config, test_case: dict) -> dict:
 
     # Pre-activate skills
     await _setup_skills(ctx, test_case)
-
-    # Handle confirmation requests in evals.
-    # setup.auto_confirm: true (default) = auto-approve, false = auto-deny
-    auto_confirm = test_case.get("setup", {}).get("auto_confirm", True)
 
     import asyncio
 
