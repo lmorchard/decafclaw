@@ -58,6 +58,18 @@ ROLE_REMAP: dict[str, str] = {
 }
 
 
+# Preempt-skill-hint trimming (#604). The visible <preempt_skill_hint> lists
+# only skills scoring within _HINT_SCORE_GAP of the top match and at least
+# _HINT_MIN_SCORE — so a clearly-relevant skill isn't diluted by a pile of
+# weak keyword matches. Exception: at least one match is always shown, so when
+# the top scorer is itself below the floor the single best match still appears.
+# Lower scorers still land in ctx.skills.preempt_matches for tool promotion;
+# only the hint text is trimmed. Hardcoded for now; promote to config if these
+# need per-deployment tuning.
+_HINT_SCORE_GAP = 1
+_HINT_MIN_SCORE = 2
+
+
 # -- Enums --------------------------------------------------------------------
 
 
@@ -1056,13 +1068,28 @@ class ContextComposer:
         scored.sort(key=lambda e: (-e["score"], e["name"]))
         top = scored[: cfg.max_matches]
         matched_names = {e["name"] for e in top}
+        # Promote ALL top matches for tool loading — the hint trim below only
+        # affects the visible text, not which skills classify_tools can pull in.
         ctx.skills.preempt_matches = matched_names
 
-        # Escape skill names before interpolating — names come from
+        # Trim the *visible* hint to skills within a small gap of the top
+        # scorer so a dense pile of weak matches doesn't dilute the routing
+        # signal (#604). Always keep at least one so the hint is never empty.
+        top_score = top[0]["score"]
+        threshold = max(_HINT_MIN_SCORE, top_score - _HINT_SCORE_GAP)
+        hinted = [e for e in top if e["score"] >= threshold] or top[:1]
+        hinted_names = {e["name"] for e in hinted}
+
+        # Sanitize skill names before interpolating — names come from
         # SKILL.md frontmatter, which workspace/admin skills control.
-        # An unescaped `</preempt_skill_hint>` (or stray newline) in a
-        # name could break out of the wrapper and inject prompt content.
-        safe_names = sorted(html.escape(name, quote=False) for name in matched_names)
+        # Collapse whitespace (incl. newlines) to a single space so a name
+        # can't inject extra hint lines/directives, then html-escape so an
+        # `</preempt_skill_hint>` (or other markup) can't break out of the
+        # wrapper and inject prompt content.
+        safe_names = sorted(
+            html.escape(" ".join(name.split()), quote=False)
+            for name in hinted_names
+        )
         bullets = "\n".join(f"- {n}" for n in safe_names)
         hint_text = (
             "<preempt_skill_hint>\n"
@@ -1073,18 +1100,24 @@ class ContextComposer:
         )
 
         log.info(
-            "preemptive skill match: surfaced %d skill(s) for conv %s: %s",
-            len(top), (ctx.conv_id or ctx.context_id)[:12],
-            ", ".join(f"{e['name']}({e['score']})" for e in top),
+            "preemptive skill match: promoted %d skill(s), hinted %d, for conv %s: %s",
+            len(top), len(hinted), (ctx.conv_id or ctx.context_id)[:12],
+            ", ".join(
+                f"{e['name']}({e['score']}{'*' if e['name'] in hinted_names else ''})"
+                for e in top
+            ),
         )
 
         entry = SourceEntry(
             source="preempt_skill_matches",
             tokens_estimated=estimate_tokens(hint_text),
-            items_included=len(top),
+            items_included=len(hinted),  # the entry represents the hint text
             details={
                 "input_tokens": sorted(input_tokens),
-                "matches": top,
+                "matches": top,          # full promoted set (feeds tool promotion)
+                "hinted": hinted,        # subset actually named in the hint
+                "promoted_count": len(top),
+                "hinted_count": len(hinted),
                 "max_matches": cfg.max_matches,
             },
         )
