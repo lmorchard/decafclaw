@@ -926,15 +926,22 @@ async def websocket_terminal(websocket: WebSocket, config, registry) -> None:
             msg = await websocket.receive()
             if msg["type"] == "websocket.disconnect":
                 break
-            if "text" in msg and msg["text"] is not None:
-                ctrl = json.loads(msg["text"])
-                if ctrl.get("type") == "input":
+            text = msg.get("text")
+            if text is None:
+                continue  # ignore binary client frames (protocol uses text control frames)
+            try:
+                ctrl = json.loads(text)
+                mtype = ctrl.get("type")
+                if mtype == "input":
                     await registry.write_input(session, ctrl["data"].encode("utf-8"))
-                elif ctrl.get("type") == "resize":
+                elif mtype == "resize":
                     await registry.set_viewport(session, id(websocket), int(ctrl["cols"]), int(ctrl["rows"]))
-                    cols, rows = registry._min_viewport(session)
-                    await websocket.send_json({"type": "size_changed", "cols": cols, "rows": rows})
-                # ping ignored (liveness only)
+                    size = registry._min_viewport(session)
+                    if size:
+                        await websocket.send_json({"type": "size_changed", "cols": size[0], "rows": size[1]})
+                # "ping" and unknown types: ignore
+            except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+                log.debug("terminal control-frame drop conv=%s: %s", conv_id, exc)
     finally:
         await registry.detach(session, send_bytes)
         await registry.drop_viewport(session, id(websocket))
