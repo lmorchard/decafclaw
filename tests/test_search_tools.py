@@ -136,6 +136,24 @@ class TestKeywordScoring:
         assert '"name": "wait"' in result.text
         assert "heartbeat_trigger" not in result.text
 
+    def test_exact_name_outranks_partial_name_plus_description(self, ctx):
+        # `wait_for` is a partial-name match AND hits the keyword in its
+        # description; `wait` is an exact-name match only. The exact name
+        # must still rank first — and `wait_for` is placed EARLIER in the
+        # pool so a stable sort can't rescue it by accident.
+        ctx.tools.deferred_pool = [
+            _make_tool_def(
+                "wait_for", "Block until a condition is met — wait politely."
+            ),
+            _make_tool_def("wait", "Sleep for the specified number of seconds."),
+        ]
+        ctx.config.skill_tool_owners = {}
+        ctx.config.discovered_skills = []
+        result = tool_search(ctx, "wait")
+        assert result.text.index('"name": "wait"') < result.text.index(
+            '"name": "wait_for"'
+        )
+
 
 class TestEmptyPool:
     def test_no_pool(self, ctx):

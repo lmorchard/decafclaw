@@ -33,31 +33,47 @@ def tool_search(ctx, query: str, max_results: int = 10) -> ToolResult:
     else:
         keyword = query.lower()
 
-    def _score(name: str, desc: str) -> int:
+    # Score is a (name_tier, description_hit) tuple, compared
+    # lexicographically: the name tier dominates so an exact-name match
+    # always outranks a partial-name match, which always outranks a
+    # description-only match — the description hit only breaks ties *within*
+    # a name tier. A weighted sum wouldn't hold this invariant (a
+    # partial-name + description match could tie an exact-name-only match).
+    NO_MATCH = (0, 0)
+
+    def _score(name: str, desc: str) -> tuple[int, int]:
         """Relevance of a name+description pair to the query.
 
-        `select:` is an exact-name lookup (1 = named, 0 = not). Keyword
+        `select:` is an exact-name lookup: (1, 0) named, (0, 0) not. Keyword
         search ranks name-token matches above description-only matches so a
         query naming a tool doesn't get outranked by an unrelated tool that
         happens to mention the word in its description (#526)."""
         if is_select:
-            return 1 if name in requested_names else 0
+            return (1, 0) if name in requested_names else NO_MATCH
         n = name.lower()
-        score = 0
         if keyword == n:
-            score += 3  # exact name match — strongest signal
+            name_tier = 2  # exact name match — strongest signal
         elif keyword in n:
-            score += 2  # partial name match
-        if keyword in desc.lower():
-            score += 1  # description-only match ranks last
-        return score
+            name_tier = 1  # partial name match
+        else:
+            name_tier = 0
+        desc_hit = 1 if keyword in desc.lower() else 0
+        return (name_tier, desc_hit)
+
+    # Skill descriptions keyed by name — built once so the deferred-pool
+    # walk resolves an owning skill's description in O(1) rather than
+    # re-scanning discovered_skills per matching tool.
+    skill_desc_by_name = {s.name: s.description for s in discovered_skills}
 
     # 1. Match the skill catalog (name + description per skill). Track the
     #    best score seen per skill so a hidden-tool-name hit (step 2) can
     #    raise a skill already matched by its catalog entry.
-    matched_skills: dict[str, tuple[str, int]] = {}  # name → (description, score)
+    # name → (description, score)
+    matched_skills: dict[str, tuple[str, tuple[int, int]]] = {}
 
-    def _record_skill(skill_name: str, description: str, score: int) -> None:
+    def _record_skill(
+        skill_name: str, description: str, score: tuple[int, int]
+    ) -> None:
         existing = matched_skills.get(skill_name)
         if existing is None or score > existing[1]:
             matched_skills[skill_name] = (description, score)
@@ -66,13 +82,13 @@ def tool_search(ctx, query: str, max_results: int = 10) -> ToolResult:
         if skill.name in activated:
             continue
         score = _score(skill.name, skill.description)
-        if score:
+        if score != NO_MATCH:
             _record_skill(skill.name, skill.description, score)
 
     # 2. Walk the deferred pool. Skill tools redirect to their owning
     #    skill; non-skill deferred tools (core demoted + MCP) get
     #    fetched into the active set as today.
-    scored_tool_defs: list[tuple[int, dict]] = []
+    scored_tool_defs: list[tuple[tuple[int, int], dict]] = []
     for td in pool:
         name = td.get("function", {}).get("name", "")
         if not name:
@@ -80,19 +96,13 @@ def tool_search(ctx, query: str, max_results: int = 10) -> ToolResult:
         desc = get_description(td)
         owning_skill = skill_tool_owners.get(name)
         score = _score(name, desc)
-        if not score:
+        if score == NO_MATCH:
             continue
         if owning_skill:
             if owning_skill in activated:
                 continue
-            # Surface the skill, not the tool. Look up the skill's
-            # description for the response.
-            skill_desc = ""
-            for s in discovered_skills:
-                if s.name == owning_skill:
-                    skill_desc = s.description
-                    break
-            _record_skill(owning_skill, skill_desc, score)
+            # Surface the skill, not the tool.
+            _record_skill(owning_skill, skill_desc_by_name.get(owning_skill, ""), score)
         else:
             scored_tool_defs.append((score, td))
 
