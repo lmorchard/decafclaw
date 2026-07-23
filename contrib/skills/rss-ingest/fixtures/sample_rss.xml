@@ -1,0 +1,20 @@
+<?xml version="1.0"?>
+<rss version="2.0">
+  <channel>
+    <title>Sample Blog</title>
+    <item>
+      <title>First Post</title>
+      <link>https://blog.example/first</link>
+      <guid>https://blog.example/first</guid>
+      <pubDate>Wed, 23 Jul 2026 10:00:00 +0000</pubDate>
+      <description>Hello world summary.</description>
+    </item>
+    <item>
+      <title>Second Post</title>
+      <link>https://blog.example/second</link>
+      <guid>https://blog.example/second</guid>
+      <pubDate>Tue, 22 Jul 2026 10:00:00 +0000</pubDate>
+      <description>Another summary.</description>
+    </item>
+  </channel>
+</rss>
