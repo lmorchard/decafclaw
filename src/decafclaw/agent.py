@@ -765,6 +765,11 @@ class TurnRunner:
         self.loop_breaker.record(sigs)
         verdict = self.loop_breaker.verdict()
         if verdict is LoopVerdict.NUDGE:
+            # Ephemeral — appended to self.messages only, never archived or
+            # added to self.history. Archiving would re-surface it via
+            # restore_history on a restart/reload (role "system" is an LLM
+            # role), permanently polluting context on all later turns.
+            # Matches _run_grace_turn's injected note.
             nudge = {
                 "role": "system",
                 "content": (
@@ -775,7 +780,6 @@ class TurnRunner:
                 ),
             }
             self.messages.append(nudge)
-            _archive(self.ctx, nudge)
             await self.ctx.publish("loop_breaker", action="nudge",
                                    reason=self.loop_breaker.last_signal())
         elif verdict is LoopVerdict.STOP:
