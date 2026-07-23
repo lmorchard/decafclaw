@@ -8,11 +8,10 @@ import asyncio
 import fcntl
 import logging
 import os
-import pty
+import shlex
 import signal
 import struct
 import termios
-import warnings
 from dataclasses import dataclass, field
 
 log = logging.getLogger(__name__)
@@ -36,16 +35,16 @@ class TerminalSession:
 
 
 class TerminalRegistry:
-    def __init__(self, config, *, loop=None, pty_module=pty, os_module=os):
+    def __init__(self, config, *, loop=None, os_module=os):
         self._config = config
         self._loop = loop
-        self._pty = pty_module
         self._os = os_module
         self._sessions: dict[tuple[str, str], TerminalSession] = {}
         self._lock = asyncio.Lock()
         # WS-json senders keyed by session, for control frames (size_changed,
         # session_ended). Parallel to session.attached (raw-byte senders).
         self._json_sinks: dict[int, dict] = {}
+        self._tasks: set = set()
 
     # -- lookup --------------------------------------------------------------
     def get(self, conv_id, tab_id):
@@ -54,39 +53,41 @@ class TerminalRegistry:
     def count_for_conv(self, conv_id) -> int:
         return sum(1 for (c, _t) in self._sessions if c == conv_id)
 
+    def _spawn_task(self, coro):
+        task = asyncio.get_running_loop().create_task(coro)
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+        return task
+
     # -- spawn ---------------------------------------------------------------
     async def spawn(self, conv_id, tab_id, session_id, cwd, shell) -> TerminalSession:
         loop = self._loop or asyncio.get_running_loop()
-
-        # pty.fork() is a fast syscall wrapper, not a blocking I/O call — run
-        # it directly on the event-loop thread rather than via
-        # asyncio.to_thread. The forked child does no Python-level work
-        # beyond chdir + execvpe (immediate process-image replacement), so
-        # it never touches a lock inherited from another thread — the
-        # deadlock risk CPython's forkpty-in-multithreaded-process warning
-        # is about. We already run inside an async host process (event
-        # loop + thread pools), so the warning fires unconditionally
-        # regardless of where fork() is called from; suppress narrowly by
-        # module rather than blanket-silencing all DeprecationWarnings.
-        with warnings.catch_warnings():
-            warnings.filterwarnings("ignore", category=DeprecationWarning, module="pty")
-            pid, fd = self._pty.fork()
-        if pid == 0:  # child
-            try:
-                self._os.chdir(cwd)
-            except OSError:
-                pass
-            env = dict(self._os.environ)
-            env["TERM"] = "xterm-256color"
-            self._os.execvpe(shell, [shell], env)  # replaces child image
-
+        master, slave = self._os.openpty()
+        env = dict(self._os.environ)          # built in the PARENT, not a forked child
+        env["TERM"] = "xterm-256color"
+        # posix_spawn has no portable chdir; trampoline through sh to set cwd,
+        # then exec the target shell so its pid IS session.pid (survives exec).
+        inner = f"cd {shlex.quote(cwd)} && exec {shlex.quote(shell)}"
+        argv = ["/bin/sh", "-c", inner]
+        file_actions = [
+            (os.POSIX_SPAWN_DUP2, slave, 0),
+            (os.POSIX_SPAWN_DUP2, slave, 1),
+            (os.POSIX_SPAWN_DUP2, slave, 2),
+            (os.POSIX_SPAWN_CLOSE, slave),
+            (os.POSIX_SPAWN_CLOSE, master),
+        ]
+        try:
+            pid = self._os.posix_spawn(argv[0], argv, env,
+                                       file_actions=file_actions, setsid=True)
+        finally:
+            self._os.close(slave)             # parent keeps only the master fd
         session = TerminalSession(
             conv_id=conv_id, tab_id=tab_id, session_id=session_id,
-            cwd=cwd, shell=shell, pid=pid, fd=fd,
+            cwd=cwd, shell=shell, pid=pid, fd=master,
         )
         self._sessions[(conv_id, tab_id)] = session
         self._json_sinks[id(session)] = {}
-        loop.add_reader(fd, self._on_readable, session)
+        loop.add_reader(master, self._on_readable, session)
         log.info("terminal spawned conv=%s tab=%s pid=%s cwd=%s shell=%s",
                  conv_id, tab_id, pid, cwd, shell)
         return session
@@ -98,7 +99,15 @@ class TerminalRegistry:
         except OSError:
             chunk = b""  # EIO on Linux when child exits → treat as EOF
         if not chunk:
-            asyncio.get_running_loop().create_task(self._on_eof(session))
+            loop = asyncio.get_running_loop()
+            # Remove the reader synchronously, before scheduling _on_eof, so
+            # the level-triggered selector can't dispatch a second EOF
+            # callback while the coroutine is still pending.
+            try:
+                loop.remove_reader(session.fd)
+            except (OSError, ValueError):
+                pass
+            self._spawn_task(self._on_eof(session))
             return
         self._handle_output(session, chunk)
 
@@ -108,7 +117,7 @@ class TerminalRegistry:
         if len(session.buffer) > cap:
             del session.buffer[: len(session.buffer) - cap]
         for sink in list(session.attached):
-            asyncio.get_running_loop().create_task(self._send(session, sink, chunk))
+            self._spawn_task(self._send(session, sink, chunk))
 
     async def _send(self, session, sink, chunk):
         try:
@@ -127,7 +136,8 @@ class TerminalRegistry:
             _pid, status = await asyncio.to_thread(self._os.waitpid, session.pid, 0)
             session.exit_status = os.waitstatus_to_exitcode(status)
         except (ChildProcessError, OSError):
-            session.exit_status = session.exit_status or -1
+            if session.exit_status is None:
+                session.exit_status = -1
         for send_json in list(self._json_sinks.get(id(session), {}).values()):
             try:
                 await send_json({"type": "session_ended", "exit_status": session.exit_status})

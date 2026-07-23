@@ -80,11 +80,16 @@ def test_no_agent_side_imports():
     """terminals.py must not be reachable from tools/ or skills/ — the
     load-bearing 'agent cannot touch terminals' guarantee."""
     import pathlib
+    import re
     root = pathlib.Path(__file__).resolve().parent.parent / "src" / "decafclaw"
+    # Catches every realistic import spelling: "import decafclaw.terminals",
+    # "from decafclaw.terminals import X", "from decafclaw import terminals",
+    # "from .terminals import X", "from ..terminals import X".
+    import_line_re = re.compile(r"^\s*(import|from)\s+.*\bterminals\b", re.MULTILINE)
     offenders = []
     for sub in ("tools", "skills"):
         for py in (root / sub).rglob("*.py"):
             text = py.read_text(encoding="utf-8")
-            if "decafclaw.terminals" in text or "from ..terminals" in text or "from .terminals" in text:
+            if import_line_re.search(text):
                 offenders.append(str(py))
     assert not offenders, f"terminals.py imported by agent-side code: {offenders}"
