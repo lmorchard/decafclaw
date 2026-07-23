@@ -1625,6 +1625,13 @@ async def ws_chat(websocket):
     )
 
 
+async def ws_terminal(websocket):
+    """WebSocket entry point — defers to the gateway in `web/websocket.py`."""
+    from .web.websocket import websocket_terminal
+    state = websocket.app.state
+    await websocket_terminal(websocket, state.config, state.terminal_registry)
+
+
 # -- Widget routes ------------------------------------------------------------
 
 
@@ -2074,6 +2081,7 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> Starlette:
         Route("/canvas/{conv_id}", get_canvas_page, methods=["GET"]),
         Route("/canvas/{conv_id}/{tab_id}", get_canvas_page, methods=["GET"]),
         WebSocketRoute("/ws/chat", ws_chat),
+        WebSocketRoute("/ws/terminal/{conv_id}/{tab_id}", ws_terminal),
     ]
 
     # Static file serving for web UI
@@ -2093,6 +2101,8 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> Starlette:
     app.state.event_bus = event_bus
     app.state.manager = manager
     app.state.app_ctx = app_ctx
+    from .terminals import TerminalRegistry
+    app.state.terminal_registry = TerminalRegistry(config)
     return app
 
 

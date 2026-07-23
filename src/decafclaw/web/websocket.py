@@ -883,3 +883,58 @@ async def websocket_chat(websocket: WebSocket, config, event_bus, app_ctx,
         event_bus.unsubscribe(notif_sub_id)
         event_bus.unsubscribe(vault_sub_id)
         _unsubscribe_all(state)
+
+
+async def websocket_terminal(websocket: WebSocket, config, registry) -> None:
+    """Handle a WebSocket terminal connection: attach to a PTY session,
+    replay its ring buffer, then relay input/resize/ping control frames.
+
+    Human-only surface — the agent has no access to this route or registry.
+    """
+    from .auth import get_current_user
+
+    username = get_current_user(websocket, config)
+    if not username:
+        await websocket.close(code=4001, reason="Not authenticated")
+        return
+    if not config.terminal.enabled:
+        await websocket.close(code=4003, reason="Terminals disabled")
+        return
+
+    conv_id = websocket.path_params["conv_id"]
+    tab_id = websocket.path_params["tab_id"]
+    await websocket.accept()
+    session = registry.get(conv_id, tab_id)
+    if session is None:
+        await websocket.send_json({"type": "session_ended", "exit_status": None})
+        await websocket.close()
+        return
+
+    async def send_bytes(chunk: bytes) -> None:
+        await websocket.send_bytes(chunk)
+
+    async def send_json(obj: dict) -> None:
+        await websocket.send_json(obj)
+
+    await registry.attach(session, send_bytes, send_json)
+    # Replay ring buffer, then signal done.
+    if session.buffer:
+        await websocket.send_bytes(bytes(session.buffer))
+    await websocket.send_json({"type": "buffer_replay_done"})
+    try:
+        while True:
+            msg = await websocket.receive()
+            if msg["type"] == "websocket.disconnect":
+                break
+            if "text" in msg and msg["text"] is not None:
+                ctrl = json.loads(msg["text"])
+                if ctrl.get("type") == "input":
+                    await registry.write_input(session, ctrl["data"].encode("utf-8"))
+                elif ctrl.get("type") == "resize":
+                    await registry.set_viewport(session, id(websocket), int(ctrl["cols"]), int(ctrl["rows"]))
+                    cols, rows = registry._min_viewport(session)
+                    await websocket.send_json({"type": "size_changed", "cols": cols, "rows": rows})
+                # ping ignored (liveness only)
+    finally:
+        await registry.detach(session, send_bytes)
+        await registry.drop_viewport(session, id(websocket))
