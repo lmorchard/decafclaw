@@ -1797,7 +1797,9 @@ async def post_canvas_close_tab(request: Request, username: str) -> JSONResponse
         return JSONResponse({"error": "body must be a JSON object"}, status_code=400)
     tab_id = body.get("tab_id", "")
     emit = manager.emit if manager else None
-    result = await canvas_mod.close_tab(config, conv_id, tab_id, emit=emit)
+    result = await canvas_mod.close_tab(
+        config, conv_id, tab_id, emit=emit,
+        registry=request.app.state.terminal_registry)
     if not result.ok:
         return JSONResponse({"error": result.error}, status_code=400)
     return JSONResponse({"ok": True})

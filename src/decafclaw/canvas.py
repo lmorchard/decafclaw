@@ -279,8 +279,23 @@ async def update_tab(config,
 async def close_tab(config,
                     conv_id: str,
                     tab_id: str,
-                    emit: EmitFn | None = None) -> CanvasOpResult:
-    """Remove a tab. If active, switch to left neighbor (else right; else None)."""
+                    emit: EmitFn | None = None,
+                    registry=None) -> CanvasOpResult:
+    """Remove a tab. If active, switch to left neighbor (else right; else None).
+
+    If the tab is a terminal widget and a ``TerminalRegistry`` is supplied,
+    kill the underlying PTY session before removing the tab. Kill failures
+    are logged, not raised — they must never block tab removal.
+    """
+    tab = get_tab(config, conv_id, tab_id)
+    if tab is not None and tab.get("widget_type") == "terminal" and registry is not None:
+        session = registry.get(conv_id, tab_id)
+        if session is not None:
+            try:
+                await registry.kill(session)
+            except Exception as exc:
+                log.warning("close_tab: failed to kill terminal session "
+                           "conv=%s tab=%s: %s", conv_id, tab_id, exc)
     state = read_canvas_state(config, conv_id)
     tabs = state.get("tabs", [])
     idx = next((i for i, t in enumerate(tabs) if t.get("id") == tab_id), -1)

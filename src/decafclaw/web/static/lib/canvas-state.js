@@ -172,6 +172,13 @@ export async function switchToTab(tabId) {
 export async function closeTabFromUi(tabId) {
   const convId = _state.active;
   if (!convId) return;
+  const s = _ensure(convId);
+  const tab = s.tabs.find((t) => t.id === tabId);
+  if (tab && tab.widget_type === 'terminal') {
+    if (!window.confirm('Close this terminal? The shell session will be terminated.')) {
+      return;
+    }
+  }
   try {
     await fetch(`/api/canvas/${encodeURIComponent(convId)}/close_tab`, {
       method: 'POST',
