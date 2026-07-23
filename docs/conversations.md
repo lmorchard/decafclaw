@@ -99,7 +99,7 @@ Place a `COMPACTION.md` file at `data/{agent_id}/COMPACTION.md` to customize the
 ### Tools
 
 - **`conversation_compact`** — manually trigger compaction without waiting for the token budget to be exceeded
-- **`conversation_search`** — search past conversations using semantic search (across all archived conversations, not just the current one)
+- **`conversation_search`** — search past conversations by stemmed word overlap plus substring, ranked by relevance (across all archived conversations, not just the current one). Stemming means plural/inflected queries match — `"embedding providers"` finds `"embedding provider"`.
 
 ## Web UI conversations
 

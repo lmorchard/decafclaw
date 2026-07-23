@@ -10,10 +10,9 @@
 
 - name: "reaches for conversation_search on explicit history query"
   setup:
-    # `conversation_search` does case-insensitive *substring* match, so seed
-    # phrasing must contain whichever exact tokens the agent's query is
-    # likely to use. Using plural "embedding providers" + naming all three
-    # provider tokens verbatim makes the search deterministic.
+    # `conversation_search` matches by stemmed word overlap plus substring
+    # (see #535), so exact-token phrasing is no longer required — but naming
+    # the distinctive provider tokens verbatim keeps this case deterministic.
     conversation_history:
       - role: user
         content: "I'm planning to switch our embedding providers from OpenAI to Vertex."
@@ -30,6 +29,28 @@
     # because the agent often paraphrases "switching to Vertex" without
     # naming the "from" side.
     response_contains_all: ["Vertex", "Cohere"]
+    max_tool_calls: 5
+    max_tool_errors: 0
+    expect_tool: conversation_search
+
+# -- Inflection-tolerant recall (#535) ---------------------------------------
+#
+# The seed is SINGULAR ("embedding provider") but the query is PLURAL
+# ("embedding providers"). Under the old substring-only match this returned
+# zero hits and the agent would deny ever discussing it. Stemmed matching
+# now bridges the plural/singular gap. Naming Vertex in the seed lets the
+# assertion prove real retrieval rather than fabrication.
+
+- name: "recalls history across singular/plural query mismatch (#535)"
+  setup:
+    conversation_history:
+      - role: user
+        content: "I'm planning to switch our embedding provider from OpenAI to Vertex."
+      - role: assistant
+        content: "Got it. Vertex it is unless you want me to run a comparison."
+  input: "Search our past chat history for what I said about embedding providers."
+  expect:
+    response_contains: "Vertex"
     max_tool_calls: 5
     max_tool_errors: 0
     expect_tool: conversation_search
