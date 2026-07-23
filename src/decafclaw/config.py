@@ -6,6 +6,7 @@ Resolution order (first non-empty wins):
   3. Dataclass default
 """
 
+import dataclasses
 import json
 import logging
 import os
@@ -35,6 +36,7 @@ from .config_types import (
     ReflectionConfig,
     RelevanceConfig,
     TelemetryConfig,
+    TerminalConfig,
     VaultConfig,
     VaultGuideConfig,
     VaultRetrievalConfig,
@@ -57,18 +59,26 @@ def _parse_bool(value: str, default: bool = False) -> bool:
     return value.strip().lower() in ("true", "1", "yes")
 
 
-def _parse_list(value: str) -> list[str]:
-    """Parse env var to list. Try JSON first, fall back to comma-split."""
+def _parse_list(value: str) -> list[str] | None:
+    """Parse env var to list. Try JSON first, fall back to comma-split.
+
+    Returns None if JSON parsing succeeds but produces a non-list value (e.g. null).
+    The caller's type guard then coerces None to [].
+    """
     value = value.strip()
     if not value:
         return []
-    if value.startswith("["):
-        try:
-            parsed = json.loads(value)
-            if isinstance(parsed, list):
-                return [str(item) for item in parsed]
-        except json.JSONDecodeError:
-            pass
+    # Try JSON parsing for any value (not just arrays)
+    try:
+        parsed = json.loads(value)
+        if isinstance(parsed, list):
+            return [str(item) for item in parsed]
+        # JSON parsed but not a list (e.g. null, string, number)
+        # Return None so the type guard can coerce it
+        return None
+    except json.JSONDecodeError:
+        pass
+    # Fall back to comma-split
     return [item.strip() for item in value.split(",") if item.strip()]
 
 
@@ -164,6 +174,7 @@ class Config:
     embedding: EmbeddingConfig = field(default_factory=EmbeddingConfig)
     heartbeat: HeartbeatConfig = field(default_factory=HeartbeatConfig)
     http: HttpConfig = field(default_factory=HttpConfig)
+    terminal: TerminalConfig = field(default_factory=TerminalConfig)
     agent: AgentConfig = field(default_factory=AgentConfig)
     skills: dict[str, dict[str, Any]] = field(default_factory=dict)
     reflection: ReflectionConfig = field(default_factory=ReflectionConfig)
@@ -406,6 +417,9 @@ def load_config() -> Config:
     http = load_sub_config(
         HttpConfig, file_data.get("http", {}), "HTTP")
 
+    terminal = load_sub_config(
+        TerminalConfig, file_data.get("terminal", {}), "TERMINAL")
+
     agent = load_sub_config(
         AgentConfig, file_data.get("agent", {}), "",
         env_aliases={
@@ -542,6 +556,7 @@ def load_config() -> Config:
         embedding=embedding,
         heartbeat=heartbeat,
         http=http,
+        terminal=terminal,
         agent=agent,
         skills=skills,
         reflection=reflection,
@@ -582,6 +597,11 @@ def load_config() -> Config:
     else:
         for entry in paths:
             normalize_folder(entry, warn_on_invalid=True)
+
+    # Guard: a JSON scalar/null where a list is expected passes through
+    # load_sub_config untouched (see vault.user_writable_paths precedent).
+    if not isinstance(config.terminal.allowed_cwd_roots, list):
+        config.terminal = dataclasses.replace(config.terminal, allowed_cwd_roots=[])
 
     return config
 
