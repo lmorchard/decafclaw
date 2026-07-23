@@ -51,7 +51,7 @@ Always-activated skill for the unified knowledge base. See [Vault](vault.md).
 
 | Tool | What it does |
 |------|--------------|
-| `conversation_search` | Search past conversation archives (semantic) |
+| `conversation_search` | Search past conversation archives (stemmed word overlap + substring) |
 | `conversation_compact` | Manually trigger conversation compaction |
 
 ## Checklist (`tools/checklist_tools.py`)

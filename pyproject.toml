@@ -26,6 +26,7 @@ dependencies = [
     "tabstack>=2.6.1",
     "uvicorn>=0.41.0",
     "websockets>=16.0",
+    "snowballstemmer>=2.2.0",
 ]
 
 [project.optional-dependencies]
