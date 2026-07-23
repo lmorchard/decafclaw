@@ -116,6 +116,18 @@ Fetches recent posts from a Mastodon account and records interesting content to 
 
 **Schedule:** Every 4 hours (`:30`)
 
+### rss-ingest
+
+Fetches new items from subscribed RSS/Atom feeds (blogs, YouTube channels, podcast shownotes, newsletters) and records interesting content to the vault under `agent/pages/rss/`. Emits only items newer than the last run (per-feed incremental state, deduped by entry id; first sight of a feed defaults to the last 24h). The agent does all vault integration; the fetch script only produces markdown.
+
+**Requires:** `uv` on `$PATH`. No API keys and no bundled binary — the fetch script declares `feedparser` via PEP 723 inline metadata, which `uv run` resolves into an isolated, cached environment on first run.
+
+**Feeds:** managed via the fetch script (no direct file editing): `contrib/skills/rss-ingest/fetch.sh add <url> [name]` / `list` / `remove <url>`. Subscriptions live at `workspace/skill-state/rss-ingest/feeds.txt`.
+
+**Tests:** pure logic runs in `make test`; the feedparser adapter is exercised via `uv run --with feedparser python -m pytest contrib/skills/rss-ingest/`.
+
+**Schedule:** Every 4 hours (`0 */4 * * *`), **disabled by default** (contrib SCHEDULE.md is forced `enabled: false` — opt in via an overlay at `data/{agent_id}/schedules/rss-ingest.md`). Also runs on demand via `/rss-ingest`.
+
 ### meta-ingest
 
 Unified successor to `linkding-ingest` + `mastodon-ingest`. Uses the [`me-to-markdown`](https://github.com/lmorchard/me-to-markdown) orchestrator to fetch **all** registered sources (Mastodon, Linkding, GitHub, Spotify, YouTube, Pocket Casts) over one shared time window, then fans out one child agent per source to analyze it and record insights to the vault (heavy content like article text stays in the children, never the parent).
