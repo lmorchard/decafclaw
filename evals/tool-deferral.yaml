@@ -54,3 +54,19 @@
     max_tool_calls: 5
     max_tool_errors: 1
     expect_tool: wait
+
+# -- Preempt skill hint routes the clear winner (#604) -----------------------
+#
+# A prompt that strongly matches one lazy skill (postmortem: "blameless",
+# "postmortem", "root causes", "went wrong") should surface it at the top of
+# <preempt_skill_hint> and get activated. #604 trims the visible hint to
+# skills within a small score gap of the top match so a pile of weak keyword
+# matches can't dilute this signal — this case guards that the clear winner
+# still routes to activate_skill after trimming. (expect_tool is fine with
+# reflection on.)
+- name: "preempt skill hint activates the clearly-relevant skill"
+  input: "Do a blameless postmortem of what went wrong in this conversation — root causes and specific fixes, please."
+  expect:
+    max_tool_calls: 6
+    max_tool_errors: 1
+    expect_tool: activate_skill
