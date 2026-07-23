@@ -1626,7 +1626,7 @@ async def ws_chat(websocket):
     state = websocket.app.state
     await websocket_chat(
         websocket, state.config, state.event_bus, state.app_ctx,
-        manager=state.manager,
+        manager=state.manager, terminal_registry=state.terminal_registry,
     )
 
 

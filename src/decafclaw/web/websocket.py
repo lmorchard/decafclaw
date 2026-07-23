@@ -8,7 +8,10 @@ state are owned by the ConversationManager.
 import asyncio
 import json
 import logging
+import os
 import re
+import uuid
+from pathlib import Path
 
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
@@ -330,6 +333,12 @@ async def _handle_send(ws_send: WSSendCallable, index, username, msg, state) -> 
             metadata={"workflow_name": wf_trigger, "resume": False})
         return
 
+    # -- /terminal side-effect command (#442): spawn a PTY + canvas tab with
+    # NO agent turn and NO archive write. Human-only; the agent has no path here.
+    if text.startswith("/terminal") and (text == "/terminal" or text[9:10].isspace()):
+        await _handle_terminal_command(ws_send, conv_id, text, username, state)
+        return
+
     # -- Command dispatch (centralized in commands.py) --
     from ..commands import dispatch_command
     from ..context import Context
@@ -406,6 +415,64 @@ async def _handle_send(ws_send: WSSendCallable, index, username, msg, state) -> 
 
     # Touch conversation metadata
     index.touch(conv_id)
+
+
+def _is_within(child: Path, parent: Path) -> bool:
+    """True if `child` is `parent` or a descendant of it."""
+    return parent == child or parent in child.parents
+
+
+async def _handle_terminal_command(ws_send: WSSendCallable, conv_id, text, username, state) -> None:
+    """`/terminal [cwd]`: spawn a PTY + open a canvas tab. No agent turn,
+    no archive write — this is a human-only side-effect command (#442)."""
+    from .. import canvas
+
+    config = state["config"]
+    tcfg = config.terminal
+
+    async def _msg(body: str) -> None:
+        await ws_send({
+            "type": WSMessageType.MESSAGE_COMPLETE, "conv_id": conv_id,
+            "role": "assistant", "text": body, "final": True,
+        })
+
+    if not tcfg.enabled:
+        await _msg("Terminals are disabled on this server.")
+        return
+
+    arg = text[len("/terminal"):].strip()
+    default_cwd = tcfg.default_cwd or str(config.workspace_path)
+    cwd = str(Path(arg).expanduser()) if arg else default_cwd
+
+    roots = tcfg.allowed_cwd_roots or [str(config.workspace_path), str(Path.home())]
+    resolved = Path(cwd).resolve()
+    if not any(_is_within(resolved, Path(r).expanduser().resolve()) for r in roots):
+        await _msg(f"cwd not allowed: {cwd}")
+        return
+
+    registry = state["terminal_registry"]
+    if registry.count_for_conv(conv_id) >= tcfg.max_sessions_per_conv:
+        await _msg("Max sessions reached for this conversation.")
+        return
+
+    shell = tcfg.shell_override or os.environ.get("SHELL") or "/bin/sh"
+    session_id = uuid.uuid4().hex
+    manager = state.get("manager")
+    emit = manager.emit if manager else None
+    result = await canvas.new_tab(
+        config, conv_id, "terminal",
+        {"session_id": session_id, "cwd": str(resolved), "shell": shell},
+        emit=emit,
+    )
+    if not result.ok:
+        await _msg(f"Could not open terminal tab: {result.error}")
+        return
+
+    await registry.spawn(conv_id, result.tab_id, session_id, str(resolved), shell)
+    await ws_send({
+        "type": WSMessageType.COMMAND_ACK, "conv_id": conv_id,
+        "command": "/terminal", "skill": "terminal",
+    })
 
 
 async def _handle_cancel_turn(ws_send: WSSendCallable, index, username, msg, state) -> None:
@@ -811,7 +878,7 @@ def _make_vault_change_forwarder(ws_send: WSSendCallable):
 
 
 async def websocket_chat(websocket: WebSocket, config, event_bus, app_ctx,
-                         manager=None):
+                         manager=None, terminal_registry=None):
     """Handle a WebSocket chat connection."""
     from .auth import get_current_user
     from .conversations import ConversationIndex
@@ -847,6 +914,7 @@ async def websocket_chat(websocket: WebSocket, config, event_bus, app_ctx,
         "websocket": websocket,
         "ws_send": ws_send,
         "manager": manager,
+        "terminal_registry": terminal_registry,
     }
 
     # Forward notification events from the global event bus to this socket.
