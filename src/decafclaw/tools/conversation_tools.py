@@ -1,16 +1,37 @@
 """Conversation tools — search and compact conversations."""
 
+import heapq
 import json
 import logging
 
+import snowballstemmer
+
 from ..conversation_paths import iter_conversation_archives
 from ..media import ToolResult
+from ..preempt_search import tokenize
 
 log = logging.getLogger(__name__)
 
+# Ranking: a raw-substring hit is a much stronger signal than incidental
+# token overlap (it's the caller's exact phrase, mid-word matches included),
+# so it dominates the score. Token overlap then orders the rest and breaks
+# ties among substring hits.
+_SUBSTRING_BOOST = 1000
+_MAX_RESULTS = 10
+
+# One shared English stemmer (Porter2). Stemming both query and content
+# tokens lets plural/inflected queries match singular text and vice versa
+# ("colors" ~ "color", "providers" ~ "provider") — the failure mode in #535.
+_STEMMER = snowballstemmer.stemmer("english")
+
+
+def _stemmed_tokens(text: str) -> set[str]:
+    """Tokenize (stopword-filtered, >=3 chars) then stem to word roots."""
+    return {_STEMMER.stemWord(t) for t in tokenize(text)}
+
 
 def tool_conversation_search(ctx, query: str) -> str:
-    """Search across conversation archives using substring matching."""
+    """Search conversation archives by stemmed-token overlap plus substring."""
     log.info(f"[tool:conversation_search] query={query}")
 
     archives = sorted(
@@ -19,8 +40,16 @@ def tool_conversation_search(ctx, query: str) -> str:
         return f"No conversation history found matching '{query}'"
 
     query_lower = query.lower()
-    results: list[str] = []
-    max_results = 10
+    query_stems = _stemmed_tokens(query)
+
+    # Relevance ranking requires scoring every message (a top match can sit
+    # anywhere in the archive), but we only ever return _MAX_RESULTS. Keep a
+    # bounded min-heap of the best entries so memory stays O(_MAX_RESULTS)
+    # regardless of how many messages match. Heap key is (score, -order):
+    # larger is better — higher score wins, and among equal scores the
+    # earlier (smaller order) message wins. heap[0] is thus the weakest kept.
+    heap: list[tuple[int, int, str]] = []
+    order = 0  # archive iteration order — deterministic tie-break
 
     for conv_id, filepath in archives:
         with filepath.open("r", encoding="utf-8") as f:
@@ -35,18 +64,32 @@ def tool_conversation_search(ctx, query: str) -> str:
                 if msg.get("role") not in ("user", "assistant"):
                     continue
                 content = msg.get("content", "")
-                if not content or query_lower not in content.lower():
+                if not content:
                     continue
+
+                score = 0
+                if query_lower in content.lower():
+                    score += _SUBSTRING_BOOST
+                if query_stems:
+                    score += len(query_stems & _stemmed_tokens(content))
+                if score == 0:
+                    continue
+
                 role = msg.get("role", "unknown")
                 excerpt = content[:500] + ("..." if len(content) > 500 else "")
-                results.append(f"--- [{conv_id}] {role} ---\n{excerpt}")
-                if len(results) >= max_results:
-                    break
-        if len(results) >= max_results:
-            break
+                item = (score, -order, f"--- [{conv_id}] {role} ---\n{excerpt}")
+                if len(heap) < _MAX_RESULTS:
+                    heapq.heappush(heap, item)
+                elif item > heap[0]:
+                    heapq.heapreplace(heap, item)
+                order += 1
 
-    if not results:
+    if not heap:
         return f"No conversation history found matching '{query}'"
+
+    # Best first: highest score, then earliest (smallest order).
+    ranked = sorted(heap, key=lambda t: (-t[0], -t[1]))
+    results = [entry for _score, _negorder, entry in ranked]
 
     return f"Found {len(results)} matching conversation entries:\n\n" + "\n\n".join(results)
 
@@ -77,13 +120,15 @@ CONVERSATION_TOOL_DEFINITIONS = [
         "function": {
             "name": "conversation_search",
             "description": (
-                "Search the **raw chat history** of past conversations using "
-                "substring matching. Use this when the user is asking for a "
-                "verbatim reference — the literal exchange — and only when the "
-                "answer is not better-suited to the vault. **Resolved decisions, "
-                "design choices, and curated knowledge live in the vault — for "
-                "those, prefer vault_search even when the user phrases it as "
-                "'what did we decide' or 'we talked about'.** "
+                "Search the **raw chat history** of past conversations. "
+                "Matches by word overlap (stemmed, so plural/inflected words "
+                "match: 'providers' finds 'provider') and by substring, with "
+                "results ranked by relevance. Use this when the user is asking "
+                "for a verbatim reference — the literal exchange — and only when "
+                "the answer is not better-suited to the vault. **Resolved "
+                "decisions, design choices, and curated knowledge live in the "
+                "vault — for those, prefer vault_search even when the user "
+                "phrases it as 'what did we decide' or 'we talked about'.** "
                 "Searches the full uncompacted JSONL archives. "
                 "Useful for: pinning down the exact wording of a prior exchange."
             ),
