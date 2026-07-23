@@ -27,6 +27,7 @@ from .config_types import (
     HeartbeatConfig,
     HttpConfig,
     LlmConfig,
+    LoopBreakerConfig,
     MapWidgetConfig,
     MattermostConfig,
     ModelConfig,
@@ -189,6 +190,7 @@ class Config:
     email: EmailConfig = field(default_factory=EmailConfig)
     background: BackgroundConfig = field(default_factory=BackgroundConfig)
     workflow: WorkflowConfig = field(default_factory=WorkflowConfig)
+    loop_breaker: LoopBreakerConfig = field(default_factory=LoopBreakerConfig)
     telemetry: TelemetryConfig = field(default_factory=TelemetryConfig)
     widgets: WidgetsConfig = field(default_factory=WidgetsConfig)
 
@@ -479,6 +481,9 @@ def load_config() -> Config:
     workflow = load_sub_config(
         WorkflowConfig, file_data.get("workflow", {}), "WORKFLOW")
 
+    loop_breaker = load_sub_config(
+        LoopBreakerConfig, file_data.get("loop_breaker", {}), "LOOP_BREAKER")
+
     telemetry = load_sub_config(
         TelemetryConfig, file_data.get("telemetry", {}), "TELEMETRY")
 
@@ -571,6 +576,7 @@ def load_config() -> Config:
         email=email,
         background=background,
         workflow=workflow,
+        loop_breaker=loop_breaker,
         telemetry=telemetry,
         widgets=widgets,
         env=env_vars,
