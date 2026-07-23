@@ -1,4 +1,7 @@
+import pytest
+
 from decafclaw import sticky
+from decafclaw.widgets import init_widgets
 
 
 def test_empty_state_shape():
@@ -26,10 +29,6 @@ def test_corrupt_file_is_empty(config):
     p.write_text("{not json")
     assert sticky.read_sticky_state(config, "conv-b") == \
         sticky.empty_sticky_state()
-
-
-import pytest
-from decafclaw.widgets import init_widgets
 
 
 @pytest.fixture
