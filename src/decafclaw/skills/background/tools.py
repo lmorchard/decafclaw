@@ -162,6 +162,19 @@ async def _finalize_job(job: BackgroundJob) -> None:
         return
     job.finalized = True
 
+    # Deterministically release the subprocess transport now that the process
+    # has exited, while the event loop is still alive. asyncio otherwise only
+    # closes it when the Process is garbage-collected; if that GC runs after
+    # the loop is gone (e.g. pytest-asyncio's function-scoped loop),
+    # BaseSubprocessTransport.__del__ raises against a dead loop and surfaces
+    # as a PytestUnraisableExceptionWarning (#632). Harmless in production
+    # (single long-lived loop), but we close explicitly so cleanup is
+    # deterministic regardless of loop lifetime. `_transport` is a real
+    # asyncio.subprocess.Process attribute that its type stub omits.
+    transport = job.process._transport  # type: ignore[attr-defined]
+    if transport is not None:
+        transport.close()
+
     if job.config is None:
         return  # no config => nothing we can do
 
