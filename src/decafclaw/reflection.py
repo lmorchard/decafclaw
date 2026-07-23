@@ -31,6 +31,10 @@ class ReflectionResult:
     critique: str = ""
     raw_response: str = ""  # full judge output for debug mode
     error: str = ""         # non-empty if the judge call failed
+    # Judge LLM token cost for this round (#409 telemetry). 0 when the
+    # provider reports no usage or the call errored before completing.
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
 
 
 def load_reflection_prompt(config) -> str:
@@ -298,14 +302,21 @@ async def evaluate_response(
             )
 
         raw = response.get("content", "")
+        usage = response.get("usage") or {}
+        judge_prompt = usage.get("prompt_tokens", 0)
+        judge_completion = usage.get("completion_tokens", 0)
         passed, critique = _parse_verdict(raw)
 
         if passed is None:
             log.warning("Reflection judge returned unparseable output: %s", raw[:200])
             return ReflectionResult(passed=True, raw_response=raw,
-                                    error="unparseable judge output")
+                                    error="unparseable judge output",
+                                    prompt_tokens=judge_prompt,
+                                    completion_tokens=judge_completion)
 
-        return ReflectionResult(passed=passed, critique=critique, raw_response=raw)
+        return ReflectionResult(passed=passed, critique=critique, raw_response=raw,
+                                prompt_tokens=judge_prompt,
+                                completion_tokens=judge_completion)
 
     except Exception as exc:
         log.error("Reflection judge call failed: %s", exc)

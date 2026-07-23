@@ -17,6 +17,10 @@ class TokenUsage:
     total_prompt: int = 0
     total_completion: int = 0
     last_prompt: int = 0
+    # Prompt tokens served from the provider's cache (#480). Subset of the
+    # prompt totals — measurement only, no billing/behavior implication here.
+    total_cached_prompt: int = 0
+    last_cached_prompt: int = 0
 
 
 @dataclass

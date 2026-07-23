@@ -173,6 +173,17 @@ The composer is mode-aware via `ComposerMode`:
 
 Each context source produces a `SourceEntry` with token estimates, item counts, and source-specific details. These are stored on `ComposerState.last_sources` and can be inspected for debugging (not published as events every turn).
 
+### Prompt-cache tokens (#480)
+
+The per-conversation diagnostics sidecar (`workspace/conversations/{conv_id}/context.json`, served by `GET /api/conversations/{id}/context`) also carries the prompt-cache figures providers report:
+
+| Field | Meaning |
+|-------|---------|
+| `cached_prompt_tokens` | Prompt tokens served from the provider's cache on the last turn |
+| `cache_hit_rate` | `cached_prompt_tokens / total_tokens_actual` (0.0 when no prompt tokens) |
+
+Providers normalize their native counter into a common `cached_tokens` usage key — Vertex from `usageMetadata.cachedContentTokenCount`, OpenAI-compatible from `prompt_tokens_details.cached_tokens`. The agent's usage merge point (`agent.py`) accumulates it onto `TokenUsage.total_cached_prompt` / `last_cached_prompt` and feeds `record_actuals`. The context-inspector popover renders a **Cached** row (count + hit-rate %). This is measurement only — no `cache_control` hints are emitted and no behavior changes (issue #480 Phase 1). A `LOG_LEVEL=DEBUG` "Turn token usage: prompt=… cached=… completion=…" line prints per turn.
+
 ## Vault retrieval
 
 Before each interactive turn, the composer automatically surfaces relevant vault content — without the agent needing to explicitly search.

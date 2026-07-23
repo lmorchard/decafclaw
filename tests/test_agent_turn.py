@@ -792,6 +792,24 @@ async def test_run_agent_turn_tracks_token_usage(ctx):
 
 
 @pytest.mark.asyncio
+async def test_run_agent_turn_tracks_cached_prompt_tokens(ctx):
+    """Cached-prompt-token count from provider usage accumulates on context (#480)."""
+    ctx.config.llm.streaming = False
+    ctx.config.system_prompt = "You are a test bot."
+
+    with patch("decafclaw.agent.call_llm", new_callable=AsyncMock) as mock_llm:
+        mock_llm.return_value = _mock_llm_response(
+            "hi", usage={"prompt_tokens": 200, "completion_tokens": 50,
+                         "cached_tokens": 160}
+        )
+        history = []
+        await run_agent_turn(ctx, "hi", history)
+
+    assert ctx.tokens.total_cached_prompt == 160
+    assert ctx.tokens.last_cached_prompt == 160
+
+
+@pytest.mark.asyncio
 async def test_run_agent_turn_archives_messages(ctx):
     """Messages are archived during the turn."""
     ctx.config.llm.streaming = False
@@ -996,6 +1014,122 @@ async def test_reflection_sees_text_emitted_alongside_tool_calls(ctx):
         f"but agent_response was: {agent_response_arg!r}"
     )
     assert trailer_text in agent_response_arg
+
+
+# -- reflection telemetry (#409) ----------------------------------------------
+
+
+def _collect_reflection_turns(ctx):
+    """Subscribe a collector for reflection_turn events. Returns the list."""
+    events: list[dict] = []
+
+    def _on(event):
+        if event.get("type") == "reflection_turn":
+            events.append(event)
+
+    ctx.event_bus.subscribe(_on)
+    return events
+
+
+@pytest.mark.asyncio
+async def test_reflection_turn_emitted_passed_first(ctx):
+    """A first-pass turn emits one passed_first row with judge token cost."""
+    ctx.config.llm.streaming = False
+    ctx.config.system_prompt = "test"
+    ctx.config.reflection = ReflectionConfig(enabled=True)
+    events = _collect_reflection_turns(ctx)
+
+    with patch("decafclaw.agent.call_llm", new_callable=AsyncMock) as mock_llm, \
+         patch("decafclaw.reflection.evaluate_response", new_callable=AsyncMock) as mock_eval:
+        mock_llm.return_value = _mock_llm_response("Good answer")
+        mock_eval.return_value = ReflectionResult(
+            passed=True, prompt_tokens=150, completion_tokens=8)
+        await run_agent_turn(ctx, "question", [])
+
+    assert len(events) == 1
+    assert events[0]["outcome"] == "passed_first"
+    assert events[0]["retry_count"] == 0
+    assert events[0]["judge_prompt_tokens"] == 150
+    assert events[0]["judge_completion_tokens"] == 8
+    assert events[0]["overlap_ratio"] == 1.0  # first == final
+    assert events[0]["char_delta"] == 0
+
+
+@pytest.mark.asyncio
+async def test_reflection_turn_emitted_passed_after_retry(ctx):
+    """A retried-then-passed turn emits passed_after_retry with a real delta
+    between the first and final response, and summed judge tokens."""
+    ctx.config.llm.streaming = False
+    ctx.config.system_prompt = "test"
+    ctx.config.reflection = ReflectionConfig(enabled=True, max_retries=2)
+    events = _collect_reflection_turns(ctx)
+
+    llm_calls = 0
+
+    async def llm_side(*a, **k):
+        nonlocal llm_calls
+        llm_calls += 1
+        return _mock_llm_response("Bad answer" if llm_calls == 1 else "Better fuller answer")
+
+    eval_calls = 0
+
+    async def eval_side(*a, **k):
+        nonlocal eval_calls
+        eval_calls += 1
+        if eval_calls == 1:
+            return ReflectionResult(passed=False, critique="You missed the point",
+                                    prompt_tokens=200, completion_tokens=15)
+        return ReflectionResult(passed=True, prompt_tokens=210, completion_tokens=5)
+
+    with patch("decafclaw.agent.call_llm", new_callable=AsyncMock, side_effect=llm_side), \
+         patch("decafclaw.reflection.evaluate_response", new_callable=AsyncMock,
+               side_effect=eval_side):
+        await run_agent_turn(ctx, "question", [])
+
+    assert len(events) == 1
+    e = events[0]
+    assert e["outcome"] == "passed_after_retry"
+    assert e["retry_count"] == 1
+    assert e["judge_prompt_tokens"] == 410  # summed across rounds
+    assert e["judge_completion_tokens"] == 20
+    assert e["overlap_ratio"] < 1.0  # first differs from final
+    assert e["critique_fingerprint"].startswith("You missed the point")
+
+
+@pytest.mark.asyncio
+async def test_reflection_turn_emitted_loop_exhausted(ctx):
+    """An always-failing judge exhausts retries and emits loop_exhausted even
+    though last_reflection is nulled on the skip path."""
+    ctx.config.llm.streaming = False
+    ctx.config.system_prompt = "test"
+    ctx.config.reflection = ReflectionConfig(enabled=True, max_retries=1)
+    events = _collect_reflection_turns(ctx)
+
+    with patch("decafclaw.agent.call_llm", new_callable=AsyncMock) as mock_llm, \
+         patch("decafclaw.reflection.evaluate_response", new_callable=AsyncMock) as mock_eval:
+        mock_llm.return_value = _mock_llm_response("Mediocre answer")
+        mock_eval.return_value = ReflectionResult(
+            passed=False, critique="Still not great", prompt_tokens=180)
+        await run_agent_turn(ctx, "question", [])
+
+    assert len(events) == 1
+    assert events[0]["outcome"] == "loop_exhausted"
+
+
+@pytest.mark.asyncio
+async def test_reflection_turn_not_emitted_for_child_agent(ctx):
+    """Child agents (skip_reflection) emit no reflection_turn row."""
+    ctx.config.llm.streaming = False
+    ctx.config.system_prompt = "test"
+    ctx.config.reflection = ReflectionConfig(enabled=True)
+    ctx.skip_reflection = True
+    events = _collect_reflection_turns(ctx)
+
+    with patch("decafclaw.agent.call_llm", new_callable=AsyncMock) as mock_llm:
+        mock_llm.return_value = _mock_llm_response("child response")
+        await run_agent_turn(ctx, "question", [])
+
+    assert events == []
 
 
 @pytest.mark.asyncio

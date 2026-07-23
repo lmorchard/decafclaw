@@ -123,6 +123,7 @@ class ComposerState:
     last_total_tokens_estimated: int = 0
     last_prompt_tokens_actual: int = 0
     last_completion_tokens_actual: int = 0
+    last_cached_prompt_tokens_actual: int = 0  # prompt tokens served from provider cache (#480)
     injected_paths: set[str] = field(default_factory=set)  # file_paths already in context; cleared on compaction
     # Cumulative tool-result clearing stats for this conversation
     # (#298). Reset on compaction since the surviving summary
@@ -1165,10 +1166,12 @@ class ContextComposer:
             f" ({pct:.0f}%), {message_count} messages{hint}]"
         )
 
-    def record_actuals(self, prompt_tokens: int, completion_tokens: int) -> None:
+    def record_actuals(self, prompt_tokens: int, completion_tokens: int,
+                       cached_prompt_tokens: int = 0) -> None:
         """Record actual token usage from the LLM response."""
         self.state.last_prompt_tokens_actual = prompt_tokens
         self.state.last_completion_tokens_actual = completion_tokens
+        self.state.last_cached_prompt_tokens_actual = cached_prompt_tokens
 
     def build_diagnostics(self, config, composed: ComposedContext) -> dict:
         """Build the full diagnostics dict for the context sidecar file."""
@@ -1202,6 +1205,12 @@ class ContextComposer:
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "total_tokens_estimated": composed.total_tokens_estimated,
             "total_tokens_actual": self.state.last_prompt_tokens_actual,
+            "cached_prompt_tokens": self.state.last_cached_prompt_tokens_actual,
+            "cache_hit_rate": (
+                round(self.state.last_cached_prompt_tokens_actual
+                      / self.state.last_prompt_tokens_actual, 4)
+                if self.state.last_prompt_tokens_actual else 0.0
+            ),
             "context_window_size": self._get_context_window_size(config),
             "compaction_threshold": config.compaction.max_tokens,
             "sources": sources,

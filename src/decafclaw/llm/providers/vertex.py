@@ -263,6 +263,7 @@ class _VertexStreamState:
                 "prompt_tokens": chunk_usage.get("promptTokenCount", 0),
                 "completion_tokens": chunk_usage.get("candidatesTokenCount", 0),
                 "total_tokens": chunk_usage.get("totalTokenCount", 0),
+                "cached_tokens": chunk_usage.get("cachedContentTokenCount", 0),
             }
 
         candidates = chunk.get("candidates", [])
@@ -564,4 +565,5 @@ def _parse_usage(data: dict) -> dict | None:
         "prompt_tokens": meta.get("promptTokenCount", 0),
         "completion_tokens": meta.get("candidatesTokenCount", 0),
         "total_tokens": meta.get("totalTokenCount", 0),
+        "cached_tokens": meta.get("cachedContentTokenCount", 0),
     }

@@ -105,8 +105,10 @@ class OpenAICompatProvider:
         usage = data.get("usage")
 
         if usage:
-            log.debug("LLM usage: prompt=%s, completion=%s",
-                      usage.get("prompt_tokens"), usage.get("completion_tokens"))
+            usage["cached_tokens"] = _cached_tokens(usage)
+            log.debug("LLM usage: prompt=%s, completion=%s, cached=%s",
+                      usage.get("prompt_tokens"), usage.get("completion_tokens"),
+                      usage.get("cached_tokens"))
         log.debug("LLM response: content=%s, tool_calls=%d",
                   bool(message.get("content")), len(message.get("tool_calls", [])))
 
@@ -253,6 +255,17 @@ class OpenAICompatProvider:
 # ---------------------------------------------------------------------------
 
 
+def _cached_tokens(usage: dict | None) -> int:
+    """Prompt cache-hit token count from an OpenAI-compatible usage dict.
+
+    OpenAI reports it under ``prompt_tokens_details.cached_tokens``; providers
+    that don't cache omit it. Returns 0 when absent (#480)."""
+    if not usage:
+        return 0
+    details = usage.get("prompt_tokens_details") or {}
+    return details.get("cached_tokens", 0) or 0
+
+
 class _RetryableError(Exception):
     """Raised on 429/5xx to trigger retry logic."""
     def __init__(self, status: int, body: str, retry_after: str | None = None):
@@ -293,6 +306,7 @@ class _StreamState:
         """Process a single parsed SSE chunk."""
         chunk_usage = chunk.get("usage")
         if chunk_usage:
+            chunk_usage["cached_tokens"] = _cached_tokens(chunk_usage)
             self.usage = chunk_usage
 
         choices = chunk.get("choices", [])

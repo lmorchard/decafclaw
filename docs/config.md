@@ -421,6 +421,19 @@ Skill config fields support env var overrides via the skill's `SkillConfig` meta
 
 Config CLI shows skill values as raw JSON (`config show skills`). Use `--reveal` to unmask values.
 
+### `telemetry`
+
+Instrumentation sidecars — append-only JSONL under `workspace/`, metadata only (never tool args/returns, reflection bodies, or prompt contents). Producers are fail-open EventBus subscribers. See [tools.md#tool-usage-telemetry-310](tools.md#tool-usage-telemetry-310) (#310) and [reflection.md#metrics-409](reflection.md#metrics-409) (#409).
+
+| Field | Type | Default | Env Var |
+|-------|------|---------|---------|
+| `tool_usage_enabled` | bool | `true` | `TELEMETRY_TOOL_USAGE_ENABLED` |
+| `tool_usage_path` | str | `tool_usage.jsonl` | `TELEMETRY_TOOL_USAGE_PATH` |
+| `reflection_metrics_enabled` | bool | `true` | `TELEMETRY_REFLECTION_METRICS_ENABLED` |
+| `reflection_metrics_path` | str | `reflection/metrics.jsonl` | `TELEMETRY_REFLECTION_METRICS_PATH` |
+
+Paths are workspace-relative. Enabled by default so a deployed agent starts collecting without a config edit — the intent is a week of real data. No rotation yet (append-only); retention is a follow-up. Reports: `make tool-usage-report`, `make reflection-stats`.
+
 ### `env`
 
 Arbitrary environment variables set at startup. Useful for API keys and tool-specific config that doesn't have a dedicated config field.

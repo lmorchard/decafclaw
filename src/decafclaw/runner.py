@@ -94,6 +94,19 @@ async def run_all(app_ctx):
             mm_client=mm_client,
         )
 
+        # Wire telemetry subscribers (measurement only, fail-open). Each
+        # records to an append-only JSONL sidecar under workspace/.
+        if config.telemetry.tool_usage_enabled:
+            from .tool_telemetry import make_tool_telemetry_subscriber
+            app_ctx.event_bus.subscribe(make_tool_telemetry_subscriber(config))
+            log.info("Telemetry: tool-usage subscriber active (%s)",
+                     config.telemetry.tool_usage_path)
+        if config.telemetry.reflection_metrics_enabled:
+            from .reflection_metrics import make_reflection_metrics_subscriber
+            app_ctx.event_bus.subscribe(make_reflection_metrics_subscriber(config))
+            log.info("Telemetry: reflection-metrics subscriber active (%s)",
+                     config.telemetry.reflection_metrics_path)
+
         # Start heartbeat timer
         if parse_interval(config.heartbeat.interval) is not None:
             # Use Mattermost heartbeat cycle if available, otherwise basic

@@ -119,9 +119,34 @@ Reflection is fail-open. The agent's response is always delivered even if reflec
 - **Unparseable judge output** — treat as pass, log warning.
 - **False positives** (judge incorrectly fails a good response) — the retry budget limits damage. After `max_retries`, deliver whatever the agent has.
 
+## Metrics (#409)
+
+`reflection_metrics.py` records one **metadata-only** JSONL row per judge-eligible turn to `{workspace}/reflection/metrics.jsonl` so we can answer "does reflection earn its keep" with data instead of impression. It's a fail-open EventBus subscriber (guarded by `config.telemetry.reflection_metrics_enabled`, default on); the agent loop publishes one `reflection_turn` event per eligible turn.
+
+**A turn is judge-eligible** when reflection is enabled, the agent is not a child agent, the turn wasn't cancelled, and it reached a no-tool final response (the point the judge actually weighs in). Turns that end via `end_turn`, a grace turn, or max-iteration exhaustion never invoke the judge and emit no row — keeping the pass-rate denominator meaningful.
+
+**Row fields:** `timestamp`, `conv_id`, `outcome`, `retry_count`, `judge_prompt_tokens`, `judge_completion_tokens`, `char_delta`, `overlap_ratio`, `critique_fingerprint`.
+
+**Outcome buckets:**
+
+| Bucket | Meaning |
+|--------|---------|
+| `passed_first` | Judge approved on the first call — pure overhead (a judge call that changed nothing) |
+| `passed_after_retry` | Judge rejected, the agent retried, judge then approved — the genuine-value case |
+| `loop_exhausted` | Judge kept rejecting through `max_retries`; the last (possibly worse) answer ships with an escalation nudge |
+| `errored` | Judge call failed or returned unparseable output (treated as pass, fail-open) |
+| `skipped_empty` | Eligible turn whose final content was empty |
+
+**Effectiveness signals:** the judge's token cost per round is captured (previously discarded); `char_delta` + `overlap_ratio` (Jaccard over whitespace tokens between the first and final response) measure whether a retry *actually rewrote anything* — a `passed_after_retry` with `overlap_ratio ≈ 1.0` is a performative loop, not real self-correction. `critique_fingerprint` (first 120 chars of the rejection) surfaces repeating rejection patterns. Response bodies and prompt contents are never recorded.
+
+**Reading the four questions from #409:** `make reflection-stats` (`python -m decafclaw.reflection_metrics`) prints the pass-first rate (pure overhead), loop-exhausted rate (waste + bad UX), mean retries, and total/per-turn judge tokens. Whether successful retries meaningfully differ is read from the `overlap_ratio` distribution of `passed_after_retry` rows.
+
+This is measurement only — reflection behavior is unchanged (issue #409). See [tools.md](tools.md#tool-usage-telemetry-310) for the parallel tool-usage telemetry and [config.md](config.md) for the `telemetry` config group.
+
 ## Files
 
-- `src/decafclaw/reflection.py` — judge call, prompt assembly, result parsing
-- `src/decafclaw/agent.py` — reflection check after final response, retry integration
-- `src/decafclaw/config_types.py` — `ReflectionConfig` dataclass
+- `src/decafclaw/reflection.py` — judge call, prompt assembly, result parsing (now also carries per-round judge token usage on `ReflectionResult`)
+- `src/decafclaw/agent.py` — reflection check after final response, retry integration, per-turn `reflection_turn` metrics emit (`_emit_reflection_metrics`)
+- `src/decafclaw/reflection_metrics.py` — metrics subscriber, `response_delta` / `classify_outcome`, stats aggregation, `make reflection-stats`
+- `src/decafclaw/config_types.py` — `ReflectionConfig` and `TelemetryConfig` dataclasses
 - `data/{agent_id}/REFLECTION.md` — optional custom judge prompt override

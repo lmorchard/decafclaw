@@ -113,7 +113,7 @@ async def test_streaming_text_only():
 
 @pytest.mark.asyncio
 async def test_streaming_with_usage():
-    """Usage from final chunk is captured."""
+    """Usage from final chunk is captured (with normalized cached_tokens, #480)."""
     usage = {"prompt_tokens": 10, "completion_tokens": 5}
     events = _make_text_events(["Hi"], usage=usage)
 
@@ -121,7 +121,8 @@ async def test_streaming_with_usage():
         mock_sse.return_value = FakeEventSource(events)
         result = await call_llm_streaming(_config(), [])
 
-    assert result["usage"] == usage
+    assert result["usage"] == {"prompt_tokens": 10, "completion_tokens": 5,
+                               "cached_tokens": 0}
 
 
 @pytest.mark.asyncio
