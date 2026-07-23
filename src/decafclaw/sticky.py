@@ -73,3 +73,58 @@ class StickyOpResult:
     ok: bool
     text: str = ""
     error: str = ""
+
+
+def _validate_widget_for_sticky(widget_type: str, data: dict) -> str | None:
+    """Return an error message string, or None if validation passes."""
+    registry = get_widget_registry()
+    if registry is None:
+        return "widget registry not initialized"
+    descriptor = registry.get(widget_type)
+    if descriptor is None:
+        return f"widget '{widget_type}' not registered"
+    if "sticky" not in descriptor.modes:
+        return f"widget '{widget_type}' does not support sticky mode"
+    ok, msg = registry.validate(widget_type, data)
+    if not ok:
+        return f"schema validation failed: {msg}"
+    return None
+
+
+async def _emit_sticky(emit: EmitFn | None, conv_id: str, payload: dict) -> None:
+    """Publish a sticky event for subscribed clients. Fail-open."""
+    if emit is None:
+        return
+    try:
+        await emit(conv_id, payload)
+    except Exception:
+        log.warning("sticky emit failed for %s", conv_id, exc_info=True)
+
+
+async def set_sticky(config, conv_id: str, widget_type: str, data: dict,
+                     emit: EmitFn | None = None) -> StickyOpResult:
+    """Pin a widget into the sticky slot, replacing any previous occupant."""
+    err = _validate_widget_for_sticky(widget_type, data)
+    if err:
+        return StickyOpResult(ok=False, error=err)
+    registry = get_widget_registry()
+    if registry is not None:
+        data = registry.normalize(widget_type, data)
+    state = {"schema_version": 1, "widget_type": widget_type, "data": data}
+    if not write_sticky_state(config, conv_id, state):
+        return StickyOpResult(ok=False, error="failed to write sticky state to disk")
+    await _emit_sticky(emit, conv_id, {
+        "type": "sticky_set",
+        "widget_type": widget_type,
+        "data": data,
+    })
+    return StickyOpResult(ok=True, text="sticky widget pinned")
+
+
+async def clear_sticky(config, conv_id: str,
+                       emit: EmitFn | None = None) -> StickyOpResult:
+    """Clear the sticky slot; hides it."""
+    if not write_sticky_state(config, conv_id, empty_sticky_state()):
+        return StickyOpResult(ok=False, error="failed to write sticky state to disk")
+    await _emit_sticky(emit, conv_id, {"type": "sticky_clear"})
+    return StickyOpResult(ok=True, text="sticky slot cleared")
