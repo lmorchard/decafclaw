@@ -167,6 +167,19 @@ def test_suggest_tool_names_excludes_case_insensitive_input():
     assert "Project_Advance" not in suggestions
 
 
+def test_suggest_tool_names_tolerates_none_candidate():
+    """A malformed tool def can leave a None in the candidate pool
+    (deferred_names uses `.get("name")` with no default); the suggestion
+    helper must not crash the unknown-tool error path (#355)."""
+    from decafclaw.tools import _suggest_tool_names
+
+    candidates = {None, "workspace_read"}
+    # "workspce_read" is an intentional typo of the real tool name.
+    suggestions = _suggest_tool_names("workspce_read", candidates)
+    assert "workspace_read" in suggestions
+    assert None not in suggestions
+
+
 @pytest.mark.asyncio
 async def test_execute_tool_unknown_suffix_match_suggests_mcp(ctx, monkeypatch):
     """Dropped mcp__ prefix should surface the full MCP name as a suggestion."""

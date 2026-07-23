@@ -174,8 +174,11 @@ def _suggest_tool_names(name: str, candidates: set[str], max_results: int = 5) -
     # present in the candidate pool (e.g. a deferred/unactivated tool),
     # difflib would return it as an exact ratio-1.0 match. Case-insensitive
     # so a candidate differing only in case is treated as the same name.
+    # `isinstance(c, str)` guards against a malformed tool def leaving a
+    # None in the pool (deferred_names uses `.get("name")` with no default)
+    # — a suggestion hint must never crash the unknown-tool error path.
     name_lower = name.lower()
-    candidates = {c for c in candidates if c.lower() != name_lower}
+    candidates = {c for c in candidates if isinstance(c, str) and c.lower() != name_lower}
     if not candidates:
         return []
     suggestions: list[str] = []
