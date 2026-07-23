@@ -10,7 +10,16 @@ Dev-session artifacts: [`docs/dev-sessions/2026-05-06-2042-web-terminal-canvas/`
 
 ## Opening a terminal
 
-Type `/terminal` or `/terminal <cwd>` in the chat input. This is a
+Two ways, both human-only:
+
+- Click the **`>_` button** in the chat input row (next to the 📎 attach
+  button). It appears once a conversation is active and sends `/terminal`
+  over the normal chat WebSocket — the same path as typing it, no dedicated
+  endpoint. Opens in the default CWD.
+- Type `/terminal` or `/terminal <cwd>` in the chat input (use the typed form
+  to pass a specific CWD).
+
+`/terminal` is a
 **server-side side-effect command** — it is intercepted in `_handle_send`
 (`web/websocket.py`) before command dispatch, spawns the PTY, and opens a
 canvas tab, all without an LLM turn and without writing anything to the
