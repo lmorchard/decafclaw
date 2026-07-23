@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
 import re as _re
 from dataclasses import dataclass, field
@@ -23,10 +24,12 @@ if TYPE_CHECKING:
 
 from .archive import append_message
 from .compaction import compact_history
+from .config_types import LoopBreakerConfig
 from .context_cleanup import clear_old_tool_results
 from .context_composer import ComposerMode, ContextComposer
 from .iteration_budget import IterationBudget
 from .llm import call_llm
+from .loop_breaker import LoopBreaker, LoopVerdict, fingerprint
 from .media import EndTurnConfirm, ToolResult, WidgetInputPause, extract_workspace_media
 from .persistence import read_skill_data, read_skills_state, write_skill_data, write_skills_state
 from .reflection_metrics import classify_outcome, response_delta
@@ -116,6 +119,31 @@ async def _maybe_compact(ctx, config, history, prompt_tokens) -> None:
             ctx.composer.cleanup_cleared_bytes = 0
         except Exception as e:
             log.error(f"Compaction failed: {e}")
+
+
+def _extract_call_signatures(tool_calls, messages):
+    """Map each tool_call to (tool_name, fingerprint, is_error) using the
+    tool-result messages just appended by execute_tool_calls. Errors are
+    tool-role messages whose content starts with '[error' (see
+    tool_execution.py:ToolResult(text="[error: ...]")).
+    """
+    results_by_id = {
+        m.get("tool_call_id"): (m.get("content") or "")
+        for m in messages if m.get("role") == "tool"
+    }
+    out = []
+    for tc in tool_calls:
+        fn = tc.get("function", {})
+        name = fn.get("name") or tc.get("name", "")
+        raw_args = fn.get("arguments", tc.get("arguments", ""))
+        try:
+            args = json.loads(raw_args) if isinstance(raw_args, str) else raw_args
+        except (TypeError, ValueError):
+            args = raw_args
+        content = results_by_id.get(tc.get("id"), "")
+        is_error = content.lstrip().startswith("[error")
+        out.append((name, fingerprint(name, args), is_error))
+    return out
 
 
 # -- Agent turn helpers --------------------------------------------------------
@@ -488,6 +516,9 @@ class TurnRunner:
     budget: IterationBudget = field(
         default_factory=lambda: IterationBudget(remaining=0),
     )
+    loop_breaker: LoopBreaker = field(
+        default_factory=lambda: LoopBreaker(LoopBreakerConfig()),
+    )
 
     async def run(self) -> "ToolResult":
         """Process a single user message through the agent loop."""
@@ -512,6 +543,7 @@ class TurnRunner:
             self.budget = IterationBudget(
                 remaining=self.config.agent.max_tool_iterations,
             )
+            self.loop_breaker = LoopBreaker(self.config.loop_breaker)
 
             iteration = 0
             while self.budget.consume():
@@ -725,6 +757,31 @@ class TurnRunner:
             _archive(self.ctx, final_msg)
 
             return _Final(result=self._extract_workspace_media(content))
+
+        # Loop-breaker: only checked on the normal continue path — a genuine
+        # end-turn signal (widget pause / EndTurnConfirm / end_turn=True)
+        # already returned above and takes precedence over the breaker.
+        sigs = _extract_call_signatures(tool_calls, self.messages)
+        self.loop_breaker.record(sigs)
+        verdict = self.loop_breaker.verdict()
+        if verdict is LoopVerdict.NUDGE:
+            nudge = {
+                "role": "system",
+                "content": (
+                    f"[loop-breaker] You {self.loop_breaker.last_signal()} without "
+                    "progress. STOP repeating it. Switch to root-cause diagnosis: "
+                    "read the relevant logs, build a minimal repro, and re-check the "
+                    "contract/interface before any further edits."
+                ),
+            }
+            self.messages.append(nudge)
+            _archive(self.ctx, nudge)
+            await self.ctx.publish("loop_breaker", action="nudge",
+                                   reason=self.loop_breaker.last_signal())
+        elif verdict is LoopVerdict.STOP:
+            await self.ctx.publish("loop_breaker", action="stop",
+                                   reason=self.loop_breaker.last_signal())
+            return _Final(result=await self._finalize_loop_break())
 
         return _Continue()
 
@@ -1005,6 +1062,24 @@ class TurnRunner:
         )
         accumulated = "\n\n".join(self.accumulated_text_parts)
         msg = accumulated + limit_note if accumulated else limit_note.strip()
+        final_msg = {"role": "assistant", "content": msg}
+        self.history.append(final_msg)
+        _archive(self.ctx, final_msg)
+        await _maybe_compact(
+            self.ctx, self.config, self.history, self.prompt_tokens,
+        )
+        return ToolResult(text=msg)
+
+    async def _finalize_loop_break(self) -> "ToolResult":
+        """Loop-breaker hard-stop: end the turn with a summary of the thrash
+        and a diagnostic next step, preserving any accumulated text."""
+        note = (
+            f"\n\n[loop-breaker] Stopped: you {self.loop_breaker.last_signal()} "
+            "without progress. Next: read the relevant logs, build a minimal "
+            "repro, and re-check the contract before retrying."
+        )
+        accumulated = "\n\n".join(self.accumulated_text_parts)
+        msg = accumulated + note if accumulated else note.strip()
         final_msg = {"role": "assistant", "content": msg}
         self.history.append(final_msg)
         _archive(self.ctx, final_msg)
