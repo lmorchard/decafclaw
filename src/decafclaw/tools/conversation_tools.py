@@ -1,5 +1,6 @@
 """Conversation tools — search and compact conversations."""
 
+import heapq
 import json
 import logging
 
@@ -41,10 +42,14 @@ def tool_conversation_search(ctx, query: str) -> str:
     query_lower = query.lower()
     query_stems = _stemmed_tokens(query)
 
-    # Collect every match with a relevance score, then rank — a message that
-    # overlaps more query tokens should outrank one that overlaps fewer.
-    scored: list[tuple[int, int, str]] = []
-    order = 0  # preserves archive iteration order for deterministic ties
+    # Relevance ranking requires scoring every message (a top match can sit
+    # anywhere in the archive), but we only ever return _MAX_RESULTS. Keep a
+    # bounded min-heap of the best entries so memory stays O(_MAX_RESULTS)
+    # regardless of how many messages match. Heap key is (score, -order):
+    # larger is better — higher score wins, and among equal scores the
+    # earlier (smaller order) message wins. heap[0] is thus the weakest kept.
+    heap: list[tuple[int, int, str]] = []
+    order = 0  # archive iteration order — deterministic tie-break
 
     for conv_id, filepath in archives:
         with filepath.open("r", encoding="utf-8") as f:
@@ -72,15 +77,19 @@ def tool_conversation_search(ctx, query: str) -> str:
 
                 role = msg.get("role", "unknown")
                 excerpt = content[:500] + ("..." if len(content) > 500 else "")
-                scored.append((score, order, f"--- [{conv_id}] {role} ---\n{excerpt}"))
+                item = (score, -order, f"--- [{conv_id}] {role} ---\n{excerpt}")
+                if len(heap) < _MAX_RESULTS:
+                    heapq.heappush(heap, item)
+                elif item > heap[0]:
+                    heapq.heapreplace(heap, item)
                 order += 1
 
-    if not scored:
+    if not heap:
         return f"No conversation history found matching '{query}'"
 
-    # Highest score first; ties keep archive order (order asc).
-    scored.sort(key=lambda t: (-t[0], t[1]))
-    results = [entry for _score, _order, entry in scored[:_MAX_RESULTS]]
+    # Best first: highest score, then earliest (smallest order).
+    ranked = sorted(heap, key=lambda t: (-t[0], -t[1]))
+    results = [entry for _score, _negorder, entry in ranked]
 
     return f"Found {len(results)} matching conversation entries:\n\n" + "\n\n".join(results)
 

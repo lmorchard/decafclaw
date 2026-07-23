@@ -89,6 +89,21 @@ def test_search_ranks_higher_overlap_first(ctx):
     assert out.index("conv-strong") < out.index("conv-weak")
 
 
+def test_search_caps_results_at_ten_keeping_earliest_on_ties(ctx):
+    """More than _MAX_RESULTS matches with equal score: exactly 10 come back,
+    and equal-score ties keep the earliest messages (bounded top-k heap)."""
+    _write_dir(ctx.config, "conv-many", [
+        {"role": "user", "content": f"osprey note {i}"} for i in range(12)
+    ])
+    out = tool_conversation_search(ctx, "osprey")
+    assert "Found 10 matching" in out
+    for i in range(10):
+        assert f"osprey note {i}" in out
+    # The last two (highest order) lose the tie and are dropped.
+    assert "osprey note 10" not in out
+    assert "osprey note 11" not in out
+
+
 def test_search_no_match_when_no_tokens_overlap(ctx):
     _write_dir(ctx.config, "conv-x", [
         {"role": "user", "content": "the weather is sunny today"},
