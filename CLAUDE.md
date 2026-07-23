@@ -167,12 +167,13 @@ Full doc index: [docs/index.md](docs/index.md). Hot files for navigation:
 - `compaction_decisions.py` — Structured decision slice threaded through compaction (decisions / open questions / artifacts; persisted to per-conv sidecar)
 - `context_cleanup.py` — Lightweight clear tier: stubs old large tool messages before compaction
 - `canvas.py` — per-conversation canvas state sidecar + state operations
+- `sticky.py` — per-conversation sticky-slot sidecar (`sticky.json`) + `set_sticky`/`clear_sticky`
 - `persistence.py`, `attachments.py`, `embeddings.py`, `frontmatter.py`, `memory_context.py`, `checklist.py`, `notes.py`
 
 ### Tools
 - `tools/tool_registry.py` — Priority-based classification, deferred catalog
 - `tools/search_tools.py` — `tool_search`
-- `tools/{core,workspace_tools,conversation_tools,checklist_tools,notes_tools,shell_tools,http_tools,skill_tools,delegate,model_tools,confirmation,health,attachment_tools,email_tools,heartbeat_tools,canvas_tools}.py`
+- `tools/{core,workspace_tools,conversation_tools,checklist_tools,notes_tools,shell_tools,http_tools,skill_tools,delegate,model_tools,confirmation,health,attachment_tools,email_tools,heartbeat_tools,canvas_tools,sticky_tools}.py`
 - `preempt_search.py` — Keyword-match for pre-emptive tool promotion
 
 ### Skills (bundled)
@@ -192,6 +193,7 @@ Full doc index: [docs/index.md](docs/index.md). Hot files for navigation:
 - `mcp_client.py`
 - `media.py`, `widgets.py`, `widget_input.py`, `web/static/widgets/`, `web/static/components/widgets/widget-host.js`
 - `web/static/components/canvas-panel.js`, `web/static/lib/canvas-state.js`
+- `web/static/components/sticky-slot.js`, `web/static/lib/sticky-state.js` — sticky slot (pinned display-only widget above chat input)
 - `terminals.py` — human-only PTY session registry backing the web terminal ([docs/web-terminal.md](docs/web-terminal.md))
 - `util.py`, `eval/`
 
