@@ -438,7 +438,7 @@ Config CLI shows skill values as raw JSON (`config show skills`). Use `--reveal`
 
 ### `telemetry`
 
-Instrumentation sidecars — append-only JSONL under `workspace/`, metadata only (never tool args/returns, reflection bodies, or prompt contents). Producers are fail-open EventBus subscribers. See [tools.md#tool-usage-telemetry-310](tools.md#tool-usage-telemetry-310) (#310) and [reflection.md#metrics-409](reflection.md#metrics-409) (#409).
+Instrumentation sidecars — append-only JSONL under `workspace/`, metadata only (never tool args/returns, reflection bodies, or prompt contents). Producers are fail-open EventBus subscribers. See [tools.md#tool-usage-telemetry-310](tools.md#tool-usage-telemetry-310) (#310), [reflection.md#metrics-409](reflection.md#metrics-409) (#409), and [context-composer.md#retrieval-telemetry-197](context-composer.md#retrieval-telemetry-197) (#197).
 
 | Field | Type | Default | Env Var |
 |-------|------|---------|---------|
@@ -446,8 +446,10 @@ Instrumentation sidecars — append-only JSONL under `workspace/`, metadata only
 | `tool_usage_path` | str | `tool_usage.jsonl` | `TELEMETRY_TOOL_USAGE_PATH` |
 | `reflection_metrics_enabled` | bool | `true` | `TELEMETRY_REFLECTION_METRICS_ENABLED` |
 | `reflection_metrics_path` | str | `reflection/metrics.jsonl` | `TELEMETRY_REFLECTION_METRICS_PATH` |
+| `retrieval_enabled` | bool | `true` | `TELEMETRY_RETRIEVAL_ENABLED` |
+| `retrieval_path` | str | `telemetry/retrieval.jsonl` | `TELEMETRY_RETRIEVAL_PATH` |
 
-Paths are workspace-relative. Enabled by default so a deployed agent starts collecting without a config edit — the intent is a week of real data. No rotation yet (append-only); retention is a follow-up. Reports: `make tool-usage-report`, `make reflection-stats`.
+Paths are workspace-relative. Enabled by default so a deployed agent starts collecting without a config edit — the intent is a week of real data. No rotation yet (append-only); retention is a follow-up. Reports: `make tool-usage-report`, `make reflection-stats`, `make retrieval-report`.
 
 ### `env`
 

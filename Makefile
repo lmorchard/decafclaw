@@ -108,6 +108,10 @@ tool-usage-report:
 reflection-stats:
 	uv run python -m decafclaw.reflection_metrics
 
+# Retrieval telemetry report from workspace/telemetry/retrieval.jsonl (#197)
+retrieval-report:
+	uv run python -m decafclaw.retrieval_telemetry
+
 # Dry-run sidecar migration (show what would change)
 migrate-sidecars-dry:
 	uv run python scripts/migrate_sidecars_to_dirs.py --dry-run

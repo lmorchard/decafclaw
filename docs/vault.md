@@ -174,6 +174,15 @@ Vault content is indexed in the embeddings database with per-type source types a
 - `--concurrency N` controls parallel embedding API calls (default 4)
 - Reindex includes 429 retry with exponential backoff
 
+## Retrieval telemetry (#197)
+
+A fail-open EventBus subscriber records which retrieval candidates were
+considered each interactive turn and which survived to injection —
+measurement foundation for the self-improving vault arc (importance
+formula, dream/garden tuning, and so on down the line). See
+[Retrieval telemetry](context-composer.md#retrieval-telemetry-197) in the
+context-composer docs for the event shape and `make retrieval-report`.
+
 ## Migration
 
 For existing installations with `workspace/wiki/` and `workspace/memories/`:

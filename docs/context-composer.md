@@ -316,6 +316,49 @@ importance: 0.5
 
 The embedding index stores a composite document (summary + keywords + tags + body) for richer semantic search. Pages without frontmatter embed as body-only. Frontmatter fields are parsed and used for scoring today; the dream/garden processes don't yet auto-generate them (they use `> tl;dr:` blockquote summaries instead).
 
+## Retrieval telemetry (#197)
+
+Phase 0 of the self-improving vault arc: a fail-open EventBus subscriber
+records which retrieval candidates were considered and which survived to
+injection — the measurement foundation later phases (notably an
+importance-formula rework) build on.
+
+Once per interactive turn, after `_score_candidates` produces the full
+scored candidate list and before the `min_composite_score` threshold and
+token-budget trim are applied, `_compose_vault_retrieval` publishes a
+`retrieval_event` on the event bus:
+
+```python
+{
+    "type": "retrieval_event",
+    "conv_id": str,
+    "candidates": [
+        {
+            "file_path": str,
+            "source_type": str,          # "page" | "user" | "journal" | "graph_expansion"
+            "similarity": float,
+            "recency": float,
+            "importance": float,
+            "composite_score": float,
+            "included": bool,            # survived score threshold AND budget trim
+            "drop_reason": str | None,   # None | "score" | "budget"
+        },
+        ...
+    ],
+}
+```
+
+`retrieval_telemetry.py` mirrors `tool_telemetry.py`'s shape: a fail-open
+subscriber (`make_retrieval_telemetry_subscriber`, guarded by
+`config.telemetry.retrieval_enabled`, default on) appends one JSONL record
+per event to `{workspace}/telemetry/retrieval.jsonl`. The emit itself is
+wrapped in try/except so a telemetry failure never breaks retrieval.
+
+**Report:** `make retrieval-report` (`python -m decafclaw.retrieval_telemetry`)
+aggregates per-page retrieval/include/drop-by-reason counts, plus a
+point-in-time vault-health snapshot (how many pages carry an `importance`
+frontmatter field).
+
 ## Relationship to agent loop
 
 The agent loop (`run_agent_turn`) creates a `ContextComposer` at the start of each turn and calls `compose()` once. The iteration loop still uses `_build_tool_list()` per-iteration because fetched tools change mid-turn as the model calls `tool_search`. After each LLM response, `record_actuals()` stores the real token counts for future calibration.
