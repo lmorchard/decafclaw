@@ -8,7 +8,10 @@ state are owned by the ConversationManager.
 import asyncio
 import json
 import logging
+import os
 import re
+import uuid
+from pathlib import Path
 
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
@@ -330,6 +333,12 @@ async def _handle_send(ws_send: WSSendCallable, index, username, msg, state) -> 
             metadata={"workflow_name": wf_trigger, "resume": False})
         return
 
+    # -- /terminal side-effect command (#442): spawn a PTY + canvas tab with
+    # NO agent turn and NO archive write. Human-only; the agent has no path here.
+    if text.startswith("/terminal") and (text == "/terminal" or text[9:10].isspace()):
+        await _handle_terminal_command(ws_send, conv_id, text, username, state)
+        return
+
     # -- Command dispatch (centralized in commands.py) --
     from ..commands import dispatch_command
     from ..context import Context
@@ -406,6 +415,73 @@ async def _handle_send(ws_send: WSSendCallable, index, username, msg, state) -> 
 
     # Touch conversation metadata
     index.touch(conv_id)
+
+
+def _is_within(child: Path, parent: Path) -> bool:
+    """True if `child` is `parent` or a descendant of it."""
+    return parent == child or parent in child.parents
+
+
+async def _handle_terminal_command(ws_send: WSSendCallable, conv_id, text, username, state) -> None:
+    """`/terminal [cwd]`: spawn a PTY + open a canvas tab. No agent turn,
+    no archive write — this is a human-only side-effect command (#442)."""
+    from .. import canvas
+
+    config = state["config"]
+    tcfg = config.terminal
+
+    async def _msg(body: str) -> None:
+        await ws_send({
+            "type": WSMessageType.MESSAGE_COMPLETE, "conv_id": conv_id,
+            "role": "assistant", "text": body, "final": True,
+        })
+
+    if not tcfg.enabled:
+        await _msg("Terminals are disabled on this server.")
+        return
+
+    arg = text[len("/terminal"):].strip()
+    default_cwd = tcfg.default_cwd or str(config.workspace_path)
+    cwd = str(Path(arg).expanduser()) if arg else default_cwd
+
+    roots = tcfg.allowed_cwd_roots or [str(config.workspace_path), str(Path.home())]
+    resolved = Path(cwd).resolve()
+    if not any(_is_within(resolved, Path(r).expanduser().resolve()) for r in roots):
+        await _msg(f"cwd not allowed: {cwd}")
+        return
+
+    registry = state["terminal_registry"]
+    if registry.count_for_conv(conv_id) >= tcfg.max_sessions_per_conv:
+        await _msg("Max sessions reached for this conversation.")
+        return
+
+    shell = tcfg.shell_override or os.environ.get("SHELL") or "/bin/sh"
+    session_id = uuid.uuid4().hex
+    manager = state.get("manager")
+    emit = manager.emit if manager else None
+    result = await canvas.new_tab(
+        config, conv_id, "terminal",
+        {"session_id": session_id, "cwd": str(resolved), "shell": shell},
+        emit=emit,
+    )
+    if not result.ok:
+        await _msg(f"Could not open terminal tab: {result.error}")
+        return
+    tab_id = result.tab_id
+    assert tab_id is not None  # new_tab guarantees tab_id when ok=True
+
+    try:
+        await registry.spawn(conv_id, tab_id, session_id, str(resolved), shell)
+    except Exception as exc:
+        log.warning("terminal spawn failed conv=%s: %s", conv_id, exc)
+        await canvas.close_tab(config, conv_id, tab_id, emit=emit)
+        await _msg(f"Could not start terminal: {exc}")
+        return
+
+    await ws_send({
+        "type": WSMessageType.COMMAND_ACK, "conv_id": conv_id,
+        "command": "/terminal", "skill": "terminal",
+    })
 
 
 async def _handle_cancel_turn(ws_send: WSSendCallable, index, username, msg, state) -> None:
@@ -811,7 +887,7 @@ def _make_vault_change_forwarder(ws_send: WSSendCallable):
 
 
 async def websocket_chat(websocket: WebSocket, config, event_bus, app_ctx,
-                         manager=None):
+                         manager=None, terminal_registry=None):
     """Handle a WebSocket chat connection."""
     from .auth import get_current_user
     from .conversations import ConversationIndex
@@ -847,6 +923,7 @@ async def websocket_chat(websocket: WebSocket, config, event_bus, app_ctx,
         "websocket": websocket,
         "ws_send": ws_send,
         "manager": manager,
+        "terminal_registry": terminal_registry,
     }
 
     # Forward notification events from the global event bus to this socket.
@@ -883,3 +960,65 @@ async def websocket_chat(websocket: WebSocket, config, event_bus, app_ctx,
         event_bus.unsubscribe(notif_sub_id)
         event_bus.unsubscribe(vault_sub_id)
         _unsubscribe_all(state)
+
+
+async def websocket_terminal(websocket: WebSocket, config, registry) -> None:
+    """Handle a WebSocket terminal connection: attach to a PTY session,
+    replay its ring buffer, then relay input/resize/ping control frames.
+
+    Human-only surface — the agent has no access to this route or registry.
+    """
+    from .auth import get_current_user
+
+    username = get_current_user(websocket, config)
+    if not username:
+        await websocket.close(code=4001, reason="Not authenticated")
+        return
+    if not config.terminal.enabled:
+        await websocket.close(code=4003, reason="Terminals disabled")
+        return
+
+    conv_id = websocket.path_params["conv_id"]
+    tab_id = websocket.path_params["tab_id"]
+    await websocket.accept()
+    session = registry.get(conv_id, tab_id)
+    if session is None:
+        await websocket.send_json({"type": "session_ended", "exit_status": None})
+        await websocket.close()
+        return
+
+    async def send_bytes(chunk: bytes) -> None:
+        await websocket.send_bytes(chunk)
+
+    async def send_json(obj: dict) -> None:
+        await websocket.send_json(obj)
+
+    await registry.attach(session, send_bytes, send_json)
+    # Replay ring buffer, then signal done.
+    if session.buffer:
+        await websocket.send_bytes(bytes(session.buffer))
+    await websocket.send_json({"type": "buffer_replay_done"})
+    try:
+        while True:
+            msg = await websocket.receive()
+            if msg["type"] == "websocket.disconnect":
+                break
+            text = msg.get("text")
+            if text is None:
+                continue  # ignore binary client frames (protocol uses text control frames)
+            try:
+                ctrl = json.loads(text)
+                mtype = ctrl.get("type")
+                if mtype == "input":
+                    await registry.write_input(session, ctrl["data"].encode("utf-8"))
+                elif mtype == "resize":
+                    await registry.set_viewport(session, id(websocket), int(ctrl["cols"]), int(ctrl["rows"]))
+                    size = registry._min_viewport(session)
+                    if size:
+                        await websocket.send_json({"type": "size_changed", "cols": size[0], "rows": size[1]})
+                # "ping" and unknown types: ignore
+            except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+                log.debug("terminal control-frame drop conv=%s: %s", conv_id, exc)
+    finally:
+        await registry.detach(session, send_bytes)
+        await registry.drop_viewport(session, id(websocket))

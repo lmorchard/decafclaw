@@ -1,0 +1,16 @@
+{
+  "name": "terminal",
+  "description": "Live PTY shell session over WebSocket. Created by the /terminal command — the agent cannot spawn, attach to, or read terminals.",
+  "modes": ["canvas"],
+  "accepts_input": false,
+  "data_schema": {
+    "type": "object",
+    "required": ["session_id"],
+    "properties": {
+      "session_id": {"type": "string", "minLength": 1},
+      "cwd": {"type": "string"},
+      "shell": {"type": "string"}
+    },
+    "additionalProperties": false
+  }
+}

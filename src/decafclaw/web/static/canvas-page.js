@@ -23,7 +23,7 @@ if (!convId) {
   throw new Error('no conv_id');
 }
 
-const host = /** @type {HTMLElement & {widgetType: string, data: any, mode: string}} */ (
+const host = /** @type {HTMLElement & {widgetType: string, data: any, mode: string, convId: string, tabId: string}} */ (
   document.getElementById('canvas-standalone-host')
 );
 const empty = document.getElementById('canvas-empty-state');
@@ -56,6 +56,8 @@ function showTab(tab) {
   host.widgetType = tab.widget_type;
   host.mode = 'canvas';
   host.data = tab.data;
+  host.convId = convId;
+  host.tabId = tab.id;
   if (labelEl) labelEl.textContent = tab.label || 'Canvas';
   document.title = `Canvas — ${tab.label || 'Canvas'}`;
   currentTab = tab;

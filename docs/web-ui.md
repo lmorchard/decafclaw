@@ -215,6 +215,15 @@ See [Widgets — Phase 3](widgets.md#phase-3--canvas-panel-and-markdown_document
 and [Phase 4](widgets.md#phase-4--code_block-and-canvas-tabs) for the
 widget mode contract and bundled widgets.
 
+### Terminals
+
+Type `/terminal [cwd]` in the chat input to open a real, interactive PTY
+shell as a canvas tab. Human-only — the agent has no tools or code path to
+spawn, attach to, or read from a terminal session. `/terminal` is a
+server-side side-effect command: it spawns the shell and opens the tab
+directly, with no LLM turn and no archive write. See [Web Terminal](web-terminal.md)
+for the full architecture, security model, and configuration reference.
+
 ## Architecture
 
 ### Frontend

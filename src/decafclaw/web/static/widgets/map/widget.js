@@ -43,6 +43,7 @@ export class MapWidget extends LitElement {
     this.mode = 'inline';
     this._map = null;
     this._markerLayer = null;
+    this._ro = null;
   }
 
   createRenderRoot() { return this; }
@@ -54,6 +55,10 @@ export class MapWidget extends LitElement {
 
   disconnectedCallback() {
     super.disconnectedCallback();
+    if (this._ro) {
+      this._ro.disconnect();
+      this._ro = null;
+    }
     if (this._map) {
       this._map.remove();
       this._map = null;
@@ -106,6 +111,15 @@ export class MapWidget extends LitElement {
     this._renderData();
     // First paint often happens before the container has its final size.
     requestAnimationFrame(() => this._map && this._map.invalidateSize());
+    // Widgets stay mounted-but-hidden when the canvas tab/panel is switched
+    // away (keep-alive host), so a hidden 0×0 container can later become
+    // visible again without a `mode` change firing `updated()`. Re-measure
+    // on any container resize (covers panel resize, window resize, and the
+    // hidden→visible transition itself).
+    this._ro = new ResizeObserver(() => {
+      if (this._map) this._map.invalidateSize();
+    });
+    this._ro.observe(el);
   }
 
   _renderData() {

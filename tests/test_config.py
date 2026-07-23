@@ -614,3 +614,38 @@ class TestWorkflowConfig:
         monkeypatch.delenv("WORKFLOW_MAX_RESUME_ATTEMPTS", raising=False)
         c = load_config()
         assert c.workflow.max_resume_attempts == 7
+
+
+class TestTerminalConfig:
+    """TerminalConfig — settings for the web terminal feature (#442)."""
+
+    def test_terminal_config_defaults(self):
+        from decafclaw.config import load_config
+        cfg = load_config()
+        assert cfg.terminal.enabled is True
+        assert cfg.terminal.buffer_bytes == 10 * 1024 * 1024
+        assert cfg.terminal.max_sessions_per_conv == 8
+        assert cfg.terminal.allowed_cwd_roots == []
+
+    def test_terminal_config_env_override(self, monkeypatch):
+        from decafclaw.config import load_config
+        monkeypatch.setenv("TERMINAL_ENABLED", "false")
+        monkeypatch.setenv("TERMINAL_BUFFER_BYTES", "2048")
+        monkeypatch.setenv("TERMINAL_ALLOWED_CWD_ROOTS", "/tmp,/var")
+        cfg = load_config()
+        assert cfg.terminal.enabled is False
+        assert cfg.terminal.buffer_bytes == 2048
+        assert cfg.terminal.allowed_cwd_roots == ["/tmp", "/var"]
+
+    def test_terminal_config_bad_list_falls_back(self, tmp_path, monkeypatch):
+        # A JSON null where a list is expected (via config.json) must not
+        # crash config load.
+        from decafclaw.config import load_config
+        agent_dir = tmp_path / "decafclaw"
+        agent_dir.mkdir()
+        (agent_dir / "config.json").write_text(json.dumps({
+            "terminal": {"allowed_cwd_roots": None},
+        }))
+        monkeypatch.setenv("DATA_HOME", str(tmp_path))
+        cfg = load_config()  # must not raise
+        assert cfg.terminal.allowed_cwd_roots == []

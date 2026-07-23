@@ -3,7 +3,6 @@ import {
   subscribe, currentSnapshot, dismiss, getActiveConvId,
   switchToTab, closeTabFromUi,
 } from '../lib/canvas-state.js';
-import { getDescriptor } from '../lib/widget-catalog.js';
 import './widgets/widget-host.js';
 
 /**
@@ -32,6 +31,16 @@ export class CanvasPanel extends LitElement {
     this._mobileListOpen = false;
     /** @type {(() => void) | null} */
     this._unsubscribe = null;
+    /**
+     * One `<dc-widget-host>` per tab, keyed by tab id, kept mounted across
+     * tab switches so a widget's live connection (e.g. the terminal's
+     * WebSocket) survives switching away and back. Managed imperatively
+     * (not via a Lit-rendered array) because `lit/directives/repeat.js`
+     * isn't in the vendor importmap — see canvas-panel.js history for
+     * details. Non-active hosts are hidden via the `hidden` attribute.
+     * @type {Map<string, HTMLElement & {widgetType: string, data: any, mode: string, convId: string|null, tabId: string|null, fallbackText: string}>}
+     */
+    this._hosts = new Map();
   }
 
   createRenderRoot() { return this; }
@@ -56,6 +65,7 @@ export class CanvasPanel extends LitElement {
 
   disconnectedCallback() {
     if (this._unsubscribe) this._unsubscribe();
+    this._clearHosts();
     super.disconnectedCallback();
   }
 
@@ -83,10 +93,9 @@ export class CanvasPanel extends LitElement {
     window.open(url, '_blank', 'noopener');
   }
 
-  /** @param {string} tabId @param {string} label */
-  _confirmAndClose(tabId, label) {
-    const name = label || tabId;
-    if (!window.confirm(`Close tab "${name}"?`)) return;
+  /** Close a tab. The confirm (terminal-aware) lives in closeTabFromUi so
+   * every close path prompts exactly once. @param {string} tabId */
+  _closeTab(tabId) {
     closeTabFromUi(tabId);
   }
 
@@ -154,7 +163,7 @@ export class CanvasPanel extends LitElement {
                     @click=${(e) => { e.stopPropagation(); this._openTabInWindow(t.id); }}>↗</button>
             <button class="canvas-mobile-tab-close" type="button"
                     aria-label="Close tab ${t.label || t.id}"
-                    @click=${(e) => { e.stopPropagation(); this._confirmAndClose(t.id, t.label); }}>×</button>
+                    @click=${(e) => { e.stopPropagation(); this._closeTab(t.id); }}>×</button>
           </div>
         `)}
       </div>
@@ -184,7 +193,7 @@ export class CanvasPanel extends LitElement {
             <button class="canvas-tab-close" type="button"
                     title="Close tab"
                     aria-label="Close tab ${t.label || t.id}"
-                    @click=${(e) => { e.stopPropagation(); this._confirmAndClose(t.id, t.label); }}>×</button>
+                    @click=${(e) => { e.stopPropagation(); this._closeTab(t.id); }}>×</button>
           </div>
         `)}
       </div>
@@ -194,9 +203,9 @@ export class CanvasPanel extends LitElement {
   render() {
     const active = this._snapshot.activeTab;
     if (!active) {
+      this._clearHosts();
       return html`<div class="canvas-empty">No canvas content yet.</div>`;
     }
-    const descriptor = getDescriptor(active.widget_type);
     return html`
       <div class="canvas-tab-strip-desktop">
         ${this._renderTabStrip()}
@@ -218,15 +227,63 @@ export class CanvasPanel extends LitElement {
       ${this._renderMobileList()}
       <main class="canvas-body" id="canvas-tabpanel"
             role="tabpanel" aria-labelledby=${`canvas-tab-${active.id}`}>
-        <dc-widget-host
-          .widgetType=${active.widget_type}
-          .descriptor=${descriptor}
-          .data=${active.data}
-          .mode=${'canvas'}
-          fallbackText="Canvas widget unavailable">
-        </dc-widget-host>
       </main>
     `;
+  }
+
+  /**
+   * Called after every render. `#canvas-tabpanel` above is a plain static
+   * element with no Lit expression inside it, so Lit never touches its
+   * children across re-renders — safe to manage those children ourselves.
+   */
+  updated(changed) {
+    super.updated(changed);
+    this._syncHosts();
+  }
+
+  /**
+   * Keep exactly one `<dc-widget-host>` per current tab, reusing existing
+   * host elements by tab id (so a widget's live state/connection survives
+   * across re-renders and tab switches), removing hosts for tabs that no
+   * longer exist, and hiding every host except the active tab's.
+   */
+  _syncHosts() {
+    const container = this.querySelector('#canvas-tabpanel');
+    if (!container) {
+      this._clearHosts();
+      return;
+    }
+    const tabs = this._snapshot.tabs || [];
+    const activeId = this._snapshot.activeTabId;
+    const convId = getActiveConvId();
+    const seen = new Set();
+    for (const t of tabs) {
+      seen.add(t.id);
+      let hostEl = this._hosts.get(t.id);
+      if (!hostEl) {
+        hostEl = /** @type {any} */ (document.createElement('dc-widget-host'));
+        hostEl.fallbackText = 'Canvas widget unavailable';
+        this._hosts.set(t.id, hostEl);
+      }
+      if (hostEl.parentNode !== container) container.appendChild(hostEl);
+      hostEl.widgetType = t.widget_type;
+      hostEl.data = t.data;
+      hostEl.mode = 'canvas';
+      hostEl.convId = convId;
+      hostEl.tabId = t.id;
+      hostEl.hidden = t.id !== activeId;
+    }
+    for (const [id, el] of this._hosts) {
+      if (!seen.has(id)) {
+        el.remove();
+        this._hosts.delete(id);
+      }
+    }
+  }
+
+  _clearHosts() {
+    for (const el of this._hosts.values()) el.remove();
+    this._hosts.clear();
   }
 }
 
