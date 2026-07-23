@@ -1,6 +1,7 @@
 """Tests for the context composer module."""
 
 import json
+from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -84,6 +85,7 @@ class TestComposerState:
         assert state.last_prompt_tokens_actual == 0
         assert state.last_completion_tokens_actual == 0
         assert state.injected_paths == set()
+        assert state.last_recent_journal_ts is None
 
 
 # -- ContextComposer ----------------------------------------------------------
@@ -1473,7 +1475,6 @@ class TestScoreCandidates:
         assert scores == sorted(scores, reverse=True)
 
     def test_recency_favors_recent(self, config):
-        from datetime import datetime, timedelta
         now = datetime.now()
         recent = (now - timedelta(hours=1)).isoformat()
         old = (now - timedelta(hours=1000)).isoformat()
@@ -1893,3 +1894,137 @@ class TestComposeExpandsBackgroundEvent:
 
         roles = [m.get("role") for m in result.messages]
         assert "background_event" not in roles
+
+
+# -- Recent journal surfacing (#306) ------------------------------------------
+
+
+def _write_journal_file(config, day: datetime, entries: list[tuple[str, str]]):
+    """Write a daily journal file mirroring vault_journal_append's format."""
+    d = config.vault_agent_journal_dir / str(day.year)
+    d.mkdir(parents=True, exist_ok=True)
+    path = d / f"{day:%Y-%m-%d}.md"
+    text = ""
+    for hhmm, content in entries:
+        text += f"\n## {day:%Y-%m-%d} {hhmm}\n\n- **tags:** test\n\n{content}\n"
+    path.write_text(text, encoding="utf-8")
+
+
+class TestComposeRecentJournal:
+    def test_injects_entries_within_window(self, ctx, config):
+        now = datetime(2026, 7, 23, 15, 0)
+        _write_journal_file(config, now, [("14:30", "just thinking about X")])
+        composer = ContextComposer()
+        with patch("decafclaw.context_composer._now", return_value=now):
+            msgs, entry = composer._compose_recent_journal(
+                ctx, config, ComposerMode.INTERACTIVE)
+        assert len(msgs) == 1
+        assert msgs[0]["role"] == "recent_journal"
+        assert "just thinking about X" in msgs[0]["content"]
+        assert entry is not None and entry.items_included == 1
+        # High-water mark advanced to the newest surfaced entry.
+        assert ctx.composer.last_recent_journal_ts == datetime(2026, 7, 23, 14, 30)
+
+    def test_second_turn_skips_when_no_new_entries(self, ctx, config):
+        now = datetime(2026, 7, 23, 15, 0)
+        _write_journal_file(config, now, [("14:30", "entry one")])
+        composer = ContextComposer()
+        with patch("decafclaw.context_composer._now", return_value=now):
+            composer._compose_recent_journal(ctx, config, ComposerMode.INTERACTIVE)
+            # Same entries, later turn — nothing new since the mark.
+            msgs, entry = composer._compose_recent_journal(
+                ctx, config, ComposerMode.INTERACTIVE)
+        assert msgs == []
+        assert entry is None
+
+    def test_second_turn_surfaces_only_new_entries(self, ctx, config):
+        now = datetime(2026, 7, 23, 15, 0)
+        _write_journal_file(config, now, [("14:30", "old entry")])
+        composer = ContextComposer()
+        with patch("decafclaw.context_composer._now", return_value=now):
+            composer._compose_recent_journal(ctx, config, ComposerMode.INTERACTIVE)
+        # A new entry lands; next turn should surface only it.
+        later = datetime(2026, 7, 23, 15, 5)
+        _write_journal_file(config, later, [
+            ("14:30", "old entry"), ("15:02", "brand new entry")])
+        with patch("decafclaw.context_composer._now", return_value=later):
+            msgs, entry = composer._compose_recent_journal(
+                ctx, config, ComposerMode.INTERACTIVE)
+        assert len(msgs) == 1
+        assert "brand new entry" in msgs[0]["content"]
+        assert "old entry" not in msgs[0]["content"]
+        assert entry.items_included == 1
+
+    def test_skips_when_disabled(self, ctx, config):
+        now = datetime(2026, 7, 23, 15, 0)
+        _write_journal_file(config, now, [("14:30", "entry")])
+        config.recent_journal.enabled = False
+        composer = ContextComposer()
+        with patch("decafclaw.context_composer._now", return_value=now):
+            msgs, entry = composer._compose_recent_journal(
+                ctx, config, ComposerMode.INTERACTIVE)
+        assert msgs == []
+        assert entry is None
+
+    @pytest.mark.parametrize("mode", [
+        ComposerMode.HEARTBEAT, ComposerMode.SCHEDULED, ComposerMode.CHILD_AGENT,
+    ])
+    def test_skips_non_interactive_modes(self, ctx, config, mode):
+        now = datetime(2026, 7, 23, 15, 0)
+        _write_journal_file(config, now, [("14:30", "entry")])
+        composer = ContextComposer()
+        with patch("decafclaw.context_composer._now", return_value=now):
+            msgs, entry = composer._compose_recent_journal(ctx, config, mode)
+        assert msgs == []
+        assert entry is None
+
+    def test_no_entries_returns_empty(self, ctx, config):
+        now = datetime(2026, 7, 23, 15, 0)
+        composer = ContextComposer()
+        with patch("decafclaw.context_composer._now", return_value=now):
+            msgs, entry = composer._compose_recent_journal(
+                ctx, config, ComposerMode.INTERACTIVE)
+        assert msgs == []
+        assert entry is None
+
+    def test_trims_to_token_budget_dropping_oldest(self, ctx, config):
+        now = datetime(2026, 7, 23, 15, 0)
+        big = "word " * 400  # ~well over a small token budget on its own
+        _write_journal_file(config, now, [
+            ("13:00", "oldest " + big),
+            ("14:00", "middle " + big),
+            ("14:45", "newest keep-me"),
+        ])
+        config.recent_journal.max_tokens = 40
+        composer = ContextComposer()
+        with patch("decafclaw.context_composer._now", return_value=now):
+            msgs, entry = composer._compose_recent_journal(
+                ctx, config, ComposerMode.INTERACTIVE)
+        # Newest survives; older bulky entries trimmed away.
+        assert "newest keep-me" in msgs[0]["content"]
+        assert entry.items_truncated > 0
+        # Mark still reflects the newest entry, not a trimmed one.
+        assert ctx.composer.last_recent_journal_ts == datetime(2026, 7, 23, 14, 45)
+
+
+class TestComposeRecentJournalIntegration:
+    @pytest.mark.asyncio
+    async def test_recent_journal_reaches_llm_history_as_user(self, ctx, config):
+        now = datetime(2026, 7, 23, 15, 0)
+        _write_journal_file(config, now, [("14:30", "recently journaled fact")])
+        with (
+            patch("decafclaw.context_composer.collect_all_tool_defs", return_value=[]),
+            patch("decafclaw.context_composer.retrieve_memory_context",
+                  new_callable=AsyncMock, return_value=[]),
+            patch("decafclaw.context_composer._now", return_value=now),
+        ):
+            composer = ContextComposer()
+            result = await composer.compose(
+                ctx, "hello", [], mode=ComposerMode.INTERACTIVE)
+        # The recent_journal role is remapped to "user" before the LLM;
+        # its content must appear in the sent messages.
+        user_content = " ".join(
+            str(m.get("content", "")) for m in result.messages
+            if m.get("role") == "user")
+        assert "recently journaled fact" in user_content
+        assert "recent_journal" not in [m.get("role") for m in result.messages]

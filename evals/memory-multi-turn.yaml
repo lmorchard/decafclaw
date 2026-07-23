@@ -65,3 +65,24 @@
         response_contains: "green"
         max_tool_calls: 5
         max_tool_errors: 0
+
+# #306: a fact journaled in an earlier turn is auto-surfaced (recency
+# window) at the next turn's start, so the agent recalls it from context
+# without a fresh vault lookup. reflection_enabled: false because the
+# turn-2 expect_no_tool assertion must not be perturbed by a reflection
+# retry invoking a search tool.
+- name: "recalls a just-journaled fact from recency surfacing"
+  setup:
+    reflection_enabled: false
+  turns:
+    - input: "Please journal this so you remember it: the staging deploy key rotates every Tuesday at 4pm."
+      expect:
+        expect_tool: vault_journal_append
+        max_tool_calls: 5
+        max_tool_errors: 0
+    - input: "When does the staging deploy key rotate?"
+      expect:
+        response_contains: "Tuesday"
+        expect_no_tool: [vault_search, vault_read, vault_recent]
+        max_tool_calls: 3
+        max_tool_errors: 0

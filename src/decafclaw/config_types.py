@@ -65,6 +65,28 @@ class NotesConfig:
 
 
 @dataclass
+class RecentJournalConfig:
+    """Auto-surface recent journal entries (#306).
+
+    At interactive turn start, inject a bounded summary of recently
+    written journal entries on a small fixed budget, separate from the
+    dynamic semantic-retrieval pool so it doesn't compete with it.
+    Recency is a strong signal as a retrieval *mode* — surfacing "what
+    was I just thinking about?" — where it's weak as a factor folded
+    into a composite similarity score.
+
+    Only entries newer than the last one already surfaced this
+    conversation are injected (high-water mark on ``ComposerState``), so
+    each entry appears at most once. Skipped for heartbeat / scheduled /
+    child-agent modes.
+    """
+    enabled: bool = True
+    max_hours: int = 24        # only entries written within this window
+    max_entries: int = 5       # most recent K within the window, whichever is tighter
+    max_tokens: int = 1024     # soft cap on the injected body (trims oldest)
+
+
+@dataclass
 class CompactionConfig:
     url: str = ""       # empty = resolve from llm via resolved()
     model: str = ""     # empty = resolve from llm via resolved()

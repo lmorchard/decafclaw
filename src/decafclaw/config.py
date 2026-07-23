@@ -33,6 +33,7 @@ from .config_types import (
     NotesConfig,
     NotificationsConfig,
     ProviderConfig,
+    RecentJournalConfig,
     ReflectionConfig,
     RelevanceConfig,
     TelemetryConfig,
@@ -163,6 +164,7 @@ class Config:
     compaction: CompactionConfig = field(default_factory=CompactionConfig)
     cleanup: CleanupConfig = field(default_factory=CleanupConfig)
     notes: NotesConfig = field(default_factory=NotesConfig)
+    recent_journal: RecentJournalConfig = field(default_factory=RecentJournalConfig)
     embedding: EmbeddingConfig = field(default_factory=EmbeddingConfig)
     heartbeat: HeartbeatConfig = field(default_factory=HeartbeatConfig)
     http: HttpConfig = field(default_factory=HttpConfig)
@@ -399,6 +401,9 @@ def load_config() -> Config:
     notes = load_sub_config(
         NotesConfig, file_data.get("notes", {}), "NOTES")
 
+    recent_journal = load_sub_config(
+        RecentJournalConfig, file_data.get("recent_journal", {}), "RECENT_JOURNAL")
+
     embedding = load_sub_config(
         EmbeddingConfig, file_data.get("embedding", {}), "EMBEDDING",
         env_aliases={"search_strategy": "MEMORY_SEARCH_STRATEGY"})
@@ -545,6 +550,7 @@ def load_config() -> Config:
         compaction=compaction,
         cleanup=cleanup,
         notes=notes,
+        recent_journal=recent_journal,
         embedding=embedding,
         heartbeat=heartbeat,
         http=http,
