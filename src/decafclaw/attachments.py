@@ -6,12 +6,18 @@ import mimetypes
 from datetime import datetime
 from pathlib import Path
 
+from decafclaw.conversation_paths import conversation_dir
+
 log = logging.getLogger(__name__)
 
 
 def uploads_dir(config, conv_id: str) -> Path:
-    """Return the uploads directory for a conversation (does not create it)."""
-    return config.workspace_path / "conversations" / conv_id / "uploads"
+    """Return the uploads directory for a conversation (does not create it).
+
+    Delegates to `conversation_dir` so the user-controlled `conv_id` is
+    sanitized and sandboxed under the conversations root (#587).
+    """
+    return conversation_dir(config, conv_id) / "uploads"
 
 
 def save_attachment(config, conv_id: str, filename: str, data: bytes,
