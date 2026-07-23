@@ -76,6 +76,35 @@ async def test_real_pty_echo_and_cleanup():
     assert s.exit_status == 0
 
 
+@pytest.mark.asyncio
+async def test_shutdown_all_kills_and_clears(monkeypatch):
+    reg = TerminalRegistry(load_config())
+    killed = []
+
+    async def fake_kill(session, grace=1.0): killed.append(session.tab_id)
+    monkeypatch.setattr(reg, "kill", fake_kill)
+    reg._sessions[("c1", "canvas_1")] = _session()
+    reg._sessions[("c1", "canvas_2")] = _session(tab_id="canvas_2")
+    await reg.shutdown_all()
+    assert sorted(killed) == ["canvas_1", "canvas_2"]
+    assert reg._sessions == {}
+
+
+@pytest.mark.asyncio
+async def test_kill_sessions_for_conv(monkeypatch):
+    reg = TerminalRegistry(load_config())
+    killed = []
+
+    async def fake_kill(session, grace=1.0): killed.append((session.conv_id, session.tab_id))
+    monkeypatch.setattr(reg, "kill", fake_kill)
+    reg._sessions[("c1", "canvas_1")] = _session()
+    reg._sessions[("c1", "canvas_2")] = _session(tab_id="canvas_2")
+    reg._sessions[("c2", "canvas_1")] = _session(conv_id="c2")
+    await reg.kill_sessions_for_conv("c1")
+    assert sorted(killed) == [("c1", "canvas_1"), ("c1", "canvas_2")]
+    assert list(reg._sessions.keys()) == [("c2", "canvas_1")]
+
+
 def test_no_agent_side_imports():
     """terminals.py must not be reachable from tools/ or skills/ — the
     load-bearing 'agent cannot touch terminals' guarantee."""

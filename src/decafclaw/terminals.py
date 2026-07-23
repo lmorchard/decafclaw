@@ -212,3 +212,10 @@ class TerminalRegistry:
             await self.kill(session, grace=0.2)
         self._sessions.clear()
         self._json_sinks.clear()
+
+    async def kill_sessions_for_conv(self, conv_id):
+        for key, session in list(self._sessions.items()):
+            if key[0] == conv_id:
+                await self.kill(session, grace=0.2)
+                self._sessions.pop(key, None)
+                self._json_sinks.pop(id(session), None)
