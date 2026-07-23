@@ -558,7 +558,7 @@ currently only) sticky-mode widget.
 **Driven by tools**, not `WidgetRequest`/`ToolResult` like other widgets:
 `widget_pin_sticky(widget_type, data)` pins a widget, replacing any previous
 occupant (single slot); `widget_unpin_sticky()` clears it. Both are
-always-loaded, normal-priority tools (`src/decafclaw/tools/sticky_tools.py`).
+normal-priority tools in the base registry (`src/decafclaw/tools/sticky_tools.py`).
 A forthcoming change (#414) will have the checklist tools auto-emit sticky
 updates as steps complete, without the agent calling these tools directly.
 
