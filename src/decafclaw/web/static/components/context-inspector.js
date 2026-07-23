@@ -159,6 +159,12 @@ export class ContextInspector extends LitElement {
         <dd>${data.total_tokens_estimated?.toLocaleString() || '—'}</dd>
         <dt>Actual</dt>
         <dd>${data.total_tokens_actual?.toLocaleString() || '—'}</dd>
+        <dt>Cached</dt>
+        <dd>
+          ${data.cached_prompt_tokens != null
+            ? html`${data.cached_prompt_tokens.toLocaleString()} (${Math.round((data.cache_hit_rate || 0) * 100)}%)`
+            : '—'}
+        </dd>
         <dt>Window</dt>
         <dd>${data.context_window_size?.toLocaleString() || '—'}</dd>
         <dt>Compact at</dt>

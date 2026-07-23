@@ -16,6 +16,7 @@ import functools
 import json
 import logging
 import re as _re
+import time
 
 from .archive import append_message
 from .media import EndTurnConfirm, ToolResult, WidgetInputPause
@@ -226,9 +227,11 @@ async def execute_single_tool(call_ctx, tc, semaphore):
 
     result = ToolResult(text=f"[error: {fn_name} did not complete]")
     async with semaphore:
+        started = time.perf_counter()
         try:
             await call_ctx.publish("tool_start", tool=fn_name, args=fn_args,
-                                   tool_call_id=tool_call_id)
+                                   tool_call_id=tool_call_id,
+                                   conv_id=call_ctx.conv_id)
             result = await execute_tool(call_ctx, fn_name, fn_args)
             log.debug(f"Tool result [{fn_name}]: {result.text[:200]}...")
 
@@ -246,6 +249,10 @@ async def execute_single_tool(call_ctx, tc, semaphore):
             result = ToolResult(text=f"[error executing {fn_name}: {e}]")
         finally:
             widget_payload = resolve_widget(fn_name, result, tool_call_id)
+            try:
+                input_bytes = len(json.dumps(fn_args, default=str).encode("utf-8"))
+            except (TypeError, ValueError):
+                input_bytes = 0
             publish_kwargs = {
                 "tool": fn_name,
                 "result_text": result.text,
@@ -254,6 +261,9 @@ async def execute_single_tool(call_ctx, tc, semaphore):
                     result, "display_short_text", None),
                 "media": result.media or [],
                 "tool_call_id": tool_call_id,
+                "conv_id": call_ctx.conv_id,
+                "duration_ms": round((time.perf_counter() - started) * 1000, 1),
+                "input_bytes": input_bytes,
             }
             if widget_payload is not None:
                 publish_kwargs["widget"] = widget_payload

@@ -34,6 +34,7 @@ from .config_types import (
     ProviderConfig,
     ReflectionConfig,
     RelevanceConfig,
+    TelemetryConfig,
     VaultConfig,
     VaultGuideConfig,
     VaultRetrievalConfig,
@@ -183,6 +184,7 @@ class Config:
     email: EmailConfig = field(default_factory=EmailConfig)
     background: BackgroundConfig = field(default_factory=BackgroundConfig)
     workflow: WorkflowConfig = field(default_factory=WorkflowConfig)
+    telemetry: TelemetryConfig = field(default_factory=TelemetryConfig)
     widgets: WidgetsConfig = field(default_factory=WidgetsConfig)
 
     # Custom environment variables from config.json "env" section
@@ -466,6 +468,9 @@ def load_config() -> Config:
     workflow = load_sub_config(
         WorkflowConfig, file_data.get("workflow", {}), "WORKFLOW")
 
+    telemetry = load_sub_config(
+        TelemetryConfig, file_data.get("telemetry", {}), "TELEMETRY")
+
     # Build the doubly-nested widgets.map leaf explicitly so its systematic
     # env vars (WIDGETS_MAP_*) resolve. load_sub_config only recurses into a
     # nested dataclass field when that key is present in JSON, so a bare
@@ -553,6 +558,7 @@ def load_config() -> Config:
         email=email,
         background=background,
         workflow=workflow,
+        telemetry=telemetry,
         widgets=widgets,
         env=env_vars,
         system_prompt=system_prompt,

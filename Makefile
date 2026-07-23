@@ -100,6 +100,14 @@ migrate-vault-dry:
 migrate-sidecars:
 	uv run python scripts/migrate_sidecars_to_dirs.py
 
+# Ranked tool-usage report from workspace/tool_usage.jsonl (#310)
+tool-usage-report:
+	uv run python -m decafclaw.tool_telemetry
+
+# Reflection cost/effectiveness stats from workspace/reflection/metrics.jsonl (#409)
+reflection-stats:
+	uv run python -m decafclaw.reflection_metrics
+
 # Dry-run sidecar migration (show what would change)
 migrate-sidecars-dry:
 	uv run python scripts/migrate_sidecars_to_dirs.py --dry-run

@@ -29,6 +29,7 @@ from .iteration_budget import IterationBudget
 from .llm import call_llm
 from .media import EndTurnConfirm, ToolResult, WidgetInputPause, extract_workspace_media
 from .persistence import read_skill_data, read_skills_state, write_skill_data, write_skills_state
+from .reflection_metrics import classify_outcome, response_delta
 from .skills import activate_always_loaded
 from .tool_definitions import build_tool_list, refresh_dynamic_tools
 from .tool_execution import execute_tool_calls
@@ -470,6 +471,14 @@ class TurnRunner:
     empty_retries: int = 0
     reflection_retries: int = 0
     last_reflection: "ReflectionResult | None" = None
+    # Reflection telemetry (#409) — captured across rounds for the per-turn
+    # metrics emit. first_response is the round-0 response the judge saw;
+    # exhausted survives _reflection_skip nulling last_reflection.
+    reflection_first_response: "str | None" = None
+    reflection_judge_prompt_tokens: int = 0
+    reflection_judge_completion_tokens: int = 0
+    reflection_exhausted: bool = False
+    reflection_last_critique: str = ""
     turn_start_index: int = 0
     accumulated_text_parts: list[str] = field(default_factory=list)
     model_override: dict[str, str] = field(default_factory=dict)
@@ -493,6 +502,11 @@ class TurnRunner:
             self.empty_retries = 0
             self.reflection_retries = 0
             self.last_reflection = None  # last ReflectionResult, for archiving after final response
+            self.reflection_first_response = None
+            self.reflection_judge_prompt_tokens = 0
+            self.reflection_judge_completion_tokens = 0
+            self.reflection_exhausted = False
+            self.reflection_last_critique = ""
 
             self.accumulated_text_parts = []  # text from iterations that also had tool calls
             self.budget = IterationBudget(
@@ -599,13 +613,19 @@ class TurnRunner:
         if usage:
             prompt_tokens = usage.get("prompt_tokens", 0)
             completion_tokens = usage.get("completion_tokens", 0)
+            cached_tokens = usage.get("cached_tokens", 0)
             self.ctx.tokens.total_prompt += prompt_tokens
             self.ctx.tokens.total_completion += completion_tokens
             self.ctx.tokens.last_prompt = prompt_tokens
+            self.ctx.tokens.total_cached_prompt += cached_tokens
+            self.ctx.tokens.last_cached_prompt = cached_tokens
             self.prompt_tokens = prompt_tokens
+            log.debug("Turn token usage: prompt=%s, cached=%s, completion=%s",
+                      prompt_tokens, cached_tokens, completion_tokens)
             # composer is set by _compose() before the loop; guard is for the type checker
             if self.composer is not None:
-                self.composer.record_actuals(prompt_tokens, completion_tokens)
+                self.composer.record_actuals(prompt_tokens, completion_tokens,
+                                             cached_tokens)
 
         tool_calls = response.get("tool_calls")
         if tool_calls:
@@ -759,8 +779,44 @@ class TurnRunner:
                 _archive(self.ctx, {"role": "reflection", "tool": label,
                                     "content": detail})
 
+        await self._emit_reflection_metrics(content)
         await _maybe_compact(self.ctx, self.config, self.history, self.prompt_tokens)
         return _Final(result=self._extract_workspace_media(content))
+
+    async def _emit_reflection_metrics(self, final_content: str) -> None:
+        """Publish one reflection_turn telemetry event per judge-eligible turn
+        (#409). Fail-open — measurement only, never affects the turn."""
+        try:
+            config = self.config
+            if not config.reflection.enabled or self.ctx.skip_reflection:
+                return  # disabled or child agent — not a reflection turn
+            if self.ctx.cancelled and self.ctx.cancelled.is_set():
+                return
+            last_error = self.last_reflection.error if self.last_reflection else ""
+            outcome = classify_outcome(
+                first_response=self.reflection_first_response,
+                last_error=last_error,
+                retry_count=self.reflection_retries,
+                exhausted=self.reflection_exhausted,
+                final_content=final_content,
+            )
+            if outcome is None:
+                return
+            first = self.reflection_first_response or final_content
+            char_delta, overlap = response_delta(first, final_content)
+            await self.ctx.publish(
+                "reflection_turn",
+                conv_id=self.ctx.conv_id,
+                outcome=outcome,
+                retry_count=self.reflection_retries,
+                judge_prompt_tokens=self.reflection_judge_prompt_tokens,
+                judge_completion_tokens=self.reflection_judge_completion_tokens,
+                char_delta=char_delta,
+                overlap_ratio=overlap,
+                critique_fingerprint=self.reflection_last_critique[:120],
+            )
+        except Exception as exc:  # fail-open
+            log.debug("reflection metrics emit failed: %s", exc)
 
     async def _handle_reflection(self, content: str) -> ReflectionOutcome:
         """Thin orchestrator. Mutates self.reflection_retries and
@@ -781,6 +837,10 @@ class TurnRunner:
             and self.last_reflection is not None
             and not self.last_reflection.passed
         )
+        # Telemetry (#409): persist the exhausted verdict before nulling
+        # last_reflection, so the per-turn emit can bucket it as loop_exhausted.
+        if reflection_exhausted:
+            self.reflection_exhausted = True
         self.last_reflection = None
         if reflection_exhausted:
             content += (
@@ -818,11 +878,20 @@ class TurnRunner:
             part for part in [*self.accumulated_text_parts, content]
             if part and part.strip()
         ) or content
+        # Telemetry (#409): capture the first response the judge sees and
+        # accumulate judge token cost across rounds.
+        if self.reflection_first_response is None:
+            self.reflection_first_response = content
+
         result = await evaluate_response(
             self.config, judge_user_message, judge_agent_response, tool_summary,
             prior_turn_summary=prior_turn_summary,
             retrieved_context=self.retrieved_context_text,
         )
+        self.reflection_judge_prompt_tokens += result.prompt_tokens
+        self.reflection_judge_completion_tokens += result.completion_tokens
+        if result.critique:
+            self.reflection_last_critique = result.critique
 
         log.info("Reflection result: passed=%s, critique=%s, error=%s",
                  result.passed, result.critique[:200] if result.critique else "",

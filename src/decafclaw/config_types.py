@@ -407,6 +407,25 @@ class WorkflowConfig:
     max_resume_attempts: int = 3
 
 
+@dataclass
+class TelemetryConfig:
+    """Instrumentation sidecars (#310 tool usage, #409 reflection metrics).
+
+    Append-only JSONL under ``workspace/``, metadata only — never tool
+    args/returns, reflection response bodies, or prompt contents; only
+    names, sizes, counts, token totals, and fingerprints. Producers are
+    fail-open EventBus subscribers: a telemetry write that raises must
+    never break a turn. Paths are workspace-relative. Enabled by default
+    so a deployed agent starts collecting without a config edit — the
+    point is a week of real data. No rotation yet (append-only); retention
+    is a follow-up. See docs/tools.md and docs/reflection.md.
+    """
+    tool_usage_enabled: bool = True
+    tool_usage_path: str = "tool_usage.jsonl"
+    reflection_metrics_enabled: bool = True
+    reflection_metrics_path: str = "reflection/metrics.jsonl"
+
+
 def is_secret(dc_class: type, field_name: str) -> bool:
     """Check if a dataclass field is marked as secret."""
     for f in dc_fields(dc_class):
