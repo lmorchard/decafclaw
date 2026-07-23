@@ -16,6 +16,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from decafclaw.skills.background.tools import format_status_text
+from decafclaw.skills.vault.tools import (
+    format_recent_journal_for_context,
+    read_recent_journal_entries,
+)
 
 from .archive import LLM_ROLES
 from .attachments import resolve_attachments
@@ -53,9 +57,19 @@ ROLE_REMAP: dict[str, str] = {
     "vault_retrieval": "user",
     "vault_references": "user",
     "conversation_notes": "user",
+    "recent_journal": "user",
     "cancel_marker": "user",
     "turn_aborted": "user",
 }
+
+
+def _now() -> datetime:
+    """Current naive local time — a seam so tests can patch the clock.
+
+    Naive/local matches how ``vault_journal_append`` timestamps entries
+    (``datetime.now()``), so the recency window compares apples to apples.
+    """
+    return datetime.now()
 
 
 # Preempt-skill-hint trimming (#604). The visible <preempt_skill_hint> lists
@@ -137,6 +151,12 @@ class ComposerState:
     last_completion_tokens_actual: int = 0
     last_cached_prompt_tokens_actual: int = 0  # prompt tokens served from provider cache (#480)
     injected_paths: set[str] = field(default_factory=set)  # file_paths already in context; cleared on compaction
+    # Recency high-water mark for auto-surfaced journal entries (#306):
+    # timestamp of the newest entry already injected this conversation.
+    # Only entries newer than this are surfaced on later turns, so each
+    # appears at most once. In-memory only — resets on restart (at worst
+    # one window re-surfaces).
+    last_recent_journal_ts: datetime | None = None
     # Cumulative tool-result clearing stats for this conversation
     # (#298). Reset on compaction since the surviving summary
     # represents a fresh in-memory view.
@@ -343,6 +363,18 @@ class ContextComposer:
         if notes_entry:
             sources.append(notes_entry)
 
+        # -- Recent journal entries (#306) --
+        # Auto-surface recently written journal entries on a small fixed
+        # budget, separate from the dynamic semantic pool, so temporally
+        # relevant context appears without depending on vocabulary overlap.
+        recent_journal_msgs, recent_journal_entry = self._compose_recent_journal(
+            ctx, config, mode,
+        )
+        for rm in recent_journal_msgs:
+            to_archive.append(rm)
+        if recent_journal_entry:
+            sources.append(recent_journal_entry)
+
         # -- Pre-emptive tool search (populate ctx.tools.preempt_matches) --
         # Runs before tool classification so matches promote into the active
         # set via the existing critical-tier mechanism.
@@ -372,6 +404,8 @@ class ContextComposer:
             fixed_tokens += wiki_entry.tokens_estimated
         if notes_entry:
             fixed_tokens += notes_entry.tokens_estimated
+        if recent_journal_entry:
+            fixed_tokens += recent_journal_entry.tokens_estimated
         # History contains only archived prior-turn content at this point —
         # fresh wiki / notes / memory / user injections are appended after
         # all token accounting, at the end of compose(). Count messages whose
@@ -454,9 +488,13 @@ class ContextComposer:
 
         # -- Build LLM messages (filter + remap roles) --
         # Combine archived history with this turn's injections in the same
-        # order they'll be archived: prior history → wiki → notes → memory →
-        # user message. The combined list is what the LLM sees.
-        combined = [*history, *wiki_msgs, *notes_msgs, *memory_msgs, user_msg]
+        # order they'll be archived: prior history → wiki → notes →
+        # recent journal → memory → user message. The combined list is
+        # what the LLM sees.
+        combined = [
+            *history, *wiki_msgs, *notes_msgs, *recent_journal_msgs,
+            *memory_msgs, user_msg,
+        ]
         llm_history = []
         for m in combined:
             role = m.get("role")
@@ -911,6 +949,68 @@ class ContextComposer:
             tokens_estimated=estimate_tokens(text),
             items_included=len(items),
             items_truncated=0,
+        )
+        return [msg], entry
+
+    def _compose_recent_journal(
+        self, ctx, config, mode: ComposerMode,
+    ) -> tuple[list[dict], SourceEntry | None]:
+        """Auto-surface recently written journal entries (#306).
+
+        Injects a bounded, recency-windowed summary of the agent's own
+        journal at turn start on a small fixed budget, separate from the
+        dynamic semantic-retrieval pool so it doesn't compete with it.
+        Recency is a strong signal as a retrieval *mode* — "what was I
+        just thinking about?" — where it's weak folded into a composite
+        similarity score.
+
+        Only entries newer than the newest one already surfaced this
+        conversation (``ComposerState.last_recent_journal_ts``) are
+        injected, so each entry appears at most once. Emits a
+        ``recent_journal`` role message remapped to ``user`` for the LLM.
+        Skipped in non-interactive modes (heartbeat / scheduled / child
+        agent) and when disabled.
+        """
+        cfg = config.recent_journal
+        if not cfg.enabled:
+            return [], None
+        skip_modes = {ComposerMode.HEARTBEAT, ComposerMode.SCHEDULED, ComposerMode.CHILD_AGENT}
+        if mode in skip_modes:
+            return [], None
+
+        entries = read_recent_journal_entries(
+            config, now=_now(),
+            max_hours=cfg.max_hours, max_entries=cfg.max_entries,
+        )
+        if not entries:
+            return [], None
+
+        # High-water mark: drop entries at/before the newest already surfaced.
+        last_ts = ctx.composer.last_recent_journal_ts
+        if last_ts is not None:
+            entries = [e for e in entries if e.timestamp > last_ts]
+        if not entries:
+            return [], None
+
+        # Advance the mark to the newest entry surfaced (entries are
+        # chronological, so the last one is newest). Trimming below only
+        # drops oldest, so the newest — and thus the mark — is unaffected.
+        ctx.composer.last_recent_journal_ts = entries[-1].timestamp
+
+        # Trim to the token budget by dropping oldest entries first.
+        truncated = 0
+        text = format_recent_journal_for_context(entries, cfg.max_hours)
+        while len(entries) > 1 and estimate_tokens(text) > cfg.max_tokens:
+            entries = entries[1:]
+            truncated += 1
+            text = format_recent_journal_for_context(entries, cfg.max_hours)
+
+        msg = {"role": "recent_journal", "content": text}
+        entry = SourceEntry(
+            source="recent_journal",
+            tokens_estimated=estimate_tokens(text),
+            items_included=len(entries),
+            items_truncated=truncated,
         )
         return [msg], entry
 

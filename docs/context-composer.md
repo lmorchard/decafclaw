@@ -88,6 +88,7 @@ the slice guidance still lives in the system prompt via the addendum.
 │ VAULT CONTEXT (injected by composer)    │
 │ - @[[Page]] references                  │
 │ - Open web UI page                      │
+│ - Recent journal entries (recency)      │
 │ - Proactive vault retrieval results     │
 ├─────────────────────────────────────────┤
 │ [CONVERSATION SUMMARY]                  │
@@ -115,7 +116,7 @@ the slice guidance still lives in the system prompt via the addendum.
 
 #### History accounting
 
-`compose()` treats the input `history` list as read-only during all token-budget and diagnostics calculation. Fresh-this-turn injections (`vault_references`, `conversation_notes`, `vault_retrieval`, and the current user message) are each tracked via their own `SourceEntry` (`wiki_entry`, `notes_entry`, `memory_entry`, `user_msg_entry`). The `history` source entry counts everything archived from prior turns, including messages whose role is in `ROLE_REMAP` (auto-injected role messages archived from earlier turns) — they're sent to the LLM after remap, so they count.
+`compose()` treats the input `history` list as read-only during all token-budget and diagnostics calculation. Fresh-this-turn injections (`vault_references`, `conversation_notes`, `recent_journal`, `vault_retrieval`, and the current user message) are each tracked via their own `SourceEntry` (`wiki_entry`, `notes_entry`, `recent_journal_entry`, `memory_entry`, `user_msg_entry`). The `history` source entry counts everything archived from prior turns, including messages whose role is in `ROLE_REMAP` (auto-injected role messages archived from earlier turns) — they're sent to the LLM after remap, so they count.
 
 `ROLE_REMAP` also covers two turn-closure markers (both remapped to `user`): `cancel_marker`, written when a user cancels a turn, and `turn_aborted`, written when a turn aborts via an unexpected exception. See [Cancelled turns](conversations.md#cancelled-turns) and [Aborted turns](conversations.md#aborted-turns-unexpected-exceptions) for producer-side details. The remap is what guarantees each marker reaches the LLM at the right position regardless of provider (Vertex collapses `system`-role messages into `systemInstruction`).
 
@@ -374,6 +375,29 @@ Oversized guides are truncated (head kept) at `vault_guide.max_tokens` (default 
 | `vault_guide.max_tokens` | int | `2000` | Token cap; oversized guides are truncated at the head |
 
 Config dataclass: `VaultGuideConfig` in `config_types.py`. Settable in `data/{agent_id}/config.json` under the `vault_guide` key, or via the `VAULT_GUIDE_` env prefix (`VAULT_GUIDE_ENABLED`, `VAULT_GUIDE_PATH`, `VAULT_GUIDE_MAX_TOKENS`), following the standard resolution order (defaults → config.json → env).
+
+## Recent journal surfacing
+
+`_compose_recent_journal` auto-injects a bounded summary of recently written journal entries at the start of every **interactive** turn, on a small fixed budget kept separate from the dynamic semantic-retrieval pool so it doesn't compete with it. Journal entries otherwise surface only through embedding similarity, so temporally relevant context — "what was I just thinking about an hour ago?" — appears only when its vocabulary happens to overlap the current message. Recency is a strong signal used as a retrieval *mode*, where it's weak folded into a composite similarity score. Anthropic's [Effective Context Engineering for AI Agents](https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents) notes timestamps and recency are legitimate progressive-disclosure signals. See #306.
+
+### How it works
+
+- The reader (`read_recent_journal_entries` in `skills/vault/tools.py`, colocated with `vault_journal_append`) reads only the daily files (`<journal_dir>/YYYY/YYYY-MM-DD.md`) whose dates fall in the window, so a 24h window touches at most two files and crossing midnight is handled. Entry timestamps come from the `## YYYY-MM-DD HH:MM` headers, parsed as naive local datetimes to match how entries are written (`datetime.now()`).
+- The window is the last `max_hours`, capped at the most recent `max_entries`, whichever is tighter.
+- A **high-water mark** on `ComposerState` (`last_recent_journal_ts`, the newest entry surfaced this conversation) filters out already-seen entries, so each entry is injected at most once and a long conversation doesn't keep re-surfacing the same block. The mark is in-memory only — a server restart re-surfaces at most one window.
+- The formatted block (`format_recent_journal_for_context`) is emitted as a `recent_journal` role message, added to `ROLE_REMAP` → `user`. If the block overflows `max_tokens`, the oldest entries are dropped first (the newest is always kept).
+
+### Skip conditions
+
+Skipped for heartbeat / scheduled / child-agent modes (mirrors `_compose_notes`), and when `recent_journal.enabled` is `false`.
+
+### Relationship to `dream`
+
+Overlaps intentionally with the [`dream`](skills.md) skill, which distills journal entries into curated vault pages over time. Dream is long-term consolidation (lossy, scheduled, distilled); recent-journal surfacing is short-term working memory (raw, per-turn, temporal). Different lifecycles — both justified.
+
+### Configuration
+
+See [config.md#recent_journal](config.md#recent_journal). Config dataclass: `RecentJournalConfig` in `config_types.py` (`enabled`, `max_hours` default 24, `max_entries` default 5, `max_tokens` default 1024), `RECENT_JOURNAL_` env prefix.
 
 ## Tool-result clearing (lightweight tier)
 

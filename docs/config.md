@@ -123,6 +123,19 @@ Per-conversation scratchpad — always-loaded `notes_append` / `notes_read` tool
 
 `max_entry_chars` is the silent-truncation cap on individual notes. `context_max_entries` and `context_max_chars` together bound the auto-inject — at most N entries, dropping oldest until the total body fits the char cap. `max_total_entries` is the file-level cap: when an append would push the file over the limit, oldest entries get dropped via an atomic rewrite so long-running conversations don't accumulate unbounded read-cost per turn (the composer reads the file every interactive turn). `0` disables the file cap. `enabled: false` disables both tools and the auto-inject.
 
+### `recent_journal`
+
+Auto-surface recently written journal entries at interactive turn start on a small fixed budget, separate from the dynamic semantic-retrieval pool so it doesn't compete with it. Recency is a strong signal as a retrieval *mode* — surfacing "what was I just thinking about?" — where it's weak folded into a composite similarity score. See [context-composer.md#recent-journal-surfacing](context-composer.md#recent-journal-surfacing) and #306.
+
+| Field | Type | Default | Env Var |
+|-------|------|---------|---------|
+| `enabled` | bool | `true` | `RECENT_JOURNAL_ENABLED` |
+| `max_hours` | int | `24` | `RECENT_JOURNAL_MAX_HOURS` |
+| `max_entries` | int | `5` | `RECENT_JOURNAL_MAX_ENTRIES` |
+| `max_tokens` | int | `1024` | `RECENT_JOURNAL_MAX_TOKENS` |
+
+`max_hours` and `max_entries` bound the window — journal entries written within the last N hours, capped at the most recent K, whichever is tighter. Only entries newer than the newest one already surfaced this conversation are injected (a high-water mark on `ComposerState`), so each entry appears at most once and a long conversation doesn't keep re-surfacing the same block. `max_tokens` is a soft cap on the injected body: if the window overflows it, the oldest entries are dropped first (the newest is always kept). Skipped for heartbeat / scheduled / child-agent modes. `enabled: false` disables the auto-inject. Overlaps intentionally with the `dream` skill (which distills journal → curated pages over time): dream is long-term consolidation, this is short-term working memory.
+
 ### `cleanup`
 
 Tool-result clearing — a lightweight pre-compaction tier that replaces large old tool-message bodies with a short stub (`[tool output cleared: N chars]`) so the agent loop doesn't keep paying attention budget on raw tool output it has already synthesized. Runs every iteration (cheap, in-memory). The original tool body remains durably written to the per-conversation JSONL archive — only the in-memory copy is edited. See [context-composer.md#tool-result-clearing-lightweight-tier](context-composer.md#tool-result-clearing-lightweight-tier) and #298.
