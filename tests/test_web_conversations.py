@@ -228,6 +228,41 @@ async def test_conv_routes_require_auth(unauthed_client):
 
 
 @pytest.mark.asyncio
+async def test_delete_conv_route_kills_terminal_sessions(authed_client, app, monkeypatch):
+    """Deleting a conversation kills its live terminal sessions (and only
+    its own — another conversation's sessions must survive)."""
+    from decafclaw.terminals import TerminalSession
+
+    create_resp = await authed_client.post(
+        "/api/conversations", json={"title": "To delete"}
+    )
+    conv_id = create_resp.json()["conv_id"]
+
+    registry = app.state.terminal_registry
+    killed = []
+
+    async def fake_kill(session, grace=1.0):
+        killed.append((session.conv_id, session.tab_id))
+
+    monkeypatch.setattr(registry, "kill", fake_kill)
+    target_session = TerminalSession(
+        conv_id=conv_id, tab_id="canvas_1", session_id="s1",
+        cwd="/tmp", shell="/bin/sh", pid=123, fd=9,
+    )
+    other_session = TerminalSession(
+        conv_id="other-conv", tab_id="canvas_1", session_id="s2",
+        cwd="/tmp", shell="/bin/sh", pid=456, fd=10,
+    )
+    registry._sessions[(conv_id, "canvas_1")] = target_session
+    registry._sessions[("other-conv", "canvas_1")] = other_session
+
+    resp = await authed_client.delete(f"/api/conversations/{conv_id}")
+    assert resp.status_code == 200
+    assert killed == [(conv_id, "canvas_1")]
+    assert list(registry._sessions.keys()) == [("other-conv", "canvas_1")]
+
+
+@pytest.mark.asyncio
 async def test_get_conv_route(authed_client):
     create_resp = await authed_client.post(
         "/api/conversations", json={"title": "Test"}

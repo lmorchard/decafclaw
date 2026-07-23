@@ -146,6 +146,16 @@ class HttpConfig:
 
 
 @dataclass
+class TerminalConfig:
+    enabled: bool = True
+    buffer_bytes: int = 10 * 1024 * 1024      # ring buffer cap per session
+    default_cwd: str | None = None            # falls back to workspace_path
+    allowed_cwd_roots: list[str] = field(default_factory=list)  # empty → [workspace, $HOME]
+    shell_override: str | None = None         # falls back to $SHELL or /bin/sh
+    max_sessions_per_conv: int = 8
+
+
+@dataclass
 class PreemptiveSearchConfig:
     """Pre-emptive keyword-match against the current user message to
     promote relevant deferred tools into the active set for the turn.

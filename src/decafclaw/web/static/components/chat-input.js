@@ -130,6 +130,17 @@ export class ChatInput extends LitElement {
     /** @type {HTMLInputElement|null} */ (this.querySelector('#file-input'))?.click();
   }
 
+  /** Open a terminal by sending the /terminal command over the normal send
+   * path — same server-side handler as typing it, no dedicated endpoint. */
+  #openTerminal() {
+    if (this.disabled) return;
+    this.dispatchEvent(new CustomEvent('send', {
+      detail: { text: '/terminal', attachments: [] },
+      bubbles: true,
+      composed: true,
+    }));
+  }
+
   // -- Drag and drop ----------------------------------------------------------
 
   /** @param {DragEvent} e */
@@ -185,8 +196,12 @@ export class ChatInput extends LitElement {
         <input type="file" id="file-input" multiple hidden
           @change=${this.#handleFileInput}>
         ${!this.disabled ? html`
-          <button class="attach-btn" @click=${this.#openFilePicker}
+          <button type="button" class="attach-btn" @click=${this.#openFilePicker}
             title="Attach file">&#128206;</button>
+        ` : nothing}
+        ${!this.disabled && this.convId ? html`
+          <button type="button" class="terminal-btn" @click=${this.#openTerminal}
+            title="Open a terminal" aria-label="Open a terminal">&gt;_</button>
         ` : nothing}
         <textarea
           placeholder=${this.placeholder}

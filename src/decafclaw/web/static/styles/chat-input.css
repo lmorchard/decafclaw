@@ -39,6 +39,17 @@ chat-input .attach-btn:hover {
   opacity: 1;
 }
 
+chat-input .terminal-btn {
+  cursor: pointer;
+  font-family: var(--pico-font-family-monospace, monospace);
+  font-weight: 700;
+  font-size: 1rem;
+  opacity: 0.7;
+}
+chat-input .terminal-btn:hover {
+  opacity: 1;
+}
+
 chat-input .input-row.drag-over {
   outline: 2px dashed var(--pico-primary);
   outline-offset: -2px;

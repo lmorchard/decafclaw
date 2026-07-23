@@ -316,3 +316,44 @@ def test_buttons_create_tokens_in_registry(http_config):
     build_confirm_buttons(http_config, "shell", "ls", "ls *", "ctx-1", "msg")
     # One token per button (3 for shell: approve, deny, add_pattern)
     assert len(registry) == before + 3
+
+
+# -- Server shutdown --------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_shutdown_http_server_kills_terminal_sessions(app, monkeypatch):
+    """The graceful-shutdown path must kill live PTYs — they're child
+    processes of this server and would otherwise be orphaned."""
+    import decafclaw.http_server as http_server_module
+
+    class FakeUvicornServer:
+        def __init__(self):
+            self.should_exit = False
+
+    fake_server = FakeUvicornServer()
+    monkeypatch.setattr(http_server_module, "_http_server", fake_server)
+    monkeypatch.setattr(http_server_module, "_http_app", app)
+
+    called = []
+
+    async def fake_shutdown_all():
+        called.append(True)
+
+    monkeypatch.setattr(app.state.terminal_registry, "shutdown_all", fake_shutdown_all)
+
+    await http_server_module.shutdown_http_server()
+
+    assert called == [True]
+    assert fake_server.should_exit is True
+
+
+@pytest.mark.asyncio
+async def test_shutdown_http_server_noop_when_not_running():
+    """No server started (``_http_server``/``_http_app`` still None) — must
+    not raise."""
+    import decafclaw.http_server as http_server_module
+
+    assert http_server_module._http_server is None
+    assert http_server_module._http_app is None
+    await http_server_module.shutdown_http_server()  # must not raise

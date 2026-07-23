@@ -64,6 +64,29 @@ const bundles = [
     entry: join(__dirname, 'leaflet-entry.js'),
     outfile: join(outdir, 'leaflet.js'),
   },
+  {
+    name: '@xterm/xterm',
+    entry: join(__dirname, 'xterm-entry.js'),
+    outfile: join(outdir, 'xterm.js'),
+  },
+  {
+    name: '@xterm/addon-fit',
+    entry: join(__dirname, 'xterm-addon-fit-entry.js'),
+    outfile: join(outdir, 'xterm-addon-fit.js'),
+    external: ['@xterm/xterm'],
+  },
+  {
+    name: '@xterm/addon-serialize',
+    entry: join(__dirname, 'xterm-addon-serialize-entry.js'),
+    outfile: join(outdir, 'xterm-addon-serialize.js'),
+    external: ['@xterm/xterm'],
+  },
+  {
+    name: '@xterm/addon-web-links',
+    entry: join(__dirname, 'xterm-addon-web-links-entry.js'),
+    outfile: join(outdir, 'xterm-addon-web-links.js'),
+    external: ['@xterm/xterm'],
+  },
 ];
 
 for (const bundle of bundles) {
@@ -104,5 +127,11 @@ const leafletImagesSrc = join(__dirname, 'node_modules', 'leaflet', 'dist', 'ima
 const leafletImagesDst = join(outdir, 'images');
 cpSync(leafletImagesSrc, leafletImagesDst, { recursive: true });
 console.log('Copied leaflet images');
+
+// Copy xterm.js CSS (terminal cursor/selection styling; not imported by the JS).
+const xtermCssSrc = join(__dirname, 'node_modules', '@xterm', 'xterm', 'css', 'xterm.css');
+const xtermCssDst = join(outdir, 'xterm.css');
+cpSync(xtermCssSrc, xtermCssDst);
+console.log('Copied xterm.css');
 
 console.log('Vendor bundle complete!');

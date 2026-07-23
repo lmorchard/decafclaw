@@ -447,6 +447,65 @@ async def test_close_tab_unknown_id(config, md_doc_registry, emit_recorder):
     assert "not found" in result.error
 
 
+class _FakeTerminalRegistry:
+    """Stand-in for TerminalRegistry — spies on kill() calls."""
+
+    def __init__(self, sessions):
+        self._sessions = sessions
+        self.killed = []
+
+    def get(self, conv_id, tab_id):
+        return self._sessions.get((conv_id, tab_id))
+
+    async def kill(self, session, grace=1.0):
+        self.killed.append(session)
+
+
+@pytest.mark.asyncio
+async def test_close_tab_kills_terminal_pty(config, emit_recorder):
+    state = {
+        "schema_version": 1,
+        "active_tab": "canvas_1",
+        "next_tab_id": 3,
+        "tabs": [
+            {"id": "canvas_1", "label": "Terminal", "widget_type": "terminal",
+             "data": {"session_id": "s1", "cwd": "/tmp", "shell": "/bin/sh"}},
+            {"id": "canvas_2", "label": "Table", "widget_type": "data_table",
+             "data": {}},
+        ],
+    }
+    canvas.write_canvas_state(config, "c", state)
+    session = object()
+    reg = _FakeTerminalRegistry({("c", "canvas_1"): session})
+
+    result = await canvas.close_tab(config, "c", "canvas_1", emit=emit_recorder,
+                                    registry=reg)
+    assert result.ok
+    assert reg.killed == [session]
+
+
+@pytest.mark.asyncio
+async def test_close_tab_non_terminal_does_not_kill(config, emit_recorder):
+    state = {
+        "schema_version": 1,
+        "active_tab": "canvas_2",
+        "next_tab_id": 3,
+        "tabs": [
+            {"id": "canvas_1", "label": "Terminal", "widget_type": "terminal",
+             "data": {"session_id": "s1", "cwd": "/tmp", "shell": "/bin/sh"}},
+            {"id": "canvas_2", "label": "Table", "widget_type": "data_table",
+             "data": {}},
+        ],
+    }
+    canvas.write_canvas_state(config, "c", state)
+    reg = _FakeTerminalRegistry({("c", "canvas_1"): object()})
+
+    result = await canvas.close_tab(config, "c", "canvas_2", emit=emit_recorder,
+                                    registry=reg)
+    assert result.ok
+    assert reg.killed == []
+
+
 @pytest.mark.asyncio
 async def test_set_active_tab(config, md_doc_registry, emit_recorder):
     await canvas.new_tab(config, "c", "markdown_document", {"content": "1"}, emit=emit_recorder)

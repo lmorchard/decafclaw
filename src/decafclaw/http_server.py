@@ -664,6 +664,11 @@ async def delete_conversation(request: Request, username: str) -> JSONResponse:
     if not conv or conv.user_id != username:
         return JSONResponse({"error": "not found"}, status_code=404)
 
+    # Kill any live terminal sessions before removing files out from under
+    # them — the shell's cwd may be inside the conversation's workspace.
+    terminal_registry = request.app.state.terminal_registry
+    await terminal_registry.kill_sessions_for_conv(conv_id)
+
     # Remove the {id}/ dir (archive, sidecars, uploads, workflow.json) and
     # any leftover flat legacy sidecar files.
     delete_conversation_files(config, conv_id)
@@ -1621,8 +1626,15 @@ async def ws_chat(websocket):
     state = websocket.app.state
     await websocket_chat(
         websocket, state.config, state.event_bus, state.app_ctx,
-        manager=state.manager,
+        manager=state.manager, terminal_registry=state.terminal_registry,
     )
+
+
+async def ws_terminal(websocket):
+    """WebSocket entry point — defers to the gateway in `web/websocket.py`."""
+    from .web.websocket import websocket_terminal
+    state = websocket.app.state
+    await websocket_terminal(websocket, state.config, state.terminal_registry)
 
 
 # -- Widget routes ------------------------------------------------------------
@@ -1785,7 +1797,9 @@ async def post_canvas_close_tab(request: Request, username: str) -> JSONResponse
         return JSONResponse({"error": "body must be a JSON object"}, status_code=400)
     tab_id = body.get("tab_id", "")
     emit = manager.emit if manager else None
-    result = await canvas_mod.close_tab(config, conv_id, tab_id, emit=emit)
+    result = await canvas_mod.close_tab(
+        config, conv_id, tab_id, emit=emit,
+        registry=request.app.state.terminal_registry)
     if not result.ok:
         return JSONResponse({"error": result.error}, status_code=400)
     return JSONResponse({"ok": True})
@@ -2074,6 +2088,7 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> Starlette:
         Route("/canvas/{conv_id}", get_canvas_page, methods=["GET"]),
         Route("/canvas/{conv_id}/{tab_id}", get_canvas_page, methods=["GET"]),
         WebSocketRoute("/ws/chat", ws_chat),
+        WebSocketRoute("/ws/terminal/{conv_id}/{tab_id}", ws_terminal),
     ]
 
     # Static file serving for web UI
@@ -2093,17 +2108,21 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> Starlette:
     app.state.event_bus = event_bus
     app.state.manager = manager
     app.state.app_ctx = app_ctx
+    from .terminals import TerminalRegistry
+    app.state.terminal_registry = TerminalRegistry(config)
     return app
 
 
 _http_server = None  # uvicorn.Server instance, set by run_http_server
+_http_app: Starlette | None = None  # Starlette app instance, set by run_http_server
 
 
 async def run_http_server(config, event_bus, app_ctx=None, manager=None) -> None:
     """Start the HTTP server as an asyncio task."""
-    global _http_server
+    global _http_server, _http_app
     import uvicorn
     app = create_app(config, event_bus, app_ctx=app_ctx, manager=manager)
+    _http_app = app
     server_config = uvicorn.Config(
         app,
         host=config.http.host,
@@ -2116,6 +2135,15 @@ async def run_http_server(config, event_bus, app_ctx=None, manager=None) -> None
 
 
 async def shutdown_http_server() -> None:
-    """Gracefully shut down the HTTP server (avoids CancelledError tracebacks)."""
+    """Gracefully shut down the HTTP server (avoids CancelledError tracebacks).
+
+    Also kills any still-running terminal PTY sessions first — they're
+    child processes of this server, not the OS session, and would
+    otherwise be orphaned on restart/shutdown.
+    """
+    if _http_app is not None:
+        reg = getattr(_http_app.state, "terminal_registry", None)
+        if reg is not None:
+            await reg.shutdown_all()
     if _http_server is not None:
         _http_server.should_exit = True

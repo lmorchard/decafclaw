@@ -85,6 +85,13 @@ canvas-panel {
   min-height: 0;
   overflow: hidden;
 }
+/* Canvas keep-alive host (#442): canvas-panel mounts one dc-widget-host
+   per tab, all kept in the DOM, and hides every non-active one. The rule
+   above sets `display: flex` on every `.canvas-body > dc-widget-host`
+   unconditionally (specificity 0,1,1), which outguns the UA default
+   `[hidden] { display: none }` (0,1,0) — without this override, hidden
+   hosts would still render and stack in the flex column. */
+.canvas-body > dc-widget-host[hidden] { display: none; }
 .canvas-empty { padding: 1rem; color: var(--pico-muted-color); }
 
 /* Resummon pill uses .dc-floating-btn for border/radius/shadow.

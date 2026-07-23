@@ -6,6 +6,7 @@ Resolution order (first non-empty wins):
   3. Dataclass default
 """
 
+import dataclasses
 import json
 import logging
 import os
@@ -35,6 +36,7 @@ from .config_types import (
     ReflectionConfig,
     RelevanceConfig,
     TelemetryConfig,
+    TerminalConfig,
     VaultConfig,
     VaultGuideConfig,
     VaultRetrievalConfig,
@@ -164,6 +166,7 @@ class Config:
     embedding: EmbeddingConfig = field(default_factory=EmbeddingConfig)
     heartbeat: HeartbeatConfig = field(default_factory=HeartbeatConfig)
     http: HttpConfig = field(default_factory=HttpConfig)
+    terminal: TerminalConfig = field(default_factory=TerminalConfig)
     agent: AgentConfig = field(default_factory=AgentConfig)
     skills: dict[str, dict[str, Any]] = field(default_factory=dict)
     reflection: ReflectionConfig = field(default_factory=ReflectionConfig)
@@ -406,6 +409,9 @@ def load_config() -> Config:
     http = load_sub_config(
         HttpConfig, file_data.get("http", {}), "HTTP")
 
+    terminal = load_sub_config(
+        TerminalConfig, file_data.get("terminal", {}), "TERMINAL")
+
     agent = load_sub_config(
         AgentConfig, file_data.get("agent", {}), "",
         env_aliases={
@@ -542,6 +548,7 @@ def load_config() -> Config:
         embedding=embedding,
         heartbeat=heartbeat,
         http=http,
+        terminal=terminal,
         agent=agent,
         skills=skills,
         reflection=reflection,
@@ -582,6 +589,11 @@ def load_config() -> Config:
     else:
         for entry in paths:
             normalize_folder(entry, warn_on_invalid=True)
+
+    # Guard: a JSON scalar/null where a list is expected passes through
+    # load_sub_config untouched (see vault.user_writable_paths precedent).
+    if not isinstance(config.terminal.allowed_cwd_roots, list):
+        config.terminal = dataclasses.replace(config.terminal, allowed_cwd_roots=[])
 
     return config
 
