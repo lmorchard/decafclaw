@@ -55,6 +55,7 @@ export class TerminalWidget extends LitElement {
 
   connectedCallback() {
     super.connectedCallback();
+    this._attempts = 0;   // fresh reconnect budget on (re)mount
     this._mountTerminal();
     this._maybeConnect();
   }
@@ -125,7 +126,12 @@ export class TerminalWidget extends LitElement {
     const ws = new WebSocket(this._wsUrl());
     ws.binaryType = 'arraybuffer';
     this._ws = ws;
-    ws.onopen = () => { this._attempts = 0; this._state = 'replaying'; this._replaying = true; };
+    ws.onopen = () => {
+      this._attempts = 0;
+      this._state = 'replaying';
+      this._replaying = true;
+      this._term.reset();   // replayed scrollback REPLACES, not appends to, on-screen content
+    };
     ws.onmessage = (e) => this._onMessage(e);
     ws.onclose = () => this._onClose();
     ws.onerror = () => { /* onclose follows; reconnect handled there */ };
@@ -137,7 +143,12 @@ export class TerminalWidget extends LitElement {
       this._term.write(new Uint8Array(e.data));
       return;
     }
-    const msg = JSON.parse(e.data);
+    let msg;
+    try {
+      msg = JSON.parse(e.data);
+    } catch {
+      return;  // ignore malformed control frame
+    }
     if (msg.type === 'buffer_replay_done') {
       this._replaying = false;
       this._state = 'attached';

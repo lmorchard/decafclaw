@@ -284,6 +284,19 @@ chat-message .tool-result-raw pre {
   padding: 1rem 1.25rem;
 }
 
+/* ---- terminal ---- */
+
+/* Banner/status states (ended, error, waiting, reconnecting) render as
+   plain divs — no visual styling from xterm.css (which only covers the
+   live terminal surface). Keep this minimal and theme-aware. */
+.dc-terminal-banner,
+.dc-terminal-status {
+  padding: 0.75rem 1rem;
+  text-align: center;
+  font-size: 0.85rem;
+  color: var(--pico-muted-color);
+}
+
 /* ---- code_block ---- */
 
 .code-block {
