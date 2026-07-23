@@ -263,7 +263,6 @@ export class CanvasPanel extends LitElement {
       let hostEl = this._hosts.get(t.id);
       if (!hostEl) {
         hostEl = /** @type {any} */ (document.createElement('dc-widget-host'));
-        hostEl.className = 'dc-canvas-host';
         hostEl.fallbackText = 'Canvas widget unavailable';
         this._hosts.set(t.id, hostEl);
       }
