@@ -170,13 +170,21 @@ def _suggest_tool_names(name: str, candidates: set[str], max_results: int = 5) -
     """
     if not candidates:
         return []
+    # Never suggest the unknown name back to the caller (#355): if it's
+    # present in the candidate pool (e.g. a deferred/unactivated tool),
+    # difflib would return it as an exact ratio-1.0 match. Case-insensitive
+    # so a candidate differing only in case is treated as the same name.
+    name_lower = name.lower()
+    candidates = {c for c in candidates if c.lower() != name_lower}
+    if not candidates:
+        return []
     suggestions: list[str] = []
     # Suffix match catches the common "dropped prefix" case (e.g. Gemini
     # truncating `mcp__oblique-strategies__get_strategy` to
     # `strategies__get_strategy`).
     for cand in candidates:
         if cand.endswith(f"__{name}") or cand.endswith(name):
-            if cand != name and cand not in suggestions:
+            if cand not in suggestions:
                 suggestions.append(cand)
     # difflib fuzzy match for general typos
     for cand in difflib.get_close_matches(name, list(candidates), n=max_results, cutoff=0.6):
