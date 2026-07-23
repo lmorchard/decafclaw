@@ -49,6 +49,8 @@ Use `CRITICAL_TOOLS` to force-promote additional tools (extends, does not replac
 2. Skill catalog entries (skill name + description) — returns the skill name, NOT the individual tools. The agent must call `activate_skill(name)` to load the skill's body and tools.
 3. Hidden skill-tool inventory (tool names + descriptions of tools provided by unactivated skills) — surfaces the OWNING SKILL, so an agent that recalled a specific tool name still gets routed to `activate_skill` rather than a bypass-load that would skip the skill body.
 
+Keyword matches are **ranked by relevance**, not returned in pool order: an exact name match scores highest, a partial name match next, and a description-only match last (`3 / 2 / +1`; a match scoring in both name and description sums). This keeps a query that names a tool (e.g. `wait`) from being outranked by an unrelated tool that merely mentions the word in its description (e.g. `heartbeat_trigger`'s "without waiting"). Skills and tools are each rendered in ranked order, and `max_results` truncation keeps the highest-scored matches. Ties preserve discovery / pool order.
+
 **Exact selection**: `select:writing-clearly,workspace_edit` accepts both skill names (returns skill) and tool names. Hidden skill-tool names also surface their owning skill.
 
 Tools become callable on the next LLM iteration. Skills must be explicitly activated via `activate_skill`.

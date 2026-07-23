@@ -33,55 +33,90 @@ def tool_search(ctx, query: str, max_results: int = 10) -> ToolResult:
     else:
         keyword = query.lower()
 
-    def _matches(name: str, desc: str) -> bool:
-        if is_select:
-            return name in requested_names
-        return keyword in name.lower() or keyword in desc.lower()
+    def _score(name: str, desc: str) -> int:
+        """Relevance of a name+description pair to the query.
 
-    # 1. Match the skill catalog (name + description per skill).
-    matched_skills: dict[str, str] = {}  # skill name → description (deduped)
+        `select:` is an exact-name lookup (1 = named, 0 = not). Keyword
+        search ranks name-token matches above description-only matches so a
+        query naming a tool doesn't get outranked by an unrelated tool that
+        happens to mention the word in its description (#526)."""
+        if is_select:
+            return 1 if name in requested_names else 0
+        n = name.lower()
+        score = 0
+        if keyword == n:
+            score += 3  # exact name match — strongest signal
+        elif keyword in n:
+            score += 2  # partial name match
+        if keyword in desc.lower():
+            score += 1  # description-only match ranks last
+        return score
+
+    # 1. Match the skill catalog (name + description per skill). Track the
+    #    best score seen per skill so a hidden-tool-name hit (step 2) can
+    #    raise a skill already matched by its catalog entry.
+    matched_skills: dict[str, tuple[str, int]] = {}  # name → (description, score)
+
+    def _record_skill(skill_name: str, description: str, score: int) -> None:
+        existing = matched_skills.get(skill_name)
+        if existing is None or score > existing[1]:
+            matched_skills[skill_name] = (description, score)
+
     for skill in discovered_skills:
         if skill.name in activated:
             continue
-        if _matches(skill.name, skill.description):
-            matched_skills.setdefault(skill.name, skill.description)
+        score = _score(skill.name, skill.description)
+        if score:
+            _record_skill(skill.name, skill.description, score)
 
     # 2. Walk the deferred pool. Skill tools redirect to their owning
     #    skill; non-skill deferred tools (core demoted + MCP) get
     #    fetched into the active set as today.
-    fetched_tool_defs: list[dict] = []
+    scored_tool_defs: list[tuple[int, dict]] = []
     for td in pool:
         name = td.get("function", {}).get("name", "")
         if not name:
             continue
         desc = get_description(td)
         owning_skill = skill_tool_owners.get(name)
+        score = _score(name, desc)
+        if not score:
+            continue
         if owning_skill:
             if owning_skill in activated:
                 continue
-            if _matches(name, desc):
-                # Surface the skill, not the tool. Look up the skill's
-                # description for the response.
-                if owning_skill not in matched_skills:
-                    for s in discovered_skills:
-                        if s.name == owning_skill:
-                            matched_skills[owning_skill] = s.description
-                            break
+            # Surface the skill, not the tool. Look up the skill's
+            # description for the response.
+            skill_desc = ""
+            for s in discovered_skills:
+                if s.name == owning_skill:
+                    skill_desc = s.description
+                    break
+            _record_skill(owning_skill, skill_desc, score)
         else:
-            if _matches(name, desc):
-                fetched_tool_defs.append(td)
+            scored_tool_defs.append((score, td))
+
+    # Order both result sets by score (descending), highest-signal first.
+    # sorted() is stable, so ties keep skill-discovery / pool order.
+    ranked_skills = sorted(
+        matched_skills.items(), key=lambda kv: kv[1][1], reverse=True
+    )
+    fetched_tool_defs = [
+        td for _, td in sorted(scored_tool_defs, key=lambda st: st[0], reverse=True)
+    ]
 
     # Bound keyword-mode results across the combined output. Exact
     # `select:` queries return everything the user named.
-    if not is_select and (matched_skills or fetched_tool_defs):
-        total = len(matched_skills) + len(fetched_tool_defs)
+    if not is_select and (ranked_skills or fetched_tool_defs):
+        total = len(ranked_skills) + len(fetched_tool_defs)
         if total > max_results:
             # Prefer skills first (lighter — agent decides whether to
-            # activate), then fill remaining budget with tools.
-            keep_skills = list(matched_skills.items())[:max_results]
-            matched_skills = dict(keep_skills)
-            remaining = max_results - len(matched_skills)
+            # activate), then fill remaining budget with tools. Both lists
+            # are already ranked, so truncation keeps the best matches.
+            ranked_skills = ranked_skills[:max_results]
+            remaining = max_results - len(ranked_skills)
             fetched_tool_defs = fetched_tool_defs[: max(remaining, 0)]
+    matched_skills = dict(ranked_skills)
 
     missing: set[str] = set()
     if is_select:
@@ -110,8 +145,8 @@ def tool_search(ctx, query: str, max_results: int = 10) -> ToolResult:
             f"{len(matched_skills)} skill(s) matched. Call "
             "activate_skill(name) to load a skill's body and tools."
         )
-        for skill_name in sorted(matched_skills):
-            parts.append(f"- **{skill_name}**: {matched_skills[skill_name]}")
+        for skill_name, (description, _score_) in ranked_skills:
+            parts.append(f"- **{skill_name}**: {description}")
 
     if fetched_tool_defs:
         parts.append(

@@ -100,6 +100,43 @@ class TestExactSelectionNonSkillTools:
         assert "mcp__playwright__click" in fetched
 
 
+class TestKeywordScoring:
+    """Name-token matches must outrank description-only matches (#526)."""
+
+    @pytest.fixture
+    def scoring_ctx(self, ctx):
+        ctx.tools.deferred_pool = [
+            # Only mentions the keyword in its description ("without waiting").
+            _make_tool_def(
+                "heartbeat_trigger",
+                "Manually trigger a heartbeat cycle without waiting for the tick.",
+            ),
+            # Exact name match for the keyword "wait".
+            _make_tool_def(
+                "wait",
+                "Sleep for the specified number of seconds before returning.",
+            ),
+        ]
+        ctx.config.skill_tool_owners = {}
+        ctx.config.discovered_skills = []
+        return ctx
+
+    def test_name_match_outranks_description_match(self, scoring_ctx):
+        result = tool_search(scoring_ctx, "wait")
+        # Both tools match, but the tool named `wait` must be rendered first.
+        assert '"name": "wait"' in result.text
+        assert "heartbeat_trigger" in result.text
+        assert result.text.index('"name": "wait"') < result.text.index(
+            "heartbeat_trigger"
+        )
+
+    def test_max_results_keeps_highest_scored(self, scoring_ctx):
+        # With a budget of 1, the name match must survive the truncation.
+        result = tool_search(scoring_ctx, "wait", max_results=1)
+        assert '"name": "wait"' in result.text
+        assert "heartbeat_trigger" not in result.text
+
+
 class TestEmptyPool:
     def test_no_pool(self, ctx):
         ctx.config.skill_tool_owners = {}
