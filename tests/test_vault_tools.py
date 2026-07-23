@@ -2,6 +2,7 @@
 
 import os
 import time
+from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -10,6 +11,8 @@ from decafclaw.skills.vault._grants import add_grant
 from decafclaw.skills.vault.tools import (
     GateOutcome,
     _check_user_write_allowed,
+    format_recent_journal_for_context,
+    read_recent_journal_entries,
     resolve_page,
     tool_vault_backlinks,
     tool_vault_delete,
@@ -759,6 +762,82 @@ class TestVaultRenameUserFolders:
             await tool_vault_rename(ctx, "creative/A", "notes/B")
         assert "creative/A.md" in captured["message"]
         assert "notes/B.md" in captured["message"]
+
+
+def _write_journal(config, day: datetime, entries: list[tuple[str, str]]):
+    """Write a daily journal file mirroring vault_journal_append's format.
+
+    ``entries`` is a list of ``(HH:MM, content)`` for the given ``day``.
+    """
+    d = config.vault_agent_journal_dir / str(day.year)
+    d.mkdir(parents=True, exist_ok=True)
+    path = d / f"{day:%Y-%m-%d}.md"
+    text = ""
+    for hhmm, content in entries:
+        text += f"\n## {day:%Y-%m-%d} {hhmm}\n\n- **tags:** test\n\n{content}\n"
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+class TestReadRecentJournalEntries:
+    def test_reads_only_entries_within_window(self, config):
+        now = datetime(2026, 7, 23, 15, 0)
+        _write_journal(config, now, [
+            ("02:00", "old, outside 6h window"),
+            ("14:30", "recent, inside window"),
+        ])
+        got = read_recent_journal_entries(
+            config, now=now, max_hours=6, max_entries=5)
+        assert len(got) == 1
+        assert "recent" in got[0].text
+        assert got[0].timestamp == datetime(2026, 7, 23, 14, 30)
+
+    def test_caps_at_max_entries_keeping_most_recent(self, config):
+        now = datetime(2026, 7, 23, 15, 0)
+        _write_journal(config, now, [
+            ("11:00", "one"), ("12:00", "two"), ("13:00", "three"),
+            ("14:00", "four"), ("14:45", "five"),
+        ])
+        got = read_recent_journal_entries(
+            config, now=now, max_hours=24, max_entries=3)
+        # Most recent 3, returned chronological (oldest first).
+        assert [e.timestamp.strftime("%H:%M") for e in got] == \
+            ["13:00", "14:00", "14:45"]
+
+    def test_crosses_midnight_reads_both_files(self, config):
+        now = datetime(2026, 7, 23, 2, 0)
+        yesterday = now - timedelta(days=1)
+        _write_journal(config, yesterday, [("23:30", "late last night")])
+        _write_journal(config, now, [("01:15", "early this morning")])
+        got = read_recent_journal_entries(
+            config, now=now, max_hours=6, max_entries=5)
+        assert [e.text.split("\n")[-1] for e in got][-2:] == \
+            ["late last night", "early this morning"]
+
+    def test_missing_files_return_empty(self, config):
+        now = datetime(2026, 7, 23, 15, 0)
+        assert read_recent_journal_entries(
+            config, now=now, max_hours=24, max_entries=5) == []
+
+    def test_zero_bounds_return_empty(self, config):
+        now = datetime(2026, 7, 23, 15, 0)
+        _write_journal(config, now, [("14:30", "recent")])
+        assert read_recent_journal_entries(
+            config, now=now, max_hours=0, max_entries=5) == []
+        assert read_recent_journal_entries(
+            config, now=now, max_hours=24, max_entries=0) == []
+
+    def test_format_includes_header_and_bodies(self, config):
+        now = datetime(2026, 7, 23, 15, 0)
+        _write_journal(config, now, [
+            ("13:00", "first thought"), ("14:00", "second thought"),
+        ])
+        got = read_recent_journal_entries(
+            config, now=now, max_hours=24, max_entries=5)
+        text = format_recent_journal_for_context(got, max_hours=24)
+        assert "last 24h" in text
+        assert "first thought" in text
+        assert text.index("first thought") < text.index("second thought")
 
 
 class TestVaultJournalAppend:
