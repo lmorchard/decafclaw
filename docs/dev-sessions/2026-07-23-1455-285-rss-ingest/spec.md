@@ -185,6 +185,6 @@ Fixtures: static RSS 2.0 + Atom sample files under `tests/fixtures/`.
 - Unit tests green, no network.
 - Manual smoke: add a real feed via `fetch.sh add`, run `fetch.sh`, confirm
   markdown output; run again, confirm no re-emission (incremental works).
-- Not LLM-visible routing → no eval. (The skill catalog entry is a new
-  description; if it risks overlap with mastodon/linkding ingest, add a
-  `tool_choice`/theme eval — decide at plan time.)
+- **No eval.** This is an opt-in contrib skill; per project convention we
+  don't add eval coverage for contrib skills. (Decided at review — keep
+  deferred.)
