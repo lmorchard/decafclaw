@@ -97,3 +97,17 @@ Two bugs unit tests + all 3 review layers missed:
 Lesson: JS runtime/bundle-interop bugs are invisible to tsc + Python unit tests
 + diff review. A real-browser smoke is the only net. Worth an eval/JS-test
 follow-up, but the browser check is non-negotiable for widget work.
+
+## REVERSAL: back to pty.fork (CI, 2026-07-23)
+
+The posix_spawn(setsid=True) decision above was REVERSED after PR #627 CI
+(ubuntu-latest) failed with `NotImplementedError: posix_spawn: setsid
+unavailable on this platform`. setsid-in-posix_spawn is not portable — it
+works on macOS (via a CPython fallback) but not on the Linux CI/deploy target,
+where it would break `/terminal` entirely. Per Les's original fallback ("if
+the non-deprecated path is infeasible, keep fork and don't suppress"), `spawn()`
+now uses `pty.fork()` (portable controlling-TTY via login_tty). The
+multi-threaded-fork DeprecationWarning is NOT suppressed — it's ignored by
+Python's default filter in normal runs and only appears in pytest's warnings
+summary (no filterwarnings=error, so it doesn't fail tests). Lesson: verify
+platform-specific syscalls on the DEPLOY platform (Linux), not just macOS dev.

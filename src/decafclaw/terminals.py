@@ -8,7 +8,7 @@ import asyncio
 import fcntl
 import logging
 import os
-import shlex
+import pty
 import signal
 import struct
 import termios
@@ -35,10 +35,11 @@ class TerminalSession:
 
 
 class TerminalRegistry:
-    def __init__(self, config, *, loop=None, os_module=os):
+    def __init__(self, config, *, loop=None, os_module=os, pty_module=pty):
         self._config = config
         self._loop = loop
         self._os = os_module
+        self._pty = pty_module
         self._sessions: dict[tuple[str, str], TerminalSession] = {}
         self._lock = asyncio.Lock()
         # WS-json senders keyed by session, for control frames (size_changed,
@@ -62,32 +63,34 @@ class TerminalRegistry:
     # -- spawn ---------------------------------------------------------------
     async def spawn(self, conv_id, tab_id, session_id, cwd, shell) -> TerminalSession:
         loop = self._loop or asyncio.get_running_loop()
-        master, slave = self._os.openpty()
-        env = dict(self._os.environ)          # built in the PARENT, not a forked child
+        # pty.fork() is the portable way to get a child in its OWN session with
+        # the PTY as its controlling terminal (login_tty: setsid + TIOCSCTTY) —
+        # required for job control and for killpg() to tear down the shell tree
+        # without touching the server. posix_spawn(setsid=True) is not available
+        # on all platforms (NotImplementedError on Linux/CI), so we fork.
+        # Forking a multi-threaded interpreter emits a DeprecationWarning; per
+        # project decision we do NOT suppress it (it is ignored by Python's
+        # default warning filter in normal runs). Build env in the parent so the
+        # child only chdir + execvpe between fork and exec.
+        env = dict(self._os.environ)
         env["TERM"] = "xterm-256color"
-        # posix_spawn has no portable chdir; trampoline through sh to set cwd,
-        # then exec the target shell so its pid IS session.pid (survives exec).
-        inner = f"cd {shlex.quote(cwd)} && exec {shlex.quote(shell)}"
-        argv = ["/bin/sh", "-c", inner]
-        file_actions = [
-            (os.POSIX_SPAWN_DUP2, slave, 0),
-            (os.POSIX_SPAWN_DUP2, slave, 1),
-            (os.POSIX_SPAWN_DUP2, slave, 2),
-            (os.POSIX_SPAWN_CLOSE, slave),
-            (os.POSIX_SPAWN_CLOSE, master),
-        ]
-        try:
-            pid = self._os.posix_spawn(argv[0], argv, env,
-                                       file_actions=file_actions, setsid=True)
-        finally:
-            self._os.close(slave)             # parent keeps only the master fd
+        pid, fd = self._pty.fork()
+        if pid == 0:  # child
+            try:
+                self._os.chdir(cwd)
+            except OSError:
+                pass
+            try:
+                self._os.execvpe(shell, [shell], env)
+            except OSError:
+                self._os._exit(127)  # exec failed — do not fall back into async code
         session = TerminalSession(
             conv_id=conv_id, tab_id=tab_id, session_id=session_id,
-            cwd=cwd, shell=shell, pid=pid, fd=master,
+            cwd=cwd, shell=shell, pid=pid, fd=fd,
         )
         self._sessions[(conv_id, tab_id)] = session
         self._json_sinks[id(session)] = {}
-        loop.add_reader(master, self._on_readable, session)
+        loop.add_reader(fd, self._on_readable, session)
         log.info("terminal spawned conv=%s tab=%s pid=%s cwd=%s shell=%s",
                  conv_id, tab_id, pid, cwd, shell)
         return session

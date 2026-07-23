@@ -57,24 +57,23 @@ Three pieces, all human-only:
   `[session ended]` status line for terminal states the PTY itself can't
   render.
 
-### Spawning: `os.posix_spawn`, not `pty.fork()`
+### Spawning: `pty.fork()`
 
-The registry's `spawn()` uses `os.openpty()` + `os.posix_spawn(...,
-setsid=True)`, not the more obvious `pty.fork()`. `pty.fork()` calls
-`os.fork()` under the hood, and forking a multi-threaded interpreter (which
-the server always is — asyncio + uvicorn + reader threads) trips CPython's
-`DeprecationWarning: ... forkpty() may lead to deadlocks in the child`. That
-warning is a real runtime-safety caution, not deprecated-API noise, and this
-project has zero tolerance for warning suppression. `posix_spawn` sidesteps
-it entirely — no interpreter fork, no event-loop-blocking fork, no warning.
+The registry's `spawn()` uses `pty.fork()`. The child gets its own session
+with the PTY as its controlling terminal (`login_tty` = `setsid` +
+`TIOCSCTTY`), which is what makes job control work and lets `killpg()` tear
+down the whole shell tree without touching the server. The child only
+`chdir`s to the CWD and `execvpe`s the shell between fork and exec (the
+environment is built in the parent to keep child-side work minimal).
 
-Because `posix_spawn` has no portable `chdir`, the CWD is set via a
-trampoline: the spawned command is `sh -c 'cd <cwd> && exec <shell>'`. The
-`exec` replaces the shell process image in place, so the trampoline's pid
-*is* the final shell's pid — `session.pid` stays valid for `waitpid`/`killpg`
-even though a `sh` briefly ran first. The child is spawned into its own
-session (`setsid=True`) with the PTY slave dup'd onto its stdio, giving it a
-working controlling TTY.
+We first tried `os.posix_spawn(..., setsid=True)` to avoid forking a
+multi-threaded interpreter (which trips CPython's `DeprecationWarning: ...
+forkpty() may lead to deadlocks in the child`). But `posix_spawn`'s `setsid`
+is not available on all platforms — it raises `NotImplementedError` on Linux
+(CI and the deploy target), which would break `/terminal` entirely there. So
+we fork. Per project decision the fork's `DeprecationWarning` is **not
+suppressed**; it is ignored by Python's default warning filter in normal runs
+and only shows in pytest's warnings summary (it does not fail tests).
 
 ### Output and replay
 
