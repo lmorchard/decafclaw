@@ -136,6 +136,26 @@ class TestKeywordScoring:
         assert '"name": "wait"' in result.text
         assert "heartbeat_trigger" not in result.text
 
+    def test_budget_keeps_high_scored_tool_over_low_scored_skill(self, ctx, tmp_path):
+        # A description-only skill match must not consume a tight budget and
+        # evict an exact-name tool match — truncation is score-aware across
+        # skills and tools together.
+        skill = SkillInfo(
+            name="helper-skill",
+            description="Assists with wait operations and other chores.",
+            location=tmp_path / "helper-skill",
+            trust_tier="extra",
+        )
+        skill.location.mkdir()
+        ctx.config.discovered_skills = [skill]
+        ctx.config.skill_tool_owners = {}
+        ctx.tools.deferred_pool = [
+            _make_tool_def("wait", "Sleep for the specified number of seconds."),
+        ]
+        result = tool_search(ctx, "wait", max_results=1)
+        assert '"name": "wait"' in result.text
+        assert "helper-skill" not in result.text
+
     def test_exact_name_outranks_partial_name_plus_description(self, ctx):
         # `wait_for` is a partial-name match AND hits the keyword in its
         # description; `wait` is an exact-name match only. The exact name

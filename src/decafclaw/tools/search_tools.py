@@ -111,21 +111,26 @@ def tool_search(ctx, query: str, max_results: int = 10) -> ToolResult:
     ranked_skills = sorted(
         matched_skills.items(), key=lambda kv: kv[1][1], reverse=True
     )
-    fetched_tool_defs = [
-        td for _, td in sorted(scored_tool_defs, key=lambda st: st[0], reverse=True)
-    ]
+    ranked_tools = sorted(scored_tool_defs, key=lambda st: st[0], reverse=True)
 
     # Bound keyword-mode results across the combined output. Exact
-    # `select:` queries return everything the user named.
-    if not is_select and (ranked_skills or fetched_tool_defs):
-        total = len(ranked_skills) + len(fetched_tool_defs)
-        if total > max_results:
-            # Prefer skills first (lighter — agent decides whether to
-            # activate), then fill remaining budget with tools. Both lists
-            # are already ranked, so truncation keeps the best matches.
-            ranked_skills = ranked_skills[:max_results]
-            remaining = max_results - len(ranked_skills)
-            fetched_tool_defs = fetched_tool_defs[: max(remaining, 0)]
+    # `select:` queries return everything the user named. The budget is
+    # score-aware across skills AND tools together, so a low-scoring
+    # (e.g. description-only) skill can't consume the budget and evict a
+    # higher-scoring tool. Skills win ties (kind_rank 0) — they're lighter
+    # pointers the agent chooses to activate. Rendering still groups skills
+    # then tools; only which matches survive the budget is combined.
+    if not is_select and len(ranked_skills) + len(ranked_tools) > max_results:
+        candidates = [
+            (score, 0, ("skill", name)) for name, (_desc, score) in ranked_skills
+        ] + [(score, 1, ("tool", i)) for i, (score, _td) in enumerate(ranked_tools)]
+        candidates.sort(key=lambda c: c[1])  # tiebreak: skills before tools
+        candidates.sort(key=lambda c: c[0], reverse=True)  # primary: score desc
+        kept = {ref for _score, _kind, ref in candidates[:max_results]}
+        ranked_skills = [rs for rs in ranked_skills if ("skill", rs[0]) in kept]
+        ranked_tools = [rt for i, rt in enumerate(ranked_tools) if ("tool", i) in kept]
+
+    fetched_tool_defs = [td for _score, td in ranked_tools]
     matched_skills = dict(ranked_skills)
 
     missing: set[str] = set()
