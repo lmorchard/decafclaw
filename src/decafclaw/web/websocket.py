@@ -467,8 +467,17 @@ async def _handle_terminal_command(ws_send: WSSendCallable, conv_id, text, usern
     if not result.ok:
         await _msg(f"Could not open terminal tab: {result.error}")
         return
+    tab_id = result.tab_id
+    assert tab_id is not None  # new_tab guarantees tab_id when ok=True
 
-    await registry.spawn(conv_id, result.tab_id, session_id, str(resolved), shell)
+    try:
+        await registry.spawn(conv_id, tab_id, session_id, str(resolved), shell)
+    except Exception as exc:
+        log.warning("terminal spawn failed conv=%s: %s", conv_id, exc)
+        await canvas.close_tab(config, conv_id, tab_id, emit=emit)
+        await _msg(f"Could not start terminal: {exc}")
+        return
+
     await ws_send({
         "type": WSMessageType.COMMAND_ACK, "conv_id": conv_id,
         "command": "/terminal", "skill": "terminal",

@@ -177,6 +177,71 @@ async def test_terminal_command_session_cap(terminal_send_env):
 
 
 @pytest.mark.asyncio
+async def test_terminal_command_spawn_failure_cleans_up_tab(terminal_send_env, monkeypatch):
+    """If `registry.spawn` raises after the tab was created, the handler
+    must clean up the orphaned tab, send a rejection, and let no exception
+    escape (#442 review finding: a spawn failure must not kill the WS)."""
+    env = terminal_send_env()
+
+    async def raising_spawn(conv_id, tab_id, session_id, cwd, shell):
+        raise OSError("openpty failed")
+
+    monkeypatch.setattr(env.registry, "spawn", raising_spawn)
+
+    close_tab_calls = []
+    orig_close_tab = canvas_mod.close_tab
+
+    async def spy_close_tab(config, conv_id, tab_id, emit=None):
+        close_tab_calls.append({"conv_id": conv_id, "tab_id": tab_id})
+        return await orig_close_tab(config, conv_id, tab_id, emit=emit)
+
+    monkeypatch.setattr(canvas_mod, "close_tab", spy_close_tab)
+
+    # No exception should escape the handler.
+    await env.handle_send({"conv_id": "c1", "text": "/terminal"})
+
+    # The orphaned tab was created and then removed.
+    assert env.new_tab_calls
+    assert close_tab_calls
+    assert close_tab_calls[0]["conv_id"] == "c1"
+    assert close_tab_calls[0]["tab_id"] is not None
+
+    # No lingering canvas tabs, no orphaned registry session.
+    state = canvas_mod.read_canvas_state(env.config, "c1")
+    assert state.get("tabs") == []
+    assert env.registry.count_for_conv("c1") == 0
+
+    # A rejection message was sent.
+    assert any("could not start" in (m.get("text") or "").lower() for m in env.sent)
+
+    # Invariants: no agent turn, no archive write, no COMMAND_ACK.
+    env.manager.enqueue_turn.assert_not_called()
+    assert env.archive_appends == []
+    assert not any(m["type"] == "command_ack" for m in env.sent)
+
+
+@pytest.mark.asyncio
+async def test_terminal_command_new_tab_failure_rejects_no_spawn(terminal_send_env, monkeypatch):
+    """If `canvas.new_tab` itself fails, the handler must reject cleanly
+    without ever calling `spawn` (Minor review note: confirm this branch)."""
+    env = terminal_send_env()
+
+    async def failing_new_tab(config, conv_id, widget_type, data, label=None, emit=None):
+        return canvas_mod.CanvasOpResult(ok=False, error="boom")
+
+    monkeypatch.setattr(canvas_mod, "new_tab", failing_new_tab)
+
+    await env.handle_send({"conv_id": "c1", "text": "/terminal"})
+
+    assert env.spawn_calls == []
+    assert env.registry.count_for_conv("c1") == 0
+    assert any("could not open terminal tab" in (m.get("text") or "").lower() for m in env.sent)
+    assert not any(m["type"] == "command_ack" for m in env.sent)
+    env.manager.enqueue_turn.assert_not_called()
+    assert env.archive_appends == []
+
+
+@pytest.mark.asyncio
 async def test_terminalfoo_does_not_match(terminal_send_env):
     """Guard: '/terminalfoo' must NOT be intercepted as '/terminal'."""
     env = terminal_send_env()
