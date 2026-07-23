@@ -184,6 +184,8 @@ Full doc index: [docs/index.md](docs/index.md). Hot files for navigation:
 - `prompts/` — System prompt assembly
 - `commands.py` — User-invokable commands
 - `reflection.py` — Self-reflection (Reflexion pattern)
+- `tool_telemetry.py` — Tool-usage telemetry subscriber + report (#310); `make tool-usage-report`
+- `reflection_metrics.py` — Reflection cost/effectiveness telemetry subscriber + stats (#409); `make reflection-stats`
 - `heartbeat.py`, `schedules.py`, `polling.py`
 - `notifications.py`, `notification_channels/`, `mail.py`
 - `mcp_client.py`
