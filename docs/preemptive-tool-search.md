@@ -37,7 +37,9 @@ Unlike the tool match, this is purely a **hint** — no auto-activation. The age
 
 The wording is intentionally bulleted (one skill per line) rather than comma-joined inline — small parent models attend to visual structure more reliably than to running prose, and the activation directive sits at the top where the model is most likely to read it.
 
-Diagnostics surface as a parallel source entry, `preempt_skill_matches`, with the same shape as `preempt_matches` (matched skills with score and matched tokens).
+**Hint trimming (#604).** On generic tokens the raw match set can run ~10 skills — a clearly-relevant skill buried among several score-1 matches. A dense hint dilutes the routing signal (the model tends to fall back to always-loaded general tools instead of activating the relevant skill). So the **visible hint** lists only skills scoring within a small gap of the top match — `score >= max(_HINT_MIN_SCORE, top_score - _HINT_SCORE_GAP)` (constants in `context_composer.py`, currently floor 2 / gap 1) — always keeping at least one. Crucially this trims *only the hint text*: the full match set still lands on `ctx.skills.preempt_matches`, so a lower-scoring but genuinely-relevant skill's tools are still promoted for the turn — it just isn't named in the hint.
+
+Diagnostics surface as a parallel source entry, `preempt_skill_matches`. `details.matches` is the full promoted set (with score and matched tokens); `details.hinted` is the subset actually named in the hint, and `promoted_count` / `hinted_count` record the split.
 
 ## Why "user + previous assistant"?
 
