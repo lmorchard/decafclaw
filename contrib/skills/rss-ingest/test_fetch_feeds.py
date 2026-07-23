@@ -5,6 +5,8 @@ import importlib.util
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import pytest
+
 _THIS_DIR = Path(__file__).parent
 _spec = importlib.util.spec_from_file_location(
     "decafclaw_contrib_rss_fetch_feeds", _THIS_DIR / "fetch_feeds.py"
@@ -68,6 +70,19 @@ def test_render_markdown_groups_by_feed_and_shows_fields():
     assert "2026-07-23" in md
 
 
+def test_clean_summary_strips_html_unescapes_and_truncates():
+    raw = "<p>Hello <b>world</b> &amp; friends</p>\n<p>line two</p>"
+    assert ff.clean_summary(raw) == "Hello world & friends line two"
+    long = "<p>" + ("x" * 600) + "</p>"
+    out = ff.clean_summary(long, max_chars=50)
+    assert len(out) == 51  # 50 chars + ellipsis
+    assert out.endswith("…")
+
+
+def test_clean_summary_empty():
+    assert ff.clean_summary("") == ""
+
+
 def test_save_state_caps_seen_guids(tmp_path):
     p = tmp_path / "state.json"
     guids = [f"g{i}" for i in range(300)]
@@ -86,9 +101,6 @@ def test_feeds_add_is_idempotent_and_remove_works():
     removed = ff.feeds_remove(added, "https://b.example/x.xml")
     assert "b.example" not in removed
     assert "a.example" in removed
-
-
-import pytest
 
 
 def test_parse_feed_rss_fixture():
