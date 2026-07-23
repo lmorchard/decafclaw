@@ -83,6 +83,31 @@ def render_markdown(entries_by_feed: dict[str, list[dict]]) -> str:
     return "\n".join(blocks).strip() + ("\n" if blocks else "")
 
 
+def parse_feed(raw: str, feed_name: str) -> list[dict]:
+    """Parse raw RSS/Atom text into normalized Entry dicts.
+
+    The ONLY feedparser-dependent function — imported lazily so the module
+    stays importable where feedparser is absent (project test env).
+    """
+    import feedparser  # lazy: confined to this adapter
+
+    parsed = feedparser.parse(raw)
+    entries: list[dict] = []
+    for e in parsed.entries:
+        struct = e.get("published_parsed") or e.get("updated_parsed")
+        published = datetime(*struct[:6], tzinfo=UTC) if struct is not None else None
+        guid = e.get("id") or e.get("guid") or e.get("link") or ""
+        entries.append({
+            "guid": guid,
+            "title": e.get("title", "(untitled)"),
+            "link": e.get("link", ""),
+            "published": published,
+            "summary": e.get("summary", ""),
+            "feed_name": feed_name,
+        })
+    return entries
+
+
 def load_state(path: str | Path) -> dict:
     p = Path(path)
     if not p.exists():

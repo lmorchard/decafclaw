@@ -86,3 +86,30 @@ def test_feeds_add_is_idempotent_and_remove_works():
     removed = ff.feeds_remove(added, "https://b.example/x.xml")
     assert "b.example" not in removed
     assert "a.example" in removed
+
+
+import pytest
+
+
+def test_parse_feed_rss_fixture():
+    pytest.importorskip("feedparser")  # per-test: absent in the project env
+    raw = (_THIS_DIR / "fixtures" / "sample_rss.xml").read_text()
+    entries = ff.parse_feed(raw, "Sample Blog")
+    assert len(entries) == 2
+    first = entries[0]
+    assert first["title"] == "First Post"
+    assert first["link"] == "https://blog.example/first"
+    assert first["guid"] == "https://blog.example/first"
+    assert first["feed_name"] == "Sample Blog"
+    assert first["published"].year == 2026
+    assert "summary" in first["summary"].lower()
+
+
+def test_parse_feed_atom_fixture_uses_id_and_updated():
+    pytest.importorskip("feedparser")  # per-test: absent in the project env
+    raw = (_THIS_DIR / "fixtures" / "sample_atom.xml").read_text()
+    entries = ff.parse_feed(raw, "Sample Atom")
+    assert len(entries) == 1
+    assert entries[0]["guid"] == "urn:atom:e1"
+    assert entries[0]["link"] == "https://atom.example/e1"
+    assert entries[0]["published"] is not None
