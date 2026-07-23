@@ -51,6 +51,7 @@ export class TerminalWidget extends LitElement {
     this._ro = null;
     this._surface = null;
     this._reconnectTimer = null;
+    this._connectedKey = null;   // `${convId}/${tabId}` of the currently-targeted session
   }
 
   connectedCallback() {
@@ -67,9 +68,29 @@ export class TerminalWidget extends LitElement {
 
   /** @param {Map<string, any>} changed */
   updated(changed) {
-    if (changed.has('convId') || changed.has('tabId')) {
-      this._maybeConnect();
+    if (!(changed.has('convId') || changed.has('tabId'))) return;
+    // A shared-host standalone canvas window reuses one widget instance
+    // across terminal tabs (widget-host only recreates the child when the
+    // *tag* changes, not the props). If convId/tabId now point at a
+    // different session than the one we're connected to, the old socket
+    // must be dropped and a fresh one opened — otherwise keystrokes keep
+    // routing to the previous tab's shell.
+    const key = (this.convId && this.tabId) ? `${this.convId}/${this.tabId}` : null;
+    if (key && this._connectedKey && key !== this._connectedKey) {
+      this._retarget();
+      return;
     }
+    this._maybeConnect();
+  }
+
+  /** Drop the old session's socket/state and reconnect to the new target. */
+  _retarget() {
+    this._teardownSocket();
+    this._term.reset();   // clear the old session's scrollback
+    this._ended = null;
+    this._attempts = 0;
+    this._state = 'connecting';
+    this._connect();
   }
 
   _mountTerminal() {
@@ -123,6 +144,7 @@ export class TerminalWidget extends LitElement {
 
   _connect() {
     this._state = 'connecting';
+    this._connectedKey = `${this.convId}/${this.tabId}`;
     const ws = new WebSocket(this._wsUrl());
     ws.binaryType = 'arraybuffer';
     this._ws = ws;
