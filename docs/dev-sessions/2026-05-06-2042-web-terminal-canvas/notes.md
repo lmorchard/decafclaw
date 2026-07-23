@@ -59,3 +59,17 @@ corrections are in the spec's "Revisions — 2026-07-23" block. Summary:
 - macOS vs Linux PTY differences (`TIOCSWINSZ`, EIO-on-exit). Dev on macOS;
   deploy target Linux (`decafclaw@lmorchard`). Integration test must pass on
   both.
+
+## Decision: posix_spawn, not pty.fork (Task 2 review, 2026-07-23)
+
+`pty.fork()` in our multi-threaded server emits CPython's intrinsic
+`DeprecationWarning: ...forkpty() may lead to deadlocks in the child`. That
+warning is a runtime-safety caution (forkpty/os.forkpty are NOT deprecated
+APIs) about forking a multi-threaded interpreter. Rather than suppress it
+(against our "never suppress warnings" convention) we heed it: `spawn()` uses
+`os.openpty()` + `os.posix_spawn(..., setsid=True)` — no interpreter fork, no
+warning, no event-loop-blocking fork. Spiked on macOS: setsid + dup2'd slave
+gives the child a working controlling TTY (`/dev/tty` accessible). cwd is set
+via a `sh -c 'cd <cwd> && exec <shell>'` trampoline (posix_spawn has no
+portable chdir); the exec preserves pid so `session.pid` stays valid for
+waitpid/killpg. Linux (deploy target) supports setsid in posix_spawn via glibc.
