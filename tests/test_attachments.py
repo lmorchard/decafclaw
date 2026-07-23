@@ -9,6 +9,7 @@ from decafclaw.attachments import (
     save_attachment,
     uploads_dir,
 )
+from decafclaw.conversation_paths import conversations_root
 
 
 def test_save_attachment_writes_file(config):
@@ -86,3 +87,20 @@ def test_delete_conversation_uploads(config):
 def test_delete_conversation_uploads_noop_if_missing(config):
     # Should not raise
     delete_conversation_uploads(config, "nonexistent")
+
+
+# --- sandboxing (#587) ------------------------------------------------------
+
+
+def test_uploads_dir_traversal_stays_under_root(config):
+    # conv_id from web routes is user-controlled; a traversal id must not
+    # escape the conversations root.
+    root = conversations_root(config)
+    d = uploads_dir(config, "../../etc")
+    assert d.resolve().is_relative_to(root)
+
+
+def test_uploads_dir_empty_id_resolves_to_invalid(config):
+    root = conversations_root(config)
+    d = uploads_dir(config, "")
+    assert d == root / "_invalid" / "uploads"
