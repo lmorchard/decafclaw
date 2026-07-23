@@ -637,9 +637,15 @@ class TestTerminalConfig:
         assert cfg.terminal.buffer_bytes == 2048
         assert cfg.terminal.allowed_cwd_roots == ["/tmp", "/var"]
 
-    def test_terminal_config_bad_list_falls_back(self, monkeypatch):
-        # A JSON scalar where a list is expected must not crash config load.
+    def test_terminal_config_bad_list_falls_back(self, tmp_path, monkeypatch):
+        # A JSON null where a list is expected (via config.json) must not
+        # crash config load.
         from decafclaw.config import load_config
-        monkeypatch.setenv("TERMINAL_ALLOWED_CWD_ROOTS", "null")
-        cfg = load_config()
+        agent_dir = tmp_path / "decafclaw"
+        agent_dir.mkdir()
+        (agent_dir / "config.json").write_text(json.dumps({
+            "terminal": {"allowed_cwd_roots": None},
+        }))
+        monkeypatch.setenv("DATA_HOME", str(tmp_path))
+        cfg = load_config()  # must not raise
         assert cfg.terminal.allowed_cwd_roots == []

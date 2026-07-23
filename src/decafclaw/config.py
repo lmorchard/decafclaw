@@ -59,26 +59,18 @@ def _parse_bool(value: str, default: bool = False) -> bool:
     return value.strip().lower() in ("true", "1", "yes")
 
 
-def _parse_list(value: str) -> list[str] | None:
-    """Parse env var to list. Try JSON first, fall back to comma-split.
-
-    Returns None if JSON parsing succeeds but produces a non-list value (e.g. null).
-    The caller's type guard then coerces None to [].
-    """
+def _parse_list(value: str) -> list[str]:
+    """Parse env var to list. Try JSON first, fall back to comma-split."""
     value = value.strip()
     if not value:
         return []
-    # Try JSON parsing for any value (not just arrays)
-    try:
-        parsed = json.loads(value)
-        if isinstance(parsed, list):
-            return [str(item) for item in parsed]
-        # JSON parsed but not a list (e.g. null, string, number)
-        # Return None so the type guard can coerce it
-        return None
-    except json.JSONDecodeError:
-        pass
-    # Fall back to comma-split
+    if value.startswith("["):
+        try:
+            parsed = json.loads(value)
+            if isinstance(parsed, list):
+                return [str(item) for item in parsed]
+        except json.JSONDecodeError:
+            pass
     return [item.strip() for item in value.split(",") if item.strip()]
 
 
