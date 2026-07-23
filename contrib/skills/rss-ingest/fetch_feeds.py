@@ -91,7 +91,10 @@ def select_new_entries(entries: list[dict], feed_state: dict, now: datetime) -> 
         pub = e.get("published")
         if e["guid"] in seen:
             continue
-        if pub is not None and pub <= cutoff:
+        # Strict `<`: an entry sharing last_published's timestamp (common with
+        # day-granularity feeds) is still new if its guid is unseen. seen_guids
+        # above — not the timestamp — is what prevents re-emitting old items.
+        if pub is not None and pub < cutoff:
             continue
         out.append(e)
     out.sort(key=lambda e: (e["published"] or now))
@@ -270,6 +273,9 @@ def cmd_feeds(action: str, url: str | None, name: str | None) -> int:
         return 0
     if action == "remove":
         assert url is not None  # main() only calls remove with a URL argument
+        if not path.exists():
+            print(f"not found: {url}")  # nothing subscribed yet — don't create the file
+            return 0
         new = feeds_remove(text, url)
         path.write_text(new)
         print(f"removed: {url}" if new != text else f"not found: {url}")

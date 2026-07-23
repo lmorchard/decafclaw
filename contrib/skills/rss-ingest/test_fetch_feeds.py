@@ -61,6 +61,20 @@ def test_select_new_entries_dedupes_seen_guids():
     assert ff.select_new_entries([e], state, now) == []
 
 
+def test_select_new_entries_emits_same_timestamp_new_guid():
+    """An entry whose published == last_published but with a NEW guid must
+    still be emitted — day-granularity feeds share timestamps. seen_guids
+    (not the timestamp) is what prevents re-emitting already-seen items.
+    (#285 Copilot review — off-by-one boundary.)"""
+    now = datetime(2026, 7, 23, 12, 0, tzinfo=UTC)
+    ts = datetime(2026, 7, 23, 6, 0, tzinfo=UTC)
+    state = {"last_published": ts.isoformat(), "seen_guids": ["already"]}
+    same_seen = _entry("already", ts)  # same ts, already emitted → dropped
+    same_new = _entry("fresh", ts)     # same ts, NEW guid → must emit
+    out = ff.select_new_entries([same_seen, same_new], state, now)
+    assert [e["guid"] for e in out] == ["fresh"]
+
+
 def test_render_markdown_groups_by_feed_and_shows_fields():
     now = datetime(2026, 7, 23, 12, 0, tzinfo=UTC)
     md = ff.render_markdown({"Blog": [_entry("g", now, title="Hello", link="http://x/p")]})
@@ -81,6 +95,15 @@ def test_clean_summary_strips_html_unescapes_and_truncates():
 
 def test_clean_summary_empty():
     assert ff.clean_summary("") == ""
+
+
+def test_cmd_feeds_remove_before_any_add_does_not_crash(tmp_path, monkeypatch):
+    """`fetch.sh remove <url>` before the workspace state dir exists should
+    report 'not found' cleanly, not raise FileNotFoundError (#285 review)."""
+    monkeypatch.setenv("DECAFCLAW_WORKSPACE", str(tmp_path))
+    monkeypatch.delenv("PWD", raising=False)
+    rc = ff.cmd_feeds("remove", "https://nope.example/feed.xml", None)
+    assert rc == 0
 
 
 def test_save_state_caps_seen_guids(tmp_path):
