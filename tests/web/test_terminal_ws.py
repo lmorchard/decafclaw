@@ -1,11 +1,16 @@
 """Tests for the `/ws/terminal/{conv_id}/{tab_id}` WebSocket route."""
 
+import asyncio
+import json
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
 from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
-from decafclaw.terminals import TerminalSession
+from decafclaw.terminals import TerminalRegistry, TerminalSession
 from decafclaw.web.auth import create_token
+from decafclaw.web.websocket import websocket_terminal
 
 
 @pytest.fixture
@@ -74,3 +79,60 @@ def test_terminal_ws_tolerates_malformed_control_frames(authed_client_with_sessi
         ws.send_text('{"type": "resize", "cols": 80, "rows": 24}')
         msg = ws.receive_json()
         assert msg == {"type": "size_changed", "cols": 80, "rows": 24}
+
+
+@pytest.mark.asyncio
+async def test_ws_handler_serves_real_spawned_session(http_config):
+    """End-to-end seam the other tests stub around: a REAL spawned PTY session
+    (real fd + live reader) served through `websocket_terminal` — its buffer is
+    replayed to the socket and a resize round-trips to `size_changed`.
+
+    Driven against the handler directly with a fake WebSocket rather than
+    Starlette's TestClient: a live PTY reader is bound to the event loop it was
+    spawned on (`loop.add_reader`), and TestClient runs the app on a separate
+    portal loop — so a real-spawn-over-TestClient would cross loops. Here the
+    spawn, the reader, and the handler all share the one test loop (same shape
+    as `tests/test_terminals.py::test_real_pty_echo_and_cleanup`).
+    """
+    registry = TerminalRegistry(http_config)
+    # /bin/cat stays alive (echoes stdin), so the session is still attachable
+    # when the handler connects — unlike a one-shot command that exits first.
+    session = await registry.spawn("c1", "canvas_1", "s1", cwd="/tmp", shell="/bin/cat")
+    try:
+        await registry.write_input(session, b"ping-42\n")
+        # Wait on the real signal (buffer fills), not a fixed sleep.
+        for _ in range(200):
+            if b"ping-42" in bytes(session.buffer):
+                break
+            await asyncio.sleep(0.01)
+        assert b"ping-42" in bytes(session.buffer)
+
+        sent_bytes: list[bytes] = []
+        sent_json: list[dict] = []
+        ws = MagicMock()
+        ws.cookies = {"decafclaw_session": create_token(http_config, "testuser")}
+        ws.path_params = {"conv_id": "c1", "tab_id": "canvas_1"}
+        ws.accept = AsyncMock()
+        ws.close = AsyncMock()
+        ws.send_bytes = AsyncMock(side_effect=lambda b: sent_bytes.append(bytes(b)))
+        ws.send_json = AsyncMock(side_effect=lambda m: sent_json.append(m))
+        # One resize frame, then disconnect.
+        ws.receive = AsyncMock(side_effect=[
+            {"type": "websocket.receive",
+             "text": json.dumps({"type": "resize", "cols": 100, "rows": 30})},
+            {"type": "websocket.disconnect"},
+        ])
+
+        await websocket_terminal(ws, http_config, registry)
+
+        # Replay: the real session's buffer went out as a binary frame...
+        assert any(b"ping-42" in chunk for chunk in sent_bytes)
+        # ...followed by buffer_replay_done, and the resize round-tripped.
+        assert any(m.get("type") == "buffer_replay_done" for m in sent_json)
+        assert {"type": "size_changed", "cols": 100, "rows": 30} in sent_json
+        # Disconnect cleanup released the viewport (no leak).
+        assert session.viewports == {}
+    finally:
+        # Short grace: cat dies on SIGHUP immediately; no need for the full
+        # default 1s SIGHUP→SIGKILL window (keeps this test off the slow list).
+        await registry.kill(session, grace=0.1)
