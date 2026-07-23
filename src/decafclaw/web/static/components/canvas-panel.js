@@ -93,10 +93,9 @@ export class CanvasPanel extends LitElement {
     window.open(url, '_blank', 'noopener');
   }
 
-  /** @param {string} tabId @param {string} label */
-  _confirmAndClose(tabId, label) {
-    const name = label || tabId;
-    if (!window.confirm(`Close tab "${name}"?`)) return;
+  /** Close a tab. The confirm (terminal-aware) lives in closeTabFromUi so
+   * every close path prompts exactly once. @param {string} tabId */
+  _closeTab(tabId) {
     closeTabFromUi(tabId);
   }
 
@@ -164,7 +163,7 @@ export class CanvasPanel extends LitElement {
                     @click=${(e) => { e.stopPropagation(); this._openTabInWindow(t.id); }}>↗</button>
             <button class="canvas-mobile-tab-close" type="button"
                     aria-label="Close tab ${t.label || t.id}"
-                    @click=${(e) => { e.stopPropagation(); this._confirmAndClose(t.id, t.label); }}>×</button>
+                    @click=${(e) => { e.stopPropagation(); this._closeTab(t.id); }}>×</button>
           </div>
         `)}
       </div>
@@ -194,7 +193,7 @@ export class CanvasPanel extends LitElement {
             <button class="canvas-tab-close" type="button"
                     title="Close tab"
                     aria-label="Close tab ${t.label || t.id}"
-                    @click=${(e) => { e.stopPropagation(); this._confirmAndClose(t.id, t.label); }}>×</button>
+                    @click=${(e) => { e.stopPropagation(); this._closeTab(t.id); }}>×</button>
           </div>
         `)}
       </div>

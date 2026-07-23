@@ -174,11 +174,12 @@ export async function closeTabFromUi(tabId) {
   if (!convId) return;
   const s = _ensure(convId);
   const tab = s.tabs.find((t) => t.id === tabId);
-  if (tab && tab.widget_type === 'terminal') {
-    if (!window.confirm('Close this terminal? The shell session will be terminated.')) {
-      return;
-    }
-  }
+  // Single confirm point for every close path (tab [×], keyboard). Terminal
+  // tabs warn that the shell dies; other tabs get the generic prompt.
+  const msg = (tab && tab.widget_type === 'terminal')
+    ? 'Close this terminal? The shell session will be terminated.'
+    : `Close tab "${(tab && tab.label) || tabId}"?`;
+  if (!window.confirm(msg)) return;
   try {
     await fetch(`/api/canvas/${encodeURIComponent(convId)}/close_tab`, {
       method: 'POST',
