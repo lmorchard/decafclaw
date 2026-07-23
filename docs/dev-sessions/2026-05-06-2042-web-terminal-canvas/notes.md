@@ -73,3 +73,27 @@ gives the child a working controlling TTY (`/dev/tty` accessible). cwd is set
 via a `sh -c 'cd <cwd> && exec <shell>'` trampoline (posix_spawn has no
 portable chdir); the exec preserves pid so `session.pid` stays valid for
 waitpid/killpg. Linux (deploy target) supports setsid in posix_spawn via glibc.
+
+## Live browser smoke test (2026-07-23) — 2 bugs found + fixed
+
+Drove the real UI via Playwright against an isolated server (temp DATA_HOME,
+HEARTBEAT_INTERVAL=0, MM off, port 18900). Validated end-to-end: /terminal
+spawns a real zsh PTY (posix_spawn+setsid, own pgid) + canvas tab → widget
+mounts → WS attaches + replays → live prompt → interactive I/O (echo → output)
+→ two terminals with independent sessions and ZERO content bleed (aliasing fix
++ keep-alive: hidden tab stayed attached) → close-tab confirm + PTY kill (closed
+tab's shell died, other survived).
+
+Two bugs unit tests + all 3 review layers missed:
+1. BLOCKER — vendored xterm addon bundles exposed classes only under `default`
+   (esbuild CJS interop), so the widget's `import { FitAddon }` threw at load →
+   every terminal "unavailable". check-js missed it (tsc trusts npm named-export
+   types). Fixed: normalize entry files re-exporting named + default
+   (xterm-entry.js et al., mirroring leaflet-entry.js). Commit f3a52cf.
+2. UX — closing a terminal tab double-confirmed (canvas-panel generic prompt +
+   Task 9's terminal-specific prompt). Consolidated to one terminal-aware
+   confirm in closeTabFromUi. Commit 692efd7.
+
+Lesson: JS runtime/bundle-interop bugs are invisible to tsc + Python unit tests
++ diff review. A real-browser smoke is the only net. Worth an eval/JS-test
+follow-up, but the browser check is non-negotiable for widget work.
