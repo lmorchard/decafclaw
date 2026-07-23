@@ -56,6 +56,13 @@ dev = [
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+# Promote pytest's unraisable-exception warning to an error so a leaked
+# resource (e.g. an unclosed asyncio subprocess transport GC'd after its event
+# loop closes) fails the suite deterministically instead of flakily dirtying it
+# with an intermittent "1 warning" (#605).
+filterwarnings = [
+    "error::pytest.PytestUnraisableExceptionWarning",
+]
 # Default pytest invocation:
 #   - `-n auto --dist=worksteal` runs unit tests in parallel across CPU cores.
 #     Override with `-n 0` for serial runs (debugging with `pdb`, or cleaner

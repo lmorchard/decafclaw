@@ -1,10 +1,73 @@
 """Tests for background process management — BackgroundJobManager lifecycle."""
 
 import asyncio
+from types import SimpleNamespace
 
 import pytest
 
+from decafclaw.skills.background import tools
 from decafclaw.skills.background.tools import BackgroundJobManager
+
+# ---------------------------------------------------------------------------
+# Transport cleanup (#605) — close the subprocess transport deterministically
+# so BaseSubprocessTransport.__del__ doesn't fire after the event loop closes.
+# ---------------------------------------------------------------------------
+
+def test_close_transport_closes_open_transport():
+    closed = []
+
+    class FakeTransport:
+        def close(self):
+            closed.append(True)
+
+    job = SimpleNamespace(process=SimpleNamespace(_transport=FakeTransport()),
+                          job_id="j1")
+    tools._close_transport(job)
+    assert closed == [True]
+
+
+def test_close_transport_fail_open_on_missing_transport():
+    # No _transport attribute — must not raise.
+    job = SimpleNamespace(process=SimpleNamespace(), job_id="j2")
+    tools._close_transport(job)
+
+
+def test_close_transport_fail_open_when_close_raises():
+    class BoomTransport:
+        def close(self):
+            raise RuntimeError("boom")
+
+    job = SimpleNamespace(process=SimpleNamespace(_transport=BoomTransport()),
+                          job_id="j3")
+    tools._close_transport(job)  # swallowed, must not raise
+
+
+@pytest.mark.asyncio
+async def test_transport_closed_even_when_finalize_raises(monkeypatch, tmp_path):
+    """The transport must be closed deterministically even if _finalize_job
+    raises (or the reader is cancelled mid-finalize) — else the #605 leak
+    regresses. Guards the try/finally in _run_reader's cleanup."""
+    async def boom(job):
+        raise RuntimeError("finalize boom")
+
+    closed = []
+    real_close = tools._close_transport
+
+    def spy(job):
+        closed.append(job.job_id)
+        real_close(job)  # actually close so this test doesn't leak a transport
+
+    monkeypatch.setattr(tools, "_finalize_job", boom)
+    monkeypatch.setattr(tools, "_close_transport", spy)
+
+    manager = BackgroundJobManager()
+    job = await manager.start("echo hi", cwd=str(tmp_path))
+    with pytest.raises(RuntimeError, match="finalize boom"):
+        await job.reader_task
+
+    assert closed == [job.job_id]  # ran despite finalize raising
+    # No cleanup_all() here: the process already exited and the spy closed the
+    # transport, and cleanup_all would re-invoke the patched (raising) finalize.
 
 # ---------------------------------------------------------------------------
 # Helpers used by tool-layer tests

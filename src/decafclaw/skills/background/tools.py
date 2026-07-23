@@ -72,8 +72,36 @@ async def _run_reader(job: BackgroundJob) -> None:
         if job.process.returncode is not None:
             job.exit_code = job.process.returncode
     finally:
-        if not cancelled:
-            await _finalize_job(job)
+        # Close the transport even if _finalize_job raises or the reader is
+        # cancelled mid-finalize — the deterministic-cleanup guarantee (#605)
+        # must not depend on finalize succeeding.
+        try:
+            if not cancelled:
+                await _finalize_job(job)
+        finally:
+            _close_transport(job)
+
+
+def _close_transport(job: BackgroundJob) -> None:
+    """Deterministically close the subprocess transport once the job is done.
+
+    ``Process.wait()`` reaps the child but never closes the transport; asyncio
+    otherwise leaves it for GC. Under pytest's per-test event loops that means
+    ``BaseSubprocessTransport.__del__`` runs after the loop is closed, raising
+    ``RuntimeError('Event loop is closed')`` as an unraisable and tripping
+    ``PytestUnraisableExceptionWarning`` (#605). Closing it here — inside the
+    still-live loop — sets ``_closed`` so ``__del__`` is a no-op. ``_transport``
+    is asyncio-internal (no public accessor on ``Process``); ``close()`` is
+    idempotent. Fail-open: cleanup must never break the reader.
+    """
+    transport = getattr(job.process, "_transport", None)
+    if transport is None:
+        return
+    try:
+        transport.close()
+    except Exception as exc:
+        log.debug("closing subprocess transport for %s failed: %s",
+                  job.job_id, exc)
 
 
 async def _notify_job_exit(job: BackgroundJob) -> None:
