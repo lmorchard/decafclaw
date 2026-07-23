@@ -143,6 +143,43 @@ async def test_execute_tool_unknown_suggests_close_match(ctx):
     assert "workspace_read" in result.text
 
 
+def test_suggest_tool_names_excludes_exact_input():
+    """The unknown name must never be suggested back to the caller (#355).
+
+    Regression: when the unknown name is also present in the candidate pool
+    (e.g. a deferred/unactivated tool), difflib returned it as the top
+    (ratio 1.0) match, so the hint read "Did you mean: project_advance"
+    for a call to project_advance.
+    """
+    from decafclaw.tools import _suggest_tool_names
+
+    candidates = {"project_advance", "project_task_done", "project_note"}
+    suggestions = _suggest_tool_names("project_advance", candidates)
+    assert "project_advance" not in suggestions
+
+
+def test_suggest_tool_names_excludes_case_insensitive_input():
+    """A candidate differing only in case is the same name — not a suggestion (#355)."""
+    from decafclaw.tools import _suggest_tool_names
+
+    candidates = {"Project_Advance", "project_note"}
+    suggestions = _suggest_tool_names("project_advance", candidates)
+    assert "Project_Advance" not in suggestions
+
+
+def test_suggest_tool_names_tolerates_none_candidate():
+    """A malformed tool def can leave a None in the candidate pool
+    (deferred_names uses `.get("name")` with no default); the suggestion
+    helper must not crash the unknown-tool error path (#355)."""
+    from decafclaw.tools import _suggest_tool_names
+
+    candidates = {None, "workspace_read"}
+    # "workspce_read" is an intentional typo of the real tool name.
+    suggestions = _suggest_tool_names("workspce_read", candidates)
+    assert "workspace_read" in suggestions
+    assert None not in suggestions
+
+
 @pytest.mark.asyncio
 async def test_execute_tool_unknown_suffix_match_suggests_mcp(ctx, monkeypatch):
     """Dropped mcp__ prefix should surface the full MCP name as a suggestion."""
