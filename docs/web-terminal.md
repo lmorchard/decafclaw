@@ -165,6 +165,19 @@ broadcasts `size_changed` so every client can letterbox if its own viewport
 is larger. This means a small popped-out window can force the in-canvas
 view (and any program relying on terminal size) down to its dimensions.
 
+The widget **debounces** resizes (`_scheduleResize`, 150 ms) and only sends a
+`resize` frame when the fitted `(cols, rows)` actually changed. This matters
+because the canvas panel animates its width (`transition: width 0.25s` in
+`canvas.css`) whenever a conversation is switched, so the widget's
+`ResizeObserver` fires roughly once per animation frame. Without coalescing,
+the terminal would walk the PTY through every intermediate width — and each
+genuine `TIOCSWINSZ` makes the shell reprint its prompt, so a single switch
+produced a cascade of prompt lines at ramping widths in the scrollback. The
+initial post-replay size (sent after `buffer_replay_done`) goes through the
+same debounce, not an immediate fit: a (re)connect lands mid-animation, and an
+immediate fit would grab a garbage intermediate width (e.g. 2 columns) and
+ship it to the PTY.
+
 The canvas host keeps every open tab's widget mounted (not just the active
 one) and toggles visibility instead of tearing widgets down on tab switch —
 this is what lets the terminal's WebSocket survive switching to another tab
