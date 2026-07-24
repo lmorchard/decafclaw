@@ -267,6 +267,27 @@
     (source_type=user). vault_list would dump the whole journal folder with no
     date filter; vault_search needs a query string.
 
+# -- vault_tags vs vault_search -----------------------------------------------
+
+- name: vault-tags-vs-search-what-tags
+  scenario: "What tags have I used?"
+  expected: vault_tags
+  near_miss: [vault_search]
+  notes: |
+    Asking about the tag vocabulary itself (not filtering content by tag)
+    is vault_tags — it takes no query and just enumerates tags with counts.
+    vault_search is tempting since it also accepts a `tags` filter, but that
+    filter narrows a content search; it doesn't answer "what tags exist."
+
+- name: vault-tags-vs-search-list-all-tags
+  scenario: "List all my tags."
+  expected: vault_tags
+  near_miss: [vault_search]
+  notes: |
+    Same distinction as above: no content query, just "list the tags." A
+    vault_search call with an empty query and no tags filter wouldn't answer
+    this — vault_tags is the direct enumeration tool.
+
 # -- vault_recompute_importance vs vault_update_frontmatter / vault_write ----
 # (#197 Phase 5)
 

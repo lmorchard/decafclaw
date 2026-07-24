@@ -25,6 +25,7 @@ from decafclaw.skills.vault.tools import (
     tool_vault_recent,
     tool_vault_rename,
     tool_vault_search,
+    tool_vault_tags,
     tool_vault_update_frontmatter,
     tool_vault_write,
 )
@@ -1541,6 +1542,48 @@ class TestVaultRecent:
     async def test_missing_folder_errors(self, ctx, vault_dir):
         result = await tool_vault_recent(ctx, days=7, folder="nope/missing")
         assert "does not exist" in str(result).lower()
+
+
+class TestVaultTags:
+    async def test_sorted_by_count_desc_with_tie_break(
+        self, ctx, agent_pages, agent_journal,
+    ):
+        (agent_pages / "Rust.md").write_text("---\ntags: [Rust]\n---\nabout rust")
+        (agent_pages / "Async.md").write_text("body mentions #Rust and #async")
+        journal_day_dir = agent_journal / "2026"
+        journal_day_dir.mkdir(parents=True, exist_ok=True)
+        (journal_day_dir / "2026-07-24.md").write_text(
+            "## 2026-07-24 10:00\n\n- **tags:** rust, zeta\n\nnotes"
+        )
+
+        result = await tool_vault_tags(ctx)
+
+        assert result.data["tags"] == [
+            {"tag": "Rust", "count": 3},
+            {"tag": "async", "count": 1},
+            {"tag": "zeta", "count": 1},
+        ]
+        assert "Rust (3)" in result.text
+        assert "3 tag(s)" in result.text
+
+    async def test_all_untagged_journal_yields_no_tags(self, ctx, agent_journal):
+        """Regression guard for the shared collect_all_tags primitive: an
+        all-untagged journal entry must not surface a spurious "untagged"
+        tag via this tool."""
+        journal_day_dir = agent_journal / "2026"
+        journal_day_dir.mkdir(parents=True, exist_ok=True)
+        (journal_day_dir / "2026-07-24.md").write_text(
+            "## 2026-07-24 10:00\n\n- **tags:** untagged\n\nsome note"
+        )
+
+        result = await tool_vault_tags(ctx)
+
+        assert result.data["tags"] == []
+        assert "No tags found" in result.text
+
+    async def test_empty_vault_returns_no_tags(self, ctx, vault_dir):
+        result = await tool_vault_tags(ctx)
+        assert result.data["tags"] == []
 
 
 class TestVaultUpdateFrontmatter:

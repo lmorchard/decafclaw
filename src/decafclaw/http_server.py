@@ -34,6 +34,7 @@ from .skills.vault._events import (
     KIND_UPDATE,
     publish_vault_changed,
 )
+from .tags import collect_all_tags
 from .web.workspace_paths import (
     IMAGE_EXTENSIONS,
     detect_kind,
@@ -1202,6 +1203,23 @@ async def vault_recent(request: Request, username: str) -> JSONResponse:
 
 
 @_authenticated
+async def vault_tags(request: Request, username: str) -> JSONResponse:
+    """List all tags in use across the vault with usage counts and pages.
+
+    Sorted by count descending, tie-broken by (normalized) tag name
+    ascending — same ordering as the ``vault_tags`` tool.
+    """
+    config = request.app.state.config
+    tag_map = collect_all_tags(config)
+    ordered = sorted(tag_map.items(), key=lambda kv: (-kv[1]["count"], kv[0]))
+    tags = [
+        {"tag": info["display"], "count": info["count"], "pages": info["pages"]}
+        for _, info in ordered
+    ]
+    return JSONResponse({"tags": tags})
+
+
+@_authenticated
 async def vault_read(request: Request, username: str) -> JSONResponse:
     """Read a single vault page as JSON."""
     config = request.app.state.config
@@ -2088,6 +2106,7 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> Starlette:
         Route("/api/vault", vault_list, methods=["GET"]),
         Route("/api/vault/folders", vault_create_folder, methods=["POST"]),
         Route("/api/vault/recent", vault_recent, methods=["GET"]),
+        Route("/api/vault/tags", vault_tags, methods=["GET"]),
         Route("/api/vault/{page:path}", vault_write, methods=["PUT"]),
         Route("/api/vault/{page:path}", vault_read, methods=["GET"]),
         Route("/api/vault/{page:path}", vault_delete, methods=["DELETE"]),

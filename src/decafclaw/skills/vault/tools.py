@@ -28,7 +28,7 @@ from decafclaw.skills.vault._grants import (
     normalize_folder,
 )
 from decafclaw.skills.vault._sections import Document, _insert_into_doc
-from decafclaw.tags import extract_tags, normalize_tag, pages_with_tags
+from decafclaw.tags import collect_all_tags, extract_tags, normalize_tag, pages_with_tags
 from decafclaw.tools.confirmation import request_confirmation
 
 log = logging.getLogger(__name__)
@@ -1182,6 +1182,23 @@ async def tool_vault_recent(ctx, days: int = 7, folder: str = "",
     )
 
 
+async def tool_vault_tags(ctx) -> ToolResult:
+    """List all tags currently in use across the vault, with usage counts."""
+    log.info("[tool:vault_tags]")
+    tag_map = collect_all_tags(ctx.config)
+    if not tag_map:
+        return ToolResult(text="No tags found in the vault.", data={"tags": []})
+
+    # Sorted by count desc, tie-broken by (normalized) tag name asc so the
+    # ordering is deterministic regardless of dict iteration order.
+    ordered = sorted(tag_map.items(), key=lambda kv: (-kv[1]["count"], kv[0]))
+    tags = [{"tag": info["display"], "count": info["count"]} for _, info in ordered]
+
+    lines = [f"- {t['tag']} ({t['count']})" for t in tags]
+    header = f"{len(tags)} tag(s) in use across the vault"
+    return ToolResult(text=f"{header}:\n\n" + "\n".join(lines), data={"tags": tags})
+
+
 _WIKI_LINK_RE = re.compile(r"\[\[([^\]]+)\]\]")
 
 
@@ -1548,6 +1565,7 @@ TOOLS = {
     "vault_search": tool_vault_search,
     "vault_list": tool_vault_list,
     "vault_recent": tool_vault_recent,
+    "vault_tags": tool_vault_tags,
     "vault_backlinks": tool_vault_backlinks,
     "vault_show_sections": tool_vault_show_sections,
     "vault_move_lines": tool_vault_move_lines,
@@ -1893,6 +1911,25 @@ TOOL_DEFINITIONS = [
                         ),
                     },
                 },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "vault_tags",
+            "description": (
+                "List all tags currently in use across the vault with usage "
+                "counts, sorted by count descending. Use this to see what "
+                "tags exist before filtering — e.g. 'what tags have I used' "
+                "or 'list all my tags'. Unlike vault_search (which finds or "
+                "filters content by tag/query), vault_tags takes no "
+                "arguments and just enumerates the tag vocabulary itself."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {},
                 "required": [],
             },
         },
