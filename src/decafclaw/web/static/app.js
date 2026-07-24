@@ -459,7 +459,7 @@ document.addEventListener('sidebar-tab-change', (e) => {
     hideFileView();
     hideSchedulePage();
   }
-  if ((tab === 'wiki' || tab === 'files')
+  if ((tab === 'wiki' || tab === 'files' || tab === 'tags')
       && window.matchMedia('(max-width: 639px)').matches) {
     if (canvasSnapshot().visible) {
       canvasDismiss();

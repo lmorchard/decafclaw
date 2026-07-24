@@ -87,6 +87,14 @@ The tab auto-refreshes on activation. Save/reset actions dispatch a `schedule-sa
 
 See [Schedules](schedules.md) for the full model, overlay semantics, and API.
 
+### Tags tab
+
+The **Tags** tab lists every tag in use across the vault, with usage counts, sorted by count descending:
+
+- Click a tag to see the pages that carry it
+- Click a page to open it in the wiki pane (same side panel as the Vault editor)
+- Backed by `GET /api/vault/tags`
+
 ### Model picker
 
 When multiple model configs are defined, a dropdown in the sidebar lets you switch models per-conversation. See [Model Selection](model-selection.md).

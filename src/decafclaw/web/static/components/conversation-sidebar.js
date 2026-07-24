@@ -4,6 +4,7 @@ import './notification-inbox.js';
 import './vault-sidebar.js';
 import './files-sidebar.js';
 import './schedules-sidebar.js';
+import './tags-sidebar.js';
 
 export class ConversationSidebar extends LitElement {
   static properties = {
@@ -494,6 +495,8 @@ export class ConversationSidebar extends LitElement {
             @click=${() => this.#switchTab('files')}>Files</button>
           <button class="sidebar-tab ${this._sidebarTab === 'schedules' ? 'active' : ''}"
             @click=${() => this.#switchTab('schedules')}>Schedules</button>
+          <button class="sidebar-tab ${this._sidebarTab === 'tags' ? 'active' : ''}"
+            @click=${() => this.#switchTab('tags')}>Tags</button>
         </div>
         <button class="mobile-close-btn dc-overlay-close-x" @click=${() => this.closeMobile()} title="Close sidebar">×</button>
         <button class="collapse-btn dc-icon-btn" @click=${this.#toggleCollapse} title="Collapse sidebar" aria-label="Collapse sidebar">‹</button>
@@ -513,6 +516,11 @@ export class ConversationSidebar extends LitElement {
         .openName=${this._openSchedule}
         style="${this._sidebarTab !== 'schedules' ? 'display:none' : ''}"
       ></schedules-sidebar>
+      <tags-sidebar
+        .active=${this._sidebarTab === 'tags'}
+        style="${this._sidebarTab !== 'tags' ? 'display:none' : ''}"
+        @wiki-open=${(e) => this.#handleWikiOpen(e)}
+      ></tags-sidebar>
       <div class="conv-list" style="${this._sidebarTab !== 'conversations' ? 'display:none' : ''}">
         ${this._chatSection === '' ? html`
           <div class="vault-action-btns">
