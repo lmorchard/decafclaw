@@ -51,6 +51,9 @@ export class TerminalWidget extends LitElement {
     this._ro = null;
     this._surface = null;
     this._reconnectTimer = null;
+    this._resizeTimer = null;    // debounce for ResizeObserver-driven fits
+    this._lastCols = 0;          // last size sent to the server (resize dedup)
+    this._lastRows = 0;
     this._connectedKey = null;   // `${convId}/${tabId}` of the currently-targeted session
   }
 
@@ -108,7 +111,7 @@ export class TerminalWidget extends LitElement {
     this._term.open(host);
     this._fit.fit();
     this._term.onData((d) => this._send({ type: 'input', data: d }));
-    this._ro = new ResizeObserver(() => this._onResize());
+    this._ro = new ResizeObserver(() => this._scheduleResize());
     this._ro.observe(host);
     // No live theme-change event exists in this codebase (theme-toggle.js
     // just sets/removes the data-theme attribute) — the terminal picks up
@@ -145,6 +148,11 @@ export class TerminalWidget extends LitElement {
   _connect() {
     this._state = 'connecting';
     this._connectedKey = `${this.convId}/${this.tabId}`;
+    // Force the post-replay resize to send: each socket registers its viewport
+    // server-side on its first `resize` frame (keyed per-connection), so the
+    // dedup must not swallow the initial size after a (re)connect.
+    this._lastCols = 0;
+    this._lastRows = 0;
     const ws = new WebSocket(this._wsUrl());
     ws.binaryType = 'arraybuffer';
     this._ws = ws;
@@ -174,7 +182,13 @@ export class TerminalWidget extends LitElement {
     if (msg.type === 'buffer_replay_done') {
       this._replaying = false;
       this._state = 'attached';
-      this._onResize();                           // send initial size
+      // Debounced, NOT immediate: a (re)connect lands while the canvas panel
+      // is still animating its width open (canvas.css `width 0.25s`), so an
+      // immediate fit grabs a garbage intermediate width (e.g. 2 cols) and
+      // ships it to the PTY — the shell reprints its prompt catastrophically
+      // wrapped. Debouncing coalesces this with the animation's resize burst
+      // and sends exactly one size, after the layout settles.
+      this._scheduleResize();                     // send initial size once settled
     } else if (msg.type === 'session_ended') {
       this._ended = msg.exit_status;
       this._state = 'ended';
@@ -196,10 +210,31 @@ export class TerminalWidget extends LitElement {
     this._reconnectTimer = setTimeout(() => this._connect(), delay);
   }
 
+  /**
+   * Coalesce ResizeObserver bursts. The canvas panel animates its width
+   * (`transition: width 0.25s` in canvas.css) whenever a conversation is
+   * switched, so the observer fires ~once per animation frame. Fitting +
+   * sending a resize on each frame walks the PTY through every intermediate
+   * width — and each genuine size change makes the shell reprint its prompt
+   * into the scrollback (a cascade of prompt lines at ramping widths). Debounce
+   * so we fit + send exactly once, after the layout settles.
+   */
+  _scheduleResize() {
+    clearTimeout(this._resizeTimer);
+    this._resizeTimer = setTimeout(() => this._onResize(), 150);
+  }
+
   _onResize() {
     if (!this._fit || !this._term) return;
     this._fit.fit();
-    this._send({ type: 'resize', cols: this._term.cols, rows: this._term.rows });
+    const { cols, rows } = this._term;
+    // Dedup: only tell the server when the fitted size actually changed.
+    // A hidden panel fits to 0 (no-op) and sub-pixel jitter re-fires the
+    // observer without changing cols/rows — neither should hit the PTY.
+    if (cols === this._lastCols && rows === this._lastRows) return;
+    this._lastCols = cols;
+    this._lastRows = rows;
+    this._send({ type: 'resize', cols, rows });
   }
 
   /** @param {Object} obj */
@@ -223,6 +258,8 @@ export class TerminalWidget extends LitElement {
 
   _teardown() {
     this._teardownSocket();
+    clearTimeout(this._resizeTimer);
+    this._resizeTimer = null;
     if (this._ro) { this._ro.disconnect(); this._ro = null; }
     if (this._term) { this._term.dispose(); this._term = null; }
     this._fit = null;
