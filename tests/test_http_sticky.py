@@ -30,7 +30,9 @@ def md_doc_registry(monkeypatch):
     class _Reg:
         _d = {
             "markdown_document": SimpleNamespace(
-                modes=["inline", "canvas", "sticky"], required=["content"]
+                modes=["inline", "canvas", "sticky"],
+                accepts_input=False,
+                required=["content"],
             ),
         }
 
