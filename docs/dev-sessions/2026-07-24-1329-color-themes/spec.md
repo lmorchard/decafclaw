@@ -46,7 +46,7 @@ light-base and dark-base paths are exercised.
 
 - `data-theme` = `light | dark` (or **absent** for system) — Pico's structural base,
   unchanged from today.
-- `data-palette` = `dracula | alucard` (or **absent** for stock Pico) — our color overlay.
+- `data-palette` = `dracula | solarized-light` (or **absent** for stock Pico) — our color overlay.
 
 Pico only recognizes `data-theme` values `light` / `dark` / (unset → light). An unknown
 value like `data-theme="dracula"` would fall back to Pico's light `:root` defaults,
@@ -130,7 +130,7 @@ needed for v1.
 ## UI — `theme-toggle.js`
 
 Keep the existing ☀️ / 🌙 / 💻 base buttons. Add a 🎨 **palette button** that opens a
-small popover listing the custom palettes (Dracula, Alucard), each with a representative
+small popover listing the custom palettes (Dracula, Solarized Light), each with a representative
 color dot.
 
 **One active selection.** The toggle represents a single active theme name, chosen either
@@ -138,7 +138,7 @@ via a base button or via the palette popover:
 
 - Clicking a base button (☀️/🌙/💻) sets the active theme to `light`/`dark`/`system` and
   **clears** any custom palette (reverts to stock Pico).
-- Selecting a palette from the popover sets the active theme to `dracula`/`alucard`, which
+- Selecting a palette from the popover sets the active theme to `dracula`/`solarized-light`, which
   **supersedes** the base-button selection and drives its own base mode.
 - Active-state indicators reflect whichever was chosen last: when a palette is active, the
   🎨 button shows the active state (and the base buttons show none); when a base is active,
