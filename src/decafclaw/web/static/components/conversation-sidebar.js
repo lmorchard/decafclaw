@@ -519,6 +519,7 @@ export class ConversationSidebar extends LitElement {
       <tags-sidebar
         .active=${this._sidebarTab === 'tags'}
         style="${this._sidebarTab !== 'tags' ? 'display:none' : ''}"
+        @wiki-open=${(e) => this.#handleWikiOpen(e)}
       ></tags-sidebar>
       <div class="conv-list" style="${this._sidebarTab !== 'conversations' ? 'display:none' : ''}">
         ${this._chatSection === '' ? html`
