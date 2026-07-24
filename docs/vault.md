@@ -55,6 +55,8 @@ The vault supports hierarchical folders. The API and web UI provide folder-aware
 
 `PUT /api/vault/{page}` with `{"rename_to": "new/path"}` renames/moves a page. Returns 409 if target exists.
 
+`GET /api/vault/tags` returns `{tags: [{tag, count, pages}, ...]}` — every tag in use across the vault, sorted by count descending (tie-broken by tag name), mirroring the `vault_tags` tool. `pages` lists the vault-relative paths carrying that tag, for click-through UI (#318).
+
 ## Wiki Links
 
 Standard Obsidian `[[wiki-links]]` connect pages:
@@ -77,8 +79,13 @@ Fields the system recognizes today (parsed by `frontmatter.py` via `get_frontmat
 |-------|------|----------|
 | `summary` | string | Prepended to body for semantic-search embeddings (via `build_composite_text`); surfaced in UI |
 | `keywords` | list of strings | Prepended to body for embeddings (via `build_composite_text`) |
-| `tags` | list of strings | Prepended to body for embeddings (via `build_composite_text`); loose categorization |
+| `tags` | list of strings | Prepended to body for embeddings (via `build_composite_text`), unioned with inline Obsidian-style `#tags` found in the body (#318); loose categorization |
 | `importance` | float in [0, 1] | Composite scoring weight in memory retrieval (not used by `build_composite_text`) |
+
+Folding inline `#tags` into the composite embedding text is a change to
+what gets embedded, not to any file on disk — it only takes effect for
+pages re-embedded after the change. Run `make reindex` to pick it up for
+existing pages.
 
 Skill-authored conventions (preserved by the parser but not interpreted by core code):
 
@@ -101,9 +108,10 @@ The vault skill is **always loaded** — its tools are available in every conver
 | `vault_delete(page)` | Delete a page. Pages outside `agent/` trigger a user confirmation. |
 | `vault_rename(from_page, to_page)` | Rename/move a page (preserves links). Pages outside `agent/` trigger a user confirmation. |
 | `vault_grant_folder(folder, reason)` | Request per-conversation trust for a folder. After approval, vault_write/delete/rename under the folder skip confirmation. |
-| `vault_journal_append(tags, content)` | Append timestamped entry to today's journal file. |
-| `vault_search(query, source_type?, days?, folder?)` | Semantic + substring search across the vault. |
+| `vault_journal_append(tags, content)` | Append timestamped entry to today's journal file. Tags surface both as the back-compat `- **tags:**` bullet and as inline Obsidian-style `#tags` in the body (#318), so `extract_tags`/tag search see them without a separate scan pass. |
+| `vault_search(query, source_type?, days?, folder?, tags?, any_tag?)` | Semantic + substring search across the vault. Optional `tags` filters to files whose extracted tags satisfy the request (AND by default; `any_tag=true` for OR); an empty `query` with non-empty `tags` skips search entirely and lists matching pages directly via `pages_with_tags` (#318). Empty/omitted `tags` leaves behavior unchanged — `pages_with_tags` with an empty list would vacuously match everything, so that path only activates when `tags` is non-empty. |
 | `vault_list(folder?, pattern?)` | List pages with last-modified dates. |
+| `vault_tags()` | List every tag in use across the vault with usage counts, sorted by count descending (tie-broken by tag name). Thin wrapper over `collect_all_tags` (#318) — enumerates the tag vocabulary itself, distinct from `vault_search`'s content-filtering `tags` parameter. |
 | `vault_backlinks(page)` | Find pages linking to this page via `[[wiki-links]]`. |
 | `vault_show_sections(page, section?)` | Show a page's section outline or a specific section's content with absolute line numbers. |
 | `vault_move_lines(from_page, to_page, lines, to_section?, position?)` | Move specific lines (by line number) from one agent page to another. Both pages must be under `agent/`. |
@@ -265,6 +273,7 @@ The agent follows these principles (encoded in the vault skill's system prompt):
 - **Journal entries** (`vault_journal_append`) are timestamped observations — append-only daily files
 - **Pages** (`vault_write`) are curated knowledge — revised and restructured over time
 - The [dream](dream-consolidation.md) process periodically reviews journal entries and distills insights into pages
+- Journal tags passed to `vault_journal_append` are written twice: the existing `- **tags:** rust, async` bullet (back-compat with #306's `read_recent_journal_entries`, which parses entries on the `## YYYY-MM-DD HH:MM` header and is unaffected by the extra body line) and an inline `#rust #async` line in the body, mirrored into the text used for embedding. A tag containing whitespace is skipped from the inline line (Obsidian-style `#tags` can't contain spaces) but still appears in the bullet. No tags → no inline line, bullet stays `untagged`.
 
 ## Chat Context Integration
 

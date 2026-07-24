@@ -172,6 +172,7 @@ Full doc index: [docs/index.md](docs/index.md). Hot files for navigation:
 - `canvas.py` — per-conversation canvas state sidecar + state operations
 - `sticky.py` — per-conversation sticky-slot sidecar (`sticky.json`) + `set_sticky`/`clear_sticky`
 - `backlinks.py` — persistent inbound-link index (`{workspace}/backlinks.json`); `rebuild_index`/`load_index`/`inbound_count`/`update_for_page`; incremental update wired to the `vault_changed` event in `runner.py`
+- `tags.py` — first-class tag extraction/normalization + on-demand scan (`extract_tags`/`collect_all_tags`/`pages_with_tags`); tags from frontmatter + journal bullet + inline `#tags`, unioned at the query layer (#318)
 - `persistence.py`, `attachments.py`, `embeddings.py`, `frontmatter.py`, `memory_context.py`, `checklist.py`, `notes.py`
 
 ### Tools

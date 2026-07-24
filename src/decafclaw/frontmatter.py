@@ -88,8 +88,10 @@ def get_frontmatter_field(metadata: dict, field: str, default=None):
 def build_composite_text(metadata: dict, body: str) -> str:
     """Build composite text for embedding indexing.
 
-    Prepends summary, keywords, and tags to body content for richer embeddings.
-    Returns body as-is if no relevant frontmatter fields are present.
+    Prepends summary, keywords, and tags (frontmatter ``tags:`` plus inline
+    Obsidian-style ``#tags`` found in the body, #318) to body content for
+    richer embeddings. Returns body as-is if no relevant frontmatter fields
+    or inline tags are present.
     """
     parts: list[str] = []
 
@@ -101,9 +103,29 @@ def build_composite_text(metadata: dict, body: str) -> str:
     if isinstance(keywords, list) and keywords:
         parts.append(", ".join(str(k) for k in keywords))
 
-    tags = get_frontmatter_field(metadata, "tags", [])
-    if isinstance(tags, list) and tags:
-        parts.append(", ".join(str(t) for t in tags))
+    # Function-level import: this breaks a module-level import cycle.
+    # tags.py imports parse_frontmatter/get_frontmatter_field from this
+    # module at module level, so importing tags.py here at module level
+    # would cycle back into a partially-initialized frontmatter module.
+    from decafclaw.tags import normalize_tag, parse_inline_tags
+
+    fm_tags = get_frontmatter_field(metadata, "tags", [])
+    seen_norm: set[str] = set()
+    all_tags: list[str] = []
+    if isinstance(fm_tags, list):
+        for t in fm_tags:
+            raw = str(t)
+            norm = normalize_tag(raw)
+            if norm and norm not in seen_norm:
+                seen_norm.add(norm)
+                all_tags.append(raw)
+    for norm in sorted(parse_inline_tags(body)):
+        if norm not in seen_norm:
+            seen_norm.add(norm)
+            all_tags.append(norm)
+
+    if all_tags:
+        parts.append(", ".join(all_tags))
 
     if not parts:
         return body

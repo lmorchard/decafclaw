@@ -159,3 +159,18 @@ class TestBuildCompositeText:
         body = "Body."
         result = build_composite_text(meta, body)
         assert result == "alpha, beta\nBody."
+
+    def test_composite_includes_inline_tags(self):
+        out = build_composite_text({"tags": ["rust"]}, "body mentioning #async")
+        # Assert on the tags line specifically, not just substring-anywhere-in-
+        # `out` — the raw body text already contains "#async" as a substring,
+        # so a weaker "in out" check would pass even without folding inline
+        # tags into the tags portion.
+        tags_line = out.splitlines()[0]
+        assert "rust" in tags_line
+        assert "async" in tags_line
+
+    def test_composite_dedups_tag_in_both_frontmatter_and_inline(self):
+        out = build_composite_text({"tags": ["rust"]}, "love #rust here")
+        tags_line = out.splitlines()[0]
+        assert tags_line.count("rust") == 1

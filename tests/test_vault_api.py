@@ -379,6 +379,35 @@ async def test_vault_recent_excludes_user_pages(client, http_config):
     assert "UserNote" not in titles
 
 
+# -- vault_tags ----------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_vault_tags_empty(client):
+    resp = await client.get("/api/vault/tags")
+    assert resp.status_code == 200
+    assert resp.json()["tags"] == []
+
+
+@pytest.mark.asyncio
+async def test_vault_tags_sorted_by_count_desc(client, http_config):
+    pages_dir = http_config.vault_agent_pages_dir
+    (pages_dir / "Rust.md").write_text("---\ntags: [Rust]\n---\nabout rust")
+    (pages_dir / "Async.md").write_text("body mentions #Rust and #async")
+
+    resp = await client.get("/api/vault/tags")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["tags"] == [
+        {
+            "tag": "Rust",
+            "count": 2,
+            "pages": ["agent/pages/Async.md", "agent/pages/Rust.md"],
+        },
+        {"tag": "async", "count": 1, "pages": ["agent/pages/Async.md"]},
+    ]
+
+
 # -- vault_changed event publishing -------------------------------------------
 #
 # These tests verify the REST handlers publish `vault_changed` events on the

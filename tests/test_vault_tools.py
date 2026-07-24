@@ -1,6 +1,7 @@
 """Tests for vault tools."""
 
 import os
+import re
 import time
 from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, patch
@@ -24,6 +25,7 @@ from decafclaw.skills.vault.tools import (
     tool_vault_recent,
     tool_vault_rename,
     tool_vault_search,
+    tool_vault_tags,
     tool_vault_update_frontmatter,
     tool_vault_write,
 )
@@ -884,6 +886,92 @@ class TestVaultJournalAppend:
         assert matching[0]["kind"] == "journal"
         assert matching[0]["path"].endswith(".md")
 
+    @pytest.mark.asyncio
+    async def test_emits_inline_tags_alongside_bullet(self, ctx, agent_journal):
+        """Phase 3 (#318): tags also surface as inline #tags in the body,
+        in addition to the existing back-compat bullet."""
+        with patch("decafclaw.embeddings.index_entry", new_callable=AsyncMock):
+            await tool_vault_journal_append(
+                ctx, tags=["rust", "async"], content="hi")
+        files = list(agent_journal.rglob("*.md"))
+        assert len(files) == 1
+        text = files[0].read_text()
+        assert "- **tags:** rust, async" in text
+        assert "#rust #async" in text
+
+    @pytest.mark.asyncio
+    async def test_inline_tags_do_not_break_recent_journal_reader(
+        self, ctx, agent_journal,
+    ):
+        """Guard against #306's `read_recent_journal_entries` regressing:
+        the inline #tags line must not split entries or break parsing."""
+        with patch("decafclaw.embeddings.index_entry", new_callable=AsyncMock):
+            await tool_vault_journal_append(
+                ctx, tags=["rust", "async"], content="hi")
+        files = list(agent_journal.rglob("*.md"))
+        text = files[0].read_text()
+
+        entries = read_recent_journal_entries(
+            ctx.config, now=datetime.now(), max_hours=24, max_entries=10)
+        assert len(entries) == 1
+        header_match = re.search(
+            r"^## (\d{4}-\d{2}-\d{2} \d{2}:\d{2})\s*$", text, re.MULTILINE)
+        assert header_match is not None
+        expected_ts = datetime.strptime(header_match.group(1), "%Y-%m-%d %H:%M")
+        assert entries[0].timestamp == expected_ts
+        assert "hi" in entries[0].text
+        assert "#rust #async" in entries[0].text
+
+    @pytest.mark.asyncio
+    async def test_inline_tags_match_extract_tags_no_duplication(
+        self, ctx, agent_journal,
+    ):
+        from decafclaw.tags import extract_tags
+
+        with patch("decafclaw.embeddings.index_entry", new_callable=AsyncMock):
+            await tool_vault_journal_append(
+                ctx, tags=["rust", "async"], content="hi")
+        files = list(agent_journal.rglob("*.md"))
+        text = files[0].read_text()
+        assert extract_tags(text, "journal") == {"rust", "async"}
+
+    @pytest.mark.asyncio
+    async def test_inline_tag_normalizes_leading_hash(self, ctx, agent_journal):
+        """A caller-supplied tag that already starts with '#' must not
+        double up to '##' in the inline line, and must still round-trip
+        through extract_tags."""
+        from decafclaw.tags import extract_tags
+
+        with patch("decafclaw.embeddings.index_entry", new_callable=AsyncMock):
+            await tool_vault_journal_append(
+                ctx, tags=["#Rust", "async"], content="x")
+        files = list(agent_journal.rglob("*.md"))
+        text = files[0].read_text()
+
+        assert "##Rust" not in text
+        assert "#Rust" in text
+        assert "#async" in text
+        assert extract_tags(text, "journal") == {"rust", "async"}
+
+    @pytest.mark.asyncio
+    async def test_empty_tags_no_inline_line(self, ctx, agent_journal):
+        from decafclaw.tags import extract_tags
+
+        with patch("decafclaw.embeddings.index_entry", new_callable=AsyncMock):
+            await tool_vault_journal_append(ctx, tags=[], content="x")
+        files = list(agent_journal.rglob("*.md"))
+        text = files[0].read_text()
+        assert "- **tags:** untagged" in text
+
+        lines = text.splitlines()
+        tags_line_idx = next(
+            i for i, line in enumerate(lines)
+            if line.startswith("- **tags:**")
+        )
+        # No inline tag line between the bullet and the blank line/content.
+        assert lines[tags_line_idx + 1] == ""
+        assert extract_tags(text, "journal") == set()
+
 
 class TestVaultSearch:
     @pytest.mark.asyncio
@@ -911,6 +999,266 @@ class TestVaultSearch:
         # vault dir doesn't exist
         result = await tool_vault_search(ctx, "anything")
         assert "does not exist" in result.text.lower()
+
+
+class TestVaultSearchTags:
+    """Tag filtering on vault_search (#318 phase 4)."""
+
+    @pytest.mark.asyncio
+    async def test_query_plus_tags_drops_non_matching_results(
+        self, ctx, agent_pages
+    ):
+        (agent_pages / "AsyncPage.md").write_text(
+            "# AsyncPage\n\nWidget notes about async work. #async")
+        (agent_pages / "RustPage.md").write_text(
+            "# RustPage\n\nWidget notes about rust work. #rust")
+
+        result = await tool_vault_search(ctx, "widget", tags=["async"])
+
+        assert "AsyncPage" in result.text
+        assert "RustPage" not in result.text
+
+    @pytest.mark.asyncio
+    async def test_empty_query_pure_tag_filter_is_and_by_default(
+        self, ctx, agent_pages
+    ):
+        (agent_pages / "Both.md").write_text(
+            "---\ntags: [rust, async]\n---\nbody")
+        (agent_pages / "OnlyRust.md").write_text(
+            "---\ntags: [rust]\n---\nbody")
+
+        result = await tool_vault_search(ctx, "", tags=["rust", "async"])
+
+        assert "Both" in result.text
+        assert "OnlyRust" not in result.text
+
+    @pytest.mark.asyncio
+    async def test_any_tag_true_is_or(self, ctx, agent_pages):
+        (agent_pages / "Both.md").write_text(
+            "---\ntags: [rust, async]\n---\nbody")
+        (agent_pages / "OnlyRust.md").write_text(
+            "---\ntags: [rust]\n---\nbody")
+        (agent_pages / "OnlyAsync.md").write_text(
+            "---\ntags: [async]\n---\nbody")
+        (agent_pages / "Neither.md").write_text("no tags here")
+
+        result = await tool_vault_search(
+            ctx, "", tags=["rust", "async"], any_tag=True)
+
+        assert "Both" in result.text
+        assert "OnlyRust" in result.text
+        assert "OnlyAsync" in result.text
+        assert "Neither" not in result.text
+
+    @pytest.mark.asyncio
+    async def test_tag_filter_spans_page_and_journal_source_types(
+        self, ctx, agent_pages, agent_journal
+    ):
+        (agent_pages / "PageTag.md").write_text(
+            "---\ntags: [shared]\n---\nbody")
+        (agent_journal / "2026-07-24.md").write_text(
+            "## 2026-07-24 10:00\n\n- **tags:** shared\n\nJournal content")
+
+        result = await tool_vault_search(ctx, "", tags=["shared"])
+
+        assert "agent/pages/PageTag" in result.text
+        assert "agent/journal/2026-07-24" in result.text
+
+    @pytest.mark.asyncio
+    async def test_empty_tags_leaves_behavior_unchanged(
+        self, ctx, vault_dir
+    ):
+        """Omitted/empty `tags` must NOT enter the pure-filter path — that
+        path calls `pages_with_tags(config, [])`, which vacuously matches
+        every file (empty AND). Guard against that footgun regressing.
+        """
+        (vault_dir / "Foo.md").write_text("hello")
+
+        with patch(
+            "decafclaw.skills.vault.tools.pages_with_tags"
+        ) as mock_pages_with_tags:
+            result_omitted = await tool_vault_search(ctx, "")
+            result_empty_list = await tool_vault_search(ctx, "", tags=[])
+
+        mock_pages_with_tags.assert_not_called()
+        assert "Foo" in result_omitted.text
+        assert "Foo" in result_empty_list.text
+
+    @pytest.mark.asyncio
+    async def test_source_type_and_tags_compose_in_pure_filter(
+        self, ctx, agent_pages, agent_journal
+    ):
+        """Pure tag-filter path (empty query) must apply source_type as an
+        additional filter on top of the tag match, not just tags alone
+        (P4-M1)."""
+        (agent_pages / "PageTag.md").write_text(
+            "---\ntags: [async]\n---\nbody")
+        (agent_journal / "2026-07-24.md").write_text(
+            "## 2026-07-24 10:00\n\n- **tags:** async\n\nJournal content")
+
+        result = await tool_vault_search(
+            ctx, "", tags=["async"], source_type="page")
+
+        assert "agent/pages/PageTag" in result.text
+        assert "agent/journal/2026-07-24" not in result.text
+
+    @pytest.mark.asyncio
+    async def test_days_filters_pure_tag_filter(self, ctx, agent_pages):
+        """Pure tag-filter path (empty query) must honor `days` recency,
+        matching the semantic/substring branches — a page whose tag matches
+        but is older than `days` is excluded (#318)."""
+        recent = agent_pages / "RecentRust.md"
+        recent.write_text("---\ntags: [rust]\n---\nbody")
+        stale = agent_pages / "StaleRust.md"
+        stale.write_text("---\ntags: [rust]\n---\nbody")
+        _set_mtime(stale, 30)
+
+        result = await tool_vault_search(ctx, "", tags=["rust"], days=7)
+
+        assert "RecentRust" in result.text
+        assert "StaleRust" not in result.text
+
+
+class TestVaultSearchTagsSemantic:
+    """Tag filtering on the SEMANTIC branch of vault_search (#318 phase 4
+    review fix). `TestVaultSearchTags` above only exercises the default
+    test config's `search_strategy = "substring"`; the semantic branch —
+    the path the deployed agent actually uses — otherwise has zero
+    coverage, including `_semantic_result_matches_tags`'s fail-open
+    behavior.
+    """
+
+    @pytest.mark.asyncio
+    async def test_and_filter_drops_non_matching_candidate(
+        self, ctx, agent_pages, monkeypatch
+    ):
+        ctx.config.embedding.search_strategy = "semantic"
+        (agent_pages / "AsyncPage.md").write_text(
+            "# AsyncPage\n\nWidget notes about async work. #async")
+        (agent_pages / "RustPage.md").write_text(
+            "# RustPage\n\nWidget notes about rust work. #rust")
+
+        async def fake_search_similar(*args, **kwargs):
+            return [
+                {"file_path": "agent/pages/AsyncPage.md", "similarity": 0.9,
+                 "source_type": "page", "entry_text": "Widget notes async"},
+                {"file_path": "agent/pages/RustPage.md", "similarity": 0.8,
+                 "source_type": "page", "entry_text": "Widget notes rust"},
+            ]
+
+        monkeypatch.setattr(
+            "decafclaw.embeddings.search_similar", fake_search_similar)
+
+        result = await tool_vault_search(ctx, "widget", tags=["async"])
+
+        assert result.data["mode"] == "semantic"
+        paths = [r["path"] for r in result.data["results"]]
+        assert paths == ["agent/pages/AsyncPage"]
+
+    @pytest.mark.asyncio
+    async def test_any_tag_or_filter(self, ctx, agent_pages, monkeypatch):
+        ctx.config.embedding.search_strategy = "semantic"
+        (agent_pages / "Both.md").write_text(
+            "---\ntags: [rust, async]\n---\nbody about widgets")
+        (agent_pages / "OnlyRust.md").write_text(
+            "---\ntags: [rust]\n---\nbody about widgets")
+        (agent_pages / "OnlyAsync.md").write_text(
+            "---\ntags: [async]\n---\nbody about widgets")
+        (agent_pages / "Neither.md").write_text(
+            "body about widgets, no tags")
+
+        async def fake_search_similar(*args, **kwargs):
+            return [
+                {"file_path": "agent/pages/Both.md", "similarity": 0.9,
+                 "source_type": "page", "entry_text": "Both"},
+                {"file_path": "agent/pages/OnlyRust.md", "similarity": 0.8,
+                 "source_type": "page", "entry_text": "OnlyRust"},
+                {"file_path": "agent/pages/OnlyAsync.md", "similarity": 0.7,
+                 "source_type": "page", "entry_text": "OnlyAsync"},
+                {"file_path": "agent/pages/Neither.md", "similarity": 0.6,
+                 "source_type": "page", "entry_text": "Neither"},
+            ]
+
+        monkeypatch.setattr(
+            "decafclaw.embeddings.search_similar", fake_search_similar)
+
+        result = await tool_vault_search(
+            ctx, "widgets", tags=["rust", "async"], any_tag=True)
+
+        assert "Both" in result.text
+        assert "OnlyRust" in result.text
+        assert "OnlyAsync" in result.text
+        assert "Neither" not in result.text
+
+    @pytest.mark.asyncio
+    async def test_fail_open_excludes_unreadable_candidate(
+        self, ctx, agent_pages, monkeypatch
+    ):
+        """A candidate row whose file is missing/unreadable must be
+        excluded, not raise — matching `pages_with_tags`'s per-file
+        fail-open behavior."""
+        ctx.config.embedding.search_strategy = "semantic"
+        (agent_pages / "AsyncPage.md").write_text(
+            "# AsyncPage\n\nWidget notes about async work. #async")
+
+        async def fake_search_similar(*args, **kwargs):
+            return [
+                {"file_path": "agent/pages/AsyncPage.md", "similarity": 0.9,
+                 "source_type": "page", "entry_text": "Widget notes async"},
+                # Points at a file that was never written to disk.
+                {"file_path": "agent/pages/Ghost.md", "similarity": 0.85,
+                 "source_type": "page", "entry_text": "Ghost entry"},
+            ]
+
+        monkeypatch.setattr(
+            "decafclaw.embeddings.search_similar", fake_search_similar)
+
+        result = await tool_vault_search(ctx, "widget", tags=["async"])
+
+        paths = [r["path"] for r in result.data["results"]]
+        assert paths == ["agent/pages/AsyncPage"]
+
+    @pytest.mark.asyncio
+    async def test_fail_open_excludes_candidate_when_extract_tags_raises(
+        self, ctx, agent_pages, monkeypatch
+    ):
+        """A candidate whose extract_tags call raises must be excluded
+        from the results, not blow up the whole semantic search branch
+        (which would fall back to the global un-filtered path instead of
+        just dropping that one candidate)."""
+        from decafclaw.tags import extract_tags
+
+        ctx.config.embedding.search_strategy = "semantic"
+        (agent_pages / "AsyncPage.md").write_text(
+            "# AsyncPage\n\nWidget notes about async work. #async")
+        (agent_pages / "BadPage.md").write_text(
+            "# BadPage\n\nWidget notes. #async")
+
+        async def fake_search_similar(*args, **kwargs):
+            return [
+                {"file_path": "agent/pages/AsyncPage.md", "similarity": 0.9,
+                 "source_type": "page", "entry_text": "Widget notes async"},
+                {"file_path": "agent/pages/BadPage.md", "similarity": 0.85,
+                 "source_type": "page", "entry_text": "Widget notes bad"},
+            ]
+
+        monkeypatch.setattr(
+            "decafclaw.embeddings.search_similar", fake_search_similar)
+
+        real_extract_tags = extract_tags
+
+        def fake_extract_tags(content, source_type):
+            if "BadPage" in content:
+                raise ValueError("boom")
+            return real_extract_tags(content, source_type)
+
+        monkeypatch.setattr(
+            "decafclaw.skills.vault.tools.extract_tags", fake_extract_tags)
+
+        result = await tool_vault_search(ctx, "widget", tags=["async"])
+
+        paths = [r["path"] for r in result.data["results"]]
+        assert paths == ["agent/pages/AsyncPage"]
 
 
 class TestVaultList:
@@ -1270,6 +1618,48 @@ class TestVaultRecent:
     async def test_missing_folder_errors(self, ctx, vault_dir):
         result = await tool_vault_recent(ctx, days=7, folder="nope/missing")
         assert "does not exist" in str(result).lower()
+
+
+class TestVaultTags:
+    async def test_sorted_by_count_desc_with_tie_break(
+        self, ctx, agent_pages, agent_journal,
+    ):
+        (agent_pages / "Rust.md").write_text("---\ntags: [Rust]\n---\nabout rust")
+        (agent_pages / "Async.md").write_text("body mentions #Rust and #async")
+        journal_day_dir = agent_journal / "2026"
+        journal_day_dir.mkdir(parents=True, exist_ok=True)
+        (journal_day_dir / "2026-07-24.md").write_text(
+            "## 2026-07-24 10:00\n\n- **tags:** rust, zeta\n\nnotes"
+        )
+
+        result = await tool_vault_tags(ctx)
+
+        assert result.data["tags"] == [
+            {"tag": "Rust", "count": 3},
+            {"tag": "async", "count": 1},
+            {"tag": "zeta", "count": 1},
+        ]
+        assert "Rust (3)" in result.text
+        assert "3 tag(s)" in result.text
+
+    async def test_all_untagged_journal_yields_no_tags(self, ctx, agent_journal):
+        """Regression guard for the shared collect_all_tags primitive: an
+        all-untagged journal entry must not surface a spurious "untagged"
+        tag via this tool."""
+        journal_day_dir = agent_journal / "2026"
+        journal_day_dir.mkdir(parents=True, exist_ok=True)
+        (journal_day_dir / "2026-07-24.md").write_text(
+            "## 2026-07-24 10:00\n\n- **tags:** untagged\n\nsome note"
+        )
+
+        result = await tool_vault_tags(ctx)
+
+        assert result.data["tags"] == []
+        assert "No tags found" in result.text
+
+    async def test_empty_vault_returns_no_tags(self, ctx, vault_dir):
+        result = await tool_vault_tags(ctx)
+        assert result.data["tags"] == []
 
 
 class TestVaultUpdateFrontmatter:

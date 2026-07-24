@@ -36,7 +36,8 @@ conversation-sidebar .conv-list {
    of conversation-sidebar and the existing flex:1 rule above applies. */
 conversation-sidebar vault-sidebar,
 conversation-sidebar files-sidebar,
-conversation-sidebar schedules-sidebar {
+conversation-sidebar schedules-sidebar,
+conversation-sidebar tags-sidebar {
   display: contents;
 }
 

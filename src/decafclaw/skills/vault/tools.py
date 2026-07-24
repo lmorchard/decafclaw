@@ -28,6 +28,7 @@ from decafclaw.skills.vault._grants import (
     normalize_folder,
 )
 from decafclaw.skills.vault._sections import Document, _insert_into_doc
+from decafclaw.tags import collect_all_tags, extract_tags, normalize_tag, pages_with_tags
 from decafclaw.tools.confirmation import request_confirmation
 
 log = logging.getLogger(__name__)
@@ -604,6 +605,15 @@ async def tool_vault_journal_append(ctx, tags: list[str], content: str) -> ToolR
 
     filepath = journal_dir / f"{now:%Y-%m-%d}.md"
     tag_str = ", ".join(tags) if tags else "untagged"
+    # Inline #tags mirror the bullet for extract_tags/#318 (see tags.py); a
+    # tag containing whitespace can't round-trip as a single inline token
+    # (Obsidian-style #tags don't allow spaces), so it's skipped there and
+    # only surfaces via the bullet.
+    stripped_tags = [t.lstrip("#").strip() for t in tags]
+    inline_tags = [
+        t for t in stripped_tags if t and not any(ch.isspace() for ch in t)
+    ]
+    inline_tag_line = " ".join(f"#{t}" for t in inline_tags)
 
     entry = f"\n## {now:%Y-%m-%d %H:%M}\n\n"
     channel_name = ctx.channel_name
@@ -614,6 +624,8 @@ async def tool_vault_journal_append(ctx, tags: list[str], content: str) -> ToolR
     if thread_id:
         entry += f"- **thread:** {thread_id}\n"
     entry += f"- **tags:** {tag_str}\n"
+    if inline_tag_line:
+        entry += f"{inline_tag_line}\n"
     entry += f"\n{content}\n"
 
     with open(filepath, "a", encoding="utf-8") as f:
@@ -630,7 +642,10 @@ async def tool_vault_journal_append(ctx, tags: list[str], content: str) -> ToolR
             entry_text += f"- **channel:** {channel_name} ({channel_id})\n"
         if thread_id:
             entry_text += f"- **thread:** {thread_id}\n"
-        entry_text += f"- **tags:** {tag_str}\n\n{content}"
+        entry_text += f"- **tags:** {tag_str}\n"
+        if inline_tag_line:
+            entry_text += f"{inline_tag_line}\n"
+        entry_text += f"\n{content}"
         await index_entry(ctx.config, rel_path, entry_text,
                           source_type="journal")
     except Exception as e:
@@ -653,10 +668,25 @@ async def tool_vault_journal_append(ctx, tags: list[str], content: str) -> ToolR
 
 
 async def tool_vault_search(ctx, query: str, source_type: str = "",
-                            days: int = 0, folder: str = "") -> str | ToolResult:
-    """Search the vault using semantic or substring matching."""
+                            days: int = 0, folder: str = "",
+                            tags: list[str] | None = None,
+                            any_tag: bool = False) -> str | ToolResult:
+    """Search the vault using semantic or substring matching, optionally
+    filtered by tag.
+
+    Tag filtering has two modes:
+    - Empty ``query`` + non-empty ``tags``: pure tag filter, bypasses
+      semantic/substring search entirely (`pages_with_tags`).
+    - Non-empty ``query`` + non-empty ``tags``: run the normal search, then
+      drop results whose extracted tags don't satisfy the filter.
+    Empty/omitted ``tags`` leaves behavior unchanged (no filtering) — a
+    non-empty `tags` list is required to enter either tag-filter mode, since
+    `pages_with_tags(config, [])` would otherwise vacuously match everything.
+    """
+    req_tags = {normalize_tag(t) for t in tags} if tags else set()
     log.info(f"[tool:vault_search] query={query!r} source_type={source_type} "
-             f"days={days} folder={folder}")
+             f"days={days} folder={folder} tags={sorted(req_tags)} "
+             f"any_tag={any_tag}")
 
     vault = _vault_root(ctx.config)
     if not vault.is_dir():
@@ -667,6 +697,11 @@ async def tool_vault_search(ctx, query: str, source_type: str = "",
         safe = _safe_folder(ctx.config, folder)
         if safe is None:
             return ToolResult(text=f"[error: invalid folder path '{folder}']")
+
+    if not query and req_tags:
+        return _tag_filter_search(ctx.config, req_tags, any_tag,
+                                  source_type=source_type, folder=folder,
+                                  days=days)
 
     # Try semantic search first
     if ctx.config.embedding.search_strategy == "semantic":
@@ -694,6 +729,12 @@ async def tool_vault_search(ctx, query: str, source_type: str = "",
             if folder:
                 results = [r for r in results
                            if r.get("file_path", "").startswith(folder)]
+
+            # Apply tag filter (post-search: drop non-matching results)
+            if req_tags:
+                results = [r for r in results
+                           if _semantic_result_matches_tags(
+                               ctx.config, r, req_tags, any_tag)]
 
             if results:
                 lines = [f"Found {len(results)} result(s):\n"]
@@ -732,11 +773,91 @@ async def tool_vault_search(ctx, query: str, source_type: str = "",
             log.error(f"Semantic search failed, falling back to substring: {e}")
 
     # Substring search across vault
-    return _substring_search(ctx.config, query, days=days, folder=folder)
+    return _substring_search(ctx.config, query, days=days, folder=folder,
+                             req_tags=req_tags, any_tag=any_tag)
 
 
-def _substring_search(config, query: str, days: int = 0,
-                      folder: str = "") -> str | ToolResult:
+def _semantic_result_matches_tags(config, result: dict, req_tags: set[str],
+                                  any_tag: bool) -> bool:
+    """Fail-open per-result tag check for a semantic search result row.
+
+    Reads the result's source file directly (results carry composite
+    embedding text, not raw content) and calls `extract_tags` on it. An
+    unreadable file is excluded rather than raised, matching
+    `pages_with_tags`'s per-file fail-open behavior.
+    """
+    file_path = result.get("file_path", "")
+    if not file_path:
+        return False
+    path = _vault_root(config) / file_path
+    try:
+        content = path.read_text()
+        source_type = result.get("source_type") or _source_type_for_path(config, path)
+        file_tags = extract_tags(content, source_type)
+    except Exception as exc:
+        log.debug(f"vault_search: failed reading/tagging {path} for tag filter: {exc}")
+        return False
+    if any_tag:
+        return bool(file_tags & req_tags)
+    return req_tags <= file_tags
+
+
+def _tag_filter_search(config, req_tags: set[str], any_tag: bool,
+                       source_type: str = "", folder: str = "",
+                       days: int = 0) -> ToolResult:
+    """Pure tag filter (empty query): list vault pages matching the tag
+    filter, formatted like the existing no-query substring search output.
+    """
+    vault = _vault_root(config)
+    matches = pages_with_tags(config, sorted(req_tags), any_tag=any_tag)
+
+    cutoff = None
+    if days > 0:
+        cutoff = datetime.now(tz=timezone.utc) - timedelta(days=days)
+
+    lines: list[str] = []
+    rows: list[dict] = []
+    for rel_path in sorted(matches):
+        if folder and not rel_path.startswith(folder):
+            continue
+        path = vault / rel_path
+        if source_type and _source_type_for_path(config, path) != source_type:
+            continue
+        try:
+            mtime = datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)
+        except Exception as exc:
+            log.debug(f"vault_search: failed stat'ing {path} for tag filter: {exc}")
+            continue
+        if cutoff and mtime < cutoff:
+            continue
+        mtime_str = mtime.strftime("%Y-%m-%d %H:%M")
+        page = str(path.relative_to(vault).with_suffix(""))
+        lines.append(f"- {page} (modified: {mtime_str})")
+        rows.append({"page": page, "modified": mtime_str})
+
+    tag_list = sorted(req_tags)
+    if not lines:
+        return ToolResult(
+            text=f"No pages found matching tags {tag_list}.",
+            display_short_text="tags — no results",
+            data={"query": "", "mode": "tags", "tags": tag_list,
+                 "any_tag": any_tag, "results": []},
+        )
+
+    text = f"Found {len(lines)} result(s):\n\n" + "\n".join(lines)
+    widget = _substring_results_widget("", rows)
+    return ToolResult(
+        text=text,
+        display_short_text=f"tags {tag_list} — {len(lines)} result(s)",
+        widget=widget,
+        data={"query": "", "mode": "tags", "tags": tag_list,
+             "any_tag": any_tag, "results": rows},
+    )
+
+
+def _substring_search(config, query: str, days: int = 0, folder: str = "",
+                      req_tags: set[str] | None = None,
+                      any_tag: bool = False) -> str | ToolResult:
     """Substring search across vault markdown files."""
     vault = _vault_root(config)
     search_root = vault / folder if folder else vault
@@ -776,6 +897,13 @@ def _substring_search(config, query: str, days: int = 0,
         text = path.read_text()
         name = path.stem
         if query_lower in name.lower() or query_lower in text.lower():
+            if req_tags:
+                file_tags = extract_tags(
+                    text, _source_type_for_path(config, path))
+                matches = (bool(file_tags & req_tags) if any_tag
+                          else req_tags <= file_tags)
+                if not matches:
+                    continue
             excerpt = ""
             for line in text.splitlines():
                 if query_lower in line.lower():
@@ -1063,6 +1191,23 @@ async def tool_vault_recent(ctx, days: int = 7, folder: str = "",
             ],
         },
     )
+
+
+async def tool_vault_tags(ctx) -> ToolResult:
+    """List all tags currently in use across the vault, with usage counts."""
+    log.info("[tool:vault_tags]")
+    tag_map = collect_all_tags(ctx.config)
+    if not tag_map:
+        return ToolResult(text="No tags found in the vault.", data={"tags": []})
+
+    # Sorted by count desc, tie-broken by (normalized) tag name asc so the
+    # ordering is deterministic regardless of dict iteration order.
+    ordered = sorted(tag_map.items(), key=lambda kv: (-kv[1]["count"], kv[0]))
+    tags = [{"tag": info["display"], "count": info["count"]} for _, info in ordered]
+
+    lines = [f"- {t['tag']} ({t['count']})" for t in tags]
+    header = f"{len(tags)} tag(s) in use across the vault"
+    return ToolResult(text=f"{header}:\n\n" + "\n".join(lines), data={"tags": tags})
 
 
 _WIKI_LINK_RE = re.compile(r"\[\[([^\]]+)\]\]")
@@ -1431,6 +1576,7 @@ TOOLS = {
     "vault_search": tool_vault_search,
     "vault_list": tool_vault_list,
     "vault_recent": tool_vault_recent,
+    "vault_tags": tool_vault_tags,
     "vault_backlinks": tool_vault_backlinks,
     "vault_show_sections": tool_vault_show_sections,
     "vault_move_lines": tool_vault_move_lines,
@@ -1679,6 +1825,27 @@ TOOL_DEFINITIONS = [
                             "(e.g. 'agent/journal' or 'agent/pages')"
                         ),
                     },
+                    "tags": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": (
+                            "Filter to pages/entries carrying these tags "
+                            "(case-insensitive, leading '#' optional). "
+                            "Default AND: must have ALL listed tags — set "
+                            "any_tag=true for OR. Empty query + tags = pure "
+                            "tag filter (skips search); query + tags = "
+                            "search first, then drop non-matching results. "
+                            "Empty/omitted = no tag filter."
+                        ),
+                    },
+                    "any_tag": {
+                        "type": "boolean",
+                        "description": (
+                            "With tags set, match ANY listed tag (OR) "
+                            "instead of requiring all (AND, the default). "
+                            "Ignored if tags is empty."
+                        ),
+                    },
                 },
                 "required": ["query"],
             },
@@ -1755,6 +1922,25 @@ TOOL_DEFINITIONS = [
                         ),
                     },
                 },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "vault_tags",
+            "description": (
+                "List all tags currently in use across the vault with usage "
+                "counts, sorted by count descending. Use this to see what "
+                "tags exist before filtering — e.g. 'what tags have I used' "
+                "or 'list all my tags'. Unlike vault_search (which finds or "
+                "filters content by tag/query), vault_tags takes no "
+                "arguments and just enumerates the tag vocabulary itself."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {},
                 "required": [],
             },
         },
