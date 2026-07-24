@@ -88,6 +88,12 @@ reindex:
 prune-embeddings:
 	uv run decafclaw-prune-embeddings
 
+# One-time backfill of frontmatter (summary/keywords/tags/importance) on
+# existing vault pages that predate frontmatter generation. Safe to re-run
+# (already-complete pages are skipped). Follow with `make reindex`. #197
+backfill-frontmatter:
+	uv run decafclaw-backfill-frontmatter
+
 # Migrate wiki/memories to unified vault structure
 migrate-vault:
 	uv run python scripts/migrate_to_vault.py

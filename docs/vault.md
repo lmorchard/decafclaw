@@ -108,7 +108,7 @@ The vault skill is **always loaded** — its tools are available in every conver
 | `vault_show_sections(page, section?)` | Show a page's section outline or a specific section's content with absolute line numbers. |
 | `vault_move_lines(from_page, to_page, lines, to_section?, position?)` | Move specific lines (by line number) from one agent page to another. Both pages must be under `agent/`. |
 | `vault_section(page, action, section?, title?, level?, after?, before?, parent?)` | Section ops: `add`, `remove`, `rename`, or `move`. Page must be under `agent/`. |
-| `vault_update_frontmatter(page, fields, overwrite?)` | Merge frontmatter fields (`summary`, `importance`, `tags`, `keywords`, etc.) into a page's existing metadata without touching the body. Fills absent/empty fields by default; `overwrite=true` replaces existing values. Reindexes the page. Shared write primitive for the self-improving vault arc (#197) — [dream](dream-consolidation.md) calls it (`overwrite=false`) after every `vault_write` in its Consolidate phase; a future backfill CLI and garden importance tuning build on the same primitive. |
+| `vault_update_frontmatter(page, fields, overwrite?)` | Merge frontmatter fields (`summary`, `importance`, `tags`, `keywords`, etc.) into a page's existing metadata without touching the body. Fills absent/empty fields by default; `overwrite=true` replaces existing values. Reindexes the page. Shared write primitive for the self-improving vault arc (#197) — [dream](dream-consolidation.md) calls it (`overwrite=false`) after every `vault_write` in its Consolidate phase; the `backfill-frontmatter` CLI and garden importance tuning build on the same primitive. |
 
 ### Frontmatter merge (#197)
 
@@ -116,10 +116,26 @@ The vault skill is **always loaded** — its tools are available in every conver
 `merge_frontmatter(existing: dict, fields: dict, overwrite: bool) -> dict` in
 `skills/vault/tools.py`. The pure function does the field coercion (reusing
 `get_frontmatter_field`'s rules so the merge and the parser agree on shape)
-and the fill-vs-replace merge logic, with no ctx or I/O — later phases
-(dream generation, a backfill CLI, garden importance tuning) import and call
-it directly to compute merged frontmatter without going through the tool or
-a running agent context.
+and the fill-vs-replace merge logic, with no ctx or I/O — other callers
+(dream generation, the backfill CLI, garden importance tuning) import and
+call it directly to compute merged frontmatter without going through the
+tool or a running agent context.
+
+### Backfill CLI (#197)
+
+`make backfill-frontmatter` (`decafclaw-backfill-frontmatter`,
+`src/decafclaw/backfill_frontmatter.py`) is a one-time CLI for vault pages
+written before frontmatter generation existed. It walks all non-journal
+vault pages, and for each one missing `summary`/`keywords`/`tags`/
+`importance` makes a single forced-tool structured-output LLM call
+(`generate_fields_for_page`) to generate the missing fields, then merges
+them in via `merge_frontmatter(overwrite=False)` — a manually-set field is
+never clobbered. Pages where all four fields are already present are
+skipped for free, so the CLI is resumable and safe to re-run. `--dry-run`
+prints planned changes without writing; `--limit N` caps how many pages get
+an LLM call in one run (skips don't count against it). It does not reindex
+itself — follow with `make reindex` so composite embeddings pick up the new
+frontmatter.
 
 ### Ownership
 
