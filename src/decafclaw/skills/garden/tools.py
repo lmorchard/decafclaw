@@ -9,9 +9,12 @@ produce the same score, so `compute_importance_scores` is pure and unit
 testable without a running agent.
 
 `tool_vault_recompute_importance` is the thin async wrapper garden calls
-during its weekly sweep: it scores every non-journal vault page, writes
-changed scores via `vault_update_frontmatter(overwrite=True)`, and skips
-pages whose rounded score didn't change.
+during its weekly sweep: it scores every `agent/` page (this automated
+sweep is scoped to the agent's own folder — never the user's own vault
+pages elsewhere, per garden's charter), writes changed scores via
+`vault_update_frontmatter(overwrite=True)`, and skips pages whose rounded
+score didn't change or that have no measured signal at all yet (leaving
+any existing importance, e.g. dream's initial guess, untouched).
 """
 
 from __future__ import annotations
@@ -34,26 +37,25 @@ _SCORE_PRECISION = 3
 
 
 def _iter_importance_candidates(config) -> list[tuple[str, Path]]:
-    """List (vault-relative POSIX path, Path) for every scoreable vault page.
+    """List (vault-relative POSIX path, Path) for every scoreable agent page.
 
-    Mirrors the walk in `embeddings._iter_vault_pages` /
-    `backfill_frontmatter._iter_frontmatter_candidates`: every vault `.md`
-    file except journal entries (journal is episodic, not curated
-    knowledge — it never carries an `importance` field).
+    Scoped to `config.vault_agent_pages_dir` only — garden's charter is
+    "only read and write within `agent/`", and this sweep runs weekly,
+    non-interactively, with no human in the loop. Writing `importance`
+    frontmatter into the user's own hand-written pages elsewhere in the
+    vault would be unattended and ungated (#197 whole-branch review). The
+    `vault_update_frontmatter` tool itself keeps its vault-wide reach —
+    only this automated sweep is scoped down. `agent/journal` is a sibling
+    of `agent/pages`, so it's naturally excluded without extra filtering.
     """
-    vault = config.vault_root
-    if not vault.is_dir():
+    pages_dir = config.vault_agent_pages_dir
+    if not pages_dir.is_dir():
         return []
-    journal_dir = config.vault_agent_journal_dir
-    candidates: list[tuple[str, Path]] = []
-    for path in sorted(vault.rglob("*.md")):
-        try:
-            if path.resolve().is_relative_to(journal_dir.resolve()):
-                continue
-        except (ValueError, OSError):
-            pass
-        candidates.append((path.relative_to(vault).as_posix(), path))
-    return candidates
+    vault = config.vault_root
+    return [
+        (path.relative_to(vault).as_posix(), path)
+        for path in sorted(pages_dir.rglob("*.md"))
+    ]
 
 
 def _clamp01(value: float) -> float:
@@ -65,13 +67,31 @@ def _norm(value: float, max_value: float) -> float:
     return value / max_value if max_value > 0 else 0.0
 
 
+def compute_importance_signals(config) -> dict[str, tuple[int, int]]:
+    """Raw (retrieval_count, inbound_count) per scoreable agent page.
+
+    Exposed separately from `compute_importance_scores` so the recompute
+    write path can tell "genuinely low importance" apart from "no
+    measured signal at all yet" — a page with zero on both counts hasn't
+    been observed by the system, so its computed score is an artifact of
+    absence, not a judgment, and shouldn't overwrite an existing
+    importance value (#197 whole-branch review).
+    """
+    pages = [rel for rel, _ in _iter_importance_candidates(config)]
+    stats = retrieval_telemetry.aggregate(retrieval_telemetry.load_records(config))
+    return {
+        p: (stats.get(p, {}).get("retrieval_count", 0), backlinks.inbound_count(config, p))
+        for p in pages
+    }
+
+
 def compute_importance_scores(config) -> dict[str, float]:
     """Deterministic per-page importance score (#197 Phase 5, formula v1).
 
     ``importance = clamp01(w_retrieval * norm(retrieval_freq) +
     w_inbound * norm(inbound_links))``
 
-    ``norm(x) = x / max(x across all vault pages)``, defined as 0 when
+    ``norm(x) = x / max(x across all agent pages)``, defined as 0 when
     that max is 0. Weights come from ``config.importance``
     (``ImportanceConfig``). ``w_reference`` is reserved / not yet
     computed — no explicit-reference signal exists yet, so it defaults
@@ -80,15 +100,12 @@ def compute_importance_scores(config) -> dict[str, float]:
 
     Pure and config-driven: no ``ctx``, no I/O beyond reading the
     telemetry log, the backlink index, and vault page paths (never page
-    contents). Returns ``{}`` if the vault has no non-journal pages.
+    contents). Returns ``{}`` if the agent has no pages.
     """
     weights = config.importance
-    candidates = _iter_importance_candidates(config)
-    pages = [rel for rel, _ in candidates]
-
-    stats = retrieval_telemetry.aggregate(retrieval_telemetry.load_records(config))
-    retrieval_freq = {p: stats.get(p, {}).get("retrieval_count", 0) for p in pages}
-    inbound_links = {p: backlinks.inbound_count(config, p) for p in pages}
+    signals = compute_importance_signals(config)
+    retrieval_freq = {p: rc for p, (rc, _ic) in signals.items()}
+    inbound_links = {p: ic for p, (_rc, ic) in signals.items()}
 
     max_retrieval = max(retrieval_freq.values(), default=0)
     max_inbound = max(inbound_links.values(), default=0)
@@ -98,25 +115,35 @@ def compute_importance_scores(config) -> dict[str, float]:
             weights.w_retrieval * _norm(retrieval_freq[p], max_retrieval)
             + weights.w_inbound * _norm(inbound_links[p], max_inbound)
         )
-        for p in pages
+        for p in signals
     }
 
 
 async def tool_vault_recompute_importance(ctx, dry_run: bool = False) -> ToolResult:
-    """Recompute every vault page's importance score deterministically.
+    """Recompute every agent page's importance score deterministically.
 
     Scores come from `compute_importance_scores` (retrieval frequency +
-    inbound-link count — not an LLM's subjective judgment). Pages whose
-    rounded score is unchanged are skipped, so a re-run only touches
-    pages that actually moved. `dry_run=True` reports the planned deltas
-    without writing anything.
+    inbound-link count — not an LLM's subjective judgment), scoped to
+    `agent/` pages only. Pages whose rounded score is unchanged are
+    skipped, so a re-run only touches pages that actually moved. Pages
+    with zero measured signal (no retrieval, no inbound links) are also
+    skipped — that's absence of data, not a computed low score, so any
+    existing importance (e.g. dream's initial guess) is left intact
+    rather than zeroed. `dry_run=True` reports the planned deltas without
+    writing anything.
     """
     log.info(f"[tool:vault_recompute_importance] dry_run={dry_run}")
     scores = compute_importance_scores(ctx.config)
+    signals = compute_importance_signals(ctx.config)
 
     deltas: list[dict] = []
     written = 0
     for rel, new_score in sorted(scores.items()):
+        retrieval_count, inbound_count = signals.get(rel, (0, 0))
+        if retrieval_count == 0 and inbound_count == 0:
+            # No measured signal at all — leave existing importance alone.
+            continue
+
         path = ctx.config.vault_root / rel
         try:
             text = path.read_text(encoding="utf-8")
@@ -172,11 +199,12 @@ TOOL_DEFINITIONS = [
         "function": {
             "name": "vault_recompute_importance",
             "description": (
-                "Deterministically recompute every vault page's `importance` "
+                "Deterministically recompute every agent page's `importance` "
                 "frontmatter score from measured signals (retrieval frequency, "
-                "inbound-link count) — not an LLM judgment call. Weekly garden "
-                "maintenance step. Set dry_run=true to preview planned changes "
-                "without writing."
+                "inbound-link count) — not an LLM judgment call. Scoped to "
+                "agent/ pages only; never touches the user's own vault pages. "
+                "Weekly garden maintenance step. Set dry_run=true to preview "
+                "planned changes without writing."
             ),
             "parameters": {
                 "type": "object",

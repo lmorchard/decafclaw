@@ -102,7 +102,12 @@ class TestComputeImportanceScores:
 class TestToolVaultRecomputeImportance:
     @pytest.mark.asyncio
     async def test_dry_run_returns_deltas_without_writing(self, ctx, vault_pages):
-        with patch(
+        # STAR has real signal (retrieval); ORPHAN has none — its mocked
+        # score of 0.0 should NOT show up as a planned change, since a page
+        # with zero raw signal is left alone rather than zeroed (#197 cold
+        # start).
+        p1, p2 = _patch_signals({STAR: 10}, {})
+        with p1, p2, patch(
             "decafclaw.skills.garden.tools.compute_importance_scores",
             return_value={STAR: 0.9, ORPHAN: 0.0},
         ):
@@ -111,10 +116,7 @@ class TestToolVaultRecomputeImportance:
         assert result.data["dry_run"] is True
         by_path = {d["path"]: d for d in result.data["deltas"]}
         assert by_path[STAR]["new"] == 0.9
-        # orphan.md's score (0.0) matches its unset importance (None != 0.0
-        # rounds differently) — still counts as a planned change since
-        # there's no existing frontmatter to compare against.
-        assert ORPHAN in by_path
+        assert ORPHAN not in by_path
 
         # Nothing written to disk in dry-run mode.
         text = (ctx.config.vault_agent_pages_dir / "star.md").read_text(encoding="utf-8")
@@ -123,12 +125,14 @@ class TestToolVaultRecomputeImportance:
     @pytest.mark.asyncio
     async def test_writes_changed_scores_and_skips_unchanged(self, ctx, vault_pages):
         # orphan.md already carries the score it would be recomputed to —
-        # this page must be skipped as unchanged.
+        # this page must be skipped as unchanged (it also has zero raw
+        # signal, so it would be skipped for that reason too).
         (ctx.config.vault_agent_pages_dir / "orphan.md").write_text(
             "---\nimportance: 0.0\n---\nNobody cares about this.\n", encoding="utf-8",
         )
 
-        with patch(
+        p1, p2 = _patch_signals({STAR: 10}, {})
+        with p1, p2, patch(
             "decafclaw.skills.garden.tools.compute_importance_scores",
             return_value={STAR: 0.9, ORPHAN: 0.0},
         ):
@@ -148,3 +152,99 @@ class TestToolVaultRecomputeImportance:
         )
         assert orphan_meta["importance"] == 0.0
         assert orphan_body.strip() == "Nobody cares about this."
+
+
+class TestRecomputeScopedToAgentPages:
+    """#197 whole-branch-review fix: automated importance writes must stay
+    within `agent/` — the tool `vault_update_frontmatter` keeps its
+    vault-wide reach, but the unattended weekly sweep must not touch the
+    user's own hand-written pages living elsewhere in the vault."""
+
+    @pytest.mark.asyncio
+    async def test_user_page_outside_agent_is_never_written(self, ctx, vault_pages):
+        # A user page living directly under vault_root, outside agent/.
+        user_page = ctx.config.vault_root / "user-notes.md"
+        user_page.write_text("Les's own hand-written notes.\n", encoding="utf-8")
+
+        p1, p2 = _patch_signals({STAR: 10, "user-notes.md": 10}, {})
+        with p1, p2:
+            result = await tool_vault_recompute_importance(ctx)
+
+        touched_paths = {d["path"] for d in result.data["deltas"]}
+        assert "user-notes.md" not in touched_paths
+
+        assert user_page.read_text(encoding="utf-8") == "Les's own hand-written notes.\n"
+
+    @pytest.mark.asyncio
+    async def test_nested_user_folder_outside_agent_is_never_written(self, ctx, vault_pages):
+        # A user-owned subfolder outside agent/ (not just a top-level file).
+        other_dir = ctx.config.vault_root / "reference"
+        other_dir.mkdir(parents=True, exist_ok=True)
+        other_page = other_dir / "notes.md"
+        other_page.write_text("Reference material.\n", encoding="utf-8")
+
+        p1, p2 = _patch_signals({STAR: 10}, {"reference/notes.md": 10})
+        with p1, p2:
+            result = await tool_vault_recompute_importance(ctx)
+
+        touched_paths = {d["path"] for d in result.data["deltas"]}
+        assert "reference/notes.md" not in touched_paths
+        assert other_page.read_text(encoding="utf-8") == "Reference material.\n"
+
+
+class TestRecomputeColdStart:
+    """#197 whole-branch-review fix: pages with zero measured signal keep
+    their existing importance (or lack of one) instead of being zeroed."""
+
+    @pytest.mark.asyncio
+    async def test_agent_page_with_real_signal_gets_written(self, ctx, vault_pages):
+        p1, p2 = _patch_signals({STAR: 10}, {})
+        with p1, p2:
+            result = await tool_vault_recompute_importance(ctx)
+
+        touched_paths = {d["path"] for d in result.data["deltas"]}
+        assert STAR in touched_paths
+
+        star_meta, _ = parse_frontmatter(
+            (ctx.config.vault_agent_pages_dir / "star.md").read_text(encoding="utf-8")
+        )
+        # Only retrieval signal is present (default w_retrieval=0.6).
+        assert star_meta["importance"] == pytest.approx(0.6)
+
+    @pytest.mark.asyncio
+    async def test_zero_signal_page_with_existing_importance_is_untouched(
+        self, ctx, vault_pages,
+    ):
+        # A page with dream's initial importance guess but no measured
+        # signal yet — recompute must not overwrite it, even though the
+        # formula would compute 0.0 for it (no retrieval, no inbound links,
+        # and its neighbor STAR absorbs all the normalized signal).
+        (ctx.config.vault_agent_pages_dir / "orphan.md").write_text(
+            "---\nimportance: 0.7\n---\nNobody cares about this.\n", encoding="utf-8",
+        )
+
+        p1, p2 = _patch_signals({STAR: 10}, {})
+        with p1, p2:
+            result = await tool_vault_recompute_importance(ctx)
+
+        touched_paths = {d["path"] for d in result.data["deltas"]}
+        assert ORPHAN not in touched_paths
+
+        orphan_meta, _ = parse_frontmatter(
+            (ctx.config.vault_agent_pages_dir / "orphan.md").read_text(encoding="utf-8")
+        )
+        assert orphan_meta["importance"] == 0.7
+
+    @pytest.mark.asyncio
+    async def test_zero_signal_page_with_no_importance_stays_unset(self, ctx, vault_pages):
+        p1, p2 = _patch_signals({STAR: 10}, {})
+        with p1, p2:
+            result = await tool_vault_recompute_importance(ctx)
+
+        touched_paths = {d["path"] for d in result.data["deltas"]}
+        assert ORPHAN not in touched_paths
+
+        orphan_meta, _ = parse_frontmatter(
+            (ctx.config.vault_agent_pages_dir / "orphan.md").read_text(encoding="utf-8")
+        )
+        assert "importance" not in orphan_meta

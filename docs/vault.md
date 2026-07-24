@@ -125,8 +125,9 @@ tool or a running agent context.
 
 `make backfill-frontmatter` (`decafclaw-backfill-frontmatter`,
 `src/decafclaw/backfill_frontmatter.py`) is a one-time CLI for vault pages
-written before frontmatter generation existed. It walks all non-journal
-vault pages, and for each one missing `summary`/`keywords`/`tags`/
+written before frontmatter generation existed. It walks the agent's own
+pages (`config.vault_agent_pages_dir`) — not the user's own vault pages
+elsewhere — and for each one missing `summary`/`keywords`/`tags`/
 `importance` makes a single forced-tool structured-output LLM call
 (`generate_fields_for_page`) to generate the missing fields, then merges
 them in via `merge_frontmatter(overwrite=False)` — a manually-set field is
@@ -183,6 +184,17 @@ replaces that guess weekly with a deterministic score, so importance
 tracks measured usage instead of drifting further from it with every LLM
 re-guess.
 
+This sweep is scoped to `agent/` pages only (`config.vault_agent_pages_dir`)
+— it runs weekly and non-interactively, with no human in the loop, so it
+never writes into the user's own hand-written vault pages elsewhere. This
+is narrower than the `vault_update_frontmatter` *tool*, which keeps its
+vault-wide reach for interactive, user-directed edits; only the automated
+sweep (and the `backfill_frontmatter` CLI, below) is scoped down. Pages
+with no measured signal at all yet (zero retrieval, zero inbound links —
+e.g. a page dream just wrote) are left untouched rather than zeroed, so a
+brand-new page's initial importance guess survives until real usage
+signal accumulates.
+
 `compute_importance_scores(config)` in `skills/garden/tools.py` is pure
 and config-driven (no `ctx`, no writes):
 
@@ -204,15 +216,15 @@ resolve `w_retrieval=0.6`, `w_inbound=0.4`, `w_reference=0.0` via the same
 dataclass-default → `config.json` → `IMPORTANCE_*` env resolution as every
 other sub-config.
 
-`tool_vault_recompute_importance(ctx, dry_run=False)` scores every
-non-journal vault page, writes changed scores via
-`vault_update_frontmatter(overwrite=True)`, and skips pages whose rounded
-score is unchanged so a re-run only touches what actually moved.
-`dry_run=true` reports the planned deltas without writing. It's the
-weekly step in the `garden` skill's sweep (`skills/garden/SKILL.md`) —
-review the reported deltas for outliers, and use `vault_backlinks` + the
-recomputed score together to flag orphaned, rarely-retrieved pages as
-split/merge/delete candidates.
+`tool_vault_recompute_importance(ctx, dry_run=False)` scores every agent
+page, writes changed scores via `vault_update_frontmatter(overwrite=True)`,
+and skips pages whose rounded score is unchanged or that have no measured
+signal at all yet, so a re-run only touches pages that both moved and have
+real data behind the move. `dry_run=true` reports the planned deltas
+without writing. It's the weekly step in the `garden` skill's sweep
+(`skills/garden/SKILL.md`) — review the reported deltas for outliers, and
+use `vault_backlinks` + the recomputed score together to flag orphaned,
+rarely-retrieved pages as split/merge/delete candidates.
 
 ### Ownership
 

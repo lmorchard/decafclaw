@@ -136,3 +136,17 @@ class TestRunBackfill:
 
         assert results == []
         patched_generate.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_skips_user_pages_outside_agent(self, config, agent_pages, patched_generate):
+        # #197 whole-branch-review fix: backfill's default scope is agent/
+        # pages only — the user's own hand-written pages elsewhere in the
+        # vault must not be touched by this unattended-by-default walk.
+        user_page = config.vault_root / "user-notes.md"
+        user_page.write_text("Les's own hand-written notes.\n", encoding="utf-8")
+
+        results = await run_backfill(config)
+
+        assert results == []
+        patched_generate.assert_not_awaited()
+        assert user_page.read_text(encoding="utf-8") == "Les's own hand-written notes.\n"

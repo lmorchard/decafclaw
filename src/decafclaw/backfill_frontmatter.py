@@ -2,10 +2,11 @@
 
 Pages written before frontmatter generation (dream consolidation, #197 Phase
 2) have no `summary` / `keywords` / `tags` / `importance`. This walks the
-vault, generates the missing fields via a forced-tool LLM call, and merges
-them in without clobbering anything a human already set by hand. Resumable:
-a page whose frontmatter already has all four fields is skipped, so a
-partial or interrupted run can be re-run safely.
+agent's own pages (`config.vault_agent_pages_dir`) — not the user's own
+vault pages elsewhere — generates the missing fields via a forced-tool LLM
+call, and merges them in without clobbering anything a human already set
+by hand. Resumable: a page whose frontmatter already has all four fields
+is skipped, so a partial or interrupted run can be re-run safely.
 
 Does not reindex embeddings itself — run `make reindex` afterward so
 composite embeddings (frontmatter.build_composite_text) pick up the new
@@ -60,24 +61,19 @@ _SCHEMA = {
 
 
 def _iter_frontmatter_candidates(config):
-    """Yield vault page paths eligible for frontmatter backfill.
+    """Yield agent page paths eligible for frontmatter backfill.
 
-    Mirrors the walk in `embeddings._iter_vault_pages` (all vault `.md`
-    files except journal entries) but yields `Path` objects instead of
-    embedding text, since backfill needs to read and rewrite each page's
-    frontmatter in place.
+    Scoped to `config.vault_agent_pages_dir` only — this walk writes
+    LLM-generated frontmatter unattended, so it stays within the agent's
+    own folder rather than touching the user's own hand-written vault
+    pages elsewhere (#197 whole-branch review; mirrors the same scoping
+    in `garden.tools._iter_importance_candidates`). `agent/journal` is a
+    sibling of `agent/pages`, so it's naturally excluded.
     """
-    vault = config.vault_root
-    if not vault.is_dir():
+    pages_dir = config.vault_agent_pages_dir
+    if not pages_dir.is_dir():
         return
-    journal_dir = config.vault_agent_journal_dir
-    for path in sorted(vault.rglob("*.md")):
-        try:
-            if path.resolve().is_relative_to(journal_dir.resolve()):
-                continue
-        except (ValueError, OSError):
-            pass
-        yield path
+    yield from sorted(pages_dir.rglob("*.md"))
 
 
 def _has_all_fields(metadata: dict) -> bool:
