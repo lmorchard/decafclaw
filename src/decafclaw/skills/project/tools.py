@@ -9,11 +9,14 @@ Control flow is mechanical:
 - Phase-boundary tools return end_turn=True to stop the agent loop
 """
 
+import logging
 from datetime import datetime, timezone
 from pathlib import Path
 
+from decafclaw import sticky as sticky_mod
 from decafclaw.media import EndTurnConfirm, ToolResult
 from decafclaw.skills.project.plan_parser import (
+    Step,
     insert_steps,
     next_actionable,
     parse_plan,
@@ -30,6 +33,8 @@ from decafclaw.skills.project.state import (
     save_project,
     validate_transition,
 )
+
+log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -83,6 +88,67 @@ def _load_current(ctx) -> ProjectInfo | ToolResult:
     except ValueError as e:
         return ToolResult(text=f"[error: {e}]")
     return _load_or_error(ctx.config, project)
+
+
+def _emit_for_ctx(ctx):
+    manager = getattr(ctx, "manager", None)
+    if manager is None:
+        return None
+    return manager.emit
+
+
+def _flatten_leaf_steps(steps: list[Step]) -> list[Step]:
+    """Depth-first list of leaf steps (those without children)."""
+    out: list[Step] = []
+    for s in steps:
+        if s.children:
+            out.extend(_flatten_leaf_steps(s.children))
+        else:
+            out.append(s)
+    return out
+
+
+def _progress_data_from_plan(info: ProjectInfo, steps: list[Step]) -> dict:
+    """Build a progress_tracker payload from parsed plan steps."""
+    widget_steps = []
+    for s in _flatten_leaf_steps(steps):
+        step = {"label": f"{s.number}. {s.description}", "status": s.status}
+        if s.note:
+            step["note"] = s.note
+        widget_steps.append(step)
+    done, total = plan_progress(steps)
+    nxt = next_actionable(steps)
+    summary = f"{done}/{total} · {nxt.number}. {nxt.description}" if nxt \
+        else f"{done}/{total}"
+    return {"steps": widget_steps, "title": info.description, "summary": summary}
+
+
+async def _emit_project_progress(ctx, info: ProjectInfo) -> None:
+    """Mirror an EXECUTING project's plan into the sticky slot. Fail-open."""
+    if info.status != ProjectState.EXECUTING:
+        return
+    try:
+        content = info.plan_path.read_text() if info.plan_path.exists() else ""
+        if not content.strip():
+            return
+        _, steps, _ = parse_plan(content)
+        if not steps:
+            return
+        data = _progress_data_from_plan(info, steps)
+        await sticky_mod.set_sticky(
+            ctx.config, ctx.conv_id, "progress_tracker", data,
+            emit=_emit_for_ctx(ctx))
+    except Exception:
+        log.warning("project sticky emit failed", exc_info=True)
+
+
+async def _clear_project_progress(ctx) -> None:
+    """Clear the sticky slot for a project. Fail-open."""
+    try:
+        await sticky_mod.clear_sticky(
+            ctx.config, ctx.conv_id, emit=_emit_for_ctx(ctx))
+    except Exception:
+        log.warning("project sticky clear failed", exc_info=True)
 
 
 # ---------------------------------------------------------------------------
@@ -151,6 +217,7 @@ async def tool_project_next_task(ctx) -> str | ToolResult:
         )
 
     elif info.status == ProjectState.EXECUTING:
+        await _emit_project_progress(ctx, info)
         return _next_execution_step(info)
 
     elif info.status == ProjectState.DONE:
@@ -256,6 +323,7 @@ async def tool_project_task_done(ctx) -> str | ToolResult:
             )
         info.status = ProjectState.DONE
         save_project(info)
+        await _clear_project_progress(ctx)
         return ToolResult(text="Project complete!", end_turn=True)
 
     elif info.status == ProjectState.DONE:
@@ -465,6 +533,7 @@ async def tool_project_update_step(
 
     info.plan_path.write_text(render_plan(overview, steps, tail))
     save_project(info)
+    await _emit_project_progress(ctx, info)
 
     done, total = plan_progress(steps)
     msg = f"Step {step} → **{status}** ({done}/{total})"
@@ -493,6 +562,7 @@ async def tool_project_add_steps(
 
     info.plan_path.write_text(render_plan(overview, plan_steps, tail))
     save_project(info)
+    await _emit_project_progress(ctx, info)
 
     _, total = plan_progress(plan_steps)
     return f"Added {len(steps)} step(s) after step {after_step}. Plan now has {total} steps."

@@ -33,7 +33,8 @@ def ctx(tmp_path):
         current_call_id=None,
     )
     skills = SimpleNamespace(data={})
-    return SimpleNamespace(config=config, tools=tools, skills=skills)
+    return SimpleNamespace(config=config, tools=tools, skills=skills,
+                           conv_id="proj-conv", manager=None)
 
 
 def _approve(result):
@@ -397,3 +398,56 @@ class TestGetTools:
         tools, defs = get_tools(ctx)
         def_names = {d["function"]["name"] for d in defs}
         assert def_names == set(tools.keys())
+
+
+class TestProgressTrackerEmit:
+    @pytest.mark.asyncio
+    async def test_update_step_emits_during_executing(self, ctx, monkeypatch):
+        from unittest.mock import AsyncMock
+        set_mock = AsyncMock()
+        monkeypatch.setattr("decafclaw.sticky.set_sticky", set_mock)
+        monkeypatch.setattr("decafclaw.sticky.clear_sticky", AsyncMock())
+        await _advance_to_executing(ctx, slug="pt-step")
+        set_mock.reset_mock()
+        await tool_project_update_step(ctx, step="1.1", status="done", note="ok")
+        assert set_mock.await_count >= 1
+        args, _ = set_mock.await_args
+        assert args[2] == "progress_tracker"
+        labels = [s["label"] for s in args[3]["steps"]]
+        assert any(lbl.startswith("1.1.") for lbl in labels)
+
+    @pytest.mark.asyncio
+    async def test_done_clears_sticky(self, ctx, monkeypatch):
+        from unittest.mock import AsyncMock
+        clear_mock = AsyncMock()
+        monkeypatch.setattr("decafclaw.sticky.set_sticky", AsyncMock())
+        monkeypatch.setattr("decafclaw.sticky.clear_sticky", clear_mock)
+        plan = "# Plan\n\n## Steps\n\n- [ ] 1. Only step\n"
+        await _advance_to_executing(ctx, slug="pt-done", plan=plan)
+        await tool_project_update_step(ctx, step="1", status="done")
+        result = await tool_project_task_done(ctx)
+        assert _text(result) == "Project complete!" or "complete" in _text(result).lower()
+        assert clear_mock.await_count >= 1
+
+    @pytest.mark.asyncio
+    async def test_no_emit_outside_executing(self, ctx, monkeypatch):
+        from unittest.mock import AsyncMock
+        set_mock = AsyncMock()
+        monkeypatch.setattr("decafclaw.sticky.set_sticky", set_mock)
+        monkeypatch.setattr("decafclaw.sticky.clear_sticky", AsyncMock())
+        await tool_project_create(ctx, description="planning phase", slug="pt-plan")
+        # BRAINSTORMING phase: next_task must not pin a tracker.
+        await tool_project_next_task(ctx)
+        set_mock.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_emit_failure_is_fail_open(self, ctx, monkeypatch):
+        from unittest.mock import AsyncMock
+        monkeypatch.setattr("decafclaw.sticky.set_sticky",
+                            AsyncMock(side_effect=RuntimeError("boom")))
+        monkeypatch.setattr("decafclaw.sticky.clear_sticky",
+                            AsyncMock(side_effect=RuntimeError("boom")))
+        await _advance_to_executing(ctx, slug="pt-failopen")
+        # Must not raise.
+        result = await tool_project_update_step(ctx, step="1.1", status="done")
+        assert _text(result)
