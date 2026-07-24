@@ -117,6 +117,28 @@ class TestCollectAllTags:
     def test_empty_vault_returns_empty_dict(self, config):
         assert collect_all_tags(config) == {}
 
+    def test_all_untagged_journal_yields_no_untagged_tag(self, config, agent_journal):
+        # An all-untagged journal entry must not surface a spurious
+        # "untagged" tag in the aggregate — the sentinel guard in
+        # extract_tags must also apply here (#318 follow-on fix).
+        journal_day_dir = agent_journal / "2026"
+        journal_day_dir.mkdir(parents=True, exist_ok=True)
+        (journal_day_dir / "2026-07-24.md").write_text(
+            "## 2026-07-24 10:00\n\n- **tags:** untagged\n\nsome note"
+        )
+
+        result = collect_all_tags(config)
+
+        assert "untagged" not in result
+        assert result == {}
+
+    def test_frontmatter_display_casing_preserved(self, config, agent_pages):
+        (agent_pages / "Rust.md").write_text("---\ntags: [Rust]\n---\nabout rust")
+
+        result = collect_all_tags(config)
+
+        assert result["rust"]["display"] == "Rust"
+
 
 class TestPagesWithTags:
     def test_and_default_requires_all_tags(self, config, agent_pages):

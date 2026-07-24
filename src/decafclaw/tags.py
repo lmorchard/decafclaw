@@ -61,19 +61,28 @@ def parse_inline_tags(body: str) -> set[str]:
     return {normalize_tag(t) for t in _raw_inline_tag_matches(body)}
 
 
-def extract_tags(content: str, source_type: str) -> set[str]:
-    """Union of all tag sources for one file's raw content, normalized.
+def _extract_tag_pairs(content: str, source_type: str) -> list[tuple[str, str]]:
+    """Return ``(normalized, display)`` pairs for every tag occurrence in one
+    file's raw content, in encounter order: frontmatter ``tags:`` (all
+    source types), the journal ``- **tags:**`` bullet (``source_type ==
+    "journal"`` only), then inline ``#tags`` in the body.
 
-    Sources: frontmatter ``tags:`` (all source types), the journal
-    ``- **tags:**`` bullet (``source_type == "journal"`` only), and inline
-    ``#tags`` in the body.
+    Single shared extraction path for both ``extract_tags`` (per-file
+    union, normalized) and ``collect_all_tags`` (vault-wide aggregate,
+    needs display casing) — keeps the parsing rules and the journal
+    "untagged" placeholder guard defined exactly once.
     """
     metadata, body = parse_frontmatter(content)
-    tags: set[str] = set()
+    pairs: list[tuple[str, str]] = []
+
     fm_tags = get_frontmatter_field(metadata, "tags", [])
     if isinstance(fm_tags, list):
         for t in fm_tags:
-            tags.add(normalize_tag(str(t)))
+            raw = str(t)
+            norm = normalize_tag(raw)
+            if norm:
+                pairs.append((norm, raw.lstrip("#").strip()))
+
     if source_type == "journal":
         for m in _JOURNAL_TAGS_BULLET_RE.finditer(content):
             bullet_value = m.group(1).strip()
@@ -85,11 +94,28 @@ def extract_tags(content: str, source_type: str) -> set[str]:
             if bullet_value.lower() == "untagged":
                 continue
             for part in bullet_value.split(","):
-                if part.strip():
-                    tags.add(normalize_tag(part))
-    tags |= parse_inline_tags(body)
-    tags.discard("")
-    return tags
+                raw = part.strip()
+                if raw:
+                    norm = normalize_tag(raw)
+                    if norm:
+                        pairs.append((norm, raw.lstrip("#").strip()))
+
+    for raw in _raw_inline_tag_matches(body):
+        norm = normalize_tag(raw)
+        if norm:
+            pairs.append((norm, raw.lstrip("#").strip()))
+
+    return pairs
+
+
+def extract_tags(content: str, source_type: str) -> set[str]:
+    """Union of all tag sources for one file's raw content, normalized.
+
+    Sources: frontmatter ``tags:`` (all source types), the journal
+    ``- **tags:**`` bullet (``source_type == "journal"`` only), and inline
+    ``#tags`` in the body.
+    """
+    return {norm for norm, _ in _extract_tag_pairs(content, source_type)}
 
 
 def _iter_tag_source_files(config):
@@ -141,20 +167,15 @@ def collect_all_tags(config) -> dict[str, dict]:
     result: dict[str, dict] = {}
 
     for rel_path, content, source_type in _iter_tag_source_files(config):
-        metadata, body = parse_frontmatter(content)
-        fm_tags = get_frontmatter_field(metadata, "tags", [])
-        raw_tags: list[str] = [str(t) for t in fm_tags] if isinstance(fm_tags, list) else []
-        if source_type == "journal":
-            for m in _JOURNAL_TAGS_BULLET_RE.finditer(content):
-                raw_tags.extend(part.strip() for part in m.group(1).split(",") if part.strip())
-        raw_tags.extend(_raw_inline_tag_matches(body))
+        try:
+            pairs = _extract_tag_pairs(content, source_type)
+        except Exception as exc:
+            log.debug("tags: failed extracting tags from %s: %s", rel_path, exc)
+            continue
 
         seen_norm_in_file: set[str] = set()
-        for raw in raw_tags:
-            norm = normalize_tag(raw)
-            if not norm:
-                continue
-            entry = result.setdefault(norm, {"count": 0, "display": raw.lstrip("#").strip(), "pages": []})
+        for norm, display in pairs:
+            entry = result.setdefault(norm, {"count": 0, "display": display, "pages": []})
             if norm not in seen_norm_in_file:
                 seen_norm_in_file.add(norm)
                 entry["count"] += 1
