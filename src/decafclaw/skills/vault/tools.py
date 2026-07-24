@@ -1231,6 +1231,12 @@ async def tool_vault_update_frontmatter(
     merged = merge_frontmatter(metadata, fields, overwrite)
     changed = sorted(field for field in fields if merged.get(field) != metadata.get(field))
 
+    if not changed:
+        return ToolResult(
+            text=f"No frontmatter changes for '{page}'",
+            data={"path": page, "changed": []},
+        )
+
     path.write_text(serialize_frontmatter(merged, body), encoding="utf-8")
     await _reindex_page(ctx, path)
     await publish_vault_changed(
@@ -1238,10 +1244,7 @@ async def tool_vault_update_frontmatter(
     )
 
     return ToolResult(
-        text=(
-            f"Updated frontmatter for '{page}': {', '.join(changed)}"
-            if changed else f"No frontmatter changes for '{page}'"
-        ),
+        text=f"Updated frontmatter for '{page}': {', '.join(changed)}",
         data={"path": page, "changed": changed},
     )
 

@@ -1362,6 +1362,28 @@ class TestVaultUpdateFrontmatter:
         assert "summary" not in meta
 
     @pytest.mark.asyncio
+    async def test_noop_merge_skips_write_reindex_publish(self, ctx, agent_pages):
+        """When the merge produces no change (e.g. overwrite=False on an
+        already-populated field), the tool must not rewrite the file, reindex,
+        or publish vault_changed."""
+        p = agent_pages / "topic.md"
+        original = "---\nsummary: existing\n---\nBody.\n"
+        p.write_text(original)
+        with (
+            patch("decafclaw.skills.vault.tools._reindex_page",
+                  new_callable=AsyncMock) as rx,
+            patch("decafclaw.skills.vault.tools.publish_vault_changed",
+                  new_callable=AsyncMock) as pub,
+        ):
+            result = await tool_vault_update_frontmatter(
+                ctx, page="agent/pages/topic.md",
+                fields={"summary": "different"}, overwrite=False)
+        assert p.read_text() == original
+        rx.assert_not_awaited()
+        pub.assert_not_awaited()
+        assert result.data["changed"] == []
+
+    @pytest.mark.asyncio
     async def test_non_interactive_user_page_updates_without_gate(
         self, ctx, vault_dir,
     ):
