@@ -768,3 +768,167 @@ async def test_rest_vault_delete_publishes_vault_changed(
     assert len(events) == 1
     assert events[0]["kind"] == "delete"
     assert events[0]["path"] == "agent/pages/DeleteMe.md"
+
+
+@pytest.mark.asyncio
+async def test_vault_write_frontmatter_raw_replaces(client, http_config):
+    """Replace, not merge: a key absent from the submission is gone.
+
+    This is the test that distinguishes the two paths — it fails if the raw
+    field is wired to merge_frontmatter.
+    """
+    path = http_config.vault_agent_pages_dir / "Raw.md"
+    path.write_text("---\nimportance: 0.4\ntags:\n- gone\n---\nBody.\n")
+
+    resp = await client.put(
+        "/api/vault/agent/pages/Raw",
+        json={"frontmatter_raw": "summary: Only this.\n"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["frontmatter"] == {"summary": "Only this."}
+    text = path.read_text()
+    assert "tags" not in text
+    assert "importance" not in text
+    assert text.endswith("Body.\n")
+
+
+@pytest.mark.asyncio
+async def test_vault_write_frontmatter_raw_preserves_user_text(
+    client, http_config,
+):
+    """Stored verbatim, so hand-written comments and key order survive."""
+    path = http_config.vault_agent_pages_dir / "RawVerbatim.md"
+    path.write_text("---\nimportance: 0.4\n---\nBody.\n")
+
+    resp = await client.put(
+        "/api/vault/agent/pages/RawVerbatim",
+        json={"frontmatter_raw": "# a note\nzeta: 1\nalpha: 2\n"},
+    )
+    assert resp.status_code == 200
+    assert path.read_text() == (
+        "---\n# a note\nzeta: 1\nalpha: 2\n---\nBody.\n"
+    )
+
+
+@pytest.mark.asyncio
+async def test_vault_write_frontmatter_raw_empty_removes_block(
+    client, http_config,
+):
+    path = http_config.vault_agent_pages_dir / "RawEmpty.md"
+    path.write_text("---\nimportance: 0.4\n---\nBody.\n")
+    resp = await client.put(
+        "/api/vault/agent/pages/RawEmpty",
+        json={"frontmatter_raw": "   \n"},
+    )
+    assert resp.status_code == 200
+    assert path.read_text() == "Body.\n"
+    assert resp.json()["frontmatter"] == {}
+
+
+@pytest.mark.asyncio
+async def test_vault_write_frontmatter_patch_emptying_removes_block(
+    client, http_config,
+):
+    """Nulling every key drops the block entirely, not `{}` or bare delimiters.
+
+    _dump_frontmatter returns None for an empty dict and join_frontmatter then
+    omits the delimiters. Asserted so the behavior is intentional rather than
+    incidental.
+    """
+    path = http_config.vault_agent_pages_dir / "PatchEmpty.md"
+    path.write_text("---\nimportance: 0.4\ntags:\n- a\n---\nBody.\n")
+    resp = await client.put(
+        "/api/vault/agent/pages/PatchEmpty",
+        json={"frontmatter": {"importance": None, "tags": None}},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["frontmatter"] == {}
+    assert resp.json()["frontmatter_raw"] == ""
+    assert path.read_text() == "Body.\n"
+
+
+@pytest.mark.asyncio
+async def test_vault_write_frontmatter_raw_malformed_is_rejected(
+    client, http_config,
+):
+    path = http_config.vault_agent_pages_dir / "RawBad.md"
+    original = "---\nimportance: 0.4\n---\nBody.\n"
+    path.write_text(original)
+    resp = await client.put(
+        "/api/vault/agent/pages/RawBad",
+        json={"frontmatter_raw": "this: is: not: valid\n"},
+    )
+    assert resp.status_code == 400
+    assert resp.json()["error"]
+    assert path.read_text() == original
+
+
+@pytest.mark.asyncio
+async def test_vault_write_frontmatter_raw_non_mapping_is_rejected(
+    client, http_config,
+):
+    path = http_config.vault_agent_pages_dir / "RawList.md"
+    original = "---\nimportance: 0.4\n---\nBody.\n"
+    path.write_text(original)
+    resp = await client.put(
+        "/api/vault/agent/pages/RawList",
+        json={"frontmatter_raw": "- just\n- a list\n"},
+    )
+    assert resp.status_code == 400
+    assert "mapping" in resp.json()["error"]
+    assert path.read_text() == original
+
+
+@pytest.mark.asyncio
+async def test_vault_write_frontmatter_raw_with_delimiter_is_rejected(
+    client, http_config,
+):
+    """A bare `---` line inside the block would split the file in two."""
+    path = http_config.vault_agent_pages_dir / "RawDelim.md"
+    original = "---\nimportance: 0.4\n---\nBody.\n"
+    path.write_text(original)
+    resp = await client.put(
+        "/api/vault/agent/pages/RawDelim",
+        json={"frontmatter_raw": "a: 1\n---\nb: 2\n"},
+    )
+    assert resp.status_code == 400
+    assert "---" in resp.json()["error"]
+    assert path.read_text() == original
+
+
+@pytest.mark.asyncio
+async def test_vault_write_frontmatter_both_shapes_rejected(
+    client, http_config,
+):
+    """Patch and replace cannot be reconciled in one write."""
+    path = http_config.vault_agent_pages_dir / "RawBoth.md"
+    path.write_text("---\nimportance: 0.4\n---\nBody.\n")
+    resp = await client.put(
+        "/api/vault/agent/pages/RawBoth",
+        json={"frontmatter": {"summary": "S"}, "frontmatter_raw": "a: 1\n"},
+    )
+    assert resp.status_code == 400
+    assert "mutually exclusive" in resp.json()["error"]
+
+
+@pytest.mark.asyncio
+async def test_vault_rename_rejects_combined_write_payloads(client, http_config):
+    """Every write key must collide with rename_to, not just `content`.
+
+    A payload the endpoint accepts but silently discards is worse than a 400.
+    """
+    path = http_config.vault_agent_pages_dir / "Combo.md"
+    path.write_text("---\nimportance: 0.4\n---\nBody.\n")
+    for key, value in [
+        ("content", "x"),
+        ("body", "x"),
+        ("frontmatter", {"summary": "s"}),
+        ("frontmatter_raw", "a: 1\n"),
+    ]:
+        resp = await client.put(
+            "/api/vault/agent/pages/Combo",
+            json={"rename_to": "agent/pages/Renamed", key: value},
+        )
+        assert resp.status_code == 400, f"{key} did not collide with rename_to"
+        assert key in resp.json()["error"]
+    assert path.exists(), "no rename should have happened"

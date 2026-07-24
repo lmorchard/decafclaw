@@ -1348,9 +1348,13 @@ async def vault_write(request: Request, username: str) -> JSONResponse:
 
     rename_to = body.get("rename_to")
     if rename_to is not None:
-        if "content" in body:
+        conflicting = [
+            key for key in ("content", "body", "frontmatter", "frontmatter_raw")
+            if key in body
+        ]
+        if conflicting:
             return JSONResponse(
-                {"error": "cannot combine rename_to with content"},
+                {"error": f"cannot combine rename_to with {', '.join(sorted(conflicting))}"},
                 status_code=400,
             )
         return await _vault_rename(
@@ -1368,7 +1372,17 @@ async def vault_write(request: Request, username: str) -> JSONResponse:
         return JSONResponse(
             {"error": "frontmatter must be an object"}, status_code=400,
         )
-    if new_body is None and fm_patch is None:
+    fm_raw = body.get("frontmatter_raw")
+    if fm_raw is not None and not isinstance(fm_raw, str):
+        return JSONResponse(
+            {"error": "frontmatter_raw must be a string"}, status_code=400,
+        )
+    if fm_patch is not None and fm_raw is not None:
+        return JSONResponse(
+            {"error": "frontmatter and frontmatter_raw are mutually exclusive"},
+            status_code=400,
+        )
+    if new_body is None and fm_patch is None and fm_raw is None:
         return JSONResponse({"error": "content (string) required"}, status_code=400)
 
     modified = body.get("modified")
@@ -1394,7 +1408,32 @@ async def vault_write(request: Request, username: str) -> JSONResponse:
     # yaml.dump would reorder keys and drop comments, and parse_frontmatter
     # reports {} for malformed YAML, which would delete it outright.
     new_raw = existing_raw
-    if fm_patch is not None:
+    if fm_raw is not None:
+        stripped = fm_raw.strip()
+        if not stripped:
+            new_raw = None
+        else:
+            # A bare `---` line would terminate the block early and push the
+            # rest into the body on the next read.
+            if any(line.strip() == "---" for line in fm_raw.splitlines()):
+                return JSONResponse(
+                    {"error": "frontmatter_raw must not contain a '---' line"},
+                    status_code=400,
+                )
+            try:
+                parsed = yaml.safe_load(stripped)
+            except yaml.YAMLError as exc:
+                return JSONResponse(
+                    {"error": f"invalid YAML: {exc}"}, status_code=400,
+                )
+            if not isinstance(parsed, dict):
+                return JSONResponse(
+                    {"error": "frontmatter must be a mapping"}, status_code=400,
+                )
+            # Stored verbatim rather than re-dumped, so the comments and key
+            # order the user typed survive.
+            new_raw = fm_raw.strip("\n")
+    elif fm_patch is not None:
         if fm_error is not None:
             return JSONResponse(
                 {"error": f"existing frontmatter is malformed: {fm_error}"},
