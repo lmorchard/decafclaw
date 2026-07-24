@@ -660,6 +660,54 @@ async def test_vault_tags_sorted_by_count_desc(client, http_config):
     ]
 
 
+@pytest.mark.asyncio
+async def test_vault_list_includes_summary(client, http_config):
+    pages_dir = http_config.vault_agent_pages_dir
+    (pages_dir / "WithFm.md").write_text(
+        "---\nsummary: A short summary.\n---\n# Body\n"
+    )
+    (pages_dir / "NoFm.md").write_text("# Body only\n")
+    resp = await client.get("/api/vault?folder=agent/pages")
+    assert resp.status_code == 200
+    pages = {p["title"]: p for p in resp.json()["pages"]}
+    assert pages["WithFm"]["summary"] == "A short summary."
+    assert pages["NoFm"]["summary"] == ""
+
+
+@pytest.mark.asyncio
+async def test_vault_list_summary_survives_malformed_frontmatter(
+    client, http_config,
+):
+    """A broken page must not break the whole listing."""
+    pages_dir = http_config.vault_agent_pages_dir
+    (pages_dir / "Bad.md").write_text("---\nthis: is: not: valid\n---\nBody.\n")
+    resp = await client.get("/api/vault?folder=agent/pages")
+    assert resp.status_code == 200
+    pages = {p["title"]: p for p in resp.json()["pages"]}
+    assert pages["Bad"]["summary"] == ""
+
+
+@pytest.mark.asyncio
+async def test_vault_list_summary_survives_undecodable_page(client, http_config):
+    """Invalid UTF-8 raises UnicodeDecodeError, not OSError — catch both."""
+    pages_dir = http_config.vault_agent_pages_dir
+    (pages_dir / "Binary.md").write_bytes(b"---\nsummary: x\n---\n\xff\xfe\n")
+    resp = await client.get("/api/vault?folder=agent/pages")
+    assert resp.status_code == 200
+    pages = {p["title"]: p for p in resp.json()["pages"]}
+    assert pages["Binary"]["summary"] == ""
+
+
+@pytest.mark.asyncio
+async def test_vault_recent_includes_summary(client, http_config):
+    pages_dir = http_config.vault_agent_pages_dir
+    (pages_dir / "Recent.md").write_text("---\nsummary: Recent one.\n---\nB\n")
+    resp = await client.get("/api/vault/recent")
+    assert resp.status_code == 200
+    pages = {p["title"]: p for p in resp.json()["pages"]}
+    assert pages["Recent"]["summary"] == "Recent one."
+
+
 # -- vault_changed event publishing -------------------------------------------
 #
 # These tests verify the REST handlers publish `vault_changed` events on the

@@ -194,6 +194,24 @@ def _dump_frontmatter(metadata: dict) -> str | None:
     ).rstrip("\n")
 
 
+def _page_summary(path: Path) -> str:
+    """Read a page's frontmatter `summary`, or "" if absent or unreadable.
+
+    Fail-open: a malformed or unreadable page must not break a listing.
+    UnicodeDecodeError is caught alongside OSError — it is a ValueError, not
+    an OSError, so a page with invalid UTF-8 would otherwise 500 the whole
+    listing.
+    """
+    try:
+        raw_block, _ = split_frontmatter(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError) as exc:
+        log.debug("Could not read %s for summary: %s", path, exc)
+        return ""
+    metadata, _ = parse_frontmatter_block(raw_block)
+    summary = metadata.get("summary")
+    return str(summary) if summary else ""
+
+
 def _collect_recent_workspace_files(
     workspace_root: Path,
 ) -> list[tuple[float, Path, str]]:
@@ -1160,6 +1178,7 @@ async def vault_list(request: Request, username: str) -> JSONResponse:
                 "path": str(rel.with_suffix("")),
                 "folder": folder_param,
                 "modified": stat.st_mtime,
+                "summary": _page_summary(child),
             })
     pages.sort(key=lambda p: p["title"].lower())
 
@@ -1216,6 +1235,7 @@ async def vault_recent(request: Request, username: str) -> JSONResponse:
             "path": str(rel.with_suffix("")),
             "folder": str(rel.parent) if str(rel.parent) != "." else "",
             "modified": md_file.stat().st_mtime,
+            "summary": _page_summary(md_file),
         })
 
     pages.sort(key=lambda p: p["modified"], reverse=True)
