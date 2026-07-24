@@ -9,6 +9,7 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 
+import yaml
 from croniter import croniter
 from starlette.applications import Starlette
 from starlette.requests import Request
@@ -16,7 +17,12 @@ from starlette.responses import FileResponse, JSONResponse, Response
 from starlette.routing import Mount, Route, WebSocketRoute
 from starlette.staticfiles import StaticFiles
 
-from .frontmatter import join_frontmatter, parse_frontmatter_block, split_frontmatter
+from .frontmatter import (
+    join_frontmatter,
+    merge_frontmatter,
+    parse_frontmatter_block,
+    split_frontmatter,
+)
 from .mattermost_ui import get_token_registry
 from .schedules import (
     _discover_skill_schedule_files,
@@ -173,6 +179,19 @@ def _vault_source_type(config, filepath: Path) -> str:
     """Determine source type for a vault file."""
     from .skills.vault.tools import _source_type_for_path
     return _source_type_for_path(config, filepath)
+
+
+def _dump_frontmatter(metadata: dict) -> str | None:
+    """Serialize a metadata dict to a raw frontmatter block, or None if empty.
+
+    Returns the block body only — no delimiters, no trailing newline — for
+    `join_frontmatter`.
+    """
+    if not metadata:
+        return None
+    return yaml.dump(
+        metadata, default_flow_style=False, allow_unicode=True,
+    ).rstrip("\n")
 
 
 def _collect_recent_workspace_files(
@@ -1342,8 +1361,16 @@ async def vault_write(request: Request, username: str) -> JSONResponse:
     if "content" in body and "body" not in body:
         body["body"] = body.pop("content")
     new_body = body.get("body")
-    if new_body is None or not isinstance(new_body, str):
+    fm_patch = body.get("frontmatter")
+    if new_body is not None and not isinstance(new_body, str):
+        return JSONResponse({"error": "body must be a string"}, status_code=400)
+    if fm_patch is not None and not isinstance(fm_patch, dict):
+        return JSONResponse(
+            {"error": "frontmatter must be an object"}, status_code=400,
+        )
+    if new_body is None and fm_patch is None:
         return JSONResponse({"error": "content (string) required"}, status_code=400)
+
     modified = body.get("modified")
     if modified is not None:
         try:
@@ -1357,16 +1384,32 @@ async def vault_write(request: Request, username: str) -> JSONResponse:
                     {"error": "conflict", "server_modified": file_mtime},
                     status_code=409,
                 )
+
     existed = target.exists()
-    # Splice the existing frontmatter block back verbatim rather than
-    # reserializing it: yaml.dump would reorder keys and drop comments, and
-    # parse_frontmatter reports {} for malformed YAML, which would delete it.
-    existing_raw = None
-    if existed:
-        existing_raw, _ = split_frontmatter(target.read_text(encoding="utf-8"))
-    content = join_frontmatter(existing_raw, new_body)
+    existing_text = target.read_text(encoding="utf-8") if existed else ""
+    existing_raw, existing_body = split_frontmatter(existing_text)
+    existing_meta, fm_error = parse_frontmatter_block(existing_raw)
+
+    # Splice the existing block back verbatim when only the body changed:
+    # yaml.dump would reorder keys and drop comments, and parse_frontmatter
+    # reports {} for malformed YAML, which would delete it outright.
+    new_raw = existing_raw
+    if fm_patch is not None:
+        if fm_error is not None:
+            return JSONResponse(
+                {"error": f"existing frontmatter is malformed: {fm_error}"},
+                status_code=400,
+            )
+        merged = merge_frontmatter(existing_meta, fm_patch, overwrite=True)
+        # merge_frontmatter has no deletion path — it would write `field: null`.
+        merged = {key: value for key, value in merged.items() if value is not None}
+        new_raw = _dump_frontmatter(merged)
+
+    final_body = existing_body if new_body is None else new_body
+    content = join_frontmatter(new_raw, final_body)
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(content, encoding="utf-8")
+    result_meta, _ = parse_frontmatter_block(new_raw)
     source_type = _vault_source_type(config, target)
     try:
         from .embeddings import delete_entries, index_entry
@@ -1380,7 +1423,15 @@ async def vault_write(request: Request, username: str) -> JSONResponse:
         kind=KIND_UPDATE if existed else KIND_CREATE,
         path=target,
     )
-    return JSONResponse({"ok": True, "modified": target.stat().st_mtime})
+    return JSONResponse({
+        "ok": True,
+        "modified": target.stat().st_mtime,
+        "frontmatter": result_meta,
+        # Returned so the client can reseed its raw editor without a second
+        # GET. A successful write always leaves a parseable block, so there
+        # is no frontmatter_error counterpart here.
+        "frontmatter_raw": new_raw or "",
+    })
 
 
 @_authenticated

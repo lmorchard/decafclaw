@@ -282,6 +282,132 @@ async def test_vault_write_body_only_preserves_key_order_and_comments(
 
 
 @pytest.mark.asyncio
+async def test_vault_write_frontmatter_patch_merges(client, http_config):
+    path = http_config.vault_agent_pages_dir / "Patch.md"
+    path.write_text("---\nimportance: 0.4\ntags:\n- keep\n---\nBody.\n")
+
+    resp = await client.put(
+        "/api/vault/agent/pages/Patch",
+        json={"frontmatter": {"summary": "A summary."}},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["frontmatter"]["summary"] == "A summary."
+    assert resp.json()["frontmatter_raw"] == "importance: 0.4\nsummary: A summary.\ntags:\n- keep"
+
+    from decafclaw.frontmatter import parse_frontmatter
+    meta, body = parse_frontmatter(path.read_text())
+    assert meta == {
+        "importance": 0.4,
+        "tags": ["keep"],
+        "summary": "A summary.",
+    }
+    assert body == "Body.\n"
+
+
+@pytest.mark.asyncio
+async def test_vault_write_frontmatter_patch_coerces(client, http_config):
+    """importance 1.7 -> 1.0 proves merge_frontmatter is really in the path."""
+    path = http_config.vault_agent_pages_dir / "Coerce.md"
+    path.write_text("---\nimportance: 0.4\n---\nBody.\n")
+
+    resp = await client.put(
+        "/api/vault/agent/pages/Coerce",
+        json={"frontmatter": {"importance": 1.7, "tags": "solo"}},
+    )
+    assert resp.status_code == 200
+    data = resp.json()["frontmatter"]
+    assert data["importance"] == 1.0
+    assert data["tags"] == ["solo"]
+
+
+@pytest.mark.asyncio
+async def test_vault_write_frontmatter_null_removes_key(client, http_config):
+    """A patch cannot delete by omission, so null means remove.
+
+    merge_frontmatter would otherwise write a literal `tags: null`.
+    """
+    path = http_config.vault_agent_pages_dir / "Del.md"
+    path.write_text("---\nimportance: 0.4\ntags:\n- gone\n---\nBody.\n")
+
+    resp = await client.put(
+        "/api/vault/agent/pages/Del",
+        json={"frontmatter": {"tags": None}},
+    )
+    assert resp.status_code == 200
+    assert "tags" not in resp.json()["frontmatter"]
+    text = path.read_text()
+    assert "tags" not in text
+    assert "null" not in text
+    assert "importance: 0.4" in text
+
+
+@pytest.mark.asyncio
+async def test_vault_write_frontmatter_patch_leaves_body_alone(
+    client, http_config,
+):
+    path = http_config.vault_agent_pages_dir / "BodySafe.md"
+    path.write_text("---\nimportance: 0.4\n---\n# Head\n\nExact body.\n")
+    resp = await client.put(
+        "/api/vault/agent/pages/BodySafe",
+        json={"frontmatter": {"summary": "S"}},
+    )
+    assert resp.status_code == 200
+    assert path.read_text().endswith("# Head\n\nExact body.\n")
+
+
+@pytest.mark.asyncio
+async def test_vault_write_frontmatter_patch_on_malformed_is_rejected(
+    client, http_config,
+):
+    """Merging into an unparseable block would silently discard it."""
+    path = http_config.vault_agent_pages_dir / "BadPatch.md"
+    original = "---\nthis: is: not: valid\n---\nBody.\n"
+    path.write_text(original)
+
+    resp = await client.put(
+        "/api/vault/agent/pages/BadPatch",
+        json={"frontmatter": {"summary": "S"}},
+    )
+    assert resp.status_code == 400
+    assert "malformed" in resp.json()["error"]
+    assert path.read_text() == original
+
+
+@pytest.mark.asyncio
+async def test_vault_write_frontmatter_and_body_one_write(client, http_config):
+    path = http_config.vault_agent_pages_dir / "Both.md"
+    path.write_text("---\nimportance: 0.4\n---\nOld.\n")
+    resp = await client.put(
+        "/api/vault/agent/pages/Both",
+        json={"frontmatter": {"summary": "S"}, "body": "New.\n"},
+    )
+    assert resp.status_code == 200
+    text = path.read_text()
+    assert "summary: S" in text
+    assert text.endswith("New.\n")
+
+
+@pytest.mark.asyncio
+async def test_vault_write_frontmatter_stale_modified_conflicts(
+    client, http_config,
+):
+    """A merge against a stale read would resurrect a just-deleted key."""
+    path = http_config.vault_agent_pages_dir / "Stale.md"
+    path.write_text("---\nimportance: 0.4\n---\nBody.\n")
+    resp = await client.put(
+        "/api/vault/agent/pages/Stale",
+        json={"frontmatter": {"summary": "S"}, "modified": 1.0},
+    )
+    assert resp.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_vault_write_requires_a_payload(client, http_config):
+    resp = await client.put("/api/vault/agent/pages/Nothing", json={})
+    assert resp.status_code == 400
+
+
+@pytest.mark.asyncio
 async def test_vault_write_path_traversal(client):
     resp = await client.put(
         "/api/vault/../../../etc/passwd",
