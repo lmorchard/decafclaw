@@ -59,6 +59,11 @@ def test_count_for_conv():
     assert reg.count_for_conv("c2") == 1
 
 
+# The spawn path deliberately keeps Python 3.13's forkpty DeprecationWarning
+# visible in production (terminals.py:71-73) — this fork is safe (chdir+execvpe
+# only between fork and exec). Exempt it per-site rather than suite-wide so an
+# unaudited forkpty elsewhere still dirties the suite. #638
+@pytest.mark.filterwarnings("ignore:.*use of forkpty.*:DeprecationWarning")
 @pytest.mark.asyncio
 async def test_real_pty_echo_and_cleanup():
     reg = TerminalRegistry(load_config())
