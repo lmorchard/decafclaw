@@ -232,16 +232,23 @@ export class TerminalWidget extends LitElement {
     // A hidden panel fits to 0 (no-op) and sub-pixel jitter re-fires the
     // observer without changing cols/rows — neither should hit the PTY.
     if (cols === this._lastCols && rows === this._lastRows) return;
-    this._lastCols = cols;
-    this._lastRows = rows;
-    this._send({ type: 'resize', cols, rows });
+    // Advance the dedup baseline ONLY when the frame actually goes out. A
+    // debounced resize can fire mid-replay (`_send` is gated on !_replaying);
+    // updating the baseline there would let the dedup swallow the required
+    // post-`buffer_replay_done` resize, leaving the socket with no size.
+    if (this._send({ type: 'resize', cols, rows })) {
+      this._lastCols = cols;
+      this._lastRows = rows;
+    }
   }
 
-  /** @param {Object} obj */
+  /** @param {Object} obj @returns {boolean} whether the frame was transmitted */
   _send(obj) {
     if (this._ws && this._ws.readyState === WebSocket.OPEN && !this._replaying) {
       this._ws.send(JSON.stringify(obj));
+      return true;
     }
+    return false;
   }
 
   _teardownSocket() {
