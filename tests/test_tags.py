@@ -66,6 +66,18 @@ def test_extract_journal_bullet_plus_inline():
     assert extract_tags(content, "journal") == {"rust", "async", "extra"}
 
 
+def test_extract_journal_untagged_sentinel_yields_no_tags():
+    # "untagged" is vault_journal_append's display placeholder for the
+    # no-tags case, not a real tag — the bullet should contribute nothing.
+    content = "## 2026-07-24 10:00\n\n- **tags:** untagged\n\nsome note"
+    assert extract_tags(content, "journal") == set()
+
+
+def test_extract_journal_untagged_sentinel_with_inline_tag():
+    content = "## 2026-07-24 10:00\n\n- **tags:** untagged\n\nsome #real note"
+    assert extract_tags(content, "journal") == {"real"}
+
+
 class TestCollectAllTags:
     def test_counts_display_and_pages(self, config, agent_pages, agent_journal):
         (agent_pages / "Rust.md").write_text("---\ntags: [Rust]\n---\nabout rust")

@@ -76,7 +76,15 @@ def extract_tags(content: str, source_type: str) -> set[str]:
             tags.add(normalize_tag(str(t)))
     if source_type == "journal":
         for m in _JOURNAL_TAGS_BULLET_RE.finditer(content):
-            for part in m.group(1).split(","):
+            bullet_value = m.group(1).strip()
+            # "untagged" is vault_journal_append's display placeholder for
+            # the no-tags case (see skills/vault/tools.py), not a real tag —
+            # skip it. Only the whole-value sentinel is excluded; a
+            # legitimate multi-tag bullet that merely contains the word
+            # elsewhere is untouched.
+            if bullet_value.lower() == "untagged":
+                continue
+            for part in bullet_value.split(","):
                 if part.strip():
                     tags.add(normalize_tag(part))
     tags |= parse_inline_tags(body)
