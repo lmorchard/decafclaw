@@ -70,6 +70,7 @@ Any field on `Config` or any of its nested sections is reachable. The runner doe
 Notes:
 
 - **Typos raise.** An unknown path fails that test with the available field names listed. Silently ignoring it would produce a green test measuring the wrong config — the whole point of the mechanism is to make the config under test explicit.
+- **`config_overrides` is validated on presence, not truthiness.** A bare `config_overrides:` parses to YAML null, and `[]` / `0` / `""` are falsy too; all of them raise rather than quietly doing nothing. Write `config_overrides: {}` if you really mean "no overrides". (A bare `setup:` *is* tolerated as an empty block — an empty setup section is a normal authoring state, whereas an empty `config_overrides` block means the author intended overrides and lost them.)
 - **Nesting comes from dots in the key, never from nested YAML.** A dict on the value side is a literal value, so plain-dict fields (`skills`, `providers`, `model_configs`) can be set wholesale.
 - **The sandbox wins.** `agent.data_home` and `agent.id` are applied after your overrides, so a case cannot redirect itself out of its temp directory.
 - Two earlier bespoke keys, `setup.max_tool_iterations` and `setup.reflection_enabled`, were folded into this mechanism. They now raise with a migration hint rather than being silently ignored.

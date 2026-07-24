@@ -12,7 +12,12 @@ import pytest
 import yaml
 
 from decafclaw.config import Config
-from decafclaw.eval.runner import _REMOVED_SETUP_KEYS, _build_test_config
+from decafclaw.eval.runner import (
+    _REMOVED_SETUP_KEYS,
+    _build_test_config,
+    _seed_conversation_history,
+    _setup_of,
+)
 
 
 def _tmp(tmp_path):
@@ -214,13 +219,59 @@ def test_conflicting_paths_raise(tmp_path):
         )
 
 
-def test_config_overrides_must_be_a_mapping(tmp_path):
+@pytest.mark.parametrize("bad", [
+    ["reflection.enabled=False"],
+    # Falsy non-mappings must raise too. A bare `config_overrides:` in YAML
+    # parses to None, and gating validation on truthiness would let that (and
+    # `[]`, `0`, `""`) silently no-op — the exact failure this mechanism
+    # exists to prevent. The repo has been bitten by null-YAML before; see
+    # test_schedule_null_allowed_tools.
+    None,
+    [],
+    0,
+    "",
+])
+def test_config_overrides_must_be_a_mapping(tmp_path, bad):
     cfg = Config()
     with pytest.raises(ValueError, match="must be a mapping"):
         _build_test_config(
-            cfg, {"setup": {"config_overrides": ["reflection.enabled=False"]}},
-            _tmp(tmp_path),
+            cfg, {"setup": {"config_overrides": bad}}, _tmp(tmp_path),
         )
+
+
+def test_empty_mapping_is_an_explicit_noop(tmp_path):
+    """`config_overrides: {}` is unambiguous — the author wrote no paths."""
+    cfg = Config()
+    out = _build_test_config(
+        cfg, {"setup": {"config_overrides": {}}}, _tmp(tmp_path),
+    )
+    assert out.reflection.enabled == cfg.reflection.enabled
+
+
+def test_null_setup_is_treated_as_empty(tmp_path):
+    """`setup:` with nothing under it is a natural authoring state, not an
+    error — but it must not crash the runner."""
+    cfg = Config()
+    out = _build_test_config(cfg, {"setup": None}, _tmp(tmp_path))
+    assert out.agent.data_home == _tmp(tmp_path)
+
+
+def test_non_mapping_setup_raises(tmp_path):
+    cfg = Config()
+    with pytest.raises(ValueError, match="setup must be a mapping"):
+        _build_test_config(cfg, {"setup": ["reflection_enabled"]}, _tmp(tmp_path))
+
+
+def test_all_setup_consumers_tolerate_null_setup():
+    """Every reader of the `setup` block goes through the same normalizer.
+
+    Regression guard for the extraction: `_build_test_config` alone handling
+    `setup: None` would still leave the other readers raising AttributeError
+    on `.get()`.
+    """
+    assert _setup_of({"setup": None}) == {}
+    assert _setup_of({}) == {}
+    assert _seed_conversation_history(Config(), {"setup": None}) == []
 
 
 # -- removed bespoke keys fail loudly rather than silently no-opping --

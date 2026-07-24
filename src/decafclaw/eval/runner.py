@@ -95,7 +95,7 @@ class _EvalConversationManager(ConversationManager):
 
 async def _setup_skills(ctx, test_case: dict):
     """Pre-activate skills specified in setup.skills."""
-    setup = test_case.get("setup", {})
+    setup = _setup_of(test_case)
     skill_names = setup.get("skills", [])
     if not skill_names:
         return
@@ -126,7 +126,7 @@ def _seed_conversation_history(config, test_case: dict) -> list[dict]:
     Validates that each entry has a ``role``; everything else is passed
     through. Returns ``[]`` when the setup field is absent.
     """
-    setup = test_case.get("setup", {})
+    setup = _setup_of(test_case)
     seed = setup.get("conversation_history") or []
     if not seed:
         return []
@@ -150,7 +150,7 @@ def _seed_conversation_history(config, test_case: dict) -> list[dict]:
 async def _setup_workspace(config, test_case: dict):
     """Create fixture data in the temp workspace."""
     import shutil
-    setup = test_case.get("setup", {})
+    setup = _setup_of(test_case)
 
     # Copy pre-built embeddings fixture if specified
     fixture_db = setup.get("embeddings_fixture")
@@ -472,6 +472,22 @@ def _check_assertions(test_case: dict, response: str, tool_calls: int,
     return True, ""
 
 
+def _setup_of(test_case: dict) -> dict:
+    """Return a test case's ``setup`` block, normalized to a mapping.
+
+    A bare ``setup:`` in YAML parses to ``None``. An empty setup block is a
+    natural authoring state, so treat it as absent — but reject any other
+    non-mapping instead of letting it surface later as an ``AttributeError``
+    from a ``.get()`` on the wrong type.
+    """
+    setup = test_case.get("setup")
+    if setup is None:
+        return {}
+    if not isinstance(setup, dict):
+        raise ValueError(f"setup must be a mapping, got {type(setup).__name__}")
+    return setup
+
+
 # Bespoke setup keys folded into the generic config_overrides mechanism.
 # Kept only to fail loudly — a silently-ignored key would look like a
 # passing test of the wrong config, which is the failure mode the generic
@@ -569,21 +585,28 @@ def _build_test_config(config: Config, test_case: dict, tmp: str) -> Config:
     The sandbox fields (``agent.data_home`` / ``agent.id``) are applied
     *last* so a case cannot redirect itself out of its temp directory.
     """
-    setup = test_case.get("setup", {})
+    setup = _setup_of(test_case)
     for old, new in _REMOVED_SETUP_KEYS.items():
         if old in setup:
             raise ValueError(
                 f"setup.{old} was replaced by setup.config_overrides. "
                 f"Use:\n  setup:\n    config_overrides:\n      {new}: <value>"
             )
-    raw = setup.get("config_overrides", {})
-    if raw:
+
+    # Validate on *presence*, not truthiness. A bare `config_overrides:`
+    # parses to None, and `[]` / `0` / `""` are falsy too — gating on
+    # truthiness would let all of them silently no-op, which is the exact
+    # failure this mechanism exists to prevent. `{}` is the unambiguous way
+    # to say "no overrides".
+    if "config_overrides" in setup:
+        raw = setup["config_overrides"]
         if not isinstance(raw, dict):
             raise ValueError(
                 f"config_overrides must be a mapping of dotted paths to "
-                f"values, got {type(raw).__name__}"
+                f"values, got {type(raw).__name__}. Use `{{}}` for none."
             )
         config = _apply_overrides(config, _nest_overrides(raw))
+
     return replace(config, agent=replace(config.agent, data_home=tmp, id="eval"))
 
 
@@ -607,7 +630,7 @@ async def run_test(config: Config, test_case: dict) -> dict:
     # Resolved early so both the manager (child confirmations via typed
     # path) and the event-bus shim (parent confirmations via legacy path)
     # see the same verdict.
-    auto_confirm = test_case.get("setup", {}).get("auto_confirm", True)
+    auto_confirm = _setup_of(test_case).get("auto_confirm", True)
 
     bus = EventBus()
     manager = _EvalConversationManager(config, bus, auto_confirm=auto_confirm)
