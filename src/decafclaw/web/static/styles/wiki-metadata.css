@@ -83,3 +83,61 @@ button.wiki-md-toggle {
   gap: 0.25rem;
   margin: 0;
 }
+
+.wiki-md-summary-input,
+.wiki-md-raw-input {
+  width: 100%;
+  margin: 0;
+  font-size: 0.8125rem;
+}
+
+.wiki-md-raw-input {
+  font-family: var(--pico-font-family-monospace);
+}
+
+.wiki-md-chip-input {
+  width: 6rem;
+  margin: 0;
+  padding: 0 0.25rem;
+  font-size: 0.75rem;
+}
+
+/* Tag-qualified so Pico's button:not(...) (0,1,1) doesn't win. */
+button.wiki-md-chip-x,
+button.wiki-md-raw-toggle {
+  width: auto;
+  margin: 0;
+  border: none;
+  background: none;
+  color: inherit;
+}
+
+button.wiki-md-chip-x {
+  padding: 0 0 0 0.25rem;
+  font-size: 0.875rem;
+  line-height: 1;
+}
+
+button.wiki-md-raw-toggle {
+  padding: 0.25rem 0;
+  font-size: 0.75rem;
+  color: var(--pico-muted-color);
+}
+
+.wiki-md-raw {
+  margin-top: 0.5rem;
+}
+
+.wiki-md-raw-actions {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  margin-top: 0.375rem;
+}
+
+.wiki-md-raw-actions button {
+  width: auto;
+  margin: 0;
+  padding: 0.125rem 0.5rem;
+  font-size: 0.75rem;
+}

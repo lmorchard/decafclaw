@@ -66,16 +66,93 @@ export class WikiPage extends LitElement {
     /** @type {string} */ this._renameError = '';
   }
 
+  /** @type {ReturnType<typeof setTimeout> | null} */
+  #metaTimer = null;
+  /** @type {Record<string, any>} */
+  #pendingFields = {};
+  /** @type {Promise<void> | null} */
+  #metaInFlight = null;
+
   /** @param {Map<string, any>} changed */
   willUpdate(changed) {
     if (changed.has('page') && this.page) {
       // If editing, flush save before switching pages
       if (this._editing) {
+        void this.#flushMetadata();
         /** @type {import('./wiki-editor.js').WikiEditor|null} */
         const editor = this.querySelector('wiki-editor');
         if (editor) editor.flushSave();
       }
       this._fetchPage();
+    }
+  }
+
+  /** @param {CustomEvent} e */
+  _onMetadataChange(e) {
+    Object.assign(this.#pendingFields, e.detail.fields);
+    if (this.#metaTimer != null) clearTimeout(this.#metaTimer);
+    this.#metaTimer = setTimeout(() => { this.#flushMetadata(); }, 600);
+  }
+
+  /** Send any debounced typed patch now. Resolves when the write completes. */
+  async #flushMetadata() {
+    if (this.#metaTimer != null) {
+      clearTimeout(this.#metaTimer);
+      this.#metaTimer = null;
+    }
+    if (this.#metaInFlight) await this.#metaInFlight;
+    const fields = this.#pendingFields;
+    this.#pendingFields = {};
+    if (!Object.keys(fields).length) return;
+    this.#metaInFlight = this.#putMetadata({ frontmatter: fields })
+      .then(() => { this.#metaInFlight = null; });
+    await this.#metaInFlight;
+  }
+
+  /** @param {CustomEvent} e */
+  async _onMetadataRawSave(e) {
+    // A typed patch landing after a raw replace would resurrect a key the
+    // raw save just deleted, so flush it first. The two PUT shapes are
+    // mutually exclusive server-side.
+    await this.#flushMetadata();
+    const panel = this.querySelector('wiki-metadata');
+    const res = await this.#putMetadata({ frontmatter_raw: e.detail.raw });
+    if (res.ok) {
+      /** @type {any} */ (panel)?.closeRaw();
+    } else {
+      /** @type {any} */ (panel)?.setRawError(res.error);
+    }
+  }
+
+  /**
+   * @param {Record<string, any>} payload
+   * @returns {Promise<{ok: boolean, error: string}>}
+   */
+  async #putMetadata(payload) {
+    try {
+      const res = await fetch('/api/vault/' + encodePagePath(this.page), {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...payload, modified: this._modified }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        return { ok: false, error: data.error || `Save failed (${res.status})` };
+      }
+      this._frontmatter = data.frontmatter ?? {};
+      // The response carries the new raw block, so no second GET is needed.
+      // A successful write always leaves a parseable block, so any prior
+      // parse error is resolved by definition.
+      this._frontmatterRaw = data.frontmatter_raw ?? '';
+      this._frontmatterError = '';
+      this._modified = data.modified;
+      // Push the new mtime into the body editor, or its next autosave 409s.
+      /** @type {any} */
+      const editor = this.querySelector('wiki-editor');
+      if (editor) editor.modified = data.modified;
+      return { ok: true, error: '' };
+    } catch (err) {
+      return { ok: false, error: 'Save failed (network error)' };
     }
   }
 
@@ -108,6 +185,7 @@ export class WikiPage extends LitElement {
   async _toggleMode() {
     if (this._editing) {
       // Flush editor save before switching to view mode
+      await this.#flushMetadata();
       /** @type {import('./wiki-editor.js').WikiEditor|null} */
       const editor = this.querySelector('wiki-editor');
       if (editor) await editor.flushSave();
@@ -301,10 +379,12 @@ export class WikiPage extends LitElement {
 
     const metadataPanel = html`
       <wiki-metadata
-        readonly
+        ?readonly=${!this._editing}
         .frontmatter=${this._frontmatter}
         .frontmatterRaw=${this._frontmatterRaw}
         .frontmatterError=${this._frontmatterError}
+        @metadata-change=${this._onMetadataChange}
+        @metadata-raw-save=${this._onMetadataRawSave}
       ></wiki-metadata>
     `;
 

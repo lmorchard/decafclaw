@@ -27,6 +27,9 @@ export class WikiMetadata extends LitElement {
     frontmatterError: { attribute: false },
     readonly: { type: Boolean },
     _expanded: { state: true },
+    _rawOpen: { state: true },
+    _rawText: { state: true },
+    _rawError: { state: true },
   };
 
   createRenderRoot() { return this; }
@@ -38,11 +41,173 @@ export class WikiMetadata extends LitElement {
     /** @type {string} */ this.frontmatterError = '';
     this.readonly = false;
     this._expanded = localStorage.getItem(EXPANDED_KEY) === 'true';
+    this._rawOpen = false;
+    this._rawText = '';
+    this._rawError = '';
+  }
+
+  /** @param {Map<string, any>} changed */
+  willUpdate(changed) {
+    // Reseed the raw editor from the server's bytes whenever the page's
+    // frontmatter changes underneath us, unless the user is mid-edit.
+    if (changed.has('frontmatterRaw') && !this._rawOpen) {
+      this._rawText = this.frontmatterRaw;
+    }
   }
 
   #toggle() {
     this._expanded = !this._expanded;
     localStorage.setItem(EXPANDED_KEY, String(this._expanded));
+  }
+
+  /**
+   * @param {string} field
+   * @param {any} value — null removes the key
+   */
+  #emitChange(field, value) {
+    this.dispatchEvent(new CustomEvent('metadata-change', {
+      detail: { fields: { [field]: value } },
+      bubbles: true,
+      composed: true,
+    }));
+  }
+
+  /** @param {string} field @param {string[]} tags */
+  #emitList(field, tags) {
+    this.#emitChange(field, tags.length ? tags : null);
+  }
+
+  /** @param {string} field @param {string} tag */
+  #removeTag(field, tag) {
+    this.#emitList(field, this.#list(field).filter(t => t !== tag));
+  }
+
+  /** @param {string} field @param {KeyboardEvent} e */
+  #addTagKey(field, e) {
+    if (e.key !== 'Enter' && e.key !== ',') return;
+    e.preventDefault();
+    const input = /** @type {HTMLInputElement} */ (e.target);
+    const value = input.value.trim().replace(/,$/, '');
+    if (!value) return;
+    const existing = this.#list(field);
+    if (!existing.includes(value)) this.#emitList(field, [...existing, value]);
+    input.value = '';
+  }
+
+  #toggleRaw() {
+    this._rawOpen = !this._rawOpen;
+    this._rawError = '';
+    if (this._rawOpen) this._rawText = this.frontmatterRaw;
+  }
+
+  #saveRaw() {
+    this._rawError = '';
+    this.dispatchEvent(new CustomEvent('metadata-raw-save', {
+      detail: { raw: this._rawText },
+      bubbles: true,
+      composed: true,
+    }));
+  }
+
+  /** Called by the host when a raw save is rejected. @param {string} message */
+  setRawError(message) {
+    this._rawError = message;
+  }
+
+  /** Called by the host after a raw save succeeds. */
+  closeRaw() {
+    this._rawOpen = false;
+    this._rawError = '';
+  }
+
+  /** @param {string} field @param {string} label */
+  #renderChipInput(field, label) {
+    const tags = this.#list(field);
+    return html`
+      <dt>${label}</dt>
+      <dd>
+        ${tags.map(tag => html`
+          <span class="wiki-md-chip">
+            ${tag}
+            <button
+              type="button"
+              class="wiki-md-chip-x"
+              title="Remove ${tag}"
+              aria-label="Remove ${tag}"
+              @click=${() => this.#removeTag(field, tag)}
+            >&times;</button>
+          </span>
+        `)}
+        <input
+          class="wiki-md-chip-input"
+          type="text"
+          placeholder="add…"
+          aria-label="Add ${label}"
+          @keydown=${(/** @type {KeyboardEvent} */ e) => this.#addTagKey(field, e)}
+        />
+      </dd>
+    `;
+  }
+
+  #renderEditControls() {
+    const importance = this.frontmatter?.importance;
+    const disabled = Boolean(this.frontmatterError);
+    return html`
+      <dl class="wiki-md-detail">
+        <dt>summary</dt>
+        <dd>
+          <textarea
+            class="wiki-md-summary-input"
+            rows="2"
+            aria-label="Summary"
+            ?disabled=${disabled}
+            .value=${this.frontmatter?.summary ? String(this.frontmatter.summary) : ''}
+            @change=${(/** @type {Event} */ e) => {
+              const value = /** @type {HTMLTextAreaElement} */ (e.target).value.trim();
+              this.#emitChange('summary', value || null);
+            }}
+          ></textarea>
+        </dd>
+        <dt>importance</dt>
+        <dd>
+          <input
+            type="range"
+            min="0" max="1" step="0.05"
+            aria-label="Importance"
+            ?disabled=${disabled}
+            .value=${importance == null ? '0.5' : String(importance)}
+            @change=${(/** @type {Event} */ e) => {
+              const value = Number(/** @type {HTMLInputElement} */ (e.target).value);
+              this.#emitChange('importance', value);
+            }}
+          />
+          <span class="wiki-md-importance">${importance == null ? '—' : importance}</span>
+        </dd>
+        ${disabled ? nothing : this.#renderChipInput('tags', 'tags')}
+        ${disabled ? nothing : this.#renderChipInput('keywords', 'keywords')}
+      </dl>
+      <div class="wiki-md-raw">
+        <button type="button" class="wiki-md-raw-toggle" @click=${() => this.#toggleRaw()}>
+          ${this._rawOpen ? '▾' : '▸'} edit raw YAML
+        </button>
+        ${this._rawOpen ? html`
+          <textarea
+            class="wiki-md-raw-input"
+            rows="8"
+            aria-label="Raw frontmatter YAML"
+            .value=${this._rawText}
+            @input=${(/** @type {Event} */ e) => {
+              this._rawText = /** @type {HTMLTextAreaElement} */ (e.target).value;
+            }}
+          ></textarea>
+          <div class="wiki-md-raw-actions">
+            <button type="button" @click=${() => this.#saveRaw()}>Save YAML</button>
+            <button type="button" class="secondary" @click=${() => this.#toggleRaw()}>Cancel</button>
+            ${this._rawError ? html`<span class="wiki-md-error">${this._rawError}</span>` : nothing}
+          </div>
+        ` : nothing}
+      </div>
+    `;
   }
 
   /**
@@ -64,6 +229,7 @@ export class WikiMetadata extends LitElement {
   }
 
   #hasAnything() {
+    if (!this.readonly) return true;
     return Boolean(this.frontmatterError)
       || Object.keys(this.frontmatter || {}).length > 0;
   }
@@ -132,7 +298,9 @@ export class WikiMetadata extends LitElement {
           ${this.frontmatterError
             ? html`<div class="wiki-md-error">Frontmatter is not valid YAML: ${this.frontmatterError}</div>`
             : nothing}
-          ${this._expanded ? this.#renderDetail() : this.#renderStrip()}
+          ${this._expanded
+            ? (this.readonly ? this.#renderDetail() : this.#renderEditControls())
+            : this.#renderStrip()}
         </div>
       </div>
     `;

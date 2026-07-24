@@ -243,11 +243,11 @@ export class WikiEditor extends LitElement {
       const res = await fetch(`/api/vault/${encodePagePath(this.page)}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
-      // wiki-editor is shared with schedule-page.js and config-panel.js,
-      // whose endpoints still return `content`; the vault endpoint now
-      // returns `body` instead. #reload's fetch is hardcoded to the vault
-      // endpoint, so this fallback is defensive, but keep the source of
-      // truth in one place rather than re-deriving it below.
+      // The vault endpoint returns `body`; `content` is insurance only. Note
+      // this fetch is hardcoded to /api/vault regardless of `saveEndpoint`, so
+      // schedule-page / config-panel never actually reach this path today —
+      // the fallback exists for whenever that hardcoding is fixed, not because
+      // it fires now. Assigned once so all four uses stay in sync.
       const newContent = data.body ?? data.content ?? '';
       this.content = newContent;
       this.modified = data.modified;

@@ -18,7 +18,7 @@ warnings are pre-existing `forkpty` deprecations in the terminal tests.
 - Task 5 — PUT `frontmatter_raw` replace: pending
 - Task 6 — sidebar summaries: pending
 - Task 7 — `<wiki-metadata>` read-only + `wiki-page` on `body`: done
-- Task 8 — metadata editing: pending
+- Task 8 — metadata editing: done
 - Task 9 — docs + wrap-up: pending
 
 ## Open question to answer during Task 7
@@ -92,6 +92,70 @@ Tasks 1–6 added coverage; no regressions).
 - Typed controls patch; raw replaces; mutually exclusive on the wire.
 - Read-only compact strip in view mode, expandable.
 - Tag chips inert this session — #318 owns tag query semantics.
+
+## Task 8 details
+
+Implemented the brief's edit controls verbatim in `wiki-metadata.js`
+(`willUpdate` reseed guard, `#emitChange`/`#emitList`/`#removeTag`/
+`#addTagKey`, raw-editor toggle/save/setRawError/closeRaw, `#renderChipInput`,
+`#renderEditControls`), the CSS block in `wiki-metadata.css`, and
+`wiki-page.js`'s PUT ownership (`#metaTimer`/`#pendingFields`/`#metaInFlight`,
+`_onMetadataChange`, `#flushMetadata`, `_onMetadataRawSave`, `#putMetadata`),
+plus the flush calls added to `willUpdate` (`void`, unawaited — matches the
+existing unawaited `editor.flushSave()` there) and `_toggleMode` (awaited).
+Step 3c reframed the `#reload()` fallback comment in `wiki-editor.js` per the
+brief's exact text — no behavior change, `?? data.content` expression kept.
+
+`make check` clean (ruff, pyright, `tsc --checkJs`, message-types drift
+check). `make test`: 3276 passed, 2 skipped — identical to the pre-task-8
+baseline (this task is pure client-side JS, so no new Python test coverage
+was expected or added).
+
+**Browser verification** (isolated `DATA_HOME=/tmp/fm-smoke`, fixture
+`agent/pages/FmSmoke`, restored via `cp` from `FmSmoke.orig.md` afterward,
+byte-identical confirmed by `diff`). All eight checks from the brief's Step 5,
+adapted to FmSmoke:
+
+1. Edited the summary textarea, blurred (Tab), waited >600ms. Sidebar row for
+   FmSmoke updated to the new summary text; `diff` against the previous disk
+   state showed only the `summary:` line changed.
+2. Set the importance slider via a `change` event. Panel showed the new value;
+   `diff` showed only `importance:` changed.
+3. Removed the "workflow" tag chip, typed "smoketest" + Enter in the tags
+   input. `diff` showed only the `tags:` list changed (workflow out,
+   smoketest in).
+4. Removed all three remaining tag chips (0din, AI, smoketest) one at a time.
+   Resulting file has **no `tags:` key at all** — confirmed by `cat`, not
+   `tags: null`.
+5. `curl -X PUT .../FmSmoke -d '{"frontmatter": {"importance": 1.7}}'` (used
+   `127.0.0.1` not `localhost` — the session cookie's domain is `127.0.0.1`,
+   so `localhost` gets "not authenticated"). Response: `"importance": 1.0` —
+   coercion confirmed on the wire path.
+6. Opened "edit raw YAML"; textarea held the real bytes (`JSON.stringify`'d
+   the `.value` to confirm actual `\n` newlines, not accessibility-tree
+   flattening). Replaced with an unterminated `[...` flow sequence and saved:
+   inline error appeared ("invalid YAML: while parsing a flow sequence...");
+   `cat` on disk showed the file untouched. Fixed the YAML and saved again:
+   applied cleanly, editor auto-closed (`closeRaw()` fired), sidebar/panel
+   updated to the new summary.
+7. Deleted the `importance` key from the raw textarea and saved. Disk file
+   has no `importance` key; panel's importance row shows "—" (its no-value
+   placeholder). Confirms whole-frontmatter replace semantics, not a merge.
+8. Race check: edited the summary textarea (arms `wiki-page`'s 600ms
+   debounce) then, in the *same synchronous JS turn* (before the timer's
+   macrotask could fire — verified this is guaranteed since `setTimeout`
+   can't run until the current call stack unwinds past any pending
+   microtasks), opened the raw editor, set different raw text, and clicked
+   Save YAML. Captured the two resulting PUT request bodies via Playwright's
+   network inspector: PUT #1 was
+   `{"frontmatter":{"summary":"TYPED PENDING..."}}` (the flushed typed
+   patch), PUT #2 was `{"frontmatter_raw":"...summary: RAW WINS"}` (the raw
+   replace) — confirming `_onMetadataRawSave`'s `await this.#flushMetadata()`
+   really does send the patch first. Final disk content: `summary: RAW WINS`
+   — the raw save won and the typed edit did not resurrect or clobber it.
+
+No deviations from the brief for Task 8 itself (Step 3c's comment rewrite was
+the brief's own instruction, not a deviation).
 
 ## #318 coordination
 
