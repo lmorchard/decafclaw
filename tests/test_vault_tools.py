@@ -1323,3 +1323,59 @@ class TestVaultUpdateFrontmatter:
             await tool_vault_update_frontmatter(
                 ctx, page="agent/pages/t.md", fields={"summary": "s"})
         rx.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_interactive_user_page_confirms_then_updates(self, ctx, vault_dir):
+        """Interactive caller updating a user-owned page outside agent/ must
+        hit the same gate as vault_write: confirmation requested, then the
+        write proceeds on approval."""
+        p = vault_dir / "creative" / "foo.md"
+        p.parent.mkdir(parents=True)
+        p.write_text("Body.\n")
+        ctx.request_confirmation = _dummy_request_confirmation
+        with (
+            patch("decafclaw.skills.vault.tools.request_confirmation",
+                  AsyncMock(return_value={"approved": True})) as mock_conf,
+            patch("decafclaw.skills.vault.tools._reindex_page",
+                  new_callable=AsyncMock),
+        ):
+            await tool_vault_update_frontmatter(
+                ctx, page="creative/foo", fields={"summary": "s"})
+        assert mock_conf.called
+        meta, _ = parse_frontmatter(p.read_text())
+        assert meta["summary"] == "s"
+
+    @pytest.mark.asyncio
+    async def test_interactive_user_page_denied_returns_error_no_update(
+        self, ctx, vault_dir,
+    ):
+        p = vault_dir / "creative" / "foo.md"
+        p.parent.mkdir(parents=True)
+        p.write_text("Body.\n")
+        ctx.request_confirmation = _dummy_request_confirmation
+        with patch("decafclaw.skills.vault.tools.request_confirmation",
+                   AsyncMock(return_value={"approved": False})):
+            result = await tool_vault_update_frontmatter(
+                ctx, page="creative/foo", fields={"summary": "s"})
+        assert "denied by user" in result.text
+        meta, _ = parse_frontmatter(p.read_text())
+        assert "summary" not in meta
+
+    @pytest.mark.asyncio
+    async def test_non_interactive_user_page_updates_without_gate(
+        self, ctx, vault_dir,
+    ):
+        """Non-interactive callers (scheduled dream/garden) can't prompt, so
+        vault-wide reach proceeds ungated — this is the tool's intended
+        maintenance purpose."""
+        p = vault_dir / "creative" / "foo.md"
+        p.parent.mkdir(parents=True)
+        p.write_text("Body.\n")
+        ctx.request_confirmation = None
+        with patch("decafclaw.skills.vault.tools._reindex_page",
+                   new_callable=AsyncMock):
+            result = await tool_vault_update_frontmatter(
+                ctx, page="creative/foo", fields={"summary": "s"})
+        assert "updated" in result.text.lower()
+        meta, _ = parse_frontmatter(p.read_text())
+        assert meta["summary"] == "s"

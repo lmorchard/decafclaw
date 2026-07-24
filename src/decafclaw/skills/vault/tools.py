@@ -249,6 +249,17 @@ def _format_vault_delete_preview(config, path: Path) -> str:
     )
 
 
+def _format_vault_update_frontmatter_preview(
+    config, path: Path, fields: dict,
+) -> str:
+    """Confirmation preview for vault_update_frontmatter."""
+    try:
+        rel = str(path.resolve().relative_to(config.vault_root.resolve()))
+    except ValueError:
+        rel = path.name
+    return f"Vault frontmatter update to: {rel}\nFields: {', '.join(sorted(fields))}"
+
+
 def _format_vault_rename_preview(config, old_path: Path, new_path: Path) -> str:
     """Confirmation preview for vault_rename. Shows both paths."""
     def _rel(p: Path) -> str:
@@ -1169,11 +1180,37 @@ async def tool_vault_update_frontmatter(
     ctx, page: str, fields: dict, overwrite: bool = False,
 ) -> ToolResult:
     """Merge frontmatter fields into a vault page (thin wrapper over
-    `merge_frontmatter`)."""
+    `merge_frontmatter`).
+
+    Interactive callers updating a user-owned page outside agent/ go through
+    the same confirmation gate as `vault_write`. Non-interactive callers
+    (scheduled dream/garden) can't prompt, so they proceed ungated — vault-
+    wide reach for scheduled maintenance is this tool's intended purpose.
+    """
     log.info(f"[tool:vault_update_frontmatter] page={page!r} overwrite={overwrite}")
     path = resolve_page(ctx.config, page)
     if path is None:
         return ToolResult(text=f"[error: vault page '{page}' not found]")
+
+    if ctx.request_confirmation is not None:
+        outcome = _check_user_write_allowed(ctx, path)
+        gate_result = await _run_gate_or_confirm(
+            ctx,
+            [outcome],
+            tool_name="vault_update_frontmatter",
+            command=f"vault_update_frontmatter on '{page}'",
+            preview=_format_vault_update_frontmatter_preview(ctx.config, path, fields),
+            non_interactive_error=(
+                f"[error: vault_update_frontmatter on '{page}' outside agent "
+                f"folder requires interactive confirmation; not available "
+                f"from this context]"
+            ),
+            denied_error=(
+                f"[error: vault_update_frontmatter on '{page}' was denied by user]"
+            ),
+        )
+        if gate_result is not None:
+            return gate_result
 
     from decafclaw.frontmatter import parse_frontmatter, serialize_frontmatter
 
