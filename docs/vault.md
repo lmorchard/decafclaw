@@ -137,6 +137,37 @@ an LLM call in one run (skips don't count against it). It does not reindex
 itself — follow with `make reindex` so composite embeddings pick up the new
 frontmatter.
 
+### Backlink index (#197)
+
+`vault_backlinks` no longer brute-force `rglob`s and regex-scans every page
+on each call. `src/decafclaw/backlinks.py` maintains a persistent JSON
+index at `{workspace}/backlinks.json` mapping `page -> [pages linking to
+it]` (sorted, human-readable, crash-recoverable via tmp-file-then-rename).
+
+- `rebuild_index(config)` — full scan: resolves every `[[link]]` (or
+  `[[link|display]]`) in every page to an existing page, case-insensitively
+  by full relative path or falling back to bare filename (stem). Dangling
+  links (no matching page) and self-links are dropped — the index only
+  tracks edges between real pages.
+- `load_index(config)` — reads the persisted JSON, rebuilding lazily if
+  missing or corrupt.
+- `inbound_count(config, page)` — number of distinct pages linking to
+  `page`. This is the raw signal Phase 5's importance formula folds in.
+- `update_for_page(config, page)` — incremental update: re-scans only the
+  changed page's current outbound links and adjusts the index's inbound
+  entries (add new targets, drop stale ones) without re-reading every
+  other page's content.
+
+A `vault_changed`-event subscriber (`make_backlinks_subscriber`, wired in
+`runner.py`) calls `update_for_page` after every vault mutation, so the
+index tracks disk state without an explicit rebuild step. Fail-open
+throughout — I/O or parse errors are logged at debug level and never
+propagate into a tool call or event subscriber.
+
+`vault_backlinks(page)` itself now just resolves `page`, looks up its
+inbound linkers in the index, and re-reads only those specific linking
+pages (not the whole vault) to pull a one-line quote for display context.
+
 ### Ownership
 
 - Agent writes to `agent/` by default

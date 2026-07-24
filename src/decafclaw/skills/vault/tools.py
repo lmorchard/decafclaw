@@ -1071,37 +1071,45 @@ _WIKI_LINK_RE = re.compile(r"\[\[([^\]]+)\]\]")
 async def tool_vault_backlinks(ctx, page: str) -> str:
     """Find all vault pages that link to the given page via [[wiki-links]]."""
     log.info(f"[tool:vault_backlinks] page={page}")
+    from decafclaw.backlinks import _build_page_lookup, _resolve_link_target, load_index
+
     vault = _vault_root(ctx.config)
     if not vault.is_dir():
         return f"No backlinks to '{page}' (vault directory does not exist)."
 
-    page_lower = page.lower()
-    # Also match by stem for paths like "agent/pages/Foo"
-    page_stem_lower = Path(page).stem.lower()
-    results = []
+    resolved = resolve_page(ctx.config, page)
+    if resolved is None:
+        return f"No pages link to '{page}'."
+    target_rel = resolved.relative_to(vault).as_posix()
 
-    for path in sorted(vault.rglob("*.md")):
-        stem_lower = path.stem.lower()
-        if stem_lower == page_lower or stem_lower == page_stem_lower:
-            continue  # skip the page itself
-        text = path.read_text()
+    linkers = load_index(ctx.config).get(target_rel, [])
+    if not linkers:
+        return f"No pages link to '{page}'."
+
+    # Persisted index tells us WHICH pages link here; re-read just those
+    # pages (not the whole vault) to pull a one-line quote for context.
+    full_lower_map, stem_lower_map = _build_page_lookup(
+        sorted(vault.rglob("*.md")), vault)
+
+    results = []
+    for linker_rel in linkers:
+        try:
+            text = (vault / linker_rel).read_text(encoding="utf-8")
+        except OSError as exc:
+            log.debug("vault_backlinks: failed reading %s: %s", linker_rel, exc)
+            continue
+        context_line = ""
         for match in _WIKI_LINK_RE.finditer(text):
-            raw_link = match.group(1)
-            # Handle [[target|display]] — extract target before pipe
-            link = raw_link.split("|")[0].strip().lower()
-            link_stem = Path(link).stem.lower()
-            if link == page_lower or link_stem == page_stem_lower:
+            if _resolve_link_target(
+                match.group(1), full_lower_map, stem_lower_map
+            ) == target_rel:
                 line_no = text[:match.start()].count("\n")
                 lines = text.splitlines()
                 context_line = (lines[line_no].strip()[:200]
                                 if line_no < len(lines) else "")
-                rel = path.relative_to(vault)
-                results.append(
-                    f"- **{rel.with_suffix('')}**: {context_line}")
-                break  # one backlink per page
-
-    if not results:
-        return f"No pages link to '{page}'."
+                break
+        rel_display = Path(linker_rel).with_suffix("")
+        results.append(f"- **{rel_display}**: {context_line}")
 
     return f"{len(results)} page(s) link to '{page}':\n\n" + "\n".join(results)
 

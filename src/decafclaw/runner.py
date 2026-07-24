@@ -94,6 +94,13 @@ async def run_all(app_ctx):
             mm_client=mm_client,
         )
 
+        # Wire the persistent backlink index (#197 Phase 4): incrementally
+        # updates {workspace}/backlinks.json on every vault_changed event
+        # instead of brute-force rescanning the vault on each query.
+        # Fail-open — never propagates into the publishing turn.
+        from .backlinks import make_backlinks_subscriber
+        app_ctx.event_bus.subscribe(make_backlinks_subscriber(config))
+
         # Wire telemetry subscribers (measurement only, fail-open). Each
         # records to an append-only JSONL sidecar under workspace/.
         if config.telemetry.tool_usage_enabled:

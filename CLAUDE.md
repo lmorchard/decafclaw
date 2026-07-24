@@ -170,6 +170,7 @@ Full doc index: [docs/index.md](docs/index.md). Hot files for navigation:
 - `context_cleanup.py` — Lightweight clear tier: stubs old large tool messages before compaction
 - `canvas.py` — per-conversation canvas state sidecar + state operations
 - `sticky.py` — per-conversation sticky-slot sidecar (`sticky.json`) + `set_sticky`/`clear_sticky`
+- `backlinks.py` — persistent inbound-link index (`{workspace}/backlinks.json`); `rebuild_index`/`load_index`/`inbound_count`/`update_for_page`; incremental update wired to the `vault_changed` event in `runner.py`
 - `persistence.py`, `attachments.py`, `embeddings.py`, `frontmatter.py`, `memory_context.py`, `checklist.py`, `notes.py`
 
 ### Tools
