@@ -122,12 +122,10 @@ The vault skill is **always loaded** — its tools are available in every conver
 
 `vault_update_frontmatter` is a thin async wrapper around a pure helper,
 `merge_frontmatter(existing: dict, fields: dict, overwrite: bool) -> dict` in
-`skills/vault/tools.py`. The pure function does the field coercion (reusing
-`get_frontmatter_field`'s rules so the merge and the parser agree on shape)
-and the fill-vs-replace merge logic, with no ctx or I/O — other callers
-(dream generation, the backfill CLI, garden importance tuning) import and
-call it directly to compute merged frontmatter without going through the
-tool or a running agent context.
+`frontmatter.py` (coercion mirrors `get_frontmatter_field`'s rules so the merge
+and the parser agree on shape). It lives beside the parser rather than in the
+skill because the backfill CLI and the vault REST API both need it without a
+running agent context.
 
 ### Backfill CLI (#197)
 

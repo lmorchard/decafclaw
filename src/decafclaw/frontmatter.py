@@ -132,6 +132,33 @@ def get_frontmatter_field(metadata: dict, field: str, default=None):
     return value
 
 
+def merge_frontmatter(existing: dict, fields: dict, overwrite: bool) -> dict:
+    """Merge coerced field values into existing frontmatter metadata.
+
+    Pure function — no ctx, no I/O — so callers (dream generation, the
+    backfill CLI, garden importance tuning, the vault REST API) can reuse the
+    merge logic without a running agent context. Coercion goes through
+    `get_frontmatter_field` (importance clamped to [0, 1]; tags/keywords to
+    list[str]; summary to str) so the merged result and the parser agree on
+    shape.
+
+    When `overwrite` is False, only fields that are absent or empty in
+    `existing` are filled. When True, every field in `fields` is set,
+    replacing any existing value.
+
+    Note there is no deletion path: a ``None`` value coerces to ``None`` and
+    is *set*, producing ``field: null`` rather than removing the key. Callers
+    that need deletion strip null values from the result themselves.
+    """
+    merged = dict(existing)
+    for field, raw_value in fields.items():
+        coerced = get_frontmatter_field({field: raw_value}, field)
+        if not overwrite and merged.get(field) not in (None, "", []):
+            continue
+        merged[field] = coerced
+    return merged
+
+
 def build_composite_text(metadata: dict, body: str) -> str:
     """Build composite text for embedding indexing.
 

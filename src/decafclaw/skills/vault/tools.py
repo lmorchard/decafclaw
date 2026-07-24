@@ -1309,30 +1309,6 @@ async def _reindex_page(ctx, path: Path) -> None:
         log.warning(f"Failed to reindex vault page '{path}': {e}")
 
 
-def merge_frontmatter(existing: dict, fields: dict, overwrite: bool) -> dict:
-    """Merge coerced field values into existing frontmatter metadata.
-
-    Pure function — no ctx, no I/O — so later callers (dream generation,
-    backfill CLI, garden importance tuning) can reuse the merge logic without
-    a running agent context. Coercion mirrors `get_frontmatter_field`
-    (importance clamped to [0, 1]; tags/keywords to list[str]; summary to
-    str) so the merged result and the parser agree on shape.
-
-    When `overwrite` is False, only fields that are absent or empty in
-    `existing` are filled. When True, every field in `fields` is set,
-    replacing any existing value.
-    """
-    from decafclaw.frontmatter import get_frontmatter_field
-
-    merged = dict(existing)
-    for field, raw_value in fields.items():
-        coerced = get_frontmatter_field({field: raw_value}, field)
-        if not overwrite and merged.get(field) not in (None, "", []):
-            continue
-        merged[field] = coerced
-    return merged
-
-
 async def tool_vault_update_frontmatter(
     ctx, page: str, fields: dict, overwrite: bool = False,
 ) -> ToolResult:
@@ -1369,7 +1345,11 @@ async def tool_vault_update_frontmatter(
         if gate_result is not None:
             return gate_result
 
-    from decafclaw.frontmatter import parse_frontmatter, serialize_frontmatter
+    from decafclaw.frontmatter import (
+        merge_frontmatter,
+        parse_frontmatter,
+        serialize_frontmatter,
+    )
 
     content = path.read_text(encoding="utf-8")
     metadata, body = parse_frontmatter(content)
