@@ -25,6 +25,7 @@ export class WikiMetadata extends LitElement {
     frontmatter: { attribute: false },
     frontmatterRaw: { attribute: false },
     frontmatterError: { attribute: false },
+    metaError: { attribute: false },
     readonly: { type: Boolean },
     _expanded: { state: true },
     _rawOpen: { state: true },
@@ -39,6 +40,13 @@ export class WikiMetadata extends LitElement {
     /** @type {Record<string, any>} */ this.frontmatter = {};
     /** @type {string} */ this.frontmatterRaw = '';
     /** @type {string} */ this.frontmatterError = '';
+    /**
+     * Set by the host when a metadata write (typed patch or raw replace)
+     * fails. `status: 'conflict'` (409) offers Reload/Overwrite; any other
+     * status offers Retry. Cleared by the host on the next successful write.
+     * @type {{status: 'conflict'|'error', message: string} | null}
+     */
+    this.metaError = null;
     this.readonly = false;
     this._expanded = localStorage.getItem(EXPANDED_KEY) === 'true';
     this._rawOpen = false;
@@ -118,6 +126,43 @@ export class WikiMetadata extends LitElement {
   closeRaw() {
     this._rawOpen = false;
     this._rawError = '';
+  }
+
+  /** @param {string} type */
+  #emitMetaAction(type) {
+    this.dispatchEvent(new CustomEvent(type, { bubbles: true, composed: true }));
+  }
+
+  /** Conflict/error banner for a failed metadata write (typed patch or raw replace). */
+  #renderMetaError() {
+    if (!this.metaError) return nothing;
+    const isConflict = this.metaError.status === 'conflict';
+    return html`
+      <div class="wiki-md-conflict">
+        <span>${this.metaError.message}</span>
+        ${isConflict ? html`
+          <button
+            type="button"
+            class="wiki-md-conflict-btn"
+            aria-label="Reload page, discarding pending metadata edits"
+            @click=${() => this.#emitMetaAction('metadata-reload')}
+          >Reload</button>
+          <button
+            type="button"
+            class="wiki-md-conflict-btn"
+            aria-label="Overwrite server metadata with local changes"
+            @click=${() => this.#emitMetaAction('metadata-overwrite')}
+          >Overwrite</button>
+        ` : html`
+          <button
+            type="button"
+            class="wiki-md-conflict-btn"
+            aria-label="Retry metadata save"
+            @click=${() => this.#emitMetaAction('metadata-retry')}
+          >Retry</button>
+        `}
+      </div>
+    `;
   }
 
   /** @param {string} field @param {string} label */
@@ -295,6 +340,7 @@ export class WikiMetadata extends LitElement {
           @click=${() => this.#toggle()}
         >${this._expanded ? '▾' : '▸'}</button>
         <div class="wiki-md-content">
+          ${this.#renderMetaError()}
           ${this.frontmatterError
             ? html`<div class="wiki-md-error">Frontmatter is not valid YAML: ${this.frontmatterError}</div>`
             : nothing}

@@ -33,6 +33,7 @@ export class WikiPage extends LitElement {
     _frontmatter: { state: true },
     _frontmatterRaw: { state: true },
     _frontmatterError: { state: true },
+    _metaError: { state: true },
     _loaded: { state: true },
     _title: { state: true },
     _modified: { state: true },
@@ -54,6 +55,12 @@ export class WikiPage extends LitElement {
     /** @type {Record<string, any>} */ this._frontmatter = {};
     /** @type {string} */ this._frontmatterRaw = '';
     /** @type {string} */ this._frontmatterError = '';
+    /**
+     * Set when a metadata write (typed patch or raw replace) fails. Passed
+     * straight through to <wiki-metadata> for display.
+     * @type {{status: 'conflict'|'error', message: string} | null}
+     */
+    this._metaError = null;
     this._loaded = false;
     /** @type {string} */ this._title = '';
     /** @type {number} */ this._modified = 0;
@@ -70,8 +77,22 @@ export class WikiPage extends LitElement {
   #metaTimer = null;
   /** @type {Record<string, any>} */
   #pendingFields = {};
-  /** @type {Promise<void> | null} */
+  /**
+   * Gate serializing every metadata write (typed patch and raw replace)
+   * against every other. Whoever wants to write awaits any existing value
+   * here first, then installs their own until they're done — so a raw save
+   * and a typed-patch flush can never have two PUTs in flight at once, each
+   * carrying the same now-stale `modified`.
+   * @type {Promise<void> | null}
+   */
   #metaInFlight = null;
+  /**
+   * What to resend for Retry/Overwrite after a metadata write fails. Typed
+   * patches don't need their fields stored here — a failed patch is merged
+   * back into #pendingFields, so retrying is just flushing again.
+   * @type {{kind: 'raw', raw: string} | {kind: 'patch'} | null}
+   */
+  #lastMetaAttempt = null;
 
   /** @param {Map<string, any>} changed */
   willUpdate(changed) {
@@ -90,8 +111,38 @@ export class WikiPage extends LitElement {
   /** @param {CustomEvent} e */
   _onMetadataChange(e) {
     Object.assign(this.#pendingFields, e.detail.fields);
+    // A conflict must be resolved (Reload/Overwrite) before we try again —
+    // auto-firing another flush would just carry the same stale `modified`
+    // into another silent 409. The edit stays queued in #pendingFields.
+    if (this._metaError?.status === 'conflict') return;
     if (this.#metaTimer != null) clearTimeout(this.#metaTimer);
     this.#metaTimer = setTimeout(() => { this.#flushMetadata(); }, 600);
+  }
+
+  /**
+   * Serialize one metadata PUT against any other in-flight metadata write.
+   * Clears `_metaError` on success; leaves error handling to the caller on
+   * failure, since typed-patch and raw-replace failures need different
+   * retry bookkeeping.
+   * @param {Record<string, any>} payload
+   * @param {{skipModifiedCheck?: boolean}} [opts]
+   * @returns {Promise<{ok: boolean, status: number, error: string}>}
+   */
+  async #writeMeta(payload, opts) {
+    while (this.#metaInFlight) await this.#metaInFlight;
+    let release = () => {};
+    this.#metaInFlight = new Promise(r => { release = r; });
+    try {
+      const res = await this.#putMetadata(payload, opts);
+      if (res.ok) {
+        this._metaError = null;
+        this.#lastMetaAttempt = null;
+      }
+      return res;
+    } finally {
+      release();
+      this.#metaInFlight = null;
+    }
   }
 
   /** Send any debounced typed patch now. Resolves when the write completes. */
@@ -100,13 +151,21 @@ export class WikiPage extends LitElement {
       clearTimeout(this.#metaTimer);
       this.#metaTimer = null;
     }
-    if (this.#metaInFlight) await this.#metaInFlight;
+    // Don't auto-send into a known conflict; wait for the user to resolve it.
+    if (this._metaError?.status === 'conflict') return;
     const fields = this.#pendingFields;
     this.#pendingFields = {};
     if (!Object.keys(fields).length) return;
-    this.#metaInFlight = this.#putMetadata({ frontmatter: fields })
-      .then(() => { this.#metaInFlight = null; });
-    await this.#metaInFlight;
+    const res = await this.#writeMeta({ frontmatter: fields });
+    if (!res.ok) {
+      // Nothing the user typed gets dropped: merge the failed fields back in
+      // (newer pending edits, if any landed during the write, win).
+      this.#pendingFields = { ...fields, ...this.#pendingFields };
+      this.#lastMetaAttempt = { kind: 'patch' };
+      this._metaError = res.status === 409
+        ? { status: 'conflict', message: 'Metadata was modified externally.' }
+        : { status: 'error', message: res.error };
+    }
   }
 
   /** @param {CustomEvent} e */
@@ -115,29 +174,113 @@ export class WikiPage extends LitElement {
     // raw save just deleted, so flush it first. The two PUT shapes are
     // mutually exclusive server-side.
     await this.#flushMetadata();
-    const panel = this.querySelector('wiki-metadata');
-    const res = await this.#putMetadata({ frontmatter_raw: e.detail.raw });
+    // If the flush left an unresolved conflict/error, don't pile a raw
+    // replace on top of it — the user needs to resolve that first, or a
+    // later flush of the still-pending typed fields could resurrect a key
+    // this raw save is about to remove.
+    if (this._metaError) return;
+    await this.#doRawSave(e.detail.raw);
+  }
+
+  /** @param {string} raw */
+  async #doRawSave(raw) {
+    const panel = /** @type {any} */ (this.querySelector('wiki-metadata'));
+    const res = await this.#writeMeta({ frontmatter_raw: raw });
     if (res.ok) {
-      /** @type {any} */ (panel)?.closeRaw();
+      panel?.closeRaw();
+      // Anything typed while this write was in flight is still valid —
+      // send it now, on top of the just-applied raw content.
+      await this.#flushMetadata();
+    } else if (res.status === 409) {
+      this.#lastMetaAttempt = { kind: 'raw', raw };
+      this._metaError = { status: 'conflict', message: 'Metadata was modified externally.' };
     } else {
-      /** @type {any} */ (panel)?.setRawError(res.error);
+      // Malformed YAML etc. — keep the raw editor's existing inline error.
+      panel?.setRawError(res.error);
+    }
+  }
+
+  /** Refetch the page from the server, discarding any pending local metadata edit. */
+  async _onMetadataReload() {
+    this.#pendingFields = {};
+    this.#lastMetaAttempt = null;
+    this._metaError = null;
+    /** @type {any} */ (this.querySelector('wiki-metadata'))?.closeRaw();
+    await this._fetchPage();
+  }
+
+  /** Resend the last failed write, skipping the server's mtime check. */
+  async _onMetadataOverwrite() {
+    const attempt = this.#lastMetaAttempt;
+    this.#lastMetaAttempt = null;
+    if (!attempt) {
+      this._metaError = null;
+      return;
+    }
+    if (attempt.kind === 'raw') {
+      await this.#doOverwrite({ frontmatter_raw: attempt.raw }, attempt);
+      return;
+    }
+    const fields = this.#pendingFields;
+    this.#pendingFields = {};
+    if (!Object.keys(fields).length) {
+      this._metaError = null;
+      return;
+    }
+    await this.#doOverwrite({ frontmatter: fields }, { kind: 'patch' }, fields);
+  }
+
+  /**
+   * @param {Record<string, any>} payload
+   * @param {{kind: 'raw', raw: string} | {kind: 'patch'}} attempt
+   * @param {Record<string, any>} [patchFields] Original fields, to restore on failure
+   */
+  async #doOverwrite(payload, attempt, patchFields) {
+    const panel = /** @type {any} */ (this.querySelector('wiki-metadata'));
+    const res = await this.#writeMeta(payload, { skipModifiedCheck: true });
+    if (res.ok) {
+      if (attempt.kind === 'raw') panel?.closeRaw();
+      // Anything typed while conflicted (or while this overwrite was in
+      // flight) is still valid — send it now that we're no longer stuck.
+      await this.#flushMetadata();
+      return;
+    }
+    if (attempt.kind === 'patch' && patchFields) {
+      this.#pendingFields = { ...patchFields, ...this.#pendingFields };
+    }
+    this.#lastMetaAttempt = attempt;
+    this._metaError = { status: 'error', message: res.error };
+  }
+
+  /** Retry the last failed write with the normal (checked) path. */
+  async _onMetadataRetry() {
+    const attempt = this.#lastMetaAttempt;
+    this._metaError = null;
+    if (attempt?.kind === 'raw') {
+      await this.#doRawSave(attempt.raw);
+    } else {
+      await this.#flushMetadata();
     }
   }
 
   /**
    * @param {Record<string, any>} payload
-   * @returns {Promise<{ok: boolean, error: string}>}
+   * @param {{skipModifiedCheck?: boolean}} [opts]
+   * @returns {Promise<{ok: boolean, status: number, error: string}>}
    */
-  async #putMetadata(payload) {
+  async #putMetadata(payload, opts) {
     try {
+      const body = opts?.skipModifiedCheck
+        ? { ...payload }
+        : { ...payload, modified: this._modified };
       const res = await fetch('/api/vault/' + encodePagePath(this.page), {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...payload, modified: this._modified }),
+        body: JSON.stringify(body),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        return { ok: false, error: data.error || `Save failed (${res.status})` };
+        return { ok: false, status: res.status, error: data.error || `Save failed (${res.status})` };
       }
       this._frontmatter = data.frontmatter ?? {};
       // The response carries the new raw block, so no second GET is needed.
@@ -150,13 +293,16 @@ export class WikiPage extends LitElement {
       /** @type {any} */
       const editor = this.querySelector('wiki-editor');
       if (editor) editor.modified = data.modified;
-      return { ok: true, error: '' };
+      return { ok: true, status: res.status, error: '' };
     } catch (err) {
-      return { ok: false, error: 'Save failed (network error)' };
+      return { ok: false, status: 0, error: 'Save failed (network error)' };
     }
   }
 
   async _fetchPage() {
+    this.#pendingFields = {};
+    this.#lastMetaAttempt = null;
+    this._metaError = null;
     this._loading = true;
     this._error = '';
     this._loaded = false;
@@ -383,8 +529,12 @@ export class WikiPage extends LitElement {
         .frontmatter=${this._frontmatter}
         .frontmatterRaw=${this._frontmatterRaw}
         .frontmatterError=${this._frontmatterError}
+        .metaError=${this._metaError}
         @metadata-change=${this._onMetadataChange}
         @metadata-raw-save=${this._onMetadataRawSave}
+        @metadata-reload=${this._onMetadataReload}
+        @metadata-overwrite=${this._onMetadataOverwrite}
+        @metadata-retry=${this._onMetadataRetry}
       ></wiki-metadata>
     `;
 

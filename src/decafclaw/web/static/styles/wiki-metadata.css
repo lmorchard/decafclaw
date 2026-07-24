@@ -65,6 +65,27 @@ button.wiki-md-toggle {
   color: var(--pico-del-color);
 }
 
+.wiki-md-conflict {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 0.375rem;
+  padding: 0.375rem 0.5rem;
+  background: var(--pico-mark-background-color, #ffeeba);
+  color: var(--pico-color);
+  border-radius: 4px;
+}
+
+/* Tag-qualified so Pico's button:not(...) (0,1,1) doesn't win. */
+button.wiki-md-conflict-btn {
+  width: auto;
+  margin: 0;
+  padding: 0.125rem 0.5rem;
+  font-size: 0.75rem;
+  color: inherit;
+}
+
 .wiki-md-detail {
   display: grid;
   grid-template-columns: max-content 1fr;
