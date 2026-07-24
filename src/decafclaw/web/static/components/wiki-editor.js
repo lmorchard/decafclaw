@@ -243,13 +243,19 @@ export class WikiEditor extends LitElement {
       const res = await fetch(`/api/vault/${encodePagePath(this.page)}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
-      this.content = data.content;
+      // wiki-editor is shared with schedule-page.js and config-panel.js,
+      // whose endpoints still return `content`; the vault endpoint now
+      // returns `body` instead. #reload's fetch is hardcoded to the vault
+      // endpoint, so this fallback is defensive, but keep the source of
+      // truth in one place rather than re-deriving it below.
+      const newContent = data.body ?? data.content ?? '';
+      this.content = newContent;
       this.modified = data.modified;
       if (this.#editor) {
-        this.#editor.action(replaceAll(data.content));
+        this.#editor.action(replaceAll(newContent));
       }
-      this.#lastSavedContent = data.content;
-      this.#currentMarkdown = data.content;
+      this.#lastSavedContent = newContent;
+      this.#currentMarkdown = newContent;
       this._status = 'saved';
       this._error = '';
     } catch (e) {

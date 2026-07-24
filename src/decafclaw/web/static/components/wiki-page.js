@@ -11,6 +11,7 @@ import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 import { renderMarkdown } from '../lib/markdown.js';
 import { encodePagePath } from '../lib/utils.js';
 import './wiki-editor.js';
+import './wiki-metadata.js';
 
 const EDIT_MODE_KEY = 'wiki-edit-mode';
 
@@ -28,7 +29,11 @@ export class WikiPage extends LitElement {
   static properties = {
     page: { type: String },
     standalone: { type: Boolean },
-    _content: { state: true },
+    _body: { state: true },
+    _frontmatter: { state: true },
+    _frontmatterRaw: { state: true },
+    _frontmatterError: { state: true },
+    _loaded: { state: true },
     _title: { state: true },
     _modified: { state: true },
     _loading: { state: true },
@@ -45,7 +50,11 @@ export class WikiPage extends LitElement {
     super();
     this.page = '';
     this.standalone = false;
-    /** @type {string} */ this._content = '';
+    /** @type {string} */ this._body = '';
+    /** @type {Record<string, any>} */ this._frontmatter = {};
+    /** @type {string} */ this._frontmatterRaw = '';
+    /** @type {string} */ this._frontmatterError = '';
+    this._loaded = false;
     /** @type {string} */ this._title = '';
     /** @type {number} */ this._modified = 0;
     this._loading = false;
@@ -73,7 +82,8 @@ export class WikiPage extends LitElement {
   async _fetchPage() {
     this._loading = true;
     this._error = '';
-    this._content = '';
+    this._loaded = false;
+    this._body = '';
     try {
       const res = await fetch('/api/vault/' + encodePagePath(this.page));
       if (!res.ok) {
@@ -82,8 +92,12 @@ export class WikiPage extends LitElement {
       }
       const data = await res.json();
       this._title = data.title;
-      this._content = data.content;
+      this._body = data.body ?? '';
+      this._frontmatter = data.frontmatter ?? {};
+      this._frontmatterRaw = data.frontmatter_raw ?? '';
+      this._frontmatterError = data.frontmatter_error ?? '';
       this._modified = data.modified;
+      this._loaded = true;
     } catch (e) {
       this._error = 'Failed to load page.';
     } finally {
@@ -233,7 +247,9 @@ export class WikiPage extends LitElement {
     if (this._error) {
       return html`<div class="wiki-page-error">${this._error}</div>`;
     }
-    if (!this._content) {
+    // Guard on load state, not on body text: a page with frontmatter but an
+    // empty body is legitimate and must still render its metadata.
+    if (!this._loaded) {
       return nothing;
     }
 
@@ -283,12 +299,22 @@ export class WikiPage extends LitElement {
         </span>
       `;
 
+    const metadataPanel = html`
+      <wiki-metadata
+        readonly
+        .frontmatter=${this._frontmatter}
+        .frontmatterRaw=${this._frontmatterRaw}
+        .frontmatterError=${this._frontmatterError}
+      ></wiki-metadata>
+    `;
+
     if (this._editing) {
       return html`
         <div class="wiki-page">
+          ${metadataPanel}
           <wiki-editor
             page=${this.page}
-            .content=${this._content}
+            .content=${this._body}
             .modified=${this._modified}
             .toolbarLeft=${breadcrumbContent}
             .toolbarExtra=${rightButtons}
@@ -306,8 +332,9 @@ export class WikiPage extends LitElement {
           ${this._modified ? html`<span class="wiki-page-date">${formatDate(this._modified)}</span>` : nothing}
           ${rightButtons}
         </div>
+        ${metadataPanel}
         <div class="wiki-page-body" @click=${this._handleClick}>
-          ${unsafeHTML(renderMarkdown(this._content))}
+          ${unsafeHTML(renderMarkdown(this._body))}
         </div>
       </div>
     `;
