@@ -1084,6 +1084,22 @@ class TestVaultSearchTags:
         assert "agent/pages/PageTag" in result.text
         assert "agent/journal/2026-07-24" not in result.text
 
+    @pytest.mark.asyncio
+    async def test_days_filters_pure_tag_filter(self, ctx, agent_pages):
+        """Pure tag-filter path (empty query) must honor `days` recency,
+        matching the semantic/substring branches — a page whose tag matches
+        but is older than `days` is excluded (#318)."""
+        recent = agent_pages / "RecentRust.md"
+        recent.write_text("---\ntags: [rust]\n---\nbody")
+        stale = agent_pages / "StaleRust.md"
+        stale.write_text("---\ntags: [rust]\n---\nbody")
+        _set_mtime(stale, 30)
+
+        result = await tool_vault_search(ctx, "", tags=["rust"], days=7)
+
+        assert "RecentRust" in result.text
+        assert "StaleRust" not in result.text
+
 
 class TestVaultSearchTagsSemantic:
     """Tag filtering on the SEMANTIC branch of vault_search (#318 phase 4

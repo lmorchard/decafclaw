@@ -697,7 +697,8 @@ async def tool_vault_search(ctx, query: str, source_type: str = "",
 
     if not query and req_tags:
         return _tag_filter_search(ctx.config, req_tags, any_tag,
-                                  source_type=source_type, folder=folder)
+                                  source_type=source_type, folder=folder,
+                                  days=days)
 
     # Try semantic search first
     if ctx.config.embedding.search_strategy == "semantic":
@@ -799,12 +800,17 @@ def _semantic_result_matches_tags(config, result: dict, req_tags: set[str],
 
 
 def _tag_filter_search(config, req_tags: set[str], any_tag: bool,
-                       source_type: str = "", folder: str = "") -> ToolResult:
+                       source_type: str = "", folder: str = "",
+                       days: int = 0) -> ToolResult:
     """Pure tag filter (empty query): list vault pages matching the tag
     filter, formatted like the existing no-query substring search output.
     """
     vault = _vault_root(config)
     matches = pages_with_tags(config, sorted(req_tags), any_tag=any_tag)
+
+    cutoff = None
+    if days > 0:
+        cutoff = datetime.now(tz=timezone.utc) - timedelta(days=days)
 
     lines: list[str] = []
     rows: list[dict] = []
@@ -815,11 +821,13 @@ def _tag_filter_search(config, req_tags: set[str], any_tag: bool,
         if source_type and _source_type_for_path(config, path) != source_type:
             continue
         try:
-            mtime_str = datetime.fromtimestamp(
-                path.stat().st_mtime, tz=timezone.utc).strftime("%Y-%m-%d %H:%M")
+            mtime = datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)
         except Exception as exc:
             log.debug(f"vault_search: failed stat'ing {path} for tag filter: {exc}")
             continue
+        if cutoff and mtime < cutoff:
+            continue
+        mtime_str = mtime.strftime("%Y-%m-%d %H:%M")
         page = str(path.relative_to(vault).with_suffix(""))
         lines.append(f"- {page} (modified: {mtime_str})")
         rows.append({"page": page, "modified": mtime_str})
