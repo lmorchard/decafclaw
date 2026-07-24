@@ -10,6 +10,10 @@ partial or interrupted run can be re-run safely.
 Does not reindex embeddings itself — run `make reindex` afterward so
 composite embeddings (frontmatter.build_composite_text) pick up the new
 frontmatter.
+
+`--dry-run` still makes a real LLM call per page to generate the fields —
+it only skips writing them to disk. It costs the same tokens as a normal
+run; use `--limit` to bound the spend.
 """
 
 from __future__ import annotations
@@ -201,7 +205,11 @@ def main() -> None:
     )
     parser.add_argument(
         "--dry-run", action="store_true",
-        help="Show planned changes without writing",
+        help=(
+            "Show planned changes without writing. Still makes a real LLM "
+            "call per page (same token spend as a normal run) — only the "
+            "file write is skipped."
+        ),
     )
     parser.add_argument(
         "--limit", type=int, default=None,

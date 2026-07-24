@@ -69,13 +69,14 @@ def compute_importance_scores(config) -> dict[str, float]:
     """Deterministic per-page importance score (#197 Phase 5, formula v1).
 
     ``importance = clamp01(w_retrieval * norm(retrieval_freq) +
-    w_inbound * norm(inbound_links) + w_reference * norm(reference_signal))``
+    w_inbound * norm(inbound_links))``
 
     ``norm(x) = x / max(x across all vault pages)``, defined as 0 when
     that max is 0. Weights come from ``config.importance``
-    (``ImportanceConfig``). ``w_reference`` defaults to 0 — no explicit-
-    reference signal exists yet, so that term is omitted from the sum
-    entirely rather than computed against an all-zero signal.
+    (``ImportanceConfig``). ``w_reference`` is reserved / not yet
+    computed — no explicit-reference signal exists yet, so it defaults
+    to 0 and that term is omitted from the sum entirely rather than
+    computed against an all-zero signal.
 
     Pure and config-driven: no ``ctx``, no I/O beyond reading the
     telemetry log, the backlink index, and vault page paths (never page

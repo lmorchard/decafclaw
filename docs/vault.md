@@ -108,7 +108,7 @@ The vault skill is **always loaded** — its tools are available in every conver
 | `vault_show_sections(page, section?)` | Show a page's section outline or a specific section's content with absolute line numbers. |
 | `vault_move_lines(from_page, to_page, lines, to_section?, position?)` | Move specific lines (by line number) from one agent page to another. Both pages must be under `agent/`. |
 | `vault_section(page, action, section?, title?, level?, after?, before?, parent?)` | Section ops: `add`, `remove`, `rename`, or `move`. Page must be under `agent/`. |
-| `vault_update_frontmatter(page, fields, overwrite?)` | Merge frontmatter fields (`summary`, `importance`, `tags`, `keywords`, etc.) into a page's existing metadata without touching the body. Fills absent/empty fields by default; `overwrite=true` replaces existing values. Reindexes the page. Shared write primitive for the self-improving vault arc (#197) — [dream](dream-consolidation.md) calls it (`overwrite=false`) after every `vault_write` in its Consolidate phase; the `backfill-frontmatter` CLI and garden importance tuning build on the same primitive. |
+| `vault_update_frontmatter(page, fields, overwrite?)` | Merge frontmatter fields (`summary`, `importance`, `tags`, `keywords`, etc.) into a page's existing metadata without touching the body. Fills absent/empty fields by default; `overwrite=true` replaces existing values. Reindexes the page. Shared write primitive for the self-improving vault arc (#197) — [dream](dream-consolidation.md) calls it (`overwrite=false`) after every `vault_write` in its Consolidate phase; the `backfill-frontmatter` CLI and garden importance tuning build on the same primitive. Interactive callers writing outside `agent/` go through the same confirmation gate as `vault_write`; non-interactive callers (scheduled dream/garden) proceed without confirmation by design — the one mutating vault tool that doesn't error in non-interactive contexts. |
 
 ### Frontmatter merge (#197)
 
@@ -132,10 +132,12 @@ vault pages, and for each one missing `summary`/`keywords`/`tags`/
 them in via `merge_frontmatter(overwrite=False)` — a manually-set field is
 never clobbered. Pages where all four fields are already present are
 skipped for free, so the CLI is resumable and safe to re-run. `--dry-run`
-prints planned changes without writing; `--limit N` caps how many pages get
-an LLM call in one run (skips don't count against it). It does not reindex
-itself — follow with `make reindex` so composite embeddings pick up the new
-frontmatter.
+prints planned changes without writing; it still makes a real LLM call per
+page and costs the same tokens as a normal run — only the file write is
+skipped. `--limit N` caps how many pages get an LLM call in one run (skips
+don't count against it), which is the way to bound spend on `--dry-run`
+too. It does not reindex itself — follow with `make reindex` so composite
+embeddings pick up the new frontmatter.
 
 ### Backlink index (#197)
 
@@ -188,17 +190,17 @@ and config-driven (no `ctx`, no writes):
 importance = clamp01(
     w_retrieval * norm(retrieval_freq)
     + w_inbound * norm(inbound_links)
-    + w_reference * norm(reference_signal)
 )
 ```
 
 `norm(x) = x / max(x across all vault pages)`, defined as 0 when that max
 is 0 (no divide-by-zero on an empty or brand-new vault). `retrieval_freq`
 comes from `retrieval_telemetry.aggregate`; `inbound_links` from
-`backlinks.inbound_count`. `w_reference` defaults to 0 — no explicit-
-reference signal exists yet, so that term is reserved for a future phase
-and contributes nothing to the score today. Weights are `ImportanceConfig`
-(`w_retrieval=0.6`, `w_inbound=0.4`, `w_reference=0.0`), same
+`backlinks.inbound_count`. `ImportanceConfig` also carries a `w_reference`
+weight (default 0.0) that is **reserved / not yet computed** — no
+explicit-reference signal exists yet, so it's omitted from the formula
+above entirely rather than multiplied against an all-zero signal. Weights
+resolve `w_retrieval=0.6`, `w_inbound=0.4`, `w_reference=0.0` via the same
 dataclass-default → `config.json` → `IMPORTANCE_*` env resolution as every
 other sub-config.
 
@@ -231,7 +233,7 @@ Writes/deletes/renames under the agent folder (`agent/`) execute directly. Opera
 2. **Per-conversation grants.** The agent can call `vault_grant_folder(folder, reason)` to request trust for a folder. After user approval, all writes/deletes/renames under that folder skip confirmation for the rest of the conversation. Grants persist as a sidecar at `{workspace}/conversations/{conv_id}/vault_grants.json` and reset between conversations.
 3. **Per-call confirmation.** Anything else triggers a confirmation request showing the operation and a content preview. Approve to proceed; deny returns an error and no change is made.
 
-Heartbeat / scheduled / child-agent contexts can't display confirmations, so writes outside the agent folder fail with an error in those contexts.
+Heartbeat / scheduled / child-agent contexts can't display confirmations, so writes outside the agent folder fail with an error in those contexts — with one exception: `vault_update_frontmatter` skips this gate entirely for non-interactive callers (scheduled `dream`/`garden`), proceeding ungated by design so weekly maintenance can touch frontmatter vault-wide without a human present. Interactive callers of `vault_update_frontmatter` are still gated exactly like `vault_write`.
 
 ## Vault Gardening
 

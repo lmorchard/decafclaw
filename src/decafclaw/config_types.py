@@ -315,11 +315,12 @@ class ImportanceConfig:
     Phase 5).
 
     v1 formula: ``importance = clamp01(w_retrieval * norm(retrieval_freq) +
-    w_inbound * norm(inbound_links) + w_reference * norm(reference_signal))``,
-    where ``norm(x) = x / max(x across all pages)`` (0 when the max is 0).
-    ``w_reference`` is reserved for a future explicit-reference signal (not
-    yet implemented) and defaults to 0 — it contributes nothing to the score
-    today. See ``skills/garden/tools.py::compute_importance_scores``.
+    w_inbound * norm(inbound_links))``, where ``norm(x) = x / max(x across
+    all pages)`` (0 when the max is 0). ``w_reference`` is reserved /
+    not yet computed — no explicit-reference signal exists yet, so it
+    defaults to 0 and is omitted from the formula entirely rather than
+    multiplied against an all-zero signal. See
+    ``skills/garden/tools.py::compute_importance_scores``.
     """
     w_retrieval: float = 0.6
     w_inbound: float = 0.4
