@@ -156,6 +156,84 @@ async def test_vault_write_new_page(client, http_config):
 
 
 @pytest.mark.asyncio
+async def test_vault_write_body_only_preserves_frontmatter(client, http_config):
+    """A body-only PUT must leave the frontmatter block byte-identical.
+
+    Regression test: the web UI had no frontmatter awareness, so Milkdown
+    parsed the YAML into markdown nodes and serialized the mangled result
+    back over the file on save.
+    """
+    path = http_config.vault_agent_pages_dir / "Fm.md"
+    original_block = (
+        "---\n"
+        "importance: 0.7\n"
+        "tags:\n"
+        "- 0din\n"
+        "---\n"
+    )
+    path.write_text(original_block + "# 0din\n\nOld body.\n")
+
+    resp = await client.put(
+        "/api/vault/agent/pages/Fm",
+        json={"content": "# 0din\n\nNew body.\n"},
+    )
+    assert resp.status_code == 200
+
+    text = path.read_text()
+    assert text.startswith(original_block)
+    assert text == original_block + "# 0din\n\nNew body.\n"
+
+
+@pytest.mark.asyncio
+async def test_vault_write_body_only_preserves_malformed_frontmatter(
+    client, http_config,
+):
+    """Malformed YAML must survive a body write untouched.
+
+    parse_frontmatter returns ({}, body) on YAMLError, so reserializing via
+    serialize_frontmatter would silently delete the block entirely.
+    """
+    path = http_config.vault_agent_pages_dir / "Broken.md"
+    original_block = "---\nthis: is: not: valid: yaml\n---\n"
+    path.write_text(original_block + "Body.\n")
+
+    resp = await client.put(
+        "/api/vault/agent/pages/Broken",
+        json={"content": "New body.\n"},
+    )
+    assert resp.status_code == 200
+    assert path.read_text() == original_block + "New body.\n"
+
+
+@pytest.mark.asyncio
+async def test_vault_write_body_only_preserves_key_order_and_comments(
+    client, http_config,
+):
+    """Hand-authored formatting must survive a body write.
+
+    yaml.dump defaults to sort_keys=True and drops comments, so this is what
+    catches a regression back to reserializing on the body path.
+    """
+    path = http_config.vault_agent_pages_dir / "Hand.md"
+    original_block = (
+        "---\n"
+        "# why this matters\n"
+        "tags:\n"
+        "- zeta\n"
+        "importance: 0.4\n"
+        "---\n"
+    )
+    path.write_text(original_block + "Body.\n")
+
+    resp = await client.put(
+        "/api/vault/agent/pages/Hand",
+        json={"content": "Edited.\n"},
+    )
+    assert resp.status_code == 200
+    assert path.read_text() == original_block + "Edited.\n"
+
+
+@pytest.mark.asyncio
 async def test_vault_write_path_traversal(client):
     resp = await client.put(
         "/api/vault/../../../etc/passwd",

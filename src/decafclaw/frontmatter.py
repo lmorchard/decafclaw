@@ -55,6 +55,53 @@ def serialize_frontmatter(metadata: dict, body: str) -> str:
     return f"---\n{yaml_text}---\n{body}"
 
 
+def split_frontmatter(text: str) -> tuple[str | None, str]:
+    """Split off the raw frontmatter block *without* parsing its YAML.
+
+    Returns ``(raw_yaml, body)``. *raw_yaml* is the text between the ``---``
+    delimiters exactly as written, with no trailing newline; ``None`` means the
+    file has no frontmatter block at all (distinct from ``""``, an empty one).
+
+    Purely lexical, so malformed YAML round-trips byte-for-byte. That is what
+    lets body-only writes preserve a block they cannot parse — reserializing
+    through ``parse_frontmatter`` + ``serialize_frontmatter`` would silently
+    delete malformed frontmatter, since the parser reports ``{}`` on error.
+    """
+    match = _FRONTMATTER_RE.match(text)
+    if not match:
+        return None, text
+    return match.group(1), text[match.end():]
+
+
+def join_frontmatter(raw_yaml: str | None, body: str) -> str:
+    """Re-attach a raw block from :func:`split_frontmatter`.
+
+    ``join_frontmatter(*split_frontmatter(t)) == t`` for any *t*.
+    """
+    if raw_yaml is None:
+        return body
+    return f"---\n{raw_yaml}\n---\n{body}"
+
+
+def parse_frontmatter_block(raw_yaml: str | None) -> tuple[dict, str | None]:
+    """Parse a raw block from :func:`split_frontmatter`.
+
+    Returns ``(metadata, error)``. On success *error* is ``None``; on malformed
+    YAML or a non-mapping document *metadata* is ``{}`` and *error* carries a
+    human-readable message. Unlike :func:`parse_frontmatter`, which logs and
+    swallows both cases, this reports them so callers can refuse to write.
+    """
+    if raw_yaml is None or not raw_yaml.strip():
+        return {}, None
+    try:
+        parsed = yaml.safe_load(raw_yaml)
+    except yaml.YAMLError as exc:
+        return {}, str(exc)
+    if not isinstance(parsed, dict):
+        return {}, "frontmatter is not a mapping"
+    return parsed, None
+
+
 def get_frontmatter_field(metadata: dict, field: str, default=None):
     """Type-safe getter for frontmatter fields.
 

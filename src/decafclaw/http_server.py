@@ -16,6 +16,7 @@ from starlette.responses import FileResponse, JSONResponse, Response
 from starlette.routing import Mount, Route, WebSocketRoute
 from starlette.staticfiles import StaticFiles
 
+from .frontmatter import join_frontmatter, split_frontmatter
 from .mattermost_ui import get_token_registry
 from .schedules import (
     _discover_skill_schedule_files,
@@ -1328,8 +1329,10 @@ async def vault_write(request: Request, username: str) -> JSONResponse:
             event_bus=event_bus,
         )
 
-    content = body.get("content")
-    if content is None or not isinstance(content, str):
+    if "content" in body and "body" not in body:
+        body["body"] = body.pop("content")
+    new_body = body.get("body")
+    if new_body is None or not isinstance(new_body, str):
         return JSONResponse({"error": "content (string) required"}, status_code=400)
     modified = body.get("modified")
     if modified is not None:
@@ -1345,6 +1348,13 @@ async def vault_write(request: Request, username: str) -> JSONResponse:
                     status_code=409,
                 )
     existed = target.exists()
+    # Splice the existing frontmatter block back verbatim rather than
+    # reserializing it: yaml.dump would reorder keys and drop comments, and
+    # parse_frontmatter reports {} for malformed YAML, which would delete it.
+    existing_raw = None
+    if existed:
+        existing_raw, _ = split_frontmatter(target.read_text(encoding="utf-8"))
+    content = join_frontmatter(existing_raw, new_body)
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(content, encoding="utf-8")
     source_type = _vault_source_type(config, target)

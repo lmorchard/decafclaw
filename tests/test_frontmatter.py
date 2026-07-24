@@ -5,8 +5,11 @@ import pytest
 from decafclaw.frontmatter import (
     build_composite_text,
     get_frontmatter_field,
+    join_frontmatter,
     parse_frontmatter,
+    parse_frontmatter_block,
     serialize_frontmatter,
+    split_frontmatter,
 )
 
 # -- parse_frontmatter ---------------------------------------------------------
@@ -174,3 +177,72 @@ class TestBuildCompositeText:
         out = build_composite_text({"tags": ["rust"]}, "love #rust here")
         tags_line = out.splitlines()[0]
         assert tags_line.count("rust") == 1
+
+
+# -- split_frontmatter / join_frontmatter ---------------------------------------
+
+
+class TestSplitFrontmatter:
+    def test_splits_block_without_parsing(self):
+        text = "---\ntitle: Test\n---\n# Hello\nBody."
+        raw, body = split_frontmatter(text)
+        assert raw == "title: Test"
+        assert body == "# Hello\nBody."
+
+    def test_absent_block(self):
+        text = "# Hello\nNo frontmatter."
+        raw, body = split_frontmatter(text)
+        assert raw is None
+        assert body == text
+
+    def test_empty_block_is_not_none(self):
+        """An empty block existed; None means no block at all."""
+        raw, body = split_frontmatter("---\n\n---\n# Hello")
+        assert raw == ""
+        assert body == "# Hello"
+
+    def test_malformed_yaml_round_trips(self):
+        text = "---\nthis: is: not: valid\n---\nBody."
+        raw, body = split_frontmatter(text)
+        assert raw == "this: is: not: valid"
+        assert body == "Body."
+
+    def test_body_starting_with_hr_is_not_swallowed(self):
+        """The regex is non-greedy and anchored, so the real block wins."""
+        text = "---\ntitle: T\n---\n---\nAn hr, not a delimiter.\n"
+        raw, body = split_frontmatter(text)
+        assert raw == "title: T"
+        assert body == "---\nAn hr, not a delimiter.\n"
+
+    @pytest.mark.parametrize("text", [
+        "---\ntitle: Test\n---\n# Hello\nBody.",
+        "# No frontmatter here.\n",
+        "---\n\n---\nEmpty block.",
+        "---\nbroken: : yaml\n---\n",
+        "---\ntitle: T\n---\n---\nhr body\n",
+    ])
+    def test_round_trip_is_byte_identical(self, text):
+        assert join_frontmatter(*split_frontmatter(text)) == text
+
+
+class TestParseFrontmatterBlock:
+    def test_valid_block(self):
+        meta, error = parse_frontmatter_block("title: Test\ntags:\n- a")
+        assert meta == {"title": "Test", "tags": ["a"]}
+        assert error is None
+
+    def test_none_block(self):
+        assert parse_frontmatter_block(None) == ({}, None)
+
+    def test_blank_block(self):
+        assert parse_frontmatter_block("   \n") == ({}, None)
+
+    def test_malformed_block_reports_error(self):
+        meta, error = parse_frontmatter_block("this: is: not: valid")
+        assert meta == {}
+        assert error is not None
+
+    def test_non_mapping_block_reports_error(self):
+        meta, error = parse_frontmatter_block("- just\n- a\n- list")
+        assert meta == {}
+        assert error == "frontmatter is not a mapping"
