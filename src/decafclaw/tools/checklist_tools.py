@@ -96,12 +96,13 @@ async def tool_checklist_step_done(ctx, note: str = "") -> ToolResult:
     """Mark current step done and advance. end_turn=True only when all complete."""
     conv_id = ctx.conv_id or "default"
     next_item = checklist.checklist_complete_current(ctx.config, conv_id, note)
+    items = checklist.checklist_status(ctx.config, conv_id)
+    if not items:
+        # No active checklist — do not touch the sticky slot (avoid clobbering
+        # a manually-pinned or project-owned widget).
+        return ToolResult(text="[error: no active checklist]")
     await _mirror_to_sticky(ctx, conv_id)
     if next_item is None:
-        # Check if there was nothing to complete vs all done
-        items = checklist.checklist_status(ctx.config, conv_id)
-        if not items:
-            return ToolResult(text="[error: no active checklist]")
         done = sum(1 for i in items if i["done"])
         return ToolResult(
             text=f"All {done} steps complete! Summarize what was accomplished.",

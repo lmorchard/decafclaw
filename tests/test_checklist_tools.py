@@ -144,6 +144,17 @@ async def test_abort_clears_sticky(ctx, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_step_done_no_checklist_does_not_clear_sticky(ctx, monkeypatch):
+    from unittest.mock import AsyncMock
+    clear_mock = AsyncMock()
+    monkeypatch.setattr("decafclaw.sticky.set_sticky", AsyncMock())
+    monkeypatch.setattr("decafclaw.sticky.clear_sticky", clear_mock)
+    result = await tool_checklist_step_done(ctx)  # no active checklist
+    assert "no active" in result.text.lower() or "[error" in result.text
+    clear_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_sticky_failure_is_fail_open(ctx, monkeypatch):
     monkeypatch.setattr("decafclaw.sticky.set_sticky",
                         AsyncMock(side_effect=RuntimeError("boom")))

@@ -585,6 +585,11 @@ underlying tool call) and use `sticky.py`'s `set_sticky` / `clear_sticky`
 directly rather than a `WidgetRequest`/`ToolResult`. It can also be pinned
 manually via `widget_pin_sticky(widget_type="progress_tracker", data={...})`
 like any other sticky-mode widget — see [Sticky slot](#sticky-slot) below.
+Since the sticky slot holds a single widget, these producers and manual
+pinning are last-writer-wins: a newer pin replaces whatever currently
+occupies the slot, and a producer clearing its own tracker (checklist
+completion/abort, project leaving `executing`) clears the slot regardless of
+who pinned it.
 
 ## Sticky slot
 
