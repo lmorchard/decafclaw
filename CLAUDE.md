@@ -39,7 +39,7 @@ See [docs/tools.md](docs/tools.md), [docs/tool-priority.md](docs/tool-priority.m
 - **Shell approval via shared `check_shell_approval()`** in `shell_tools.py`. Don't duplicate the approval checks.
 - **Per-tool timeout** wraps every non-MCP tool call (default 180s, env `TOOL_TIMEOUT_SEC`). Override via `timeout` key in `TOOL_DEFINITIONS`; `None` opts out. Current opt-outs: `delegate_task`, `conversation_compact`, `claude_code_send`. MCP tools use their own per-server timeout.
 - **`end_turn=True` on `ToolResult`** mechanically ends the turn (one final no-tools LLM call, then return). For review gates use `end_turn=EndTurnConfirm(message=..., on_approve=..., on_deny=...)`. For input widgets (`accepts_input=true`), pair with `end_turn=True` and the loop auto-promotes to a `WidgetInputPause` that pauses via the confirmation infra and resumes with the user's selection injected as a synthetic user message. Priority in one batch: `WidgetInputPause` > `EndTurnConfirm` > `True`.
-- **Checklist tools (`checklist_create/_step_done/_abort/_status`)** are always-loaded. Iteration happens within a single turn: do step → step_done → next.
+- **Checklist tools (`checklist_create/_step_done/_abort/_status`)** are always-loaded. Iteration happens within a single turn: do step → step_done → next. Create/step_done/abort auto-emit a `progress_tracker` into the sticky slot (fail-open), see [docs/widgets.md](docs/widgets.md#progress_tracker-widget).
 - **Events for progress.** Tools publish `tool_status` via `ctx.publish()`.
 
 ### Web UI styling
@@ -180,7 +180,7 @@ Full doc index: [docs/index.md](docs/index.md). Hot files for navigation:
 - `preempt_search.py` — Keyword-match for pre-emptive tool promotion
 
 ### Skills (bundled)
-`skills/{vault,tabstack,dream,garden,project,claude_code,health,postmortem,ingest,background,mcp,newsletter,skill-creator}/`. `vault`, `background`, `mcp` are always-loaded. Contrib (opt-in) skills live in `contrib/skills/`.
+`skills/{vault,tabstack,dream,garden,project,claude_code,health,postmortem,ingest,background,mcp,newsletter,skill-creator}/`. `vault`, `background`, `mcp` are always-loaded. Contrib (opt-in) skills live in `contrib/skills/`. `project` auto-emits a `progress_tracker` into the sticky slot while EXECUTING (fail-open), clearing on DONE or leaving EXECUTING.
 
 ### Workflows
 `workflow/` — Durable replay engine ([docs/workflows.md](docs/workflows.md)): `registry.py` (`@workflow` decorator), `engine.py` (`run_workflow`), `journal.py` (positional keyed journal + fingerprint), `handle.py` (`WorkflowHandle` — the `wf` object with `llm_call`/`user_input`/`tool_call`/`subagent`/`parallel`/`pipeline` primitives), `llm.py` (forced-tool structured-output), `errors.py` (`WorkflowSuspended`, `WorkflowNonDeterministic`, `WorkflowToolNotAllowed`), `paths.py` (per-conv file paths), `resume.py` (harness glue: `run_workflow_turn` + `WorkflowUserInputHandler`), `workflows/interview.py` (suspend/resume hero), `workflows/research.py` (multi-primitive hero — fan-out + pipeline + subagent).
@@ -195,7 +195,7 @@ Full doc index: [docs/index.md](docs/index.md). Hot files for navigation:
 - `heartbeat.py`, `schedules.py`, `polling.py`
 - `notifications.py`, `notification_channels/`, `mail.py`
 - `mcp_client.py`
-- `media.py`, `widgets.py`, `widget_input.py`, `web/static/widgets/`, `web/static/components/widgets/widget-host.js`
+- `media.py`, `widgets.py`, `widget_input.py`, `web/static/widgets/` (incl. `web/static/widgets/progress_tracker/`), `web/static/components/widgets/widget-host.js`
 - `web/static/components/canvas-panel.js`, `web/static/lib/canvas-state.js`
 - `web/static/components/sticky-slot.js`, `web/static/lib/sticky-state.js` — sticky slot (pinned display-only widget above chat input)
 - `terminals.py` — human-only PTY session registry backing the web terminal ([docs/web-terminal.md](docs/web-terminal.md))

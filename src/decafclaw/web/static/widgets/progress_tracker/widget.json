@@ -1,0 +1,29 @@
+{
+  "name": "progress_tracker",
+  "description": "A quiet multi-step status list (pending / in_progress / done / failed / skipped). Shows in-flight progress of a task at a glance. Display-only, snapshot-rendered. Auto-emitted by the checklist tool and the project skill; can also be pinned manually.",
+  "modes": ["inline", "canvas", "sticky"],
+  "accepts_input": false,
+  "data_schema": {
+    "type": "object",
+    "required": ["steps"],
+    "properties": {
+      "steps": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["label", "status"],
+          "properties": {
+            "label": { "type": "string" },
+            "status": {
+              "type": "string",
+              "enum": ["pending", "in_progress", "done", "failed", "skipped"]
+            },
+            "note": { "type": "string" }
+          }
+        }
+      },
+      "title": { "type": "string" },
+      "summary": { "type": "string" }
+    }
+  }
+}

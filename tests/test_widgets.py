@@ -613,3 +613,38 @@ def test_sticky_is_a_valid_mode(fake_config):
     desc = reg.get("markdown_document")
     assert desc is not None
     assert "sticky" in desc.modes
+
+
+def test_bundled_progress_tracker_is_registered(fake_config):
+    """Fresh registry scan finds the bundled progress_tracker widget."""
+    reg = load_widget_registry(fake_config,
+                               admin_dir=Path("/nonexistent/admin"))
+    desc = reg.get("progress_tracker")
+    assert desc is not None
+    assert desc.tier == "bundled"
+    assert desc.accepts_input is False
+    assert set(desc.modes) == {"inline", "canvas", "sticky"}
+
+
+def test_progress_tracker_validates_all_statuses(fake_config):
+    """The schema accepts every status value and rejects an unknown one."""
+    reg = load_widget_registry(fake_config,
+                               admin_dir=Path("/nonexistent/admin"))
+    ok, err = reg.validate("progress_tracker", {
+        "title": "Work",
+        "summary": "1/5",
+        "steps": [
+            {"label": "a", "status": "done", "note": "n"},
+            {"label": "b", "status": "in_progress"},
+            {"label": "c", "status": "pending"},
+            {"label": "d", "status": "failed"},
+            {"label": "e", "status": "skipped"},
+        ],
+    })
+    assert ok, err
+    bad_ok, _ = reg.validate("progress_tracker", {
+        "steps": [{"label": "x", "status": "bogus"}],
+    })
+    assert bad_ok is False
+    missing_ok, _ = reg.validate("progress_tracker", {"steps": [{"label": "x"}]})
+    assert missing_ok is False

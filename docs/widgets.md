@@ -67,6 +67,10 @@ Post-Phase 4 (#358 part B):
 - **`iframe_sandbox`** — agent-authored HTML/CSS/JS rendered in a CSP-locked sandboxed iframe; inline + canvas modes. Data shape (input): `{body: string, title?: string}`. See [iframe_sandbox](#iframe_sandbox-widget).
 - **`map`** — interactive geographic map (Leaflet + OSM tiles). Trusted first-party widget: the agent supplies structured data only; the tile source is server config (`config.widgets.map`), injected server-side. Data shape (input): `{markers: [{lat, lng, label?, popup?}], center?: {lat, lng}, zoom?, title?}`. See [map](#map-widget).
 
+Post-#414:
+
+- **`progress_tracker`** — quiet multi-step status list; inline, canvas, and sticky modes. Display-only, snapshot-rendered (each update replaces the full step list). Data shape: `{steps: [{label, status, note?}], title?, summary?}` where `status ∈ pending | in_progress | done | failed | skipped`. Auto-emitted into the sticky slot by the checklist tools and the project skill; can also be pinned manually via `widget_pin_sticky`. See [progress_tracker](#progress_tracker-widget).
+
 ## Adding a new widget
 
 Widgets are extensible by admins without changing DecafClaw's core. Each
@@ -543,6 +547,50 @@ return ToolResult(
 
 Or `canvas_new_tab(widget_type="map", data={"markers": [...]})`.
 
+## `progress_tracker` widget
+
+Bundled at `src/decafclaw/web/static/widgets/progress_tracker/`. A quiet
+multi-step status list — shows in-flight progress of a task at a glance.
+Display-only, snapshot-rendered: every update replaces the full step list
+(no incremental diffing). Supports `inline`, `canvas`, and `sticky` modes,
+so it can appear as a normal tool-result widget, live in the canvas panel,
+or pinned above the chat input.
+
+### Data shape
+
+- `steps` (array, required) — each `{label, status, note?}`. `status` is
+  one of `pending | in_progress | done | failed | skipped`, rendered with a
+  distinct glyph (○ / ◐ / ● / ✗ / ⊘ respectively). `note` renders inline
+  after the label.
+- `title` (optional, string) — header above the step list.
+- `summary` (optional, string) — a compact one-line status (e.g.
+  `"2/5 · Step 3"`); this is what the sticky slot's collapsed header shows.
+
+### Auto-emit
+
+The widget is rarely constructed directly by the agent — it's mirrored
+automatically into the sticky slot by two producers:
+
+- **Checklist tools** (`tools/checklist_tools.py`) — every
+  `checklist_create` / `checklist_step_done` / `checklist_abort` call
+  mirrors the current checklist state as a `progress_tracker` snapshot;
+  the slot clears once every step is done or on abort.
+- **Project skill** (`skills/project/tools.py`) — while a project is in the
+  `executing` phase, plan-mutating tools mirror the plan's steps as a
+  `progress_tracker` snapshot; the slot clears on completion or when the
+  project leaves `executing` (e.g. `project_advance` back to planning).
+
+Both producers are fail-open (a sticky-mirror failure never breaks the
+underlying tool call) and use `sticky.py`'s `set_sticky` / `clear_sticky`
+directly rather than a `WidgetRequest`/`ToolResult`. It can also be pinned
+manually via `widget_pin_sticky(widget_type="progress_tracker", data={...})`
+like any other sticky-mode widget — see [Sticky slot](#sticky-slot) below.
+Since the sticky slot holds a single widget, these producers and manual
+pinning are last-writer-wins: a newer pin replaces whatever currently
+occupies the slot, and a producer clearing its own tracker (checklist
+completion/abort, project leaving `executing`) clears the slot regardless of
+who pinned it.
+
 ## Sticky slot
 
 A single-slot, display-only widget surface pinned directly above the chat
@@ -552,15 +600,16 @@ so the user keeps seeing at-a-glance status while a workflow runs. Web UI
 only.
 
 A widget opts in by adding `"sticky"` to its `modes` array in `widget.json`
-(alongside `"inline"` / `"canvas"`). `markdown_document` is the first (and
-currently only) sticky-mode widget.
+(alongside `"inline"` / `"canvas"`). `markdown_document` and
+`progress_tracker` are the two sticky-mode widgets so far.
 
 **Driven by tools**, not `WidgetRequest`/`ToolResult` like other widgets:
 `widget_pin_sticky(widget_type, data)` pins a widget, replacing any previous
 occupant (single slot); `widget_unpin_sticky()` clears it. Both are
 normal-priority tools in the base registry (`src/decafclaw/tools/sticky_tools.py`).
-A forthcoming change (#414) will have the checklist tools auto-emit sticky
-updates as steps complete, without the agent calling these tools directly.
+As of #414, the checklist tools and the project skill also drive the sticky
+slot directly (bypassing these two tools) to auto-emit a `progress_tracker`
+snapshot as steps complete — see [progress_tracker](#progress_tracker-widget).
 
 **Collapse to summary.** The header shows a one-line summary (the widget's
 `summary` or `title` field, falling back to the widget type name) with a
@@ -608,12 +657,13 @@ before any live events arrive. Live updates ride the `sticky_set` /
 - `src/decafclaw/tools/sticky_tools.py` — `widget_pin_sticky`/`widget_unpin_sticky` tools
 - `src/decafclaw/web/static/lib/sticky-state.js` — frontend sticky state (collapse persistence, WS event apply)
 - `src/decafclaw/web/static/components/sticky-slot.js` — `<sticky-slot>` panel component
-- `src/decafclaw/web/static/widgets/` — bundled widgets (data_table, multiple_choice, text_input, markdown_document, code_block, iframe_sandbox, map)
+- `src/decafclaw/web/static/widgets/` — bundled widgets (data_table, multiple_choice, text_input, markdown_document, code_block, iframe_sandbox, map, progress_tracker)
 - `src/decafclaw/web/static/widgets/map/` — map widget descriptor + Lit component (Leaflet)
 - `src/decafclaw/web/static/leaflet-entry.js` — Leaflet vendor entry (ESM/UMD interop → default export)
 - `src/decafclaw/web/static/widgets/markdown_document/` — markdown_document widget descriptor + Lit component
 - `src/decafclaw/web/static/widgets/code_block/` — code_block widget descriptor + Lit component
 - `src/decafclaw/web/static/widgets/iframe_sandbox/` — iframe_sandbox widget descriptor + Lit component
+- `src/decafclaw/web/static/widgets/progress_tracker/` — progress_tracker widget descriptor + Lit component; auto-emit callers in `tools/checklist_tools.py` and `skills/project/tools.py`
 - `vendor/bundle/highlight.js` — bundled hljs core + ~20 languages + dual themes
 - `src/decafclaw/web/static/components/widgets/widget-host.js` — frontend host
 - `src/decafclaw/web/static/lib/widget-catalog.js` — catalog client
