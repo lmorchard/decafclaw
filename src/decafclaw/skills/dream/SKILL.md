@@ -49,6 +49,12 @@ For each finding from the gather phase:
    - `vault_write` the new page
 4. Convert any relative dates ("yesterday", "last week") to absolute dates.
 5. For pages that have grown longer than ~20 lines, add or update a `> tl;dr:` summary blockquote after the title.
+6. After `vault_write`, call `vault_update_frontmatter(page, fields, overwrite=False)` on the same page to fill in metadata:
+   - `summary` — one sentence describing what the page covers.
+   - `keywords` — a short list of terms someone would search for.
+   - `tags` — a short list of topical tags.
+   - `importance` — a float 0–1. Score higher for pages that consolidate many journal entries or sit central to the wiki-link graph; score lower for a page capturing a single passing note.
+   - `overwrite=False` respects fields a human already set by hand — never clobber manually-curated frontmatter, even though the tool already enforces this.
 
 ## Phase 4: Prune
 

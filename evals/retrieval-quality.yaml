@@ -1,0 +1,67 @@
+# Retrieval-quality eval (#197 Measurement step).
+#
+# What this DOES exercise: the real production retrieval pipeline for a
+# VAULT PAGE carrying rich frontmatter (summary/keywords/tags/importance) —
+# no shortcuts, no pre-baked embeddings fixture. The eval harness only
+# supports seeding raw page files (`setup.workspace_files`) and journal
+# entries (`setup.memories`, auto-indexed if `search_strategy: semantic`);
+# it does NOT auto-index workspace-seeded vault *pages* into embeddings.db.
+# So this test relies on two pieces of *real* production machinery instead:
+#
+#   1. `vault_search`'s lazy auto-reindex (`embeddings.search_similar`):
+#      the very first semantic search against an empty index triggers a
+#      real `reindex_vault()` / `reindex_journal()` pass, which embeds
+#      every vault page using `build_composite_text(frontmatter, body)` —
+#      i.e. the seeded page's frontmatter genuinely flows into its
+#      embedding, exactly as it would in production after a `vault_write`.
+#   2. Proactive memory retrieval (`memory_context.retrieve_memory_context`,
+#      mode "always" by default): once indexed, a *later* turn's own query
+#      can surface the page's content automatically, with NO explicit
+#      tool call — this is the composite-scored (similarity + recency +
+#      importance) auto-injection path that Phase 5's importance recompute
+#      feeds into.
+#
+# Turn 2 asks about a detail that is NOT restated in turn 1's response
+# (so the model can't just recall it from conversation history) and is
+# reachable only via the vault page — forcing genuine retrieval, not
+# memorized dialogue.
+#
+# LIMITATION (see #197 measurement report / notes.md): this is an honest
+# END-TO-END PIPELINE VALIDATION, not a controlled frontmatter-vs-bare-content
+# A/B. A rigorous A/B (frontmatter-rich page vs. an otherwise-identical bare
+# page, both pre-embedded and scored under equal distractor load) needs a
+# framework extension — a `setup.vault_pages` (or similar) fixture path that
+# seeds page files AND computes their composite embeddings deterministically
+# at setup time (mirroring what `tool_vault_write` does on a real write),
+# the way `setup.memories` already does for journal entries. Not built here
+# per the #197 measurement task scope — filed as a follow-up.
+
+- name: "vault page frontmatter is embedded and proactively retrieved later"
+  setup:
+    workspace_files:
+      "vault/agent/pages/escalation-runbook.md": |
+        ---
+        summary: On-call paging escalation chain — who gets notified when the primary responder doesn't acknowledge a page in time.
+        keywords: [escalation, paging, on-call, alerting, incident-response]
+        tags: [ops, runbook]
+        importance: 0.9
+        ---
+        # Escalation Runbook
+
+        If Priya doesn't acknowledge a page within 4 minutes, the alert
+        escalates to Marcus. If Marcus doesn't acknowledge within 8 minutes,
+        it escalates to the shift lead. If the shift lead doesn't acknowledge
+        within 15 minutes, PagerDuty auto-escalates to the VP of Engineering.
+  turns:
+    - input: "Search the vault for our on-call escalation policy — who gets paged first, and who's next if they don't respond?"
+      expect:
+        response_contains_all: ["Priya", "Marcus"]
+        expect_tool: vault_search
+        max_tool_calls: 4
+        max_tool_errors: 0
+    - input: "One more thing on that topic — how long does the shift lead have before it escalates further, and to whom?"
+      expect:
+        response_contains_all: ["15", "re:vp|vice president"]
+        expect_no_tool: [vault_search, vault_read, vault_recent]
+        max_tool_calls: 0
+        max_tool_errors: 0

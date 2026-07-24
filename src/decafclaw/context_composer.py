@@ -709,6 +709,7 @@ class ContextComposer:
             # Score and rank candidates
             total_candidates = len(results)
             results = self._score_candidates(results, config)
+            all_scored = list(results)  # full scored list, before threshold/budget drops
 
             # Drop candidates below minimum score threshold
             score_threshold = config.relevance.min_composite_score
@@ -726,6 +727,38 @@ class ContextComposer:
                           len(results), total_candidates,
                           results[0].get("composite_score", 0),
                           results[-1].get("composite_score", 0))
+
+            # Retrieval-event telemetry (#197 Phase 0): publish the full
+            # scored candidate list — not just what got injected — tagged
+            # with include/drop verdicts. Fail-open: telemetry must never
+            # break retrieval.
+            try:
+                survived_paths = {r.get("file_path", "") for r in results}
+                candidates_payload = []
+                for c in all_scored:
+                    path = c.get("file_path", "")
+                    included = path in survived_paths
+                    if included:
+                        drop_reason = None
+                    elif c.get("composite_score", 0) < score_threshold:
+                        drop_reason = "score"
+                    else:
+                        drop_reason = "budget"
+                    candidates_payload.append({
+                        "file_path": path,
+                        "source_type": c.get("source_type", ""),
+                        "similarity": c.get("similarity", 0.0),
+                        "recency": c.get("recency", 0.0),
+                        "importance": c.get("importance", 0.0),
+                        "composite_score": c.get("composite_score", 0.0),
+                        "included": included,
+                        "drop_reason": drop_reason,
+                    })
+                await ctx.publish(
+                    "retrieval_event", conv_id=ctx.conv_id, candidates=candidates_payload,
+                )
+            except Exception as exc:
+                log.debug("Retrieval telemetry emit failed: %s", exc)
 
             # Compute per-candidate token estimates for diagnostics
             for r in results:

@@ -108,6 +108,123 @@ The vault skill is **always loaded** — its tools are available in every conver
 | `vault_show_sections(page, section?)` | Show a page's section outline or a specific section's content with absolute line numbers. |
 | `vault_move_lines(from_page, to_page, lines, to_section?, position?)` | Move specific lines (by line number) from one agent page to another. Both pages must be under `agent/`. |
 | `vault_section(page, action, section?, title?, level?, after?, before?, parent?)` | Section ops: `add`, `remove`, `rename`, or `move`. Page must be under `agent/`. |
+| `vault_update_frontmatter(page, fields, overwrite?)` | Merge frontmatter fields (`summary`, `importance`, `tags`, `keywords`, etc.) into a page's existing metadata without touching the body. Fills absent/empty fields by default; `overwrite=true` replaces existing values. Reindexes the page. Shared write primitive for the self-improving vault arc (#197) — [dream](dream-consolidation.md) calls it (`overwrite=false`) after every `vault_write` in its Consolidate phase; the `backfill-frontmatter` CLI and garden importance tuning build on the same primitive. Interactive callers writing outside `agent/` go through the same confirmation gate as `vault_write`; non-interactive callers (scheduled dream/garden) proceed without confirmation by design — the one mutating vault tool that doesn't error in non-interactive contexts. |
+
+### Frontmatter merge (#197)
+
+`vault_update_frontmatter` is a thin async wrapper around a pure helper,
+`merge_frontmatter(existing: dict, fields: dict, overwrite: bool) -> dict` in
+`skills/vault/tools.py`. The pure function does the field coercion (reusing
+`get_frontmatter_field`'s rules so the merge and the parser agree on shape)
+and the fill-vs-replace merge logic, with no ctx or I/O — other callers
+(dream generation, the backfill CLI, garden importance tuning) import and
+call it directly to compute merged frontmatter without going through the
+tool or a running agent context.
+
+### Backfill CLI (#197)
+
+`make backfill-frontmatter` (`decafclaw-backfill-frontmatter`,
+`src/decafclaw/backfill_frontmatter.py`) is a one-time CLI for vault pages
+written before frontmatter generation existed. It walks the agent's own
+pages (`config.vault_agent_pages_dir`) — not the user's own vault pages
+elsewhere — and for each one missing `summary`/`keywords`/`tags`/
+`importance` makes a single forced-tool structured-output LLM call
+(`generate_fields_for_page`) to generate the missing fields, then merges
+them in via `merge_frontmatter(overwrite=False)` — a manually-set field is
+never clobbered. Pages where all four fields are already present are
+skipped for free, so the CLI is resumable and safe to re-run. `--dry-run`
+prints planned changes without writing; it still makes a real LLM call per
+page and costs the same tokens as a normal run — only the file write is
+skipped. `--limit N` caps how many pages get an LLM call in one run (skips
+don't count against it), which is the way to bound spend on `--dry-run`
+too. It does not reindex itself — follow with `make reindex` so composite
+embeddings pick up the new frontmatter.
+
+### Backlink index (#197)
+
+`vault_backlinks` no longer brute-force `rglob`s and regex-scans every page
+on each call. `src/decafclaw/backlinks.py` maintains a persistent JSON
+index at `{workspace}/backlinks.json` mapping `page -> [pages linking to
+it]` (sorted, human-readable, crash-recoverable via tmp-file-then-rename).
+
+- `rebuild_index(config)` — full scan: resolves every `[[link]]` (or
+  `[[link|display]]`) in every page to an existing page, case-insensitively
+  by full relative path or falling back to bare filename (stem). Dangling
+  links (no matching page) and self-links are dropped — the index only
+  tracks edges between real pages.
+- `load_index(config)` — reads the persisted JSON, rebuilding lazily if
+  missing or corrupt.
+- `inbound_count(config, page)` — number of distinct pages linking to
+  `page`. This is the raw signal Phase 5's importance formula folds in.
+- `update_for_page(config, page)` — incremental update: re-scans only the
+  changed page's current outbound links and adjusts the index's inbound
+  entries (add new targets, drop stale ones) without re-reading every
+  other page's content.
+
+A `vault_changed`-event subscriber (`make_backlinks_subscriber`, wired in
+`runner.py`) keeps the index current without an explicit rebuild step: for
+create/update (and other same-identity events) it calls `update_for_page`
+for the changed page only; for delete/rename — which change a page's own
+identity in the index and can't be corrected incrementally (a rename event
+only carries the new path) — it runs a full `rebuild_index` instead.
+Delete/rename are rare relative to writes, so the full-scan cost is a
+non-issue. Fail-open throughout — I/O or parse errors are logged at debug
+level and never propagate into a tool call or event subscriber.
+
+`vault_backlinks(page)` itself now just resolves `page`, looks up its
+inbound linkers in the index, and re-reads only those specific linking
+pages (not the whole vault) to pull a one-line quote for display context.
+
+### Importance recompute (#197)
+
+`importance` frontmatter starts as an LLM's subjective guess (backfill,
+dream generation). `vault_recompute_importance` — a native tool from the
+`garden` skill's `tools.py` (`src/decafclaw/skills/garden/tools.py`) —
+replaces that guess weekly with a deterministic score, so importance
+tracks measured usage instead of drifting further from it with every LLM
+re-guess.
+
+This sweep is scoped to `agent/` pages only (`config.vault_agent_pages_dir`)
+— it runs weekly and non-interactively, with no human in the loop, so it
+never writes into the user's own hand-written vault pages elsewhere. This
+is narrower than the `vault_update_frontmatter` *tool*, which keeps its
+vault-wide reach for interactive, user-directed edits; only the automated
+sweep (and the `backfill_frontmatter` CLI, below) is scoped down. Pages
+with no measured signal at all yet (zero retrieval, zero inbound links —
+e.g. a page dream just wrote) are left untouched rather than zeroed, so a
+brand-new page's initial importance guess survives until real usage
+signal accumulates.
+
+`compute_importance_scores(config)` in `skills/garden/tools.py` is pure
+and config-driven (no `ctx`, no writes):
+
+```
+importance = clamp01(
+    w_retrieval * norm(retrieval_freq)
+    + w_inbound * norm(inbound_links)
+)
+```
+
+`norm(x) = x / max(x across all vault pages)`, defined as 0 when that max
+is 0 (no divide-by-zero on an empty or brand-new vault). `retrieval_freq`
+comes from `retrieval_telemetry.aggregate`; `inbound_links` from
+`backlinks.inbound_count`. `ImportanceConfig` also carries a `w_reference`
+weight (default 0.0) that is **reserved / not yet computed** — no
+explicit-reference signal exists yet, so it's omitted from the formula
+above entirely rather than multiplied against an all-zero signal. Weights
+resolve `w_retrieval=0.6`, `w_inbound=0.4`, `w_reference=0.0` via the same
+dataclass-default → `config.json` → `IMPORTANCE_*` env resolution as every
+other sub-config.
+
+`tool_vault_recompute_importance(ctx, dry_run=False)` scores every agent
+page, writes changed scores via `vault_update_frontmatter(overwrite=True)`,
+and skips pages whose rounded score is unchanged or that have no measured
+signal at all yet, so a re-run only touches pages that both moved and have
+real data behind the move. `dry_run=true` reports the planned deltas
+without writing. It's the weekly step in the `garden` skill's sweep
+(`skills/garden/SKILL.md`) — review the reported deltas for outliers, and
+use `vault_backlinks` + the recomputed score together to flag orphaned,
+rarely-retrieved pages as split/merge/delete candidates.
 
 ### Ownership
 
@@ -128,7 +245,7 @@ Writes/deletes/renames under the agent folder (`agent/`) execute directly. Opera
 2. **Per-conversation grants.** The agent can call `vault_grant_folder(folder, reason)` to request trust for a folder. After user approval, all writes/deletes/renames under that folder skip confirmation for the rest of the conversation. Grants persist as a sidecar at `{workspace}/conversations/{conv_id}/vault_grants.json` and reset between conversations.
 3. **Per-call confirmation.** Anything else triggers a confirmation request showing the operation and a content preview. Approve to proceed; deny returns an error and no change is made.
 
-Heartbeat / scheduled / child-agent contexts can't display confirmations, so writes outside the agent folder fail with an error in those contexts.
+Heartbeat / scheduled / child-agent contexts can't display confirmations, so writes outside the agent folder fail with an error in those contexts — with one exception: `vault_update_frontmatter` skips this gate entirely for non-interactive callers (scheduled `dream`/`garden`), proceeding ungated by design so weekly maintenance can touch frontmatter vault-wide without a human present. Interactive callers of `vault_update_frontmatter` are still gated exactly like `vault_write`.
 
 ## Vault Gardening
 
@@ -173,6 +290,15 @@ Vault content is indexed in the embeddings database with per-type source types a
 - `make reindex` rebuilds the full index (`--vault`, `--journal` flags for subsets)
 - `--concurrency N` controls parallel embedding API calls (default 4)
 - Reindex includes 429 retry with exponential backoff
+
+## Retrieval telemetry (#197)
+
+A fail-open EventBus subscriber records which retrieval candidates were
+considered each interactive turn and which survived to injection —
+measurement foundation for the self-improving vault arc (importance
+formula, dream/garden tuning, and so on down the line). See
+[Retrieval telemetry](context-composer.md#retrieval-telemetry-197) in the
+context-composer docs for the event shape and `make retrieval-report`.
 
 ## Migration
 

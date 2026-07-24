@@ -223,6 +223,29 @@
     everything and mutates the live catalog; it reports rejections too, but
     it's the broad/commit path, not the focused "did I author this right" check.
 
+# -- vault_update_frontmatter vs vault_write ---------------------------------
+
+- name: frontmatter-vs-write-metadata-only
+  scenario: "Set the importance to 0.8 and add the tags 'architecture' and 'decision' on my 'context-composer' vault page — don't touch the body."
+  expected: vault_update_frontmatter
+  near_miss: [vault_write]
+  notes: |
+    Metadata-only update (importance/tags) with an explicit "don't touch
+    the body" — the canonical vault_update_frontmatter case. vault_write
+    would need the caller to read, edit, and resubmit the whole body just
+    to change two frontmatter fields, and risks clobbering content the
+    request explicitly says to leave alone.
+
+- name: write-vs-frontmatter-rewrite-body
+  scenario: "Replace the entire body of my 'onboarding' vault page with this corrected text: '# Onboarding\n\n1. Clone the repo.\n2. Run make install.\n3. Copy .env.example to .env.'"
+  expected: vault_write
+  near_miss: [vault_update_frontmatter]
+  notes: |
+    Body content is what's changing here (out-of-date steps replaced with
+    concrete corrected text), not metadata. vault_update_frontmatter never
+    touches the body — it's the wrong tool whenever the actual page content
+    needs to change.
+
 # -- vault_recent vs vault_search / vault_list ---------------------------------
 
 - name: vault-recent-vs-search-whats-new
@@ -243,3 +266,30 @@
     Time-bounded ("past few days") + my own content points at vault_recent
     (source_type=user). vault_list would dump the whole journal folder with no
     date filter; vault_search needs a query string.
+
+# -- vault_recompute_importance vs vault_update_frontmatter / vault_write ----
+# (#197 Phase 5)
+
+- name: recompute-importance-vs-frontmatter-whole-vault
+  scenario: "Recalculate the importance scores across my whole vault based on how often pages actually get retrieved and linked to — not my guesses."
+  expected: vault_recompute_importance
+  near_miss: [vault_update_frontmatter, vault_write]
+  notes: |
+    "Across my whole vault" + "based on how often pages get retrieved and
+    linked to" (not a guess) is the deterministic, bulk recompute over the
+    agent's managed pages — exactly what vault_recompute_importance does from
+    measured signals.
+    vault_update_frontmatter only ever touches ONE named page's fields;
+    it has no vault-wide sweep. vault_write would need the caller to
+    read/edit/resubmit every page's body just to bump one field.
+
+- name: frontmatter-vs-recompute-single-page-importance
+  scenario: "Bump the importance to 0.9 on just my 'roadmap' vault page — I want that one to stand out, don't touch anything else."
+  expected: vault_update_frontmatter
+  near_miss: [vault_recompute_importance]
+  notes: |
+    A specific value on a specific named page is a targeted metadata edit —
+    vault_update_frontmatter. vault_recompute_importance ignores any
+    caller-supplied number; it derives every page's score from retrieval/
+    inbound-link telemetry and would silently overwrite the requested 0.9
+    with whatever the formula computes, which isn't what was asked.

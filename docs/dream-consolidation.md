@@ -19,7 +19,7 @@ Runs through four phases:
 
 1. **Orient** — survey existing vault pages and their summaries
 2. **Gather** — scan recent journal entries and search conversations for new insights, corrections, preferences, and overlooked themes
-3. **Consolidate** — update existing vault pages or create new ones, add `[[wiki-links]]`, convert relative dates to absolute
+3. **Consolidate** — update existing vault pages or create new ones, add `[[wiki-links]]`, convert relative dates to absolute, then call [`vault_update_frontmatter`](vault.md#page-frontmatter) (`overwrite=False`) to fill `summary`, `keywords`, `tags`, and an initial `importance` score — never clobbering fields a human set manually
 4. **Prune** — resolve contradictions, note corrections in Sources sections
 
 Always ends with a short narrative summary — what was consolidated and any new pages created. When the cycle was quiet, the summary is prefixed with `HEARTBEAT_OK` so the scheduler's log-line stays tidy; the narrative still reaches the newsletter via the archive. Scheduled runs are logged only, not posted to any channel.
@@ -81,4 +81,4 @@ Save as `data/{agent_id}/schedules/dream.md` — it will override the bundled sk
 
 The dream process maintains `> tl;dr:` summary blockquotes on longer vault pages. Pages shorter than ~20 lines don't need summaries. The dream and garden processes add/update these automatically.
 
-Vault pages also support YAML frontmatter with a `summary` field (see [Context Composer](context-composer.md#vault-page-frontmatter)) — both conventions coexist.
+Vault pages also support YAML frontmatter with a `summary` field (see [Context Composer](context-composer.md#vault-page-frontmatter)) — both conventions coexist. Since #197, dream generates that frontmatter (`summary`, `keywords`, `tags`, `importance`) itself after writing a page, via `vault_update_frontmatter` with `overwrite=False` so it never overrides values a human set by hand.
