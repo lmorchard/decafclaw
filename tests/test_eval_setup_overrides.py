@@ -1,4 +1,4 @@
-"""Unit coverage for the eval runner's per-test ``setup`` overrides.
+"""Unit coverage for the eval runner's per-test ``setup`` block.
 
 ``setup.config_overrides`` is a generic dotted-path mechanism for tweaking
 any slice of the resolved ``Config`` for a single eval case. See
@@ -7,17 +7,21 @@ any slice of the resolved ``Config`` for a single eval case. See
 
 import dataclasses
 import pathlib
+import re
 
 import pytest
 import yaml
 
 from decafclaw.config import Config
 from decafclaw.eval.runner import (
+    _KNOWN_SETUP_KEYS,
     _REMOVED_SETUP_KEYS,
     _build_test_config,
     _seed_conversation_history,
     _setup_of,
 )
+
+_REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 
 def _tmp(tmp_path):
@@ -292,8 +296,89 @@ def test_removed_setup_keys_raise_with_migration_hint(tmp_path, old, new):
         _build_test_config(cfg, {"setup": {old: 1}}, _tmp(tmp_path))
 
 
+# -- unknown setup keys fail loudly (#661) --
+
+
+def test_unknown_setup_key_raises(tmp_path):
+    """A typo'd setup key must not silently no-op.
+
+    `workspace_file` (missing the 's') would otherwise return the default
+    from `.get()`, the fixture would never be seeded, and the case would
+    fail for a confusing reason — or pass for the wrong one.
+    """
+    cfg = Config()
+    with pytest.raises(ValueError, match="workspace_file"):
+        _build_test_config(
+            cfg, {"setup": {"workspace_file": {"a.md": "x"}}}, _tmp(tmp_path),
+        )
+
+
+def test_unknown_setup_key_error_lists_valid_keys(tmp_path):
+    cfg = Config()
+    with pytest.raises(ValueError, match="workspace_files"):
+        _build_test_config(cfg, {"setup": {"nonesuch": 1}}, _tmp(tmp_path))
+
+
+def test_removed_keys_keep_their_migration_hint(tmp_path):
+    """Removed keys must give the migration message, not generic 'unknown'.
+
+    Both checks live in `_setup_of`, so ordering matters: the specific hint
+    has to win over the catch-all.
+    """
+    cfg = Config()
+    with pytest.raises(ValueError, match="config_overrides"):
+        _build_test_config(
+            cfg, {"setup": {"reflection_enabled": False}}, _tmp(tmp_path),
+        )
+
+
+def test_all_known_keys_accepted(tmp_path):
+    """Every documented key passes validation.
+
+    Guards against the allowlist drifting narrower than the readers.
+    """
+    setup = {
+        "skills": [],
+        "memories": [],
+        "workspace_files": {},
+        "conversation_history": [],
+        "embeddings_fixture": "",
+        "auto_confirm": True,
+        "config_overrides": {},
+    }
+    assert set(setup) == set(_KNOWN_SETUP_KEYS)
+    _build_test_config(Config(), {"setup": setup}, _tmp(tmp_path))
+
+
+def test_known_setup_keys_match_docs():
+    """`_KNOWN_SETUP_KEYS` must match the docs/eval-loop.md setup table.
+
+    The allowlist is hand-maintained — the keys are consumed by five
+    different functions, so there's nothing to introspect. This is its
+    keeper: adding a key requires touching both the code and the table,
+    and forgetting either fails here rather than rotting silently.
+    """
+    doc = (_REPO_ROOT / "docs" / "eval-loop.md").read_text()
+    documented = set(re.findall(r"^\| `setup\.(\w+)`", doc, re.M))
+    assert documented == set(_KNOWN_SETUP_KEYS), (
+        f"docs-only: {sorted(documented - set(_KNOWN_SETUP_KEYS))}, "
+        f"code-only: {sorted(set(_KNOWN_SETUP_KEYS) - documented)}"
+    )
+
+
+def test_no_eval_yaml_uses_unknown_setup_keys():
+    """The real suite must be clean under the new validation."""
+    bad = [
+        f"{path.name}::{case.get('name')}::{key}"
+        for path, case in _iter_eval_cases()
+        for key in (case.get("setup") or {})
+        if key not in _KNOWN_SETUP_KEYS
+    ]
+    assert not bad, f"eval YAML using unknown setup keys: {bad}"
+
+
 def _iter_eval_cases():
-    root = pathlib.Path(__file__).resolve().parent.parent / "evals"
+    root = _REPO_ROOT / "evals"
     for path in sorted(root.rglob("*.yaml")):
         cases = yaml.safe_load(path.read_text()) or []
         if not isinstance(cases, list):

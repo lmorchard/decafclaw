@@ -472,21 +472,27 @@ def _check_assertions(test_case: dict, response: str, tool_calls: int,
     return True, ""
 
 
-def _setup_of(test_case: dict) -> dict:
-    """Return a test case's ``setup`` block, normalized to a mapping.
-
-    A bare ``setup:`` in YAML parses to ``None``. An empty setup block is a
-    natural authoring state, so treat it as absent — but reject any other
-    non-mapping instead of letting it surface later as an ``AttributeError``
-    from a ``.get()`` on the wrong type.
-    """
-    setup = test_case.get("setup")
-    if setup is None:
-        return {}
-    if not isinstance(setup, dict):
-        raise ValueError(f"setup must be a mapping, got {type(setup).__name__}")
-    return setup
-
+# Accepted keys in a test case's ``setup`` block.
+#
+# Hand-maintained on purpose: these are consumed by five separate functions
+# (``_setup_skills``, ``_seed_conversation_history``, ``_setup_workspace``,
+# ``_build_test_config``, and the ``auto_confirm`` lookup in ``run_test``),
+# so there is no single structure to introspect. Deriving the set by
+# scraping ``setup.get(...)`` call sites would also happily accept a key
+# that is read but undocumented.
+#
+# ``test_known_setup_keys_match_docs`` is the keeper: it asserts this set
+# matches the ``setup.*`` rows in the docs/eval-loop.md table, so adding a
+# key means touching both and forgetting either one fails.
+_KNOWN_SETUP_KEYS = frozenset({
+    "skills",
+    "memories",
+    "workspace_files",
+    "conversation_history",
+    "embeddings_fixture",
+    "auto_confirm",
+    "config_overrides",
+})
 
 # Bespoke setup keys folded into the generic config_overrides mechanism.
 # Kept only to fail loudly — a silently-ignored key would look like a
@@ -496,6 +502,42 @@ _REMOVED_SETUP_KEYS = {
     "max_tool_iterations": "agent.max_tool_iterations",
     "reflection_enabled": "reflection.enabled",
 }
+
+
+def _setup_of(test_case: dict) -> dict:
+    """Return a test case's ``setup`` block, normalized and validated.
+
+    A bare ``setup:`` in YAML parses to ``None``. An empty setup block is a
+    natural authoring state, so treat it as absent — but reject any other
+    non-mapping instead of letting it surface later as an ``AttributeError``
+    from a ``.get()`` on the wrong type.
+
+    Unknown keys raise. Every reader goes through here, so a typo like
+    ``workspace_file`` (missing the ``s``) fails the case outright instead
+    of returning the ``.get()`` default and quietly skipping its fixture.
+    """
+    setup = test_case.get("setup")
+    if setup is None:
+        return {}
+    if not isinstance(setup, dict):
+        raise ValueError(f"setup must be a mapping, got {type(setup).__name__}")
+
+    # Removed keys first — the migration hint is more useful than the
+    # generic "unknown key" message they would otherwise fall through to.
+    for old, new in _REMOVED_SETUP_KEYS.items():
+        if old in setup:
+            raise ValueError(
+                f"setup.{old} was replaced by setup.config_overrides. "
+                f"Use:\n  setup:\n    config_overrides:\n      {new}: <value>"
+            )
+
+    unknown = set(setup) - _KNOWN_SETUP_KEYS
+    if unknown:
+        raise ValueError(
+            f"unknown setup key(s): {', '.join(sorted(unknown))}. "
+            f"Valid keys: {', '.join(sorted(_KNOWN_SETUP_KEYS))}"
+        )
+    return setup
 
 
 class _Leaf:
@@ -585,13 +627,9 @@ def _build_test_config(config: Config, test_case: dict, tmp: str) -> Config:
     The sandbox fields (``agent.data_home`` / ``agent.id``) are applied
     *last* so a case cannot redirect itself out of its temp directory.
     """
+    # `_setup_of` has already rejected non-mappings, removed keys, and
+    # unknown keys, so only the config_overrides shape is left to check.
     setup = _setup_of(test_case)
-    for old, new in _REMOVED_SETUP_KEYS.items():
-        if old in setup:
-            raise ValueError(
-                f"setup.{old} was replaced by setup.config_overrides. "
-                f"Use:\n  setup:\n    config_overrides:\n      {new}: <value>"
-            )
 
     # Validate on *presence*, not truthiness. A bare `config_overrides:`
     # parses to None, and `[]` / `0` / `""` are falsy too — gating on
