@@ -44,21 +44,60 @@ def _save_allow_pattern(config, pattern: str) -> None:
         log.info(f"Added shell allow pattern: {pattern}")
 
 
-def _command_matches_pattern(command: str, patterns: list[str]) -> bool:
-    """Check if a command matches any allow pattern (glob-style)."""
-    for pattern in patterns:
-        if fnmatch.fnmatch(command, pattern):
-            return True
-    return False
+# Shell metacharacters that could chain additional commands. This tuple is a
+# security boundary, so it is kept as a minimal *covering* set — each entry is
+# a substring of every operator it needs to catch:
+#   ";"   sequence
+#   "&"   background, and covers "&&"
+#   "|"   pipe, and covers "||"
+#   "`"   command substitution (legacy)
+#   "$("  command substitution
+#   "\n"  newline as a statement separator
+# Note this covers command *chaining* only. Redirection (`>`, `<`) is not
+# blocked: it cannot introduce a second command, and rejecting it would break
+# too many legitimate invocations.
+_SHELL_CHAIN_TOKENS = (";", "&", "|", "`", "$(", "\n")
 
-
-# Shell metacharacters that could chain additional commands
-_SHELL_CHAIN_TOKENS = (";", "&&", "||", "|", "`", "$(", "\n")
+# fnmatch wildcards. A pattern containing any of these matches a *class* of
+# commands rather than one literal command.
+_GLOB_CHARS = ("*", "?", "[")
 
 
 def _has_shell_metacharacters(command: str) -> bool:
     """Check if a command contains shell chaining/injection tokens."""
     return any(tok in command for tok in _SHELL_CHAIN_TOKENS)
+
+
+def _is_glob_pattern(pattern: str) -> bool:
+    """Check if a pattern contains fnmatch wildcards."""
+    return any(ch in pattern for ch in _GLOB_CHARS)
+
+
+def _command_matches_pattern(command: str, patterns: list[str]) -> bool:
+    """Check if a command matches any allow pattern (glob-style).
+
+    Wildcard patterns never match a command carrying shell chaining tokens.
+    ``_suggest_pattern`` mints wildcarded patterns from a single approved
+    command (``python foo.py --a`` -> ``python foo.py *``), and fnmatch's
+    ``*`` spans ``;``, ``|``, ``&&``, backticks and newlines — so without
+    this guard, approving one command silently approves everything sharing
+    its prefix, including ``python foo.py --a; rm -rf ~`` (#649).
+
+    Literal patterns are exempt: they pin the command end to end, so there
+    is no wildcard for an attacker-controlled suffix to slip through, and
+    a user who allowlists ``git log | head -20`` means exactly that.
+
+    The guard lives here rather than at the call sites so no future caller
+    can forget it — the persisted-allowlist branch was missing it while the
+    scoped-pattern branch had it.
+    """
+    chained = _has_shell_metacharacters(command)
+    for pattern in patterns:
+        if chained and _is_glob_pattern(pattern):
+            continue
+        if fnmatch.fnmatch(command, pattern):
+            return True
+    return False
 
 
 def _suggest_pattern(command: str) -> str:
@@ -108,9 +147,7 @@ async def check_shell_approval(ctx, command: str, tool_name: str = "shell",
         log.info(f"[{tool_name}] pre-approved by command: {command}")
         return {"approved": True}
 
-    if (ctx.tools.preapproved_shell_patterns
-        and not _has_shell_metacharacters(command)
-            and _command_matches_pattern(command, ctx.tools.preapproved_shell_patterns)):
+    if _command_matches_pattern(command, ctx.tools.preapproved_shell_patterns):
         log.info(f"[{tool_name}] pre-approved by scoped pattern: {command}")
         return {"approved": True}
 
