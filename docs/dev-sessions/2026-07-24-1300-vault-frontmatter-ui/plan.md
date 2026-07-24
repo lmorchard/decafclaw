@@ -849,7 +849,7 @@ def _dump_frontmatter(metadata: dict) -> str | None:
 
 Add `import yaml` to `http_server.py`'s module-level imports if absent, and `merge_frontmatter` to the `from .frontmatter import ...` line.
 
-- [ ] **Step 4: Return the resulting frontmatter**
+- [ ] **Step 4: Return the resulting frontmatter and raw block**
 
 Change `vault_write`'s final return (`:1345`, `return JSONResponse({"ok": True, "modified": ...})`) to:
 
@@ -858,7 +858,17 @@ Change `vault_write`'s final return (`:1345`, `return JSONResponse({"ok": True, 
         "ok": True,
         "modified": target.stat().st_mtime,
         "frontmatter": result_meta,
+        # Returned so the client can reseed its raw editor without a second
+        # GET. A successful write always leaves a parseable block, so there
+        # is no frontmatter_error counterpart here.
+        "frontmatter_raw": new_raw or "",
     })
+```
+
+Add one assertion to `test_vault_write_frontmatter_patch_merges` so the field is covered:
+
+```python
+    assert resp.json()["frontmatter_raw"] == "importance: 0.4\nsummary: A summary.\ntags:\n- keep"
 ```
 
 - [ ] **Step 5: Run the tests to verify they pass**
@@ -1162,6 +1172,17 @@ async def test_vault_list_summary_survives_malformed_frontmatter(
 
 
 @pytest.mark.asyncio
+async def test_vault_list_summary_survives_undecodable_page(client, http_config):
+    """Invalid UTF-8 raises UnicodeDecodeError, not OSError — catch both."""
+    pages_dir = http_config.vault_agent_pages_dir
+    (pages_dir / "Binary.md").write_bytes(b"---\nsummary: x\n---\n\xff\xfe\n")
+    resp = await client.get("/api/vault?folder=agent/pages")
+    assert resp.status_code == 200
+    pages = {p["title"]: p for p in resp.json()["pages"]}
+    assert pages["Binary"]["summary"] == ""
+
+
+@pytest.mark.asyncio
 async def test_vault_recent_includes_summary(client, http_config):
     pages_dir = http_config.vault_agent_pages_dir
     (pages_dir / "Recent.md").write_text("---\nsummary: Recent one.\n---\nB\n")
@@ -1188,10 +1209,13 @@ def _page_summary(path: Path) -> str:
     """Read a page's frontmatter `summary`, or "" if absent or unreadable.
 
     Fail-open: a malformed or unreadable page must not break a listing.
+    UnicodeDecodeError is caught alongside OSError — it is a ValueError, not
+    an OSError, so a page with invalid UTF-8 would otherwise 500 the whole
+    listing.
     """
     try:
         raw_block, _ = split_frontmatter(path.read_text(encoding="utf-8"))
-    except OSError as exc:
+    except (OSError, UnicodeDecodeError) as exc:
         log.debug("Could not read %s for summary: %s", path, exc)
         return ""
     metadata, _ = parse_frontmatter_block(raw_block)
@@ -2029,18 +2053,16 @@ Add these private fields and methods to `WikiPage`:
         return { ok: false, error: data.error || `Save failed (${res.status})` };
       }
       this._frontmatter = data.frontmatter ?? {};
+      // The response carries the new raw block, so no second GET is needed.
+      // A successful write always leaves a parseable block, so any prior
+      // parse error is resolved by definition.
+      this._frontmatterRaw = data.frontmatter_raw ?? '';
+      this._frontmatterError = '';
       this._modified = data.modified;
       // Push the new mtime into the body editor, or its next autosave 409s.
       /** @type {any} */
       const editor = this.querySelector('wiki-editor');
       if (editor) editor.modified = data.modified;
-      // Reseed the raw editor from the server's bytes.
-      const fresh = await fetch('/api/vault/' + encodePagePath(this.page));
-      if (fresh.ok) {
-        const page = await fresh.json();
-        this._frontmatterRaw = page.frontmatter_raw ?? '';
-        this._frontmatterError = page.frontmatter_error ?? '';
-      }
       return { ok: true, error: '' };
     } catch (err) {
       return { ok: false, error: 'Save failed (network error)' };
