@@ -27,7 +27,7 @@ def _isolate_env(monkeypatch):
             "HEARTBEAT_", "HTTP_", "TABSTACK_", "CLAUDE_CODE_",
             "SKILLS_", "MEMORY_SEARCH", "SYSTEM_PROMPT",
             "NOTIFICATIONS_", "EMAIL_", "EXTRA_SKILL_", "VAULT_GUIDE_",
-            "WORKFLOW_",
+            "WORKFLOW_", "LOOP_BREAKER_",
         )):
             monkeypatch.delenv(key, raising=False)
 
@@ -649,3 +649,23 @@ class TestTerminalConfig:
         monkeypatch.setenv("DATA_HOME", str(tmp_path))
         cfg = load_config()  # must not raise
         assert cfg.terminal.allowed_cwd_roots == []
+
+
+class TestLoopBreakerConfig:
+    """LoopBreakerConfig — diagnostic guardrails for infinite loop detection (#598)."""
+
+    def test_loop_breaker_config_defaults(self):
+        from decafclaw.config import load_config
+        cfg = load_config()
+        assert cfg.loop_breaker.enabled is True
+        assert cfg.loop_breaker.repeat_threshold == 3
+        assert cfg.loop_breaker.error_threshold == 4
+        assert cfg.loop_breaker.error_window == 6
+
+    def test_loop_breaker_config_env_override(self, monkeypatch):
+        from decafclaw.config import load_config
+        monkeypatch.setenv("LOOP_BREAKER_ENABLED", "false")
+        monkeypatch.setenv("LOOP_BREAKER_REPEAT_THRESHOLD", "2")
+        cfg = load_config()
+        assert cfg.loop_breaker.enabled is False
+        assert cfg.loop_breaker.repeat_threshold == 2
