@@ -50,6 +50,7 @@ See [docs/web-ui-design.md](docs/web-ui-design.md) for the primitive catalog and
 - **`--pico-secondary-background` is a TEXT color, not a background.** Misleading name. Don't reach for it as a panel/strip bg.
 - **Tag-qualify custom button rules** (`button.foo`, not `.foo`). Pico's `button:not(...)` is 0,1,1; bare `.foo` (0,1,0) loses regardless of load order.
 - **Reach for primitives first** (`.dc-floating-btn`, `.dc-overlay-header`, `.dc-overlay-close-x`, `.dc-icon-btn` in `primitives.css`) before declaring per-component border / radius / shadow / hover-color. Cluster-style fragility is the failure mode this doc exists to prevent.
+- **Color palettes are a two-axis model** (`data-theme` × `data-palette`, managed by `lib/theme.js`). Palettes are the ONLY sanctioned place to set `--pico-primary-background`/`-inverse`, scoped under `[data-palette]`. See [docs/web-ui-design.md](docs/web-ui-design.md#color-palettes--theming).
 
 ### Skills
 
@@ -214,6 +215,7 @@ make lint         # Compile-check
 make typecheck    # Pyright
 make check-js     # tsc --checkJs
 make check        # Lint + typecheck (Python + JS)
+make test-js      # vitest (JS unit tests)
 make test         # Pytest
 make vendor       # Rebuild web UI vendor bundle
 make reindex      # Rebuild embedding index
