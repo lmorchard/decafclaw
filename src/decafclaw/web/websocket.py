@@ -24,6 +24,8 @@ from decafclaw.web.message_types import (
     SrvConvHistory,
     SrvConvSelected,
     SrvMessageComplete,
+    SrvStickyClear,
+    SrvStickySet,
     SrvToolEnd,
     WSMessageType,
     WSSendCallable,
@@ -91,6 +93,38 @@ def _make_canvas_update_forwarder(state, conv_id):
         if "closed_tab_id" in event:
             out["closed_tab_id"] = event["closed_tab_id"]
         await ws_send(out)
+
+    return _forward
+
+
+def _make_sticky_forwarder(state, conv_id):
+    """Build a coroutine that forwards sticky_set/sticky_clear events to ws_send.
+
+    Used in unit tests; production code uses the inline branch in
+    on_conv_event for performance.
+    """
+    ws_send: WSSendCallable = state["ws_send"]
+
+    async def _forward(event):
+        etype = event.get("type")
+        if etype not in ("sticky_set", "sticky_clear"):
+            return
+        if event.get("conv_id") != conv_id:
+            return
+        if etype == "sticky_set":
+            set_out: SrvStickySet = {
+                "type": WSMessageType.STICKY_SET,
+                "conv_id": conv_id,
+                "widget_type": event.get("widget_type") or "",
+                "data": event.get("data") or {},
+            }
+            await ws_send(set_out)
+        else:
+            clear_out: SrvStickyClear = {
+                "type": WSMessageType.STICKY_CLEAR,
+                "conv_id": conv_id,
+            }
+            await ws_send(clear_out)
 
     return _forward
 
@@ -681,6 +715,24 @@ def _subscribe_to_conv(state, conv_id):
                 if "closed_tab_id" in event:
                     payload["closed_tab_id"] = event["closed_tab_id"]
                 await ws_send(payload)
+
+        elif event_type == "sticky_set":
+            if event_conv_id == conv_id:
+                sticky_set_payload: SrvStickySet = {
+                    "type": WSMessageType.STICKY_SET,
+                    "conv_id": event_conv_id,
+                    "widget_type": event.get("widget_type") or "",
+                    "data": event.get("data") or {},
+                }
+                await ws_send(sticky_set_payload)
+
+        elif event_type == "sticky_clear":
+            if event_conv_id == conv_id:
+                sticky_clear_payload: SrvStickyClear = {
+                    "type": WSMessageType.STICKY_CLEAR,
+                    "conv_id": event_conv_id,
+                }
+                await ws_send(sticky_clear_payload)
 
         elif event_type == "vault_retrieval":
             text = event.get("text", "")

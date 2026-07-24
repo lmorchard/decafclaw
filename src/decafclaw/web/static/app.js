@@ -18,6 +18,10 @@ import {
   dismiss as canvasDismiss,
   currentSnapshot as canvasSnapshot,
 } from './lib/canvas-state.js';
+import {
+  setActiveConv as stickySetActiveConv,
+  applyEvent as stickyApplyEvent,
+} from './lib/sticky-state.js';
 
 // Import components (registers custom elements)
 import './components/login-view.js';
@@ -80,6 +84,7 @@ store.addEventListener('change', () => {
   if (cur !== lastConvId) {
     lastConvId = cur;
     setActiveConv(cur);
+    stickySetActiveConv(cur);
   }
 });
 
@@ -512,6 +517,9 @@ ws.addEventListener('message', (e) => {
   }
   if (msg?.type === MESSAGE_TYPES.CANVAS_UPDATE) {
     applyEvent(msg);
+  }
+  if (msg?.type === MESSAGE_TYPES.STICKY_SET || msg?.type === MESSAGE_TYPES.STICKY_CLEAR) {
+    stickyApplyEvent(msg);
   }
 });
 

@@ -543,6 +543,41 @@ return ToolResult(
 
 Or `canvas_new_tab(widget_type="map", data={"markers": [...]})`.
 
+## Sticky slot
+
+A single-slot, display-only widget surface pinned directly above the chat
+input — unlike inline widgets (which scroll away with the conversation) or
+the canvas panel (a detached, multi-tab workspace), the sticky slot stays put
+so the user keeps seeing at-a-glance status while a workflow runs. Web UI
+only.
+
+A widget opts in by adding `"sticky"` to its `modes` array in `widget.json`
+(alongside `"inline"` / `"canvas"`). `markdown_document` is the first (and
+currently only) sticky-mode widget.
+
+**Driven by tools**, not `WidgetRequest`/`ToolResult` like other widgets:
+`widget_pin_sticky(widget_type, data)` pins a widget, replacing any previous
+occupant (single slot); `widget_unpin_sticky()` clears it. Both are
+normal-priority tools in the base registry (`src/decafclaw/tools/sticky_tools.py`).
+A forthcoming change (#414) will have the checklist tools auto-emit sticky
+updates as steps complete, without the agent calling these tools directly.
+
+**Collapse to summary.** The header shows a one-line summary (the widget's
+`summary` or `title` field, falling back to the widget type name) with a
+▾/▸ toggle. Expanded shows the widget body in `mode="sticky"`; collapsed
+hides it. Starts expanded on desktop, collapsed on mobile (≤639px); the
+collapsed state persists per-conversation in `localStorage`
+(`sticky-collapsed.{convId}`) and survives reload and conversation switches.
+
+**Persistence and recovery.** State lives in a JSON sidecar at
+`workspace/conversations/{conv_id}/sticky.json`
+(`{schema_version, widget_type, data}`), written via `sticky.py`'s
+`set_sticky` / `clear_sticky`. On conversation load, the frontend fetches
+`GET /api/sticky/{conv_id}` to recover the pinned widget (or empty state)
+before any live events arrive. Live updates ride the `sticky_set` /
+`sticky_clear` WebSocket message types — see
+[websocket-messages.md](websocket-messages.md) for the wire shape.
+
 ## Out-of-scope
 
 - Polylines/polygons, GeoJSON overlays, routing, marker clustering for `map` — v1 is markers + popups only; follow-on if needed.
@@ -569,6 +604,10 @@ Or `canvas_new_tab(widget_type="map", data={"markers": [...]})`.
 - `src/decafclaw/tools/canvas_tools.py` — canvas tools
 - `src/decafclaw/web/static/lib/canvas-state.js` — frontend state
 - `src/decafclaw/web/static/components/canvas-panel.js` — panel component
+- `src/decafclaw/sticky.py` — sticky-slot sidecar persistence + `set_sticky`/`clear_sticky`
+- `src/decafclaw/tools/sticky_tools.py` — `widget_pin_sticky`/`widget_unpin_sticky` tools
+- `src/decafclaw/web/static/lib/sticky-state.js` — frontend sticky state (collapse persistence, WS event apply)
+- `src/decafclaw/web/static/components/sticky-slot.js` — `<sticky-slot>` panel component
 - `src/decafclaw/web/static/widgets/` — bundled widgets (data_table, multiple_choice, text_input, markdown_document, code_block, iframe_sandbox, map)
 - `src/decafclaw/web/static/widgets/map/` — map widget descriptor + Lit component (Leaflet)
 - `src/decafclaw/web/static/leaflet-entry.js` — Leaflet vendor entry (ESM/UMD interop → default export)

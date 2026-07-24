@@ -187,6 +187,24 @@ Output of the post-turn reflection step for a conversation.
 - `raw_response` — string
 - `error` — string
 
+### `sticky_clear`
+
+The conversation's sticky slot was cleared.
+
+**Fields:**
+
+- `conv_id` — string
+
+### `sticky_set`
+
+A widget was pinned into the conversation's sticky slot.
+
+**Fields:**
+
+- `conv_id` — string
+- `widget_type` — string
+- `data` — object
+
 ### `tool_end`
 
 Final result of a tool call. Replaces the in-flight tool_status with terminal state.
