@@ -1065,6 +1065,124 @@ class TestVaultSearchTags:
         assert "Foo" in result_omitted.text
         assert "Foo" in result_empty_list.text
 
+    @pytest.mark.asyncio
+    async def test_source_type_and_tags_compose_in_pure_filter(
+        self, ctx, agent_pages, agent_journal
+    ):
+        """Pure tag-filter path (empty query) must apply source_type as an
+        additional filter on top of the tag match, not just tags alone
+        (P4-M1)."""
+        (agent_pages / "PageTag.md").write_text(
+            "---\ntags: [async]\n---\nbody")
+        (agent_journal / "2026-07-24.md").write_text(
+            "## 2026-07-24 10:00\n\n- **tags:** async\n\nJournal content")
+
+        result = await tool_vault_search(
+            ctx, "", tags=["async"], source_type="page")
+
+        assert "agent/pages/PageTag" in result.text
+        assert "agent/journal/2026-07-24" not in result.text
+
+
+class TestVaultSearchTagsSemantic:
+    """Tag filtering on the SEMANTIC branch of vault_search (#318 phase 4
+    review fix). `TestVaultSearchTags` above only exercises the default
+    test config's `search_strategy = "substring"`; the semantic branch —
+    the path the deployed agent actually uses — otherwise has zero
+    coverage, including `_semantic_result_matches_tags`'s fail-open
+    behavior.
+    """
+
+    @pytest.mark.asyncio
+    async def test_and_filter_drops_non_matching_candidate(
+        self, ctx, agent_pages, monkeypatch
+    ):
+        ctx.config.embedding.search_strategy = "semantic"
+        (agent_pages / "AsyncPage.md").write_text(
+            "# AsyncPage\n\nWidget notes about async work. #async")
+        (agent_pages / "RustPage.md").write_text(
+            "# RustPage\n\nWidget notes about rust work. #rust")
+
+        async def fake_search_similar(*args, **kwargs):
+            return [
+                {"file_path": "agent/pages/AsyncPage.md", "similarity": 0.9,
+                 "source_type": "page", "entry_text": "Widget notes async"},
+                {"file_path": "agent/pages/RustPage.md", "similarity": 0.8,
+                 "source_type": "page", "entry_text": "Widget notes rust"},
+            ]
+
+        monkeypatch.setattr(
+            "decafclaw.embeddings.search_similar", fake_search_similar)
+
+        result = await tool_vault_search(ctx, "widget", tags=["async"])
+
+        assert result.data["mode"] == "semantic"
+        paths = [r["path"] for r in result.data["results"]]
+        assert paths == ["agent/pages/AsyncPage"]
+
+    @pytest.mark.asyncio
+    async def test_any_tag_or_filter(self, ctx, agent_pages, monkeypatch):
+        ctx.config.embedding.search_strategy = "semantic"
+        (agent_pages / "Both.md").write_text(
+            "---\ntags: [rust, async]\n---\nbody about widgets")
+        (agent_pages / "OnlyRust.md").write_text(
+            "---\ntags: [rust]\n---\nbody about widgets")
+        (agent_pages / "OnlyAsync.md").write_text(
+            "---\ntags: [async]\n---\nbody about widgets")
+        (agent_pages / "Neither.md").write_text(
+            "body about widgets, no tags")
+
+        async def fake_search_similar(*args, **kwargs):
+            return [
+                {"file_path": "agent/pages/Both.md", "similarity": 0.9,
+                 "source_type": "page", "entry_text": "Both"},
+                {"file_path": "agent/pages/OnlyRust.md", "similarity": 0.8,
+                 "source_type": "page", "entry_text": "OnlyRust"},
+                {"file_path": "agent/pages/OnlyAsync.md", "similarity": 0.7,
+                 "source_type": "page", "entry_text": "OnlyAsync"},
+                {"file_path": "agent/pages/Neither.md", "similarity": 0.6,
+                 "source_type": "page", "entry_text": "Neither"},
+            ]
+
+        monkeypatch.setattr(
+            "decafclaw.embeddings.search_similar", fake_search_similar)
+
+        result = await tool_vault_search(
+            ctx, "widgets", tags=["rust", "async"], any_tag=True)
+
+        assert "Both" in result.text
+        assert "OnlyRust" in result.text
+        assert "OnlyAsync" in result.text
+        assert "Neither" not in result.text
+
+    @pytest.mark.asyncio
+    async def test_fail_open_excludes_unreadable_candidate(
+        self, ctx, agent_pages, monkeypatch
+    ):
+        """A candidate row whose file is missing/unreadable must be
+        excluded, not raise — matching `pages_with_tags`'s per-file
+        fail-open behavior."""
+        ctx.config.embedding.search_strategy = "semantic"
+        (agent_pages / "AsyncPage.md").write_text(
+            "# AsyncPage\n\nWidget notes about async work. #async")
+
+        async def fake_search_similar(*args, **kwargs):
+            return [
+                {"file_path": "agent/pages/AsyncPage.md", "similarity": 0.9,
+                 "source_type": "page", "entry_text": "Widget notes async"},
+                # Points at a file that was never written to disk.
+                {"file_path": "agent/pages/Ghost.md", "similarity": 0.85,
+                 "source_type": "page", "entry_text": "Ghost entry"},
+            ]
+
+        monkeypatch.setattr(
+            "decafclaw.embeddings.search_similar", fake_search_similar)
+
+        result = await tool_vault_search(ctx, "widget", tags=["async"])
+
+        paths = [r["path"] for r in result.data["results"]]
+        assert paths == ["agent/pages/AsyncPage"]
+
 
 class TestVaultList:
     @pytest.mark.asyncio
