@@ -177,8 +177,15 @@ export class WikiPage extends LitElement {
     // If the flush left an unresolved conflict/error, don't pile a raw
     // replace on top of it — the user needs to resolve that first, or a
     // later flush of the still-pending typed fields could resurrect a key
-    // this raw save is about to remove.
-    if (this._metaError) return;
+    // this raw save is about to remove. The banner above only talks about
+    // the typed fields, so give the raw editor its own inline word too
+    // (via its existing error channel) rather than a silent no-op — the
+    // raw text itself is left untouched.
+    if (this._metaError) {
+      /** @type {any} */ (this.querySelector('wiki-metadata'))
+        ?.setRawError('Resolve the pending metadata conflict above before saving raw YAML.');
+      return;
+    }
     await this.#doRawSave(e.detail.raw);
   }
 
@@ -332,6 +339,13 @@ export class WikiPage extends LitElement {
     if (this._editing) {
       // Flush editor save before switching to view mode
       await this.#flushMetadata();
+      // A failed flush leaves an unresolved _metaError with its
+      // Reload/Overwrite/Retry affordance. Switching to view mode now would
+      // call _fetchPage(), which unconditionally wipes #pendingFields and
+      // _metaError and overwrites _frontmatter from the server — silently
+      // discarding the edit and the only visible sign anything went wrong.
+      // Stay in edit mode so the conflict banner remains visible instead.
+      if (this._metaError) return;
       /** @type {import('./wiki-editor.js').WikiEditor|null} */
       const editor = this.querySelector('wiki-editor');
       if (editor) await editor.flushSave();
