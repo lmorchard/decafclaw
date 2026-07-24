@@ -365,3 +365,34 @@ chat-message .tool-result-raw pre {
   margin: 0;
   padding: 0.75rem 1rem;
 }
+
+/* progress_tracker — quiet multi-step status list */
+.progress-tracker { font-size: 0.85rem; }
+.progress-tracker__title {
+  font-weight: 600;
+  font-size: 0.9rem;
+  margin: 0 0 0.35rem;
+}
+.progress-tracker__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+.progress-tracker__item {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+.progress-tracker__glyph { flex: 0 0 1rem; text-align: center; }
+.progress-tracker__label { flex: 1; min-width: 0; }
+.progress-tracker__note { color: var(--pico-muted-color); font-size: 0.8rem; }
+.progress-tracker__item--pending { color: var(--pico-muted-color); }
+.progress-tracker__item--pending .progress-tracker__glyph { color: var(--pico-muted-color); }
+.progress-tracker__item--in_progress .progress-tracker__glyph { color: var(--pico-primary); }
+.progress-tracker__item--done .progress-tracker__glyph { color: var(--pico-ins-color, #2e7d32); }
+.progress-tracker__item--failed .progress-tracker__glyph { color: var(--pico-del-color, #c62828); }
+.progress-tracker__item--skipped { color: var(--pico-muted-color); }
+.progress-tracker__item--skipped .progress-tracker__label { text-decoration: line-through; }
