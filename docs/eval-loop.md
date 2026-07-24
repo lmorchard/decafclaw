@@ -52,6 +52,10 @@ Tests are YAML files with a list of test cases. Single-turn form:
 | `setup.auto_confirm` | Default `true`. Auto-approve (or deny) all tool confirmation requests (shell, email, `EndTurnConfirm`, etc.) |
 | `setup.config_overrides` | Map of dotted config paths to values, applied to the resolved `Config` for this test only. See [Config overrides](#config-overrides) |
 
+**This table is the accepted set.** An unknown `setup.*` key raises and fails that case, listing the valid keys — a typo like `workspace_file` (missing the `s`) would otherwise return the `.get()` default, silently skip its fixture, and leave the case failing for a confusing reason or passing for the wrong one.
+
+The allowlist (`_KNOWN_SETUP_KEYS` in `eval/runner.py`) is checked against this table by a unit test, so **adding a setup field means editing both** — the code and this table. Forgetting either fails `make test`.
+
 ### Config overrides
 
 `setup.config_overrides` maps dotted paths to values and is applied to the resolved `Config` via recursive `dataclasses.replace`:
