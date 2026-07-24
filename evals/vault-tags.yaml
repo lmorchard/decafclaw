@@ -6,7 +6,7 @@
 
 - name: "tag-scoped ask surfaces the right page via vault_search tags filter"
   setup:
-    reflection_enabled: false
+    reflection.enabled: false
     workspace_files:
       "vault/agent/pages/storage-notes.md": |
         ---
