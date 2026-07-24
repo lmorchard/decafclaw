@@ -41,6 +41,35 @@ pre-existing WYSIWYG round-trip behavior unrelated to this branch). So the
 a change relative to itself (`md === prev` on first render) — the bug this
 branch fixes was real editing, not merely opening a page.
 
+### Independently re-verified after the final-review fixes
+
+The final-review fix pass reported the opposite — that "Milkdown normalizes
+markdown on load and autosaves it, so opening a page in edit mode can rewrite
+it on disk with no user edit," hit "repeatedly." That contradicted the answer
+above, and since this claim goes in the PR description, it was re-tested from
+scratch on the final merged code (`d28535e`) against the isolated
+`/tmp/fm-smoke` fixture:
+
+1. **Opening does not write.** With Milkdown demonstrably mounted (editable
+   body, metadata panel expanded, edit mode active), the file was byte-identical
+   by MD5 immediately after open and again 5s later.
+2. **That result is not an artifact of a broken autosave.** A subsequent single
+   keystroke *did* write within 3s, proving the save path was live during the
+   no-op window.
+3. **The frontmatter block was byte-identical after that write.** The branch's
+   core promise, confirmed on the merged code rather than only per-task.
+
+So the answer above stands. The fix pass's claim looks like a misattribution of
+the *body* normalization both it and Task 7 observed: on the first save, Milkdown
+round-trips the body markdown and reformats it beyond the user's edit — here
+`*   [link]` → `* [link]` (three spaces to one). That is real and worth knowing,
+but it happens on **save**, not on open, and it never touches frontmatter.
+
+**Worth filing separately:** the first edit to any hand-authored vault page
+reformats its body markdown as a side effect of Milkdown's round-trip. Users
+who keep their vault in git will see churn beyond what they typed. Pre-existing,
+out of scope here, unrelated to frontmatter.
+
 ## Task 7 details
 
 Implemented `<wiki-metadata>` (compact strip, expandable to full detail incl.
