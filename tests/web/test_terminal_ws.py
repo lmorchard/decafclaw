@@ -81,6 +81,11 @@ def test_terminal_ws_tolerates_malformed_control_frames(authed_client_with_sessi
         assert msg == {"type": "size_changed", "cols": 80, "rows": 24}
 
 
+# The spawn path deliberately keeps Python 3.13's forkpty DeprecationWarning
+# visible in production (terminals.py:71-73) — this fork is safe (chdir+execvpe
+# only between fork and exec). Exempt it per-site rather than suite-wide so an
+# unaudited forkpty elsewhere still dirties the suite. #638
+@pytest.mark.filterwarnings("ignore:.*use of forkpty.*:DeprecationWarning")
 @pytest.mark.asyncio
 async def test_ws_handler_serves_real_spawned_session(http_config):
     """End-to-end seam the other tests stub around: a REAL spawned PTY session
