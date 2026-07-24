@@ -5,7 +5,8 @@
   "description": "Vendor dependencies for DecafClaw web UI",
   "scripts": {
     "build": "node build-vendor.mjs",
-    "clean": "rm -rf vendor/bundle node_modules"
+    "clean": "rm -rf vendor/bundle node_modules",
+    "test": "vitest run"
   },
   "dependencies": {
     "@codemirror/commands": "^6.0.0",
@@ -32,6 +33,8 @@
   },
   "devDependencies": {
     "esbuild": "^0.25.0",
-    "typescript": "^5.9.3"
+    "jsdom": "^29.1.1",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.10"
   }
 }
