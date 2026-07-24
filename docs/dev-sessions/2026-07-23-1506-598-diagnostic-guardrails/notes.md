@@ -42,7 +42,7 @@ move (apology spiral).
   It's appended to `self.messages` (the in-memory turn list) but never
   written to `self.history` or the archive. Reasoning: archiving it would
   let `restore_history` resurrect it on a page reload or process restart — a
-  `system`-role message is a real LLM role, not UI-only — permanently
+  `user`-role message is a real LLM role, not UI-only — permanently
   polluting every later turn's context with a diagnostic aside that only
   made sense in the moment it fired. The hard-stop's *final summary*, by
   contrast, is archived normally, because it's a genuine response the user

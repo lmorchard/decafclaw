@@ -33,9 +33,11 @@ sorted-JSON arguments) and asks the breaker for a verdict.
 
 **Escalation is one-way per turn:**
 
-1. **First trip → nudge.** A `system`-role diagnostic message is appended
+1. **First trip → nudge.** A `user`-role diagnostic message is appended
    telling the model to stop repeating the move and switch to root-cause
-   diagnosis (read logs, build a minimal repro, re-check the contract). The
+   diagnosis (read logs, build a minimal repro, re-check the contract). It is
+   `user`-role rather than `system` because models weight user-role directives
+   more heavily for mid-turn corrections (matching `_run_grace_turn`). The
    turn continues normally into the next iteration.
 2. **Any subsequent trip → hard stop.** The turn ends immediately with a
    short summary of what was tried and the same diagnostic next step,
@@ -51,7 +53,7 @@ already ends the turn earlier and takes precedence over the breaker.
 The nudge message is appended to the turn's in-memory `messages` list only
 — it is **never** written to `self.history` and **never** archived. This is
 intentional: archiving it would let it get restored via `restore_history`
-on a page reload or process restart (a `system`-role message is a real LLM
+on a page reload or process restart (a `user`-role message is a real LLM
 role, not UI-only), permanently polluting the context of every later turn
 with a diagnostic aside that only made sense in the moment it fired. The
 hard-stop's final summary, by contrast, *is* archived normally — it's a
