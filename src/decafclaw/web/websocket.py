@@ -512,10 +512,12 @@ async def _handle_terminal_command(ws_send: WSSendCallable, conv_id, text, usern
         await _msg(f"Could not start terminal: {exc}")
         return
 
-    await ws_send({
-        "type": WSMessageType.COMMAND_ACK, "conv_id": conv_id,
-        "command": "/terminal", "skill": "terminal",
-    })
+    # Success is chat-silent: the tab opens via the canvas channel (the
+    # `emit` above), and we send NO chat message. A COMMAND_ACK here would
+    # leave the client's optimistic `busy` flag set forever — the terminal
+    # path runs no agent turn, so nothing would ever clear it (perpetual
+    # "Running skill: terminal" spinner). See _handle_send / conversation
+    # store: the client also skips the busy flag + user echo for /terminal.
 
 
 async def _handle_cancel_turn(ws_send: WSSendCallable, index, username, msg, state) -> None:

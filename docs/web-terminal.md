@@ -23,8 +23,18 @@ Two ways, both human-only:
 **server-side side-effect command** — it is intercepted in `_handle_send`
 (`web/websocket.py`) before command dispatch, spawns the PTY, and opens a
 canvas tab, all without an LLM turn and without writing anything to the
-conversation's JSONL archive. The client only sees a `COMMAND_ACK` frame and
-the new canvas tab appearing.
+conversation's JSONL archive.
+
+A successful open is **chat-silent**: the server sends *no* chat frame, and
+the client (`conversation-store.js`) special-cases `/terminal` so it neither
+sets the "busy" progress state nor echoes an optimistic user message. The tab
+appears purely via the separate `canvas_update` channel. This decoupling is
+load-bearing: because the command runs no agent turn, it never emits a
+`MESSAGE_COMPLETE` frame — the signal that would clear the client's busy flag.
+An earlier version emitted a `COMMAND_ACK` on success, which rendered a
+"Running skill: terminal" bubble and left the progress spinner stuck forever
+with nothing to clear it. Only the *error* paths send a chat message (an
+inline `MESSAGE_COMPLETE`, which also clears busy).
 
 - No argument → CWD defaults to `terminal.default_cwd` (falls back to the
   agent's workspace path).

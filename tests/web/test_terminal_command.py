@@ -140,7 +140,20 @@ async def test_terminal_command_spawns_and_creates_tab(terminal_send_env):
     await env.handle_send({"conv_id": "c1", "text": "/terminal"})
     assert env.registry.count_for_conv("c1") == 1
     assert env.new_tab_calls and env.new_tab_calls[0]["widget_type"] == "terminal"
-    assert any(m["type"] == "command_ack" for m in env.sent)
+
+
+@pytest.mark.asyncio
+async def test_terminal_command_success_is_chat_silent(terminal_send_env):
+    """A successful /terminal must emit NO chat messages — no COMMAND_ACK and
+    no MESSAGE_COMPLETE. The tab opens via the canvas channel; the chat log
+    stays untouched. Regression: COMMAND_ACK left the client's optimistic
+    `busy` flag set with nothing to clear it (perpetual "Running skill"
+    spinner), since the terminal path runs no agent turn."""
+    env = terminal_send_env()
+    await env.handle_send({"conv_id": "c1", "text": "/terminal"})
+    assert env.registry.count_for_conv("c1") == 1  # it really opened
+    assert not any(m["type"] == "command_ack" for m in env.sent)
+    assert not any(m["type"] == "message_complete" for m in env.sent)
 
 
 @pytest.mark.asyncio
