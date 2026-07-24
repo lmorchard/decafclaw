@@ -41,6 +41,16 @@ chat-view {
   padding: 0 0.85rem;
   font-size: 0.85rem;
 }
+
+/* `>_` terminal-open button sits in the cluster next to Copy. Inherits the
+   .dc-floating-btn frame; here we only set the monospace glyph treatment. */
+button.terminal-open-btn {
+  padding: 0 0.85rem;
+  font-family: var(--pico-font-family-monospace, monospace);
+  font-weight: 700;
+  font-size: 0.95rem;
+}
+button.terminal-open-btn[hidden] { display: none; }
 .copy-menu-list {
   position: absolute;
   top: calc(100% + 0.3rem);

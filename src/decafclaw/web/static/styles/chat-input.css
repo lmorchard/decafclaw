@@ -34,19 +34,15 @@ chat-input .attach-btn {
   cursor: pointer;
   font-size: 1.2rem;
   opacity: 0.7;
+  /* The button carries `type="button"`, which matches Pico's
+     `[type=button] { margin-bottom: var(--pico-spacing) }` (specificity 0,1,0)
+     — that beats our `chat-input button { margin: 0 }` reset (0,0,2), leaving a
+     1rem bottom margin. With the row's `align-items: stretch`, that margin box
+     fills the row while the border box sits 1rem short. Zero it here (this
+     selector is 0,1,1, so it wins) so the button matches the field/Send. */
+  margin: 0;
 }
 chat-input .attach-btn:hover {
-  opacity: 1;
-}
-
-chat-input .terminal-btn {
-  cursor: pointer;
-  font-family: var(--pico-font-family-monospace, monospace);
-  font-weight: 700;
-  font-size: 1rem;
-  opacity: 0.7;
-}
-chat-input .terminal-btn:hover {
   opacity: 1;
 }
 
