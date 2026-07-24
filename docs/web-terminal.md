@@ -12,10 +12,10 @@ Dev-session artifacts: [`docs/dev-sessions/2026-05-06-2042-web-terminal-canvas/`
 
 Two ways, both human-only:
 
-- Click the **`>_` button** in the chat input row (next to the 📎 attach
-  button). It appears once a conversation is active and sends `/terminal`
-  over the normal chat WebSocket — the same path as typing it, no dedicated
-  endpoint. Opens in the default CWD.
+- Click the **`>_` button** in the chat-action cluster at the top-right of the
+  conversation (next to the 📋 Copy menu). It appears once a conversation is
+  active and sends `/terminal` over the normal chat WebSocket — the same path
+  as typing it, no dedicated endpoint. Opens in the default CWD.
 - Type `/terminal` or `/terminal <cwd>` in the chat input (use the typed form
   to pass a specific CWD).
 

@@ -839,3 +839,29 @@ function setupCopyConversationMenu() {
 }
 
 setupCopyConversationMenu();
+
+function setupTerminalButton() {
+  // `>_` lives in the chat-action cluster (top-right of #chat-main), next to
+  // the Copy menu. Clicking it sends the `/terminal` side-effect command —
+  // conversation-store special-cases it (no busy state, no user echo; the
+  // canvas tab opens over the separate canvas channel). Hidden until a
+  // conversation is active, mirroring the Copy menu's convId gating.
+  const actions = getChatActions();
+  if (!actions) return;
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'terminal-open-btn dc-floating-btn';
+  btn.title = 'Open a terminal';
+  btn.setAttribute('aria-label', 'Open a terminal');
+  btn.textContent = '>_';
+  btn.addEventListener('click', () => {
+    if (!store.currentConvId) return;
+    store.sendMessage('/terminal');
+  });
+  const sync = () => { btn.hidden = !store.currentConvId; };
+  sync();
+  actions.appendChild(btn);
+  store.addEventListener('change', sync);
+}
+
+setupTerminalButton();
