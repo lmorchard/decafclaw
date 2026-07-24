@@ -266,3 +266,29 @@
     Time-bounded ("past few days") + my own content points at vault_recent
     (source_type=user). vault_list would dump the whole journal folder with no
     date filter; vault_search needs a query string.
+
+# -- vault_recompute_importance vs vault_update_frontmatter / vault_write ----
+# (#197 Phase 5)
+
+- name: recompute-importance-vs-frontmatter-whole-vault
+  scenario: "Recalculate the importance scores across my whole vault based on how often pages actually get retrieved and linked to — not my guesses."
+  expected: vault_recompute_importance
+  near_miss: [vault_update_frontmatter, vault_write]
+  notes: |
+    "Across my whole vault" + "based on how often pages get retrieved and
+    linked to" (not a guess) is the deterministic, vault-wide recompute —
+    exactly what vault_recompute_importance does from measured signals.
+    vault_update_frontmatter only ever touches ONE named page's fields;
+    it has no vault-wide sweep. vault_write would need the caller to
+    read/edit/resubmit every page's body just to bump one field.
+
+- name: frontmatter-vs-recompute-single-page-importance
+  scenario: "Bump the importance to 0.9 on just my 'roadmap' vault page — I want that one to stand out, don't touch anything else."
+  expected: vault_update_frontmatter
+  near_miss: [vault_recompute_importance]
+  notes: |
+    A specific value on a specific named page is a targeted metadata edit —
+    vault_update_frontmatter. vault_recompute_importance ignores any
+    caller-supplied number; it derives every page's score from retrieval/
+    inbound-link telemetry and would silently overwrite the requested 0.9
+    with whatever the formula computes, which isn't what was asked.
