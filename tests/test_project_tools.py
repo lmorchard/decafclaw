@@ -451,3 +451,28 @@ class TestProgressTrackerEmit:
         # Must not raise.
         result = await tool_project_update_step(ctx, step="1.1", status="done")
         assert _text(result)
+
+    @pytest.mark.asyncio
+    async def test_add_steps_during_planning_does_not_emit(self, ctx, monkeypatch):
+        from unittest.mock import AsyncMock
+        set_mock = AsyncMock()
+        monkeypatch.setattr("decafclaw.sticky.set_sticky", set_mock)
+        monkeypatch.setattr("decafclaw.sticky.clear_sticky", AsyncMock())
+        await _advance_to_planning(ctx, slug="pt-add-plan")
+        await tool_project_update_plan(ctx, plan_text=SAMPLE_PLAN)
+        # Now in PLAN_REVIEW, not EXECUTING.
+        result = await tool_project_add_steps(ctx, after_step="1", steps=["Extra step"])
+        assert "Added" in _text(result)
+        set_mock.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_advance_out_of_executing_clears(self, ctx, monkeypatch):
+        from unittest.mock import AsyncMock
+        clear_mock = AsyncMock()
+        monkeypatch.setattr("decafclaw.sticky.set_sticky", AsyncMock())
+        monkeypatch.setattr("decafclaw.sticky.clear_sticky", clear_mock)
+        await _advance_to_executing(ctx, slug="pt-advance")
+        clear_mock.reset_mock()
+        result = await tool_project_advance(ctx, target_status="planning")
+        assert "reverted" in _text(result).lower()
+        assert clear_mock.await_count >= 1

@@ -597,8 +597,11 @@ async def tool_project_advance(ctx, target_status: str = "") -> str | ToolResult
             f"Valid: {valid}]"
         )
 
+    was_executing = info.status == ProjectState.EXECUTING
     info.status = target
     save_project(info)
+    if was_executing and target != ProjectState.EXECUTING:
+        await _clear_project_progress(ctx)
     return f"Project reverted to {target.value}. Call project_next_task."
 
 
