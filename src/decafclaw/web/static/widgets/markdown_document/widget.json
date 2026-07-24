@@ -1,7 +1,7 @@
 {
   "name": "markdown_document",
   "description": "A persistent markdown document the agent can build and revise across turns. Inline mode shows a collapsed preview; canvas mode is the primary surface.",
-  "modes": ["inline", "canvas"],
+  "modes": ["inline", "canvas", "sticky"],
   "accepts_input": false,
   "data_schema": {
     "type": "object",

@@ -29,6 +29,8 @@ class WSMessageType(StrEnum):
     NOTIFICATION_CREATED = "notification_created"
     NOTIFICATION_READ = "notification_read"
     REFLECTION_RESULT = "reflection_result"
+    STICKY_CLEAR = "sticky_clear"
+    STICKY_SET = "sticky_set"
     TOOL_END = "tool_end"
     TOOL_START = "tool_start"
     TOOL_STATUS = "tool_status"
@@ -65,6 +67,8 @@ S2C_MESSAGE_TYPES: frozenset[WSMessageType] = frozenset({
     WSMessageType.NOTIFICATION_CREATED,
     WSMessageType.NOTIFICATION_READ,
     WSMessageType.REFLECTION_RESULT,
+    WSMessageType.STICKY_CLEAR,
+    WSMessageType.STICKY_SET,
     WSMessageType.TOOL_END,
     WSMessageType.TOOL_START,
     WSMessageType.TOOL_STATUS,
@@ -204,6 +208,16 @@ class SrvReflectionResult(TypedDict):
     raw_response: str
     error: str
 
+class SrvStickyClear(TypedDict):
+    type: Literal[WSMessageType.STICKY_CLEAR]
+    conv_id: str
+
+class SrvStickySet(TypedDict):
+    type: Literal[WSMessageType.STICKY_SET]
+    conv_id: str
+    widget_type: str
+    data: dict[str, object]
+
 class SrvToolEnd(TypedDict):
     type: Literal[WSMessageType.TOOL_END]
     conv_id: str
@@ -292,7 +306,7 @@ class CliWidgetResponse(TypedDict):
 
 # -- Discriminated unions --
 
-ServerMessage = SrvBackgroundEvent | SrvCanvasUpdate | SrvChunk | SrvCommandAck | SrvCompactionDone | SrvConfirmRequest | SrvConfirmationResponse | SrvConvHistory | SrvConvSelected | SrvError | SrvMessageComplete | SrvModelChanged | SrvModelsAvailable | SrvNotificationCreated | SrvNotificationRead | SrvReflectionResult | SrvToolEnd | SrvToolStart | SrvToolStatus | SrvTurnComplete | SrvTurnStart | SrvUserMessage | SrvVaultChanged
+ServerMessage = SrvBackgroundEvent | SrvCanvasUpdate | SrvChunk | SrvCommandAck | SrvCompactionDone | SrvConfirmRequest | SrvConfirmationResponse | SrvConvHistory | SrvConvSelected | SrvError | SrvMessageComplete | SrvModelChanged | SrvModelsAvailable | SrvNotificationCreated | SrvNotificationRead | SrvReflectionResult | SrvStickyClear | SrvStickySet | SrvToolEnd | SrvToolStart | SrvToolStatus | SrvTurnComplete | SrvTurnStart | SrvUserMessage | SrvVaultChanged
 
 ClientMessage = CliCancelTurn | CliConfirmResponse | CliLoadHistory | CliSelectConv | CliSend | CliSetEffort | CliSetModel | CliWidgetResponse
 

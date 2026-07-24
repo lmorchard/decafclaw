@@ -117,6 +117,16 @@
       "description": "A vault page or folder was created, edited, deleted, renamed, or moved. Clients showing vault content should re-fetch.",
       "fields": {"path": "string", "kind": "string"}
     },
+    "sticky_set": {
+      "direction": "server_to_client",
+      "description": "A widget was pinned into the conversation's sticky slot.",
+      "fields": {"conv_id": "string", "widget_type": "string", "data": "object"}
+    },
+    "sticky_clear": {
+      "direction": "server_to_client",
+      "description": "The conversation's sticky slot was cleared.",
+      "fields": {"conv_id": "string"}
+    },
 
     "cancel_turn": {
       "direction": "client_to_server",

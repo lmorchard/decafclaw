@@ -1725,6 +1725,23 @@ async def get_canvas_state(request: Request, username: str) -> JSONResponse:
 
 
 @_authenticated
+async def get_sticky_state(request: Request, username: str) -> JSONResponse:
+    """Load current sticky-slot state for a conversation (reload recovery)."""
+    from . import sticky as sticky_mod
+    config = request.app.state.config
+    conv_id = request.path_params.get("conv_id", "")
+    if not _is_safe_conv_id(conv_id):
+        return JSONResponse({"error": "invalid conv_id"}, status_code=400)
+    if not _user_owns_conv(config, conv_id, username):
+        return JSONResponse({"error": "not found"}, status_code=404)
+    state = sticky_mod.read_sticky_state(config, conv_id)
+    return JSONResponse({
+        "widget_type": state.get("widget_type"),
+        "data": state.get("data"),
+    })
+
+
+@_authenticated
 async def post_canvas_new_tab(request: Request, username: str) -> JSONResponse:
     """Create a new canvas tab. Backs the inline 'Open in Canvas' button."""
     from . import canvas as canvas_mod
@@ -2082,6 +2099,7 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> Starlette:
         Route("/widgets/{tier}/{name}/widget.js", serve_widget_js,
               methods=["GET"]),
         Route("/api/canvas/{conv_id}", get_canvas_state, methods=["GET"]),
+        Route("/api/sticky/{conv_id}", get_sticky_state, methods=["GET"]),
         Route("/api/canvas/{conv_id}/new_tab", post_canvas_new_tab, methods=["POST"]),
         Route("/api/canvas/{conv_id}/active_tab", post_canvas_active_tab, methods=["POST"]),
         Route("/api/canvas/{conv_id}/close_tab", post_canvas_close_tab, methods=["POST"]),

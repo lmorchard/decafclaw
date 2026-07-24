@@ -1,0 +1,25 @@
+.sticky-slot {
+  border-top: 1px solid var(--pico-muted-border-color);
+  background: var(--pico-card-background-color);
+  max-height: 30vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.sticky-slot.sticky-collapsed { max-height: none; }
+.sticky-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.25rem 0.75rem;
+  cursor: pointer;
+  font-size: 0.85rem;
+  color: var(--pico-muted-color);
+}
+.sticky-summary { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+button.sticky-toggle { flex: 0 0 auto; }
+.sticky-body { overflow-y: auto; padding: 0 0.75rem 0.5rem; }
+@media (max-width: 639px) {
+  .sticky-slot { max-height: 25vh; }
+}

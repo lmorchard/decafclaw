@@ -28,7 +28,7 @@ _META_SCHEMA = {
         "description": {"type": "string"},
         "modes": {
             "type": "array",
-            "items": {"type": "string", "enum": ["inline", "canvas"]},
+            "items": {"type": "string", "enum": ["inline", "canvas", "sticky"]},
             "minItems": 1,
         },
         "accepts_input": {"type": "boolean"},

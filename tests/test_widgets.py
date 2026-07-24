@@ -604,3 +604,12 @@ def test_map_normalize_falls_back_to_defaults_without_config():
     assert out["tile_url"] == MapWidgetConfig().tile_url
     assert out["tile_attribution"] == MapWidgetConfig().tile_attribution
     assert out["max_zoom"] == MapWidgetConfig().max_zoom
+
+
+def test_sticky_is_a_valid_mode(fake_config):
+    """Verify that sticky mode is a valid widget mode option."""
+    reg = load_widget_registry(fake_config,
+                               admin_dir=Path("/nonexistent/admin"))
+    desc = reg.get("markdown_document")
+    assert desc is not None
+    assert "sticky" in desc.modes
