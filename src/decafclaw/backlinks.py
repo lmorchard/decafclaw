@@ -3,8 +3,8 @@
 Replaces the brute-force ``rglob``-and-regex-scan that used to live inline
 in ``tool_vault_backlinks``: a JSON index at ``{workspace}/backlinks.json``
 mapping ``page -> [pages that link to it]``. Rebuilt lazily on first read,
-kept current incrementally via ``update_for_page`` (wired to the
-``vault_changed`` EventBus event in ``runner.py``), and consumed directly
+kept current via the ``vault_changed`` EventBus subscriber wired in
+``runner.py`` (see ``make_backlinks_subscriber``), and consumed directly
 by ``inbound_count`` — the raw signal Phase 5's importance formula folds
 into its score.
 
@@ -14,6 +14,20 @@ insensitively, first by full relative path and falling back to bare
 filename (stem). Links that don't resolve to any existing page (dangling
 links) and self-links are not recorded — a backlink index only makes
 sense for edges between real pages.
+
+Incremental vs. full rebuild: ``update_for_page`` only rescans the
+*changed page's own outbound links* and reconciles other pages' inbound
+lists accordingly. That's correct for CREATE/UPDATE (and other events that
+don't change a page's identity, e.g. SECTION/JOURNAL/MOVE-between-
+sections) — the page's own rel-path key never moves. It's NOT sufficient
+for DELETE or RENAME: those change (or remove) the page's own key in the
+index, which nothing in ``update_for_page`` ever scrubs or creates, and a
+rename event only carries the new path (no old path to diff against). So
+``make_backlinks_subscriber`` runs a full ``rebuild_index`` on DELETE/
+RENAME and only takes the incremental path otherwise. DELETE/RENAME are
+rare compared to writes, so the full-scan cost is a non-issue — a
+correct-but-occasionally-full-rebuild index beats a fast-but-wrong one.
+There is no separate periodic self-heal; DELETE/RENAME rebuilds are it.
 
 Fail-open throughout: any I/O or parse error is logged at debug level and
 falls back to an empty/rebuilt result rather than propagating into a tool
@@ -26,6 +40,8 @@ import json
 import logging
 from pathlib import Path
 from typing import Awaitable, Callable
+
+from decafclaw.skills.vault._events import KIND_DELETE, KIND_RENAME
 
 log = logging.getLogger(__name__)
 
@@ -177,7 +193,12 @@ def inbound_count(config, page: str) -> int:
         resolved = resolve_page(config, page)
         if resolved is None:
             return 0
-        rel = resolved.relative_to(config.vault_root).as_posix()
+        # resolve_page() returns a fully-resolved path (symlinks collapsed),
+        # so the vault root side of relative_to() must be resolved too, or
+        # a symlinked vault_root component (e.g. /tmp -> /private/tmp on
+        # macOS) makes relative_to() raise and this silently returns 0.
+        vault_resolved = config.vault_root.resolve()
+        rel = resolved.relative_to(vault_resolved).as_posix()
         return len(load_index(config).get(rel, []))
     except Exception as exc:  # fail-open
         log.debug("backlinks: inbound_count failed for %r: %s", page, exc)
@@ -195,7 +216,9 @@ def _resolve_source_rel(config, page: str) -> tuple[str, str]:
 
     resolved = resolve_page(config, page)
     if resolved is not None and resolved.exists():
-        rel = resolved.relative_to(config.vault_root).as_posix()
+        # Same resolved/unresolved consistency requirement as inbound_count.
+        vault_resolved = config.vault_root.resolve()
+        rel = resolved.relative_to(vault_resolved).as_posix()
         return rel, resolved.read_text(encoding="utf-8")
 
     norm = page[:-3] if page.endswith(".md") else page
@@ -210,6 +233,11 @@ def update_for_page(config, page: str) -> None:
     file contents — the per-page lookup maps only need filenames) and
     updates the index's inbound entries: drops this page from targets it
     no longer links to, adds it to new ones. Fail-open — never raises.
+
+    Only correct for events that don't change `page`'s own identity (its
+    own rel-path key in the index). Callers must NOT use this for
+    delete/rename — see the module docstring and `make_backlinks_subscriber`,
+    which routes those to a full `rebuild_index` instead.
     """
     try:
         vault = config.vault_root
@@ -237,13 +265,25 @@ def update_for_page(config, page: str) -> None:
 
 
 def make_backlinks_subscriber(config) -> Callable[[dict], Awaitable[None]]:
-    """EventBus subscriber: incrementally updates the index on `vault_changed`.
+    """EventBus subscriber: keeps the index current on `vault_changed`.
+
+    CREATE/UPDATE (and other same-identity events like SECTION/JOURNAL/MOVE)
+    take the fast incremental path (`update_for_page`) since only the
+    changed page's outbound links can have moved. DELETE/RENAME change a
+    page's identity (its own rel-path key disappears, appears, or both),
+    which `update_for_page` cannot correct — see module docstring — so
+    those trigger a full `rebuild_index` instead. Rare enough in practice
+    that the cost is a non-issue, and correctness beats speed here.
 
     Fail-open — never propagates into the publishing turn.
     """
     async def handle(event: dict) -> None:
         try:
             if event.get("type") != "vault_changed":
+                return
+            kind = event.get("kind") or ""
+            if kind in (KIND_DELETE, KIND_RENAME):
+                rebuild_index(config)
                 return
             path = event.get("path") or ""
             if not path:

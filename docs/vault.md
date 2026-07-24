@@ -159,10 +159,14 @@ it]` (sorted, human-readable, crash-recoverable via tmp-file-then-rename).
   other page's content.
 
 A `vault_changed`-event subscriber (`make_backlinks_subscriber`, wired in
-`runner.py`) calls `update_for_page` after every vault mutation, so the
-index tracks disk state without an explicit rebuild step. Fail-open
-throughout — I/O or parse errors are logged at debug level and never
-propagate into a tool call or event subscriber.
+`runner.py`) keeps the index current without an explicit rebuild step: for
+create/update (and other same-identity events) it calls `update_for_page`
+for the changed page only; for delete/rename — which change a page's own
+identity in the index and can't be corrected incrementally (a rename event
+only carries the new path) — it runs a full `rebuild_index` instead.
+Delete/rename are rare relative to writes, so the full-scan cost is a
+non-issue. Fail-open throughout — I/O or parse errors are logged at debug
+level and never propagate into a tool call or event subscriber.
 
 `vault_backlinks(page)` itself now just resolves `page`, looks up its
 inbound linkers in the index, and re-reads only those specific linking

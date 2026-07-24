@@ -1076,6 +1076,10 @@ async def tool_vault_backlinks(ctx, page: str) -> str:
     vault = _vault_root(ctx.config)
     if not vault.is_dir():
         return f"No backlinks to '{page}' (vault directory does not exist)."
+    # resolve_page() returns a fully-resolved path, so `vault` must be
+    # resolved too before relative_to() — otherwise a symlinked vault_root
+    # component makes relative_to() raise (fail-open swallows it silently).
+    vault = vault.resolve()
 
     resolved = resolve_page(ctx.config, page)
     if resolved is None:
