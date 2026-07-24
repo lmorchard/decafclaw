@@ -77,8 +77,13 @@ Fields the system recognizes today (parsed by `frontmatter.py` via `get_frontmat
 |-------|------|----------|
 | `summary` | string | Prepended to body for semantic-search embeddings (via `build_composite_text`); surfaced in UI |
 | `keywords` | list of strings | Prepended to body for embeddings (via `build_composite_text`) |
-| `tags` | list of strings | Prepended to body for embeddings (via `build_composite_text`); loose categorization |
+| `tags` | list of strings | Prepended to body for embeddings (via `build_composite_text`), unioned with inline Obsidian-style `#tags` found in the body (#318); loose categorization |
 | `importance` | float in [0, 1] | Composite scoring weight in memory retrieval (not used by `build_composite_text`) |
+
+Folding inline `#tags` into the composite embedding text is a change to
+what gets embedded, not to any file on disk — it only takes effect for
+pages re-embedded after the change. Run `make reindex` to pick it up for
+existing pages.
 
 Skill-authored conventions (preserved by the parser but not interpreted by core code):
 
