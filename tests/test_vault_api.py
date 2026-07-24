@@ -120,7 +120,55 @@ async def test_vault_read_page(client, http_config):
     data = resp.json()
     assert data["title"] == "TestPage"
     assert data["path"] == "agent/pages/TestPage"
-    assert "Hello world." in data["content"]
+    assert "Hello world." in data["body"]
+
+
+@pytest.mark.asyncio
+async def test_vault_read_splits_frontmatter(client, http_config):
+    pages_dir = http_config.vault_agent_pages_dir
+    (pages_dir / "Split.md").write_text(
+        "---\nimportance: 0.7\ntags:\n- a\n---\n# Split\n\nBody text.\n"
+    )
+    resp = await client.get("/api/vault/agent/pages/Split")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["frontmatter"] == {"importance": 0.7, "tags": ["a"]}
+    assert data["body"] == "# Split\n\nBody text.\n"
+    assert "---" not in data["body"]
+    assert data["frontmatter_raw"] == "importance: 0.7\ntags:\n- a"
+    assert "frontmatter_error" not in data
+    assert "content" not in data
+
+
+@pytest.mark.asyncio
+async def test_vault_read_no_frontmatter(client, http_config):
+    """frontmatter_raw is "" — not null — when there is no block."""
+    pages_dir = http_config.vault_agent_pages_dir
+    (pages_dir / "Plain.md").write_text("# Plain\n\nJust body.\n")
+    resp = await client.get("/api/vault/agent/pages/Plain")
+    data = resp.json()
+    assert data["frontmatter"] == {}
+    assert data["frontmatter_raw"] == ""
+    assert data["body"] == "# Plain\n\nJust body.\n"
+    assert "frontmatter_error" not in data
+
+
+@pytest.mark.asyncio
+async def test_vault_read_malformed_frontmatter(client, http_config):
+    """Malformed YAML surfaces as an error plus the raw block, not silence.
+
+    frontmatter_raw is present on well-formed pages too, so the raw editor
+    can be seeded with real bytes rather than a re-serialized dict.
+    """
+    pages_dir = http_config.vault_agent_pages_dir
+    (pages_dir / "Bad.md").write_text("---\nthis: is: not: valid\n---\nBody.\n")
+    resp = await client.get("/api/vault/agent/pages/Bad")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["frontmatter"] == {}
+    assert data["frontmatter_raw"] == "this: is: not: valid"
+    assert data["frontmatter_error"]
+    assert data["body"] == "Body.\n"
 
 
 @pytest.mark.asyncio

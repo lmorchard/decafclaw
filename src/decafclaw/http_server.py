@@ -16,7 +16,7 @@ from starlette.responses import FileResponse, JSONResponse, Response
 from starlette.routing import Mount, Route, WebSocketRoute
 from starlette.staticfiles import StaticFiles
 
-from .frontmatter import join_frontmatter, split_frontmatter
+from .frontmatter import join_frontmatter, parse_frontmatter_block, split_frontmatter
 from .mattermost_ui import get_token_registry
 from .schedules import (
     _discover_skill_schedule_files,
@@ -1234,12 +1234,22 @@ async def vault_read(request: Request, username: str) -> JSONResponse:
     stat = resolved.stat()
     vault = _vault_root(config).resolve()
     rel = resolved.relative_to(vault)
-    return JSONResponse({
+    raw_block, page_body = split_frontmatter(content)
+    metadata, fm_error = parse_frontmatter_block(raw_block)
+    payload = {
         "title": resolved.stem,
         "path": str(rel.with_suffix("")),
-        "content": content,
+        "frontmatter": metadata,
+        # Always the real bytes: the raw editor has replace semantics, so
+        # re-serializing the parsed dict would reorder keys and drop comments
+        # the moment anyone opened the panel.
+        "frontmatter_raw": raw_block or "",
+        "body": page_body,
         "modified": stat.st_mtime,
-    })
+    }
+    if fm_error is not None:
+        payload["frontmatter_error"] = fm_error
+    return JSONResponse(payload)
 
 
 async def _vault_rename(
