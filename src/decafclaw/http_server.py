@@ -1382,12 +1382,18 @@ async def vault_write(request: Request, username: str) -> JSONResponse:
             event_bus=event_bus,
         )
 
+    # `content` is the legacy alias for `body`. Remember which name the client
+    # actually sent so a type error names the field they typed, not ours.
+    body_field = "body"
     if "content" in body and "body" not in body:
         body["body"] = body.pop("content")
+        body_field = "content"
     new_body = body.get("body")
     fm_patch = body.get("frontmatter")
     if new_body is not None and not isinstance(new_body, str):
-        return JSONResponse({"error": "body must be a string"}, status_code=400)
+        return JSONResponse(
+            {"error": f"{body_field} must be a string"}, status_code=400,
+        )
     if fm_patch is not None and not isinstance(fm_patch, dict):
         return JSONResponse(
             {"error": "frontmatter must be an object"}, status_code=400,
@@ -1434,8 +1440,11 @@ async def vault_write(request: Request, username: str) -> JSONResponse:
             new_raw = None
         else:
             # A bare `---` line would terminate the block early and push the
-            # rest into the body on the next read.
-            if any(line.strip() == "---" for line in fm_raw.splitlines()):
+            # rest into the body on the next read. Only a column-0 `---` does
+            # that — _FRONTMATTER_RE matches `\n---\n` — so an indented `  ---`
+            # (which is what PyYAML emits when it folds a multi-line value) is
+            # harmless and must not be rejected.
+            if re.search(r"(?m)^---$", fm_raw):
                 return JSONResponse(
                     {"error": "frontmatter_raw must not contain a '---' line"},
                     status_code=400,
@@ -1460,15 +1469,21 @@ async def vault_write(request: Request, username: str) -> JSONResponse:
                 status_code=400,
             )
         merged = merge_frontmatter(existing_meta, fm_patch, overwrite=True)
-        # merge_frontmatter has no deletion path — it would write `field: null`.
-        merged = {key: value for key, value in merged.items() if value is not None}
+        # merge_frontmatter has no deletion path: a None coerces to None and is
+        # *set*, which would write `field: null`. Remove only the keys this
+        # patch explicitly nulled — a comprehension over `merged` would also
+        # drop pre-existing bare keys like `aliases:` (very common in Obsidian,
+        # and what any empty scalar parses to) that the user never touched.
+        for key, value in fm_patch.items():
+            if value is None:
+                merged.pop(key, None)
         new_raw = _dump_frontmatter(merged)
 
     final_body = existing_body if new_body is None else new_body
     content = join_frontmatter(new_raw, final_body)
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(content, encoding="utf-8")
-    result_meta, _ = parse_frontmatter_block(new_raw)
+    result_meta, result_fm_error = parse_frontmatter_block(new_raw)
     source_type = _vault_source_type(config, target)
     try:
         from .embeddings import delete_entries, index_entry
@@ -1487,9 +1502,13 @@ async def vault_write(request: Request, username: str) -> JSONResponse:
         "modified": target.stat().st_mtime,
         "frontmatter": result_meta,
         # Returned so the client can reseed its raw editor without a second
-        # GET. A successful write always leaves a parseable block, so there
-        # is no frontmatter_error counterpart here.
+        # GET. The metadata paths validate before writing, so they always leave
+        # a parseable block — but a body-only write splices an existing block
+        # back verbatim, malformed YAML included, and then reports
+        # `frontmatter: {}`. Mirror GET and report the parse error too, so no
+        # caller has to guess whether `{}` means "empty" or "unparseable".
         "frontmatter_raw": new_raw or "",
+        "frontmatter_error": result_fm_error or "",
     })
 
 

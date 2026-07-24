@@ -6,6 +6,7 @@ from decafclaw.frontmatter import (
     build_composite_text,
     get_frontmatter_field,
     join_frontmatter,
+    merge_frontmatter,
     parse_frontmatter,
     parse_frontmatter_block,
     serialize_frontmatter,
@@ -246,3 +247,108 @@ class TestParseFrontmatterBlock:
         meta, error = parse_frontmatter_block("- just\n- a\n- list")
         assert meta == {}
         assert error == "frontmatter is not a mapping"
+
+
+# -- merge_frontmatter ---------------------------------------------------------
+
+
+class TestMergeFrontmatter:
+    """The shared merge primitive behind the REST patch path, the
+    `vault_update_frontmatter` tool, and the backfill CLI."""
+
+    def test_does_not_mutate_existing(self):
+        existing = {"importance": 0.4}
+        merged = merge_frontmatter(existing, {"summary": "S"}, overwrite=True)
+        assert existing == {"importance": 0.4}
+        assert merged == {"importance": 0.4, "summary": "S"}
+
+    def test_overwrite_true_replaces(self):
+        merged = merge_frontmatter(
+            {"summary": "old", "importance": 0.2},
+            {"summary": "new"},
+            overwrite=True,
+        )
+        assert merged == {"summary": "new", "importance": 0.2}
+
+    def test_overwrite_false_keeps_existing_value(self):
+        merged = merge_frontmatter(
+            {"summary": "old"}, {"summary": "new"}, overwrite=False,
+        )
+        assert merged == {"summary": "old"}
+
+    @pytest.mark.parametrize("empty", [None, "", []])
+    def test_overwrite_false_fills_absent_or_empty(self, empty):
+        """None / "" / [] all count as unset, so they get filled."""
+        merged = merge_frontmatter(
+            {"summary": empty}, {"summary": "new"}, overwrite=False,
+        )
+        assert merged == {"summary": "new"}
+
+    def test_overwrite_false_fills_missing_key(self):
+        merged = merge_frontmatter({}, {"summary": "new"}, overwrite=False)
+        assert merged == {"summary": "new"}
+
+    def test_overwrite_false_does_not_fill_falsy_but_set_values(self):
+        """0.0 and False are real values, not "empty" — they must survive."""
+        merged = merge_frontmatter(
+            {"importance": 0.0}, {"importance": 0.9}, overwrite=False,
+        )
+        assert merged == {"importance": 0.0}
+
+    def test_coerces_importance_clamping_high(self):
+        merged = merge_frontmatter({}, {"importance": 1.7}, overwrite=True)
+        assert merged == {"importance": 1.0}
+
+    def test_coerces_importance_clamping_low(self):
+        merged = merge_frontmatter({}, {"importance": -3}, overwrite=True)
+        assert merged == {"importance": 0.0}
+
+    def test_coerces_importance_from_string(self):
+        merged = merge_frontmatter({}, {"importance": "0.25"}, overwrite=True)
+        assert merged == {"importance": 0.25}
+
+    def test_coerces_unparseable_importance_to_default(self):
+        merged = merge_frontmatter({}, {"importance": "nope"}, overwrite=True)
+        assert merged == {"importance": 0.5}
+
+    @pytest.mark.parametrize("field", ["tags", "keywords"])
+    def test_coerces_scalar_to_list(self, field):
+        merged = merge_frontmatter({}, {field: "solo"}, overwrite=True)
+        assert merged == {field: ["solo"]}
+
+    @pytest.mark.parametrize("field", ["tags", "keywords"])
+    def test_coerces_list_members_to_str(self, field):
+        merged = merge_frontmatter({}, {field: [1, 2.5]}, overwrite=True)
+        assert merged == {field: ["1", "2.5"]}
+
+    @pytest.mark.parametrize("field", ["tags", "keywords"])
+    def test_coerces_non_list_non_str_to_empty_list(self, field):
+        merged = merge_frontmatter({}, {field: 7}, overwrite=True)
+        assert merged == {field: []}
+
+    def test_coerces_summary_to_str(self):
+        merged = merge_frontmatter({}, {"summary": 42}, overwrite=True)
+        assert merged == {"summary": "42"}
+
+    def test_unknown_fields_pass_through_uncoerced(self):
+        merged = merge_frontmatter(
+            {}, {"aliases": ["a", 1]}, overwrite=True,
+        )
+        assert merged == {"aliases": ["a", 1]}
+
+    def test_none_is_set_not_deleted(self):
+        """Documented: there is no deletion path. Callers strip nulls
+        themselves, and must strip only the keys they nulled."""
+        merged = merge_frontmatter(
+            {"tags": ["keep"], "aliases": None},
+            {"tags": None},
+            overwrite=True,
+        )
+        assert merged == {"tags": None, "aliases": None}
+        assert "tags" in merged
+
+    def test_none_with_overwrite_false_is_a_no_op(self):
+        """`existing` value is absent/empty, so the None fills it — and a None
+        coerces to None, so the key still ends up present but null."""
+        merged = merge_frontmatter({}, {"summary": None}, overwrite=False)
+        assert merged == {"summary": None}

@@ -95,7 +95,7 @@ Tasks 1–6 added coverage; no regressions).
 
 ## Task 8 details
 
-Implemented the brief's edit controls verbatim in `wiki-metadata.js`
+Implemented the brief's edit controls in `wiki-metadata.js`
 (`willUpdate` reseed guard, `#emitChange`/`#emitList`/`#removeTag`/
 `#addTagKey`, raw-editor toggle/save/setRawError/closeRaw, `#renderChipInput`,
 `#renderEditControls`), the CSS block in `wiki-metadata.css`, and
@@ -105,6 +105,24 @@ plus the flush calls added to `willUpdate` (`void`, unawaited — matches the
 existing unawaited `editor.flushSave()` there) and `_toggleMode` (awaited).
 Step 3c reframed the `#reload()` fallback comment in `wiki-editor.js` per the
 brief's exact text — no behavior change, `?? data.content` expression kept.
+
+Three places where what shipped differs from the spec's wording, recorded so
+the next reader doesn't trust the spec over the code:
+
+- **Parse error does not auto-open the raw editor.** The spec said the raw
+  editor "opens pre-populated with the parse error inline"; what ships renders
+  the `frontmatter_error` message and disables the typed controls, leaving the
+  user to open **edit raw YAML** themselves. The raw textarea *is* seeded from
+  the server's bytes when it opens, so the repair flow works — it's one extra
+  click, not a missing capability.
+- **The summary textarea is not autosizing.** It's a fixed `rows="2"`.
+- **Typed edits are commit-triggered, not really debounced.** The spec described
+  a ~600ms debounce on typed edits; `summary` and `importance` both fire on
+  `@change` (blur / slider release), so their write goes out one debounce tick
+  after the commit rather than while typing. The 600ms timer's real job is
+  coalescing rapid chip add/remove bursts, which fire per keystroke-commit. The
+  `@change` choice is deliberate — `@input` on a textarea would PUT on every
+  keystroke — but it means "debounced typing" overstates what the timer does.
 
 `make check` clean (ruff, pyright, `tsc --checkJs`, message-types drift
 check). `make test`: 3276 passed, 2 skipped — identical to the pre-task-8

@@ -109,7 +109,9 @@ typed control.
 Two write paths, mutually exclusive on the wire:
 
 - Typed controls send a **patch** (`PUT /api/vault/{page}` with `frontmatter`),
-  merged via `merge_frontmatter(overwrite=True)`. A `null` value removes a key.
+  merged via `merge_frontmatter(overwrite=True)`. A `null` value removes a key —
+  and only the keys the patch itself nulled, so a pre-existing bare key
+  (`aliases:` with no value) is not collateral damage.
 - The raw editor sends a **replace** (`frontmatter_raw`), stored verbatim so
   hand-written comments and key order survive. Keys absent from the submission
   are removed.
@@ -119,6 +121,12 @@ back via `split_frontmatter` / `join_frontmatter`. Key order, comments, and even
 malformed YAML survive a body edit untouched. A page whose frontmatter fails to
 parse reports `frontmatter_error`, disables the typed controls, and can still be
 repaired through the raw editor.
+
+Note the asymmetry between those paths: the body and raw-replace paths preserve
+comments and key order byte-for-byte, but a typed-control patch re-dumps the
+whole block through `yaml.dump`, which alphabetizes keys and drops comments. If
+a page's frontmatter is hand-curated, edit it through the raw editor rather than
+the typed controls.
 
 ## Tools
 

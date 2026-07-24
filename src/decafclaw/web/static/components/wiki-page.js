@@ -16,6 +16,12 @@ import './wiki-metadata.js';
 const EDIT_MODE_KEY = 'wiki-edit-mode';
 
 /**
+ * An explicit destination for a metadata PUT, used when it must not be read
+ * off `this` — i.e. when flushing a pending edit for the page we're leaving.
+ * @typedef {{page: string, modified: number}} MetaTarget
+ */
+
+/**
  * @param {number} ts — Unix timestamp (seconds)
  * @returns {string}
  */
@@ -34,6 +40,7 @@ export class WikiPage extends LitElement {
     _frontmatterRaw: { state: true },
     _frontmatterError: { state: true },
     _metaError: { state: true },
+    _orphanMetaError: { state: true },
     _loaded: { state: true },
     _title: { state: true },
     _modified: { state: true },
@@ -61,6 +68,15 @@ export class WikiPage extends LitElement {
      * @type {{status: 'conflict'|'error', message: string} | null}
      */
     this._metaError = null;
+    /**
+     * Set when a metadata write aimed at a page we have already navigated
+     * away from fails. Deliberately *not* `_metaError`: that state drives
+     * Reload/Overwrite/Retry buttons which all act on the page currently on
+     * screen, so reusing it would re-misdeliver the departed page's fields.
+     * Survives navigation and `_fetchPage()` so the failure can't vanish.
+     * @type {string}
+     */
+    this._orphanMetaError = '';
     this._loaded = false;
     /** @type {string} */ this._title = '';
     /** @type {number} */ this._modified = 0;
@@ -96,16 +112,25 @@ export class WikiPage extends LitElement {
 
   /** @param {Map<string, any>} changed */
   willUpdate(changed) {
-    if (changed.has('page') && this.page) {
-      // If editing, flush save before switching pages
-      if (this._editing) {
-        void this.#flushMetadata();
-        /** @type {import('./wiki-editor.js').WikiEditor|null} */
-        const editor = this.querySelector('wiki-editor');
-        if (editor) editor.flushSave();
-      }
-      this._fetchPage();
+    if (!changed.has('page')) return;
+    // Lit has already assigned the NEW page to `this.page` by the time
+    // willUpdate runs, so anything that must reach the page we're *leaving*
+    // has to be told which page that is. `this._modified` is still the old
+    // page's mtime here, so it travels with it.
+    /** @type {string} */
+    const prev = changed.get('page') || '';
+    if (this._editing && prev) {
+      void this.#flushMetadata({ page: prev, modified: this._modified });
+      // <wiki-editor> needs no target: it holds its own `page` property, and
+      // Lit has not re-rendered it yet, so its save still aims at `prev`.
+      /** @type {import('./wiki-editor.js').WikiEditor|null} */
+      const editor = this.querySelector('wiki-editor');
+      if (editor) editor.flushSave();
     }
+    // `page` going empty is the wiki pane closing (app.js). Flushing above
+    // rather than bailing early is the point: the debounce timer would
+    // otherwise fire 600ms later and PUT to whatever page opens next.
+    if (this.page) this._fetchPage();
   }
 
   /** @param {CustomEvent} e */
@@ -125,7 +150,7 @@ export class WikiPage extends LitElement {
    * failure, since typed-patch and raw-replace failures need different
    * retry bookkeeping.
    * @param {Record<string, any>} payload
-   * @param {{skipModifiedCheck?: boolean}} [opts]
+   * @param {{skipModifiedCheck?: boolean, target?: MetaTarget}} [opts]
    * @returns {Promise<{ok: boolean, status: number, error: string}>}
    */
   async #writeMeta(payload, opts) {
@@ -134,7 +159,9 @@ export class WikiPage extends LitElement {
     this.#metaInFlight = new Promise(r => { release = r; });
     try {
       const res = await this.#putMetadata(payload, opts);
-      if (res.ok) {
+      // Only the page on screen owns `_metaError` / `#lastMetaAttempt`, so a
+      // departed page's success must not clear the current page's banner.
+      if (res.ok && !opts?.target) {
         this._metaError = null;
         this.#lastMetaAttempt = null;
       }
@@ -145,27 +172,57 @@ export class WikiPage extends LitElement {
     }
   }
 
-  /** Send any debounced typed patch now. Resolves when the write completes. */
-  async #flushMetadata() {
+  /**
+   * Send any debounced typed patch now. Resolves when the write completes.
+   * @param {MetaTarget} [target] Page to write to, when it is no longer the
+   *   one `this.page` names — i.e. we're navigating away from it.
+   */
+  async #flushMetadata(target) {
     if (this.#metaTimer != null) {
       clearTimeout(this.#metaTimer);
       this.#metaTimer = null;
     }
-    // Don't auto-send into a known conflict; wait for the user to resolve it.
-    if (this._metaError?.status === 'conflict') return;
     const fields = this.#pendingFields;
+    // Don't auto-send into a known conflict; wait for the user to resolve it.
+    if (this._metaError?.status === 'conflict') {
+      // Unless we're leaving: _fetchPage() is about to wipe both the banner
+      // and the queued fields, so say what was lost instead of dropping it.
+      if (target && Object.keys(fields).length) {
+        this.#pendingFields = {};
+        this.#orphan(target.page, 'an unresolved conflict');
+      }
+      return;
+    }
     this.#pendingFields = {};
     if (!Object.keys(fields).length) return;
-    const res = await this.#writeMeta({ frontmatter: fields });
-    if (!res.ok) {
-      // Nothing the user typed gets dropped: merge the failed fields back in
-      // (newer pending edits, if any landed during the write, win).
-      this.#pendingFields = { ...fields, ...this.#pendingFields };
-      this.#lastMetaAttempt = { kind: 'patch' };
-      this._metaError = res.status === 409
-        ? { status: 'conflict', message: 'Metadata was modified externally.' }
-        : { status: 'error', message: res.error };
+    const res = await this.#writeMeta({ frontmatter: fields }, { target });
+    if (res.ok) return;
+    if (target) {
+      // #pendingFields, _metaError and #lastMetaAttempt are all implicitly
+      // scoped to whatever page is on screen now, and every retry affordance
+      // they drive PUTs to `this.page`. Requeueing the departed page's fields
+      // there is exactly the misdelivery we're fixing, so report the loss
+      // against the page it belongs to rather than carrying it forward.
+      this.#orphan(
+        target.page,
+        res.status === 409 ? 'it was modified externally' : res.error,
+      );
+      return;
     }
+    // Nothing the user typed gets dropped: merge the failed fields back in
+    // (newer pending edits, if any landed during the write, win).
+    this.#pendingFields = { ...fields, ...this.#pendingFields };
+    this.#lastMetaAttempt = { kind: 'patch' };
+    this._metaError = res.status === 409
+      ? { status: 'conflict', message: 'Metadata was modified externally.' }
+      : { status: 'error', message: res.error };
+  }
+
+  /** @param {string} page @param {string} reason */
+  #orphan(page, reason) {
+    this._orphanMetaError =
+      `Metadata edit to "${page}" was not saved (${reason}). `
+      + 'Reopen that page to redo it.';
   }
 
   /** @param {CustomEvent} e */
@@ -272,15 +329,21 @@ export class WikiPage extends LitElement {
 
   /**
    * @param {Record<string, any>} payload
-   * @param {{skipModifiedCheck?: boolean}} [opts]
+   * @param {{skipModifiedCheck?: boolean, target?: MetaTarget}} [opts]
    * @returns {Promise<{ok: boolean, status: number, error: string}>}
    */
   async #putMetadata(payload, opts) {
+    // Never read the page or mtime off `this` when an explicit target is
+    // given: `this.page` is already the page we navigated *to*, and pairing
+    // it with the departed page's `modified` sails past the server's
+    // `mtime > modified + 1` guard whenever the new page is the older one.
+    const page = opts?.target ? opts.target.page : this.page;
+    const modified = opts?.target ? opts.target.modified : this._modified;
     try {
       const body = opts?.skipModifiedCheck
         ? { ...payload }
-        : { ...payload, modified: this._modified };
-      const res = await fetch('/api/vault/' + encodePagePath(this.page), {
+        : { ...payload, modified };
+      const res = await fetch('/api/vault/' + encodePagePath(page), {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -289,17 +352,21 @@ export class WikiPage extends LitElement {
       if (!res.ok) {
         return { ok: false, status: res.status, error: data.error || `Save failed (${res.status})` };
       }
-      this._frontmatter = data.frontmatter ?? {};
-      // The response carries the new raw block, so no second GET is needed.
-      // A successful write always leaves a parseable block, so any prior
-      // parse error is resolved by definition.
-      this._frontmatterRaw = data.frontmatter_raw ?? '';
-      this._frontmatterError = '';
-      this._modified = data.modified;
-      // Push the new mtime into the body editor, or its next autosave 409s.
-      /** @type {any} */
-      const editor = this.querySelector('wiki-editor');
-      if (editor) editor.modified = data.modified;
+      // Adopt the response into our own state only while we're still showing
+      // the page it was written to. This covers the explicit-target case and
+      // the narrower race where an untargeted write was already in flight
+      // when the user navigated.
+      if (page === this.page) {
+        this._frontmatter = data.frontmatter ?? {};
+        // The response carries the new raw block, so no second GET is needed.
+        this._frontmatterRaw = data.frontmatter_raw ?? '';
+        this._frontmatterError = data.frontmatter_error ?? '';
+        this._modified = data.modified;
+        // Push the new mtime into the body editor, or its next autosave 409s.
+        /** @type {any} */
+        const editor = this.querySelector('wiki-editor');
+        if (editor) editor.modified = data.modified;
+      }
       return { ok: true, status: res.status, error: '' };
     } catch (err) {
       return { ok: false, status: 0, error: 'Save failed (network error)' };
@@ -372,6 +439,15 @@ export class WikiPage extends LitElement {
 
   /** @param {CustomEvent} e */
   _onSaved(e) {
+    this._modified = e.detail.modified;
+  }
+
+  /**
+   * The editor's conflict Reload refetched the page, so its mtime is fresh
+   * and ours is stale — the next metadata write would 409 for no reason.
+   * @param {CustomEvent} e
+   */
+  _onReloaded(e) {
     this._modified = e.detail.modified;
   }
 
@@ -478,17 +554,39 @@ export class WikiPage extends LitElement {
     }));
   }
 
+  /**
+   * Failure notice for a metadata write aimed at a page that is no longer on
+   * screen. Rendered by the host rather than <wiki-metadata> so it survives
+   * that panel's readonly/empty gating, and carries no Reload/Overwrite/Retry
+   * — those would act on the wrong page.
+   */
+  #renderOrphanError() {
+    if (!this._orphanMetaError) return nothing;
+    return html`
+      <div class="wiki-page-orphan-error">
+        <span>${this._orphanMetaError}</span>
+        <button
+          type="button"
+          class="wiki-page-orphan-dismiss"
+          aria-label="Dismiss"
+          @click=${() => { this._orphanMetaError = ''; }}
+        >&times;</button>
+      </div>
+    `;
+  }
+
   render() {
+    const orphan = this.#renderOrphanError();
     if (this._loading) {
-      return html`<div class="wiki-page-loading">Loading...</div>`;
+      return html`${orphan}<div class="wiki-page-loading">Loading...</div>`;
     }
     if (this._error) {
-      return html`<div class="wiki-page-error">${this._error}</div>`;
+      return html`${orphan}<div class="wiki-page-error">${this._error}</div>`;
     }
     // Guard on load state, not on body text: a page with frontmatter but an
     // empty body is legitimate and must still render its metadata.
     if (!this._loaded) {
-      return nothing;
+      return orphan;
     }
 
     const newTabUrl = '/vault/' + encodePagePath(this.page);
@@ -555,6 +653,7 @@ export class WikiPage extends LitElement {
     if (this._editing) {
       return html`
         <div class="wiki-page">
+          ${orphan}
           ${metadataPanel}
           <wiki-editor
             page=${this.page}
@@ -563,6 +662,7 @@ export class WikiPage extends LitElement {
             .toolbarLeft=${breadcrumbContent}
             .toolbarExtra=${rightButtons}
             @saved=${this._onSaved}
+            @reloaded=${this._onReloaded}
           ></wiki-editor>
         </div>
       `;
@@ -570,6 +670,7 @@ export class WikiPage extends LitElement {
 
     return html`
       <div class="wiki-page">
+        ${orphan}
         <div class="wiki-page-toolbar">
           ${breadcrumbContent}
           <span class="wiki-editor-spacer"></span>

@@ -213,6 +213,24 @@ button.file-rename-btn:hover {
   color: var(--pico-del-color);
 }
 
+/* A metadata write that failed for a page we've already navigated away from.
+   Styled with the conflict strips in wiki-editor.css; only the outer margin
+   differs, since this one sits above the metadata panel rather than inside it. */
+.wiki-page-orphan-error {
+  margin: 0.5rem;
+}
+
+/* Tag-qualified so Pico's button:not(...) (0,1,1) doesn't win. */
+button.wiki-page-orphan-dismiss {
+  width: auto;
+  margin: 0 0 0 auto;
+  padding: 0 0.375rem;
+  background: none;
+  border: none;
+  color: inherit;
+  line-height: 1;
+}
+
 /* File-page specific: plain-text view body + image + download modes */
 pre.file-page-body {
   white-space: pre-wrap;

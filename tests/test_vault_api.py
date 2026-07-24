@@ -982,3 +982,114 @@ async def test_vault_rename_rejects_combined_write_payloads(client, http_config)
         assert resp.status_code == 400, f"{key} did not collide with rename_to"
         assert key in resp.json()["error"]
     assert path.exists(), "no rename should have happened"
+
+
+@pytest.mark.asyncio
+async def test_vault_write_patch_preserves_pre_existing_bare_key(
+    client, http_config,
+):
+    """A typed patch must only delete the keys *it* nulled.
+
+    A bare `aliases:` (very common in Obsidian, and what any empty scalar
+    parses to) reads back as `{"aliases": None}`. Stripping every null from
+    the merged dict would delete it on any unrelated patch — the user drags
+    the importance slider and silently loses their aliases.
+    """
+    path = http_config.vault_agent_pages_dir / "BareKey.md"
+    path.write_text(
+        "---\nimportance: 0.4\naliases:\nsummary: S\n---\nBody.\n",
+    )
+
+    resp = await client.put(
+        "/api/vault/agent/pages/BareKey",
+        json={"frontmatter": {"importance": 0.7}},
+    )
+    assert resp.status_code == 200
+    assert "aliases" in resp.json()["frontmatter"]
+    text = path.read_text()
+    assert "aliases" in text
+    assert "importance: 0.7" in text
+    assert "summary: S" in text
+
+
+@pytest.mark.asyncio
+async def test_vault_write_frontmatter_raw_allows_indented_delimiter(
+    client, http_config,
+):
+    """Only a column-0 `---` terminates the block, so an indented one is fine.
+
+    PyYAML emits exactly this when folding a multi-line value, so the typed
+    path can produce a block the raw editor used to refuse to save back.
+    """
+    path = http_config.vault_agent_pages_dir / "RawIndented.md"
+    path.write_text("---\nimportance: 0.4\n---\nBody.\n")
+
+    resp = await client.put(
+        "/api/vault/agent/pages/RawIndented",
+        json={"frontmatter_raw": "summary: |\n  line one\n  ---\n  line two\n"},
+    )
+    assert resp.status_code == 200
+    # The stored block is `fm_raw.strip("\n")`, so the literal scalar loses
+    # its trailing newline — the `---` line surviving intact is the point.
+    assert resp.json()["frontmatter"]["summary"] == "line one\n---\nline two"
+    # The indented `---` must not have split the file on the way back out.
+    assert path.read_text().endswith("Body.\n")
+    get_resp = await client.get("/api/vault/agent/pages/RawIndented")
+    assert get_resp.json()["body"] == "Body.\n"
+    assert get_resp.json()["frontmatter"]["summary"] == "line one\n---\nline two"
+
+
+@pytest.mark.asyncio
+async def test_vault_write_body_only_reports_frontmatter_error(
+    client, http_config,
+):
+    """A body write over malformed YAML succeeds by splicing it back verbatim.
+
+    That leaves `frontmatter: {}` with an unparseable block on disk, so the
+    response has to say so — otherwise `{}` is ambiguous between "empty" and
+    "we couldn't read it".
+    """
+    path = http_config.vault_agent_pages_dir / "BodyOverBad.md"
+    path.write_text("---\nthis: is: not: valid\n---\nOld.\n")
+
+    resp = await client.put(
+        "/api/vault/agent/pages/BodyOverBad",
+        json={"body": "New.\n"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["frontmatter"] == {}
+    assert resp.json()["frontmatter_error"]
+    assert path.read_text() == "---\nthis: is: not: valid\n---\nNew.\n"
+
+
+@pytest.mark.asyncio
+async def test_vault_write_frontmatter_patch_reports_no_error(client, http_config):
+    """The metadata paths validate first, so they never leave a parse error."""
+    path = http_config.vault_agent_pages_dir / "PatchNoErr.md"
+    path.write_text("---\nimportance: 0.4\n---\nBody.\n")
+    resp = await client.put(
+        "/api/vault/agent/pages/PatchNoErr",
+        json={"frontmatter": {"summary": "S"}},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["frontmatter_error"] == ""
+
+
+@pytest.mark.asyncio
+async def test_vault_write_bad_body_type_names_the_field_sent(
+    client, http_config,
+):
+    """`content` is an alias for `body`; the error must name what was sent."""
+    resp = await client.put(
+        "/api/vault/agent/pages/BadType",
+        json={"content": 123},
+    )
+    assert resp.status_code == 400
+    assert resp.json()["error"] == "content must be a string"
+
+    resp = await client.put(
+        "/api/vault/agent/pages/BadType",
+        json={"body": 123},
+    )
+    assert resp.status_code == 400
+    assert resp.json()["error"] == "body must be a string"
