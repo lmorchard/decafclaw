@@ -14,8 +14,11 @@
 # this case inlines the fixture's content via `setup.workspace_files`
 # (same convention as evals/ingest.yaml) at
 # "skills/broken_skill/SKILL.md" — the workspace tier that
-# `discover_skills` scans (`{workspace_path}/skills/`). Keep this block
-# in sync with evals/fixtures/broken_skill/SKILL.md.
+# `discover_skills` scans (`{workspace_path}/skills/`). Only the
+# frontmatter needs to match evals/fixtures/broken_skill/SKILL.md (same
+# `name: broken_skill`, still missing `description`) — that's what
+# drives the validation failure this eval depends on; the prose bodies
+# need not match.
 #
 # Discovery-timing note: `config.discovered_skills` is populated once,
 # before `setup.workspace_files` are written to disk (see
@@ -70,5 +73,5 @@
   input: >
     Load and use the "broken_skill" skill. If it won't load, get it working.
   expect:
-    max_tool_calls: 20
-    max_tool_errors: 20
+    max_tool_calls: 15
+    max_tool_errors: 15
