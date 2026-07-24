@@ -63,7 +63,7 @@ def test_extract_signatures_handles_malformed_json_args():
 @pytest.mark.asyncio
 async def test_turn_runner_nudges_then_stops_on_repeated_tool_errors(ctx):
     """A repeated failing tool call trips the loop-breaker: a [loop-breaker]
-    system message is injected after repeat_threshold iterations, and the
+    user-role message is injected after repeat_threshold iterations, and the
     turn ends via _finalize_loop_break rather than running to
     max_tool_iterations."""
     ctx.config.llm.streaming = False
@@ -99,14 +99,25 @@ async def test_turn_runner_nudges_then_stops_on_repeated_tool_errors(ctx):
     assert "max tool iterations" not in result.text
 
     # The nudge itself is ephemeral: appended to the LLM-facing message list
-    # only (mirroring the grace-turn nudge pattern), never archived — an
-    # archived "system"-role message would get read back into history by
-    # restore_history on a restart/reload, permanently polluting context on
-    # later turns. Confirm it's absent from the archive...
+    # only (mirroring the grace-turn nudge pattern, which is also user-role),
+    # never archived — an archived "user"-role message would get read back
+    # into history by restore_history on a restart/reload, permanently
+    # polluting context on later turns. Confirm it's absent from the archive...
     from decafclaw.archive import read_archive
     archived = read_archive(ctx.config, ctx.conv_id)
-    system_msgs = [m for m in archived if m.get("role") == "system"]
-    assert not any("[loop-breaker]" in (m.get("content") or "") for m in system_msgs)
+    user_msgs = [m for m in archived if m.get("role") == "user"]
+    assert not any("[loop-breaker]" in (m.get("content") or "") for m in user_msgs)
+
+    # ...and confirm the nudge that WAS injected into the live LLM-facing
+    # message list carries role "user", not "system" (models weight
+    # user-role directives more heavily for mid-turn corrections). The same
+    # `messages` list object is mutated in place across LLM calls, so any
+    # recorded call's `messages` arg reflects the final state.
+    sent_messages = mock_llm.call_args_list[-1][0][1]
+    nudge_msgs = [m for m in sent_messages
+                  if "[loop-breaker]" in (m.get("content") or "")]
+    assert len(nudge_msgs) == 1
+    assert nudge_msgs[0]["role"] == "user"
 
     # ...while the hard-stop's final assistant message IS archived (it's the
     # turn's actual output, correctly durable).

@@ -1,6 +1,6 @@
 """Per-turn loop-breaker: detects autonomous tool-call thrash and escalates
 a diagnostic nudge, then a hard stop. Pure/deterministic — no agent or LLM
-imports; driven by TurnRunner. See docs/dev-sessions/.../spec.md (#598)."""
+imports; driven by TurnRunner. See docs/loop-breaker.md (#598)."""
 
 import enum
 import hashlib
@@ -44,6 +44,10 @@ class LoopBreaker:
         self._nudged = False
         self._last_signal = ""
 
+    @property
+    def enabled(self) -> bool:
+        return self._cfg.enabled
+
     def record(self, calls) -> None:
         """Record one iteration's tool calls.
 
@@ -74,6 +78,12 @@ class LoopBreaker:
         return None
 
     def verdict(self) -> LoopVerdict:
+        """Compute the verdict for the most recently recorded round.
+
+        Mutates escalation state: a NUDGE verdict flips the one-way "already
+        nudged" flag, so a second call without an intervening `record()`
+        will escalate NUDGE -> STOP. Call exactly once per recorded round.
+        """
         if not self._cfg.enabled:
             return LoopVerdict.NONE
         reason = self._tripped_reason()

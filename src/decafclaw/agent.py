@@ -761,31 +761,39 @@ class TurnRunner:
         # Loop-breaker: only checked on the normal continue path — a genuine
         # end-turn signal (widget pause / EndTurnConfirm / end_turn=True)
         # already returned above and takes precedence over the breaker.
-        sigs = _extract_call_signatures(tool_calls, self.messages)
-        self.loop_breaker.record(sigs)
-        verdict = self.loop_breaker.verdict()
-        if verdict is LoopVerdict.NUDGE:
-            # Ephemeral — appended to self.messages only, never archived or
-            # added to self.history. Archiving would re-surface it via
-            # restore_history on a restart/reload (role "system" is an LLM
-            # role), permanently polluting context on all later turns.
-            # Matches _run_grace_turn's injected note.
-            nudge = {
-                "role": "system",
-                "content": (
-                    f"[loop-breaker] You {self.loop_breaker.last_signal()} without "
-                    "progress. STOP repeating it. Switch to root-cause diagnosis: "
-                    "read the relevant logs, build a minimal repro, and re-check the "
-                    "contract/interface before any further edits."
-                ),
-            }
-            self.messages.append(nudge)
-            await self.ctx.publish("loop_breaker", action="nudge",
-                                   reason=self.loop_breaker.last_signal())
-        elif verdict is LoopVerdict.STOP:
-            await self.ctx.publish("loop_breaker", action="stop",
-                                   reason=self.loop_breaker.last_signal())
-            return _Final(result=await self._finalize_loop_break())
+        # Gated on `enabled` so a disabled breaker is a true no-op — nothing
+        # is extracted or recorded, not just the verdict skipped.
+        if self.loop_breaker.enabled:
+            sigs = _extract_call_signatures(tool_calls, self.messages)
+            self.loop_breaker.record(sigs)
+            verdict = self.loop_breaker.verdict()
+            if verdict is LoopVerdict.NUDGE:
+                # Role "user", not "system": models weight user-role directives
+                # more heavily than system-role for mid-turn corrections, and a
+                # weakly-followed "STOP and diagnose" defeats the point of the
+                # nudge. Matches _run_grace_turn's deliberate user-role choice.
+                #
+                # Ephemeral — appended to self.messages only, never archived or
+                # added to self.history. Archiving would re-surface it via
+                # restore_history on a restart/reload (role "user" is equally an
+                # LLM role that gets resurrected), permanently polluting context
+                # on all later turns.
+                nudge = {
+                    "role": "user",
+                    "content": (
+                        f"[loop-breaker] You {self.loop_breaker.last_signal()} without "
+                        "progress. STOP repeating it. Switch to root-cause diagnosis: "
+                        "read the relevant logs, build a minimal repro, and re-check the "
+                        "contract/interface before any further edits."
+                    ),
+                }
+                self.messages.append(nudge)
+                await self.ctx.publish("loop_breaker", action="nudge",
+                                       reason=self.loop_breaker.last_signal())
+            elif verdict is LoopVerdict.STOP:
+                await self.ctx.publish("loop_breaker", action="stop",
+                                       reason=self.loop_breaker.last_signal())
+                return _Final(result=await self._finalize_loop_break())
 
         return _Continue()
 
