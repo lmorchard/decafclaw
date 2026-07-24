@@ -65,6 +65,8 @@ Per-conversation step-by-step execution loop. Storage is markdown checkboxes at 
 | `checklist_abort` | ✓ | Abort the current checklist |
 | `checklist_status` | ✓ | Show current checklist state |
 
+`checklist_create`/`checklist_step_done`/`checklist_abort` also mirror the checklist into the sticky slot above the chat input as a `progress_tracker` widget (fail-open), so the user sees live progress without the agent calling `widget_pin_sticky` directly. The slot clears once all steps are done or on abort. See [widgets.md](widgets.md#progress_tracker-widget).
+
 ## Shell (`tools/shell_tools.py`)
 
 Requires user confirmation unless pre-approved via `shell_allow_patterns.json`.
