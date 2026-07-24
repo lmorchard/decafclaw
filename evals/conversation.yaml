@@ -64,7 +64,8 @@
 
 - name: "answers from seeded conversation history"
   setup:
-    reflection_enabled: false
+    config_overrides:
+      reflection.enabled: false
     conversation_history:
       - role: user
         content: "I just got back from a trip to Reykjavik — first time in Iceland."

@@ -1,17 +1,29 @@
 """Unit coverage for the eval runner's per-test ``setup`` overrides.
 
-These are the fields that let a single eval case tweak a slice of the
-resolved ``Config`` (agent budget, reflection gate, …) without affecting
-the rest of the suite. See ``docs/eval-loop.md`` setup-fields table for
-the accepted keys.
+``setup.config_overrides`` is a generic dotted-path mechanism for tweaking
+any slice of the resolved ``Config`` for a single eval case. See
+``docs/eval-loop.md`` setup-fields table.
 """
 
+import dataclasses
+import pathlib
+
+import pytest
+import yaml
+
 from decafclaw.config import Config
-from decafclaw.eval.runner import _build_test_config
+from decafclaw.eval.runner import _REMOVED_SETUP_KEYS, _build_test_config
 
 
 def _tmp(tmp_path):
     return str(tmp_path)
+
+
+def _overrides(**kv):
+    return {"setup": {"config_overrides": kv}}
+
+
+# -- infrastructure overrides always win --
 
 
 def test_agent_data_home_and_id_are_always_set(tmp_path):
@@ -23,63 +35,264 @@ def test_agent_data_home_and_id_are_always_set(tmp_path):
     assert out.agent.id == "eval"
 
 
-def test_reflection_enabled_default_inherits_from_config(tmp_path):
-    """Without an explicit override, config.reflection.enabled is preserved."""
+def test_config_overrides_cannot_escape_the_sandbox(tmp_path):
+    """A case cannot redirect data_home out of its temp dir — the harness
+    applies the sandbox fields last, so they beat any user override."""
     cfg = Config()
-    # Ambient default is True; flip both ways and confirm each is preserved.
-    cfg.reflection.enabled = True
-    assert _build_test_config(cfg, {}, _tmp(tmp_path)).reflection.enabled is True
-    cfg.reflection.enabled = False
-    assert _build_test_config(cfg, {}, _tmp(tmp_path)).reflection.enabled is False
+    out = _build_test_config(
+        cfg, _overrides(**{"agent.data_home": "/etc", "agent.id": "not-eval"}),
+        _tmp(tmp_path),
+    )
+    assert out.agent.data_home == _tmp(tmp_path)
+    assert out.agent.id == "eval"
 
 
-def test_reflection_enabled_false_overrides_config(tmp_path):
-    """``setup.reflection_enabled: false`` forces reflection off even when
-    the base config has it enabled (the typical case)."""
+# -- basic override behaviour --
+
+
+def test_nested_override_applies(tmp_path):
     cfg = Config()
     cfg.reflection.enabled = True
     out = _build_test_config(
-        cfg, {"setup": {"reflection_enabled": False}}, _tmp(tmp_path),
+        cfg, _overrides(**{"reflection.enabled": False}), _tmp(tmp_path),
     )
     assert out.reflection.enabled is False
     # Base config is untouched — we returned a modified copy, not a mutation.
     assert cfg.reflection.enabled is True
 
 
-def test_reflection_enabled_true_overrides_disabled_config(tmp_path):
-    """The override works both ways — a suite-wide reflection.enabled=False
-    can be opted back into for a specific test."""
+def test_override_works_in_both_directions(tmp_path):
+    """A suite-wide setting can be forced on as well as off."""
     cfg = Config()
     cfg.reflection.enabled = False
     out = _build_test_config(
-        cfg, {"setup": {"reflection_enabled": True}}, _tmp(tmp_path),
+        cfg, _overrides(**{"reflection.enabled": True}), _tmp(tmp_path),
     )
     assert out.reflection.enabled is True
 
 
 def test_max_tool_iterations_override(tmp_path):
-    """Regression: the existing max_tool_iterations override still applies
-    through the extracted helper (this shape shipped in #448)."""
+    """The grace-turn budget override (#448) now rides the generic path."""
     cfg = Config()
     baseline = cfg.agent.max_tool_iterations
     out = _build_test_config(
-        cfg, {"setup": {"max_tool_iterations": 3}}, _tmp(tmp_path),
+        cfg, _overrides(**{"agent.max_tool_iterations": 3}), _tmp(tmp_path),
     )
     assert out.agent.max_tool_iterations == 3
-    # Absent override → the config default flows through unchanged.
     unset = _build_test_config(cfg, {}, _tmp(tmp_path))
     assert unset.agent.max_tool_iterations == baseline
 
 
-def test_overrides_compose_independently(tmp_path):
-    """Setting one override doesn't clobber the other — both nested replaces
-    happen in a single pass on top of the base config."""
+def test_overrides_compose_across_sections(tmp_path):
+    """Multiple paths into different sub-dataclasses all land in one pass."""
     cfg = Config()
     cfg.reflection.enabled = True
     out = _build_test_config(
         cfg,
-        {"setup": {"reflection_enabled": False, "max_tool_iterations": 2}},
+        _overrides(**{
+            "reflection.enabled": False,
+            "agent.max_tool_iterations": 2,
+        }),
         _tmp(tmp_path),
     )
     assert out.reflection.enabled is False
     assert out.agent.max_tool_iterations == 2
+
+
+def test_multiple_overrides_into_same_section(tmp_path):
+    """Two paths sharing a prefix merge rather than clobbering each other.
+
+    Regression guard: a naive implementation that calls ``replace`` once per
+    dotted path would drop all but the last override on a shared section.
+    """
+    cfg = Config()
+    out = _build_test_config(
+        cfg,
+        _overrides(**{
+            "agent.max_tool_iterations": 7,
+            "agent.max_concurrent_tools": 2,
+        }),
+        _tmp(tmp_path),
+    )
+    assert out.agent.max_tool_iterations == 7
+    assert out.agent.max_concurrent_tools == 2
+
+
+def test_top_level_scalar_override(tmp_path):
+    """A single-segment path targets a field on Config itself."""
+    cfg = Config()
+    out = _build_test_config(
+        cfg, _overrides(**{"default_model": "some-model"}), _tmp(tmp_path),
+    )
+    assert out.default_model == "some-model"
+
+
+def test_absent_config_overrides_is_a_noop(tmp_path):
+    """No ``config_overrides`` key → config flows through unchanged."""
+    cfg = Config()
+    out = _build_test_config(cfg, {"setup": {}}, _tmp(tmp_path))
+    for f in dataclasses.fields(Config):
+        if f.name == "agent":  # sandbox fields legitimately differ
+            continue
+        assert getattr(out, f.name) == getattr(cfg, f.name)
+
+
+# -- the mechanism must not rot as Config grows --
+
+
+def test_every_config_section_is_reachable(tmp_path):
+    """Any nested dataclass section can be overridden without runner changes.
+
+    Iterates the real field list rather than a hand-written allowlist, per
+    the CLAUDE.md convention — a new config section should work on arrival.
+    """
+    cfg = Config()
+    sections = [
+        f.name for f in dataclasses.fields(Config)
+        if dataclasses.is_dataclass(getattr(cfg, f.name))
+    ]
+    assert sections, "expected Config to have nested dataclass sections"
+
+    for section in sections:
+        sub = getattr(cfg, section)
+        bool_field = next(
+            (f.name for f in dataclasses.fields(sub)
+             if isinstance(getattr(sub, f.name), bool)),
+            None,
+        )
+        if bool_field is None:
+            continue
+        path = f"{section}.{bool_field}"
+        flipped = not getattr(sub, bool_field)
+        out = _build_test_config(cfg, _overrides(**{path: flipped}), _tmp(tmp_path))
+        assert getattr(getattr(out, section), bool_field) is flipped, path
+
+
+# -- validation: a typo must fail loudly, never silently no-op --
+
+
+def test_unknown_top_level_field_raises(tmp_path):
+    cfg = Config()
+    with pytest.raises(ValueError, match="nonesuch"):
+        _build_test_config(cfg, _overrides(**{"nonesuch": 1}), _tmp(tmp_path))
+
+
+def test_unknown_nested_field_raises(tmp_path):
+    cfg = Config()
+    with pytest.raises(ValueError, match="reflection.nonesuch"):
+        _build_test_config(
+            cfg, _overrides(**{"reflection.nonesuch": 1}), _tmp(tmp_path),
+        )
+
+
+def test_error_lists_available_fields(tmp_path):
+    """The message should tell you what you *could* have written."""
+    cfg = Config()
+    with pytest.raises(ValueError, match="enabled"):
+        _build_test_config(
+            cfg, _overrides(**{"reflection.nonesuch": 1}), _tmp(tmp_path),
+        )
+
+
+def test_descending_into_non_dataclass_raises(tmp_path):
+    """A dotted path through a scalar is a mistake, not a silent no-op."""
+    cfg = Config()
+    with pytest.raises(ValueError, match="not a config section"):
+        _build_test_config(
+            cfg, _overrides(**{"reflection.enabled.deeper": 1}), _tmp(tmp_path),
+        )
+
+
+def test_conflicting_paths_raise(tmp_path):
+    """Setting a section and a field inside it is ambiguous — reject it."""
+    cfg = Config()
+    with pytest.raises(ValueError, match="conflict"):
+        _build_test_config(
+            cfg,
+            _overrides(**{"reflection": {}, "reflection.enabled": False}),
+            _tmp(tmp_path),
+        )
+
+
+def test_config_overrides_must_be_a_mapping(tmp_path):
+    cfg = Config()
+    with pytest.raises(ValueError, match="must be a mapping"):
+        _build_test_config(
+            cfg, {"setup": {"config_overrides": ["reflection.enabled=False"]}},
+            _tmp(tmp_path),
+        )
+
+
+# -- removed bespoke keys fail loudly rather than silently no-opping --
+
+
+@pytest.mark.parametrize("old,new", [
+    ("max_tool_iterations", "agent.max_tool_iterations"),
+    ("reflection_enabled", "reflection.enabled"),
+])
+def test_removed_setup_keys_raise_with_migration_hint(tmp_path, old, new):
+    """A YAML still using the old key must fail, not quietly run unmodified.
+
+    Silently ignoring it would produce a green test measuring the wrong
+    config — exactly what config_overrides exists to prevent.
+    """
+    cfg = Config()
+    with pytest.raises(ValueError, match=new):
+        _build_test_config(cfg, {"setup": {old: 1}}, _tmp(tmp_path))
+
+
+def _iter_eval_cases():
+    root = pathlib.Path(__file__).resolve().parent.parent / "evals"
+    for path in sorted(root.rglob("*.yaml")):
+        cases = yaml.safe_load(path.read_text()) or []
+        if not isinstance(cases, list):
+            continue
+        for case in cases:
+            if isinstance(case, dict):
+                yield path, case
+
+
+def test_every_eval_yaml_config_override_resolves(tmp_path):
+    """Every `config_overrides` path in the real suite must be a valid field.
+
+    Catches a typo'd path here — free and instant — instead of partway
+    through a paid eval run.
+    """
+    checked = 0
+    for path, case in _iter_eval_cases():
+        setup = case.get("setup") or {}
+        if "config_overrides" not in setup:
+            continue
+        checked += 1
+        try:
+            _build_test_config(Config(), case, _tmp(tmp_path))
+        except ValueError as exc:
+            pytest.fail(f"{path.name}::{case.get('name')}: {exc}")
+    assert checked, "expected at least one eval case using config_overrides"
+
+
+def test_no_eval_yaml_still_uses_removed_keys():
+    """The in-repo eval suite must be migrated off the old keys."""
+    stale = [
+        f"{path.name}::{case.get('name')}::{key}"
+        for path, case in _iter_eval_cases()
+        for key in _REMOVED_SETUP_KEYS
+        if key in (case.get("setup") or {})
+    ]
+    assert not stale, f"eval YAML still using removed setup keys: {stale}"
+
+
+# -- dict-valued leaves are values, not further nesting --
+
+
+def test_dict_value_is_assigned_not_traversed(tmp_path):
+    """A dict on the right-hand side is a literal value.
+
+    Nesting is expressed by dots in the key, so ``skills`` (a plain dict
+    field) can be set wholesale without the walker trying to recurse into it.
+    """
+    cfg = Config()
+    out = _build_test_config(
+        cfg, _overrides(**{"skills": {"demo": {"enabled": True}}}), _tmp(tmp_path),
+    )
+    assert out.skills == {"demo": {"enabled": True}}

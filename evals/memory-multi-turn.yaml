@@ -68,12 +68,13 @@
 
 # #306: a fact journaled in an earlier turn is auto-surfaced (recency
 # window) at the next turn's start, so the agent recalls it from context
-# without a fresh vault lookup. reflection_enabled: false because the
+# without a fresh vault lookup. reflection.enabled: false because the
 # turn-2 expect_no_tool assertion must not be perturbed by a reflection
 # retry invoking a search tool.
 - name: "recalls a just-journaled fact from recency surfacing"
   setup:
-    reflection_enabled: false
+    config_overrides:
+      reflection.enabled: false
   turns:
     - input: "Please journal this so you remember it: the staging deploy key rotates every Tuesday at 4pm."
       expect:
