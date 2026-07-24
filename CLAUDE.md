@@ -50,6 +50,7 @@ See [docs/web-ui-design.md](docs/web-ui-design.md) for the primitive catalog and
 - **`--pico-secondary-background` is a TEXT color, not a background.** Misleading name. Don't reach for it as a panel/strip bg.
 - **Tag-qualify custom button rules** (`button.foo`, not `.foo`). Pico's `button:not(...)` is 0,1,1; bare `.foo` (0,1,0) loses regardless of load order.
 - **Reach for primitives first** (`.dc-floating-btn`, `.dc-overlay-header`, `.dc-overlay-close-x`, `.dc-icon-btn` in `primitives.css`) before declaring per-component border / radius / shadow / hover-color. Cluster-style fragility is the failure mode this doc exists to prevent.
+- **Color palettes are a two-axis model** (`data-theme` × `data-palette`, managed by `lib/theme.js`). Palettes are the ONLY sanctioned place to set `--pico-primary-background`/`-inverse`, scoped under `[data-palette]`. See [docs/web-ui-design.md](docs/web-ui-design.md#color-palettes--theming).
 
 ### Skills
 
@@ -121,6 +122,7 @@ See [docs/conversations.md](docs/conversations.md), [docs/web-ui.md](docs/web-ui
 - **Bug fix = test first.** Reproduce with a failing test, then fix.
 - **Commit after each logical step.** Lint and test before committing.
 - **Iterative changes go in a branch.** Don't push rapid-fire fixes directly to main — regressions compound (especially in UX-sensitive code like streaming/placeholder logic).
+- **Always favor opening a PR.** Push the branch and open a PR as the default way to integrate work — reserve local merge for when a PR is absolutely infeasible. A PR is the review gate (Les reviews before merge) and the record; even solo/small changes go through one.
 - **Worktree setup.** Worktrees go under `.claude/worktrees/{branch}/`. Each needs its own venv — run `uv sync` (or `make install`) inside the worktree to create one. Copy `.env` from the main clone — it points at the main clone's `data/` directory, so the worktree shares conversations / vault / config without duplicating state. Then, add an `HTTP_PORT` setting to your copy of `.env` to avoid port conflicts with other worktrees. Run `make test` once for a clean baseline before starting work.
 - **Test live in Mattermost and the web UI after merging** — real behavior differs from unit tests.
 - **Test speed discipline.** Tests run in parallel via `pytest-xdist -n auto`:
@@ -214,6 +216,7 @@ make lint         # Compile-check
 make typecheck    # Pyright
 make check-js     # tsc --checkJs
 make check        # Lint + typecheck (Python + JS)
+make test-js      # vitest (JS unit tests)
 make test         # Pytest
 make vendor       # Rebuild web UI vendor bundle
 make reindex      # Rebuild embedding index

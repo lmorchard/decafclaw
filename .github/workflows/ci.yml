@@ -32,3 +32,16 @@ jobs:
         # --dist=worksteal"). `-v` is omitted because worker output
         # interleaves and the dots-style progress is more readable.
         run: uv run pytest tests/
+
+  js-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Test
+        run: make test-js

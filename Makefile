@@ -37,6 +37,10 @@ install-js:
 check-js: install-js
 	cd src/decafclaw/web/static && npx tsc --noEmit
 
+# Test JS with vitest
+test-js: install-js
+	cd src/decafclaw/web/static && npx vitest run
+
 # Lint + type check (Python + JS)
 check: install-js check-message-types
 	uv run ruff check src/ tests/

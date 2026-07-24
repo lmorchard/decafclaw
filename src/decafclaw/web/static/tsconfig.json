@@ -21,5 +21,6 @@
       "/static/*": ["./*"]
     }
   },
-  "include": ["app.js", "lib/**/*.js", "components/**/*.js", "widgets/**/*.js"]
+  "include": ["app.js", "lib/**/*.js", "components/**/*.js", "widgets/**/*.js"],
+  "exclude": ["**/*.test.js"]
 }
