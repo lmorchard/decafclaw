@@ -26,6 +26,7 @@ from .config_types import (
     EmbeddingConfig,
     HeartbeatConfig,
     HttpConfig,
+    ImportanceConfig,
     LlmConfig,
     LoopBreakerConfig,
     MapWidgetConfig,
@@ -184,6 +185,7 @@ class Config:
     skills_always_loaded: list[str] = field(default_factory=list)
     vault_retrieval: VaultRetrievalConfig = field(default_factory=VaultRetrievalConfig)
     relevance: RelevanceConfig = field(default_factory=RelevanceConfig)
+    importance: ImportanceConfig = field(default_factory=ImportanceConfig)
     vault: VaultConfig = field(default_factory=VaultConfig)
     vault_guide: VaultGuideConfig = field(default_factory=VaultGuideConfig)
     notifications: NotificationsConfig = field(default_factory=NotificationsConfig)
@@ -463,6 +465,9 @@ def load_config() -> Config:
     relevance = load_sub_config(
         RelevanceConfig, file_data.get("relevance", {}), "RELEVANCE")
 
+    importance = load_sub_config(
+        ImportanceConfig, file_data.get("importance", {}), "IMPORTANCE")
+
     vault = load_sub_config(
         VaultConfig, file_data.get("vault", {}), "VAULT")
 
@@ -570,6 +575,7 @@ def load_config() -> Config:
         skills_always_loaded=skills_always_loaded,
         vault_retrieval=vault_retrieval,
         relevance=relevance,
+        importance=importance,
         vault=vault,
         vault_guide=vault_guide,
         notifications=notifications,

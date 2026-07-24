@@ -256,7 +256,7 @@ All factors are normalized to [0, 1].
 |--------|---------|-----------|
 | `w_similarity` | 0.5 | Similarity dominates — relevance to the query matters most |
 | `w_recency` | 0.3 | Recent content is more likely to be useful |
-| `w_importance` | 0.2 | Lower weight until dream/garden actively tune importance |
+| `w_importance` | 0.2 | Kept modest even now that garden actively tunes importance weekly (#197 Phase 5, see [Importance recompute](vault.md#importance-recompute-197)) — retrieval and links move gradually, so this stays a secondary signal alongside similarity and recency |
 
 ### Source boosts
 
@@ -315,6 +315,51 @@ importance: 0.5
 ```
 
 The embedding index stores a composite document (summary + keywords + tags + body) for richer semantic search. Pages without frontmatter embed as body-only. Frontmatter fields are parsed and used for scoring today; the dream/garden processes don't yet auto-generate them (they use `> tl;dr:` blockquote summaries instead).
+
+## Retrieval telemetry (#197)
+
+Phase 0 of the self-improving vault arc: a fail-open EventBus subscriber
+records which retrieval candidates were considered and which survived to
+injection — the measurement foundation later phases (notably an
+importance-formula rework) build on.
+
+Once per interactive turn, after `_score_candidates` produces the full
+scored candidate list and before the `min_composite_score` threshold and
+token-budget trim are applied, `_compose_vault_retrieval` publishes a
+`retrieval_event` on the event bus:
+
+```python
+{
+    "type": "retrieval_event",
+    "conv_id": str,
+    "candidates": [
+        {
+            "file_path": str,
+            "source_type": str,          # "page" | "user" | "journal" | "graph_expansion"
+            "similarity": float,
+            "recency": float,
+            "importance": float,
+            "composite_score": float,
+            "included": bool,            # survived score threshold AND budget trim
+            "drop_reason": str | None,   # None | "score" | "budget"
+        },
+        ...
+    ],
+}
+```
+
+`retrieval_telemetry.py` mirrors `tool_telemetry.py`'s shape: a fail-open
+subscriber (`make_retrieval_telemetry_subscriber`, guarded by
+`config.telemetry.retrieval_enabled`, default on) appends one JSONL record
+per event to `{workspace}/telemetry/retrieval.jsonl`. The emit itself is
+wrapped in try/except so a telemetry failure never breaks retrieval.
+
+**Report:** `make retrieval-report` (`python -m decafclaw.retrieval_telemetry`)
+aggregates per-page retrieval/include/drop-by-reason counts, plus a
+point-in-time vault-health snapshot: `missing_importance` (pages with no
+`importance` frontmatter field) and `graph_orphans` (pages with zero
+inbound `[[wiki-links]]`, per the backlink index) — two distinct metrics,
+not to be conflated (#197 P0-M2).
 
 ## Relationship to agent loop
 

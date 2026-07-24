@@ -166,6 +166,18 @@ Vault location and write-gate settings. See [vault.md](vault.md).
 
 `user_writable_paths` lists vault-relative folder paths that bypass the user-page write confirmation. Prefix match (no globs); leading `/` is stripped and a trailing `/` is enforced, so `creative` and `creative/` are equivalent. Entries containing `..` are skipped with a warning. Empty by default — opt-in. Example: `["creative/", "notes/"]`.
 
+### `importance`
+
+Weights for garden's deterministic weekly importance recompute (#197 Phase 5). See [Importance recompute](vault.md#importance-recompute-197).
+
+| Field | Type | Default | Env Var |
+|-------|------|---------|---------|
+| `w_retrieval` | float | `0.6` | `IMPORTANCE_W_RETRIEVAL` |
+| `w_inbound` | float | `0.4` | `IMPORTANCE_W_INBOUND` |
+| `w_reference` | float | `0.0` | `IMPORTANCE_W_REFERENCE` |
+
+`w_reference` is reserved for a future explicit-reference signal (not yet implemented) and contributes nothing to the score while it's 0.
+
 ### `vault_retrieval`
 
 Controls auto-retrieval injection at turn start. See [context-composer.md#memory-retrieval-modes](context-composer.md#memory-retrieval-modes) and #301.
@@ -438,7 +450,7 @@ Config CLI shows skill values as raw JSON (`config show skills`). Use `--reveal`
 
 ### `telemetry`
 
-Instrumentation sidecars — append-only JSONL under `workspace/`, metadata only (never tool args/returns, reflection bodies, or prompt contents). Producers are fail-open EventBus subscribers. See [tools.md#tool-usage-telemetry-310](tools.md#tool-usage-telemetry-310) (#310) and [reflection.md#metrics-409](reflection.md#metrics-409) (#409).
+Instrumentation sidecars — append-only JSONL under `workspace/`, metadata only (never tool args/returns, reflection bodies, or prompt contents). Producers are fail-open EventBus subscribers. See [tools.md#tool-usage-telemetry-310](tools.md#tool-usage-telemetry-310) (#310), [reflection.md#metrics-409](reflection.md#metrics-409) (#409), and [context-composer.md#retrieval-telemetry-197](context-composer.md#retrieval-telemetry-197) (#197).
 
 | Field | Type | Default | Env Var |
 |-------|------|---------|---------|
@@ -446,8 +458,10 @@ Instrumentation sidecars — append-only JSONL under `workspace/`, metadata only
 | `tool_usage_path` | str | `tool_usage.jsonl` | `TELEMETRY_TOOL_USAGE_PATH` |
 | `reflection_metrics_enabled` | bool | `true` | `TELEMETRY_REFLECTION_METRICS_ENABLED` |
 | `reflection_metrics_path` | str | `reflection/metrics.jsonl` | `TELEMETRY_REFLECTION_METRICS_PATH` |
+| `retrieval_enabled` | bool | `true` | `TELEMETRY_RETRIEVAL_ENABLED` |
+| `retrieval_path` | str | `telemetry/retrieval.jsonl` | `TELEMETRY_RETRIEVAL_PATH` |
 
-Paths are workspace-relative. Enabled by default so a deployed agent starts collecting without a config edit — the intent is a week of real data. No rotation yet (append-only); retention is a follow-up. Reports: `make tool-usage-report`, `make reflection-stats`.
+Paths are workspace-relative. Enabled by default so a deployed agent starts collecting without a config edit — the intent is a week of real data. No rotation yet (append-only); retention is a follow-up. Reports: `make tool-usage-report`, `make reflection-stats`, `make retrieval-report`.
 
 ### `env`
 

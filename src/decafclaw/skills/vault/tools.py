@@ -249,6 +249,17 @@ def _format_vault_delete_preview(config, path: Path) -> str:
     )
 
 
+def _format_vault_update_frontmatter_preview(
+    config, path: Path, fields: dict,
+) -> str:
+    """Confirmation preview for vault_update_frontmatter."""
+    try:
+        rel = str(path.resolve().relative_to(config.vault_root.resolve()))
+    except ValueError:
+        rel = path.name
+    return f"Vault frontmatter update to: {rel}\nFields: {', '.join(sorted(fields))}"
+
+
 def _format_vault_rename_preview(config, old_path: Path, new_path: Path) -> str:
     """Confirmation preview for vault_rename. Shows both paths."""
     def _rel(p: Path) -> str:
@@ -1060,37 +1071,49 @@ _WIKI_LINK_RE = re.compile(r"\[\[([^\]]+)\]\]")
 async def tool_vault_backlinks(ctx, page: str) -> str:
     """Find all vault pages that link to the given page via [[wiki-links]]."""
     log.info(f"[tool:vault_backlinks] page={page}")
+    from decafclaw.backlinks import _build_page_lookup, _resolve_link_target, load_index
+
     vault = _vault_root(ctx.config)
     if not vault.is_dir():
         return f"No backlinks to '{page}' (vault directory does not exist)."
+    # resolve_page() returns a fully-resolved path, so `vault` must be
+    # resolved too before relative_to() — otherwise a symlinked vault_root
+    # component makes relative_to() raise (fail-open swallows it silently).
+    vault = vault.resolve()
 
-    page_lower = page.lower()
-    # Also match by stem for paths like "agent/pages/Foo"
-    page_stem_lower = Path(page).stem.lower()
+    resolved = resolve_page(ctx.config, page)
+    if resolved is None:
+        return f"No pages link to '{page}'."
+    target_rel = resolved.relative_to(vault).as_posix()
+
+    linkers = load_index(ctx.config).get(target_rel, [])
+    if not linkers:
+        return f"No pages link to '{page}'."
+
+    # Persisted index tells us WHICH pages link here; re-read just those
+    # pages (not the whole vault) to pull a one-line quote for context.
+    full_lower_map, stem_lower_map = _build_page_lookup(
+        sorted(vault.rglob("*.md")), vault)
+
     results = []
-
-    for path in sorted(vault.rglob("*.md")):
-        stem_lower = path.stem.lower()
-        if stem_lower == page_lower or stem_lower == page_stem_lower:
-            continue  # skip the page itself
-        text = path.read_text()
+    for linker_rel in linkers:
+        try:
+            text = (vault / linker_rel).read_text(encoding="utf-8")
+        except OSError as exc:
+            log.debug("vault_backlinks: failed reading %s: %s", linker_rel, exc)
+            continue
+        context_line = ""
         for match in _WIKI_LINK_RE.finditer(text):
-            raw_link = match.group(1)
-            # Handle [[target|display]] — extract target before pipe
-            link = raw_link.split("|")[0].strip().lower()
-            link_stem = Path(link).stem.lower()
-            if link == page_lower or link_stem == page_stem_lower:
+            if _resolve_link_target(
+                match.group(1), full_lower_map, stem_lower_map
+            ) == target_rel:
                 line_no = text[:match.start()].count("\n")
                 lines = text.splitlines()
                 context_line = (lines[line_no].strip()[:200]
                                 if line_no < len(lines) else "")
-                rel = path.relative_to(vault)
-                results.append(
-                    f"- **{rel.with_suffix('')}**: {context_line}")
-                break  # one backlink per page
-
-    if not results:
-        return f"No pages link to '{page}'."
+                break
+        rel_display = Path(linker_rel).with_suffix("")
+        results.append(f"- **{rel_display}**: {context_line}")
 
     return f"{len(results)} page(s) link to '{page}':\n\n" + "\n".join(results)
 
@@ -1139,6 +1162,91 @@ async def _reindex_page(ctx, path: Path) -> None:
         await index_entry(ctx.config, rel, embed_text, source_type=source_type)
     except Exception as e:
         log.warning(f"Failed to reindex vault page '{path}': {e}")
+
+
+def merge_frontmatter(existing: dict, fields: dict, overwrite: bool) -> dict:
+    """Merge coerced field values into existing frontmatter metadata.
+
+    Pure function — no ctx, no I/O — so later callers (dream generation,
+    backfill CLI, garden importance tuning) can reuse the merge logic without
+    a running agent context. Coercion mirrors `get_frontmatter_field`
+    (importance clamped to [0, 1]; tags/keywords to list[str]; summary to
+    str) so the merged result and the parser agree on shape.
+
+    When `overwrite` is False, only fields that are absent or empty in
+    `existing` are filled. When True, every field in `fields` is set,
+    replacing any existing value.
+    """
+    from decafclaw.frontmatter import get_frontmatter_field
+
+    merged = dict(existing)
+    for field, raw_value in fields.items():
+        coerced = get_frontmatter_field({field: raw_value}, field)
+        if not overwrite and merged.get(field) not in (None, "", []):
+            continue
+        merged[field] = coerced
+    return merged
+
+
+async def tool_vault_update_frontmatter(
+    ctx, page: str, fields: dict, overwrite: bool = False,
+) -> ToolResult:
+    """Merge frontmatter fields into a vault page (thin wrapper over
+    `merge_frontmatter`).
+
+    Interactive callers updating a user-owned page outside agent/ go through
+    the same confirmation gate as `vault_write`. Non-interactive callers
+    (scheduled dream/garden) can't prompt, so they proceed ungated — vault-
+    wide reach for scheduled maintenance is this tool's intended purpose.
+    """
+    log.info(f"[tool:vault_update_frontmatter] page={page!r} overwrite={overwrite}")
+    path = resolve_page(ctx.config, page)
+    if path is None:
+        return ToolResult(text=f"[error: vault page '{page}' not found]")
+
+    if ctx.request_confirmation is not None:
+        outcome = _check_user_write_allowed(ctx, path)
+        gate_result = await _run_gate_or_confirm(
+            ctx,
+            [outcome],
+            tool_name="vault_update_frontmatter",
+            command=f"vault_update_frontmatter on '{page}'",
+            preview=_format_vault_update_frontmatter_preview(ctx.config, path, fields),
+            non_interactive_error=(
+                f"[error: vault_update_frontmatter on '{page}' outside agent "
+                f"folder requires interactive confirmation; not available "
+                f"from this context]"
+            ),
+            denied_error=(
+                f"[error: vault_update_frontmatter on '{page}' was denied by user]"
+            ),
+        )
+        if gate_result is not None:
+            return gate_result
+
+    from decafclaw.frontmatter import parse_frontmatter, serialize_frontmatter
+
+    content = path.read_text(encoding="utf-8")
+    metadata, body = parse_frontmatter(content)
+    merged = merge_frontmatter(metadata, fields, overwrite)
+    changed = sorted(field for field in fields if merged.get(field) != metadata.get(field))
+
+    if not changed:
+        return ToolResult(
+            text=f"No frontmatter changes for '{page}'",
+            data={"path": page, "changed": []},
+        )
+
+    path.write_text(serialize_frontmatter(merged, body), encoding="utf-8")
+    await _reindex_page(ctx, path)
+    await publish_vault_changed(
+        ctx.event_bus, ctx.config, kind=KIND_UPDATE, path=path,
+    )
+
+    return ToolResult(
+        text=f"Updated frontmatter for '{page}': {', '.join(changed)}",
+        data={"path": page, "changed": changed},
+    )
 
 
 async def tool_vault_section(
@@ -1327,6 +1435,7 @@ TOOLS = {
     "vault_show_sections": tool_vault_show_sections,
     "vault_move_lines": tool_vault_move_lines,
     "vault_section": tool_vault_section,
+    "vault_update_frontmatter": tool_vault_update_frontmatter,
 }
 
 TOOL_DEFINITIONS = [
@@ -1829,6 +1938,45 @@ TOOL_DEFINITIONS = [
                     },
                 },
                 "required": ["page", "action"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "vault_update_frontmatter",
+            "description": (
+                "Merge frontmatter fields (summary, importance, tags, keywords, "
+                "etc.) into an existing vault page. By default only fills fields "
+                "that are absent or empty — set overwrite=true to replace existing "
+                "values. Reindexes the page afterward. Does not touch the page body."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "page": {
+                        "type": "string",
+                        "description": (
+                            "Page path relative to vault root or bare name "
+                            "(e.g. 'agent/pages/note', 'My Page')."
+                        ),
+                    },
+                    "fields": {
+                        "type": "object",
+                        "description": (
+                            "Frontmatter fields to merge, e.g. "
+                            '{"summary": "...", "importance": 0.7, "tags": ["a", "b"]}.'
+                        ),
+                    },
+                    "overwrite": {
+                        "type": "boolean",
+                        "description": (
+                            "If true, replace existing field values. "
+                            "If false (default), only fill absent or empty fields."
+                        ),
+                    },
+                },
+                "required": ["page", "fields"],
             },
         },
     },

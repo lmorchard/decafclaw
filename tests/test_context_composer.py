@@ -271,6 +271,36 @@ class TestComposeMemoryContext:
             assert entry2.items_included == 0
             assert entry2.details.get("injection_skipped") is True
 
+    @pytest.mark.asyncio
+    async def test_retrieval_event_published_with_drop_verdicts(self, ctx, config):
+        """A ``retrieval_event`` carries the *full* scored candidate list
+        (not just what got injected), tagged with include/drop verdicts —
+        the measurement foundation for #197."""
+        events = []
+
+        async def cap(e):
+            if e.get("type") == "retrieval_event":
+                events.append(e)
+        ctx.event_bus.subscribe(cap)
+        mock_results = [
+            {"file_path": "pages/hit.md", "source_type": "page", "entry_text": "x",
+             "similarity": 0.9, "modified_at": "", "importance": 0.9},
+            {"file_path": "pages/miss.md", "source_type": "page", "entry_text": "y",
+             "similarity": 0.01, "modified_at": "", "importance": 0.1},
+        ]
+        with patch("decafclaw.context_composer.retrieve_memory_context",
+                   new_callable=AsyncMock, return_value=mock_results):
+            composer = ContextComposer()
+            await composer._compose_vault_retrieval(
+                ctx, config, "q", ComposerMode.INTERACTIVE)
+        assert len(events) == 1
+        assert events[0]["conv_id"] == ctx.conv_id
+        paths = {c["file_path"]: c for c in events[0]["candidates"]}
+        assert paths["pages/hit.md"]["included"] is True
+        assert paths["pages/hit.md"]["drop_reason"] is None
+        assert paths["pages/miss.md"]["included"] is False
+        assert paths["pages/miss.md"]["drop_reason"] in ("score", "budget")
+
 
 # -- Retrieval modes (#301) ----------------------------------------------------
 

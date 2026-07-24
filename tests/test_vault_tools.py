@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from decafclaw.frontmatter import parse_frontmatter
 from decafclaw.skills.vault._grants import add_grant
 from decafclaw.skills.vault.tools import (
     GateOutcome,
@@ -23,6 +24,7 @@ from decafclaw.skills.vault.tools import (
     tool_vault_recent,
     tool_vault_rename,
     tool_vault_search,
+    tool_vault_update_frontmatter,
     tool_vault_write,
 )
 
@@ -1268,3 +1270,134 @@ class TestVaultRecent:
     async def test_missing_folder_errors(self, ctx, vault_dir):
         result = await tool_vault_recent(ctx, days=7, folder="nope/missing")
         assert "does not exist" in str(result).lower()
+
+
+class TestVaultUpdateFrontmatter:
+    @pytest.mark.asyncio
+    async def test_fills_absent_fields(self, ctx, agent_pages):
+        p = agent_pages / "topic.md"
+        p.write_text("Body text.\n")
+        await tool_vault_update_frontmatter(
+            ctx, page="agent/pages/topic.md",
+            fields={"summary": "s", "importance": 0.8})
+        meta, body = parse_frontmatter(p.read_text())
+        assert meta["summary"] == "s" and meta["importance"] == 0.8
+        assert body.strip() == "Body text."
+
+    @pytest.mark.asyncio
+    async def test_respects_existing_value_when_not_overwrite(self, ctx, agent_pages):
+        p = agent_pages / "topic.md"
+        p.write_text("---\nsummary: manual\n---\nBody.\n")
+        await tool_vault_update_frontmatter(
+            ctx, page="agent/pages/topic.md",
+            fields={"summary": "auto"}, overwrite=False)
+        meta, _ = parse_frontmatter(p.read_text())
+        assert meta["summary"] == "manual"
+
+    @pytest.mark.asyncio
+    async def test_overwrite_replaces(self, ctx, agent_pages):
+        p = agent_pages / "topic.md"
+        p.write_text("---\nimportance: 0.5\n---\nBody.\n")
+        await tool_vault_update_frontmatter(
+            ctx, page="agent/pages/topic.md",
+            fields={"importance": 0.9}, overwrite=True)
+        meta, _ = parse_frontmatter(p.read_text())
+        assert meta["importance"] == 0.9
+
+    @pytest.mark.asyncio
+    async def test_clamps_importance_and_coerces_lists(self, ctx, agent_pages):
+        p = agent_pages / "t.md"
+        p.write_text("Body.\n")
+        await tool_vault_update_frontmatter(
+            ctx, page="agent/pages/t.md",
+            fields={"importance": 5.0, "tags": "a"})
+        meta, _ = parse_frontmatter(p.read_text())
+        assert meta["importance"] == 1.0 and meta["tags"] == ["a"]
+
+    @pytest.mark.asyncio
+    async def test_reindexes_after_write(self, ctx, agent_pages):
+        p = agent_pages / "t.md"
+        p.write_text("Body.\n")
+        with patch("decafclaw.skills.vault.tools._reindex_page",
+                   new_callable=AsyncMock) as rx:
+            await tool_vault_update_frontmatter(
+                ctx, page="agent/pages/t.md", fields={"summary": "s"})
+        rx.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_interactive_user_page_confirms_then_updates(self, ctx, vault_dir):
+        """Interactive caller updating a user-owned page outside agent/ must
+        hit the same gate as vault_write: confirmation requested, then the
+        write proceeds on approval."""
+        p = vault_dir / "creative" / "foo.md"
+        p.parent.mkdir(parents=True)
+        p.write_text("Body.\n")
+        ctx.request_confirmation = _dummy_request_confirmation
+        with (
+            patch("decafclaw.skills.vault.tools.request_confirmation",
+                  AsyncMock(return_value={"approved": True})) as mock_conf,
+            patch("decafclaw.skills.vault.tools._reindex_page",
+                  new_callable=AsyncMock),
+        ):
+            await tool_vault_update_frontmatter(
+                ctx, page="creative/foo", fields={"summary": "s"})
+        assert mock_conf.called
+        meta, _ = parse_frontmatter(p.read_text())
+        assert meta["summary"] == "s"
+
+    @pytest.mark.asyncio
+    async def test_interactive_user_page_denied_returns_error_no_update(
+        self, ctx, vault_dir,
+    ):
+        p = vault_dir / "creative" / "foo.md"
+        p.parent.mkdir(parents=True)
+        p.write_text("Body.\n")
+        ctx.request_confirmation = _dummy_request_confirmation
+        with patch("decafclaw.skills.vault.tools.request_confirmation",
+                   AsyncMock(return_value={"approved": False})):
+            result = await tool_vault_update_frontmatter(
+                ctx, page="creative/foo", fields={"summary": "s"})
+        assert "denied by user" in result.text
+        meta, _ = parse_frontmatter(p.read_text())
+        assert "summary" not in meta
+
+    @pytest.mark.asyncio
+    async def test_noop_merge_skips_write_reindex_publish(self, ctx, agent_pages):
+        """When the merge produces no change (e.g. overwrite=False on an
+        already-populated field), the tool must not rewrite the file, reindex,
+        or publish vault_changed."""
+        p = agent_pages / "topic.md"
+        original = "---\nsummary: existing\n---\nBody.\n"
+        p.write_text(original)
+        with (
+            patch("decafclaw.skills.vault.tools._reindex_page",
+                  new_callable=AsyncMock) as rx,
+            patch("decafclaw.skills.vault.tools.publish_vault_changed",
+                  new_callable=AsyncMock) as pub,
+        ):
+            result = await tool_vault_update_frontmatter(
+                ctx, page="agent/pages/topic.md",
+                fields={"summary": "different"}, overwrite=False)
+        assert p.read_text() == original
+        rx.assert_not_awaited()
+        pub.assert_not_awaited()
+        assert result.data["changed"] == []
+
+    @pytest.mark.asyncio
+    async def test_non_interactive_user_page_updates_without_gate(
+        self, ctx, vault_dir,
+    ):
+        """Non-interactive callers (scheduled dream/garden) can't prompt, so
+        vault-wide reach proceeds ungated — this is the tool's intended
+        maintenance purpose."""
+        p = vault_dir / "creative" / "foo.md"
+        p.parent.mkdir(parents=True)
+        p.write_text("Body.\n")
+        ctx.request_confirmation = None
+        with patch("decafclaw.skills.vault.tools._reindex_page",
+                   new_callable=AsyncMock):
+            result = await tool_vault_update_frontmatter(
+                ctx, page="creative/foo", fields={"summary": "s"})
+        assert "updated" in result.text.lower()
+        meta, _ = parse_frontmatter(p.read_text())
+        assert meta["summary"] == "s"

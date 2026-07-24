@@ -49,7 +49,8 @@ Your files live under `agent/` in the vault:
 - Use `vault_read` before `vault_write` when updating existing pages — `vault_write` overwrites the entire page.
 - `vault_rename` renames or moves an existing page (updates the embedding index). Prefer it over delete + rewrite when the content stays the same.
 - `vault_delete` permanently removes a page. Only for pages that are definitively wrong, duplicate, or no longer reachable — prefer editing over deleting when the page can be salvaged. Pages outside `agent/` will trigger a user confirmation.
-- User pages outside `agent/` are writable on explicit user request. Each `vault_write` / `vault_delete` / `vault_rename` triggers a user confirmation. For batch operations (3+ pages in the same folder), call `vault_grant_folder` first to trust the folder for the rest of the conversation and skip per-page confirmations.
+- `vault_update_frontmatter` merges metadata fields (summary, keywords, tags, importance) into a page without touching the body. Pages outside `agent/` will trigger a user confirmation in interactive conversations; scheduled maintenance (dream/garden) can update frontmatter vault-wide without confirmation since it can't prompt.
+- User pages outside `agent/` are writable on explicit user request. Each `vault_write` / `vault_delete` / `vault_rename` / `vault_update_frontmatter` triggers a user confirmation. For batch operations (3+ pages in the same folder), call `vault_grant_folder` first to trust the folder for the rest of the conversation and skip per-page confirmations.
 
 ## Editing Sections
 

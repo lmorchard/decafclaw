@@ -1,0 +1,32 @@
+# Evals for dream-generated page frontmatter (#197 Phase 2).
+#
+# Exercises the real dream consolidation flow end-to-end: seed a handful of
+# related journal entries, run the actual `/dream` skill, and assert it
+# calls `vault_update_frontmatter` after writing/revising the page — not
+# just `vault_write`. This is the behavior eval for Phase 2's SKILL.md
+# addition (dream/SKILL.md Consolidate phase, step 6).
+
+- name: "dream consolidation fills page frontmatter after writing"
+  setup:
+    skills: [dream]
+    memories:
+      - tags: [workflow, worktrees, tooling]
+        content: >-
+          Worktrees for decafclaw live under .claude/worktrees/{branch}/.
+          Each one needs its own venv, created by running `uv sync` inside
+          the worktree.
+      - tags: [workflow, worktrees, tooling]
+        content: >-
+          Copy .env into a new worktree from the main clone before starting
+          work — it points at the main clone's data/ directory so
+          conversations, vault, and config are shared instead of duplicated.
+      - tags: [workflow, worktrees, tooling]
+        content: >-
+          After creating a worktree, add an HTTP_PORT setting to its .env
+          to avoid port collisions with other worktrees that are already
+          running.
+  input: "/dream"
+  expect:
+    max_tool_calls: 30
+    max_tool_errors: 0
+    expect_tool: vault_update_frontmatter

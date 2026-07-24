@@ -310,6 +310,24 @@ class RelevanceConfig:
 
 
 @dataclass
+class ImportanceConfig:
+    """Weights for garden's deterministic weekly importance recompute (#197
+    Phase 5).
+
+    v1 formula: ``importance = clamp01(w_retrieval * norm(retrieval_freq) +
+    w_inbound * norm(inbound_links))``, where ``norm(x) = x / max(x across
+    all pages)`` (0 when the max is 0). ``w_reference`` is reserved /
+    not yet computed — no explicit-reference signal exists yet, so it
+    defaults to 0 and is omitted from the formula entirely rather than
+    multiplied against an all-zero signal. See
+    ``skills/garden/tools.py::compute_importance_scores``.
+    """
+    w_retrieval: float = 0.6
+    w_inbound: float = 0.4
+    w_reference: float = 0.0
+
+
+@dataclass
 class ProviderConfig:
     """Connection config for an LLM provider."""
     type: str = ""  # "vertex", "openai", "openai-compat" (also accepts "litellm")
@@ -456,7 +474,8 @@ class LoopBreakerConfig:
 
 @dataclass
 class TelemetryConfig:
-    """Instrumentation sidecars (#310 tool usage, #409 reflection metrics).
+    """Instrumentation sidecars (#310 tool usage, #409 reflection metrics,
+    #197 retrieval telemetry).
 
     Append-only JSONL under ``workspace/``, metadata only — never tool
     args/returns, reflection response bodies, or prompt contents; only
@@ -465,12 +484,14 @@ class TelemetryConfig:
     never break a turn. Paths are workspace-relative. Enabled by default
     so a deployed agent starts collecting without a config edit — the
     point is a week of real data. No rotation yet (append-only); retention
-    is a follow-up. See docs/tools.md and docs/reflection.md.
+    is a follow-up. See docs/tools.md, docs/reflection.md, and docs/vault.md.
     """
     tool_usage_enabled: bool = True
     tool_usage_path: str = "tool_usage.jsonl"
     reflection_metrics_enabled: bool = True
     reflection_metrics_path: str = "reflection/metrics.jsonl"
+    retrieval_enabled: bool = True
+    retrieval_path: str = "telemetry/retrieval.jsonl"
 
 
 def is_secret(dc_class: type, field_name: str) -> bool:
