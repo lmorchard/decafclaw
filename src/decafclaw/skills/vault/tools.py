@@ -609,7 +609,10 @@ async def tool_vault_journal_append(ctx, tags: list[str], content: str) -> ToolR
     # tag containing whitespace can't round-trip as a single inline token
     # (Obsidian-style #tags don't allow spaces), so it's skipped there and
     # only surfaces via the bullet.
-    inline_tags = [t for t in tags if t and not any(ch.isspace() for ch in t)]
+    stripped_tags = [t.lstrip("#").strip() for t in tags]
+    inline_tags = [
+        t for t in stripped_tags if t and not any(ch.isspace() for ch in t)
+    ]
     inline_tag_line = " ".join(f"#{t}" for t in inline_tags)
 
     entry = f"\n## {now:%Y-%m-%d %H:%M}\n\n"
@@ -789,11 +792,11 @@ def _semantic_result_matches_tags(config, result: dict, req_tags: set[str],
     path = _vault_root(config) / file_path
     try:
         content = path.read_text()
+        source_type = result.get("source_type") or _source_type_for_path(config, path)
+        file_tags = extract_tags(content, source_type)
     except Exception as exc:
-        log.debug(f"vault_search: failed reading {path} for tag filter: {exc}")
+        log.debug(f"vault_search: failed reading/tagging {path} for tag filter: {exc}")
         return False
-    source_type = result.get("source_type") or _source_type_for_path(config, path)
-    file_tags = extract_tags(content, source_type)
     if any_tag:
         return bool(file_tags & req_tags)
     return req_tags <= file_tags

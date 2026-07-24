@@ -936,6 +936,24 @@ class TestVaultJournalAppend:
         assert extract_tags(text, "journal") == {"rust", "async"}
 
     @pytest.mark.asyncio
+    async def test_inline_tag_normalizes_leading_hash(self, ctx, agent_journal):
+        """A caller-supplied tag that already starts with '#' must not
+        double up to '##' in the inline line, and must still round-trip
+        through extract_tags."""
+        from decafclaw.tags import extract_tags
+
+        with patch("decafclaw.embeddings.index_entry", new_callable=AsyncMock):
+            await tool_vault_journal_append(
+                ctx, tags=["#Rust", "async"], content="x")
+        files = list(agent_journal.rglob("*.md"))
+        text = files[0].read_text()
+
+        assert "##Rust" not in text
+        assert "#Rust" in text
+        assert "#async" in text
+        assert extract_tags(text, "journal") == {"rust", "async"}
+
+    @pytest.mark.asyncio
     async def test_empty_tags_no_inline_line(self, ctx, agent_journal):
         from decafclaw.tags import extract_tags
 
@@ -1194,6 +1212,48 @@ class TestVaultSearchTagsSemantic:
 
         monkeypatch.setattr(
             "decafclaw.embeddings.search_similar", fake_search_similar)
+
+        result = await tool_vault_search(ctx, "widget", tags=["async"])
+
+        paths = [r["path"] for r in result.data["results"]]
+        assert paths == ["agent/pages/AsyncPage"]
+
+    @pytest.mark.asyncio
+    async def test_fail_open_excludes_candidate_when_extract_tags_raises(
+        self, ctx, agent_pages, monkeypatch
+    ):
+        """A candidate whose extract_tags call raises must be excluded
+        from the results, not blow up the whole semantic search branch
+        (which would fall back to the global un-filtered path instead of
+        just dropping that one candidate)."""
+        from decafclaw.tags import extract_tags
+
+        ctx.config.embedding.search_strategy = "semantic"
+        (agent_pages / "AsyncPage.md").write_text(
+            "# AsyncPage\n\nWidget notes about async work. #async")
+        (agent_pages / "BadPage.md").write_text(
+            "# BadPage\n\nWidget notes. #async")
+
+        async def fake_search_similar(*args, **kwargs):
+            return [
+                {"file_path": "agent/pages/AsyncPage.md", "similarity": 0.9,
+                 "source_type": "page", "entry_text": "Widget notes async"},
+                {"file_path": "agent/pages/BadPage.md", "similarity": 0.85,
+                 "source_type": "page", "entry_text": "Widget notes bad"},
+            ]
+
+        monkeypatch.setattr(
+            "decafclaw.embeddings.search_similar", fake_search_similar)
+
+        real_extract_tags = extract_tags
+
+        def fake_extract_tags(content, source_type):
+            if "BadPage" in content:
+                raise ValueError("boom")
+            return real_extract_tags(content, source_type)
+
+        monkeypatch.setattr(
+            "decafclaw.skills.vault.tools.extract_tags", fake_extract_tags)
 
         result = await tool_vault_search(ctx, "widget", tags=["async"])
 
