@@ -7,6 +7,11 @@ import { THEMES, applyTheme, loadStoredTheme, storeTheme } from '../lib/theme.js
  * A single active theme name is chosen either via a base button (which clears
  * any custom palette) or via a palette item (which supersedes the base and
  * drives its own base mode). Persists via lib/theme.js.
+ *
+ * The 🎨 popover is a disclosure (not an ARIA menu): the trigger carries
+ * `aria-expanded`, the items are plain buttons, and it closes on outside-click
+ * or Escape. We intentionally don't use `role="menu"`/`menuitem` — those
+ * promise arrow-key menu navigation we don't implement.
  */
 export class ThemeToggle extends LitElement {
   static properties = {
@@ -27,15 +32,23 @@ export class ThemeToggle extends LitElement {
         this._paletteOpen = false;
       }
     };
+    /** @param {KeyboardEvent} e */
+    this._onDocKeydown = (e) => {
+      if (this._paletteOpen && e.key === 'Escape') {
+        this._paletteOpen = false;
+      }
+    };
   }
 
   connectedCallback() {
     super.connectedCallback();
     document.addEventListener('click', this._onDocClick);
+    document.addEventListener('keydown', this._onDocKeydown);
   }
 
   disconnectedCallback() {
     document.removeEventListener('click', this._onDocClick);
+    document.removeEventListener('keydown', this._onDocKeydown);
     super.disconnectedCallback();
   }
 
@@ -54,6 +67,7 @@ export class ThemeToggle extends LitElement {
       <div class="theme-toggle">
         ${bases.map((t) => html`
           <button
+            type="button"
             class="theme-btn ${this._theme === t.name ? 'active' : ''}"
             @click=${() => this.#select(t.name)}
             title=${t.label}
@@ -61,18 +75,18 @@ export class ThemeToggle extends LitElement {
         `)}
         <div class="theme-palette-wrap">
           <button
+            type="button"
             class="theme-btn ${paletteActive ? 'active' : ''}"
             @click=${() => { this._paletteOpen = !this._paletteOpen; }}
             title="Color palette"
-            aria-haspopup="true"
             aria-expanded=${this._paletteOpen ? 'true' : 'false'}
           >🎨</button>
           ${this._paletteOpen ? html`
-            <div class="theme-palette-menu" role="menu">
+            <div class="theme-palette-menu">
               ${palettes.map((p) => html`
                 <button
+                  type="button"
                   class="theme-palette-item ${this._theme === p.name ? 'active' : ''}"
-                  role="menuitem"
                   @click=${() => this.#select(p.name)}
                 >
                   <span class="theme-palette-dot" style="background:${p.dot}"></span>
