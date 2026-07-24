@@ -85,6 +85,11 @@ def _validate_widget_for_sticky(widget_type: str, data: dict) -> str | None:
         return f"widget '{widget_type}' not registered"
     if "sticky" not in descriptor.modes:
         return f"widget '{widget_type}' does not support sticky mode"
+    if descriptor.accepts_input:
+        # The sticky slot is display-only (v1): input widgets stay inline so
+        # the agent's pause-and-ask flow is unambiguous. A widget that both
+        # declares sticky mode and accepts input is a misconfiguration.
+        return f"widget '{widget_type}' accepts input; the sticky slot is display-only"
     ok, msg = registry.validate(widget_type, data)
     if not ok:
         return f"schema validation failed: {msg}"

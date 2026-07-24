@@ -61,6 +61,33 @@ async def test_set_sticky_rejects_non_sticky_widget(config, widgets_ready):
 
 
 @pytest.mark.asyncio
+async def test_set_sticky_rejects_input_widget(config, monkeypatch):
+    # A widget declaring sticky mode AND accepts_input must be rejected — the
+    # sticky slot is display-only (v1). No real widget is configured this way,
+    # so stub the registry to exercise the guard directly.
+    from decafclaw import sticky as sticky_mod
+
+    class _Desc:
+        modes = ["inline", "sticky"]
+        accepts_input = True
+
+    class _Reg:
+        def get(self, name):
+            return _Desc()
+
+        def validate(self, name, data):
+            return (True, "")
+
+        def normalize(self, name, data):
+            return data
+
+    monkeypatch.setattr(sticky_mod, "get_widget_registry", lambda: _Reg())
+    res = await sticky_mod.set_sticky(config, "conv-i", "some_input_widget", {})
+    assert not res.ok
+    assert "display-only" in res.error
+
+
+@pytest.mark.asyncio
 async def test_set_sticky_replaces_previous(config, widgets_ready):
     await sticky.set_sticky(config, "conv-s", "markdown_document", {"content": "# a"})
     await sticky.set_sticky(config, "conv-s", "markdown_document", {"content": "# b"})

@@ -43,7 +43,7 @@ class StickySlot extends LitElement {
       <div class="sticky-slot ${collapsed ? 'sticky-collapsed' : ''}">
         <div class="sticky-header" @click=${() => toggleCollapsed()}>
           <span class="sticky-summary">${this._summaryText()}</span>
-          <button class="sticky-toggle dc-icon-btn" aria-label="Toggle sticky panel"
+          <button type="button" class="sticky-toggle dc-icon-btn" aria-label="Toggle sticky panel"
                   @click=${(e) => { e.stopPropagation(); toggleCollapsed(); }}>
             ${collapsed ? '▸' : '▾'}
           </button>
