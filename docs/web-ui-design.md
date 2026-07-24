@@ -48,6 +48,45 @@ Resolves to `#525f7a` (dark blue-gray) in both themes. Used by Pico as a button 
 
 ---
 
+## Color palettes / theming
+
+The UI theme is two orthogonal attributes on `<html>`, both managed by
+`lib/theme.js`:
+
+- `data-theme` = `light` | `dark` | *(absent = system)* — Pico's built-in
+  structural base. Unchanged from stock Pico.
+- `data-palette` = `dracula` | `solarized-light` | *(absent = stock Pico
+  colors)* — our color overlay, layered on top of the base.
+
+A single theme **name** resolves through the `THEMES` registry in `lib/theme.js`
+to a descriptor carrying both attributes, so a palette always pins its required
+base mode (Dracula → dark, Solarized Light → light) and nonsensical combos are
+unrepresentable. The active name persists under localStorage `decafclaw-theme`
+(backward compatible with the legacy `light`/`dark`/`system` values).
+
+The `theme-toggle` component surfaces this as base light/dark/system buttons plus
+a 🎨 palette popover. It's one logical selection: clicking a base button clears
+any palette; picking a palette supersedes the base.
+
+### The primary-family exception
+
+Palettes are the **one sanctioned place** we set `--pico-primary-background` and
+`--pico-primary-inverse` (listed under "variables we deliberately don't touch"
+above for component code). Recoloring the brand primary is the whole point of a
+palette, and setting these is exactly what makes the button-scoped alias resolve
+to the palette's color instead of stock Pico blue. The exception is scoped to the
+`[data-palette="…"]` block only.
+
+### Adding a palette
+
+1. Create `styles/palettes/<name>.css` with a single `:root[data-palette="<name>"]`
+   block overriding the color tokens (see `dracula.css` for the full token list).
+2. Add the `@import` to `style.css` after `variables.css`.
+3. Add one entry to `THEMES` in `lib/theme.js` (`kind: 'palette'`, the required
+   `dataTheme` base, `dataPalette` = the file name, and a `dot` swatch color).
+
+---
+
 ## Component primitives
 
 The four shared classes live in `src/decafclaw/web/static/styles/primitives.css`, loaded as the second `@import` in `style.css` so primitive rules sit deliberately upstream of any per-component override.

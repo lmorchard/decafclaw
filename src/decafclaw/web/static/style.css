@@ -1,4 +1,6 @@
 @import './styles/variables.css';
+@import './styles/palettes/dracula.css';
+@import './styles/palettes/solarized-light.css';
 @import './styles/primitives.css';
 @import './styles/layout.css';
 @import './styles/login.css';

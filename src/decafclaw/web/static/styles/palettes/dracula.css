@@ -1,0 +1,29 @@
+/* Dracula palette — dark base. Hex verified against https://spec.draculatheme.com/
+ *
+ * Applied when <html data-palette="dracula"> (set alongside data-theme="dark"
+ * by lib/theme.js). Overrides only the color tokens that define Dracula, on top
+ * of Pico's dark base — including the --pico-primary-* family, which palettes
+ * are the sanctioned place to set (see docs/web-ui-design.md). */
+
+:root[data-palette="dracula"] {
+  --pico-background-color: #282a36;
+  --pico-color: #f8f8f2;
+  --pico-muted-color: #6272a4;
+
+  --pico-card-background-color: #2f313f;
+  --pico-card-sectioning-background-color: #2f313f;
+  --pico-form-element-background-color: #21222c;
+  --pico-muted-border-color: #44475a;
+
+  --pico-primary: #bd93f9;
+  --pico-primary-hover: #caa6fa;
+  --pico-primary-focus: rgba(189, 147, 249, 0.375);
+  --pico-primary-background: #bd93f9;
+  --pico-primary-inverse: #282a36;
+
+  --pico-code-background-color: #21222c;
+  --pico-mark-background-color: #f1fa8c;
+  --pico-mark-color: #282a36;
+  --pico-del-color: #ff5555;
+  --pico-ins-color: #50fa7b;
+}

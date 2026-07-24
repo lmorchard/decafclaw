@@ -1,0 +1,30 @@
+/* Solarized Light palette — light base. Ethan Schoonover's published palette
+ * (https://ethanschoonover.com/solarized/), MIT-licensed.
+ *
+ * Applied when <html data-palette="solarized-light"> (set alongside
+ * data-theme="light" by lib/theme.js). Overrides only the color tokens on top
+ * of Pico's light base — including the --pico-primary-* family (see
+ * docs/web-ui-design.md). */
+
+:root[data-palette="solarized-light"] {
+  --pico-background-color: #fdf6e3;   /* base3  */
+  --pico-color: #657b83;              /* base00 */
+  --pico-muted-color: #93a1a1;        /* base1  */
+
+  --pico-card-background-color: #eee8d5;            /* base2 */
+  --pico-card-sectioning-background-color: #eee8d5; /* base2 */
+  --pico-form-element-background-color: #fdf6e3;    /* base3 */
+  --pico-muted-border-color: #93a1a1;               /* base1 */
+
+  --pico-primary: #268bd2;            /* blue */
+  --pico-primary-hover: #1a6ea8;
+  --pico-primary-focus: rgba(38, 139, 210, 0.25);
+  --pico-primary-background: #268bd2;
+  --pico-primary-inverse: #fdf6e3;
+
+  --pico-code-background-color: #eee8d5;   /* base2 */
+  --pico-mark-background-color: #eee8d5;   /* base2 */
+  --pico-mark-color: #657b83;              /* base00 */
+  --pico-del-color: #dc322f;          /* red   */
+  --pico-ins-color: #859900;          /* green */
+}
