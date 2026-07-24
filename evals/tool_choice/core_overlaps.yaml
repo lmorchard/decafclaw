@@ -276,8 +276,9 @@
   near_miss: [vault_update_frontmatter, vault_write]
   notes: |
     "Across my whole vault" + "based on how often pages get retrieved and
-    linked to" (not a guess) is the deterministic, vault-wide recompute —
-    exactly what vault_recompute_importance does from measured signals.
+    linked to" (not a guess) is the deterministic, bulk recompute over the
+    agent's managed pages — exactly what vault_recompute_importance does from
+    measured signals.
     vault_update_frontmatter only ever touches ONE named page's fields;
     it has no vault-wide sweep. vault_write would need the caller to
     read/edit/resubmit every page's body just to bump one field.
