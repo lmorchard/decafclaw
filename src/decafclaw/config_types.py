@@ -440,6 +440,21 @@ class WorkflowConfig:
 
 
 @dataclass
+class LoopBreakerConfig:
+    """Diagnostic guardrails for infinite loop detection (#598).
+
+    The agent loop monitors tool-call patterns to detect infinite loops
+    (same tool with same args N times) and error surges (E errors within
+    W tool results). Tuning these thresholds tunes the sensitivity of
+    the trip signal.
+    """
+    enabled: bool = True
+    repeat_threshold: int = 3      # same (tool, args) N times → trip
+    error_threshold: int = 4       # this many errors...
+    error_window: int = 6          # ...within the last N tool results → trip
+
+
+@dataclass
 class TelemetryConfig:
     """Instrumentation sidecars (#310 tool usage, #409 reflection metrics).
 

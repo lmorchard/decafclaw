@@ -100,6 +100,7 @@ See [docs/context-composer.md](docs/context-composer.md), [docs/semantic-search.
 - **Confirmations are persistent conversation messages** (`role: "confirmation_request"` / `"confirmation_response"`). Pending confirmations survive page reload and server restart (startup scan recovers them). Typed `ConfirmationAction` handlers determine on-approve/on-deny behavior.
 - **Transports subscribe to per-conversation event streams** via `manager.subscribe(conv_id, callback)` — not the global bus. Manager bridges global → per-conversation.
 - **Self-reflection is fail-open** ([docs/reflection.md](docs/reflection.md)). Skipped for child agents, cancelled turns, empty responses. Retries consume `max_tool_iterations` budget.
+- **Per-turn loop breaker** ([docs/loop-breaker.md](docs/loop-breaker.md)) detects autonomous tool-call thrash (repeated identical calls or an error surge) and escalates: first trip injects an ephemeral (never archived) diagnostic nudge, a second trip hard-stops the turn. The related diagnostic/apology/phantom-call guardrail prompt text lives in `AGENT.md`, not in code.
 - **Pre-compaction memory sweep** runs as an isolated background child agent before compaction summarizes old history. Vault-only tools, fail-open, controlled by `compaction.memory_sweep_enabled`. Prompt at `data/{agent_id}/MEMORY_SWEEP.md` (bundled fallback).
 
 ### Mattermost-specific
@@ -186,6 +187,7 @@ Full doc index: [docs/index.md](docs/index.md). Hot files for navigation:
 - `prompts/` — System prompt assembly
 - `commands.py` — User-invokable commands
 - `reflection.py` — Self-reflection (Reflexion pattern)
+- `loop_breaker.py` — Per-turn autonomous tool-call thrash detector (nudge → hard-stop escalation, #598)
 - `tool_telemetry.py` — Tool-usage telemetry subscriber + report (#310); `make tool-usage-report`
 - `reflection_metrics.py` — Reflection cost/effectiveness telemetry subscriber + stats (#409); `make reflection-stats`
 - `heartbeat.py`, `schedules.py`, `polling.py`

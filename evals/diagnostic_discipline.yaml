@@ -1,0 +1,77 @@
+# Eval for the loop-breaker (#598): a deliberately-unloadable skill
+# fixture where a thrashing agent gets capped. Validates the combined
+# AGENT.md prompt guardrails + LoopBreaker mechanism (src/decafclaw/
+# loop_breaker.py) end-to-end, with real LLM calls.
+#
+# Fixture: evals/fixtures/broken_skill/SKILL.md — frontmatter is missing
+# the required `description` field, so `validate_skill_md` rejects it
+# during skill discovery.
+#
+# Fixture-loading note: the eval harness (src/decafclaw/eval/runner.py)
+# has no path-based skill-fixture loader — `setup.skills` only
+# pre-activates *discovered* skills by name, and discovery only scans
+# real filesystem directories (workspace/admin/bundled/extra tiers). So
+# this case inlines the fixture's content via `setup.workspace_files`
+# (same convention as evals/ingest.yaml) at
+# "skills/broken_skill/SKILL.md" — the workspace tier that
+# `discover_skills` scans (`{workspace_path}/skills/`). Only the
+# frontmatter needs to match evals/fixtures/broken_skill/SKILL.md (same
+# `name: broken_skill`, still missing `description`) — that's what
+# drives the validation failure this eval depends on; the prose bodies
+# need not match.
+#
+# Discovery-timing note: `config.discovered_skills` is populated once,
+# before `setup.workspace_files` are written to disk (see
+# `run_test` in runner.py). So the agent's first `activate_skill
+# (name="broken_skill")` reliably errors with "not found" — the broken
+# skill isn't even in the catalog yet. Only `refresh_skills` (which
+# re-scans) or `skill_validate` will resurface it as a validation
+# rejection with the actual reason ("missing required 'description'
+# field"), giving the agent what it needs to fix the file.
+#
+# Assertion note: `expect_tool_count_by_name` in the real runner asserts
+# EXACT equality (`got != want`), not an upper bound — it can't express
+# "at most N edits," and forcing a made-up exact count here would be
+# flaky against a stochastic real-LLM run (the number of fix attempts
+# before the agent gets the frontmatter right is not deterministic).
+# The mechanical, deterministic bound on thrash is `max_tool_calls` /
+# `max_tool_errors` — both genuine upper bounds per the runner's
+# `_check_expect` implementation, and the fields the eval docs already
+# recommend for bounding thrash-prone tests. A true 200-iteration loop
+# would blow through either bound many times over; the loop breaker
+# (repeat_threshold=3 same-call, or error_threshold=4-in-6-window) trips
+# well before that, so this bound is only satisfiable if the breaker
+# (or a clean first-try fix) actually caps things.
+#
+# `expect_tool` was tried and dropped: which tool the model reaches for
+# first (activate_skill vs. tool_search vs. skill_validate) varies run
+# to run and isn't the thing this eval cares about — only the bounded
+# tool-call/error count is. Verified live: one run had the model try
+# `activate_skill("broken_skill")` 3x with identical args (fixing the
+# file in between via a botched-then-corrected workspace_edit) and the
+# loop breaker fired for real — the response ended with
+# "[loop-breaker] Stopped: you called activate_skill 3x with the same
+# args without progress." — inside the max_tool_calls/max_tool_errors
+# bound. Another run had the model call `tool_search` once, conclude
+# the skill wasn't findable, and stop — also well inside the bound.
+# Both are legitimate outcomes for this eval's purpose.
+
+- name: "loop_breaker_caps_edit_thrash"
+  setup:
+    reflection_enabled: false
+    workspace_files:
+      "skills/broken_skill/SKILL.md": |
+        ---
+        name: broken_skill
+        ---
+
+        # Broken Skill (eval fixture)
+
+        This is a deliberately-unloadable skill fixture for the loop-breaker
+        eval (#598). Its frontmatter is missing the required `description`
+        field, so skill discovery rejects it.
+  input: >
+    Load and use the "broken_skill" skill. If it won't load, get it working.
+  expect:
+    max_tool_calls: 15
+    max_tool_errors: 15
