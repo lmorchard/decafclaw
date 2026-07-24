@@ -44,8 +44,19 @@ def _save_allow_pattern(config, pattern: str) -> None:
         log.info(f"Added shell allow pattern: {pattern}")
 
 
-# Shell metacharacters that could chain additional commands
-_SHELL_CHAIN_TOKENS = (";", "&&", "||", "|", "`", "$(", "\n")
+# Shell metacharacters that could chain additional commands. This tuple is a
+# security boundary, so it is kept as a minimal *covering* set — each entry is
+# a substring of every operator it needs to catch:
+#   ";"   sequence
+#   "&"   background, and covers "&&"
+#   "|"   pipe, and covers "||"
+#   "`"   command substitution (legacy)
+#   "$("  command substitution
+#   "\n"  newline as a statement separator
+# Note this covers command *chaining* only. Redirection (`>`, `<`) is not
+# blocked: it cannot introduce a second command, and rejecting it would break
+# too many legitimate invocations.
+_SHELL_CHAIN_TOKENS = (";", "&", "|", "`", "$(", "\n")
 
 # fnmatch wildcards. A pattern containing any of these matches a *class* of
 # commands rather than one literal command.

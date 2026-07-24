@@ -55,6 +55,10 @@ def test_match_multiple_patterns():
     " `whoami`",
     " $(cat /etc/passwd)",
     "\nrm -rf ~",
+    # Bare `&` backgrounds the first command and runs the second — chaining
+    # without any of the more obvious tokens.
+    " & rm -rf ~",
+    "& rm -rf ~",
 ])
 def test_wildcard_pattern_rejects_chained_command(suffix):
     """A wildcard pattern must not match a command carrying chain tokens."""

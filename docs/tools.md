@@ -89,9 +89,24 @@ Otherwise it falls through to a user confirmation, which offers to save a sugges
 
 ### Wildcard patterns never match chained commands
 
-Approving a command offers to persist a *wildcarded* pattern — approving `python foo.py --a` suggests `python foo.py *`. Because fnmatch's `*` spans `;`, `|`, `&&`, `||`, backticks, `$(`, and newlines, a naive match would let one approval authorize everything sharing that prefix, including `python foo.py --a; rm -rf ~`.
+Approving a command offers to persist a *wildcarded* pattern — approving `python foo.py --a` suggests `python foo.py *`. Because fnmatch's `*` spans every shell chaining operator, a naive match would let one approval authorize everything sharing that prefix, including `python foo.py --a; rm -rf ~`.
 
 So `_command_matches_pattern` enforces: **a pattern containing a glob wildcard (`*`, `?`, `[`) will not match a command containing shell chaining tokens.** Such a command falls through to confirmation instead.
+
+The chaining tokens (`_SHELL_CHAIN_TOKENS`) are a minimal covering set — each is a substring of every operator it catches:
+
+| Token | Catches |
+|---|---|
+| `;` | sequence |
+| `&` | background, and `&&` |
+| `\|` | pipe, and `\|\|` |
+| `` ` `` | command substitution (legacy) |
+| `$(` | command substitution |
+| `\n` | newline as statement separator |
+
+Don't add `&&` or `||` back as separate entries — they're already covered, and the redundancy invites the mistake of thinking `&&` is handled while bare `&` isn't. That exact gap shipped once: `&` was missing while `&&` was present, so `python foo.py --a & rm -rf ~` backgrounded the approved command and ran an unapproved one.
+
+This covers command *chaining* only. Redirection (`>`, `<`) is deliberately not blocked — it can't introduce a second command, and rejecting it would break too many legitimate invocations. A wildcard pattern therefore still permits redirection in its arguments.
 
 Literal patterns are exempt — they pin the command end to end, so there's no wildcard for an unapproved suffix to slip through. A user who allowlists `git log | head -20` gets exactly that command and nothing else.
 
