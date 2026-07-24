@@ -2,7 +2,13 @@
 
 import pytest
 
-from decafclaw.eval.diagnostics import CANONICAL_AXES, aggregate_by_axis, parse_axes
+from decafclaw.eval.diagnostics import (
+    CANONICAL_AXES,
+    aggregate_by_axis,
+    detect_files_cited,
+    detect_files_read,
+    parse_axes,
+)
 
 
 def test_parse_axes_absent_returns_empty():
@@ -61,3 +67,31 @@ def test_aggregate_empty_axis_absent():
     agg = aggregate_by_axis([{"name": "a", "status": "pass"}], [{"name": "a"}])
     assert "retrieval" not in agg  # only axes actually present appear
     assert agg["untagged"]["passed"] == 1
+
+
+def test_detect_files_read_maps_args():
+    calls = [
+        ("vault_read", {"page": "agent/pages/DecafClaw"}),
+        ("workspace_read", {"path": "notes/todo.md"}),
+        ("conversation_search", {"query": "x"}),  # not a read tool
+        ("vault_read", {"page": "agent/pages/DecafClaw"}),  # dup
+    ]
+    assert detect_files_read(calls) == ["agent/pages/DecafClaw", "notes/todo.md"]
+
+
+def test_detect_files_read_drops_empty():
+    assert detect_files_read([("vault_read", {})]) == []
+
+
+def test_detect_files_cited_path_and_wiki():
+    resp = "See [[Escalation Runbook]]. I read the escalation-runbook page."
+    known = ["agent/pages/escalation-runbook.md", "agent/pages/oncall-rotation.md"]
+    cited = detect_files_cited(resp, known)
+    assert "agent/pages/escalation-runbook.md" in cited  # stem 'escalation-runbook' matched
+    assert "Escalation Runbook" in cited                 # wiki-mention
+    assert "agent/pages/oncall-rotation.md" not in cited  # never mentioned
+
+
+def test_detect_files_cited_no_false_positive_on_unrelated():
+    resp = "I don't have anything on that topic."
+    assert detect_files_cited(resp, ["agent/pages/escalation-runbook.md"]) == []

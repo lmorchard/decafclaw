@@ -8,12 +8,17 @@ failure-mode scorecard (see #528).
 
 from __future__ import annotations
 
+import re
+from pathlib import PurePosixPath
+
 CANONICAL_AXES: frozenset[str] = frozenset(
     {"retrieval", "routing", "answer_quality", "workflow_discipline"}
 )
 
 # Read-shaped tool calls whose named arg identifies the file/page read.
 READ_TOOL_ARGS: dict[str, str] = {"vault_read": "page", "workspace_read": "path"}
+
+_WIKI_RE = re.compile(r"\[\[([^\]]+)\]\]")
 
 
 def parse_axes(case: dict) -> list[str]:
@@ -59,3 +64,43 @@ def aggregate_by_axis(test_results: list[dict], cases: list[dict]) -> dict:
     for b in buckets.values():
         b["pass_rate"] = round(b["passed"] / b["total"], 4) if b["total"] else 0.0
     return buckets
+
+
+def detect_files_read(tool_calls: list[tuple[str, dict]]) -> list[str]:
+    """File/page identifiers read this turn, from read-shaped tool calls.
+
+    ``tool_calls`` is the ``(name, parsed_args)`` list from
+    ``runner._collect_tool_calls``. Order-preserving, deduped, empties dropped.
+    """
+    out: list[str] = []
+    for name, args in tool_calls:
+        arg_key = READ_TOOL_ARGS.get(name)
+        if not arg_key:
+            continue
+        value = args.get(arg_key)
+        if value and value not in out:
+            out.append(value)
+    return out
+
+
+def detect_files_cited(response: str, known_paths: list[str]) -> list[str]:
+    """Heuristic: which known files/pages the final response cites.
+
+    A ``known_path`` counts as cited if its full path, basename, or stem
+    (case-insensitive) is a substring of ``response``. Additionally, every
+    ``[[PageName]]`` wiki-mention in the response is included. Documented as a
+    heuristic — substring matching can over- or under-count (#531).
+    """
+    lower = response.lower()
+    cited: list[str] = []
+    for path in known_paths:
+        p = PurePosixPath(path)
+        needles = {path.lower(), p.name.lower(), p.stem.lower()}
+        if any(n and n in lower for n in needles):
+            if path not in cited:
+                cited.append(path)
+    for m in _WIKI_RE.findall(response):
+        name = m.strip()
+        if name and name not in cited:
+            cited.append(name)
+    return cited
