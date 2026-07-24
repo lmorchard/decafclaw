@@ -1098,6 +1098,54 @@ Then, in the frontmatter-resolution block, add the `fm_raw` branch **before** th
         ...  # unchanged from Task 4
 ```
 
+- [ ] **Step 3b: Close the `rename_to` mutual-exclusion hole**
+
+The existing guard at `:1302-1307` rejects `rename_to` combined with `content`, but checks **only** the `"content"` key. Tasks 1, 4, and 5 widened the accepted payload keys to `body`, `frontmatter`, and `frontmatter_raw`, so `{"rename_to": ..., "body": ...}` currently slips past it and falls through to `_vault_rename`, silently discarding the write. Widen the guard to the full key set:
+
+```python
+    rename_to = body.get("rename_to")
+    if rename_to is not None:
+        conflicting = [
+            key for key in ("content", "body", "frontmatter", "frontmatter_raw")
+            if key in body
+        ]
+        if conflicting:
+            return JSONResponse(
+                {"error": f"cannot combine rename_to with {', '.join(sorted(conflicting))}"},
+                status_code=400,
+            )
+        return await _vault_rename(
+            config, vault, target, page_name, rename_to,
+            event_bus=event_bus,
+        )
+```
+
+Add a test:
+
+```python
+@pytest.mark.asyncio
+async def test_vault_rename_rejects_combined_write_payloads(client, http_config):
+    """Every write key must collide with rename_to, not just `content`.
+
+    A payload the endpoint accepts but silently discards is worse than a 400.
+    """
+    path = http_config.vault_agent_pages_dir / "Combo.md"
+    path.write_text("---\nimportance: 0.4\n---\nBody.\n")
+    for key, value in [
+        ("content", "x"),
+        ("body", "x"),
+        ("frontmatter", {"summary": "s"}),
+        ("frontmatter_raw", "a: 1\n"),
+    ]:
+        resp = await client.put(
+            "/api/vault/agent/pages/Combo",
+            json={"rename_to": "agent/pages/Renamed", key: value},
+        )
+        assert resp.status_code == 400, f"{key} did not collide with rename_to"
+        assert key in resp.json()["error"]
+    assert path.exists(), "no rename should have happened"
+```
+
 - [ ] **Step 4: Run the tests to verify they pass**
 
 ```bash
