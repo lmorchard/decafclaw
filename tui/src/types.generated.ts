@@ -131,6 +131,18 @@ export interface SrvReflectionResult {
   error: string;
 }
 
+export interface SrvStickyClear {
+  type: "sticky_clear";
+  conv_id: string;
+}
+
+export interface SrvStickySet {
+  type: "sticky_set";
+  conv_id: string;
+  widget_type: string;
+  data: Record<string, unknown>;
+}
+
 export interface SrvToolEnd {
   type: "tool_end";
   conv_id: string;
@@ -248,6 +260,8 @@ export type ServerMessage =
   | SrvNotificationCreated
   | SrvNotificationRead
   | SrvReflectionResult
+  | SrvStickyClear
+  | SrvStickySet
   | SrvToolEnd
   | SrvToolStart
   | SrvToolStatus
