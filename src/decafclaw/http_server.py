@@ -1428,7 +1428,7 @@ async def vault_write(request: Request, username: str) -> JSONResponse:
                 )
             if not isinstance(parsed, dict):
                 return JSONResponse(
-                    {"error": "frontmatter must be a mapping"}, status_code=400,
+                    {"error": "frontmatter_raw must be a mapping"}, status_code=400,
                 )
             # Stored verbatim rather than re-dumped, so the comments and key
             # order the user typed survive.

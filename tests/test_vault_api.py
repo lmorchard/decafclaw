@@ -902,13 +902,15 @@ async def test_vault_write_frontmatter_both_shapes_rejected(
 ):
     """Patch and replace cannot be reconciled in one write."""
     path = http_config.vault_agent_pages_dir / "RawBoth.md"
-    path.write_text("---\nimportance: 0.4\n---\nBody.\n")
+    original = "---\nimportance: 0.4\n---\nBody.\n"
+    path.write_text(original)
     resp = await client.put(
         "/api/vault/agent/pages/RawBoth",
         json={"frontmatter": {"summary": "S"}, "frontmatter_raw": "a: 1\n"},
     )
     assert resp.status_code == 400
     assert "mutually exclusive" in resp.json()["error"]
+    assert path.read_text() == original
 
 
 @pytest.mark.asyncio
