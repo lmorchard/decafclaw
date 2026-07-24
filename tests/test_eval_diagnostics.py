@@ -5,6 +5,7 @@ import pytest
 from decafclaw.eval.diagnostics import (
     CANONICAL_AXES,
     aggregate_by_axis,
+    build_turn_diagnostics,
     detect_files_cited,
     detect_files_read,
     parse_axes,
@@ -95,3 +96,52 @@ def test_detect_files_cited_path_and_wiki():
 def test_detect_files_cited_no_false_positive_on_unrelated():
     resp = "I don't have anything on that topic."
     assert detect_files_cited(resp, ["agent/pages/escalation-runbook.md"]) == []
+
+
+def _sidecar():
+    return {
+        "total_tokens_estimated": 12000,
+        "total_tokens_actual": 11800,
+        "context_window_size": 1000000,
+        "compaction_threshold": 150000,
+        "sources": [
+            {"source": "system", "tokens_estimated": 3000, "items_included": 1,
+             "items_truncated": 0, "details": {}},
+            {"source": "tools", "tokens_estimated": 2000, "items_included": 8,
+             "items_truncated": 40, "details": {}},
+            {"source": "retrieved_context", "tokens_estimated": 1500,
+             "items_included": 3, "items_truncated": 0, "details": {}},
+        ],
+        "memory_candidates": [
+            {"file_path": "agent/pages/escalation-runbook.md",
+             "composite_score": 0.82, "similarity": 0.79, "recency": 0.5,
+             "importance": 0.9},
+        ],
+    }
+
+
+def test_build_turn_diagnostics_full():
+    calls = [("vault_read", {"page": "agent/pages/escalation-runbook.md"})]
+    resp = "Per the escalation-runbook, Priya is paged first."
+    d = build_turn_diagnostics(_sidecar(), calls, resp)
+    assert d["tokens_by_section"] == {"system": 3000, "tools": 2000,
+                                      "retrieved_context": 1500}
+    assert d["active_tools"] == 8
+    assert d["deferred_tools"] == 40
+    assert d["total_tokens_estimated"] == 12000
+    assert d["files_read"] == ["agent/pages/escalation-runbook.md"]
+    assert "agent/pages/escalation-runbook.md" in d["files_cited"]
+    assert d["tool_calls"] == {"names": ["vault_read"], "count": 1}
+    assert d["retrieved_candidates"][0]["file_path"] == "agent/pages/escalation-runbook.md"
+
+
+def test_build_turn_diagnostics_none_sidecar_degrades():
+    calls = [("workspace_read", {"path": "notes/x.md"})]
+    d = build_turn_diagnostics(None, calls, "read notes/x.md")
+    assert d["tokens_by_section"] == {}
+    assert d["active_tools"] is None
+    assert d["deferred_tools"] is None
+    assert d["total_tokens_estimated"] is None
+    assert d["retrieved_candidates"] == []
+    assert d["files_read"] == ["notes/x.md"]
+    assert d["tool_calls"] == {"names": ["workspace_read"], "count": 1}

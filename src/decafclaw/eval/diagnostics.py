@@ -104,3 +104,52 @@ def detect_files_cited(response: str, known_paths: list[str]) -> list[str]:
         if name and name not in cited:
             cited.append(name)
     return cited
+
+
+def build_turn_diagnostics(
+    sidecar: dict | None,
+    tool_calls: list[tuple[str, dict]],
+    response: str,
+) -> dict:
+    """Assemble the per-turn ``diagnostics`` block for an eval result (#531).
+
+    Sidecar-sourced fields (token split, tool counts, retrieved candidates,
+    totals) reuse the context sidecar written on turn-exit — no recompute.
+    Derived fields (files read/cited, tool-call names+count) come from the
+    turn's history slice. A ``None`` sidecar (missing file) degrades to the
+    derived fields only; never raises.
+    """
+    sidecar = sidecar or {}
+    sources = sidecar.get("sources") or []
+    tokens_by_section = {s.get("source", ""): s.get("tokens_estimated", 0)
+                         for s in sources}
+    tools_src = next((s for s in sources if s.get("source") == "tools"), None)
+
+    candidates = [
+        {
+            "file_path": c.get("file_path", ""),
+            "composite_score": c.get("composite_score"),
+            "similarity": c.get("similarity"),
+            "recency": c.get("recency"),
+            "importance": c.get("importance"),
+        }
+        for c in (sidecar.get("memory_candidates") or [])
+    ]
+
+    files_read = detect_files_read(tool_calls)
+    candidate_paths = [c["file_path"] for c in candidates if c["file_path"]]
+    files_cited = detect_files_cited(response, files_read + candidate_paths)
+
+    return {
+        "tokens_by_section": tokens_by_section,
+        "total_tokens_estimated": sidecar.get("total_tokens_estimated"),
+        "total_tokens_actual": sidecar.get("total_tokens_actual"),
+        "context_window_size": sidecar.get("context_window_size"),
+        "compaction_threshold": sidecar.get("compaction_threshold"),
+        "active_tools": tools_src.get("items_included") if tools_src else None,
+        "deferred_tools": tools_src.get("items_truncated") if tools_src else None,
+        "retrieved_candidates": candidates,
+        "files_read": files_read,
+        "files_cited": files_cited,
+        "tool_calls": {"names": [n for n, _ in tool_calls], "count": len(tool_calls)},
+    }
