@@ -194,6 +194,42 @@ evals/results/
       test-name.md
 ```
 
+## Per-turn diagnostics
+
+Each turn's result (each entry in `result["turns"]` for multi-turn tests, or the top-level `result` for single-turn tests) carries a `"diagnostics"` block built by `decafclaw.eval.diagnostics.build_turn_diagnostics`. It reuses the per-conversation context sidecar the agent already writes on turn-exit (see [Context inspection](context-composer.md#context-inspection)) — no separate recompute — plus a few fields derived from the turn's own history slice:
+
+| Key | Source | Notes |
+|-----|--------|-------|
+| `tokens_by_section` | sidecar | `{source: tokens_estimated}` per context source (`system`, `tools`, `retrieved_context`, ...) |
+| `total_tokens_estimated` / `total_tokens_actual` | sidecar | Whole-turn totals |
+| `context_window_size` / `compaction_threshold` | sidecar | Model's configured limits |
+| `active_tools` / `deferred_tools` | sidecar | `items_included` / `items_truncated` for the `tools` source |
+| `retrieved_candidates` | sidecar | Memory-retrieval candidates with `file_path`, `composite_score`, `similarity`, `recency`, `importance` |
+| `files_read` | derived | Vault/workspace paths read via tool calls this turn |
+| `files_cited` | derived | Of `files_read` plus retrieved-candidate paths, which ones the response text actually references — substring match on file path/stem, or a `[[wiki link]]` mention |
+| `tool_calls` | derived | `{names: [...], count: N}` for this turn |
+
+A missing or unreadable sidecar degrades to the derived fields only (`build_turn_diagnostics` never raises); sidecar-sourced fields come back `None`/empty.
+
+This block is what turns a bare pass/fail into an actionable failure diagnosis, roughly along four lines (independent of, though often correlated with, the [axis tags](#axis-tagging--the-failure-mode-scorecard) above):
+
+- **retrieval** — check `retrieved_candidates`: was the right page even a candidate, and how did it score?
+- **routing** — check `tool_calls.names` and `files_read`: did the agent reach for the right tool at all?
+- **answer** — check `files_cited` vs `files_read`: did the agent read the right thing but fail to ground the answer in it (or fabricate)?
+- **bloat** — check `tokens_by_section` and `active_tools`/`deferred_tools`: is the turn drowning in context it didn't need?
+
+Note what's *not* here: no per-tool-call durations (deferred — the sidecar doesn't currently time individual tool calls).
+
+`--verbose` prints a compact summary of this block after each test's response snippet:
+
+```
+[3/12] retrieves the right page for a vague query ....... PASS  (4.2s, 3100 tokens, 1 tools)
+         Response: Per the migration-plan page, the cutover is scheduled for...
+         Tokens: system=2400  tools=1800  retrieved_context=900  (active=6, deferred=31)
+         Candidates: agent/pages/migration-plan.md:0.87, agent/pages/rollout-notes.md:0.41
+         Read: ['agent/pages/migration-plan.md']  Cited: ['agent/pages/migration-plan.md']  Tools: ['vault_read']
+```
+
 ## Axis tagging & the failure-mode scorecard
 
 A test case can tag itself with one or more failure-mode axes via the top-level `tests:` key — a string for a single axis, or a list for multiple:

@@ -1,7 +1,11 @@
 """Unit tests for the deterministic eval-diagnostics helpers (#528, #531)."""
 
+import json
+
 import pytest
 
+from decafclaw.config import Config
+from decafclaw.eval import runner as eval_runner
 from decafclaw.eval.diagnostics import (
     CANONICAL_AXES,
     aggregate_by_axis,
@@ -10,6 +14,7 @@ from decafclaw.eval.diagnostics import (
     detect_files_read,
     parse_axes,
 )
+from decafclaw.eval.runner import _build_test_config, run_test
 
 
 def test_parse_axes_absent_returns_empty():
@@ -145,3 +150,42 @@ def test_build_turn_diagnostics_none_sidecar_degrades():
     assert d["retrieved_candidates"] == []
     assert d["files_read"] == ["notes/x.md"]
     assert d["tool_calls"] == {"names": ["workspace_read"], "count": 1}
+
+
+class _FakeResult:
+    def __init__(self, text):
+        self.text = text
+
+
+@pytest.mark.asyncio
+async def test_run_test_attaches_diagnostics(tmp_path, monkeypatch):
+    # Fake the LLM turn: append a synthetic vault_read call to history, no model.
+    async def _fake_turn(ctx, turn_input, history):
+        history.append({
+            "role": "assistant", "content": "",
+            "tool_calls": [{"id": "c0", "function": {
+                "name": "vault_read",
+                "arguments": json.dumps({"page": "agent/pages/foo"})}}],
+        })
+        history.append({"role": "tool", "tool_call_id": "c0", "content": "ok"})
+        return _FakeResult("I read agent/pages/foo and here is the answer.")
+
+    monkeypatch.setattr(eval_runner, "run_agent_turn", _fake_turn)
+    monkeypatch.setattr(
+        eval_runner, "read_context_sidecar",
+        lambda config, conv_id: {
+            "total_tokens_estimated": 100, "sources": [
+                {"source": "tools", "tokens_estimated": 10,
+                 "items_included": 5, "items_truncated": 20, "details": {}}],
+            "memory_candidates": []},
+    )
+
+    cfg = _build_test_config(Config(), {"setup": {}}, str(tmp_path))
+    result = await run_test(cfg, {"name": "t", "input": "hi", "expect": {}})
+
+    diag = result["diagnostics"]
+    assert diag["files_read"] == ["agent/pages/foo"]
+    assert "agent/pages/foo" in diag["files_cited"]
+    assert diag["active_tools"] == 5
+    assert diag["deferred_tools"] == 20
+    assert diag["tool_calls"]["count"] == 1
