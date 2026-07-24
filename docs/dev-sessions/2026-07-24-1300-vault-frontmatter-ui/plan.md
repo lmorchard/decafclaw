@@ -2157,6 +2157,22 @@ Then make the panel editable in edit mode and wire the events. Replace the `meta
 
 Finally, flush pending metadata alongside the editor flush in `willUpdate` and `_toggleMode`: in each place that currently calls `editor.flushSave()`, add `await this.#flushMetadata();` immediately before it (`willUpdate` is not async — use `void this.#flushMetadata();` there, matching how it already fires `flushSave()` without awaiting).
 
+- [ ] **Step 3c: Correct the `#reload` fallback comment in `wiki-editor.js`**
+
+Task 7's review established that the `?? data.content` fallback in `#reload()` **cannot fire**, and that its stated rationale is wrong. The reason: `#reload()`'s `fetch` is hardcoded to `/api/vault/...` regardless of the component's `saveEndpoint`, so it never receives a response from the schedule or config endpoints the fallback claims to protect — and the vault endpoint always returns `body`.
+
+Leaving a false rationale in the code is the maintenance trap CLAUDE.md warns about: a future reader would conclude the fallback is load-bearing for those hosts. Reframe the comment to say what is actually true, without changing behavior:
+
+```javascript
+      // The vault endpoint returns `body`; `content` is insurance only. Note
+      // this fetch is hardcoded to /api/vault regardless of `saveEndpoint`, so
+      // schedule-page / config-panel never actually reach this path today —
+      // the fallback exists for whenever that hardcoding is fixed, not because
+      // it fires now. Assigned once so all four uses stay in sync.
+```
+
+Keep the `?? data.content` expression itself. Do **not** attempt to fix the hardcoded endpoint — that is a live pre-existing bug affecting the other two hosts, tracked separately, and out of scope here.
+
 - [ ] **Step 4: Typecheck**
 
 ```bash
