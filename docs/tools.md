@@ -76,6 +76,27 @@ Requires user confirmation unless pre-approved via `shell_allow_patterns.json`.
 
 Background process management (`shell_background_start/status/stop/list`) lives in the bundled `background` skill (auto-activates) — see [Skills](skills.md).
 
+### Approval sources
+
+`check_shell_approval()` is the single chokepoint — don't duplicate its checks. It approves a command if any of these hold, in order:
+
+1. The turn is an admin heartbeat (`user_id == "heartbeat-admin"`).
+2. `shell` (or the calling tool name) is in `ctx.tools.preapproved` — blanket approval from a command's `allowed-tools`.
+3. The command matches a **scoped pattern** from a skill's `allowed-tools: shell(...)` (see [Skills](skills.md#environment-for-shell-based-skills)).
+4. The command matches a **persisted pattern** in `data/{agent_id}/shell_allow_patterns.json`.
+
+Otherwise it falls through to a user confirmation, which offers to save a suggested pattern.
+
+### Wildcard patterns never match chained commands
+
+Approving a command offers to persist a *wildcarded* pattern — approving `python foo.py --a` suggests `python foo.py *`. Because fnmatch's `*` spans `;`, `|`, `&&`, `||`, backticks, `$(`, and newlines, a naive match would let one approval authorize everything sharing that prefix, including `python foo.py --a; rm -rf ~`.
+
+So `_command_matches_pattern` enforces: **a pattern containing a glob wildcard (`*`, `?`, `[`) will not match a command containing shell chaining tokens.** Such a command falls through to confirmation instead.
+
+Literal patterns are exempt — they pin the command end to end, so there's no wildcard for an unapproved suffix to slip through. A user who allowlists `git log | head -20` gets exactly that command and nothing else.
+
+The guard lives inside `_command_matches_pattern` rather than at the call sites, so both the scoped and persisted branches get it automatically. It previously sat at one call site only, and the persisted branch was missing it ([#649](https://github.com/lmorchard/decafclaw/issues/649)).
+
 ## HTTP (`tools/http_tools.py`)
 
 | Tool | What it does |
