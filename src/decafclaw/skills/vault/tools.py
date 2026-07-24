@@ -1141,6 +1141,62 @@ async def _reindex_page(ctx, path: Path) -> None:
         log.warning(f"Failed to reindex vault page '{path}': {e}")
 
 
+def merge_frontmatter(existing: dict, fields: dict, overwrite: bool) -> dict:
+    """Merge coerced field values into existing frontmatter metadata.
+
+    Pure function — no ctx, no I/O — so later callers (dream generation,
+    backfill CLI, garden importance tuning) can reuse the merge logic without
+    a running agent context. Coercion mirrors `get_frontmatter_field`
+    (importance clamped to [0, 1]; tags/keywords to list[str]; summary to
+    str) so the merged result and the parser agree on shape.
+
+    When `overwrite` is False, only fields that are absent or empty in
+    `existing` are filled. When True, every field in `fields` is set,
+    replacing any existing value.
+    """
+    from decafclaw.frontmatter import get_frontmatter_field
+
+    merged = dict(existing)
+    for field, raw_value in fields.items():
+        coerced = get_frontmatter_field({field: raw_value}, field)
+        if not overwrite and merged.get(field) not in (None, "", []):
+            continue
+        merged[field] = coerced
+    return merged
+
+
+async def tool_vault_update_frontmatter(
+    ctx, page: str, fields: dict, overwrite: bool = False,
+) -> ToolResult:
+    """Merge frontmatter fields into a vault page (thin wrapper over
+    `merge_frontmatter`)."""
+    log.info(f"[tool:vault_update_frontmatter] page={page!r} overwrite={overwrite}")
+    path = resolve_page(ctx.config, page)
+    if path is None:
+        return ToolResult(text=f"[error: vault page '{page}' not found]")
+
+    from decafclaw.frontmatter import parse_frontmatter, serialize_frontmatter
+
+    content = path.read_text(encoding="utf-8")
+    metadata, body = parse_frontmatter(content)
+    merged = merge_frontmatter(metadata, fields, overwrite)
+    changed = sorted(field for field in fields if merged.get(field) != metadata.get(field))
+
+    path.write_text(serialize_frontmatter(merged, body), encoding="utf-8")
+    await _reindex_page(ctx, path)
+    await publish_vault_changed(
+        ctx.event_bus, ctx.config, kind=KIND_UPDATE, path=path,
+    )
+
+    return ToolResult(
+        text=(
+            f"Updated frontmatter for '{page}': {', '.join(changed)}"
+            if changed else f"No frontmatter changes for '{page}'"
+        ),
+        data={"path": page, "changed": changed},
+    )
+
+
 async def tool_vault_section(
     ctx,
     page: str,
@@ -1327,6 +1383,7 @@ TOOLS = {
     "vault_show_sections": tool_vault_show_sections,
     "vault_move_lines": tool_vault_move_lines,
     "vault_section": tool_vault_section,
+    "vault_update_frontmatter": tool_vault_update_frontmatter,
 }
 
 TOOL_DEFINITIONS = [
@@ -1829,6 +1886,45 @@ TOOL_DEFINITIONS = [
                     },
                 },
                 "required": ["page", "action"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "vault_update_frontmatter",
+            "description": (
+                "Merge frontmatter fields (summary, importance, tags, keywords, "
+                "etc.) into an existing vault page. By default only fills fields "
+                "that are absent or empty — set overwrite=true to replace existing "
+                "values. Reindexes the page afterward. Does not touch the page body."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "page": {
+                        "type": "string",
+                        "description": (
+                            "Page path relative to vault root or bare name "
+                            "(e.g. 'agent/pages/note', 'My Page')."
+                        ),
+                    },
+                    "fields": {
+                        "type": "object",
+                        "description": (
+                            "Frontmatter fields to merge, e.g. "
+                            '{"summary": "...", "importance": 0.7, "tags": ["a", "b"]}.'
+                        ),
+                    },
+                    "overwrite": {
+                        "type": "boolean",
+                        "description": (
+                            "If true, replace existing field values. "
+                            "If false (default), only fill absent or empty fields."
+                        ),
+                    },
+                },
+                "required": ["page", "fields"],
             },
         },
     },

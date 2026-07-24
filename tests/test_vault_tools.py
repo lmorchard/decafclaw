@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from decafclaw.frontmatter import parse_frontmatter
 from decafclaw.skills.vault._grants import add_grant
 from decafclaw.skills.vault.tools import (
     GateOutcome,
@@ -23,6 +24,7 @@ from decafclaw.skills.vault.tools import (
     tool_vault_recent,
     tool_vault_rename,
     tool_vault_search,
+    tool_vault_update_frontmatter,
     tool_vault_write,
 )
 
@@ -1268,3 +1270,56 @@ class TestVaultRecent:
     async def test_missing_folder_errors(self, ctx, vault_dir):
         result = await tool_vault_recent(ctx, days=7, folder="nope/missing")
         assert "does not exist" in str(result).lower()
+
+
+class TestVaultUpdateFrontmatter:
+    @pytest.mark.asyncio
+    async def test_fills_absent_fields(self, ctx, agent_pages):
+        p = agent_pages / "topic.md"
+        p.write_text("Body text.\n")
+        await tool_vault_update_frontmatter(
+            ctx, page="agent/pages/topic.md",
+            fields={"summary": "s", "importance": 0.8})
+        meta, body = parse_frontmatter(p.read_text())
+        assert meta["summary"] == "s" and meta["importance"] == 0.8
+        assert body.strip() == "Body text."
+
+    @pytest.mark.asyncio
+    async def test_respects_existing_value_when_not_overwrite(self, ctx, agent_pages):
+        p = agent_pages / "topic.md"
+        p.write_text("---\nsummary: manual\n---\nBody.\n")
+        await tool_vault_update_frontmatter(
+            ctx, page="agent/pages/topic.md",
+            fields={"summary": "auto"}, overwrite=False)
+        meta, _ = parse_frontmatter(p.read_text())
+        assert meta["summary"] == "manual"
+
+    @pytest.mark.asyncio
+    async def test_overwrite_replaces(self, ctx, agent_pages):
+        p = agent_pages / "topic.md"
+        p.write_text("---\nimportance: 0.5\n---\nBody.\n")
+        await tool_vault_update_frontmatter(
+            ctx, page="agent/pages/topic.md",
+            fields={"importance": 0.9}, overwrite=True)
+        meta, _ = parse_frontmatter(p.read_text())
+        assert meta["importance"] == 0.9
+
+    @pytest.mark.asyncio
+    async def test_clamps_importance_and_coerces_lists(self, ctx, agent_pages):
+        p = agent_pages / "t.md"
+        p.write_text("Body.\n")
+        await tool_vault_update_frontmatter(
+            ctx, page="agent/pages/t.md",
+            fields={"importance": 5.0, "tags": "a"})
+        meta, _ = parse_frontmatter(p.read_text())
+        assert meta["importance"] == 1.0 and meta["tags"] == ["a"]
+
+    @pytest.mark.asyncio
+    async def test_reindexes_after_write(self, ctx, agent_pages):
+        p = agent_pages / "t.md"
+        p.write_text("Body.\n")
+        with patch("decafclaw.skills.vault.tools._reindex_page",
+                   new_callable=AsyncMock) as rx:
+            await tool_vault_update_frontmatter(
+                ctx, page="agent/pages/t.md", fields={"summary": "s"})
+        rx.assert_awaited_once()
