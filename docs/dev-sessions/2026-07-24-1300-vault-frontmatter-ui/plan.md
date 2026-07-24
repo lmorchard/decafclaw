@@ -970,6 +970,28 @@ async def test_vault_write_frontmatter_raw_empty_removes_block(
 
 
 @pytest.mark.asyncio
+async def test_vault_write_frontmatter_patch_emptying_removes_block(
+    client, http_config,
+):
+    """Nulling every key drops the block entirely, not `{}` or bare delimiters.
+
+    _dump_frontmatter returns None for an empty dict and join_frontmatter then
+    omits the delimiters. Asserted so the behavior is intentional rather than
+    incidental.
+    """
+    path = http_config.vault_agent_pages_dir / "PatchEmpty.md"
+    path.write_text("---\nimportance: 0.4\ntags:\n- a\n---\nBody.\n")
+    resp = await client.put(
+        "/api/vault/agent/pages/PatchEmpty",
+        json={"frontmatter": {"importance": None, "tags": None}},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["frontmatter"] == {}
+    assert resp.json()["frontmatter_raw"] == ""
+    assert path.read_text() == "Body.\n"
+
+
+@pytest.mark.asyncio
 async def test_vault_write_frontmatter_raw_malformed_is_rejected(
     client, http_config,
 ):
