@@ -8,13 +8,15 @@
 #   - does NOT include the `[Agent reached max tool iterations …]` fallback
 #     notice (that notice only appears if the grace LLM call itself failed)
 #
-# Self-contained — `setup.max_tool_iterations: 3` pins the budget for this
-# test, so it runs correctly as part of the default `make eval` invocation.
+# Self-contained — `config_overrides: {agent.max_tool_iterations: 3}` pins the
+# budget for this test, so it runs correctly as part of the default
+# `make eval` invocation.
 
 - name: "grace turn produces wrap-up when budget exhausts on sequential tools"
   setup:
     auto_confirm: true
-    max_tool_iterations: 3
+    config_overrides:
+      agent.max_tool_iterations: 3
   input: |
     Use the shell tool to run these commands ONE AT A TIME, commenting briefly
     on each result before running the next: (1) `date`, (2) `echo $HOME`,

@@ -1,10 +1,12 @@
 """Eval runner — execute test cases against the agent."""
 
+import dataclasses
 import logging
 import time
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
+from typing import TypeVar
 
 from ..agent import run_agent_turn
 from ..commands import dispatch_command
@@ -15,6 +17,10 @@ from ..events import EventBus
 from ..skills import discover_skills as _discover_skills_fn
 
 log = logging.getLogger(__name__)
+
+# Preserves the concrete dataclass type through _apply_overrides, so a
+# Config in stays a Config out rather than degrading to DataclassInstance.
+_T = TypeVar("_T")
 
 
 class _EvalConversationManager(ConversationManager):
@@ -89,7 +95,7 @@ class _EvalConversationManager(ConversationManager):
 
 async def _setup_skills(ctx, test_case: dict):
     """Pre-activate skills specified in setup.skills."""
-    setup = test_case.get("setup", {})
+    setup = _setup_of(test_case)
     skill_names = setup.get("skills", [])
     if not skill_names:
         return
@@ -120,7 +126,7 @@ def _seed_conversation_history(config, test_case: dict) -> list[dict]:
     Validates that each entry has a ``role``; everything else is passed
     through. Returns ``[]`` when the setup field is absent.
     """
-    setup = test_case.get("setup", {})
+    setup = _setup_of(test_case)
     seed = setup.get("conversation_history") or []
     if not seed:
         return []
@@ -144,7 +150,7 @@ def _seed_conversation_history(config, test_case: dict) -> list[dict]:
 async def _setup_workspace(config, test_case: dict):
     """Create fixture data in the temp workspace."""
     import shutil
-    setup = test_case.get("setup", {})
+    setup = _setup_of(test_case)
 
     # Copy pre-built embeddings fixture if specified
     fixture_db = setup.get("embeddings_fixture")
@@ -466,30 +472,142 @@ def _check_assertions(test_case: dict, response: str, tool_calls: int,
     return True, ""
 
 
+def _setup_of(test_case: dict) -> dict:
+    """Return a test case's ``setup`` block, normalized to a mapping.
+
+    A bare ``setup:`` in YAML parses to ``None``. An empty setup block is a
+    natural authoring state, so treat it as absent — but reject any other
+    non-mapping instead of letting it surface later as an ``AttributeError``
+    from a ``.get()`` on the wrong type.
+    """
+    setup = test_case.get("setup")
+    if setup is None:
+        return {}
+    if not isinstance(setup, dict):
+        raise ValueError(f"setup must be a mapping, got {type(setup).__name__}")
+    return setup
+
+
+# Bespoke setup keys folded into the generic config_overrides mechanism.
+# Kept only to fail loudly — a silently-ignored key would look like a
+# passing test of the wrong config, which is the failure mode the generic
+# path exists to prevent.
+_REMOVED_SETUP_KEYS = {
+    "max_tool_iterations": "agent.max_tool_iterations",
+    "reflection_enabled": "reflection.enabled",
+}
+
+
+class _Leaf:
+    """Marks a resolved override value inside the nested override tree.
+
+    Without this, a dict on the right-hand side would be ambiguous: is
+    ``{"skills": {"demo": {}}}`` setting ``config.skills`` to a dict, or
+    descending into a ``skills`` section? Nesting is expressed by dots in
+    the *key*, so anything on the value side is always a literal.
+    """
+
+    __slots__ = ("value",)
+
+    def __init__(self, value):
+        self.value = value
+
+
+def _nest_overrides(flat: dict) -> dict:
+    """Expand ``{"a.b": 1}`` into ``{"a": {"b": _Leaf(1)}}``."""
+    nested: dict = {}
+    for path, value in flat.items():
+        parts = str(path).split(".")
+        cursor = nested
+        for i, part in enumerate(parts[:-1]):
+            existing = cursor.setdefault(part, {})
+            if isinstance(existing, _Leaf):
+                prefix = ".".join(parts[:i + 1])
+                raise ValueError(
+                    f"config_overrides: path conflict — '{path}' descends into "
+                    f"'{prefix}', which another override sets as a value"
+                )
+            cursor = existing
+        last = parts[-1]
+        if isinstance(cursor.get(last), dict):
+            raise ValueError(
+                f"config_overrides: path conflict — '{path}' is set as a value "
+                f"but other overrides descend into it"
+            )
+        cursor[last] = _Leaf(value)
+    return nested
+
+
+def _apply_overrides(obj: _T, overrides: dict, path: str = "") -> _T:
+    """Recursively ``dataclasses.replace`` ``obj`` from a nested override tree.
+
+    Unknown fields raise rather than silently no-op: a typo'd path in an
+    eval YAML would otherwise look like a passing test of the wrong config.
+    """
+    # `isinstance(obj, type)` rules out a dataclass *class* (as opposed to an
+    # instance), which `replace` cannot take.
+    if not dataclasses.is_dataclass(obj) or isinstance(obj, type):
+        raise ValueError(
+            f"config_overrides: '{path}' is not a config section, so it has "
+            f"no fields to descend into"
+        )
+    valid = {f.name for f in dataclasses.fields(obj)}
+    kwargs = {}
+    for key, node in overrides.items():
+        full = f"{path}.{key}" if path else key
+        if key not in valid:
+            raise ValueError(
+                f"config_overrides: unknown config field '{full}'. "
+                f"Available here: {', '.join(sorted(valid))}"
+            )
+        if isinstance(node, _Leaf):
+            kwargs[key] = node.value
+        else:
+            kwargs[key] = _apply_overrides(getattr(obj, key), node, full)
+    return replace(obj, **kwargs)
+
+
 def _build_test_config(config: Config, test_case: dict, tmp: str) -> Config:
     """Apply per-test ``setup`` overrides on top of the base ``config``.
 
-    Keep the list of accepted overrides small — anything that genuinely
-    varies per test opts in here explicitly. Currently:
+    ``setup.config_overrides`` maps dotted config paths to values and is
+    applied via recursive ``dataclasses.replace``, so any field on ``Config``
+    or any of its nested sections is reachable without touching this runner
+    when new config lands:
 
-    - ``setup.max_tool_iterations`` — override ``config.agent.max_tool_iterations``
-      (#448: grace-turn eval needs a small budget to force exhaustion).
-    - ``setup.reflection_enabled`` — override ``config.reflection.enabled``
-      (#534: reflection retries can invoke unexpected tools and break
-      ``expect_no_tool`` / tight ``max_tool_calls`` assertions).
+    .. code-block:: yaml
+
+        setup:
+          config_overrides:
+            vault_retrieval.mode: headlines
+            agent.max_tool_iterations: 3
+
+    The sandbox fields (``agent.data_home`` / ``agent.id``) are applied
+    *last* so a case cannot redirect itself out of its temp directory.
     """
-    agent_overrides = {"data_home": tmp, "id": "eval"}
-    reflection_overrides: dict = {}
-    setup = test_case.get("setup", {})
-    if "max_tool_iterations" in setup:
-        agent_overrides["max_tool_iterations"] = setup["max_tool_iterations"]
-    if "reflection_enabled" in setup:
-        reflection_overrides["enabled"] = setup["reflection_enabled"]
-    return replace(
-        config,
-        agent=replace(config.agent, **agent_overrides),
-        reflection=replace(config.reflection, **reflection_overrides),
-    )
+    setup = _setup_of(test_case)
+    for old, new in _REMOVED_SETUP_KEYS.items():
+        if old in setup:
+            raise ValueError(
+                f"setup.{old} was replaced by setup.config_overrides. "
+                f"Use:\n  setup:\n    config_overrides:\n      {new}: <value>"
+            )
+
+    # Validate on *presence*, not truthiness. A bare `config_overrides:`
+    # parses to None, and `[]` / `0` / `""` are falsy too — gating on
+    # truthiness would let all of them silently no-op, which is the exact
+    # failure this mechanism exists to prevent. `{}` is the unambiguous way
+    # to say "no overrides".
+    if "config_overrides" in setup:
+        raw = setup["config_overrides"]
+        if not isinstance(raw, dict):
+            raise ValueError(
+                f"config_overrides must be a mapping of dotted paths to "
+                f"values, got {type(raw).__name__}. Use `{{}}` for none."
+            )
+        config = _apply_overrides(config, _nest_overrides(raw))
+
+    return replace(config, agent=replace(config.agent, data_home=tmp, id="eval"))
 
 
 async def run_test(config: Config, test_case: dict) -> dict:
@@ -512,7 +630,7 @@ async def run_test(config: Config, test_case: dict) -> dict:
     # Resolved early so both the manager (child confirmations via typed
     # path) and the event-bus shim (parent confirmations via legacy path)
     # see the same verdict.
-    auto_confirm = test_case.get("setup", {}).get("auto_confirm", True)
+    auto_confirm = _setup_of(test_case).get("auto_confirm", True)
 
     bus = EventBus()
     manager = _EvalConversationManager(config, bus, auto_confirm=auto_confirm)

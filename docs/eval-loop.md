@@ -50,8 +50,38 @@ Tests are YAML files with a list of test cases. Single-turn form:
 | `setup.conversation_history` | List of message dicts (`{role, content, ...}`) written to `{workspace}/conversations/eval/archive.jsonl` *and* pre-loaded into the in-memory history before the first turn. Use to test `conversation_search` / `conversation_compact` without organically building up history. Each entry must have a `role`; timestamps are auto-stamped if missing. |
 | `setup.embeddings_fixture` | Path to a pre-built embeddings.db to copy into the workspace |
 | `setup.auto_confirm` | Default `true`. Auto-approve (or deny) all tool confirmation requests (shell, email, `EndTurnConfirm`, etc.) |
-| `setup.max_tool_iterations` | Override `config.agent.max_tool_iterations` for this test only. Use for tests that need to exercise budget-exhaustion behavior (e.g., the grace turn) without changing the global default |
-| `setup.reflection_enabled` | Override `config.reflection.enabled` for this test only. Default: inherit from config. Set to `false` for tests that assert tool selection with `expect_no_tool` / tight `max_tool_calls` — reflection's judge can trigger retries that invoke unexpected tools and break those assertions. See [#534](https://github.com/lmorchard/decafclaw/issues/534) |
+| `setup.config_overrides` | Map of dotted config paths to values, applied to the resolved `Config` for this test only. See [Config overrides](#config-overrides) |
+
+### Config overrides
+
+`setup.config_overrides` maps dotted paths to values and is applied to the resolved `Config` via recursive `dataclasses.replace`:
+
+```yaml
+- name: "recalls a vault page in headlines mode"
+  setup:
+    config_overrides:
+      vault_retrieval.mode: headlines
+      agent.max_tool_iterations: 3
+      cleanup.enabled: false
+```
+
+Any field on `Config` or any of its nested sections is reachable. The runner does not enumerate the accepted paths, so a newly added config field works on arrival without touching `eval/runner.py`.
+
+Notes:
+
+- **Typos raise.** An unknown path fails that test with the available field names listed. Silently ignoring it would produce a green test measuring the wrong config — the whole point of the mechanism is to make the config under test explicit.
+- **`config_overrides` is validated on presence, not truthiness.** A bare `config_overrides:` parses to YAML null, and `[]` / `0` / `""` are falsy too; all of them raise rather than quietly doing nothing. Write `config_overrides: {}` if you really mean "no overrides". (A bare `setup:` *is* tolerated as an empty block — an empty setup section is a normal authoring state, whereas an empty `config_overrides` block means the author intended overrides and lost them.)
+- **Nesting comes from dots in the key, never from nested YAML.** A dict on the value side is a literal value, so plain-dict fields (`skills`, `providers`, `model_configs`) can be set wholesale.
+- **The sandbox wins.** `agent.data_home` and `agent.id` are applied after your overrides, so a case cannot redirect itself out of its temp directory.
+- Two earlier bespoke keys, `setup.max_tool_iterations` and `setup.reflection_enabled`, were folded into this mechanism. They now raise with a migration hint rather than being silently ignored.
+
+Common paths:
+
+| Path | Why |
+|---|---|
+| `reflection.enabled: false` | Required with `expect_no_tool` / tight `max_tool_calls` — reflection's judge can trigger retries that invoke unexpected tools ([#534](https://github.com/lmorchard/decafclaw/issues/534)) |
+| `agent.max_tool_iterations` | Force budget exhaustion, e.g. the grace-turn eval ([#448](https://github.com/lmorchard/decafclaw/issues/448)) |
+| `vault_retrieval.mode` | Exercise `always` / `headlines` / `on_demand` retrieval injection |
 
 ### Expect assertions
 
