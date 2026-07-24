@@ -163,3 +163,16 @@ async def test_sticky_failure_is_fail_open(ctx, monkeypatch):
     # Must not raise; checklist still works.
     result = await tool_checklist_create(ctx, steps=["A"])
     assert "1 step" in result.text or "1 steps" in result.text
+
+
+@pytest.mark.asyncio
+async def test_ok_false_result_is_logged(ctx, monkeypatch, caplog):
+    from unittest.mock import AsyncMock
+
+    from decafclaw.sticky import StickyOpResult
+    monkeypatch.setattr("decafclaw.sticky.set_sticky",
+                        AsyncMock(return_value=StickyOpResult(ok=False, error="boom")))
+    monkeypatch.setattr("decafclaw.sticky.clear_sticky", AsyncMock(return_value=StickyOpResult(ok=True)))
+    with caplog.at_level("WARNING"):
+        await tool_checklist_create(ctx, steps=["A", "B"])
+    assert any("boom" in r.message or "sticky set failed" in r.message for r in caplog.records)

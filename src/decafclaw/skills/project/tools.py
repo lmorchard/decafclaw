@@ -9,6 +9,7 @@ Control flow is mechanical:
 - Phase-boundary tools return end_turn=True to stop the agent loop
 """
 
+import asyncio
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
@@ -128,16 +129,21 @@ async def _emit_project_progress(ctx, info: ProjectInfo) -> None:
     if info.status != ProjectState.EXECUTING:
         return
     try:
-        content = info.plan_path.read_text() if info.plan_path.exists() else ""
+        content = (
+            await asyncio.to_thread(info.plan_path.read_text)
+            if info.plan_path.exists() else ""
+        )
         if not content.strip():
             return
         _, steps, _ = parse_plan(content)
         if not steps:
             return
         data = _progress_data_from_plan(info, steps)
-        await sticky_mod.set_sticky(
+        result = await sticky_mod.set_sticky(
             ctx.config, ctx.conv_id, "progress_tracker", data,
             emit=_emit_for_ctx(ctx))
+        if result is not None and not result.ok:
+            log.warning("project sticky set failed: %s", result.error)
     except Exception:
         log.warning("project sticky emit failed", exc_info=True)
 
@@ -145,8 +151,10 @@ async def _emit_project_progress(ctx, info: ProjectInfo) -> None:
 async def _clear_project_progress(ctx) -> None:
     """Clear the sticky slot for a project. Fail-open."""
     try:
-        await sticky_mod.clear_sticky(
+        result = await sticky_mod.clear_sticky(
             ctx.config, ctx.conv_id, emit=_emit_for_ctx(ctx))
+        if result is not None and not result.ok:
+            log.warning("project sticky clear failed: %s", result.error)
     except Exception:
         log.warning("project sticky clear failed", exc_info=True)
 
@@ -218,7 +226,7 @@ async def tool_project_next_task(ctx) -> str | ToolResult:
 
     elif info.status == ProjectState.EXECUTING:
         await _emit_project_progress(ctx, info)
-        return _next_execution_step(info)
+        return await asyncio.to_thread(_next_execution_step, info)
 
     elif info.status == ProjectState.DONE:
         return "Project is complete! No more tasks."
@@ -315,14 +323,15 @@ async def tool_project_task_done(ctx) -> str | ToolResult:
         )
 
     elif info.status == ProjectState.EXECUTING:
-        _, steps, _ = parse_plan(info.plan_path.read_text())
+        content = await asyncio.to_thread(info.plan_path.read_text)
+        _, steps, _ = parse_plan(content)
         if next_actionable(steps) is not None:
             return ToolResult(
                 text="[error: there are still incomplete steps. Finish them "
                 "before calling project_task_done.]"
             )
         info.status = ProjectState.DONE
-        save_project(info)
+        await asyncio.to_thread(save_project, info)
         await _clear_project_progress(ctx)
         return ToolResult(text="Project complete!", end_turn=True)
 
@@ -526,13 +535,14 @@ async def tool_project_update_step(
     if status not in ("pending", "in_progress", "done", "skipped"):
         return ToolResult(text="[error: status must be pending, in_progress, done, or skipped]")
 
-    content = info.plan_path.read_text()
+    content = await asyncio.to_thread(info.plan_path.read_text)
     overview, steps, tail = parse_plan(content)
     if not update_step_status(steps, step, status, note):
         return ToolResult(text=f"[error: step '{step}' not found]")
 
-    info.plan_path.write_text(render_plan(overview, steps, tail))
-    save_project(info)
+    rendered = render_plan(overview, steps, tail)
+    await asyncio.to_thread(info.plan_path.write_text, rendered)
+    await asyncio.to_thread(save_project, info)
     await _emit_project_progress(ctx, info)
 
     done, total = plan_progress(steps)
@@ -555,13 +565,14 @@ async def tool_project_add_steps(
     if info.status not in (ProjectState.EXECUTING, ProjectState.PLANNING, ProjectState.PLAN_REVIEW):
         return ToolResult(text="[error: can only add steps during planning, plan_review, or executing]")
 
-    content = info.plan_path.read_text()
+    content = await asyncio.to_thread(info.plan_path.read_text)
     overview, plan_steps, tail = parse_plan(content)
     if not insert_steps(plan_steps, after_step, steps):
         return ToolResult(text=f"[error: step '{after_step}' not found]")
 
-    info.plan_path.write_text(render_plan(overview, plan_steps, tail))
-    save_project(info)
+    rendered = render_plan(overview, plan_steps, tail)
+    await asyncio.to_thread(info.plan_path.write_text, rendered)
+    await asyncio.to_thread(save_project, info)
     await _emit_project_progress(ctx, info)
 
     _, total = plan_progress(plan_steps)
