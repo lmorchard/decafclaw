@@ -108,7 +108,7 @@ The vault skill is **always loaded** — its tools are available in every conver
 | `vault_show_sections(page, section?)` | Show a page's section outline or a specific section's content with absolute line numbers. |
 | `vault_move_lines(from_page, to_page, lines, to_section?, position?)` | Move specific lines (by line number) from one agent page to another. Both pages must be under `agent/`. |
 | `vault_section(page, action, section?, title?, level?, after?, before?, parent?)` | Section ops: `add`, `remove`, `rename`, or `move`. Page must be under `agent/`. |
-| `vault_update_frontmatter(page, fields, overwrite?)` | Merge frontmatter fields (`summary`, `importance`, `tags`, `keywords`, etc.) into a page's existing metadata without touching the body. Fills absent/empty fields by default; `overwrite=true` replaces existing values. Reindexes the page. Shared write primitive for the self-improving vault arc (#197) — dream generation, a future backfill CLI, and garden importance tuning all build on this. |
+| `vault_update_frontmatter(page, fields, overwrite?)` | Merge frontmatter fields (`summary`, `importance`, `tags`, `keywords`, etc.) into a page's existing metadata without touching the body. Fills absent/empty fields by default; `overwrite=true` replaces existing values. Reindexes the page. Shared write primitive for the self-improving vault arc (#197) — [dream](dream-consolidation.md) calls it (`overwrite=false`) after every `vault_write` in its Consolidate phase; a future backfill CLI and garden importance tuning build on the same primitive. |
 
 ### Frontmatter merge (#197)
 

@@ -223,6 +223,29 @@
     everything and mutates the live catalog; it reports rejections too, but
     it's the broad/commit path, not the focused "did I author this right" check.
 
+# -- vault_update_frontmatter vs vault_write ---------------------------------
+
+- name: frontmatter-vs-write-metadata-only
+  scenario: "Set the importance to 0.8 and add the tags 'architecture' and 'decision' on my 'context-composer' vault page — don't touch the body."
+  expected: vault_update_frontmatter
+  near_miss: [vault_write]
+  notes: |
+    Metadata-only update (importance/tags) with an explicit "don't touch
+    the body" — the canonical vault_update_frontmatter case. vault_write
+    would need the caller to read, edit, and resubmit the whole body just
+    to change two frontmatter fields, and risks clobbering content the
+    request explicitly says to leave alone.
+
+- name: write-vs-frontmatter-rewrite-body
+  scenario: "Replace the entire body of my 'onboarding' vault page with this corrected text: '# Onboarding\n\n1. Clone the repo.\n2. Run make install.\n3. Copy .env.example to .env.'"
+  expected: vault_write
+  near_miss: [vault_update_frontmatter]
+  notes: |
+    Body content is what's changing here (out-of-date steps replaced with
+    concrete corrected text), not metadata. vault_update_frontmatter never
+    touches the body — it's the wrong tool whenever the actual page content
+    needs to change.
+
 # -- vault_recent vs vault_search / vault_list ---------------------------------
 
 - name: vault-recent-vs-search-whats-new
