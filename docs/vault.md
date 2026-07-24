@@ -107,7 +107,7 @@ The vault skill is **always loaded** — its tools are available in every conver
 | `vault_rename(from_page, to_page)` | Rename/move a page (preserves links). Pages outside `agent/` trigger a user confirmation. |
 | `vault_grant_folder(folder, reason)` | Request per-conversation trust for a folder. After approval, vault_write/delete/rename under the folder skip confirmation. |
 | `vault_journal_append(tags, content)` | Append timestamped entry to today's journal file. Tags surface both as the back-compat `- **tags:**` bullet and as inline Obsidian-style `#tags` in the body (#318), so `extract_tags`/tag search see them without a separate scan pass. |
-| `vault_search(query, source_type?, days?, folder?)` | Semantic + substring search across the vault. |
+| `vault_search(query, source_type?, days?, folder?, tags?, any_tag?)` | Semantic + substring search across the vault. Optional `tags` filters to files whose extracted tags satisfy the request (AND by default; `any_tag=true` for OR); an empty `query` with non-empty `tags` skips search entirely and lists matching pages directly via `pages_with_tags` (#318). Empty/omitted `tags` leaves behavior unchanged — `pages_with_tags` with an empty list would vacuously match everything, so that path only activates when `tags` is non-empty. |
 | `vault_list(folder?, pattern?)` | List pages with last-modified dates. |
 | `vault_backlinks(page)` | Find pages linking to this page via `[[wiki-links]]`. |
 | `vault_show_sections(page, section?)` | Show a page's section outline or a specific section's content with absolute line numbers. |

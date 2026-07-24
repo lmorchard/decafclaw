@@ -982,6 +982,90 @@ class TestVaultSearch:
         assert "does not exist" in result.text.lower()
 
 
+class TestVaultSearchTags:
+    """Tag filtering on vault_search (#318 phase 4)."""
+
+    @pytest.mark.asyncio
+    async def test_query_plus_tags_drops_non_matching_results(
+        self, ctx, agent_pages
+    ):
+        (agent_pages / "AsyncPage.md").write_text(
+            "# AsyncPage\n\nWidget notes about async work. #async")
+        (agent_pages / "RustPage.md").write_text(
+            "# RustPage\n\nWidget notes about rust work. #rust")
+
+        result = await tool_vault_search(ctx, "widget", tags=["async"])
+
+        assert "AsyncPage" in result.text
+        assert "RustPage" not in result.text
+
+    @pytest.mark.asyncio
+    async def test_empty_query_pure_tag_filter_is_and_by_default(
+        self, ctx, agent_pages
+    ):
+        (agent_pages / "Both.md").write_text(
+            "---\ntags: [rust, async]\n---\nbody")
+        (agent_pages / "OnlyRust.md").write_text(
+            "---\ntags: [rust]\n---\nbody")
+
+        result = await tool_vault_search(ctx, "", tags=["rust", "async"])
+
+        assert "Both" in result.text
+        assert "OnlyRust" not in result.text
+
+    @pytest.mark.asyncio
+    async def test_any_tag_true_is_or(self, ctx, agent_pages):
+        (agent_pages / "Both.md").write_text(
+            "---\ntags: [rust, async]\n---\nbody")
+        (agent_pages / "OnlyRust.md").write_text(
+            "---\ntags: [rust]\n---\nbody")
+        (agent_pages / "OnlyAsync.md").write_text(
+            "---\ntags: [async]\n---\nbody")
+        (agent_pages / "Neither.md").write_text("no tags here")
+
+        result = await tool_vault_search(
+            ctx, "", tags=["rust", "async"], any_tag=True)
+
+        assert "Both" in result.text
+        assert "OnlyRust" in result.text
+        assert "OnlyAsync" in result.text
+        assert "Neither" not in result.text
+
+    @pytest.mark.asyncio
+    async def test_tag_filter_spans_page_and_journal_source_types(
+        self, ctx, agent_pages, agent_journal
+    ):
+        (agent_pages / "PageTag.md").write_text(
+            "---\ntags: [shared]\n---\nbody")
+        (agent_journal / "2026-07-24.md").write_text(
+            "## 2026-07-24 10:00\n\n- **tags:** shared\n\nJournal content")
+
+        result = await tool_vault_search(ctx, "", tags=["shared"])
+
+        assert "agent/pages/PageTag" in result.text
+        assert "agent/journal/2026-07-24" in result.text
+
+    @pytest.mark.asyncio
+    async def test_empty_tags_leaves_behavior_unchanged(
+        self, ctx, vault_dir
+    ):
+        """Omitted/empty `tags` must NOT enter the pure-filter path — that
+        path calls `pages_with_tags(config, [])`, which vacuously matches
+        every file (empty AND). Guard against that footgun regressing.
+        """
+        (vault_dir / "Foo.md").write_text("hello")
+
+        with patch(
+            "decafclaw.skills.vault.tools.pages_with_tags"
+        ) as mock_pages_with_tags:
+            result_omitted = await tool_vault_search(ctx, "")
+            result_empty_list = await tool_vault_search(ctx, "", tags=[])
+
+        mock_pages_with_tags.assert_not_called()
+        assert "Foo" in result_omitted.text
+        assert "Foo" in result_empty_list.text
+
+
 class TestVaultList:
     @pytest.mark.asyncio
     async def test_list_pages(self, ctx, vault_dir):

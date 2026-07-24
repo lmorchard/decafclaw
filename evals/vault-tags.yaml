@@ -1,0 +1,33 @@
+# Tag-filtered vault_search (#318 phase 4). Both seeded pages mention BOTH
+# "Rust" and "Python" in their prose — a plain substring/semantic query for
+# "rust" would match both and can't disambiguate. Only the frontmatter
+# `tags:` field distinguishes them, so a correct answer requires the agent
+# to actually use vault_search's `tags` filter rather than a bare query.
+
+- name: "tag-scoped ask surfaces the right page via vault_search tags filter"
+  setup:
+    reflection_enabled: false
+    workspace_files:
+      "vault/agent/pages/storage-notes.md": |
+        ---
+        tags: [rust]
+        ---
+        # Storage Notes
+
+        We compared Rust and Python for the storage layer. The chosen
+        runtime is Zephyr.
+      "vault/agent/pages/compute-notes.md": |
+        ---
+        tags: [python]
+        ---
+        # Compute Notes
+
+        We compared Rust and Python for the compute layer. The chosen
+        runtime is Nimbus.
+  input: "Look up the vault page tagged 'rust' (not 'python') and tell me what runtime it mentions."
+  expect:
+    response_contains: "re:zephyr"
+    response_not_contains: "nimbus"
+    max_tool_calls: 4
+    max_tool_errors: 0
+    expect_tool: vault_search
