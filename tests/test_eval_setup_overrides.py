@@ -281,15 +281,15 @@ def test_all_setup_consumers_tolerate_null_setup():
 # -- removed bespoke keys fail loudly rather than silently no-opping --
 
 
-@pytest.mark.parametrize("old,new", [
-    ("max_tool_iterations", "agent.max_tool_iterations"),
-    ("reflection_enabled", "reflection.enabled"),
-])
+@pytest.mark.parametrize("old,new", sorted(_REMOVED_SETUP_KEYS.items()))
 def test_removed_setup_keys_raise_with_migration_hint(tmp_path, old, new):
     """A YAML still using the old key must fail, not quietly run unmodified.
 
     Silently ignoring it would produce a green test measuring the wrong
     config — exactly what config_overrides exists to prevent.
+
+    Parametrized off the real dict rather than a hand-listed pair, so a
+    future removed key is covered on arrival.
     """
     cfg = Config()
     with pytest.raises(ValueError, match=new):
@@ -317,6 +317,31 @@ def test_unknown_setup_key_error_lists_valid_keys(tmp_path):
     cfg = Config()
     with pytest.raises(ValueError, match="workspace_files"):
         _build_test_config(cfg, {"setup": {"nonesuch": 1}}, _tmp(tmp_path))
+
+
+@pytest.mark.parametrize("key", [
+    # PyYAML resolves `on:` / `no:` / `yes:` / `off:` to booleans, so a
+    # plausible typo yields a non-string key. Formatting the error message
+    # with `', '.join(sorted(...))` would then raise TypeError instead of
+    # the intended ValueError, and mixed types break `sorted` outright.
+    True,
+    False,
+    1,
+])
+def test_non_string_setup_key_raises_valueerror(tmp_path, key):
+    """Validation must fail with a clear ValueError, never a TypeError."""
+    cfg = Config()
+    with pytest.raises(ValueError, match="unknown setup key"):
+        _build_test_config(cfg, {"setup": {key: 1}}, _tmp(tmp_path))
+
+
+def test_mixed_type_unknown_keys_raise_valueerror(tmp_path):
+    """Mixed str/non-str unknown keys must not blow up in `sorted`."""
+    cfg = Config()
+    with pytest.raises(ValueError, match="unknown setup key"):
+        _build_test_config(
+            cfg, {"setup": {"nonesuch": 1, 2: "x"}}, _tmp(tmp_path),
+        )
 
 
 def test_removed_keys_keep_their_migration_hint(tmp_path):
@@ -366,17 +391,6 @@ def test_known_setup_keys_match_docs():
     )
 
 
-def test_no_eval_yaml_uses_unknown_setup_keys():
-    """The real suite must be clean under the new validation."""
-    bad = [
-        f"{path.name}::{case.get('name')}::{key}"
-        for path, case in _iter_eval_cases()
-        for key in (case.get("setup") or {})
-        if key not in _KNOWN_SETUP_KEYS
-    ]
-    assert not bad, f"eval YAML using unknown setup keys: {bad}"
-
-
 def _iter_eval_cases():
     root = _REPO_ROOT / "evals"
     for path in sorted(root.rglob("*.yaml")):
@@ -388,34 +402,33 @@ def _iter_eval_cases():
                 yield path, case
 
 
-def test_every_eval_yaml_config_override_resolves(tmp_path):
-    """Every `config_overrides` path in the real suite must be a valid field.
+def test_every_eval_yaml_setup_validates(tmp_path):
+    """Run the production validator over every real eval case.
 
-    Catches a typo'd path here — free and instant — instead of partway
-    through a paid eval run.
+    Covers unknown keys, removed keys, non-mapping setup blocks, and
+    unresolvable `config_overrides` paths in one pass — a typo'd anything
+    fails here, free and instant, instead of partway through a paid eval
+    run.
+
+    Deliberately calls `_build_test_config` rather than re-checking
+    `_KNOWN_SETUP_KEYS` by hand: reimplementing the rules in the test lets
+    the two drift, and a hand-rolled `for key in setup` loop breaks on the
+    very malformed input it is supposed to report (unhashable keys, a
+    `setup` that is a list).
     """
-    checked = 0
+    failures = []
+    with_overrides = 0
     for path, case in _iter_eval_cases():
-        setup = case.get("setup") or {}
-        if "config_overrides" not in setup:
-            continue
-        checked += 1
+        setup = case.get("setup")
+        if isinstance(setup, dict) and "config_overrides" in setup:
+            with_overrides += 1
         try:
             _build_test_config(Config(), case, _tmp(tmp_path))
         except ValueError as exc:
-            pytest.fail(f"{path.name}::{case.get('name')}: {exc}")
-    assert checked, "expected at least one eval case using config_overrides"
-
-
-def test_no_eval_yaml_still_uses_removed_keys():
-    """The in-repo eval suite must be migrated off the old keys."""
-    stale = [
-        f"{path.name}::{case.get('name')}::{key}"
-        for path, case in _iter_eval_cases()
-        for key in _REMOVED_SETUP_KEYS
-        if key in (case.get("setup") or {})
-    ]
-    assert not stale, f"eval YAML still using removed setup keys: {stale}"
+            failures.append(f"{path.name}::{case.get('name')}: {exc}")
+    assert not failures, "invalid setup in eval YAML:\n" + "\n".join(failures)
+    # Guard against the walk going vacuous if the suite is restructured.
+    assert with_overrides, "expected at least one case using config_overrides"
 
 
 # -- dict-valued leaves are values, not further nesting --

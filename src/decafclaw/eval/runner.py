@@ -533,8 +533,13 @@ def _setup_of(test_case: dict) -> dict:
 
     unknown = set(setup) - _KNOWN_SETUP_KEYS
     if unknown:
+        # Stringify before sorting/joining: YAML resolves `on:` / `no:` to
+        # booleans, so a plausible typo yields a non-string key. Sorting a
+        # mixed-type set raises TypeError, and joining a non-str does too —
+        # either would mask the validation error we're trying to report.
+        names = ", ".join(sorted(str(k) for k in unknown))
         raise ValueError(
-            f"unknown setup key(s): {', '.join(sorted(unknown))}. "
+            f"unknown setup key(s): {names}. "
             f"Valid keys: {', '.join(sorted(_KNOWN_SETUP_KEYS))}"
         )
     return setup
