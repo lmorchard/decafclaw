@@ -13,7 +13,8 @@
 
 - name: "delegates when user explicitly asks for a sub-agent"
   setup:
-    reflection_enabled: false
+    config_overrides:
+      reflection.enabled: false
     workspace_files:
       "vault/agent/pages/auth-rewrite.md": |
         ---
@@ -48,7 +49,8 @@
 
 - name: "child result lands in parent response"
   setup:
-    reflection_enabled: false
+    config_overrides:
+      reflection.enabled: false
   # Deliberately picking a task the child can answer from its own
   # training with no tools — keeps the assertion focused on the
   # parent-narrates-child-result path rather than the child's tool

@@ -58,7 +58,8 @@
 
 - name: "loop_breaker_caps_edit_thrash"
   setup:
-    reflection_enabled: false
+    config_overrides:
+      reflection.enabled: false
     workspace_files:
       "skills/broken_skill/SKILL.md": |
         ---
