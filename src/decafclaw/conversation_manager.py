@@ -1805,10 +1805,6 @@ class ConversationManager:
         """
         from datetime import datetime, timedelta
 
-        conversations_dir = self.config.workspace_path / "conversations"
-        if not conversations_dir.exists():
-            return 0
-
         # Staleness threshold: ignore confirmations older than 24 hours
         stale_cutoff = (datetime.now() - timedelta(hours=24)).isoformat()
         recovered = 0
