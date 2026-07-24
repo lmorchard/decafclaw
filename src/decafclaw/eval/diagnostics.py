@@ -35,3 +35,27 @@ def parse_axes(case: dict) -> list[str]:
                 f"{sorted(CANONICAL_AXES)}"
             )
     return axes
+
+
+def aggregate_by_axis(test_results: list[dict], cases: list[dict]) -> dict:
+    """Pass-rate per failure-mode axis for the #528 scorecard.
+
+    ``test_results[i]`` pairs with ``cases[i]`` by index. A case's axes come
+    from :func:`parse_axes`; an untagged case counts toward ``"untagged"``. A
+    multi-axis case counts once toward each of its axes (so summed axis totals
+    may exceed the test count). Only axes that actually appear are emitted.
+    """
+    buckets: dict[str, dict] = {}
+    for result, case in zip(test_results, cases):
+        axes = parse_axes(case) or ["untagged"]
+        passed = result.get("status") == "pass"
+        for axis in axes:
+            b = buckets.setdefault(
+                axis, {"total": 0, "passed": 0, "failed": 0, "pass_rate": 0.0}
+            )
+            b["total"] += 1
+            b["passed"] += 1 if passed else 0
+            b["failed"] += 0 if passed else 1
+    for b in buckets.values():
+        b["pass_rate"] = round(b["passed"] / b["total"], 4) if b["total"] else 0.0
+    return buckets

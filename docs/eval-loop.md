@@ -39,6 +39,7 @@ Tests are YAML files with a list of test cases. Single-turn form:
 | `setup` | Fixture setup — see [Setup fields](#setup-fields) |
 | `expect` | Assertions to check — see [Expect assertions](#expect-assertions) |
 | `allowed_tools` | List of tool names; the agent can only call these. Unlisted tool calls return an error. |
+| `tests` | Failure-mode axis tag(s) for the scorecard — a string or list of strings. See [Axis tagging & the failure-mode scorecard](#axis-tagging--the-failure-mode-scorecard) |
 
 ### Setup fields
 
@@ -192,6 +193,49 @@ evals/results/
     reflections/              # LLM-generated analysis of failures
       test-name.md
 ```
+
+## Axis tagging & the failure-mode scorecard
+
+A test case can tag itself with one or more failure-mode axes via the top-level `tests:` key — a string for a single axis, or a list for multiple:
+
+```yaml
+- name: "retrieves the right page for a vague query"
+  input: "what did I write about the migration plan?"
+  tests: retrieval
+  expect:
+    response_contains: "migration"
+
+- name: "routes to the right tool and answers correctly"
+  input: "what's on my calendar tomorrow?"
+  tests: [routing, answer_quality]
+  expect:
+    max_tool_calls: 3
+```
+
+The four canonical axes (`decafclaw.eval.diagnostics.CANONICAL_AXES`) are:
+
+| Axis | Covers |
+|------|--------|
+| `retrieval` | Finding/recalling the right memory, page, or context |
+| `routing` | Picking the right tool/skill for the task |
+| `answer_quality` | Correctness and completeness of the final response |
+| `workflow_discipline` | Following multi-step procedures, confirmations, and guardrails correctly |
+
+A case with no `tests:` key falls into the `untagged` bucket rather than being dropped from the scorecard. An axis value outside the canonical set raises `ValueError` and fails the run rather than silently vanishing.
+
+After each run, `results["summary"]["by_axis"]` in the result bundle's `results.json` maps each axis (plus `untagged`) to `{total, passed, failed, pass_rate}`. `make eval` also prints a scorecard to the console:
+
+```
+By axis (failure-mode scorecard):
+  answer_quality         8/10  (80%)
+  retrieval              5/6  (83%)
+  routing                9/9  (100%)
+  untagged               12/15  (80%)
+```
+
+A case tagged with multiple axes counts once toward *each* of its axes, so axis totals summed across the table can exceed the total test count — that's expected, not a bug.
+
+Per-axis pass-rate trend over time (mirroring [Pass-rate history](#pass-rate-history) but broken out by axis) is a deferred follow-up, not yet implemented.
 
 ## Pass-rate history
 

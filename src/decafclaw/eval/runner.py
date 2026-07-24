@@ -15,6 +15,7 @@ from ..context import Context
 from ..conversation_manager import ConversationManager
 from ..events import EventBus
 from ..skills import discover_skills as _discover_skills_fn
+from .diagnostics import aggregate_by_axis
 
 log = logging.getLogger(__name__)
 
@@ -940,5 +941,17 @@ async def run_eval(yaml_data: list[dict], config: Config,
         results["summary"]["duration_sec"] += dur
         results["summary"]["total_tokens"] += tokens
 
+    # Per-axis failure-mode scorecard (#528). Cases align with results by index.
+    results["summary"]["by_axis"] = aggregate_by_axis(results["tests"], yaml_data)
+
     results["summary"]["duration_sec"] = round(results["summary"]["duration_sec"], 1)
+
+    by_axis = results["summary"]["by_axis"]
+    if by_axis:
+        print("\nBy axis (failure-mode scorecard):")
+        for axis in sorted(by_axis):
+            b = by_axis[axis]
+            print(f"  {axis:<22} {b['passed']}/{b['total']}  "
+                  f"({b['pass_rate'] * 100:.0f}%)")
+
     return results, timestamp, effective_model
