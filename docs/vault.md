@@ -106,7 +106,7 @@ The vault skill is **always loaded** — its tools are available in every conver
 | `vault_delete(page)` | Delete a page. Pages outside `agent/` trigger a user confirmation. |
 | `vault_rename(from_page, to_page)` | Rename/move a page (preserves links). Pages outside `agent/` trigger a user confirmation. |
 | `vault_grant_folder(folder, reason)` | Request per-conversation trust for a folder. After approval, vault_write/delete/rename under the folder skip confirmation. |
-| `vault_journal_append(tags, content)` | Append timestamped entry to today's journal file. |
+| `vault_journal_append(tags, content)` | Append timestamped entry to today's journal file. Tags surface both as the back-compat `- **tags:**` bullet and as inline Obsidian-style `#tags` in the body (#318), so `extract_tags`/tag search see them without a separate scan pass. |
 | `vault_search(query, source_type?, days?, folder?)` | Semantic + substring search across the vault. |
 | `vault_list(folder?, pattern?)` | List pages with last-modified dates. |
 | `vault_backlinks(page)` | Find pages linking to this page via `[[wiki-links]]`. |
@@ -270,6 +270,7 @@ The agent follows these principles (encoded in the vault skill's system prompt):
 - **Journal entries** (`vault_journal_append`) are timestamped observations — append-only daily files
 - **Pages** (`vault_write`) are curated knowledge — revised and restructured over time
 - The [dream](dream-consolidation.md) process periodically reviews journal entries and distills insights into pages
+- Journal tags passed to `vault_journal_append` are written twice: the existing `- **tags:** rust, async` bullet (back-compat with #306's `read_recent_journal_entries`, which parses entries on the `## YYYY-MM-DD HH:MM` header and is unaffected by the extra body line) and an inline `#rust #async` line in the body, mirrored into the text used for embedding. A tag containing whitespace is skipped from the inline line (Obsidian-style `#tags` can't contain spaces) but still appears in the bullet. No tags → no inline line, bullet stays `untagged`.
 
 ## Chat Context Integration
 

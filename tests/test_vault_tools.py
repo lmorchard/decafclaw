@@ -1,6 +1,7 @@
 """Tests for vault tools."""
 
 import os
+import re
 import time
 from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, patch
@@ -883,6 +884,74 @@ class TestVaultJournalAppend:
         assert len(matching) == 1
         assert matching[0]["kind"] == "journal"
         assert matching[0]["path"].endswith(".md")
+
+    @pytest.mark.asyncio
+    async def test_emits_inline_tags_alongside_bullet(self, ctx, agent_journal):
+        """Phase 3 (#318): tags also surface as inline #tags in the body,
+        in addition to the existing back-compat bullet."""
+        with patch("decafclaw.embeddings.index_entry", new_callable=AsyncMock):
+            await tool_vault_journal_append(
+                ctx, tags=["rust", "async"], content="hi")
+        files = list(agent_journal.rglob("*.md"))
+        assert len(files) == 1
+        text = files[0].read_text()
+        assert "- **tags:** rust, async" in text
+        assert "#rust #async" in text
+
+    @pytest.mark.asyncio
+    async def test_inline_tags_do_not_break_recent_journal_reader(
+        self, ctx, agent_journal,
+    ):
+        """Guard against #306's `read_recent_journal_entries` regressing:
+        the inline #tags line must not split entries or break parsing."""
+        with patch("decafclaw.embeddings.index_entry", new_callable=AsyncMock):
+            await tool_vault_journal_append(
+                ctx, tags=["rust", "async"], content="hi")
+        files = list(agent_journal.rglob("*.md"))
+        text = files[0].read_text()
+
+        entries = read_recent_journal_entries(
+            ctx.config, now=datetime.now(), max_hours=24, max_entries=10)
+        assert len(entries) == 1
+        header_match = re.search(
+            r"^## (\d{4}-\d{2}-\d{2} \d{2}:\d{2})\s*$", text, re.MULTILINE)
+        assert header_match is not None
+        expected_ts = datetime.strptime(header_match.group(1), "%Y-%m-%d %H:%M")
+        assert entries[0].timestamp == expected_ts
+        assert "hi" in entries[0].text
+        assert "#rust #async" in entries[0].text
+
+    @pytest.mark.asyncio
+    async def test_inline_tags_match_extract_tags_no_duplication(
+        self, ctx, agent_journal,
+    ):
+        from decafclaw.tags import extract_tags
+
+        with patch("decafclaw.embeddings.index_entry", new_callable=AsyncMock):
+            await tool_vault_journal_append(
+                ctx, tags=["rust", "async"], content="hi")
+        files = list(agent_journal.rglob("*.md"))
+        text = files[0].read_text()
+        assert extract_tags(text, "journal") == {"rust", "async"}
+
+    @pytest.mark.asyncio
+    async def test_empty_tags_no_inline_line(self, ctx, agent_journal):
+        from decafclaw.tags import extract_tags
+
+        with patch("decafclaw.embeddings.index_entry", new_callable=AsyncMock):
+            await tool_vault_journal_append(ctx, tags=[], content="x")
+        files = list(agent_journal.rglob("*.md"))
+        text = files[0].read_text()
+        assert "- **tags:** untagged" in text
+
+        lines = text.splitlines()
+        tags_line_idx = next(
+            i for i, line in enumerate(lines)
+            if line.startswith("- **tags:**")
+        )
+        # No inline tag line between the bullet and the blank line/content.
+        assert lines[tags_line_idx + 1] == ""
+        assert extract_tags(text, "journal") == set()
 
 
 class TestVaultSearch:

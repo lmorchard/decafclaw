@@ -604,6 +604,12 @@ async def tool_vault_journal_append(ctx, tags: list[str], content: str) -> ToolR
 
     filepath = journal_dir / f"{now:%Y-%m-%d}.md"
     tag_str = ", ".join(tags) if tags else "untagged"
+    # Inline #tags mirror the bullet for extract_tags/#318 (see tags.py); a
+    # tag containing whitespace can't round-trip as a single inline token
+    # (Obsidian-style #tags don't allow spaces), so it's skipped there and
+    # only surfaces via the bullet.
+    inline_tags = [t for t in tags if t and not any(ch.isspace() for ch in t)]
+    inline_tag_line = " ".join(f"#{t}" for t in inline_tags)
 
     entry = f"\n## {now:%Y-%m-%d %H:%M}\n\n"
     channel_name = ctx.channel_name
@@ -614,6 +620,8 @@ async def tool_vault_journal_append(ctx, tags: list[str], content: str) -> ToolR
     if thread_id:
         entry += f"- **thread:** {thread_id}\n"
     entry += f"- **tags:** {tag_str}\n"
+    if inline_tag_line:
+        entry += f"{inline_tag_line}\n"
     entry += f"\n{content}\n"
 
     with open(filepath, "a", encoding="utf-8") as f:
@@ -630,7 +638,10 @@ async def tool_vault_journal_append(ctx, tags: list[str], content: str) -> ToolR
             entry_text += f"- **channel:** {channel_name} ({channel_id})\n"
         if thread_id:
             entry_text += f"- **thread:** {thread_id}\n"
-        entry_text += f"- **tags:** {tag_str}\n\n{content}"
+        entry_text += f"- **tags:** {tag_str}\n"
+        if inline_tag_line:
+            entry_text += f"{inline_tag_line}\n"
+        entry_text += f"\n{content}"
         await index_entry(ctx.config, rel_path, entry_text,
                           source_type="journal")
     except Exception as e:
