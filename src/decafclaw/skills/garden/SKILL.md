@@ -54,6 +54,14 @@ Perform a holistic maintenance pass over your agent pages in the vault. This is 
 - For each orphan, find related pages and add links to it.
 - If a page is truly disconnected and has little value, note it for review.
 
+## Step 8: Recompute Importance Scores
+
+- Call `vault_recompute_importance` to deterministically refresh every vault page's `importance` frontmatter from measured signals (retrieval frequency, inbound-link count) — not a fresh guess.
+- Review the reported deltas for outliers: a page that jumped or dropped sharply is worth a second look, since it usually means the retrieval or link graph shifted, not that the page itself changed.
+- Spot-check frontmatter consistency on a few pages while you're in there — `summary`/`keywords`/`tags` that no longer match the body content.
+- Flag pages that are both orphaned (zero inbound links via `vault_backlinks`) and rarely retrieved (low importance after recompute) — these are strong split/merge/delete candidates for a future pass, not something to act on unilaterally.
+- Also flag weakly-linked pages (one or two thin connections) as candidates for Step 4's "add missing connections" work next time around.
+
 ## Finishing Up
 
 End with a short narrative summary of what you tidied: pages merged, links fixed, summaries added, etc. If the vault was already in good shape and nothing needed attention, begin your summary with `HEARTBEAT_OK` on its own line followed by a brief quiet-cycle note — the leading marker lets the scheduler log a tidy line, and the narrative keeps the archive readable for the newsletter.

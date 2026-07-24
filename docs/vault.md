@@ -172,6 +172,46 @@ level and never propagate into a tool call or event subscriber.
 inbound linkers in the index, and re-reads only those specific linking
 pages (not the whole vault) to pull a one-line quote for display context.
 
+### Importance recompute (#197)
+
+`importance` frontmatter starts as an LLM's subjective guess (backfill,
+dream generation). `vault_recompute_importance` — a native tool from the
+`garden` skill's `tools.py` (`src/decafclaw/skills/garden/tools.py`) —
+replaces that guess weekly with a deterministic score, so importance
+tracks measured usage instead of drifting further from it with every LLM
+re-guess.
+
+`compute_importance_scores(config)` in `skills/garden/tools.py` is pure
+and config-driven (no `ctx`, no writes):
+
+```
+importance = clamp01(
+    w_retrieval * norm(retrieval_freq)
+    + w_inbound * norm(inbound_links)
+    + w_reference * norm(reference_signal)
+)
+```
+
+`norm(x) = x / max(x across all vault pages)`, defined as 0 when that max
+is 0 (no divide-by-zero on an empty or brand-new vault). `retrieval_freq`
+comes from `retrieval_telemetry.aggregate`; `inbound_links` from
+`backlinks.inbound_count`. `w_reference` defaults to 0 — no explicit-
+reference signal exists yet, so that term is reserved for a future phase
+and contributes nothing to the score today. Weights are `ImportanceConfig`
+(`w_retrieval=0.6`, `w_inbound=0.4`, `w_reference=0.0`), same
+dataclass-default → `config.json` → `IMPORTANCE_*` env resolution as every
+other sub-config.
+
+`tool_vault_recompute_importance(ctx, dry_run=False)` scores every
+non-journal vault page, writes changed scores via
+`vault_update_frontmatter(overwrite=True)`, and skips pages whose rounded
+score is unchanged so a re-run only touches what actually moved.
+`dry_run=true` reports the planned deltas without writing. It's the
+weekly step in the `garden` skill's sweep (`skills/garden/SKILL.md`) —
+review the reported deltas for outliers, and use `vault_backlinks` + the
+recomputed score together to flag orphaned, rarely-retrieved pages as
+split/merge/delete candidates.
+
 ### Ownership
 
 - Agent writes to `agent/` by default

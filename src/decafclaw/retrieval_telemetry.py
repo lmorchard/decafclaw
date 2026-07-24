@@ -135,26 +135,45 @@ def aggregate(records: list[dict]) -> dict[str, dict]:
     return stats
 
 
-def vault_health(config) -> dict:
-    """Point-in-time vault-health snapshot: frontmatter coverage.
+def _empty_vault_health() -> dict:
+    return {
+        "total_pages": 0,
+        "with_importance": 0,
+        "coverage_pct": 0.0,
+        "missing_importance": 0,
+        "graph_orphans": 0,
+    }
 
-    Reads pages directly from the vault (not the telemetry log) and
-    counts how many carry an ``importance`` frontmatter field versus not.
-    ``orphans`` here means "pages with no importance frontmatter" —
-    disconnected from the importance-driven scoring the later phases of
-    #197 build on top of this stream — not graph-link orphans.
+
+def vault_health(config) -> dict:
+    """Point-in-time vault-health snapshot: frontmatter coverage + graph orphans.
+
+    Reads pages directly from the vault (not the telemetry log). Two
+    distinct metrics, easy to conflate (#197 P0-M2 — the original
+    ``orphans`` name below was misleading):
+
+    - ``missing_importance``: pages with no ``importance`` frontmatter
+      field. Feeds importance-coverage tracking, not the link graph.
+    - ``graph_orphans``: pages with zero inbound ``[[wiki-links]]``, per
+      the persistent backlink index (``backlinks.load_index``). This is
+      the genuine graph-orphan count that Phase 5's importance formula
+      also treats as a low-importance signal.
+
     Fail-open: a missing/unreadable vault returns zeros.
     """
+    from .backlinks import load_index
     from .frontmatter import parse_frontmatter
 
     try:
         vault = config.vault_root
         if not vault.is_dir():
-            return {"total_pages": 0, "with_importance": 0, "coverage_pct": 0.0, "orphans": 0}
+            return _empty_vault_health()
 
         journal_dir = config.vault_agent_journal_dir
+        backlink_index = load_index(config)
         total = 0
         with_importance = 0
+        graph_orphans = 0
         for filepath in vault.rglob("*.md"):
             try:
                 if filepath.resolve().is_relative_to(journal_dir.resolve()):
@@ -169,17 +188,21 @@ def vault_health(config) -> dict:
             total += 1
             if metadata.get("importance") is not None:
                 with_importance += 1
+            rel = filepath.relative_to(vault).as_posix()
+            if not backlink_index.get(rel):
+                graph_orphans += 1
 
         coverage_pct = (with_importance / total * 100) if total else 0.0
         return {
             "total_pages": total,
             "with_importance": with_importance,
             "coverage_pct": coverage_pct,
-            "orphans": total - with_importance,
+            "missing_importance": total - with_importance,
+            "graph_orphans": graph_orphans,
         }
     except Exception as exc:  # fail-open
         log.debug("vault health snapshot failed: %s", exc)
-        return {"total_pages": 0, "with_importance": 0, "coverage_pct": 0.0, "orphans": 0}
+        return _empty_vault_health()
 
 
 def format_report(stats: dict[str, dict], health: dict) -> str:
@@ -204,7 +227,8 @@ def format_report(stats: dict[str, dict], health: dict) -> str:
         f"  With importance frontmatter: {health['with_importance']} "
         f"({health['coverage_pct']:.0f}%)"
     )
-    lines.append(f"  Orphans (no importance frontmatter): {health['orphans']}")
+    lines.append(f"  Missing importance frontmatter: {health['missing_importance']}")
+    lines.append(f"  Graph orphans (zero inbound links): {health['graph_orphans']}")
     return "\n".join(lines)
 
 

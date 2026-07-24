@@ -256,7 +256,7 @@ All factors are normalized to [0, 1].
 |--------|---------|-----------|
 | `w_similarity` | 0.5 | Similarity dominates — relevance to the query matters most |
 | `w_recency` | 0.3 | Recent content is more likely to be useful |
-| `w_importance` | 0.2 | Lower weight until dream/garden actively tune importance |
+| `w_importance` | 0.2 | Kept modest even now that garden actively tunes importance weekly (#197 Phase 5, see [Importance recompute](vault.md#importance-recompute-197)) — retrieval and links move gradually, so this stays a secondary signal alongside similarity and recency |
 
 ### Source boosts
 
@@ -356,8 +356,10 @@ wrapped in try/except so a telemetry failure never breaks retrieval.
 
 **Report:** `make retrieval-report` (`python -m decafclaw.retrieval_telemetry`)
 aggregates per-page retrieval/include/drop-by-reason counts, plus a
-point-in-time vault-health snapshot (how many pages carry an `importance`
-frontmatter field).
+point-in-time vault-health snapshot: `missing_importance` (pages with no
+`importance` frontmatter field) and `graph_orphans` (pages with zero
+inbound `[[wiki-links]]`, per the backlink index) — two distinct metrics,
+not to be conflated (#197 P0-M2).
 
 ## Relationship to agent loop
 

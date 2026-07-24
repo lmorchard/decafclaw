@@ -310,6 +310,23 @@ class RelevanceConfig:
 
 
 @dataclass
+class ImportanceConfig:
+    """Weights for garden's deterministic weekly importance recompute (#197
+    Phase 5).
+
+    v1 formula: ``importance = clamp01(w_retrieval * norm(retrieval_freq) +
+    w_inbound * norm(inbound_links) + w_reference * norm(reference_signal))``,
+    where ``norm(x) = x / max(x across all pages)`` (0 when the max is 0).
+    ``w_reference`` is reserved for a future explicit-reference signal (not
+    yet implemented) and defaults to 0 — it contributes nothing to the score
+    today. See ``skills/garden/tools.py::compute_importance_scores``.
+    """
+    w_retrieval: float = 0.6
+    w_inbound: float = 0.4
+    w_reference: float = 0.0
+
+
+@dataclass
 class ProviderConfig:
     """Connection config for an LLM provider."""
     type: str = ""  # "vertex", "openai", "openai-compat" (also accepts "litellm")

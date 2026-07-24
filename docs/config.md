@@ -166,6 +166,18 @@ Vault location and write-gate settings. See [vault.md](vault.md).
 
 `user_writable_paths` lists vault-relative folder paths that bypass the user-page write confirmation. Prefix match (no globs); leading `/` is stripped and a trailing `/` is enforced, so `creative` and `creative/` are equivalent. Entries containing `..` are skipped with a warning. Empty by default — opt-in. Example: `["creative/", "notes/"]`.
 
+### `importance`
+
+Weights for garden's deterministic weekly importance recompute (#197 Phase 5). See [Importance recompute](vault.md#importance-recompute-197).
+
+| Field | Type | Default | Env Var |
+|-------|------|---------|---------|
+| `w_retrieval` | float | `0.6` | `IMPORTANCE_W_RETRIEVAL` |
+| `w_inbound` | float | `0.4` | `IMPORTANCE_W_INBOUND` |
+| `w_reference` | float | `0.0` | `IMPORTANCE_W_REFERENCE` |
+
+`w_reference` is reserved for a future explicit-reference signal (not yet implemented) and contributes nothing to the score while it's 0.
+
 ### `vault_retrieval`
 
 Controls auto-retrieval injection at turn start. See [context-composer.md#memory-retrieval-modes](context-composer.md#memory-retrieval-modes) and #301.

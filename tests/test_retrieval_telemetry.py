@@ -19,6 +19,7 @@ from decafclaw.retrieval_telemetry import (
     format_report,
     make_retrieval_telemetry_subscriber,
     record_from_event,
+    vault_health,
 )
 
 
@@ -121,11 +122,67 @@ def test_format_report_lists_pages_and_health():
             "drop_score": 0, "drop_budget": 1, "source_type": "page",
         },
     }
-    health = {"total_pages": 4, "with_importance": 2, "coverage_pct": 50.0, "orphans": 2}
+    health = {
+        "total_pages": 4, "with_importance": 2, "coverage_pct": 50.0,
+        "missing_importance": 2, "graph_orphans": 1,
+    }
     report = format_report(stats, health)
     assert "pages/a.md" in report
     assert "Vault health" in report
     assert "50" in report
+    assert "Graph orphans" in report
+
+
+# -- vault_health -----------------------------------------------------------
+
+
+def test_vault_health_not_a_dir_returns_zeros(config):
+    # vault_root doesn't exist in a fresh tmp config — short-circuit path.
+    health = vault_health(config)
+    assert health == {
+        "total_pages": 0, "with_importance": 0, "coverage_pct": 0.0,
+        "missing_importance": 0, "graph_orphans": 0,
+    }
+
+
+def test_vault_health_counts_pages_with_and_without_importance(config):
+    pages_dir = config.vault_agent_pages_dir
+    pages_dir.mkdir(parents=True, exist_ok=True)
+    (pages_dir / "with_importance.md").write_text(
+        "---\nimportance: 0.5\n---\nBody.\n", encoding="utf-8",
+    )
+    (pages_dir / "without_importance.md").write_text("Body only.\n", encoding="utf-8")
+
+    journal_dir = config.vault_agent_journal_dir
+    journal_dir.mkdir(parents=True, exist_ok=True)
+    (journal_dir / "2026-07-23.md").write_text("## Entry\nSome text.\n", encoding="utf-8")
+
+    health = vault_health(config)
+
+    # Journal entry excluded from the count entirely.
+    assert health["total_pages"] == 2
+    assert health["with_importance"] == 1
+    assert health["missing_importance"] == 1
+    assert health["coverage_pct"] == 50.0
+    # Neither page links to the other — both are graph orphans (#197 P0-M2:
+    # this is the genuine zero-inbound-links metric, distinct from
+    # missing_importance).
+    assert health["graph_orphans"] == 2
+
+
+def test_vault_health_graph_orphans_excludes_linked_pages(config):
+    pages_dir = config.vault_agent_pages_dir
+    pages_dir.mkdir(parents=True, exist_ok=True)
+    (pages_dir / "linker.md").write_text("Links to [[target]].\n", encoding="utf-8")
+    (pages_dir / "target.md").write_text("Linked-to page.\n", encoding="utf-8")
+    (pages_dir / "lonely.md").write_text("Nobody links here.\n", encoding="utf-8")
+
+    health = vault_health(config)
+
+    assert health["total_pages"] == 3
+    # target.md has one inbound link (from linker.md); linker.md and
+    # lonely.md have zero.
+    assert health["graph_orphans"] == 2
 
 
 def test_build_report_end_to_end(config):
