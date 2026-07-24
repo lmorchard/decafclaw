@@ -35,6 +35,28 @@ def _format_value(value, field_info, reveal: bool) -> str:
     return str(value)
 
 
+# Top-level Config fields handled by dedicated renderers or that are
+# runtime-only (assembled at startup, never read from config.json) — these
+# are excluded from the generic scalar/list printing in cmd_show.
+_SHOW_SPECIAL_FIELDS = {"skills", "env"}
+_SHOW_RUNTIME_ONLY_FIELDS = {
+    "system_prompt",
+    "discovered_skills",
+    "always_loaded_skill_tools",
+    "skill_tool_owners",
+}
+
+
+def _print_dict_of_dataclasses(prefix: str, mapping: dict, reveal: bool) -> None:
+    """Print each entry of a dict-of-dataclasses (providers, model_configs)."""
+    for key in sorted(mapping):
+        entry = mapping[key]
+        if hasattr(entry, "__dataclass_fields__"):
+            _print_group(f"{prefix}.{key}", entry, reveal)
+        else:
+            print(f"{prefix}.{key} = {entry}")
+
+
 def _resolve_field(config: Config, path: str):
     """Walk dotted path and return (parent_obj, field_info, value)."""
     parts = path.split(".")
@@ -79,14 +101,21 @@ def cmd_show(args) -> None:
 
     valid_groups = set()
     for group_field in fields(config):
-        if group_field.name in ("system_prompt", "discovered_skills", "skills", "env"):
+        name = group_field.name
+        if name in _SHOW_SPECIAL_FIELDS or name in _SHOW_RUNTIME_ONLY_FIELDS:
             continue
-        group = getattr(config, group_field.name)
-        if hasattr(group, "__dataclass_fields__"):
-            valid_groups.add(group_field.name)
-            if args.group and group_field.name != args.group:
-                continue
-            _print_group(group_field.name, group, args.reveal)
+        value = getattr(config, name)
+        valid_groups.add(name)
+        if args.group and args.group != name:
+            continue
+        if hasattr(value, "__dataclass_fields__"):
+            _print_group(name, value, args.reveal)
+        elif name in ("providers", "model_configs"):
+            _print_dict_of_dataclasses(name, value, args.reveal)
+        else:
+            # Top-level scalar/list field — printed with its bare name as the
+            # path so `make config` surfaces it (issue #431).
+            print(f"{name} = {_format_value(value, group_field, args.reveal)}")
 
     # Show skills section (raw dict, schema unknown — mask all values)
     valid_groups.add("skills")
