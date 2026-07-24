@@ -54,6 +54,88 @@ def test_show_group_filter(capsys, monkeypatch, tmp_path):
     assert "llm." not in out
 
 
+def test_show_top_level_scalar_fields(capsys, monkeypatch, tmp_path):
+    """Top-level scalar/list fields appear in unfiltered output (issue #431)."""
+    monkeypatch.setenv("DATA_HOME", str(tmp_path))
+    (tmp_path / "decafclaw").mkdir()
+    cmd_show(_Args(group=None, reveal=False))
+    out = capsys.readouterr().out
+    # Scalars and lists that are NOT nested dataclasses used to be dropped.
+    assert "default_model = " in out
+    assert "extra_skill_paths = " in out
+    assert "skills_always_loaded = " in out
+
+
+def test_show_excludes_runtime_only_fields(capsys, monkeypatch, tmp_path):
+    """Runtime-only (non-config-file) fields stay out of `show` output."""
+    monkeypatch.setenv("DATA_HOME", str(tmp_path))
+    (tmp_path / "decafclaw").mkdir()
+    cmd_show(_Args(group=None, reveal=False))
+    out = capsys.readouterr().out
+    assert "system_prompt" not in out
+    assert "discovered_skills" not in out
+    assert "always_loaded_skill_tools" not in out
+    assert "skill_tool_owners" not in out
+
+
+def test_show_providers_masks_api_key(capsys, monkeypatch, tmp_path):
+    """providers dict prints per-entry fields, masking api_key by default."""
+    agent_dir = tmp_path / "decafclaw"
+    agent_dir.mkdir()
+    (agent_dir / "config.json").write_text(json.dumps({
+        "providers": {
+            "openai": {"type": "openai", "api_key": "sk-secret-123"},
+        },
+    }))
+    monkeypatch.setenv("DATA_HOME", str(tmp_path))
+    cmd_show(_Args(group=None, reveal=False))
+    out = capsys.readouterr().out
+    assert "providers.openai.type = openai" in out
+    assert "providers.openai.api_key = ****" in out
+    assert "sk-secret-123" not in out
+
+
+def test_show_providers_reveal(capsys, monkeypatch, tmp_path):
+    """--reveal unmasks provider secrets."""
+    agent_dir = tmp_path / "decafclaw"
+    agent_dir.mkdir()
+    (agent_dir / "config.json").write_text(json.dumps({
+        "providers": {
+            "openai": {"type": "openai", "api_key": "sk-secret-123"},
+        },
+    }))
+    monkeypatch.setenv("DATA_HOME", str(tmp_path))
+    cmd_show(_Args(group="providers", reveal=True))
+    out = capsys.readouterr().out
+    assert "providers.openai.api_key = sk-secret-123" in out
+
+
+def test_show_model_configs(capsys, monkeypatch, tmp_path):
+    """model_configs dict prints per-entry fields."""
+    agent_dir = tmp_path / "decafclaw"
+    agent_dir.mkdir()
+    (agent_dir / "config.json").write_text(json.dumps({
+        "model_configs": {
+            "flash": {"provider": "vertex", "model": "gemini-2.5-flash"},
+        },
+    }))
+    monkeypatch.setenv("DATA_HOME", str(tmp_path))
+    cmd_show(_Args(group="model_configs", reveal=False))
+    out = capsys.readouterr().out
+    assert "model_configs.flash.provider = vertex" in out
+    assert "model_configs.flash.model = gemini-2.5-flash" in out
+
+
+def test_show_top_level_field_filter(capsys, monkeypatch, tmp_path):
+    """A top-level scalar name is a valid `show` filter, not an unknown group."""
+    monkeypatch.setenv("DATA_HOME", str(tmp_path))
+    (tmp_path / "decafclaw").mkdir()
+    cmd_show(_Args(group="default_model", reveal=False))
+    out = capsys.readouterr().out
+    assert "default_model = " in out
+    assert "llm." not in out
+
+
 def test_get(capsys, monkeypatch, tmp_path):
     monkeypatch.setenv("DATA_HOME", str(tmp_path))
     (tmp_path / "decafclaw").mkdir()

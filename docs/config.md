@@ -41,6 +41,8 @@ Only include settings you want to override — absent keys use defaults.
 ```bash
 decafclaw config show              # all resolved values (secrets masked)
 decafclaw config show llm          # filter by group
+decafclaw config show providers    # dict groups (providers, model_configs) print per-entry fields
+decafclaw config show default_model  # filter by a top-level scalar field name
 decafclaw config show --reveal     # show secret values
 decafclaw config get llm.model     # single value
 decafclaw config set llm.model gemini-2.5-pro   # write to config.json
