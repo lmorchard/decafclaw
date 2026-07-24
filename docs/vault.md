@@ -97,6 +97,29 @@ The `sources:` list records each source that contributed to a page, with the ori
 
 New skills producing structured page metadata are welcome to add their own conventions; document them here when they stabilize.
 
+### Editing frontmatter in the web UI
+
+Vault pages in the web UI split frontmatter from body server-side, so neither
+the markdown renderer nor the Milkdown editor ever sees the YAML. View mode
+shows a compact metadata strip that expands to full detail; edit mode swaps it
+for typed controls (`summary`, `importance`, `tags`, `keywords`) plus an
+**edit raw YAML** escape hatch covering the whole block, including keys with no
+typed control.
+
+Two write paths, mutually exclusive on the wire:
+
+- Typed controls send a **patch** (`PUT /api/vault/{page}` with `frontmatter`),
+  merged via `merge_frontmatter(overwrite=True)`. A `null` value removes a key.
+- The raw editor sends a **replace** (`frontmatter_raw`), stored verbatim so
+  hand-written comments and key order survive. Keys absent from the submission
+  are removed.
+
+Body-only writes never reserialize the block — they splice the original bytes
+back via `split_frontmatter` / `join_frontmatter`. Key order, comments, and even
+malformed YAML survive a body edit untouched. A page whose frontmatter fails to
+parse reports `frontmatter_error`, disables the typed controls, and can still be
+repaired through the raw editor.
+
 ## Tools
 
 The vault skill is **always loaded** — its tools are available in every conversation.

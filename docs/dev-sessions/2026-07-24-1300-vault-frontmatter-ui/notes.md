@@ -11,15 +11,15 @@ warnings are pre-existing `forkpty` deprecations in the terminal tests.
 
 ## Task log
 
-- Task 1 — body-only writes preserve frontmatter verbatim: pending
-- Task 2 — relocate `merge_frontmatter` to `frontmatter.py`: pending
-- Task 3 — `vault_read` splits frontmatter/body: pending
-- Task 4 — PUT `frontmatter` patch: pending
-- Task 5 — PUT `frontmatter_raw` replace: pending
-- Task 6 — sidebar summaries: pending
+- Task 1 — body-only writes preserve frontmatter verbatim: done
+- Task 2 — relocate `merge_frontmatter` to `frontmatter.py`: done
+- Task 3 — `vault_read` splits frontmatter/body: done
+- Task 4 — PUT `frontmatter` patch: done
+- Task 5 — PUT `frontmatter_raw` replace: done
+- Task 6 — sidebar summaries: done
 - Task 7 — `<wiki-metadata>` read-only + `wiki-page` on `body`: done
 - Task 8 — metadata editing: done
-- Task 9 — docs + wrap-up: pending
+- Task 9 — docs + wrap-up: done
 
 ## Open question to answer during Task 7
 
@@ -169,3 +169,98 @@ Both branches edit `frontmatter.py`; the additions occupy different regions, so
 whichever lands second resolves there. `split_frontmatter` must stay purely
 lexical with no `tags` import so it doesn't deepen the existing
 `frontmatter.py` ↔ `tags.py` cycle.
+
+## Follow-up to file: `wiki-editor.js#reload()` ignores `saveEndpoint`
+
+Found during Task 7/8 browser verification, deliberately **not fixed** — out
+of this branch's scope (it predates this branch and isn't caused by it).
+
+`#reload()` (`src/decafclaw/web/static/components/wiki-editor.js`, around line
+243) does:
+
+```js
+const res = await fetch(`/api/vault/${encodePagePath(this.page)}`);
+```
+
+hardcoded to the vault endpoint, ignoring `this.saveEndpoint` — the property
+that lets `<wiki-editor>` be reused against other hosts. Two other hosts
+instantiate `<wiki-editor>` with a different `save-endpoint`:
+
+- `schedule-page.js` → `/api/schedules/`
+- `config-panel.js` → `/api/config/files/`
+
+`#reload()` fires from the conflict-resolution UI's "Reload" button (a 409
+`modified`-mismatch response shows Reload / Overwrite / Retry). On those two
+hosts, clicking Reload fetches `/api/vault/{page}` instead of the host's own
+endpoint — silently loading an unrelated vault page's content if one happens
+to exist at that path, or a 404 (surfaced as `_error = "Reload failed: HTTP
+404"`) if not. Either way the editor does not reload the schedule/config file
+the user actually asked to reload.
+
+This branch's Task 7 already had to touch `#reload()` for an unrelated reason
+(the vault endpoint stopped returning `content`, only `body`), and folded a
+comment there explaining the hardcoding so the next person doesn't have to
+rediscover it via git blame. The fix itself — parameterizing the fetch URL on
+`this.saveEndpoint` — is a one-line change but is explicitly out of scope
+here per the task brief; someone should file it as its own issue.
+
+## Session summary
+
+**What shipped.** The web UI's vault surface is now frontmatter-aware
+end-to-end. Server side: `frontmatter.py` gained `split_frontmatter` /
+`join_frontmatter` / `parse_frontmatter_block` plus the relocated
+`merge_frontmatter`; body-only writes splice the original frontmatter bytes
+back verbatim instead of round-tripping through `yaml.dump` (which sorts keys
+and drops comments) or `parse_frontmatter` (which reports `{}` for malformed
+YAML and would silently delete the block). `vault_read` and `GET
+/api/vault/{page}` now return `frontmatter` / `frontmatter_raw` / `body`
+instead of a single mangled `content` string, with `frontmatter_error`
+surfaced (not swallowed) on parse failure. `PUT /api/vault/{page}` accepts two
+mutually-exclusive frontmatter write shapes — a `frontmatter` **patch**
+(merged, `null` deletes a key) and a `frontmatter_raw` **replace** (verbatim,
+rejects malformed YAML, non-mappings, and an embedded `---` line that would
+otherwise get spliced into a spurious block terminator on the next read).
+Client side: the vault sidebar shows page summaries from frontmatter
+(fail-open); a new `<wiki-metadata>` component renders a compact strip in view
+mode (expandable to full detail, including unknown keys) and typed
+edit-mode controls (`summary`, `importance`, `tags`, `keywords`) plus a raw
+YAML editor as an escape hatch; `wiki-page` was rewired onto `body` instead of
+the old frontmatter-and-body-mashed-together `content`; a single write mutex
+in `wiki-page` serializes the debounced typed-control patches against raw-editor
+replaces so the two paths can't race each other onto disk; a conflict banner
+(Reload / Overwrite / Retry) handles the 409 case.
+
+**The corruption question, answered.** The bug this branch fixes was real
+*editing*, not merely *opening* a page — see "Open question to answer during
+Task 7" above for the empirical verification (Milkdown's `markdownUpdated`
+listener does not fire a change on its own initial `defaultValueCtx` load;
+only an actual keystroke armed the old body-only autosave that used to
+reserialize the whole file, YAML included, through the WYSIWYG round-trip).
+Anyone who had only *opened* vault pages in the old editor without editing
+them did not lose frontmatter; anyone who typed anything into the body did.
+
+**Browser verification.** Both Task 7 (read path: strip rendering, no stray
+`<hr>`/YAML-as-bullets, body-only edits leaving the frontmatter block
+byte-identical by MD5) and Task 8 (write path: all eight scenarios from the
+brief — debounced patch, slider coercion, tag add/remove down to zero keys,
+raw-YAML validation error leaving disk untouched, raw replace deleting a key
+outright, and the concurrent patch-then-raw-replace race resolving in submit
+order) passed against an isolated `DATA_HOME=/tmp/fm-smoke` fixture, restored
+byte-for-byte afterward. Full detail lives in the "Task 7 details" and "Task 8
+details" sections above.
+
+**Live bug found, not fixed.** See "Follow-up to file" above —
+`wiki-editor.js#reload()`'s hardcoded `/api/vault/` fetch breaks Reload on the
+schedule and config-file hosts that reuse `<wiki-editor>`. Pre-existing,
+out of scope, documented for a follow-up issue.
+
+**#318 coordination.** Tag chips in `<wiki-metadata>` are inert this session —
+#318 owns tag query semantics and the Tags tab. `frontmatter.py` is touched by
+both branches in non-overlapping regions; whichever lands second resolves the
+merge there.
+
+**Test posture.** Baseline (pre-branch) was 3234 passed, 2 skipped. Post-Task-8
+was 3276 passed, 2 skipped, 2 warnings (pre-existing `forkpty` deprecations).
+Task 9 re-verified `make check` / `make test` before rebasing onto
+`origin/main`, then again after — see the top-level report for exact
+before/after counts.
