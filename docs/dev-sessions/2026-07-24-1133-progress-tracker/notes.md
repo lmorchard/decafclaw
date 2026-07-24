@@ -86,4 +86,20 @@ session's changes (no terminal code touched).
 
 ## Manual QA
 
-_(pending — live browser QA driven by controller + human)_
+Verified live in the web UI (local web-only server, `MATTERMOST_ENABLED=false`,
+`HTTP_PORT=18992`, Playwright-driven):
+
+- Asked the agent to `widget_pin_sticky` a `progress_tracker` with all five
+  statuses. Agent made the single tool call → `sticky_set` → the slot rendered
+  above the chat input on the first attempt (vertex-gemini-flash, reflection
+  PASS, no console errors).
+- Rendering confirmed quiet and correct: collapsed summary line `1/5 · Run
+  migrations` with a ▾ toggle; title "Deploy pipeline"; step rows —
+  ● done (green, note "cached"), ◐ in_progress (blue), ○ pending (muted),
+  ✗ failed (red, note "registry 500"), ⊘ skipped (muted, strikethrough).
+  Notes render dim inline.
+- Look approved as-is by Les (no glyph/color/spacing changes requested).
+
+Auto-emit wiring (checklist / project → sticky) is covered by the unit tests
+in Tasks 2–3; the live pin above exercises the identical widget + sticky
+render path.
