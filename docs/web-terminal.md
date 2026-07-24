@@ -82,8 +82,17 @@ forkpty() may lead to deadlocks in the child`). But `posix_spawn`'s `setsid`
 is not available on all platforms — it raises `NotImplementedError` on Linux
 (CI and the deploy target), which would break `/terminal` entirely there. So
 we fork. Per project decision the fork's `DeprecationWarning` is **not
-suppressed**; it is ignored by Python's default warning filter in normal runs
-and only shows in pytest's warnings summary (it does not fail tests).
+suppressed** in the spawn path; it is ignored by Python's default warning
+filter in normal runs, so production terminal spawns never surface it.
+
+The two tests that exercise a real spawn — `test_real_pty_echo_and_cleanup`
+and `test_ws_handler_serves_real_spawned_session` — carry a message-matched
+`@pytest.mark.filterwarnings` so the accepted warning does not dirty the
+suite (#638). The exemption is deliberately **per-site, not suite-wide**: the
+warning is acceptable only because *this* fork is written safely, so a
+`forkpty` from an unaudited call site still shows up in pytest's warnings
+summary. A new test that spawns a real PTY needs the mark added explicitly —
+that is the point, not an oversight.
 
 ### Output and replay
 
