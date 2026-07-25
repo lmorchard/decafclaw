@@ -773,6 +773,15 @@ class TurnRunner:
                 # weakly-followed "STOP and diagnose" defeats the point of the
                 # nudge. Matches _run_grace_turn's deliberate user-role choice.
                 #
+                # But user-role means the model reads this as the human
+                # speaking. In the session behind #675 it opened its next
+                # message with "You're right. I was stuck in a loop" —
+                # apologizing for a correction the user never made, then
+                # carrying that fabricated exchange forward as context. So the
+                # text disclaims authorship explicitly rather than relying on
+                # the "[loop-breaker]" prefix, which reads as a label on a
+                # human's message rather than as the sender (#680).
+                #
                 # Ephemeral — appended to self.messages only, never archived or
                 # added to self.history. Archiving would re-surface it via
                 # restore_history on a restart/reload (role "user" is equally an
@@ -781,7 +790,10 @@ class TurnRunner:
                 nudge = {
                     "role": "user",
                     "content": (
-                        f"[loop-breaker] You {self.loop_breaker.last_signal()} without "
+                        "[loop-breaker] Automated diagnostic from the agent "
+                        "runtime — the user did not send this, so do not "
+                        "respond to it as if they had. "
+                        f"You {self.loop_breaker.last_signal()} without "
                         "progress. STOP repeating it. Switch to root-cause diagnosis: "
                         "read the relevant logs, build a minimal repro, and re-check the "
                         "contract/interface before any further edits."
