@@ -322,19 +322,66 @@ Activated skills and their tools are scoped to the current conversation. Other c
 
 ## Management tools
 
-- **`activate_skill(name)`** — activate a skill in the current conversation
+- **`activate_skill(name)`** — activate a skill in the current conversation; on an
+  already-active skill with native tools, re-imports `tools.py` (see
+  [Reloading an edited skill](#reloading-an-edited-skill))
 - **`refresh_skills`** — re-scan skill directories without restarting
 - **`skill_validate(path)`** — pre-flight lint a single workspace skill directory
+
+### Reloading an edited skill
+
+The two tools divide cleanly, and mixing them up is the most common way an
+authoring loop stalls:
+
+| Tool | What it updates |
+|---|---|
+| `refresh_skills` | The **catalog** on `config` — `discovered_skills`, the system-prompt skill list, `skill_tool_owners`. Picks up new, removed, or renamed skills. |
+| `activate_skill` | The **live tools** on `ctx.tools.extra` for one skill. |
+
+So after editing an active skill's `tools.py`, `refresh_skills` alone changes
+nothing the agent can call — the previously imported functions are still the
+ones bound in `ctx.tools.extra`. Call `activate_skill` again. It re-imports the
+module, retracts the tool names the previous generation registered (so a
+renamed or deleted tool doesn't linger, advertised but backed by dead code),
+registers the new ones, and says `Reloaded tools.py` so a real reload is
+distinguishable from a no-op.
+
+If the edited `tools.py` fails to import, the reload reports the error, names
+the exception type, and **leaves the previously working tools in place** rather
+than half-unloading the skill.
+
+Skill modules are compiled from source on every import rather than going
+through `exec_module`. CPython validates a cached `.pyc` against the source's
+size and its mtime *truncated to whole seconds*, so an edit that keeps the file
+the same size and lands within the same second as the previous import would
+replay the stale bytecode — making a correct edit look like it had no effect,
+in both the loader and `skill_validate`. Compiling from source removes that
+failure mode and stops writing `__pycache__` directories into the
+agent-writable workspace (which the agent cannot remove via `workspace_delete`).
 
 ### Authoring a skill (in-context guide)
 
 The bundled **`skill-creator`** skill is the in-context authoring guide. Activate
 it (or run `/skill-creator`) before creating or editing a workspace skill — its
-body carries the SKILL.md frontmatter rules, the decaf-specific `tools.py`
-contract (filename, absolute imports, `get_tools(ctx)` signature, no
-`default_api`), a minimal correct template, and the
+body carries where the files go, the SKILL.md frontmatter rules, the
+decaf-specific `tools.py` contract (filename, absolute imports, `get_tools(ctx)`
+signature), what a tool may and may not reach, a minimal correct template, a
+symptom→cause table, and the
 `skill_validate` → `refresh_skills` → `activate_skill` workflow. It deliberately
 flags where decaf diverges from the generic Agent Skills standard.
+
+Two things it leads with, because both were repeatedly gotten wrong:
+
+- **Delegate `tools.py` to `claude_code`.** Authoring Python by line-number
+  surgery (`workspace_replace_lines` / `workspace_insert`) on source the agent
+  can't execute corrupts the file. `claude_code` writes, imports, and iterates
+  in one delegation.
+- **Most skills need no `tools.py` at all.** The SKILL.md body is loaded into
+  context on activation, so prose describing how to do the job with existing
+  tools *is* the skill. A tool that only wraps an existing tool (e.g. shelling
+  out when `shell_background_start` already exists) adds nothing, and a skill
+  tool cannot call another decaf tool anyway — there is no `default_api`, and
+  `ctx` is not a tool namespace.
 
 ### Validating a skill before it loads
 
@@ -343,11 +390,27 @@ during discovery** — the loader requires a `SKILL.md` that starts with a `---`
 YAML frontmatter block containing both `name` and `description`. Two tools
 surface the reason instead of failing silently:
 
-- **`refresh_skills`** re-scans every skill directory and now lists any
-  found-but-rejected skills under `Rejected (found but not loaded):`, each with
-  the reason (e.g. *no valid YAML frontmatter*).
+- **`refresh_skills`** re-scans every skill directory and reports three things
+  beyond the skill list:
+  - **What changed** — `New: <names>` / `No longer found: <names>`, or
+    `No change since the last refresh.` The full list runs to dozens of names,
+    and "did the skill I just wrote appear?" is usually the only question, so
+    it's answered directly instead of by diffing. Suppressed when the catalog
+    was empty beforehand (initial population, not a change).
+  - **Rejections** — found-but-rejected skills under
+    `Rejected (found but not loaded):`, each with the reason (e.g. *no valid
+    YAML frontmatter*).
+  - **Possibly misplaced skills** — a `SKILL.md` sitting in a directory nothing
+    scans. Such a skill produces no rejection, because discovery never walks
+    there; without this the author sees only an unexplained absence.
+    `find_misplaced_skills` probes the two shapes that actually occur —
+    `workspace/skills/<name>/` (the redundant-prefix trap) and
+    `skills/<group>/<name>/` (one level too deep) — and names the corrected
+    path. Deliberately not a recursive walk: workspaces contain checked-out
+    repos with `node_modules`, and this runs on every refresh.
 - **`skill_validate('skills/<name>')`** is the pre-flight, single-skill check.
   It reports a pass/fail checklist:
+  - the location is one discovery actually **scans** (see below)
   - `SKILL.md` present
   - valid `---` frontmatter with `name` + `description`
   - native tools live in **`tools.py`** (not `main.py` or another name)
@@ -368,6 +431,92 @@ surface the reason instead of failing silently:
   The same contract check (`check_tools_contract`) now backs both, so they
   cannot diverge: `_load_native_tools` raises `SkillContractError` naming the
   offending export instead of failing opaquely downstream.
+
+#### The `discoverable` check
+
+The most common reason an authored skill never appears is that it isn't where
+discovery looks. Agent-facing tool paths (`workspace_write`, `workspace_read`,
+`skill_validate`) are **already workspace-relative**, so writing to
+`workspace/skills/<name>/SKILL.md` puts the skill at
+`…/workspace/workspace/skills/<name>/` — a valid SKILL.md in a directory nothing
+scans. Nesting any deeper (`skills/group/<name>/`) fails the same way:
+`discover_skills` only considers the immediate children of a scan root.
+
+`skill_validate` reports this as a `discoverable` check naming the corrected
+path. It shares its scan roots with `discover_skills` through
+`skill_scan_entries()` rather than a copied list, so the two cannot drift.
+
+This is the same class of bug as the shape contract above: before it existed,
+`skill_validate` checked only "inside the workspace and has a SKILL.md" and so
+reported a fully-green **PASS** on a location `refresh_skills` would never list.
+An author facing a validator and a loader that flatly contradict each other has
+nothing to reconcile them with, and no amount of retrying either one helps.
+
+`workspace_write` also flags a leading `workspace/` on the path it just wrote,
+naming the path without the prefix. The prefix is **not** stripped —
+`workspace` is a legal directory name inside a workspace, so stripping it would
+make a legitimate path unreachable and hide the mistake — but the write result
+is the earliest point the author can notice. Between that, the `discoverable`
+check, and the misplaced-skill hint in `refresh_skills`, the mistake now
+surfaces at three independent points instead of none.
+
+#### Phantom tool calls
+
+A skill tool cannot call another decaf tool — it is a plain Python function with
+no channel into the tool layer. The model's prior that it *can* is strong and
+recurring; a single session produced `default_api.shell_background_start`, then
+`ctx.shell_background_start`, then `ctx.tools.shell_background_start`, and an
+eval later produced `context['shell_background_start'](…)` while working around
+successive validation failures. One run invented a `skill.py` defining a `Skill`
+class purely to expose `ctx.tools`.
+
+These import perfectly cleanly — the call sits in a function body — so the skill
+activates and fails only when the tool is invoked. `_phantom_tool_calls` detects
+them statically, in two places:
+
+- **`skill_validate`** reports a `no_phantom_tool_calls` check.
+- **`activate_skill`** enforces it, because validation is optional and evals
+  measured that choice as a coin flip. A skill's tools do not exist until it is
+  activated, so this path cannot be skipped.
+
+Enforcement is keyed to trust tier:
+
+| Tier | Behavior |
+|---|---|
+| `workspace` | **Activation refused.** Agent-authored, so refusing is the forcing function; the tool provably cannot run. On a reload the previously loaded tools stay active. |
+| `bundled` / `admin` / `extra` | **Warning in the activation result**, skill still loads. User-authored code may hold many working tools beside one broken one, and breaking the user's agent is worse. `activate_always_loaded` skips workspace tier, so startup is never gated on this. |
+
+Detection keys on **the tool name being called**, not on the receiver — a tool's
+first parameter is `ctx` by convention only, and keying on it missed both the
+subscript form and a receiver renamed to `context`. It covers attribute chains,
+subscripts, and any receiver.
+
+Two of ~107 tool names (`shell`, `wait`) are bare words that collide with
+everyday Python (`process.wait()`, `event.wait()`, and `ctx.cancelled.wait()`
+right here in this codebase). Those require a `ctx` / `ctx.tools` receiver;
+underscored names are distinctive enough to flag anywhere. A scan of every
+bundled and contrib `tools.py` reports zero false positives, and tests pin both
+halves.
+
+#### Advisories
+
+`skill_validate` also reports **advisories**: things that load correctly but may
+surprise you later. They appear under `Advisories (will load, but worth a look):`
+and never change the PASS/FAIL verdict. `ok` means *"this skill will load and
+its tools can actually run"* — so a defect that guarantees a runtime failure is
+a check, while a stylistic difference is an advisory. Reporting FAIL on a skill
+that works fine is the validator-contradicts-loader trap in reverse, and it
+teaches the author to ignore the validator.
+
+Currently advisory:
+
+- **`name` disagrees with the directory.** A skill activates under its
+  frontmatter `name` whatever its directory is called, so
+  `skills/blog-tools/` containing `name: blogtools` works — you just activate
+  `blogtools` while the files live under `blog-tools`.
+- **`name` isn't the conventional format** (lowercase letters, numbers, single
+  hyphens). The bundled catalog itself contains names with spaces, capitals, and
+  underscores, which is exactly why this cannot be a hard failure.
 
 Minimal correct workspace skill:
 

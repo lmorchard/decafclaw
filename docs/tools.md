@@ -152,8 +152,27 @@ See [Skills System](skills.md).
 
 | Tool | Always | What it does |
 |------|:------:|--------------|
-| `activate_skill` | ✓ | Load a skill's tools into the current conversation |
-| `refresh_skills` | | Re-scan skill directories without restarting |
+| `activate_skill` | ✓ | Load a skill's tools into the current conversation; re-imports `tools.py` if the skill is already active |
+| `refresh_skills` | | Re-scan skill directories without restarting (catalog only — not the loaded tools) |
+| `skill_validate` | | Pre-flight lint one workspace skill directory, including whether discovery scans its location |
+
+## Tool error messages
+
+Every tool call is wrapped by `execute_tool`, which turns exceptions into
+`ToolResult(text="[error: ...]")` rather than propagating them. Two error shapes
+are worth knowing because they say *where* the bug is:
+
+- **`Expected parameters: a, b, c`** — the arguments didn't bind to the tool's
+  signature. The call is wrong; fix the arguments.
+- **`This TypeError was raised inside the tool's own code`** — the arguments
+  bound fine and the tool's implementation raised. Calling it differently will
+  not help; fix the tool. When the tool belongs to a skill, the message names
+  the skill.
+
+`execute_tool` distinguishes them with `signature.bind()`. Both once shared the
+first wording, so a `TypeError` from inside a tool body was reported as a
+bad-argument error — and for a tool taking only `ctx`, it rendered as an empty
+`Expected parameters: `, pointing the author at a call site that was correct.
 
 ## MCP (`skills/mcp/tools.py`)
 

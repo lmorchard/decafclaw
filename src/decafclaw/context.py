@@ -44,6 +44,26 @@ class ToolState:
     # Tracks which tool names each dynamic provider contributed last turn,
     # so stale entries can be removed when the provider returns fewer tools.
     dynamic_provider_names: dict[str, set[str]] = field(default_factory=dict)
+    # Names each activated skill contributed, so re-activating a skill whose
+    # tools.py was edited can retract the previous generation before
+    # registering the new one. Without it a renamed or deleted tool lingers in
+    # `extra` forever, advertised to the LLM but backed by dead code from the
+    # pre-edit module.
+    #
+    # Holds the union of the skill's `TOOLS` keys and its declared
+    # `TOOL_DEFINITIONS` function names — the two need not agree, and
+    # retracting by keys alone orphans a declaration that the next reload
+    # duplicates, which providers reject at the provider call (#684).
+    skill_tool_names: dict[str, set[str]] = field(default_factory=dict)
+    # What each activated skill registered: skill_name -> (tools, definitions).
+    # Retraction needs this because shadowing is legal — `execute_tool` checks
+    # `extra` before the global registry, so a later-activated skill's tool of
+    # the same name genuinely wins. Removing a shadowing name on reload would
+    # otherwise take the still-active shadowed skill's version with it, and
+    # nothing would remain to rebind from. Insertion order is activation order.
+    skill_contributions: dict[str, tuple[dict[str, Any], list[dict]]] = field(
+        default_factory=dict
+    )
     # Tool names promoted for this turn by pre-emptive keyword matching
     # against the current user message + prior assistant response.
     # Populated once at the start of a turn by ContextComposer; reused
