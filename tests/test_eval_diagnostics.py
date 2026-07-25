@@ -40,6 +40,16 @@ def test_parse_axes_unknown_in_list_raises():
         parse_axes({"tests": ["retrieval", "bogus"]})
 
 
+def test_parse_axes_non_iterable_raises_valueerror():
+    with pytest.raises(ValueError):
+        parse_axes({"tests": 123})
+
+
+def test_parse_axes_unhashable_element_raises_valueerror():
+    with pytest.raises(ValueError):
+        parse_axes({"tests": [{"nested": "dict"}]})
+
+
 def test_validate_axes_passes_for_valid_cases():
     validate_axes([{"name": "a", "tests": "retrieval"},
                    {"name": "b", "tests": ["routing", "answer_quality"]},

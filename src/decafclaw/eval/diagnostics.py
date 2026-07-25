@@ -32,9 +32,16 @@ def parse_axes(case: dict) -> list[str]:
     raw = case.get("tests")
     if raw is None:
         return []
-    axes = [raw] if isinstance(raw, str) else list(raw)
+    if isinstance(raw, str):
+        axes = [raw]
+    elif isinstance(raw, (list, tuple)):
+        axes = list(raw)
+    else:
+        raise ValueError(
+            f"tests: must be a string or list of strings, got {type(raw).__name__}"
+        )
     for axis in axes:
-        if axis not in CANONICAL_AXES:
+        if not isinstance(axis, str) or axis not in CANONICAL_AXES:
             raise ValueError(
                 f"unknown axis {axis!r} in tests: — must be one of "
                 f"{sorted(CANONICAL_AXES)}"
