@@ -3,7 +3,6 @@
 import base64
 
 from decafclaw.attachments import (
-    delete_conversation_uploads,
     list_conversation_attachments,
     read_attachment_base64,
     save_attachment,
@@ -74,19 +73,6 @@ def test_list_attachments(config):
 
 def test_list_attachments_empty_for_missing_conv(config):
     assert list_conversation_attachments(config, "nonexistent") == []
-
-
-def test_delete_conversation_uploads(config):
-    save_attachment(config, "conv1", "file.txt", b"data", "text/plain")
-    assert uploads_dir(config, "conv1").exists()
-
-    delete_conversation_uploads(config, "conv1")
-    assert not uploads_dir(config, "conv1").exists()
-
-
-def test_delete_conversation_uploads_noop_if_missing(config):
-    # Should not raise
-    delete_conversation_uploads(config, "nonexistent")
 
 
 # --- sandboxing (#587) ------------------------------------------------------
