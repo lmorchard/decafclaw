@@ -1,4 +1,8 @@
-"""Attachment storage — save, read, list, and delete conversation file attachments."""
+"""Attachment storage — save, read, and list conversation file attachments.
+
+Deletion is not this module's job: removing a conversation `rmtree`s its whole
+`{conv_id}/` directory (uploads included) via `conversation_paths.delete_conversation_files`.
+"""
 
 import base64
 import logging
@@ -91,14 +95,6 @@ def list_conversation_attachments(config, conv_id: str) -> list[dict]:
                 "size_bytes": f.stat().st_size,
             })
     return results
-
-
-def delete_conversation_uploads(config, conv_id: str) -> None:
-    """Remove the entire uploads directory for a conversation."""
-    import shutil
-    dest_dir = uploads_dir(config, conv_id)
-    if dest_dir.exists():
-        shutil.rmtree(dest_dir)
 
 
 def resolve_attachments(config, message: dict) -> dict:
