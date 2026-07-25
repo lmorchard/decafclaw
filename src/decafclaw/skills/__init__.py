@@ -328,6 +328,43 @@ def _iter_skill_dirs(base_path: Path) -> Iterator[Path]:
             yield entry
 
 
+def skill_scan_entries(config) -> list[tuple[str, Path]]:
+    """The (trust tier, base path) scan entries, in discovery priority order.
+
+    Extracted so `skill_validate` can answer "would discovery even look
+    here?" from the same source of truth `discover_skills` walks. A
+    hand-copied root list in the validator would rot the moment a scan
+    entry is added, and the failure mode is the worst kind: the validator
+    reports PASS on a location nothing scans.
+    """
+    return [
+        ("workspace", config.workspace_path / "skills"),
+        ("admin", config.agent_path / "skills"),
+        ("bundled", _BUNDLED_SKILLS_DIR),
+        *(("extra", p) for p in _resolve_extra_skill_paths(config)),
+    ]
+
+
+def is_discoverable_skill_dir(config, skill_dir: Path) -> bool:
+    """True when `discover_skills` would consider `skill_dir` a skill directory.
+
+    Mirrors `_iter_skill_dirs`: a scan entry that has SKILL.md at its own
+    root IS the skill (and its subdirectories are NOT scanned); otherwise
+    each immediate subdirectory is a candidate. Anything nested deeper, or
+    outside every scan entry, is invisible to discovery no matter how valid
+    its SKILL.md is.
+    """
+    target = skill_dir.resolve()
+    for _tier, base in skill_scan_entries(config):
+        base = base.resolve()
+        if (base / "SKILL.md").exists():
+            if target == base:
+                return True
+        elif target.parent == base:
+            return True
+    return False
+
+
 def discover_skills(config, rejections: list | None = None) -> list[SkillInfo]:
     """Scan skill directories and return discovered skills.
 
@@ -352,12 +389,7 @@ def discover_skills(config, rejections: list | None = None) -> list[SkillInfo]:
     # Each scan entry carries its trust tier so SkillInfo can record
     # where the skill came from. Extra-paths entries all share the
     # "extra" tier regardless of how many were configured.
-    scan_entries: list[tuple[str, Path]] = [
-        ("workspace", config.workspace_path / "skills"),
-        ("admin", config.agent_path / "skills"),
-        ("bundled", _BUNDLED_SKILLS_DIR),
-        *(("extra", p) for p in _resolve_extra_skill_paths(config)),
-    ]
+    scan_entries: list[tuple[str, Path]] = skill_scan_entries(config)
 
     seen_names: dict[str, Path] = {}
     skills: list[SkillInfo] = []

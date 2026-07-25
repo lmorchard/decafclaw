@@ -8,7 +8,7 @@ import logging
 from pathlib import Path
 
 from ..media import ToolResult
-from ..skills import CheckResult, validate_skill_md
+from ..skills import CheckResult, is_discoverable_skill_dir, validate_skill_md
 from .confirmation import request_confirmation
 
 log = logging.getLogger(__name__)
@@ -80,6 +80,31 @@ def check_tools_contract(module) -> list[str]:
     return problems
 
 
+def _import_tools_module(module_name: str, tools_path: Path):
+    """Import a skill's tools.py from source, bypassing the bytecode cache.
+
+    Skill modules are edited live and re-imported in-process, which is
+    exactly the workload CPython's bytecode cache handles badly: a cached
+    .pyc is validated against the source's size and its mtime *truncated to
+    whole seconds*, so an edit that keeps the file the same size and lands
+    in the same second as the previous import re-executes the STALE
+    bytecode. The edit then appears to have had no effect at all — a
+    symptom indistinguishable from a reload that never ran, and one that
+    sends the author looking for the bug in code that isn't executing.
+
+    Compiling the source ourselves takes the cache out of the picture. It
+    also stops littering the agent-writable workspace with `__pycache__`
+    directories, which the agent cannot remove with `workspace_delete`.
+    """
+    spec = importlib.util.spec_from_file_location(module_name, tools_path)
+    if spec is None:
+        raise ImportError(f"Could not load module spec for {tools_path}")
+    module = importlib.util.module_from_spec(spec)
+    code = compile(tools_path.read_text(), str(tools_path), "exec")
+    exec(code, module.__dict__)  # noqa: S102 — skill tools are trusted code by placement
+    return module
+
+
 def _permissions_path(config) -> Path:
     """Path to the skill permissions file (outside workspace, read-only to agent)."""
     return config.agent_path / "skill_permissions.json"
@@ -146,16 +171,12 @@ def _lint_tools_py(skill_dir: Path) -> list[CheckResult]:
     checks.append(CheckResult("tools_filename", True, "tools.py present"))
 
     try:
-        spec = importlib.util.spec_from_file_location(
+        # Same source-compiled import the loader uses — a validator that
+        # checked stale bytecode could report a SyntaxError the author has
+        # already fixed, or pass source the loader will reject.
+        module = _import_tools_module(
             f"decafclaw_skill_validate_{skill_dir.name}", tools_py
         )
-        if spec is None or spec.loader is None:
-            checks.append(CheckResult(
-                "tools_import", False, "could not create an import spec for tools.py",
-            ))
-            return checks
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
     except Exception as exc:
         checks.append(CheckResult(
             "tools_import", False,
@@ -251,13 +272,9 @@ def _load_native_tools(skill_info) -> tuple[dict, list, object]:
     via getattr(module, "get_tools", None) by the caller.
     """
     tools_path = skill_info.location / "tools.py"
-    spec = importlib.util.spec_from_file_location(
+    module = _import_tools_module(
         f"decafclaw_skill_{skill_info.name}", tools_path
     )
-    if spec is None or spec.loader is None:
-        raise ImportError(f"Could not load module spec for {tools_path}")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
 
     # Reject wrong-shaped exports here rather than letting them surface
     # downstream as `cannot convert dictionary update sequence element #0`
@@ -387,10 +404,18 @@ async def tool_activate_skill(ctx, name: str) -> str | ToolResult:
     if skill_info is None:
         return ToolResult(text=f"[error: skill '{name}' not found. Check Available Skills in your instructions.]")
 
-    # Check if already activated
+    # Already active. For a text-only skill there is nothing to do, but for a
+    # native skill this is the author's edit-and-reload path: re-import
+    # tools.py so a fix to the file actually takes effect. Returning a bare
+    # "already active" here made editing an active skill's tools impossible
+    # — refresh_skills only rebuilds the catalog on
+    # `config`, never the live callables in ctx.tools.extra, so the loop
+    # could not converge and the only escape was restarting the process.
     activated = ctx.skills.activated
     if name in activated:
-        return f"Skill '{name}' is already active."
+        if not skill_info.has_native_tools:
+            return f"Skill '{name}' is already active."
+        return await activate_skill_internal(ctx, skill_info, reloading=True)
 
     # Permission resolution, highest precedence first:
     # 1. User's explicit "deny" in skill_permissions.json — always wins
@@ -435,12 +460,37 @@ async def tool_activate_skill(ctx, name: str) -> str | ToolResult:
     return result
 
 
-async def activate_skill_internal(ctx, skill_info) -> str | ToolResult:
+def _retract_skill_tools(ctx, name: str) -> None:
+    """Remove the tools a previous activation of `name` registered.
+
+    Called after a successful re-import and before registering the new
+    generation, so a failed reload leaves the working tools untouched.
+    """
+    stale = ctx.tools.skill_tool_names.get(name, set())
+    if not stale:
+        return
+    for tool_name in stale:
+        ctx.tools.extra.pop(tool_name, None)
+    ctx.tools.extra_definitions[:] = [
+        td for td in ctx.tools.extra_definitions
+        if td.get("function", {}).get("name") not in stale
+    ]
+    ctx.config.always_loaded_skill_tools = (
+        ctx.config.always_loaded_skill_tools - stale
+    )
+
+
+async def activate_skill_internal(ctx, skill_info, reloading: bool = False) -> str | ToolResult:
     """Activate a skill: load tools, register on ctx, mark active.
 
     Shared by tool_activate_skill (with permission checks) and
     command execution (without permission checks). Returns the
     skill body text on success.
+
+    `reloading=True` is the re-activation path for a skill whose tools.py
+    changed on disk: the previous generation's tool names are retracted
+    before the new ones register, and the result says "reloaded" so the
+    caller can tell an edit took effect from a no-op.
     """
     name = skill_info.name
     # Substitute $SKILL_DIR in the body so the LLM sees usable paths.
@@ -457,8 +507,13 @@ async def activate_skill_internal(ctx, skill_info) -> str | ToolResult:
             tools, tool_defs, module = _load_native_tools(skill_info)
             await _call_init(module, ctx.config, skill_info.name)
 
+            # Import succeeded, so it's safe to drop the previous generation.
+            # A no-op on first activation (nothing recorded yet).
+            _retract_skill_tools(ctx, name)
+
             ctx.tools.extra.update(tools)
             ctx.tools.extra_definitions.extend(tool_defs)
+            ctx.tools.skill_tool_names[name] = set(tools.keys())
 
             # Register dynamic tool provider if the skill exports get_tools()
             get_tools_fn = getattr(module, "get_tools", None)
@@ -470,10 +525,18 @@ async def activate_skill_internal(ctx, skill_info) -> str | ToolResult:
                 log.info(f"Registered dynamic tool provider for skill '{name}'")
 
             tool_names = list(tools.keys())
-            result_parts.append(
-                f"\n\nThe following tools are now available: {', '.join(tool_names)}"
-            )
-            log.info(f"Activated native skill '{name}' with tools: {tool_names}")
+            if reloading:
+                result_parts.append(
+                    f"\n\nReloaded tools.py. The following tools are now "
+                    f"available (previous versions discarded): "
+                    f"{', '.join(tool_names)}"
+                )
+                log.info(f"Reloaded native skill '{name}' with tools: {tool_names}")
+            else:
+                result_parts.append(
+                    f"\n\nThe following tools are now available: {', '.join(tool_names)}"
+                )
+                log.info(f"Activated native skill '{name}' with tools: {tool_names}")
 
             # Shadowing a core tool name is legal — execute_tool checks
             # ctx.tools.extra before the global registry, so the skill's
@@ -506,7 +569,20 @@ async def activate_skill_internal(ctx, skill_info) -> str | ToolResult:
 
         except Exception as e:
             log.error(f"Failed to load skill '{name}' tools: {e}")
-            return ToolResult(text=f"[error: failed to load skill '{name}': {e}]")
+            # Name the exception type, as skill_validate does — a bare
+            # str(SyntaxError) is just "invalid syntax (tools.py, line 1)",
+            # which reads like a description rather than a Python error.
+            detail = f"{type(e).__name__}: {e}"
+            if reloading:
+                # Nothing was retracted (the retract happens only after a
+                # successful import), so say so explicitly rather than leave
+                # the caller guessing whether the skill is now half-loaded.
+                return ToolResult(text=(
+                    f"[error: failed to reload skill '{name}': {detail}. "
+                    f"The previously loaded tools are still active — fix "
+                    f"tools.py and activate the skill again.]"
+                ))
+            return ToolResult(text=f"[error: failed to load skill '{name}': {detail}]")
     else:
         log.info(f"Activated shell-based skill '{name}'")
 
@@ -543,6 +619,24 @@ def tool_skill_validate(ctx, path: str) -> ToolResult:
         )
 
     checks: list[CheckResult] = []
+
+    # Location first: a skill in the wrong directory is invisible to
+    # discovery, so every other check below is beside the point. Reporting
+    # PASS here while refresh_skills silently found nothing gives the author
+    # two tools that contradict each other and no way to reconcile them.
+    if is_discoverable_skill_dir(ctx.config, skill_dir):
+        checks.append(CheckResult(
+            "discoverable", True, "location is scanned by skill discovery",
+        ))
+    else:
+        checks.append(CheckResult(
+            "discoverable", False,
+            f"nothing scans '{path}' — a workspace skill must be an immediate "
+            f"child of the workspace 'skills/' directory. Move it to "
+            f"'skills/{skill_dir.name}' (workspace_write paths are already "
+            f"workspace-relative, so do NOT prefix them with 'workspace/').",
+        ))
+
     skill_md = skill_dir / "SKILL.md"
     if not skill_md.exists():
         checks.append(CheckResult(

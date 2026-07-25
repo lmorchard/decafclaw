@@ -44,6 +44,12 @@ class ToolState:
     # Tracks which tool names each dynamic provider contributed last turn,
     # so stale entries can be removed when the provider returns fewer tools.
     dynamic_provider_names: dict[str, set[str]] = field(default_factory=dict)
+    # Tool names each activated skill contributed to `extra`, so re-activating
+    # a skill whose tools.py was edited can retract the previous generation
+    # before registering the new one. Without it a renamed or deleted tool
+    # lingers in `extra` forever, advertised to the LLM but backed by dead
+    # code from the pre-edit module.
+    skill_tool_names: dict[str, set[str]] = field(default_factory=dict)
     # Tool names promoted for this turn by pre-emptive keyword matching
     # against the current user message + prior assistant response.
     # Populated once at the start of a turn by ContextComposer; reused
