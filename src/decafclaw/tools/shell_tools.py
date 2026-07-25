@@ -139,10 +139,6 @@ async def check_shell_approval(ctx, command: str, tool_name: str = "shell",
 
     Returns {"approved": True} if auto-approved, or the user's confirmation result.
     """
-    if ctx.user_id == "heartbeat-admin":
-        log.info(f"[{tool_name}] auto-approved for heartbeat: {command}")
-        return {"approved": True}
-
     if "shell" in ctx.tools.preapproved or tool_name in ctx.tools.preapproved:
         log.info(f"[{tool_name}] pre-approved by command: {command}")
         return {"approved": True}
@@ -157,6 +153,16 @@ async def check_shell_approval(ctx, command: str, tool_name: str = "shell",
         return {"approved": True}
 
     suggested_pattern = _suggest_pattern(command)
+    if ctx.is_unattended:
+        # Nobody can answer a prompt on this turn: it would block for the 60s
+        # timeout and then be synthesized into this same denial. Deny now, and
+        # say why rather than letting it look like a user decision.
+        log.warning(
+            f"[{tool_name}] denied on unattended turn "
+            f"(task_mode={ctx.task_mode!r}): {command}")
+        return {"approved": False,
+                "reason": "unattended turn: command matches no allow pattern"}
+
     result = await request_confirmation(
         ctx, tool_name=tool_name, command=command,
         message=message or f"Shell command: `{command}`",

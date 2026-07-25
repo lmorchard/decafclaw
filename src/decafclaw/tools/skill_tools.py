@@ -380,25 +380,34 @@ async def tool_activate_skill(ctx, name: str) -> str | ToolResult:
 
     # Permission resolution, highest precedence first:
     # 1. User's explicit "deny" in skill_permissions.json — always wins
-    # 2. Admin heartbeat turns auto-approve
-    # 3. Trusted tier (bundled / admin / extra) — placement is trust
-    # 4. User's explicit "always" permission
-    # 5. Skill with `auto-approve: true` frontmatter
+    # 2. Trusted tier (bundled / admin / extra) — placement is trust
+    # 3. User's explicit "always" permission
+    # 4. Skill with `auto-approve: true` frontmatter
+    # 5. Unattended turn (heartbeat / scheduled) — denied, see #649
     # 6. Interactive confirmation
     # Trust by placement: bundled/admin/extra skills are pre-trusted
     # because the user opted them in by editing source, placing files,
     # or editing config. Workspace skills could be agent-authored, so
-    # they still require explicit confirmation.
-    is_heartbeat = ctx.user_id == "heartbeat-admin"
+    # they still require explicit confirmation — and an unattended turn
+    # cannot give it, so it gets a denial rather than an unanswerable prompt.
     is_trusted_tier = skill_info.trust_tier != "workspace"
     perms = _load_permissions(ctx.config)
     if perms.get(name) == "deny":
         return ToolResult(text=f"[error: activation of skill '{name}' was denied by user]")
-    if (not is_heartbeat
-            and not is_trusted_tier
+    if (not is_trusted_tier
             and perms.get(name) != "always"
             and not skill_info.auto_approve):
         # Need confirmation (workspace tier only at this point)
+        if ctx.is_unattended:
+            # Nobody can answer a prompt on this turn, so it would block for the
+            # 60s timeout and end in this same denial. An unattended turn gets a
+            # workspace skill only via a standing "always" grant, handled above.
+            log.warning(
+                f"[tool:activate_skill] denied on unattended turn "
+                f"(task_mode={ctx.task_mode!r}): workspace-tier skill "
+                f"'{name}' has no standing grant")
+            return ToolResult(
+                text=f"[error: activation of skill '{name}' was denied by user]")
         approved, always = await _request_skill_confirmation(ctx, name)
         if not approved:
             return ToolResult(text=f"[error: activation of skill '{name}' was denied by user]")

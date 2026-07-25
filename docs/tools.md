@@ -82,12 +82,21 @@ Background process management (`shell_background_start/status/stop/list`) lives 
 
 `check_shell_approval()` is the single chokepoint — don't duplicate its checks. It approves a command if any of these hold, in order:
 
-1. The turn is an admin heartbeat (`user_id == "heartbeat-admin"`).
-2. `shell` (or the calling tool name) is in `ctx.tools.preapproved` — blanket approval from a command's `allowed-tools`.
-3. The command matches a **scoped pattern** from a skill's `allowed-tools: shell(...)` (see [Skills](skills.md#environment-for-shell-based-skills)).
-4. The command matches a **persisted pattern** in `data/{agent_id}/shell_allow_patterns.json`.
+1. `shell` (or the calling tool name) is in `ctx.tools.preapproved` — blanket approval from a command's `allowed-tools`.
+2. The command matches a **scoped pattern** from a skill's `allowed-tools: shell(...)` (see [Skills](skills.md#environment-for-shell-based-skills)).
+3. The command matches a **persisted pattern** in `data/{agent_id}/shell_allow_patterns.json`.
 
 Otherwise it falls through to a user confirmation, which offers to save a suggested pattern.
+
+**Unattended turns get the same allowlist and no prompt (#649).** Heartbeat and scheduled turns
+(`ctx.is_unattended`, i.e. `task_mode` in `{"heartbeat", "scheduled"}`) traverse exactly the branches
+above — there is no bypass for them. On a miss they are **denied outright** instead of falling through
+to a confirmation: the prompt would only reach subscribers of an ephemeral `conv_id`, so it would
+block for the 60s timeout and be synthesized into that same denial. Unattended automation is granted
+shell access by adding a persisted or scoped pattern, never by virtue of who is running.
+
+Until #649 this list began with "the turn is an admin heartbeat", which auto-approved *any* command
+on the least-supervised turn kind — the capability ladder inverted.
 
 ### Wildcard patterns never match chained commands
 

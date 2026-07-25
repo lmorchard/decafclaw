@@ -101,9 +101,26 @@ class Context:
         self.skip_archive: bool = False
         self.wiki_page: str | None = None  # open wiki page from web UI
         self.active_model: str = ""  # named model config from config.model_configs
-        self.task_mode: str = ""  # "heartbeat" | "scheduled" | "" (interactive)
+        # From KIND_TASK_MODE (conversation_manager.py): "heartbeat" |
+        # "scheduled" | "child_agent" | "background_wake", or "" for an
+        # interactive user turn. Keep this list complete — `is_unattended` below
+        # reads it as an authorization input, so a stale enumeration invites the
+        # misclassification bug that `task_mode != ""` would be (see #685).
+        self.task_mode: str = ""
         self.request_confirmation: Any = None  # set by ConversationManager
         self.manager: Any = None  # set by ConversationManager
+
+    # Turn kinds where no human can answer a confirmation prompt: it is emitted
+    # only to subscribers of an ephemeral conv_id, so it blocks for the full 60s
+    # timeout and is then synthesized into a denial. Deliberately NOT
+    # `task_mode != ""` — child_agent inherits the parent's request_confirmation,
+    # so a child of an interactive turn does have someone who can answer.
+    UNATTENDED_TASK_MODES = frozenset({"heartbeat", "scheduled"})
+
+    @property
+    def is_unattended(self) -> bool:
+        """True when a confirmation prompt on this turn cannot reach a human."""
+        return self.task_mode in self.UNATTENDED_TASK_MODES
 
     @classmethod
     def for_task(
