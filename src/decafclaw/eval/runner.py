@@ -14,6 +14,8 @@ from ..config import Config
 from ..context import Context
 from ..conversation_manager import ConversationManager
 from ..events import EventBus
+from ..prompts import load_system_prompt
+from ..skills import build_skill_tool_owners
 from ..skills import discover_skills as _discover_skills_fn
 
 log = logging.getLogger(__name__)
@@ -629,8 +631,17 @@ def _build_test_config(config: Config, test_case: dict, tmp: str) -> Config:
             vault_retrieval.mode: headlines
             agent.max_tool_iterations: 3
 
-    The sandbox fields (``agent.data_home`` / ``agent.id``) are applied
-    *last* so a case cannot redirect itself out of its temp directory.
+    The sandbox fields (``agent.data_home`` / ``agent.id`` /
+    ``extra_skill_paths``) are applied *last* so a case cannot redirect itself
+    out of its temp directory or pull in machine-local skills.
+
+    ``extra_skill_paths`` is cleared because ``load_system_prompt`` runs
+    ``discover_skills``, which reads those paths — and unlike prompt overrides
+    they live outside ``data_home``, so the tmp sandbox does not reach them.
+    Left populated, a developer's ``~/.agents/skills`` lands in the
+    ``<skill_catalog>`` of every eval prompt (measured: 113 extra skills vs 12
+    bundled, 33% of the prompt text), making results machine-dependent. See
+    #670.
     """
     # `_setup_of` has already rejected non-mappings, removed keys, and
     # unknown keys, so only the config_overrides shape is left to check.
@@ -650,7 +661,11 @@ def _build_test_config(config: Config, test_case: dict, tmp: str) -> Config:
             )
         config = _apply_overrides(config, _nest_overrides(raw))
 
-    return replace(config, agent=replace(config.agent, data_home=tmp, id="eval"))
+    return replace(
+        config,
+        agent=replace(config.agent, data_home=tmp, id="eval"),
+        extra_skill_paths=[],
+    )
 
 
 async def run_test(config: Config, test_case: dict) -> dict:
@@ -663,10 +678,30 @@ async def run_test(config: Config, test_case: dict) -> dict:
     Multi-turn tests share history across turns (same conversation).
     All turns must pass for the test to pass.
     """
+    # Assemble the system prompt the same way decafclaw/__init__.py does at
+    # startup. Without this, config.system_prompt stays "" (config.py only reads
+    # a SYSTEM_PROMPT env var) and ContextComposer._compose_system_prompt emits
+    # a zero-length system message — no SOUL.md, no AGENT.md, no skill catalog,
+    # no always-loaded skill bodies. Every eval case ran that way until #670.
+    #
+    # Deliberately after _build_test_config's sandbox, which supplies both
+    # halves of reproducibility here: the tmp data_home means load_system_prompt
+    # finds no per-agent SOUL.md/AGENT.md/USER.md overrides, and the cleared
+    # extra_skill_paths means its discover_skills call sees bundled skills only.
+    # Without the second half a developer's ~/.agents/skills would land in the
+    # <skill_catalog> of every eval prompt.
+    #
+    # Guarded on falsiness so an explicit SYSTEM_PROMPT env override still wins.
+    if not config.system_prompt:
+        config.system_prompt, config.discovered_skills = load_system_prompt(config)
+
     # Populate discovered_skills so dispatch_command can resolve `/foo` triggers.
     if not config.discovered_skills:
-        from ..skills import build_skill_tool_owners
         config.discovered_skills = _discover_skills_fn(config)
+    # Separate guard: load_system_prompt populates discovered_skills as a side
+    # effect, so folding this into the branch above would skip it and silently
+    # break command dispatch.
+    if not config.skill_tool_owners:
         config.skill_tool_owners = build_skill_tool_owners(config.discovered_skills)
 
     # setup.auto_confirm: true (default) = auto-approve, false = auto-deny.

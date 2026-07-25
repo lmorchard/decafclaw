@@ -16,6 +16,45 @@ uv run python -m decafclaw.eval --history            # Print history table, no r
 uv run python -m decafclaw.eval --history --history-limit 5  # Last 5 runs only
 ```
 
+## System prompt
+
+Eval turns run with a real system prompt, assembled in `run_test` via
+`load_system_prompt(config)` — the same call `decafclaw/__init__.py` makes at
+startup.
+
+Assembly happens **after** the per-case sandbox is applied, and the sandbox
+clears two separate sources of machine-local state so the result is the
+**bundled tier only** — bundled `SOUL.md` + `AGENT.md`, the `<skill_catalog>`,
+and the bodies of always-loaded bundled skills:
+
+| sandbox field | what it excludes |
+|---|---|
+| `agent.data_home` → tmp | per-agent prompt overrides under `data/{agent_id}/`, including `USER.md` |
+| `extra_skill_paths` → `[]` | skills from configured external dirs (e.g. `~/.agents/skills`) |
+
+The second one is easy to miss: `load_system_prompt` calls `discover_skills`,
+and `extra_skill_paths` entries live *outside* `data_home`, so the tmp
+redirect alone doesn't reach them. Left populated, a developer's personal
+skills land in the `<skill_catalog>` of every eval prompt — measured at 113
+extra skills against 12 bundled, a third of the prompt text
+([#670](https://github.com/lmorchard/decafclaw/issues/670)).
+
+Both are applied last in `_build_test_config`, so a case's
+`setup.config_overrides` cannot opt itself back into either.
+
+Net effect: eval results are reproducible across machines and in CI instead of
+drifting with local agent state.
+
+The tool-choice eval assembles the same prompt (see
+[How it works](#how-it-works) below), so the two harnesses agree on this axis.
+
+> **History discontinuity.** Runs before 2026-07-24 were measured with an
+> **empty** system prompt — the eval CLI never went through the startup path
+> that assembles it, so every case ran without SOUL.md, AGENT.md, the skill
+> catalog, or any always-loaded skill body ([#670](https://github.com/lmorchard/decafclaw/issues/670)).
+> Pass rates from before that date are not comparable to later ones, and cost
+> per case roughly doubled once the prompt was actually being sent.
+
 ## Test case format
 
 Tests are YAML files with a list of test cases. Single-turn form:
@@ -195,7 +234,7 @@ evals/results/
 
 ## Pass-rate history
 
-After each `make eval` run, a one-line summary is appended to `evals/history.jsonl` (committed to git, unlike the gitignored detail bundles in `evals/results/`). The record includes timestamp, model, total / passed / failed counts, pass-rate, duration, total tokens, and per-file pass/total breakdown.
+After each `make eval` run, a one-line summary is appended to `evals/history.jsonl`. Both it and the detail bundles in `evals/results/` are gitignored, so the trend lives on whichever machine ran the suite. The record includes timestamp, model, total / passed / failed counts, pass-rate, duration, total tokens, and per-file pass/total breakdown.
 
 View the trend with `make eval-history`:
 
@@ -243,7 +282,7 @@ uv run python -m decafclaw.eval.tool_choice evals/tool_choice/ --include-mcp  # 
 For each YAML case, the runner:
 
 1. Builds the **fully-loaded** tool schema (every core tool + every discovered skill's `tools.py` exports; MCP off by default). No deferral, no activation gating — the eval measures description overlap under fair conditions.
-2. Sends one chat completion with the production system prompt + the case's user message + the full tool schema.
+2. Sends one chat completion with the system prompt + the case's user message + the full tool schema. Same `load_system_prompt(config)` assembly the full-agent runner uses (see [System prompt](#system-prompt)).
 3. Captures the first tool name from `tool_calls` (or `<no_tool>` if the model emits text only). No tool execution, no agent loop iteration — the overlap signal we care about lives in the *first* decision.
 4. Aggregates results into a per-pair overlap report: for each declared `(expected, near_miss)` pair, what fraction of cases swapped to the near-miss?
 
