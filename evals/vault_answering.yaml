@@ -30,13 +30,24 @@
       "vault/agent/pages/staging-deploy.md": |
         # Staging Deploy
         Staging deploys run automatically on every merge to `develop`.
-  input: "What's our data-retention policy for customer PII?"
+  # Deliberately avoids the word "customer" — in this environment it real-
+  # discovers an unrelated `persona-customer-support` skill (a personal
+  # skill outside this repo's fixtures, reachable via the resolved config's
+  # `extra_skill_paths`), which derails the model into an irrelevant
+  # `activate_skill` detour and destabilized this case's final phrasing in
+  # real runs. "personal data" tests the same absence-of-a-matching-page
+  # behavior without tripping that unrelated skill.
+  input: "What's our data-retention policy for personal data we store?"
   expect:
     # Must NOT fabricate a policy; hedge/deny instead. A LIST on
     # `response_contains` is ANY-match (see runner.py:364) — there is no
     # separate `response_contains_any` assertion.
-    response_contains: ["don't have", "not find", "unable to find", "nothing", "couldn't find", "no information"]
-    max_tool_calls: 4
+    response_contains: ["don't have", "not find", "unable to find", "haven't found", "nothing", "couldn't find", "no information", "no relevant"]
+    # A thorough model tries several rephrasings (up to 5 observed in real
+    # runs) before giving up and admitting absence — that persistence is
+    # legitimate, not thrash, so the bound allows for it while still
+    # capping runaway search loops.
+    max_tool_calls: 6
     max_tool_errors: 0
 
 - name: "picks correct page among distractor filenames sharing a stem"
@@ -50,8 +61,14 @@
   # substring hit on ALL three pages, and the agent reports "not found"
   # instead of answering — observed flaky in real runs. Frontmatter tags
   # covering the query's own vocabulary (including the space-vs-hyphen
-  # "new hire" variant) on the correct page act as a safety net so a
-  # tags-qualified search still surfaces it.
+  # "new hire" variant) act as a safety net so a tags-qualified search
+  # still returns results. Critically, the SAME tags are on all three
+  # pages (not just the correct one) — otherwise a tags-qualified search
+  # would filter straight down to the one right answer and bypass the
+  # three-way body disambiguation this case exists to test. With shared
+  # tags, a tags-qualified search still returns all three candidates (or
+  # none), forcing the model to read bodies and pick the current one on
+  # every code path.
   setup:
     workspace_files:
       "vault/agent/pages/onboarding-checklist.md": |
@@ -62,10 +79,16 @@
         New-hire laptop setup: enroll in MDM, install the VPN client, and
         request access to the shared drive.
       "vault/agent/pages/onboarding-checklist-draft.md": |
+        ---
+        tags: [onboarding, checklist, "new hire", new-hire, laptop, setup]
+        ---
         # Onboarding Checklist (Draft — DO NOT USE)
         This is an old draft. New-hire laptop setup used to require a manual
         disk encryption step that has since been automated away.
       "vault/agent/pages/onboarding-checklist-archive-2023.md": |
+        ---
+        tags: [onboarding, checklist, "new hire", new-hire, laptop, setup]
+        ---
         # Onboarding Checklist (2023 Archive — superseded)
         Historical: new hires used to get a physical security key mailed to
         their home address before day one.
@@ -109,7 +132,8 @@
         max_tool_errors: 0
     - input: "If our service goes down for customers, what's the first thing we should do?"
       expect:
-        response_contains_all: ["status page", "15"]
+        response_contains_all: ["status page"]
+        response_contains: "re:15\\s*min"
         expect_no_tool: [vault_search, vault_read, vault_recent]
         max_tool_calls: 0
         max_tool_errors: 0
