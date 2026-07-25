@@ -168,7 +168,58 @@ export async function switchToTab(tabId) {
   }
 }
 
-/** User clicks [×] on a tab — close it via REST. Server emits canvas_update kind=close_tab. */
+/**
+ * Close a tab by id — no prompt, explicit conversation. Server emits
+ * canvas_update kind=close_tab, which removes the tab from every viewer.
+ *
+ * The single REST chokepoint for tab removal. `closeTabFromUi` layers the
+ * confirm dialog on top; callers that have already established the tab is
+ * dead (the terminal widget, on discovering its session is gone) come
+ * straight here — there is nothing to confirm about closing a tombstone.
+ *
+ * Takes `convId` explicitly rather than reading the active conversation:
+ * the standalone canvas window (`/canvas/{conv}/{tab}`) never sets one.
+ *
+ * @param {string} convId
+ * @param {string} tabId
+ */
+export async function closeTabById(convId, tabId) {
+  if (!convId || !tabId) return;
+  // Apply locally first, then POST — the same optimistic shape as
+  // `switchToTab`. Not just for responsiveness: the server confirms a close
+  // by broadcasting `canvas_update` over /ws/chat, and the terminal widget
+  // calls this precisely *because* the server restarted, which is when that
+  // socket is least likely to deliver anything. (It reconnects, but
+  // conversation-store only re-runs listConversations() on open — it never
+  // re-sends SELECT_CONV, so the fresh socket is subscribed to nothing.)
+  // Waiting on that push left the dead tab on screen until a full reload.
+  // The echoed event, if it does arrive, is a no-op: applyEvent filters by
+  // id and the tab is already gone.
+  const s = _state.byConv.get(convId);
+  const idx = s ? s.tabs.findIndex((t) => t.id === tabId) : -1;
+  if (s && idx >= 0) {
+    const remaining = s.tabs.filter((t) => t.id !== tabId);
+    // Mirror the server's neighbor choice (canvas.close_tab): prefer left.
+    const active = s.activeTabId === tabId
+      ? (remaining.length ? remaining[Math.max(0, idx - 1)].id : null)
+      : s.activeTabId;
+    applyEvent({
+      conv_id: convId, kind: 'close_tab', closed_tab_id: tabId, active_tab: active,
+    });
+  }
+  try {
+    await fetch(`/api/canvas/${encodeURIComponent(convId)}/close_tab`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({ tab_id: tabId }),
+    });
+  } catch (err) {
+    console.warn('canvas close_tab POST failed', err);
+  }
+}
+
+/** User clicks [×] on a tab — confirm, then close via REST. */
 export async function closeTabFromUi(tabId) {
   const convId = _state.active;
   if (!convId) return;
@@ -180,14 +231,5 @@ export async function closeTabFromUi(tabId) {
     ? 'Close this terminal? The shell session will be terminated.'
     : `Close tab "${(tab && tab.label) || tabId}"?`;
   if (!window.confirm(msg)) return;
-  try {
-    await fetch(`/api/canvas/${encodeURIComponent(convId)}/close_tab`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'same-origin',
-      body: JSON.stringify({ tab_id: tabId }),
-    });
-  } catch (err) {
-    console.warn('canvas close_tab POST failed', err);
-  }
+  await closeTabById(convId, tabId);
 }
