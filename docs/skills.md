@@ -342,6 +342,20 @@ surface the reason instead of failing silently:
   - `tools.py` imports cleanly (catches `SyntaxError`, undefined names, bad imports)
   - `tools.py` exports `get_tools(ctx)` (must accept `ctx`) **or**
     `TOOLS` / `TOOL_DEFINITIONS`
+  - those exports have the right **shape**, not merely the right names:
+    `TOOLS` must be a `dict` mapping tool name → callable, and
+    `TOOL_DEFINITIONS` must be a `list` of function schemas each carrying a
+    non-empty `function.name`
+
+  The shape check matters because wrong-typed exports import perfectly
+  cleanly. `TOOLS = [my_tool]` (a list) only fails later, inside
+  `ctx.tools.extra.update()`, as `cannot convert dictionary update sequence
+  element #0 to a sequence`. Before #675 `skill_validate` checked names but
+  not types and reported PASS on skills that could never load — leaving the
+  author with a validator and a loader that flatly contradicted each other.
+  The same contract check (`check_tools_contract`) now backs both, so they
+  cannot diverge: `_load_native_tools` raises `SkillContractError` naming the
+  offending export instead of failing opaquely downstream.
 
 Minimal correct workspace skill:
 

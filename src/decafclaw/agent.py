@@ -1072,15 +1072,7 @@ class TurnRunner:
             f"\n\n[Agent reached max tool iterations "
             f"({self.config.agent.max_tool_iterations}) without a final response]"
         )
-        accumulated = "\n\n".join(self.accumulated_text_parts)
-        msg = accumulated + limit_note if accumulated else limit_note.strip()
-        final_msg = {"role": "assistant", "content": msg}
-        self.history.append(final_msg)
-        _archive(self.ctx, final_msg)
-        await _maybe_compact(
-            self.ctx, self.config, self.history, self.prompt_tokens,
-        )
-        return ToolResult(text=msg)
+        return await self._finalize_with_note(limit_note)
 
     async def _finalize_loop_break(self) -> "ToolResult":
         """Loop-breaker hard-stop: end the turn with a summary of the thrash
@@ -1090,15 +1082,28 @@ class TurnRunner:
             "without progress. Next: read the relevant logs, build a minimal "
             "repro, and re-check the contract before retrying."
         )
+        return await self._finalize_with_note(note)
+
+    async def _finalize_with_note(self, note: str) -> "ToolResult":
+        """End an abnormally-terminated turn (iteration limit / loop-breaker)
+        by appending `note` to whatever text the turn accumulated.
+
+        The delivered text includes the accumulated preambles so the turn
+        reads as a whole, but only the note is persisted: each preamble was
+        already appended to history and archived as it was emitted (see
+        _handle_tool_calls). Archiving the join too duplicated every
+        preamble in the record — invisible on a one-preamble turn, a wall of
+        repeated text on a long thrash (#675).
+        """
         accumulated = "\n\n".join(self.accumulated_text_parts)
-        msg = accumulated + note if accumulated else note.strip()
-        final_msg = {"role": "assistant", "content": msg}
+        delivered = accumulated + note if accumulated else note.strip()
+        final_msg = {"role": "assistant", "content": note.strip()}
         self.history.append(final_msg)
         _archive(self.ctx, final_msg)
         await _maybe_compact(
             self.ctx, self.config, self.history, self.prompt_tokens,
         )
-        return ToolResult(text=msg)
+        return ToolResult(text=delivered)
 
     def _extract_workspace_media(self, content: str) -> "ToolResult":
         """Extract workspace:// refs only for channels that need it.

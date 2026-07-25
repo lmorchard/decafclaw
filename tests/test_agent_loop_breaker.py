@@ -224,3 +224,48 @@ async def test_end_turn_signal_preempts_loop_breaker(ctx):
     # 3 tool-call iterations + 1 final no-tools call after end_turn=True.
     assert mock_llm.call_count == 4
     assert mock_execute.call_count == 3
+
+
+# -- Hard-stop must not re-archive text it already archived (#675) -------------
+
+
+@pytest.mark.asyncio
+async def test_loop_break_does_not_duplicate_accumulated_text(ctx):
+    """Each iteration's assistant preamble is archived as it happens. The
+    hard-stop finalizer must not re-emit all of them joined together — on a
+    long thrash that produced a wall of duplicated text in the transcript."""
+    ctx.config.llm.streaming = False
+    ctx.config.agent.max_tool_iterations = 50
+    ctx.config.loop_breaker.repeat_threshold = 3
+    ctx.config.loop_breaker.error_threshold = 99
+    ctx.config.loop_breaker.error_window = 50
+
+    preamble = "I will try activating the skill again."
+    repeated_call = _mock_llm_response(
+        content=preamble,
+        tool_calls=[{
+            "id": "tc-repeat",
+            "function": {"name": "definitely_not_a_real_tool", "arguments": "{}"},
+        }],
+    )
+
+    with patch("decafclaw.agent.call_llm", new_callable=AsyncMock) as mock_llm:
+        mock_llm.side_effect = [repeated_call] * 10
+        history = []
+        result = await run_agent_turn(ctx, "loop forever", history)
+
+    assert "[loop-breaker] Stopped" in result.text
+
+    from decafclaw.archive import read_archive
+    archived = read_archive(ctx.config, ctx.conv_id)
+    occurrences = sum(
+        (m.get("content") or "").count(preamble)
+        for m in archived if m.get("role") == "assistant"
+    )
+    # The preamble was emitted once per iteration and archived once per
+    # iteration. The stop message must not repeat any of them.
+    iterations = mock_llm.call_count
+    assert occurrences == iterations, (
+        f"preamble archived {occurrences}× across {iterations} iterations — "
+        "the finalizer is re-archiving already-archived text"
+    )

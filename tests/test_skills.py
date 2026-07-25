@@ -1546,3 +1546,185 @@ def test_skill_validate_stray_main_py(ctx):
 def test_skill_validate_outside_workspace(ctx):
     result = tool_skill_validate(ctx, path="../../etc")
     assert "outside the workspace" in _text(result)
+
+
+# -- tools.py shape contract (#675) --
+#
+# The loader needs TOOLS to be dict[str, callable] and TOOL_DEFINITIONS to be
+# a list of OpenAI function schemas. Before #675 skill_validate only checked
+# that the names EXISTED, so it reported PASS on skills that could not
+# possibly load — the contradiction that derailed a whole session.
+
+
+def test_skill_validate_rejects_tools_as_list(ctx):
+    """TOOLS = [fn] imports cleanly but breaks ctx.tools.extra.update()."""
+    _write_ws_skill(
+        ctx, "toolslist", "name: toolslist\ndescription: Wrong TOOLS shape.",
+        tools_py="def hello():\n    return 'hi'\n\nTOOLS = [hello]\n",
+    )
+    result = tool_skill_validate(ctx, path="skills/toolslist")
+    assert result.data["ok"] is False
+    shape = next(c for c in result.data["checks"] if c["name"] == "tools_shape")
+    assert shape["passed"] is False
+    # Actionable: names the expected type, not just "invalid".
+    assert "dict" in shape["message"]
+    assert "TOOLS" in shape["message"]
+
+
+def test_skill_validate_rejects_tool_definitions_as_dict(ctx):
+    """TOOL_DEFINITIONS = {name: fn} imports cleanly but breaks every
+    consumer that iterates it as a list of schema dicts."""
+    _write_ws_skill(
+        ctx, "defsdict", "name: defsdict\ndescription: Wrong defs shape.",
+        tools_py=(
+            "def hello(ctx):\n    return 'hi'\n\n"
+            "TOOLS = {'hello': hello}\n"
+            "TOOL_DEFINITIONS = {'hello': hello}\n"
+        ),
+    )
+    result = tool_skill_validate(ctx, path="skills/defsdict")
+    assert result.data["ok"] is False
+    shape = next(c for c in result.data["checks"] if c["name"] == "tools_shape")
+    assert shape["passed"] is False
+    assert "TOOL_DEFINITIONS" in shape["message"]
+    assert "list" in shape["message"]
+
+
+def test_skill_validate_rejects_non_callable_tool_value(ctx):
+    _write_ws_skill(
+        ctx, "notcallable", "name: notcallable\ndescription: Bad value.",
+        tools_py="TOOLS = {'hello': 'not a function'}\n",
+    )
+    result = tool_skill_validate(ctx, path="skills/notcallable")
+    assert result.data["ok"] is False
+    shape = next(c for c in result.data["checks"] if c["name"] == "tools_shape")
+    assert shape["passed"] is False
+    assert "callable" in shape["message"]
+
+
+def test_skill_validate_rejects_definition_without_function_name(ctx):
+    _write_ws_skill(
+        ctx, "nofname", "name: nofname\ndescription: Missing name.",
+        tools_py=(
+            "def hello(ctx):\n    return 'hi'\n\n"
+            "TOOLS = {'hello': hello}\n"
+            "TOOL_DEFINITIONS = [{'type': 'function', 'function': {}}]\n"
+        ),
+    )
+    result = tool_skill_validate(ctx, path="skills/nofname")
+    assert result.data["ok"] is False
+    shape = next(c for c in result.data["checks"] if c["name"] == "tools_shape")
+    assert shape["passed"] is False
+    assert "function.name" in shape["message"]
+
+
+def test_skill_validate_accepts_correct_tools_shape(ctx):
+    """The happy path still passes, and reports the shape check explicitly."""
+    _write_ws_skill(
+        ctx, "goodshape", "name: goodshape\ndescription: Correct shape.",
+        tools_py=(
+            "def hello(ctx):\n    return 'hi'\n\n"
+            "TOOLS = {'hello': hello}\n"
+            "TOOL_DEFINITIONS = [{'type': 'function', "
+            "'function': {'name': 'hello'}}]\n"
+        ),
+    )
+    result = tool_skill_validate(ctx, path="skills/goodshape")
+    assert result.data["ok"] is True
+    shape = next(c for c in result.data["checks"] if c["name"] == "tools_shape")
+    assert shape["passed"] is True
+
+
+def test_load_native_tools_rejects_wrong_shape_with_actionable_error(tmp_path):
+    """_load_native_tools raises a message naming the contract, not an
+    opaque 'cannot convert dictionary update sequence element #0'."""
+    from decafclaw.skills import SkillInfo
+    from decafclaw.tools.skill_tools import SkillContractError, _load_native_tools
+
+    d = tmp_path / "badshape"
+    d.mkdir()
+    (d / "tools.py").write_text("def hello():\n    return 'hi'\n\nTOOLS = [hello]\n")
+    info = SkillInfo(name="badshape", description="d", location=d,
+                     has_native_tools=True)
+    with pytest.raises(SkillContractError) as exc:
+        _load_native_tools(info)
+    assert "TOOLS" in str(exc.value)
+    assert "dict" in str(exc.value)
+
+
+def test_build_skill_tool_owners_survives_malformed_definitions(tmp_path, config):
+    """A workspace skill with the wrong TOOL_DEFINITIONS shape must not take
+    down startup — build_skill_tool_owners is called unguarded from
+    decafclaw.main()."""
+    from decafclaw.skills import build_skill_tool_owners
+
+    root = tmp_path / "skills-root"
+    bad = root / "badskill"
+    _write_skill(bad, "name: badskill\ndescription: Bad.", tools_py=False)
+    (bad / "tools.py").write_text(
+        "def hello(ctx):\n    return 'hi'\n\n"
+        "TOOLS = {'hello': hello}\n"
+        "TOOL_DEFINITIONS = {'hello': hello}\n"  # dict, not list
+    )
+    good = root / "goodskill"
+    _write_skill(good, "name: goodskill\ndescription: Good.", tools_py=False)
+    (good / "tools.py").write_text(
+        "TOOLS = {'good_one': lambda ctx: None}\n"
+        "TOOL_DEFINITIONS = [{'type': 'function', "
+        "'function': {'name': 'good_one'}}]\n"
+    )
+    config.extra_skill_paths = [str(root)]
+    skills = discover_skills(config)
+
+    owners = build_skill_tool_owners(skills)  # must not raise
+    # The malformed skill contributes nothing; the healthy one is unaffected.
+    assert owners.get("good_one") == "goodskill"
+    assert "hello" not in owners
+
+
+def test_refresh_skills_survives_malformed_workspace_skill(ctx):
+    """refresh_skills must report the broken skill rather than erroring out
+    of the tool entirely."""
+    _write_ws_skill(
+        ctx, "badrefresh", "name: badrefresh\ndescription: Bad shape.",
+        tools_py=(
+            "def hello(ctx):\n    return 'hi'\n\n"
+            "TOOLS = {'hello': hello}\n"
+            "TOOL_DEFINITIONS = {'hello': hello}\n"
+        ),
+    )
+    text = _text(tool_refresh_skills(ctx))  # must not raise
+    assert "Skills refreshed" in text
+
+
+@pytest.mark.asyncio
+async def test_activate_skill_rediscovers_when_missing_from_catalog(ctx):
+    """activate_skill and refresh_skills run concurrently under
+    asyncio.gather, so activate can read config.discovered_skills before
+    refresh replaces it. On a miss, re-discover before reporting not-found
+    rather than emitting a nondeterministic contradiction."""
+    from decafclaw.tools.skill_tools import _save_permission, tool_activate_skill
+
+    _write_ws_skill(ctx, "latecomer", "name: latecomer\ndescription: New skill.",
+                    body="Latecomer body.")
+    # Pre-approve: this test is about the catalog miss, not the workspace-tier
+    # confirmation gate that would otherwise block activation.
+    _save_permission(ctx.config, "latecomer", "always")
+    # Simulate the stale snapshot: the skill exists on disk but the catalog
+    # this call sees predates it.
+    ctx.config.discovered_skills = []
+
+    result = await tool_activate_skill(ctx, name="latecomer")
+    assert "not found" not in _text(result)
+    assert "latecomer" in ctx.skills.activated
+    # The catalog is repaired too, so restore_skills finds it on later turns.
+    assert "latecomer" in {s.name for s in ctx.config.discovered_skills}
+
+
+@pytest.mark.asyncio
+async def test_activate_skill_still_reports_genuinely_missing_skill(ctx):
+    from decafclaw.tools.skill_tools import tool_activate_skill
+
+    ctx.config.discovered_skills = []
+    result = await tool_activate_skill(ctx, name="no-such-skill-anywhere")
+    assert "not found" in _text(result)

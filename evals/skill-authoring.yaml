@@ -14,3 +14,70 @@
     max_tool_calls: 10
     max_tool_errors: 1
     expect_tool: activate_skill
+
+# #675 — the "validator and loader contradict each other" failure mode.
+# Distinct from evals/diagnostic_discipline.yaml's broken_skill fixture,
+# which has invalid *frontmatter*: here the frontmatter is valid and
+# tools.py imports perfectly cleanly. The only defect is the shape of the
+# export — `TOOLS` is a list where the loader requires a dict.
+#
+# Before #675 this was unrecoverable by construction: skill_validate
+# reported PASS (it checked only that the name existed) while activation
+# failed with `cannot convert dictionary update sequence element #0 to a
+# sequence`, which names neither the file nor the contract. A real session
+# burned an entire conversation on it and hit the loop breaker.
+#
+# Now `check_tools_contract` backs both the validator and the loader, so
+# whichever the agent reaches for reports the same actionable problem. The
+# assertion is the outcome, not the route: TOOLS ends up a dict. Which tool
+# the model tries first varies run to run (same reasoning as the
+# diagnostic_discipline note), so it isn't asserted.
+#
+# Note the skill is written via setup.workspace_files, which lands on disk
+# AFTER config.discovered_skills is populated — so activate_skill also
+# exercises the catalog-miss rediscovery path from the same issue.
+- name: "fixes a wrong-shaped TOOLS export instead of thrashing"
+  setup:
+    workspace_files:
+      "skills/shapely/SKILL.md": |
+        ---
+        name: shapely
+        description: Greets a person by name. Use when asked to greet someone.
+        ---
+
+        # Shapely (eval fixture)
+
+        A one-tool skill whose tools.py exports TOOLS in the wrong shape.
+      "skills/shapely/tools.py": |
+        from decafclaw.media import ToolResult
+
+
+        def greet(ctx, who: str) -> ToolResult:
+            """Greet someone by name."""
+            return ToolResult(text=f"hello {who}")
+
+
+        TOOLS = [greet]
+
+        TOOL_DEFINITIONS = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "greet",
+                    "description": "Greet someone by name.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"who": {"type": "string"}},
+                        "required": ["who"],
+                    },
+                },
+            },
+        ]
+  input: >
+    The "shapely" skill in my workspace won't activate. Figure out why and fix it.
+  expect:
+    max_tool_calls: 15
+    max_tool_errors: 6
+  expect_workspace:
+    workspace_files:
+      "skills/shapely/tools.py": "re:TOOLS\\s*=\\s*\\{"
