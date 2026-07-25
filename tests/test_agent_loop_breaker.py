@@ -269,3 +269,46 @@ async def test_loop_break_does_not_duplicate_accumulated_text(ctx):
         f"preamble archived {occurrences}× across {iterations} iterations — "
         "the finalizer is re-archiving already-archived text"
     )
+
+
+# -- The nudge must not read as the user speaking (#680) -----------------------
+
+
+@pytest.mark.asyncio
+async def test_nudge_self_identifies_as_automated(ctx):
+    """The nudge is user-role on purpose (models follow user-role mid-turn
+    directives more reliably), but that makes the model read it as the user
+    talking: in the session behind #675 it replied "You're right. I was stuck
+    in a loop" to a correction Les never made.
+
+    Locks all three properties at once so a later edit can't quietly drop
+    one: still user-role, still directive, and now explicitly attributed to
+    the system rather than the user."""
+    ctx.config.llm.streaming = False
+    ctx.config.agent.max_tool_iterations = 50
+    ctx.config.loop_breaker.repeat_threshold = 3
+    ctx.config.loop_breaker.error_threshold = 99
+    ctx.config.loop_breaker.error_window = 50
+
+    repeated_call = _mock_llm_response(
+        content=None,
+        tool_calls=[{
+            "id": "tc-repeat",
+            "function": {"name": "definitely_not_a_real_tool", "arguments": "{}"},
+        }],
+    )
+
+    with patch("decafclaw.agent.call_llm", new_callable=AsyncMock) as mock_llm:
+        mock_llm.side_effect = [repeated_call] * 10
+        await run_agent_turn(ctx, "loop forever", [])
+
+    sent_messages = mock_llm.call_args_list[-1][0][1]
+    nudge = next(m for m in sent_messages
+                 if "[loop-breaker]" in (m.get("content") or ""))
+
+    # Compliance: the user-role choice and the directive both survive.
+    assert nudge["role"] == "user"
+    assert "STOP" in nudge["content"]
+
+    # Attribution: the text says outright that the user didn't write it.
+    assert "the user did not send this" in nudge["content"].lower()

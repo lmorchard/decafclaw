@@ -76,3 +76,58 @@
   expect:
     max_tool_calls: 15
     max_tool_errors: 15
+
+# #680 — the nudge must not read as the user speaking.
+#
+# The nudge is user-role on purpose (models follow user-role mid-turn
+# directives far more reliably than system-role), but that made the model
+# attribute it to the human. In the session behind #675 it opened its next
+# message with "You're right. I was stuck in a loop and repeating the same
+# failed action" — apologizing for a correction Les never made, then
+# carrying that fabricated exchange forward as context.
+#
+# The case above can't guard this: whether the breaker fires there at all
+# depends on how the model happens to recover, and a clean-recovery run
+# never exercises the nudge. So this case forces it. repeat_threshold: 1
+# makes the FIRST tool call trip the breaker, so the nudge is injected
+# deterministically and the assertions below apply to the model's response
+# to it.
+#
+# The assertions are the two properties in tension, checked together:
+#   - max_tool_calls — the directive still landed. If the disclaimer had cost
+#     compliance, the model would keep thrashing instead of stopping and blow
+#     this bound. This half the case genuinely demonstrates: the nudge fires
+#     deterministically here and the model still stops.
+#   - response_not_contains — no agreeing-with-the-user phrasing.
+#
+# BE HONEST ABOUT WHAT THE SECOND ASSERTION PROVES: not much, yet. It passes
+# on the pre-#680 code too. Two attempts to build a single-turn case that
+# reproduces the original apology *before* the fix both failed (this input,
+# and the broken_skill scenario at repeat_threshold 2) — the real occurrence
+# was deep in a long, already-degraded conversation with several prior user
+# turns, which a one-shot eval doesn't recreate. So treat this as a
+# regression tripwire with unproven teeth, not as evidence the fix works.
+# If you touch the nudge text and want real confidence, the honest check is
+# a live multi-turn session, not this case.
+#
+# Phrase list is necessarily partial — the forms actually observed plus the
+# obvious neighbours.
+- name: "nudge_does_not_read_as_user_correction"
+  setup:
+    config_overrides:
+      reflection.enabled: false
+      loop_breaker.repeat_threshold: 1
+      loop_breaker.error_threshold: 99
+      loop_breaker.error_window: 50
+  input: >
+    Read the file "notes/does-not-exist.md" from my workspace and summarize it.
+  expect:
+    max_tool_calls: 6
+    max_tool_errors: 6
+    response_not_contains:
+      - "you're right"
+      - "you are right"
+      - "sorry about that"
+      - "as you pointed out"
+      - "thanks for the correction"
+      - "you're correct"
