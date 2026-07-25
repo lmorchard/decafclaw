@@ -36,10 +36,12 @@ vi.mock('@xterm/xterm', () => ({
 vi.mock('@xterm/addon-fit', () => ({ FitAddon: class { fit() {} } }));
 vi.mock('@xterm/addon-web-links', () => ({ WebLinksAddon: class {} }));
 
-vi.mock('../../lib/toast.js', () => ({
+// Mocked at the same absolute specifier the widget imports — see the
+// /static/ alias in vitest.config.js for why that prefix is what ships.
+vi.mock('/static/lib/toast.js', () => ({
   showToast: (/** @type {string} */ msg) => { toasts.push(msg); },
 }));
-vi.mock('../../lib/canvas-state.js', () => ({
+vi.mock('/static/lib/canvas-state.js', () => ({
   closeTabById: (/** @type {string} */ convId, /** @type {string} */ tabId) => {
     closedTabs.push([convId, tabId]);
     return Promise.resolve();

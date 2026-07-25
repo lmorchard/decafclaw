@@ -134,7 +134,17 @@ cleanup path — there is deliberately **no server-side startup sweep** of
 stale terminal tabs. A tombstone in a conversation you never reopen simply
 stays in `canvas.json` until a client actually attaches and discovers it.
 
-Two details are load-bearing and easy to regress:
+Three details are load-bearing and easy to regress:
+
+- **`closeTabById` removes the tab locally before POSTing.** The server
+  confirms a close by broadcasting `canvas_update` over `/ws/chat` — but this
+  path runs *because* the server restarted, which is exactly when that socket
+  is least able to deliver. It does reconnect, yet `conversation-store` only
+  re-runs `listConversations()` on open and never re-sends `SELECT_CONV`, so
+  the fresh socket is subscribed to no conversation stream and the broadcast
+  reaches nobody. Waiting on that push left the dead tab on screen until a
+  full page reload. Anything reacting to a disconnect must not depend on that
+  connection to finish the job.
 
 - **`_disposeSurface()`, not just `_teardownSocket()`.** The xterm surface is
   a manually-appended light-DOM `div` with `height: 100%`, and `onopen`

@@ -15,6 +15,12 @@ export default defineConfig({
     // `@milkdown/kit/core` etc. must still resolve to the npm package.
     alias: [
       { find: /^@milkdown\/kit$/, replacement: here('./milkdown-entry.js') },
+      // Widgets are served from /widgets/{tier}/{name}/widget.js, not from
+      // /static/, so they import shared modules by absolute URL
+      // (`/static/lib/…`) — a relative `../../lib/…` would resolve against
+      // the wrong root and 404 in the browser. Map that URL prefix back onto
+      // the source tree so the same import resolves under vitest.
+      { find: /^\/static\//, replacement: here('./') },
     ],
   },
   test: {

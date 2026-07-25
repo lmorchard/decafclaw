@@ -3,8 +3,11 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 
-import { closeTabById } from '../../lib/canvas-state.js';
-import { showToast } from '../../lib/toast.js';
+// Absolute, not relative: widgets are served from
+// /widgets/{tier}/{name}/widget.js, so `../../lib/…` resolves to
+// /widgets/lib/… and 404s. Matches code_block and markdown_document.
+import { closeTabById } from '/static/lib/canvas-state.js';
+import { showToast } from '/static/lib/toast.js';
 
 // Reconnect backoff schedule (ms) for unexpected WS closes. Capped at
 // BACKOFF.length attempts — after that we give up and show an error banner

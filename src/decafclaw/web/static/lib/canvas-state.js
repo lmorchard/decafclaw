@@ -185,6 +185,28 @@ export async function switchToTab(tabId) {
  */
 export async function closeTabById(convId, tabId) {
   if (!convId || !tabId) return;
+  // Apply locally first, then POST — the same optimistic shape as
+  // `switchToTab`. Not just for responsiveness: the server confirms a close
+  // by broadcasting `canvas_update` over /ws/chat, and the terminal widget
+  // calls this precisely *because* the server restarted, which is when that
+  // socket is least likely to deliver anything. (It reconnects, but
+  // conversation-store only re-runs listConversations() on open — it never
+  // re-sends SELECT_CONV, so the fresh socket is subscribed to nothing.)
+  // Waiting on that push left the dead tab on screen until a full reload.
+  // The echoed event, if it does arrive, is a no-op: applyEvent filters by
+  // id and the tab is already gone.
+  const s = _state.byConv.get(convId);
+  const idx = s ? s.tabs.findIndex((t) => t.id === tabId) : -1;
+  if (s && idx >= 0) {
+    const remaining = s.tabs.filter((t) => t.id !== tabId);
+    // Mirror the server's neighbor choice (canvas.close_tab): prefer left.
+    const active = s.activeTabId === tabId
+      ? (remaining.length ? remaining[Math.max(0, idx - 1)].id : null)
+      : s.activeTabId;
+    applyEvent({
+      conv_id: convId, kind: 'close_tab', closed_tab_id: tabId, active_tab: active,
+    });
+  }
   try {
     await fetch(`/api/canvas/${encodeURIComponent(convId)}/close_tab`, {
       method: 'POST',
