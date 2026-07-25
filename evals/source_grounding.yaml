@@ -1,0 +1,103 @@
+# Behavioral suite — ANSWER_QUALITY axis (#528). Answers must ground in a
+# seeded source (vault page or workspace file) or hedge; no fabricated
+# specifics. Two source-and-hedge pairs (vault SLA page, workspace API
+# config file) plus one grounds-only case on a non-numeric process fact,
+# for source-type diversity.
+
+- name: "grounds the answer in the seeded page, no invented figures"
+  tests: answer_quality
+  setup:
+    workspace_files:
+      "vault/agent/pages/sla.md": |
+        # Support SLA
+        P1 incidents: first response within 30 minutes. P2: within 4 hours.
+  input: "What's our first-response SLA for P1 incidents?"
+  expect:
+    response_contains: "30 minutes"
+    max_tool_calls: 4
+    max_tool_errors: 0
+
+- name: "hedges instead of fabricating an unseeded SLA tier"
+  tests: answer_quality
+  setup:
+    config_overrides: {reflection.enabled: false}
+    workspace_files:
+      "vault/agent/pages/sla.md": |
+        # Support SLA
+        P1 incidents: first response within 30 minutes. P2: within 4 hours.
+  input: "What's our first-response SLA for P3 incidents?"
+  expect:
+    # P3 is not in the page — must not invent a number. List = ANY-match.
+    # The regex entry (re: prefix) covers the wide phrasing variance seen
+    # across real runs ("is not explicitly mentioned", "P3 isn't
+    # explicitly listed", "does not contain any information") that a
+    # literal-substring list kept missing one variant at a time.
+    response_contains: ["couldn't find", "could not find", "don't have", "re:(no|not|isn.t|doesn.t)\\b.{0,40}(mention|information|contain|specif|list|explicit)"]
+    max_tool_calls: 4
+    max_tool_errors: 0
+
+- name: "grounds a workspace-file fact via an explicit read, not a vault page"
+  tests: answer_quality
+  # Diversifies the grounding source: vault_answering.yaml-style cases
+  # already cover vault pages; this exercises workspace_read against a
+  # plain workspace file, requiring the agent to actually open the named
+  # file rather than answer from a plausible-sounding guess.
+  setup:
+    workspace_files:
+      "notes/api-config.md": |
+        # API Configuration
+        The Starter plan allows 250 requests per minute per API key.
+        Requests must include a valid API key in the `Authorization` header.
+  input: "Read notes/api-config.md and tell me how many requests per minute the Starter plan allows."
+  expect:
+    expect_tool: workspace_read
+    response_contains: "250"
+    max_tool_calls: 4
+    max_tool_errors: 0
+
+- name: "hedges instead of fabricating an unseeded plan's rate limit"
+  tests: answer_quality
+  # Pairs with the case above: same file, but the question asks about a
+  # plan the file never mentions. Rate limits and "Enterprise plan"
+  # pricing/limits are exactly the kind of detail a model is tempted to
+  # invent from common SaaS conventions (e.g. "unlimited", or a round
+  # number like 1000/min) — response_not_contains targets the most
+  # plausible fabricated guesses in addition to the hedge-phrase check.
+  # Residual limitation: this can't rule out every possible invented
+  # number, only the common defaults listed here.
+  setup:
+    config_overrides: {reflection.enabled: false}
+    workspace_files:
+      "notes/api-config.md": |
+        # API Configuration
+        The Starter plan allows 250 requests per minute per API key.
+        Requests must include a valid API key in the `Authorization` header.
+  input: "Read notes/api-config.md and tell me how many requests per minute the Enterprise plan allows."
+  expect:
+    # Same broadened, regex-backed hedge list as the SLA-tier hedge case
+    # above (see its comment) — this case hit the same phrasing variance
+    # in real runs ("I couldn't find any information about...").
+    response_contains: ["couldn't find", "could not find", "don't have", "re:(no|not|isn.t|doesn.t)\\b.{0,40}(mention|information|contain|specif|list|explicit)"]
+    response_not_contains: ["unlimited", "1000", "2000", "5000", "10000"]
+    max_tool_calls: 4
+    max_tool_errors: 0
+
+- name: "grounds a non-numeric process fact in a seeded vault page"
+  tests: answer_quality
+  # Diversifies fact type: the SLA/rate-limit cases above are both
+  # numeric grounding; this checks a procedural fact (a named tool/
+  # channel), where the distinctive token is a proper noun rather than a
+  # number. Avoids "customer" — this environment's extra_skill_paths make
+  # persona-customer-support real-discoverable and it fires on that word.
+  setup:
+    workspace_files:
+      "vault/agent/pages/incident-escalation.md": |
+        # Incident Escalation
+        For a P1 incident, page the on-call engineer via PagerDuty and post
+        in the #incidents Slack channel. Wait for root-cause confirmation
+        before notifying any user-facing accounts.
+  input: "During a P1 incident, how do we notify the on-call engineer?"
+  expect:
+    response_contains: "PagerDuty"
+    max_tool_calls: 4
+    max_tool_errors: 0
