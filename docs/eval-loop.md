@@ -206,7 +206,7 @@ Each turn's result (each entry in `result["turns"]` for multi-turn tests, or the
 | `active_tools` / `deferred_tools` | sidecar | `items_included` / `items_truncated` for the `tools` source |
 | `retrieved_candidates` | sidecar | Memory-retrieval candidates with `file_path`, `composite_score`, `similarity`, `recency`, `importance` |
 | `files_read` | derived | Vault/workspace paths read via tool calls this turn |
-| `files_cited` | derived | Of `files_read` plus retrieved-candidate paths, which ones the response text actually references — substring match on file path/stem, or a `[[wiki link]]` mention |
+| `files_cited` | derived | Of `files_read` plus retrieved-candidate paths, which ones the response text actually references — case-insensitive substring match on the full path, basename, or stem, plus any `[[wiki link]]` mention in the response |
 | `tool_calls` | derived | `{names: [...], count: N}` for this turn |
 
 A missing or unreadable sidecar degrades to the derived fields only (`build_turn_diagnostics` never raises); sidecar-sourced fields come back `None`/empty.
@@ -258,6 +258,22 @@ The four canonical axes (`decafclaw.eval.diagnostics.CANONICAL_AXES`) are:
 | `workflow_discipline` | Following multi-step procedures, confirmations, and guardrails correctly |
 
 A case with no `tests:` key falls into the `untagged` bucket rather than being dropped from the scorecard. An axis value outside the canonical set raises `ValueError` and fails the run rather than silently vanishing.
+
+### Behavioral suites (#528, #531)
+
+Seven single-axis suites exercise the four canonical axes end-to-end with real LLM turns:
+
+| Suite | Axis | Cases |
+|-------|------|-------|
+| `evals/vault_answering.yaml` | `retrieval` | 5 |
+| `evals/tool_routing.yaml` | `routing` | 5 |
+| `evals/source_grounding.yaml` | `answer_quality` | 5 |
+| `evals/context_pressure.yaml` | `answer_quality` | 4 |
+| `evals/clarification.yaml` | `workflow_discipline` | 4 |
+| `evals/abort_recovery.yaml` | `workflow_discipline` | 4 |
+| `evals/over_ceremony.yaml` | `workflow_discipline` | 5 |
+
+`context_pressure.yaml` and `clarification.yaml` each landed at 4 cases rather than the 5 originally targeted — both suites' authoring comments document a fifth case that was tried against real LLM calls and dropped because it surfaced a genuine behavioral gap (not an eval-design artifact), per the no-silently-weakened-assertions rule. Existing pre-#528 suites (`evals/memory.yaml`, `evals/conversation.yaml`, etc.) are not retroactively axis-tagged; retagging them is a deferred follow-up (see the dev-session notes for #528/#531).
 
 After each run, `results["summary"]["by_axis"]` in the result bundle's `results.json` maps each axis (plus `untagged`) to `{total, passed, failed, pass_rate}`. `make eval` also prints a scorecard to the console:
 

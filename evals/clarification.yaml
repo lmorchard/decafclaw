@@ -70,7 +70,7 @@
   tests: workflow_discipline
   setup:
     config_overrides: {reflection.enabled: false}
-  input: "Create a new file at workspace/reminder.md with the content 'Pick up dry cleaning after work.'"
+  input: "Create a new file at reminder.md with the content 'Pick up dry cleaning after work.'"
   expect:
     expect_tool: workspace_write
     response_contains: "reminder.md"

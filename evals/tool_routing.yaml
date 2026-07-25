@@ -16,8 +16,7 @@
 # has `extra_skill_paths` that make `persona-customer-support` (a personal
 # skill outside this repo's fixtures) real-discoverable, and it fires on
 # the word "customer" — derailing routing cases into an unrelated
-# `activate_skill`. Inputs below use "client" / "billing integration" /
-# "user" instead.
+# `activate_skill`. Inputs below use "billing integration" instead.
 
 - name: "routes to conversation_search for 'what did I say' history queries"
   tests: routing
