@@ -74,6 +74,7 @@ Work down this list instead of retrying the same call:
 | Listed but `activate_skill` errors | `tools.py` doesn't import or its exports are the wrong shape. The error names which. |
 | Your edit had no effect | You didn't re-run `activate_skill`, so the old module is still loaded. |
 | `TypeError` "raised inside the tool's own code" | The bug is in your `tools.py`, not in how you called the tool. |
+| `activate_skill` refuses: "cannot call another tool" | Your `tools.py` tries to reach a decaf tool. There is no way to do this — see "What `tools.py` can and cannot reach". Use a library directly, or delete `tools.py` and document the tool in SKILL.md. |
 
 If two tools disagree — `skill_validate` says PASS but `refresh_skills` doesn't
 list the skill — stop and report it. That combination is a decafclaw bug, not
@@ -168,6 +169,11 @@ no channel back into the tool layer:
   directly. If it needs to read a file, use `pathlib`. If the work is really
   "call tool X", don't write a tool at all — document tool X in SKILL.md and
   let the agent call it.
+- **This is enforced, not just advised.** `skill_validate` reports it, and
+  `activate_skill` **refuses to load a workspace skill** that does it — the tool
+  provably cannot run, so there is nothing to gain from loading it. Reaching the
+  tool through a subscript (`ctx['shell_background_start'](...)`) or a renamed
+  parameter (`context.shell_background_start(...)`) is detected too.
 - **You cannot return a command for the agent to run.** `ToolResult` has no
   `tool_code` field. Its fields are `text`, `media`, `display_text`,
   `display_short_text`, `data`, `end_turn`, `widget` — nothing else. Passing

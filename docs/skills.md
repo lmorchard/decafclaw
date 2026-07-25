@@ -460,6 +460,44 @@ is the earliest point the author can notice. Between that, the `discoverable`
 check, and the misplaced-skill hint in `refresh_skills`, the mistake now
 surfaces at three independent points instead of none.
 
+#### Phantom tool calls
+
+A skill tool cannot call another decaf tool — it is a plain Python function with
+no channel into the tool layer. The model's prior that it *can* is strong and
+recurring; a single session produced `default_api.shell_background_start`, then
+`ctx.shell_background_start`, then `ctx.tools.shell_background_start`, and an
+eval later produced `context['shell_background_start'](…)` while working around
+successive validation failures. One run invented a `skill.py` defining a `Skill`
+class purely to expose `ctx.tools`.
+
+These import perfectly cleanly — the call sits in a function body — so the skill
+activates and fails only when the tool is invoked. `_phantom_tool_calls` detects
+them statically, in two places:
+
+- **`skill_validate`** reports a `no_phantom_tool_calls` check.
+- **`activate_skill`** enforces it, because validation is optional and evals
+  measured that choice as a coin flip. A skill's tools do not exist until it is
+  activated, so this path cannot be skipped.
+
+Enforcement is keyed to trust tier:
+
+| Tier | Behavior |
+|---|---|
+| `workspace` | **Activation refused.** Agent-authored, so refusing is the forcing function; the tool provably cannot run. On a reload the previously loaded tools stay active. |
+| `bundled` / `admin` / `extra` | **Warning in the activation result**, skill still loads. User-authored code may hold many working tools beside one broken one, and breaking the user's agent is worse. `activate_always_loaded` skips workspace tier, so startup is never gated on this. |
+
+Detection keys on **the tool name being called**, not on the receiver — a tool's
+first parameter is `ctx` by convention only, and keying on it missed both the
+subscript form and a receiver renamed to `context`. It covers attribute chains,
+subscripts, and any receiver.
+
+Two of ~107 tool names (`shell`, `wait`) are bare words that collide with
+everyday Python (`process.wait()`, `event.wait()`, and `ctx.cancelled.wait()`
+right here in this codebase). Those require a `ctx` / `ctx.tools` receiver;
+underscored names are distinctive enough to flag anywhere. A scan of every
+bundled and contrib `tools.py` reports zero false positives, and tests pin both
+halves.
+
 #### Advisories
 
 `skill_validate` also reports **advisories**: things that load correctly but may

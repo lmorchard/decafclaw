@@ -2291,3 +2291,231 @@ async def test_reactivate_does_not_duplicate_mismatched_definition_names(ctx, tm
         td.get("function", {}).get("name") for td in ctx.tools.extra_definitions
     ]
     assert names.count("weather_fetch") == 1, f"duplicate declaration: {names}"
+
+
+# -- phantom tool calls blocked at activation (#701) --
+#
+# skill_validate catches these, but only if the agent chooses to run it — and
+# evals measured that choice as a coin flip, which capped the correct-outcome
+# rate at ~1/3. Checking at activation closes the "nobody validated it" gap:
+# the agent must activate a skill to use it, so this path cannot be skipped.
+#
+# Enforcement is keyed to trust tier. Workspace skills are agent-authored, so
+# refusing to load is the forcing function. Trusted tiers (bundled / admin /
+# extra) are the user's own code and may hold many working tools beside one
+# broken one, so they get a loud warning instead — and `activate_always_loaded`
+# skips workspace tier entirely, so startup can never be blocked by this.
+
+PHANTOM_TOOLS_PY = (
+    "from decafclaw.media import ToolResult\n\n"
+    "def start_it(ctx):\n"
+    "    return ctx.tools.shell_background_start(command='npm start')\n\n"
+    "TOOLS = {'start_it': start_it}\n"
+    "TOOL_DEFINITIONS = [{'type': 'function', "
+    "'function': {'name': 'start_it'}}]\n"
+)
+
+
+def _tiered_skill(skill_dir, name, tools_py, tier):
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    (skill_dir / "tools.py").write_text(tools_py)
+    return SkillInfo(
+        name=name, description="Tier probe.", location=skill_dir,
+        body="Body.", has_native_tools=True, trust_tier=tier,
+    )
+
+
+@pytest.mark.asyncio
+async def test_activation_blocked_for_workspace_skill_with_phantom_call(ctx, tmp_path):
+    skill = _tiered_skill(tmp_path / "ph", "ph", PHANTOM_TOOLS_PY, "workspace")
+    ctx.config.discovered_skills = [skill]
+    ctx.config.skill_tool_owners = {"shell_background_start": "background"}
+    _save_permission(ctx.config, "ph", "always")
+
+    result = await tool_activate_skill(ctx, name="ph")
+    text = _text(result)
+    assert "shell_background_start" in text
+    assert "start_it" not in ctx.tools.extra, "broken tool must not register"
+    assert "ph" not in ctx.skills.activated
+
+
+@pytest.mark.asyncio
+async def test_activation_blocked_for_default_api(ctx, tmp_path):
+    src = (
+        "def go(ctx):\n"
+        "    return default_api.workspace_read(path='x')\n"
+        "TOOLS = {'go': go}\nTOOL_DEFINITIONS = []\n"
+    )
+    skill = _tiered_skill(tmp_path / "da", "da", src, "workspace")
+    ctx.config.discovered_skills = [skill]
+    _save_permission(ctx.config, "da", "always")
+
+    result = await tool_activate_skill(ctx, name="da")
+    assert "default_api" in _text(result)
+    assert "go" not in ctx.tools.extra
+
+
+@pytest.mark.asyncio
+async def test_activation_warns_but_allows_trusted_tier(ctx, tmp_path):
+    """A bundled skill is the user's own code — warn, don't break their agent."""
+    skill = _tiered_skill(tmp_path / "bt", "bt", PHANTOM_TOOLS_PY, "bundled")
+    ctx.config.discovered_skills = [skill]
+    ctx.config.skill_tool_owners = {"shell_background_start": "background"}
+
+    result = await tool_activate_skill(ctx, name="bt")
+    text = _text(result)
+    assert "start_it" in ctx.tools.extra, "trusted skill must still load"
+    assert "bt" in ctx.skills.activated
+    assert "shell_background_start" in text, "but the problem must be surfaced"
+
+
+@pytest.mark.asyncio
+async def test_activation_unaffected_for_clean_workspace_skill(ctx, tmp_path):
+    src = (
+        "import subprocess\n"
+        "def go(ctx):\n"
+        "    subprocess.run(['npm', 'start'], check=False)\n"
+        "    ctx.publish('tool_status', {'text': 'ok'})\n"
+        "    return 'started'\n"
+        "TOOLS = {'go': go}\n"
+        "TOOL_DEFINITIONS = [{'type': 'function', 'function': {'name': 'go'}}]\n"
+    )
+    skill = _tiered_skill(tmp_path / "clean2", "clean2", src, "workspace")
+    ctx.config.discovered_skills = [skill]
+    ctx.config.skill_tool_owners = {"shell_background_start": "background"}
+    _save_permission(ctx.config, "clean2", "always")
+
+    result = await tool_activate_skill(ctx, name="clean2")
+    assert "go" in ctx.tools.extra
+    assert "cannot" not in _text(result).lower()
+
+
+@pytest.mark.asyncio
+async def test_reload_into_a_phantom_call_keeps_working_tools(ctx, tmp_path):
+    """Editing an active skill into a broken state must not strand it."""
+    skill_dir = tmp_path / "regress"
+    good = (
+        "def go(ctx):\n    return 'fine'\n"
+        "TOOLS = {'go': go}\n"
+        "TOOL_DEFINITIONS = [{'type': 'function', 'function': {'name': 'go'}}]\n"
+    )
+    skill = _tiered_skill(skill_dir, "regress", good, "workspace")
+    ctx.config.discovered_skills = [skill]
+    ctx.config.skill_tool_owners = {"shell_background_start": "background"}
+    _save_permission(ctx.config, "regress", "always")
+
+    await tool_activate_skill(ctx, name="regress")
+    assert "go" in ctx.tools.extra
+
+    (skill_dir / "tools.py").write_text(PHANTOM_TOOLS_PY)
+    result = await tool_activate_skill(ctx, name="regress")
+    assert "shell_background_start" in _text(result)
+    assert "go" in ctx.tools.extra, "the working tool must survive a bad reload"
+    assert "start_it" not in ctx.tools.extra
+
+
+# Two shapes the first version of the check missed, both produced by a real
+# eval run as the model worked around successive validation failures:
+#   context['shell_background_start'](...)   — subscript, not attribute
+#   context.shell_background_start(...)      — receiver isn't named `ctx`
+# The tool's first parameter is `ctx` by convention only; nothing enforces the
+# name. Keying on the receiver was the mistake — the tool *name* is the signal.
+
+
+def test_skill_validate_rejects_subscript_tool_call(ctx):
+    result = _validate_tools_py(ctx, "psub", (
+        "def get_tools(context):\n"
+        "    def go():\n"
+        "        return context['shell_background_start'](command='npm start')\n"
+        "    return {'go': go}, []\n"
+    ))
+    assert result.data["ok"] is False
+    assert "shell_background_start" in _phantom_check(result)["message"]
+
+
+def test_skill_validate_rejects_tool_call_on_renamed_receiver(ctx):
+    result = _validate_tools_py(ctx, "prenamed", (
+        "def go(context):\n"
+        "    return context.shell_background_start(command='npm start')\n"
+        "TOOLS = {'go': go}\nTOOL_DEFINITIONS = []\n"
+    ))
+    assert result.data["ok"] is False
+    assert "shell_background_start" in _phantom_check(result)["message"]
+
+
+def test_skill_validate_rejects_self_tool_call(ctx):
+    result = _validate_tools_py(ctx, "pself", (
+        "class Helper:\n"
+        "    def run(self):\n"
+        "        return self.shell_background_start(command='npm start')\n"
+        "TOOLS = {}\nTOOL_DEFINITIONS = []\n"
+    ))
+    assert result.data["ok"] is False
+
+
+def test_skill_validate_allows_same_named_local_variable(ctx):
+    """A dict lookup that isn't a call is not a phantom tool call."""
+    result = _validate_tools_py(ctx, "plocal", (
+        "def go(ctx):\n"
+        "    labels = {'shell_background_start': 'Start server'}\n"
+        "    return labels['shell_background_start']\n"
+        "TOOLS = {'go': go}\nTOOL_DEFINITIONS = []\n"
+    ))
+    assert result.data["ok"] is True
+
+
+# Bare tool names (`shell`, `wait` — 2 of ~107) collide with everyday Python
+# methods. A scan of every bundled and contrib tools.py caught the broadened
+# rule firing on `background` and `claude_code`, both of which call `.wait()`
+# on real objects. Underscored names flag anywhere; bare ones need a ctx-ish
+# receiver.
+
+
+def test_skill_validate_allows_wait_on_a_real_object(ctx):
+    result = _validate_tools_py(ctx, "pwait", (
+        "import asyncio\n"
+        "async def go(ctx):\n"
+        "    ev = asyncio.Event()\n"
+        "    await ev.wait()\n"
+        "    return 'done'\n"
+        "TOOLS = {'go': go}\nTOOL_DEFINITIONS = []\n"
+    ))
+    assert result.data["ok"] is True, _phantom_check(result)
+
+
+def test_skill_validate_allows_ctx_cancelled_wait(ctx):
+    """A real idiom in this codebase — the receiver check must stay shallow."""
+    result = _validate_tools_py(ctx, "pcancel", (
+        "async def go(ctx):\n"
+        "    await ctx.cancelled.wait()\n"
+        "    return 'done'\n"
+        "TOOLS = {'go': go}\nTOOL_DEFINITIONS = []\n"
+    ))
+    assert result.data["ok"] is True, _phantom_check(result)
+
+
+def test_skill_validate_allows_subprocess_wait(ctx):
+    result = _validate_tools_py(ctx, "psubwait", (
+        "import subprocess\n"
+        "def go(ctx):\n"
+        "    p = subprocess.Popen(['npm', 'start'])\n"
+        "    return p.wait()\n"
+        "TOOLS = {'go': go}\nTOOL_DEFINITIONS = []\n"
+    ))
+    assert result.data["ok"] is True, _phantom_check(result)
+
+
+def test_skill_validate_rejects_bare_tool_name_on_ctx(ctx):
+    """`ctx.shell(...)` is still the mistake, bare name notwithstanding."""
+    ctx.config.skill_tool_owners = {"shell": "core"}
+    _write_ws_skill(
+        ctx, "pbare", "name: pbare\ndescription: Bare.",
+        tools_py=(
+            "def go(ctx):\n"
+            "    return ctx.shell(command='ls')\n"
+            "TOOLS = {'go': go}\nTOOL_DEFINITIONS = []\n"
+        ),
+    )
+    result = tool_skill_validate(ctx, path="skills/pbare")
+    assert result.data["ok"] is False
+    assert "shell" in _phantom_check(result)["message"]

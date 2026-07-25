@@ -112,11 +112,50 @@ def _import_tools_module(module_name: str, tools_path: Path):
     return module
 
 
-def _attr_root(node: ast.expr) -> str | None:
-    """Name at the root of an attribute chain: `ctx.tools.foo` -> "ctx"."""
-    while isinstance(node, ast.Attribute):
-        node = node.value
-    return node.id if isinstance(node, ast.Name) else None
+_CTX_RECEIVERS = frozenset({"ctx", "context"})
+
+
+def _is_tool_namespace_receiver(func: ast.expr) -> bool:
+    """True when the call's receiver is `ctx` / `context`, or `<that>.tools`.
+
+    Used only to gate tool names that collide with ordinary Python methods.
+    Deliberately shallow: `ctx.cancelled.wait()` is a real idiom in this
+    codebase and must not be flagged, while `ctx.wait()` and
+    `ctx.tools.shell()` should be.
+    """
+    value = func.value if isinstance(func, ast.Attribute | ast.Subscript) else None
+    if isinstance(value, ast.Attribute):  # ctx.tools.X
+        return (value.attr == "tools"
+                and isinstance(value.value, ast.Name)
+                and value.value.id in _CTX_RECEIVERS)
+    return isinstance(value, ast.Name) and value.id in _CTX_RECEIVERS
+
+
+def _called_tool_name(func: ast.expr) -> str | None:
+    """The decaf tool name a call target names, however it was reached.
+
+    Handles the shapes that actually turn up:
+
+        ctx.shell_background_start(...)          Attribute
+        ctx.tools.shell_background_start(...)    Attribute chain
+        context.shell_background_start(...)      receiver renamed
+        self.shell_background_start(...)         inside a helper class
+        context['shell_background_start'](...)   Subscript
+
+    Keyed on the *name being called*, not on the receiver. The receiver was the
+    original mistake: a tool's first parameter is `ctx` by convention only, and
+    an eval produced `context['shell_background_start'](...)` specifically while
+    working around earlier validation failures. The tool name is the signal —
+    these are specific identifiers like `shell_background_start`, not words that
+    show up by chance.
+    """
+    if isinstance(func, ast.Attribute):
+        return func.attr
+    if isinstance(func, ast.Subscript):
+        key = func.slice
+        if isinstance(key, ast.Constant) and isinstance(key.value, str):
+            return key.value
+    return None
 
 
 def _phantom_tool_calls(source: str, tool_names: set[str]) -> list[str]:
@@ -152,17 +191,23 @@ def _phantom_tool_calls(source: str, tool_names: set[str]) -> list[str]:
                 "references `default_api`, which does not exist in decafclaw — "
                 "there is no way to call a decaf tool from inside a skill tool"
             )
-        elif (isinstance(node, ast.Call)
-                and isinstance(node.func, ast.Attribute)
-                and node.func.attr in tool_names
-                and _attr_root(node.func) == "ctx"):
-            problems.append(
-                f"calls the decaf tool `{node.func.attr}` via `ctx` — `ctx` is "
-                f"the runtime context, not a tool namespace. A skill tool "
-                f"cannot call another tool: use a library directly (e.g. "
-                f"`subprocess` / `pathlib`), or drop tools.py and document "
-                f"`{node.func.attr}` in SKILL.md so the agent calls it"
-            )
+        elif isinstance(node, ast.Call):
+            called = _called_tool_name(node.func)
+            # Two of ~107 tool names (`shell`, `wait`) are bare words that
+            # collide with everyday Python methods — `process.wait()`,
+            # `event.wait()`. For those, require a ctx-ish receiver; the
+            # underscored names are distinctive enough to flag anywhere.
+            # Without this the check fires on the bundled background and
+            # claude_code skills, both of which call `.wait()` legitimately.
+            if called in tool_names and (
+                    "_" in called or _is_tool_namespace_receiver(node.func)):
+                problems.append(
+                    f"tries to call the decaf tool `{called}` — a skill tool "
+                    f"cannot call another tool, and `ctx` is the runtime "
+                    f"context, not a tool namespace. Use a library directly "
+                    f"(e.g. `subprocess` / `pathlib`), or drop tools.py and "
+                    f"document `{called}` in SKILL.md so the agent calls it"
+                )
     # Same wrong call in five places is one problem, not five.
     return list(dict.fromkeys(problems))
 
@@ -208,6 +253,26 @@ def _rejection_display_path(config, path: Path) -> str:
         except ValueError:
             continue
     return str(Path(*path.parts[-2:])) if len(path.parts) >= 2 else str(path)
+
+
+def _skill_phantom_calls(skill_info, config) -> list[str]:
+    """Phantom decaf-tool calls in a skill's tools.py, for the activation path.
+
+    `skill_validate` reports the same thing, but only when the author chooses
+    to run it — evals measured that choice as a coin flip, which capped the
+    rate of correct outcomes at roughly 1/3 (#701). Activation cannot be
+    skipped: a skill's tools do not exist until it is activated. Checking here
+    closes the gap.
+
+    Returns [] when the source can't be read; the import that follows will
+    report that far better than a guess from here.
+    """
+    tools_path = skill_info.location / "tools.py"
+    try:
+        source = tools_path.read_text()
+    except OSError:
+        return []
+    return _phantom_tool_calls(source, _known_tool_names(config))
 
 
 def _known_tool_names(config) -> set[str]:
@@ -639,6 +704,41 @@ async def activate_skill_internal(ctx, skill_info, reloading: bool = False) -> s
     result_parts = [body]
 
     if skill_info.has_native_tools:
+        # Phantom decaf-tool calls, before the import. They import cleanly and
+        # fail only when the tool is invoked, so this is the last point at
+        # which the author can be told without the user hitting it first.
+        #
+        # Workspace tier is agent-authored: refuse to load, which is the
+        # forcing function #701 is about. Trusted tiers are the user's own
+        # code and may hold many working tools beside one broken one, so warn
+        # instead of breaking their agent — and `activate_always_loaded` skips
+        # workspace tier entirely, so startup is never gated on this.
+        phantom = _skill_phantom_calls(skill_info, ctx.config)
+        if phantom:
+            detail = "; ".join(phantom)
+            if skill_info.trust_tier == "workspace":
+                log.warning(
+                    "Refusing to activate skill %r — phantom tool call: %s",
+                    name, detail,
+                )
+                still_active = (
+                    " The previously loaded tools are still active."
+                    if reloading else ""
+                )
+                return ToolResult(text=(
+                    f"[error: skill '{name}' cannot be activated: {detail}."
+                    f"{still_active} Fix tools.py and activate the skill "
+                    f"again.]"
+                ))
+            log.warning(
+                "Skill %r (%s tier) has a phantom tool call: %s",
+                name, skill_info.trust_tier, detail,
+            )
+            result_parts.append(
+                f"\n\nWarning: this skill's tools.py {detail}. It loaded, but "
+                f"that call will raise when the tool runs."
+            )
+
         try:
             tools, tool_defs, module = _load_native_tools(skill_info)
             await _call_init(module, ctx.config, skill_info.name)
