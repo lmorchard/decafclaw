@@ -1,0 +1,125 @@
+# Behavioral suite — ROUTING axis (#528). Each case seeds data reachable by
+# exactly ONE surface (conversation history / workspace file / vault page)
+# and asserts the agent reaches for the matching tool, not a look-alike.
+#
+# `vault_retrieval.mode: on_demand` is used on cases that seed a vault-page
+# *distractor* alongside the real answer's surface (conversation history or
+# a workspace file). Default mode ("always") auto-injects semantically
+# similar vault pages into context without a tool call — fine for the
+# retrieval axis, but it muddies a routing assertion here: we want
+# `expect_no_tool: vault_search` to mean "the model didn't reach for vault
+# at all," not "it didn't need to because the distractor was already
+# spoon-fed into context." `on_demand` disables that auto-injection so the
+# only way vault content enters the turn is an explicit tool call.
+#
+# Trigger-word note (from #528 Task 6): this environment's resolved config
+# has `extra_skill_paths` that make `persona-customer-support` (a personal
+# skill outside this repo's fixtures) real-discoverable, and it fires on
+# the word "customer" — derailing routing cases into an unrelated
+# `activate_skill`. Inputs below use "client" / "billing integration" /
+# "user" instead.
+
+- name: "routes to conversation_search for 'what did I say' history queries"
+  tests: routing
+  # The starter phrasing ("What did I tell you earlier...") let the model
+  # answer straight from the pre-loaded in-memory history (setup.
+  # conversation_history is both archived AND loaded into the visible
+  # context — see docs/eval-loop.md) without any tool call, or reach for
+  # `notes_read` as a habitual first check — neither proves ROUTING to
+  # conversation_search. Mirroring evals/conversation.yaml's proven
+  # "explicit search" phrasing reliably forces the actual tool call.
+  setup:
+    config_overrides: {reflection.enabled: false}
+    conversation_history:
+      - role: user
+        content: "Remember: our staging DB password rotates every 30 days."
+      - role: assistant
+        content: "Noted — staging DB password rotates every 30 days."
+  input: "Search our conversation history for what I said about the staging DB password rotation."
+  expect:
+    expect_tool: conversation_search
+    expect_no_tool: vault_search
+    response_contains: "30 days"
+    max_tool_calls: 4
+    max_tool_errors: 0
+
+- name: "routes to workspace_read for a concrete workspace file path"
+  tests: routing
+  setup:
+    config_overrides: {reflection.enabled: false}
+    workspace_files:
+      "notes/release-checklist.md": |
+        # Release Checklist
+        1. Bump version. 2. Tag. 3. Run deploy.sh.
+  input: "Read notes/release-checklist.md and tell me step 3."
+  expect:
+    expect_tool: workspace_read
+    response_contains: "deploy.sh"
+    max_tool_calls: 4
+    max_tool_errors: 0
+
+- name: "routes to vault_search/vault_read for a vault-knowledge question, not workspace_read"
+  tests: routing
+  setup:
+    config_overrides: {reflection.enabled: false, vault_retrieval.mode: on_demand}
+    workspace_files:
+      "vault/agent/pages/pto-policy.md": |
+        # PTO Policy
+        Full-time staff accrue 15 days of paid time off per year, prorated
+        by start date. Unused days do not roll over.
+  input: "What's our PTO policy — how many days do full-time staff accrue per year?"
+  expect:
+    expect_tool: [vault_search, vault_read]
+    expect_no_tool: workspace_read
+    response_contains: "15 days"
+    max_tool_calls: 4
+    max_tool_errors: 0
+
+- name: "routes to conversation_search over a topically-similar vault distractor"
+  tests: routing
+  # Both surfaces cover "API keys," but only conversation history has the
+  # specific fact (expiry date) the question asks for. The vault page is a
+  # same-topic distractor that must NOT get queried instead.
+  setup:
+    config_overrides: {reflection.enabled: false, vault_retrieval.mode: on_demand}
+    conversation_history:
+      - role: user
+        content: "The billing integration's API key expires 2027-03-01 — it's stored in the secrets manager under billing-key."
+      - role: assistant
+        content: "Got it — billing integration API key expires 2027-03-01."
+    workspace_files:
+      "vault/agent/pages/api-keys.md": |
+        # API Keys
+        General guidance: rotate all API keys every 90 days and store them
+        in the secrets manager.
+  input: "Search our conversation history for when the billing integration's API key expires."
+  expect:
+    expect_tool: conversation_search
+    expect_no_tool: vault_search
+    response_contains: "2027-03-01"
+    max_tool_calls: 4
+    max_tool_errors: 0
+
+- name: "routes to workspace_read over a topically-similar vault distractor"
+  tests: routing
+  # Both surfaces cover on-call, but only the workspace runbook has the
+  # exact command the question asks for. The vault page is a same-topic
+  # distractor that must NOT get queried instead of the named file.
+  setup:
+    config_overrides: {reflection.enabled: false, vault_retrieval.mode: on_demand}
+    workspace_files:
+      "notes/oncall-runbook.md": |
+        # Oncall Runbook
+        To silence a noisy alert during a false positive, run:
+        `amtool silence add alertname=NoisyAlert --duration=2h`
+      "vault/agent/pages/oncall-overview.md": |
+        # Oncall Overview
+        General on-call rotation guidance: the primary on-call responds to
+        pages within 15 minutes.
+  input: "Read notes/oncall-runbook.md and tell me the exact command to silence a false-positive alert."
+  expect:
+    expect_tool: workspace_read
+    expect_no_tool: vault_search
+    response_contains: "amtool silence add"
+    max_tool_calls: 4
+    max_tool_errors: 0
