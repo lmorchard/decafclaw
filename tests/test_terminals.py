@@ -1,5 +1,6 @@
 import asyncio
 import dataclasses
+import os
 
 import pytest
 
@@ -42,6 +43,36 @@ async def test_broadcast_fans_out_and_drops_failing_sink():
     await asyncio.sleep(0)  # let broadcast task run
     assert good == [b"hello"]
     assert bad_sink not in s.attached   # failing sink removed
+
+
+@pytest.mark.asyncio
+async def test_eof_notify_reports_exited_reason():
+    """EOF on the PTY means the shell itself exited — `reason: "exited"`.
+
+    The client keys off `reason` to decide whether to auto-close the canvas
+    tab: an `exited` session leaves its final output on screen (you may want
+    to read it), while a `no_session` tombstone from the WS route closes
+    itself. Without the discriminator both arrive as `session_ended` with a
+    null exit status and are indistinguishable.
+    """
+    reg = TerminalRegistry(load_config())
+    # A real fd we own: `_on_eof` closes session.fd, and the shared helper's
+    # placeholder fd=9 is a live descriptor belonging to the test runner.
+    read_fd, write_fd = os.pipe()
+    os.close(write_fd)
+    s = _session(fd=read_fd)
+    seen = []
+
+    async def sink(obj):
+        seen.append(obj)
+
+    reg._sessions[(s.conv_id, s.tab_id)] = s
+    reg._json_sinks[id(s)] = {"conn": sink}
+    # pid 123 is not our child, so waitpid raises and exit_status falls to -1;
+    # the reason field is what this test is about.
+    await reg._on_eof(s)
+
+    assert seen == [{"type": "session_ended", "reason": "exited", "exit_status": -1}]
 
 
 def test_viewport_min_computation():

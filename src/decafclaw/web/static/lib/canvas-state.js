@@ -168,7 +168,36 @@ export async function switchToTab(tabId) {
   }
 }
 
-/** User clicks [×] on a tab — close it via REST. Server emits canvas_update kind=close_tab. */
+/**
+ * Close a tab by id — no prompt, explicit conversation. Server emits
+ * canvas_update kind=close_tab, which removes the tab from every viewer.
+ *
+ * The single REST chokepoint for tab removal. `closeTabFromUi` layers the
+ * confirm dialog on top; callers that have already established the tab is
+ * dead (the terminal widget, on discovering its session is gone) come
+ * straight here — there is nothing to confirm about closing a tombstone.
+ *
+ * Takes `convId` explicitly rather than reading the active conversation:
+ * the standalone canvas window (`/canvas/{conv}/{tab}`) never sets one.
+ *
+ * @param {string} convId
+ * @param {string} tabId
+ */
+export async function closeTabById(convId, tabId) {
+  if (!convId || !tabId) return;
+  try {
+    await fetch(`/api/canvas/${encodeURIComponent(convId)}/close_tab`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({ tab_id: tabId }),
+    });
+  } catch (err) {
+    console.warn('canvas close_tab POST failed', err);
+  }
+}
+
+/** User clicks [×] on a tab — confirm, then close via REST. */
 export async function closeTabFromUi(tabId) {
   const convId = _state.active;
   if (!convId) return;
@@ -180,14 +209,5 @@ export async function closeTabFromUi(tabId) {
     ? 'Close this terminal? The shell session will be terminated.'
     : `Close tab "${(tab && tab.label) || tabId}"?`;
   if (!window.confirm(msg)) return;
-  try {
-    await fetch(`/api/canvas/${encodeURIComponent(convId)}/close_tab`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'same-origin',
-      body: JSON.stringify({ tab_id: tabId }),
-    });
-  } catch (err) {
-    console.warn('canvas close_tab POST failed', err);
-  }
+  await closeTabById(convId, tabId);
 }

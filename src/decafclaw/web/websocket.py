@@ -1037,7 +1037,12 @@ async def websocket_terminal(websocket: WebSocket, config, registry) -> None:
     await websocket.accept()
     session = registry.get(conv_id, tab_id)
     if session is None:
-        await websocket.send_json({"type": "session_ended", "exit_status": None})
+        # The tab exists (canvas.json is on disk) but the PTY does not: the
+        # registry is in-memory only, so a server restart leaves every
+        # terminal tab pointing at nothing. reason="no_session" tells the
+        # widget this is a tombstone to close, not a shell that just exited.
+        await websocket.send_json({"type": "session_ended",
+                                   "reason": "no_session", "exit_status": None})
         await websocket.close()
         return
 

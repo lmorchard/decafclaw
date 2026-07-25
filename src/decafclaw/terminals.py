@@ -141,9 +141,15 @@ class TerminalRegistry:
         except (ChildProcessError, OSError):
             if session.exit_status is None:
                 session.exit_status = -1
+        # reason="exited": the shell itself is gone, but its final output is
+        # still on the client's screen and worth reading — the widget keeps
+        # the canvas tab open. Contrast the WS route's "no_session", which
+        # means the tab outlived the server that owned the PTY and is a
+        # tombstone the client closes on sight.
         for send_json in list(self._json_sinks.get(id(session), {}).values()):
             try:
-                await send_json({"type": "session_ended", "exit_status": session.exit_status})
+                await send_json({"type": "session_ended", "reason": "exited",
+                                 "exit_status": session.exit_status})
             except Exception as exc:
                 log.debug("terminal ended-notify drop: %s", exc)
         try:
