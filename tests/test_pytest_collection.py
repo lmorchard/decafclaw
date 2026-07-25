@@ -38,14 +38,45 @@ def test_testpaths_is_declared():
     )
 
 
+def _overlaps(entry: str, target: pathlib.Path) -> bool:
+    """Do the `entry` and `target` trees intersect at all?
+
+    Overlap in either direction, not a name match, because the two ways to
+    get this wrong are different shapes:
+
+    - an entry ABOVE the target (`"."`) names no directory but sweeps up
+      every one, reintroducing precisely the problem testpaths prevents;
+    - an entry BELOW it (`"data/decafclaw"`) never reaches `data/` itself
+      yet still collects agent-authored files.
+
+    A leading-component check misses the first; plain containment misses
+    the second.
+    """
+    root = (REPO_ROOT / entry).resolve()
+    return target.is_relative_to(root) or root.is_relative_to(target)
+
+
+def test_overlaps_catches_entries_above_and_below_the_target():
+    """The guard below is the actual deliverable here, so it gets its own
+    test — a guard that silently stops guarding is worse than none."""
+    data_dir = (REPO_ROOT / "data").resolve()
+    assert _overlaps("data", data_dir)
+    assert _overlaps("data/decafclaw", data_dir)   # below — plain containment misses
+    assert _overlaps(".", data_dir)                # above — a name check misses
+    assert _overlaps("./", data_dir)
+    assert not _overlaps("tests", data_dir)
+    assert not _overlaps("contrib", data_dir)
+
+
 def test_testpaths_excludes_the_agent_data_directory():
-    """`data/` is agent-writable by design. It must never be a test root."""
-    for entry in _testpaths():
-        top = pathlib.PurePosixPath(entry).parts[0]
-        assert top != "data", (
-            f"testpaths entry {entry!r} would collect the agent's own "
-            "workspace as part of our test suite"
-        )
+    """`data/` is agent-writable by design. It must never be reachable from
+    a test root — whether named directly or swept up by a broader entry."""
+    data_dir = (REPO_ROOT / "data").resolve()
+    offenders = [e for e in _testpaths() if _overlaps(e, data_dir)]
+    assert not offenders, (
+        f"testpaths entries {offenders} reach the agent's own workspace, "
+        "which would collect agent-authored files as part of our suite (#682)"
+    )
 
 
 def test_every_tracked_test_file_is_still_collected():
@@ -56,6 +87,14 @@ def test_every_tracked_test_file_is_still_collected():
     check that catches someone setting `testpaths = ["tests"]` and quietly
     dropping the colocated contrib skill tests.
     """
+    # `.git` is a directory in a normal clone and a file in a worktree, so
+    # exists() rather than is_dir(). Checked explicitly because otherwise a
+    # non-checkout (source zip, sdist) fails with a bare CalledProcessError
+    # that says nothing about the requirement.
+    assert (REPO_ROOT / ".git").exists(), (
+        "this guard needs git metadata to tell tracked tests from "
+        "agent-authored files; run it from a checkout"
+    )
     tracked = subprocess.run(
         ["git", "ls-files", "test_*.py", "*/test_*.py", "**/test_*.py",
          "*_test.py", "*/*_test.py", "**/*_test.py"],
