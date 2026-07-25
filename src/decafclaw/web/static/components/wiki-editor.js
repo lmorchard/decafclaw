@@ -243,15 +243,29 @@ export class WikiEditor extends LitElement {
       const res = await fetch(`/api/vault/${encodePagePath(this.page)}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
-      this.content = data.content;
+      // The vault endpoint returns `body`; `content` is insurance only. Note
+      // this fetch is hardcoded to /api/vault regardless of `saveEndpoint`, so
+      // schedule-page / config-panel *do* reach this path — it's wired to their
+      // conflict banner — but they reach it against the wrong endpoint. The
+      // `content` fallback exists for whenever that hardcoding is fixed.
+      // Assigned once so all four uses stay in sync.
+      const newContent = data.body ?? data.content ?? '';
+      this.content = newContent;
       this.modified = data.modified;
       if (this.#editor) {
-        this.#editor.action(replaceAll(data.content));
+        this.#editor.action(replaceAll(newContent));
       }
-      this.#lastSavedContent = data.content;
-      this.#currentMarkdown = data.content;
+      this.#lastSavedContent = newContent;
+      this.#currentMarkdown = newContent;
       this._status = 'saved';
       this._error = '';
+      // The host tracks its own mtime for metadata writes; without this its
+      // copy stays stale and the next metadata edit 409s spuriously.
+      this.dispatchEvent(new CustomEvent('reloaded', {
+        detail: { modified: this.modified, page: this.page },
+        bubbles: true,
+        composed: true,
+      }));
     } catch (e) {
       this._error = `Reload failed: ${/** @type {Error} */(e).message}`;
     }

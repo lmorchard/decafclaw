@@ -57,6 +57,9 @@ WYSIWYG markdown editor for vault pages, accessible from the sidebar:
 - **Recent pages** list for quick access
 - Open pages are automatically injected as context in the active conversation
 - `@[[PageName]]` mentions in messages also inject page content
+- **Frontmatter editing**: a metadata strip above the body shows `summary` and
+  tags in view mode; edit mode swaps it for typed controls plus a raw-YAML
+  escape hatch. See [Editing frontmatter in the web UI](vault.md#editing-frontmatter-in-the-web-ui).
 
 ### Files tab
 
@@ -246,6 +249,7 @@ Lit web components in `src/decafclaw/web/static/`:
 | `conversation-sidebar` | `components/conversation-sidebar.js` | Conversation list, folders, vault browser, model picker |
 | `wiki-editor` | `components/wiki-editor.js` | WYSIWYG markdown page editor |
 | `wiki-page` | `components/wiki-page.js` | Page viewer/renderer |
+| `wiki-metadata` | `components/wiki-metadata.js` | Frontmatter strip/panel: view-mode summary + tags, edit-mode typed controls and raw YAML editor |
 | `context-inspector` | `components/context-inspector.js` | Context diagnostics popover |
 | `notification-inbox` | `components/notification-inbox.js` | Bell icon + dropdown inbox panel |
 | `config-panel` | `components/config-panel.js` | Admin config file editor |
@@ -331,6 +335,17 @@ Folder structure is per-user metadata stored in `data/{agent_id}/web/users/{user
 | `PUT` | `/api/vault/{page}` | Write/rename a page |
 | `DELETE` | `/api/vault/{page}` | Delete a page |
 | `POST` | `/api/vault/folders` | Create a vault folder |
+
+`GET /api/vault/{page}` returns `frontmatter` (parsed dict), `frontmatter_raw`
+(the block's exact text, `""` when absent), and `body` (frontmatter-stripped).
+It does **not** return `content`. `frontmatter_error` appears only when the
+block fails to parse.
+
+`PUT /api/vault/{page}` accepts `content`/`body` (body-only; the frontmatter
+block is preserved verbatim), `frontmatter` (dict patch), or `frontmatter_raw`
+(string, whole-block replace). The last two are mutually exclusive. The
+response carries `modified` and the resulting `frontmatter` — `wiki-page` pushes
+that `modified` into `<wiki-editor>` so the body autosave doesn't 409.
 
 ### Uploads
 

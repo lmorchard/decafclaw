@@ -25,9 +25,12 @@ import json
 import logging
 from pathlib import Path
 
-from decafclaw.frontmatter import parse_frontmatter, serialize_frontmatter
+from decafclaw.frontmatter import (
+    merge_frontmatter,
+    parse_frontmatter,
+    serialize_frontmatter,
+)
 from decafclaw.llm import call_llm
-from decafclaw.skills.vault.tools import merge_frontmatter
 
 log = logging.getLogger(__name__)
 

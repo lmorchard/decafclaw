@@ -97,6 +97,37 @@ The `sources:` list records each source that contributed to a page, with the ori
 
 New skills producing structured page metadata are welcome to add their own conventions; document them here when they stabilize.
 
+### Editing frontmatter in the web UI
+
+Vault pages in the web UI split frontmatter from body server-side, so neither
+the markdown renderer nor the Milkdown editor ever sees the YAML. View mode
+shows a compact metadata strip that expands to full detail; edit mode swaps it
+for typed controls (`summary`, `importance`, `tags`, `keywords`) plus an
+**edit raw YAML** escape hatch covering the whole block, including keys with no
+typed control.
+
+Two write paths, mutually exclusive on the wire:
+
+- Typed controls send a **patch** (`PUT /api/vault/{page}` with `frontmatter`),
+  merged via `merge_frontmatter(overwrite=True)`. A `null` value removes a key —
+  and only the keys the patch itself nulled, so a pre-existing bare key
+  (`aliases:` with no value) is not collateral damage.
+- The raw editor sends a **replace** (`frontmatter_raw`), stored verbatim so
+  hand-written comments and key order survive. Keys absent from the submission
+  are removed.
+
+Body-only writes never reserialize the block — they splice the original bytes
+back via `split_frontmatter` / `join_frontmatter`. Key order, comments, and even
+malformed YAML survive a body edit untouched. A page whose frontmatter fails to
+parse reports `frontmatter_error`, disables the typed controls, and can still be
+repaired through the raw editor.
+
+Note the asymmetry between those paths: the body and raw-replace paths preserve
+comments and key order byte-for-byte, but a typed-control patch re-dumps the
+whole block through `yaml.dump`, which alphabetizes keys and drops comments. If
+a page's frontmatter is hand-curated, edit it through the raw editor rather than
+the typed controls.
+
 ## Tools
 
 The vault skill is **always loaded** — its tools are available in every conversation.
@@ -122,12 +153,10 @@ The vault skill is **always loaded** — its tools are available in every conver
 
 `vault_update_frontmatter` is a thin async wrapper around a pure helper,
 `merge_frontmatter(existing: dict, fields: dict, overwrite: bool) -> dict` in
-`skills/vault/tools.py`. The pure function does the field coercion (reusing
-`get_frontmatter_field`'s rules so the merge and the parser agree on shape)
-and the fill-vs-replace merge logic, with no ctx or I/O — other callers
-(dream generation, the backfill CLI, garden importance tuning) import and
-call it directly to compute merged frontmatter without going through the
-tool or a running agent context.
+`frontmatter.py` (coercion mirrors `get_frontmatter_field`'s rules so the merge
+and the parser agree on shape). It lives beside the parser rather than in the
+skill because the backfill CLI and the vault REST API both need it without a
+running agent context.
 
 ### Backfill CLI (#197)
 

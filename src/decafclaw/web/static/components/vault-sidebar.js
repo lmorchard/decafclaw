@@ -17,7 +17,7 @@ export class VaultSidebar extends LitElement {
   constructor() {
     super();
     this.active = false;
-    /** @type {Array<{title: string, path?: string, folder?: string, modified: number}>} */
+    /** @type {Array<{title: string, path?: string, folder?: string, modified: number, summary?: string}>} */
     this._wikiPages = [];
     this._wikiLoading = false;
     this._vaultFolder = '';
@@ -26,7 +26,7 @@ export class VaultSidebar extends LitElement {
     /** @type {string|null} */
     this._openWikiPage = null;
     this._vaultView = 'browse'; // 'browse' | 'recent'
-    /** @type {Array<{title: string, path: string, folder: string, modified: number}>} */
+    /** @type {Array<{title: string, path: string, folder: string, modified: number, summary?: string}>} */
     this._recentPages = [];
   }
 
@@ -260,6 +260,7 @@ export class VaultSidebar extends LitElement {
         return html`
           <div class="conv-item wiki-item ${isOpen ? 'active' : ''}" @click=${() => this.#handleWikiSelect(pagePath)} title=${pagePath}>
             <span class="conv-title">${p.title}</span>
+            ${p.summary ? html`<span class="wiki-item-summary">${p.summary}</span>` : nothing}
           </div>
         `;
       })}
@@ -283,6 +284,7 @@ export class VaultSidebar extends LitElement {
             ${p.folder ? html`<span class="recent-folder">${p.folder}/</span>` : nothing}
             <span class="conv-title">${p.title}</span>
             <span class="recent-time">${this.#formatRelativeTime(p.modified)}</span>
+            ${p.summary ? html`<span class="wiki-item-summary">${p.summary}</span>` : nothing}
           </div>
         `;
       })}

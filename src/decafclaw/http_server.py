@@ -9,6 +9,7 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 
+import yaml
 from croniter import croniter
 from starlette.applications import Starlette
 from starlette.requests import Request
@@ -16,6 +17,12 @@ from starlette.responses import FileResponse, JSONResponse, Response
 from starlette.routing import Mount, Route, WebSocketRoute
 from starlette.staticfiles import StaticFiles
 
+from .frontmatter import (
+    join_frontmatter,
+    merge_frontmatter,
+    parse_frontmatter_block,
+    split_frontmatter,
+)
 from .mattermost_ui import get_token_registry
 from .schedules import (
     _discover_skill_schedule_files,
@@ -172,6 +179,37 @@ def _vault_source_type(config, filepath: Path) -> str:
     """Determine source type for a vault file."""
     from .skills.vault.tools import _source_type_for_path
     return _source_type_for_path(config, filepath)
+
+
+def _dump_frontmatter(metadata: dict) -> str | None:
+    """Serialize a metadata dict to a raw frontmatter block, or None if empty.
+
+    Returns the block body only — no delimiters, no trailing newline — for
+    `join_frontmatter`.
+    """
+    if not metadata:
+        return None
+    return yaml.dump(
+        metadata, default_flow_style=False, allow_unicode=True,
+    ).rstrip("\n")
+
+
+def _page_summary(path: Path) -> str:
+    """Read a page's frontmatter `summary`, or "" if absent or unreadable.
+
+    Fail-open: a malformed or unreadable page must not break a listing.
+    UnicodeDecodeError is caught alongside OSError — it is a ValueError, not
+    an OSError, so a page with invalid UTF-8 would otherwise 500 the whole
+    listing.
+    """
+    try:
+        raw_block, _ = split_frontmatter(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError) as exc:
+        log.debug("Could not read %s for summary: %s", path, exc)
+        return ""
+    metadata, _ = parse_frontmatter_block(raw_block)
+    summary = metadata.get("summary")
+    return str(summary) if summary else ""
 
 
 def _collect_recent_workspace_files(
@@ -1140,6 +1178,7 @@ async def vault_list(request: Request, username: str) -> JSONResponse:
                 "path": str(rel.with_suffix("")),
                 "folder": folder_param,
                 "modified": stat.st_mtime,
+                "summary": _page_summary(child),
             })
     pages.sort(key=lambda p: p["title"].lower())
 
@@ -1196,6 +1235,7 @@ async def vault_recent(request: Request, username: str) -> JSONResponse:
             "path": str(rel.with_suffix("")),
             "folder": str(rel.parent) if str(rel.parent) != "." else "",
             "modified": md_file.stat().st_mtime,
+            "summary": _page_summary(md_file),
         })
 
     pages.sort(key=lambda p: p["modified"], reverse=True)
@@ -1233,12 +1273,22 @@ async def vault_read(request: Request, username: str) -> JSONResponse:
     stat = resolved.stat()
     vault = _vault_root(config).resolve()
     rel = resolved.relative_to(vault)
-    return JSONResponse({
+    raw_block, page_body = split_frontmatter(content)
+    metadata, fm_error = parse_frontmatter_block(raw_block)
+    payload = {
         "title": resolved.stem,
         "path": str(rel.with_suffix("")),
-        "content": content,
+        "frontmatter": metadata,
+        # Always the real bytes: the raw editor has replace semantics, so
+        # re-serializing the parsed dict would reorder keys and drop comments
+        # the moment anyone opened the panel.
+        "frontmatter_raw": raw_block or "",
+        "body": page_body,
         "modified": stat.st_mtime,
-    })
+    }
+    if fm_error is not None:
+        payload["frontmatter_error"] = fm_error
+    return JSONResponse(payload)
 
 
 async def _vault_rename(
@@ -1318,9 +1368,13 @@ async def vault_write(request: Request, username: str) -> JSONResponse:
 
     rename_to = body.get("rename_to")
     if rename_to is not None:
-        if "content" in body:
+        conflicting = [
+            key for key in ("content", "body", "frontmatter", "frontmatter_raw")
+            if key in body
+        ]
+        if conflicting:
             return JSONResponse(
-                {"error": "cannot combine rename_to with content"},
+                {"error": f"cannot combine rename_to with {', '.join(sorted(conflicting))}"},
                 status_code=400,
             )
         return await _vault_rename(
@@ -1328,9 +1382,39 @@ async def vault_write(request: Request, username: str) -> JSONResponse:
             event_bus=event_bus,
         )
 
-    content = body.get("content")
-    if content is None or not isinstance(content, str):
-        return JSONResponse({"error": "content (string) required"}, status_code=400)
+    # `content` is the legacy alias for `body`. Remember which name the client
+    # actually sent so a type error names the field they typed, not ours.
+    body_field = "body"
+    if "content" in body and "body" not in body:
+        body["body"] = body.pop("content")
+        body_field = "content"
+    new_body = body.get("body")
+    fm_patch = body.get("frontmatter")
+    if new_body is not None and not isinstance(new_body, str):
+        return JSONResponse(
+            {"error": f"{body_field} must be a string"}, status_code=400,
+        )
+    if fm_patch is not None and not isinstance(fm_patch, dict):
+        return JSONResponse(
+            {"error": "frontmatter must be an object"}, status_code=400,
+        )
+    fm_raw = body.get("frontmatter_raw")
+    if fm_raw is not None and not isinstance(fm_raw, str):
+        return JSONResponse(
+            {"error": "frontmatter_raw must be a string"}, status_code=400,
+        )
+    if fm_patch is not None and fm_raw is not None:
+        return JSONResponse(
+            {"error": "frontmatter and frontmatter_raw are mutually exclusive"},
+            status_code=400,
+        )
+    if new_body is None and fm_patch is None and fm_raw is None:
+        return JSONResponse(
+            {"error": "request must include body (or its alias content), "
+                      "frontmatter, or frontmatter_raw"},
+            status_code=400,
+        )
+
     modified = body.get("modified")
     if modified is not None:
         try:
@@ -1344,9 +1428,66 @@ async def vault_write(request: Request, username: str) -> JSONResponse:
                     {"error": "conflict", "server_modified": file_mtime},
                     status_code=409,
                 )
+
     existed = target.exists()
+    existing_text = target.read_text(encoding="utf-8") if existed else ""
+    existing_raw, existing_body = split_frontmatter(existing_text)
+    existing_meta, fm_error = parse_frontmatter_block(existing_raw)
+
+    # Splice the existing block back verbatim when only the body changed:
+    # yaml.dump would reorder keys and drop comments, and parse_frontmatter
+    # reports {} for malformed YAML, which would delete it outright.
+    new_raw = existing_raw
+    if fm_raw is not None:
+        stripped = fm_raw.strip()
+        if not stripped:
+            new_raw = None
+        else:
+            # A bare `---` line would terminate the block early and push the
+            # rest into the body on the next read. Only a column-0 `---` does
+            # that — _FRONTMATTER_RE matches `\n---\n` — so an indented `  ---`
+            # (which is what PyYAML emits when it folds a multi-line value) is
+            # harmless and must not be rejected.
+            if re.search(r"(?m)^---$", fm_raw):
+                return JSONResponse(
+                    {"error": "frontmatter_raw must not contain a '---' line"},
+                    status_code=400,
+                )
+            try:
+                parsed = yaml.safe_load(stripped)
+            except yaml.YAMLError as exc:
+                return JSONResponse(
+                    {"error": f"invalid YAML: {exc}"}, status_code=400,
+                )
+            if not isinstance(parsed, dict):
+                return JSONResponse(
+                    {"error": "frontmatter_raw must be a mapping"}, status_code=400,
+                )
+            # Stored verbatim rather than re-dumped, so the comments and key
+            # order the user typed survive.
+            new_raw = fm_raw.strip("\n")
+    elif fm_patch is not None:
+        if fm_error is not None:
+            return JSONResponse(
+                {"error": f"existing frontmatter is malformed: {fm_error}"},
+                status_code=400,
+            )
+        merged = merge_frontmatter(existing_meta, fm_patch, overwrite=True)
+        # merge_frontmatter has no deletion path: a None coerces to None and is
+        # *set*, which would write `field: null`. Remove only the keys this
+        # patch explicitly nulled — a comprehension over `merged` would also
+        # drop pre-existing bare keys like `aliases:` (very common in Obsidian,
+        # and what any empty scalar parses to) that the user never touched.
+        for key, value in fm_patch.items():
+            if value is None:
+                merged.pop(key, None)
+        new_raw = _dump_frontmatter(merged)
+
+    final_body = existing_body if new_body is None else new_body
+    content = join_frontmatter(new_raw, final_body)
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(content, encoding="utf-8")
+    result_meta, result_fm_error = parse_frontmatter_block(new_raw)
     source_type = _vault_source_type(config, target)
     try:
         from .embeddings import delete_entries, index_entry
@@ -1360,7 +1501,19 @@ async def vault_write(request: Request, username: str) -> JSONResponse:
         kind=KIND_UPDATE if existed else KIND_CREATE,
         path=target,
     )
-    return JSONResponse({"ok": True, "modified": target.stat().st_mtime})
+    return JSONResponse({
+        "ok": True,
+        "modified": target.stat().st_mtime,
+        "frontmatter": result_meta,
+        # Returned so the client can reseed its raw editor without a second
+        # GET. The metadata paths validate before writing, so they always leave
+        # a parseable block — but a body-only write splices an existing block
+        # back verbatim, malformed YAML included, and then reports
+        # `frontmatter: {}`. Mirror GET and report the parse error too, so no
+        # caller has to guess whether `{}` means "empty" or "unparseable".
+        "frontmatter_raw": new_raw or "",
+        "frontmatter_error": result_fm_error or "",
+    })
 
 
 @_authenticated
