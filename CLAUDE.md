@@ -129,6 +129,7 @@ See [docs/conversations.md](docs/conversations.md), [docs/web-ui.md](docs/web-ui
   - **Don't `asyncio.sleep(X)` to wait for work.** Wait on the right signal: `await job.reader_task`, `asyncio.wait_for(event.wait(), ...)`, or patch the clock (`_now_iso`/`time.monotonic`). Fixed sleeps are slower *and* flakier.
   - **Anything that runs a real scheduler/timer must patch the work function.** `discover_schedules` picks up bundled scheduled skills (`dream`, `garden`); on a fresh `tmp_path` config they're "never run → due" and fire real `run_agent_turn` calls (one test bled to ~66s this way). Patch `decafclaw.schedules.run_schedule_task` even for "no tasks" scenarios.
 - **Check `pytest --durations=25` when adding tests.** Top-25 placement → missing mock or fixed sleep masquerading as a sync primitive.
+- **Collection scope is explicit: `testpaths = ["tests", "contrib"]`.** New tests must live under one of those two roots or they won't run. `contrib` is listed because contrib skill tests are colocated with the skill. Don't drop it back to rootdir collection — `data/` is the agent's writable workspace, and anything it scaffolds matching `test_*.py` would join the suite (#682). That failure is invisible in CI and in worktrees, since neither has a `data/` dir; it only shows up on a main clone. `tests/test_pytest_collection.py` enforces both halves.
 
 ### Evals
 
