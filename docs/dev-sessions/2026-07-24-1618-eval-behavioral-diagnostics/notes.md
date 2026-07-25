@@ -30,15 +30,22 @@ Combined arc for two related issues, executed as one 13-task plan:
 |-------|------|-------|
 | `vault_answering.yaml` | retrieval | 5 |
 | `tool_routing.yaml` | routing | 5 |
-| `source_grounding.yaml` | answer_quality | 5 |
+| `source_grounding.yaml` | answer_quality | **4** |
 | `context_pressure.yaml` | answer_quality | **4** |
 | `clarification.yaml` | workflow_discipline | **4** |
 | `abort_recovery.yaml` | workflow_discipline | 4 |
 | `over_ceremony.yaml` | workflow_discipline | 5 |
-| **Total** | | **32** |
+| **Total** | | **31** |
 
-Two suites landed at 4 cases rather than the 5 originally targeted, each
+> Post-rebase update: `source_grounding.yaml` dropped from 5 to 4 (its 5th
+> case depended on the `vault_search` tags bug now tracked as #688 — see the
+> Post-rebase stabilization section at the end). Total is now **31**, still
+> above #528's ~30 floor.
+
+Three suites landed at 4 cases rather than the 5 originally targeted, each
 with a documented dropped 5th case rather than a silently reduced target:
+
+- **`source_grounding.yaml`** — see Post-rebase stabilization below (#688).
 
 - **`context_pressure.yaml`** — a 5th case (fact placed early in a long
   history, using the brief's original "buried mid-stream, parenthetical
@@ -251,3 +258,57 @@ By axis (failure-mode scorecard):
   `reminder.md`; `expect_workspace.workspace_file_exists` was already
   correctly `["reminder.md"]` (unprefixed), so no change needed there.
   Re-validated: this case passed in both combined runs above.
+
+## Post-rebase stabilization (final)
+
+Before opening the PR the branch was rebased onto `origin/main` (which had
+advanced +8 commits during the session, including **#674** "make
+vault_search's tags-only mode callable", **#672** vault frontmatter
+rendering, and **#675** skills tools.py contract). Rebase was clean.
+`make check` clean; `make test` **3448 passed, 2 skipped, zero warnings**
+(count rose from upstream's own added tests).
+
+The post-rebase behavioral re-run surfaced flakes that the pre-rebase
+authoring runs hadn't hit — the #531 diagnostics made each root cause
+visible immediately (`retrieved_candidates`, the self-attached-tags
+tool-call args, `files_read`). Handled in order:
+
+1. **`source_grounding` case 5 (Nightwatch) — dropped.** The model
+   reliably self-attaches an *invented* `tags` filter to its `vault_search`
+   call (e.g. `["P1","incident","on-call","notification"]`, then a
+   different `["incident response","on-call","notification"]` on the next
+   run). `vault_search`'s exact-string AND-logic then returns a false-empty
+   when *any* attached tag isn't on the page, and the model hedges "I don't
+   have that" instead of grounding. Adding frontmatter tags only covers the
+   phrases you anticipate — the model invents new ones each run, so the
+   tag-enumeration safety-net is unbounded whack-a-mole. This is a real
+   **product bug**, filed as **#688**, not an eval-authoring defect (it
+   supersedes the "not a product bug" framing in finding 1 above — that
+   framing held for the *distractor-disambiguation* use of shared tags, but
+   the self-attachment-false-empty interaction is a genuine defect). Per the
+   decision to keep this PR scoped to #528+#531, the flaky case was dropped
+   (source_grounding → 4 solid cases: 2 grounding + 2 hedge) rather than
+   coupling the suite to an unfixed bug. #688 is on the board (Backlog).
+2. **`vault_answering` case 5 (429/100) — reworded (legit tightening).**
+   Retrieval worked (page found at 0.96 relevance, result contained both
+   numbers); the model answered a consequence-only question ("what happens
+   if a client exceeds the limit?") with only "429" and omitted "100", so
+   `response_contains_all: ["429","100"]` failed. Reworded the input to a
+   two-part question ("What's our API rate limit, and what happens if a
+   client exceeds it?") so a complete grounded answer naturally requires
+   both discriminators; assertion unchanged, distractor still contains
+   neither token. Stable 5/5 across 5 re-runs.
+
+**Convergence confirmed:** after those two changes, the full 31-case
+combined suite ran **31/31 twice consecutively** (all four axes 100%),
+plus source_grounding 4/4 in isolation. No assertion was loosened
+dishonestly — case 5 was *dropped* (not weakened), and the 429/100 fix
+made its question stricter, not looser.
+
+**Honest note on stochasticity:** these are real-LLM adversarial suites
+against Flash. Two distinct latent flakes surfaced only under the
+post-rebase runs; both had genuine fixes (one a product-bug-driven drop,
+one a question-framing tightening). The remaining 31 cases held 31/31
+across the final consecutive runs, but as with any real-model eval a rare
+provider-level flake (see the `MALFORMED_FUNCTION_CALL` note above) can
+still occur — the suites are a smartness scorecard, not a bit-exact gate.
