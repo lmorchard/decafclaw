@@ -3,6 +3,12 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 
+// Absolute, not relative: widgets are served from
+// /widgets/{tier}/{name}/widget.js, so `../../lib/…` resolves to
+// /widgets/lib/… and 404s. Matches code_block and markdown_document.
+import { closeTabById } from '/static/lib/canvas-state.js';
+import { showToast } from '/static/lib/toast.js';
+
 // Reconnect backoff schedule (ms) for unexpected WS closes. Capped at
 // BACKOFF.length attempts — after that we give up and show an error banner
 // (no auto-retry; reloading the page starts over).
@@ -29,6 +35,7 @@ export class TerminalWidget extends LitElement {
     tabId: { attribute: false },
     _state: { state: true },
     _ended: { state: true },
+    _endedReason: { state: true },
   };
 
   createRenderRoot() { return this; }  // light DOM, matches other widgets
@@ -43,6 +50,7 @@ export class TerminalWidget extends LitElement {
     this.tabId = null;
     this._state = 'waiting';     // waiting|connecting|replaying|attached|disconnected|error|ended
     this._ended = null;          // exit status once ended
+    this._endedReason = null;    // 'exited' (shell finished) | 'no_session' (tombstone)
     this._attempts = 0;
     this._replaying = false;
     this._ws = null;
@@ -89,8 +97,12 @@ export class TerminalWidget extends LitElement {
   /** Drop the old session's socket/state and reconnect to the new target. */
   _retarget() {
     this._teardownSocket();
+    // Remount if the previous target was a dead session — `_onSessionEnded`
+    // disposes the surface in that case, so `_term` may be null here.
+    this._mountTerminal();
     this._term.reset();   // clear the old session's scrollback
     this._ended = null;
+    this._endedReason = null;
     this._attempts = 0;
     this._state = 'connecting';
     this._connect();
@@ -190,12 +202,48 @@ export class TerminalWidget extends LitElement {
       // and sends exactly one size, after the layout settles.
       this._scheduleResize();                     // send initial size once settled
     } else if (msg.type === 'session_ended') {
-      this._ended = msg.exit_status;
-      this._state = 'ended';
-      this._teardownSocket();
+      this._onSessionEnded(msg);
     }
     // size_changed: server letterbox hint — xterm already fit locally,
     // nothing to do client-side.
+  }
+
+  /**
+   * The session is over. `reason` decides whether the tab survives it:
+   *
+   * - `exited` — the shell ran and finished. Its last screenful is still on
+   *   the surface and worth reading, so keep both the surface and the tab;
+   *   the banner offers a close button.
+   * - `no_session` — the server has never heard of this session. Canvas tabs
+   *   persist to `canvas.json` but the PTY registry is in-memory only, so a
+   *   server restart turns every terminal tab into a tombstone. There is
+   *   nothing to read (the ring buffer died with the process) and nothing to
+   *   reconnect to, so drop the surface, say why, and remove the tab.
+   *
+   * Dropping the surface is the part that fixes the blank pane: it is a
+   * manually-appended `height: 100%` div, and `onopen` already reset it, so
+   * leaving it mounted renders an empty terminal over the whole tab with the
+   * explanation squeezed out of sight underneath.
+   *
+   * A missing `reason` counts as `exited` — closing a tab is the destructive
+   * direction, so ambiguity must not resolve to it.
+   *
+   * @param {{reason?: string, exit_status?: number|null}} msg
+   */
+  _onSessionEnded(msg) {
+    this._ended = msg.exit_status ?? null;
+    this._endedReason = msg.reason === 'no_session' ? 'no_session' : 'exited';
+    this._state = 'ended';
+    this._teardownSocket();
+    if (this._endedReason !== 'no_session') return;
+    this._disposeSurface();
+    showToast('Terminal session is gone — the server restarted. Closing the tab.');
+    this._closeOwnTab();
+  }
+
+  /** Remove this widget's canvas tab. No confirm — the session is already dead. */
+  _closeOwnTab() {
+    if (this.convId && this.tabId) closeTabById(this.convId, this.tabId);
   }
 
   _onClose() {
@@ -263,8 +311,13 @@ export class TerminalWidget extends LitElement {
     this._reconnectTimer = null;
   }
 
-  _teardown() {
-    this._teardownSocket();
+  /**
+   * Dispose the xterm instance and remove its host div, handing the whole
+   * pane back to `render()`. Separate from `_teardown` because a dead
+   * session drops the surface while the element stays mounted.
+   * Idempotent, and `_mountTerminal` rebuilds from here.
+   */
+  _disposeSurface() {
     clearTimeout(this._resizeTimer);
     this._resizeTimer = null;
     if (this._ro) { this._ro.disconnect(); this._ro = null; }
@@ -273,12 +326,32 @@ export class TerminalWidget extends LitElement {
     if (this._surface) { this._surface.remove(); this._surface = null; }
   }
 
+  _teardown() {
+    this._teardownSocket();
+    this._disposeSurface();
+  }
+
   render() {
+    if (this._state === 'ended' && this._endedReason === 'no_session') {
+      // Rendered for the moment between discovering the tombstone and the
+      // server's close_tab event arriving to unmount us.
+      return html`
+        <div class="dc-terminal-banner dc-terminal-banner--alert">
+          [session gone — the server restarted; closing this tab]
+        </div>`;
+    }
     if (this._state === 'ended') {
-      return html`<div class="dc-terminal-banner">[session ended · exit ${this._ended ?? '?'}]</div>`;
+      return html`
+        <div class="dc-terminal-banner">
+          <span>[session ended · exit ${this._ended ?? '?'}]</span>
+          <button type="button" @click=${this._closeOwnTab}>Close tab</button>
+        </div>`;
     }
     if (this._state === 'error') {
-      return html`<div class="dc-terminal-banner">[disconnected — reload to retry]</div>`;
+      return html`
+        <div class="dc-terminal-banner dc-terminal-banner--alert">
+          [disconnected — reload to retry]
+        </div>`;
     }
     if (this._state === 'waiting') {
       return html`<div class="dc-terminal-status">[waiting for session]</div>`;

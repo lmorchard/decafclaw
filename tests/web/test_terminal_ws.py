@@ -48,9 +48,15 @@ def test_terminal_ws_rejects_unauthenticated(app):
 
 
 def test_terminal_ws_session_not_found_sends_ended(authed_client):
+    """No such session — the canvas tab outlived the PTY (server restart, or a
+    conversation whose sessions were killed). `reason` must say `no_session`
+    so the client can auto-close the dead tab; a real shell exit reports
+    `exited` instead and is left on screen for the user to read.
+    """
     with authed_client.websocket_connect("/ws/terminal/c1/canvas_1") as ws:
         msg = ws.receive_json()
-        assert msg["type"] == "session_ended"
+        assert msg == {"type": "session_ended", "reason": "no_session",
+                       "exit_status": None}
 
 
 def test_terminal_ws_replays_buffer_then_done(authed_client_with_session):

@@ -106,8 +106,57 @@ text frame — xterm.js reconstructs cursor position, colors, etc. from the
 replayed ANSI stream.
 
 On PTY EOF (child process exited), the registry reaps the child with
-`waitpid`, broadcasts `{"type": "session_ended", "exit_status": ...}` to
-every attached connection, and removes the session from the registry.
+`waitpid`, broadcasts
+`{"type": "session_ended", "reason": "exited", "exit_status": ...}` to every
+attached connection, and removes the session from the registry.
+
+### Dead sessions and the `reason` discriminator
+
+Canvas tabs and PTY sessions have different lifetimes: a tab persists to
+`canvas.json` on disk, while the session behind it lives only in
+`TerminalRegistry`'s memory for the life of the server process. Nothing
+reconciles the two, so **every terminal tab that outlives a server restart is
+a tombstone** — the tab is still there, the shell is long dead.
+
+`session_ended` therefore carries a `reason`, and the two values mean
+materially different things:
+
+| `reason` | Sent by | Means | Client behavior |
+|---|---|---|---|
+| `exited` | `TerminalRegistry._on_eof` | The shell ran and finished. Its final output is still on screen. | Keep the surface and the tab. Banner shows the exit status plus a **Close tab** button. |
+| `no_session` | `websocket_terminal`, when `registry.get()` misses | The server has no such session — restart, or the sessions were killed out from under the tab. | Dispose the xterm surface, `showToast(...)`, and close the canvas tab via `closeTabById`. |
+
+A `session_ended` with no `reason` is treated as `exited`. Closing a tab is
+the destructive direction, so an ambiguous frame must not resolve to it.
+
+The client-side detection in `widget.js` (`_onSessionEnded`) is the only
+cleanup path — there is deliberately **no server-side startup sweep** of
+stale terminal tabs. A tombstone in a conversation you never reopen simply
+stays in `canvas.json` until a client actually attaches and discovers it.
+
+Three details are load-bearing and easy to regress:
+
+- **`closeTabById` removes the tab locally before POSTing.** The server
+  confirms a close by broadcasting `canvas_update` over `/ws/chat` — but this
+  path runs *because* the server restarted, which is exactly when that socket
+  is least able to deliver. It does reconnect, yet `conversation-store` only
+  re-runs `listConversations()` on open and never re-sends `SELECT_CONV`, so
+  the fresh socket is subscribed to no conversation stream and the broadcast
+  reaches nobody. Waiting on that push left the dead tab on screen until a
+  full page reload. Anything reacting to a disconnect must not depend on that
+  connection to finish the job.
+
+- **`_disposeSurface()`, not just `_teardownSocket()`.** The xterm surface is
+  a manually-appended light-DOM `div` with `height: 100%`, and `onopen`
+  already called `_term.reset()`. Leaving it mounted renders an empty
+  terminal over the entire pane — the original bug was exactly this: a dead
+  terminal showed up blank, with the explanation squeezed out of sight
+  underneath. `_teardown()` (unmount) and `_disposeSurface()` (drop the
+  terminal, keep the element) are separate for this reason.
+- **`order: -1` on `.dc-terminal-banner`.** `createRenderRoot()` returns
+  `this`, so Lit's rendered output is always a *later* sibling than the
+  imperatively-appended surface. The banner has to be reordered in the flex
+  layer to sit above a surviving terminal (the `exited` case).
 
 ## Security model
 
@@ -161,7 +210,9 @@ grace period via `killpg`) in exactly three places:
 **No disk-persisted scrollback.** The ring buffer is in-memory only. A
 browser reload or a second viewer replays it fine (the process is still
 running); a server restart kills the process and the buffer along with it —
-there is no cold-restart replay by design (non-goal, see spec).
+there is no cold-restart replay by design (non-goal, see spec). What the
+restart *does* get is a clean exit: the tab detects the missing session and
+removes itself, see [Dead sessions](#dead-sessions-and-the-reason-discriminator).
 
 ## Multi-attach and resize
 
@@ -210,7 +261,12 @@ fresh) regardless.
   close-tab path (with its confirm dialog) actually kills the process today.
 - **No disk-persisted scrollback across server restart** (see above) — an
   accepted non-goal, not a bug, but worth remembering if you're relying on
-  scrollback for anything durable.
+  scrollback for anything durable. The tab self-closes rather than lingering.
+- **Tombstone tabs are only reaped on attach.** A terminal tab in a
+  conversation you never reopen after a restart stays in that conversation's
+  `canvas.json` indefinitely — the client has to look at it to clean it up.
+  Harmless (the tab is a few bytes of JSON) but it means "no terminal tabs
+  exist" is never an invariant you can rely on server-side.
 
 ## Configuration
 

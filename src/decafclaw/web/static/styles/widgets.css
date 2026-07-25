@@ -286,15 +286,53 @@ chat-message .tool-result-raw pre {
 
 /* ---- terminal ---- */
 
-/* Banner/status states (ended, error, waiting, reconnecting) render as
-   plain divs — no visual styling from xterm.css (which only covers the
-   live terminal surface). Keep this minimal and theme-aware. */
-.dc-terminal-banner,
+/* Transient states (waiting, reconnecting) — quiet, the terminal is still
+   on its way. No styling comes from xterm.css, which only covers the live
+   terminal surface. */
 .dc-terminal-status {
   padding: 0.75rem 1rem;
   text-align: center;
   font-size: 0.85rem;
   color: var(--pico-muted-color);
+}
+
+/* Terminal states (shell exited, session gone, gave up reconnecting).
+   `order: -1` pins the strip ABOVE the xterm surface: the widget appends
+   that surface to its own light DOM in `_mountTerminal`, so Lit's rendered
+   output is always a LATER sibling. Without the reorder the banner lands
+   under a `height: 100%` terminal and the pane reads as blank — precisely
+   the failure this markup exists to report. `flex: 0 0 auto` stops that
+   same 100% sibling from squeezing it away. */
+.dc-terminal-banner {
+  order: -1;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  padding: 0.5rem 1rem;
+  text-align: center;
+  font-size: 0.85rem;
+  background: var(--pico-card-sectioning-background-color);
+  border-bottom: 1px solid var(--pico-muted-border-color);
+}
+
+/* Louder variant for states the user has to act on (or that are about to
+   act on their behalf): a tab closing itself, or a reconnect that gave up. */
+.dc-terminal-banner--alert {
+  background: var(--pico-del-color);
+  border-bottom-color: var(--pico-del-color);
+  color: white;
+}
+
+/* Descendant + tag (0,1,1) to match Pico's `button:not(...)`; widgets.css
+   loads after pico.min.css so the tie resolves here. */
+.dc-terminal-banner button {
+  width: auto;
+  margin: 0;
+  padding: 0.15rem 0.6rem;
+  font-size: 0.8rem;
+  line-height: 1.4;
 }
 
 /* ---- code_block ---- */

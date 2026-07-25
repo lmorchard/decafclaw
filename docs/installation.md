@@ -7,6 +7,14 @@ DecafClaw is a Python project managed with [uv](https://docs.astral.sh/uv/). It 
 - **Python 3.13+**
 - **[uv](https://docs.astral.sh/uv/)** — Python package/project manager
 - **An LLM provider** — Vertex AI (Gemini), OpenAI, or any OpenAI-compatible API (LiteLLM, Ollama, vLLM, OpenRouter). See [LLM Providers](providers.md) for setup.
+- **Node 20.19+ / 22.12+ / 24+** — only for the web UI's JS tooling (`make test-js`,
+  `make check-js`, `make vendor`). Nothing at *runtime* needs Node; the vendor
+  bundle is committed. `.nvmrc` pins 22, so `nvm use` in the repo root picks
+  the right one. The floor is real, not aspirational: vitest's rolldown
+  dependency imports `styleText` from `node:util`, added in Node 20.12, and
+  older Node fails with a bare `SyntaxError` that looks like a broken repo.
+  `package.json` declares the range and `.npmrc` sets `engine-strict`, so npm
+  now refuses the install with a message that names the problem.
 
 Optional:
 - **Mattermost instance** — for chat bot mode (interactive terminal mode works without it)
