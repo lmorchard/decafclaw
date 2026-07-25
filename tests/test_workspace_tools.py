@@ -718,3 +718,41 @@ def test_workspace_preview_markdown_caps_large_files(config, workspace_with_md):
     assert "showing first" in result.widget.data["content"]
     # Tool text starts with truncation notice for the LLM
     assert result.text.startswith("[file truncated:")
+
+
+# -- redundant workspace/ prefix note --
+#
+# workspace_write paths are already workspace-relative, so a 'workspace/'
+# prefix silently writes one level too deep. The prefix is NOT stripped —
+# 'workspace' is a legal directory name inside a workspace, so stripping it
+# would make a legitimate path unreachable — but the write says so, which is
+# the earliest point the mistake can be caught.
+
+
+def test_write_notes_a_redundant_workspace_prefix(ctx):
+    from decafclaw.tools.workspace_tools import tool_workspace_write
+    result = tool_workspace_write(
+        ctx, path="workspace/skills/foo/SKILL.md", content="x"
+    )
+    text = result if isinstance(result, str) else result.text
+    # "skills/foo/SKILL.md" is a substring of the path itself, so assert on
+    # the note and the suggested path specifically.
+    assert "did you mean" in text.lower()
+    assert "'skills/foo/SKILL.md'" in text
+    # The write still happened where it was asked to — nothing is stripped.
+    assert (ctx.config.workspace_path / "workspace/skills/foo/SKILL.md").exists()
+
+
+def test_write_does_not_note_ordinary_paths(ctx):
+    from decafclaw.tools.workspace_tools import tool_workspace_write
+    result = tool_workspace_write(ctx, path="skills/foo/SKILL.md", content="x")
+    text = result if isinstance(result, str) else result.text
+    assert "did you mean" not in text.lower()
+
+
+def test_write_does_not_note_a_nested_workspace_dir(ctx):
+    """Only a *leading* 'workspace/' is suspicious."""
+    from decafclaw.tools.workspace_tools import tool_workspace_write
+    result = tool_workspace_write(ctx, path="notes/workspace/plan.md", content="x")
+    text = result if isinstance(result, str) else result.text
+    assert "did you mean" not in text.lower()

@@ -2,6 +2,7 @@
 
 import asyncio
 import difflib
+import inspect
 import logging
 
 from ..media import ToolResult
@@ -206,6 +207,54 @@ def _format_suggestions(suggestions: list[str]) -> str:
     return f" Did you mean: {', '.join(suggestions)}."
 
 
+def _typeerror_result(ctx, name: str, fn, arguments: dict, exc: TypeError) -> ToolResult:
+    """Attribute a TypeError to either the call arguments or the tool body.
+
+    The call and the entire tool body sit inside one `except TypeError`, so
+    two very different failures land here:
+
+    1. The model guessed wrong parameter names ('path' instead of 'file') —
+       the caller is wrong, and listing the expected params lets it
+       self-correct.
+    2. The tool's own code raised TypeError — the *caller* is fine and the
+       bug is in the implementation.
+
+    Before this split, case 2 was reported with case 1's wording, so a bad
+    `ToolResult(tool_code=...)` inside a skill tool came back as "Expected
+    parameters: " (empty, for a zero-arg tool) and sent the author to audit
+    the call site for a bug that was on line 60 of their own file.
+
+    `sig.bind` is the discriminator: if the arguments bind cleanly, the
+    TypeError cannot have come from argument binding.
+    """
+    try:
+        sig = inspect.signature(fn)
+    except (ValueError, TypeError):
+        # Builtins and some C-implemented callables have no introspectable
+        # signature; there's nothing to say beyond the error itself.
+        return ToolResult(text=f"[error executing {name}: {exc}]")
+
+    try:
+        sig.bind(ctx, **arguments)
+    except TypeError:
+        params = [p for p in sig.parameters if p != "ctx"]
+        return ToolResult(
+            text=f"[error executing {name}: {exc}. "
+                 f"Expected parameters: {', '.join(params)}]"
+        )
+
+    owner = ctx.config.skill_tool_owners.get(name)
+    where = f" of skill '{owner}'" if owner else ""
+    return ToolResult(
+        text=(
+            f"[error executing {name}: {exc}. This TypeError was raised inside "
+            f"the tool's own code{where} — the arguments you passed matched its "
+            f"signature, so calling it differently will not help. Fix the tool's "
+            f"implementation.]"
+        )
+    )
+
+
 async def execute_tool(ctx, name: str, arguments: dict) -> ToolResult:
     """Execute a tool by name and return the result.
 
@@ -345,14 +394,6 @@ async def execute_tool(ctx, name: str, arguments: dict) -> ToolResult:
             return interrupted
         return _to_tool_result(tool_task.result())
     except TypeError as e:
-        # Common: model guesses wrong parameter names (e.g. 'path' instead of 'file').
-        # Include expected params in the error to help the model self-correct.
-        import inspect
-        try:
-            sig = inspect.signature(fn)
-            params = [p for p in sig.parameters if p != "ctx"]
-            return ToolResult(text=f"[error executing {name}: {e}. Expected parameters: {', '.join(params)}]")
-        except (ValueError, TypeError):
-            return ToolResult(text=f"[error executing {name}: {e}]")
+        return _typeerror_result(ctx, name, fn, arguments, e)
     except Exception as e:
         return ToolResult(text=f"[error executing {name}: {e}]")

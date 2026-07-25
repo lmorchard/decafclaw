@@ -290,3 +290,74 @@ def test_context_stats_in_forked_ctx(ctx):
     result = tool_context_stats(forked)
     assert "Context Stats" in result
     assert "user" in result
+
+
+# -- TypeError attribution --
+#
+# execute_tool wraps the whole call, body included, in one `except TypeError`
+# that appends "Expected parameters: <sig>". A TypeError raised *inside* a tool
+# therefore got reported as a wrong-arguments error — and for a zero-arg tool it
+# rendered as the surreal, empty "Expected parameters: ". That framing sends the
+# author to the call site when the bug is in the tool body.
+
+
+@pytest.mark.asyncio
+async def test_internal_typeerror_omits_param_hint(ctx):
+    """A TypeError from the tool body must not be framed as a bad-argument error."""
+    def exploding_tool(ctx):
+        from decafclaw.media import ToolResult
+        return ToolResult(tool_code="nope")  # invalid kwarg — the real 2026-07-25 bug
+
+    ctx.tools.extra = {"exploding": exploding_tool}
+    result = await execute_tool(ctx, "exploding", {})
+    assert "Expected parameters" not in result.text
+    assert "tool_code" in result.text
+    # Must point at the body, so the author looks in the right place.
+    assert "inside" in result.text.lower()
+
+
+@pytest.mark.asyncio
+async def test_bad_arguments_still_gets_param_hint(ctx):
+    """A genuine wrong-keyword call keeps the self-correction hint."""
+    def typed_tool(ctx, query: str) -> str:
+        return f"got {query}"
+
+    ctx.tools.extra = {"typed": typed_tool}
+    result = await execute_tool(ctx, "typed", {"quesry": "typo"})
+    assert "Expected parameters" in result.text
+    assert "query" in result.text
+
+
+@pytest.mark.asyncio
+async def test_missing_required_argument_gets_param_hint(ctx):
+    def typed_tool(ctx, query: str) -> str:
+        return f"got {query}"
+
+    ctx.tools.extra = {"typed": typed_tool}
+    result = await execute_tool(ctx, "typed", {})
+    assert "Expected parameters" in result.text
+    assert "query" in result.text
+
+
+@pytest.mark.asyncio
+async def test_internal_typeerror_names_owning_skill(ctx):
+    """When the tool belongs to a skill, say so — that's where the file lives."""
+    def exploding_tool(ctx):
+        return "x" + 1  # TypeError in the body
+
+    ctx.tools.extra = {"skill_tool": exploding_tool}
+    ctx.config.skill_tool_owners = {"skill_tool": "blog-tools"}
+    result = await execute_tool(ctx, "skill_tool", {})
+    assert "Expected parameters" not in result.text
+    assert "blog-tools" in result.text
+
+
+@pytest.mark.asyncio
+async def test_async_internal_typeerror_omits_param_hint(ctx):
+    """Async tools take a different call path; same attribution rule applies."""
+    async def exploding_tool(ctx):
+        return "x" + 1
+
+    ctx.tools.extra = {"async_exploding": exploding_tool}
+    result = await execute_tool(ctx, "async_exploding", {})
+    assert "Expected parameters" not in result.text

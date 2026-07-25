@@ -1040,6 +1040,214 @@ async def test_activate_native_skill(ctx, tmp_path):
     assert len(ctx.tools.extra_definitions) == 1
 
 
+# -- re-activation reloads edited tools --
+#
+# Editing an active skill's tools.py used to be a guaranteed no-op:
+# activate_skill early-returned "already active" without re-importing, and
+# refresh_skills only rebuilt the catalog on `config` — never the live
+# functions in ctx.tools.extra. So the author's edit-validate-reload loop
+# could not converge, at all, and the only escape was restarting the process.
+
+
+def _native_skill(skill_dir, name="editable", tools_py="", body="Body."):
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    (skill_dir / "tools.py").write_text(tools_py)
+    return SkillInfo(
+        name=name, description="Editable test.", location=skill_dir,
+        body=body, has_native_tools=True,
+    )
+
+
+@pytest.mark.asyncio
+async def test_reactivate_reloads_edited_tools(ctx, tmp_path):
+    """After editing tools.py, re-activating picks up the new definition."""
+    skill_dir = tmp_path / "editable"
+    skill = _native_skill(
+        skill_dir,
+        tools_py=(
+            "TOOLS = {'v1': lambda ctx: 'one'}\n"
+            "TOOL_DEFINITIONS = [{'type': 'function', "
+            "'function': {'name': 'v1'}}]\n"
+        ),
+    )
+    ctx.config.discovered_skills = [skill]
+    _save_permission(ctx.config, "editable", "always")
+
+    await tool_activate_skill(ctx, name="editable")
+    assert "v1" in ctx.tools.extra
+
+    # The author fixes their tool and renames it.
+    (skill_dir / "tools.py").write_text(
+        "TOOLS = {'v2': lambda ctx: 'two'}\n"
+        "TOOL_DEFINITIONS = [{'type': 'function', 'function': {'name': 'v2'}}]\n"
+    )
+
+    result = await tool_activate_skill(ctx, name="editable")
+    assert "v2" in ctx.tools.extra, "edited tools.py was not reloaded"
+    # The replaced tool must not linger — a stale name in ctx.tools.extra is
+    # advertised to the LLM and calls dead code.
+    assert "v1" not in ctx.tools.extra, "stale tool survived the reload"
+    names = [
+        td.get("function", {}).get("name") for td in ctx.tools.extra_definitions
+    ]
+    assert names == ["v2"]
+    assert "reload" in _text(result).lower()
+
+
+@pytest.mark.asyncio
+async def test_reactivate_reloads_changed_tool_body(ctx, tmp_path):
+    """Same tool name, changed implementation — the new body must run."""
+    skill_dir = tmp_path / "samename"
+    skill = _native_skill(
+        skill_dir, name="samename",
+        tools_py=(
+            "def go(ctx):\n    return 'before'\n\n"
+            "TOOLS = {'go': go}\n"
+            "TOOL_DEFINITIONS = [{'type': 'function', "
+            "'function': {'name': 'go'}}]\n"
+        ),
+    )
+    ctx.config.discovered_skills = [skill]
+    _save_permission(ctx.config, "samename", "always")
+
+    await tool_activate_skill(ctx, name="samename")
+    assert ctx.tools.extra["go"](ctx) == "before"
+
+    (skill_dir / "tools.py").write_text(
+        "def go(ctx):\n    return 'after'\n\n"
+        "TOOLS = {'go': go}\n"
+        "TOOL_DEFINITIONS = [{'type': 'function', 'function': {'name': 'go'}}]\n"
+    )
+    await tool_activate_skill(ctx, name="samename")
+    assert ctx.tools.extra["go"](ctx) == "after"
+
+
+@pytest.mark.asyncio
+async def test_reactivate_updates_dynamic_provider(ctx, tmp_path):
+    """A skill exporting get_tools re-registers its provider on reload."""
+    skill_dir = tmp_path / "dyn"
+    skill = _native_skill(
+        skill_dir, name="dyn",
+        tools_py=(
+            "TOOLS = {'d1': lambda ctx: 'x'}\n"
+            "TOOL_DEFINITIONS = [{'type': 'function', "
+            "'function': {'name': 'd1'}}]\n"
+            "def get_tools(ctx):\n    return TOOLS, TOOL_DEFINITIONS\n"
+        ),
+    )
+    ctx.config.discovered_skills = [skill]
+    _save_permission(ctx.config, "dyn", "always")
+
+    await tool_activate_skill(ctx, name="dyn")
+    first = ctx.tools.dynamic_providers["dyn"]
+
+    (skill_dir / "tools.py").write_text(
+        "TOOLS = {'d2': lambda ctx: 'y'}\n"
+        "TOOL_DEFINITIONS = [{'type': 'function', 'function': {'name': 'd2'}}]\n"
+        "def get_tools(ctx):\n    return TOOLS, TOOL_DEFINITIONS\n"
+    )
+    await tool_activate_skill(ctx, name="dyn")
+    assert ctx.tools.dynamic_providers["dyn"] is not first
+    assert ctx.tools.dynamic_provider_names["dyn"] == {"d2"}
+
+
+@pytest.mark.asyncio
+async def test_reactivate_broken_edit_keeps_working_tools(ctx, tmp_path):
+    """A reload that fails to import must report the error and leave the
+    previously-working tools in place rather than half-unloading them."""
+    skill_dir = tmp_path / "breakable"
+    skill = _native_skill(
+        skill_dir, name="breakable",
+        tools_py=(
+            "TOOLS = {'ok': lambda ctx: 'fine'}\n"
+            "TOOL_DEFINITIONS = [{'type': 'function', "
+            "'function': {'name': 'ok'}}]\n"
+        ),
+    )
+    ctx.config.discovered_skills = [skill]
+    _save_permission(ctx.config, "breakable", "always")
+
+    await tool_activate_skill(ctx, name="breakable")
+    (skill_dir / "tools.py").write_text("def broken(\n")  # SyntaxError
+
+    result = await tool_activate_skill(ctx, name="breakable")
+    text = _text(result)
+    assert "SyntaxError" in text
+    assert "ok" in ctx.tools.extra, "working tool was dropped by a failed reload"
+
+
+@pytest.mark.asyncio
+async def test_reactivate_same_size_edit_is_not_served_from_bytecode(ctx, tmp_path):
+    """A same-size edit inside one second must still take effect.
+
+    CPython validates a cached .pyc against source size and mtime truncated
+    to whole seconds. Both writes here are byte-for-byte the same length and
+    land in the same second, which is the precise shape that made
+    exec_module replay the pre-edit bytecode — the edit looked like a no-op.
+    """
+    skill_dir = tmp_path / "samesize"
+    before = "TOOLS = {'t': lambda ctx: 'aaa'}\nTOOL_DEFINITIONS = []\n"
+    after = "TOOLS = {'t': lambda ctx: 'bbb'}\nTOOL_DEFINITIONS = []\n"
+    assert len(before) == len(after), "test premise: writes must be the same size"
+
+    skill = _native_skill(skill_dir, name="samesize", tools_py=before)
+    ctx.config.discovered_skills = [skill]
+    _save_permission(ctx.config, "samesize", "always")
+
+    await tool_activate_skill(ctx, name="samesize")
+    assert ctx.tools.extra["t"](ctx) == "aaa"
+
+    (skill_dir / "tools.py").write_text(after)
+    await tool_activate_skill(ctx, name="samesize")
+    assert ctx.tools.extra["t"](ctx) == "bbb", "stale bytecode was executed"
+
+
+@pytest.mark.asyncio
+async def test_activation_writes_no_pycache_into_the_skill_dir(ctx, tmp_path):
+    """Skill dirs live in the agent-writable workspace, and the agent cannot
+    remove a __pycache__ directory with workspace_delete."""
+    skill_dir = tmp_path / "clean"
+    skill = _native_skill(
+        skill_dir, name="clean",
+        tools_py="TOOLS = {'c': lambda ctx: 'x'}\nTOOL_DEFINITIONS = []\n",
+    )
+    ctx.config.discovered_skills = [skill]
+    _save_permission(ctx.config, "clean", "always")
+
+    await tool_activate_skill(ctx, name="clean")
+    assert not (skill_dir / "__pycache__").exists()
+
+
+def test_skill_validate_sees_same_size_edit(ctx):
+    """The validator must not report a SyntaxError the author already fixed."""
+    d = _write_ws_skill(
+        ctx, "fixme", "name: fixme\ndescription: Being fixed.",
+        tools_py="def get_tools(ctx)\n    return {}, []\n",  # missing colon
+    )
+    first = tool_skill_validate(ctx, path="skills/fixme")
+    assert first.data["ok"] is False
+
+    # Add the colon, drop a space: same length, same second.
+    (d / "tools.py").write_text("def get_tools(ctx):\n    return {},[]\n")
+    second = tool_skill_validate(ctx, path="skills/fixme")
+    assert second.data["ok"] is True, "validator judged stale bytecode"
+
+
+@pytest.mark.asyncio
+async def test_reactivate_text_only_skill_is_idempotent(ctx, tmp_path):
+    """A skill with no tools.py still reports already-active without error."""
+    skill = SkillInfo(
+        name="texty", description="No tools.", location=tmp_path / "texty",
+        body="Just prose.", has_native_tools=False,
+    )
+    ctx.config.discovered_skills = [skill]
+    _save_permission(ctx.config, "texty", "always")
+
+    await tool_activate_skill(ctx, name="texty")
+    result = await tool_activate_skill(ctx, name="texty")
+    assert "already active" in _text(result).lower()
+
+
 def test_discover_loads_direct_skill_dir_from_extra_paths(tmp_path, config):
     """An entry in extra_skill_paths that points directly at a skill
     directory (one with SKILL.md at its root) loads that skill."""
@@ -1548,6 +1756,61 @@ def test_skill_validate_outside_workspace(ctx):
     assert "outside the workspace" in _text(result)
 
 
+# -- discoverable location --
+#
+# Same failure class as the #675 shape contract below: skill_validate used to
+# check only "inside the workspace and has a SKILL.md", so it reported a
+# fully-green PASS on a directory `discover_skills` never scans. The agent then
+# got PASS from the validator and silence from refresh_skills, with nothing to
+# reconcile them, and looped. A validator that green-lights an undiscoverable
+# location is worse than none.
+
+
+def test_skill_validate_rejects_redundant_workspace_prefix(ctx):
+    """The exact trap: workspace_write paths are workspace-relative, so a
+    'workspace/skills/<name>' path lands the skill one level too deep."""
+    d = ctx.config.workspace_path / "workspace" / "skills" / "blog-tools"
+    d.mkdir(parents=True)
+    (d / "SKILL.md").write_text(
+        "---\nname: blog-tools\ndescription: Blog helpers.\n---\nBody.\n"
+    )
+    result = tool_skill_validate(ctx, path="workspace/skills/blog-tools")
+    assert result.data["ok"] is False
+    check = next(c for c in result.data["checks"] if c["name"] == "discoverable")
+    assert check["passed"] is False
+    # Must name the corrected path, not just say "wrong".
+    assert "skills/blog-tools" in check["message"]
+
+
+def test_skill_validate_rejects_nested_subdirectory(ctx):
+    """Discovery only scans immediate children of skills/, so a skill nested
+    any deeper is invisible no matter how valid its SKILL.md is."""
+    d = ctx.config.workspace_path / "skills" / "group" / "nested"
+    d.mkdir(parents=True)
+    (d / "SKILL.md").write_text(
+        "---\nname: nested\ndescription: Too deep.\n---\nBody.\n"
+    )
+    result = tool_skill_validate(ctx, path="skills/group/nested")
+    check = next(c for c in result.data["checks"] if c["name"] == "discoverable")
+    assert check["passed"] is False
+
+
+def test_skill_validate_discoverable_passes_at_correct_location(ctx):
+    _write_ws_skill(ctx, "correct", "name: correct\ndescription: Right place.")
+    result = tool_skill_validate(ctx, path="skills/correct")
+    assert result.data["ok"] is True
+    check = next(c for c in result.data["checks"] if c["name"] == "discoverable")
+    assert check["passed"] is True
+
+
+def test_skill_validate_discoverable_accepts_skill_md_path(ctx):
+    """Passing the SKILL.md itself resolves to its parent, which is valid."""
+    _write_ws_skill(ctx, "viamd", "name: viamd\ndescription: Via SKILL.md.")
+    result = tool_skill_validate(ctx, path="skills/viamd/SKILL.md")
+    check = next(c for c in result.data["checks"] if c["name"] == "discoverable")
+    assert check["passed"] is True
+
+
 # -- tools.py shape contract (#675) --
 #
 # The loader needs TOOLS to be dict[str, callable] and TOOL_DEFINITIONS to be
@@ -1791,3 +2054,548 @@ async def test_shadow_warnings_are_ordered_deterministically(ctx):
 
     # Both reported, in sorted order.
     assert result.index("'debug_context' shadows") < result.index("'shell' shadows")
+
+
+# -- refresh_skills: misplaced-skill hint --
+#
+# A skill written to a path discovery doesn't scan is invisible to
+# refresh_skills by construction: discover_skills never walks there, so there
+# is no SKILL.md to reject and nothing to report. The author sees a normal
+# skill list with their skill simply absent, and no reason why. These checks
+# probe the two known-wrong shapes so the hint exists even when the author
+# never calls skill_validate.
+
+
+def test_refresh_skills_hints_at_redundant_workspace_prefix(ctx):
+    d = ctx.config.workspace_path / "workspace" / "skills" / "blog-tools"
+    d.mkdir(parents=True)
+    (d / "SKILL.md").write_text(
+        "---\nname: blog-tools\ndescription: Blog.\n---\nBody.\n"
+    )
+    text = _text(tool_refresh_skills(ctx))
+    assert "workspace/skills/blog-tools" in text
+    assert "skills/blog-tools" in text  # the suggested corrected path
+
+
+def test_refresh_skills_hints_at_overly_nested_skill(ctx):
+    d = ctx.config.workspace_path / "skills" / "group" / "nested"
+    d.mkdir(parents=True)
+    (d / "SKILL.md").write_text(
+        "---\nname: nested\ndescription: Too deep.\n---\nBody.\n"
+    )
+    text = _text(tool_refresh_skills(ctx))
+    assert "skills/group/nested" in text
+
+
+def test_refresh_skills_no_hint_when_everything_is_placed_right(ctx):
+    _write_ws_skill(ctx, "fine", "name: fine\ndescription: Correct place.")
+    text = _text(tool_refresh_skills(ctx))
+    assert "misplaced" not in text.lower()
+
+
+# -- refresh_skills: what changed --
+
+
+def test_refresh_skills_reports_a_newly_discovered_skill(ctx):
+    tool_refresh_skills(ctx)  # establish the baseline
+    _write_ws_skill(ctx, "brandnew", "name: brandnew\ndescription: New one.")
+    text = _text(tool_refresh_skills(ctx))
+    assert "brandnew" in text
+    assert "New:" in text
+
+
+def test_refresh_skills_reports_no_change(ctx):
+    tool_refresh_skills(ctx)
+    text = _text(tool_refresh_skills(ctx))
+    assert "no change" in text.lower()
+
+
+def test_refresh_skills_reports_a_removed_skill(ctx):
+    d = _write_ws_skill(ctx, "goingaway", "name: goingaway\ndescription: Bye.")
+    tool_refresh_skills(ctx)
+    (d / "SKILL.md").unlink()
+    text = _text(tool_refresh_skills(ctx))
+    assert "goingaway" in text
+    assert "no longer" in text.lower()
+
+
+# -- skill_validate advisories --
+#
+# `ok` must keep meaning exactly "the loader will accept this". A name that
+# disagrees with its directory, or uses spaces and capitals, loads perfectly
+# well (the bundled catalog has both), so flagging either as a FAILURE would
+# recreate the validator-contradicts-loader trap in reverse. They are
+# reported as advisories instead.
+
+
+def test_skill_validate_advises_on_name_directory_mismatch(ctx):
+    _write_ws_skill(ctx, "blog-tools", "name: blogtools\ndescription: Mismatch.")
+    result = tool_skill_validate(ctx, path="skills/blog-tools")
+    assert result.data["ok"] is True, "a name mismatch still loads"
+    advisories = " ".join(result.data["advisories"])
+    assert "blogtools" in advisories
+    assert "blog-tools" in advisories
+
+
+def test_skill_validate_advises_on_nonstandard_name_format(ctx):
+    _write_ws_skill(ctx, "shouty", "name: Shouty Skill\ndescription: Caps.")
+    result = tool_skill_validate(ctx, path="skills/shouty")
+    assert result.data["ok"] is True
+    assert any("lowercase" in a for a in result.data["advisories"])
+
+
+def test_skill_validate_no_advisories_when_name_is_clean(ctx):
+    _write_ws_skill(ctx, "tidy", "name: tidy\ndescription: All good.")
+    result = tool_skill_validate(ctx, path="skills/tidy")
+    assert result.data["ok"] is True
+    assert result.data["advisories"] == []
+
+
+def test_refresh_skills_does_not_call_everything_new_on_a_cold_catalog(ctx):
+    """An empty baseline is initial population, not 38 new skills."""
+    ctx.config.discovered_skills = []
+    text = _text(tool_refresh_skills(ctx))
+    assert "New:" not in text
+    assert "no change" not in text.lower()
+
+
+# -- phantom tool calls in tools.py --
+#
+# A skill tool cannot call another decaf tool. The model's prior that it can is
+# strong and recurring: three separate variants appeared in one session
+# (`default_api.shell_background_start`, `ctx.shell_background_start`,
+# `ctx.tools.shell_background_start`), and evals showed prose in skill-creator
+# does not suppress it (0/6 with the guidance loaded). These calls import
+# cleanly and only explode when the tool is invoked, so static detection is the
+# only thing that catches them before the user does. Same lesson as #675: the
+# validator has to enforce what documentation cannot.
+
+
+def _validate_tools_py(ctx, name, source):
+    # The check matches against the live tool catalog. At runtime
+    # skill_tool_owners is populated at startup (which is how
+    # shell_background_start — a bundled `background` skill tool — is known);
+    # a bare test ctx has none, so stand it in explicitly.
+    # test_phantom_check_sees_bundled_skill_tools covers the real wiring.
+    ctx.config.skill_tool_owners = {"shell_background_start": "background"}
+    _write_ws_skill(
+        ctx, name, f"name: {name}\ndescription: Phantom probe.", tools_py=source,
+    )
+    return tool_skill_validate(ctx, path=f"skills/{name}")
+
+
+def test_phantom_check_sees_bundled_skill_tools(config):
+    """Discovery must actually put shell_background_start in the catalog the
+    check consults — otherwise the check silently passes everything."""
+    from decafclaw.tools.skill_tools import _known_tool_names, rediscover_skills
+    rediscover_skills(config)
+    names = _known_tool_names(config)
+    assert "shell_background_start" in names, "the most-wrapped tool must be known"
+    assert "workspace_write" in names, "core tools must be known"
+
+
+def _phantom_check(result):
+    return next(
+        (c for c in result.data["checks"] if c["name"] == "no_phantom_tool_calls"),
+        None,
+    )
+
+
+def test_skill_validate_rejects_default_api(ctx):
+    result = _validate_tools_py(ctx, "pdefault", (
+        "def go(ctx):\n"
+        "    return default_api.shell_background_start(command='npm start')\n"
+        "TOOLS = {'go': go}\nTOOL_DEFINITIONS = []\n"
+    ))
+    assert result.data["ok"] is False
+    assert "default_api" in _phantom_check(result)["message"]
+
+
+def test_skill_validate_rejects_ctx_tool_call(ctx):
+    result = _validate_tools_py(ctx, "pctx", (
+        "def go(ctx):\n"
+        "    return ctx.shell_background_start(command='npm start')\n"
+        "TOOLS = {'go': go}\nTOOL_DEFINITIONS = []\n"
+    ))
+    assert result.data["ok"] is False
+    assert "shell_background_start" in _phantom_check(result)["message"]
+
+
+def test_skill_validate_rejects_ctx_tools_namespace_call(ctx):
+    """The variant the eval actually produced."""
+    result = _validate_tools_py(ctx, "pctxtools", (
+        "def go(ctx):\n"
+        "    return ctx.tools.shell_background_start(command='npm start')\n"
+        "TOOLS = {'go': go}\nTOOL_DEFINITIONS = []\n"
+    ))
+    assert result.data["ok"] is False
+    assert "shell_background_start" in _phantom_check(result)["message"]
+
+
+def test_skill_validate_allows_legitimate_ctx_use(ctx):
+    """ctx.publish / ctx.config are real. Only decaf *tool* names are phantom."""
+    result = _validate_tools_py(ctx, "goodctx", (
+        "def go(ctx):\n"
+        "    ctx.publish('tool_status', {'text': 'hi'})\n"
+        "    return str(ctx.config.workspace_path)\n"
+        "TOOLS = {'go': go}\nTOOL_DEFINITIONS = []\n"
+    ))
+    assert result.data["ok"] is True
+    assert _phantom_check(result)["passed"] is True
+
+
+def test_skill_validate_allows_subprocess(ctx):
+    """The documented way to run a command from inside a tool."""
+    result = _validate_tools_py(ctx, "subproc", (
+        "import subprocess\n"
+        "def go(ctx):\n"
+        "    return subprocess.run(['npm', 'start'], capture_output=True).stdout\n"
+        "TOOLS = {'go': go}\nTOOL_DEFINITIONS = []\n"
+    ))
+    assert result.data["ok"] is True
+
+
+def test_skill_validate_phantom_check_survives_syntax_error(ctx):
+    """A SyntaxError is tools_import's job; the phantom check must not crash."""
+    result = _validate_tools_py(ctx, "psyntax", "def go(ctx\n    pass\n")
+    assert result.data["ok"] is False
+    imp = next(c for c in result.data["checks"] if c["name"] == "tools_import")
+    assert imp["passed"] is False
+
+
+@pytest.mark.asyncio
+async def test_reactivate_does_not_duplicate_mismatched_definition_names(ctx, tmp_path):
+    """A TOOLS key and its TOOL_DEFINITIONS function.name need not match.
+
+    Retracting by TOOLS keys while filtering definitions by function.name
+    leaves the old definition behind, and the reload appends a second copy.
+    Providers reject duplicate function declarations outright — Vertex answers
+    `400 Duplicate function declaration found: <name>` at the provider call,
+    before any tool runs, so the conversation just breaks (#684).
+    """
+    skill_dir = tmp_path / "mismatch"
+    src = (
+        "def fn(ctx):\n    return 'x'\n\n"
+        "TOOLS = {'internal_key': fn}\n"
+        "TOOL_DEFINITIONS = [{'type': 'function', "
+        "'function': {'name': 'weather_fetch'}}]\n"
+    )
+    skill = _native_skill(skill_dir, name="mismatch", tools_py=src)
+    ctx.config.discovered_skills = [skill]
+    _save_permission(ctx.config, "mismatch", "always")
+
+    await tool_activate_skill(ctx, name="mismatch")
+    await tool_activate_skill(ctx, name="mismatch")  # reload, same source
+
+    names = [
+        td.get("function", {}).get("name") for td in ctx.tools.extra_definitions
+    ]
+    assert names.count("weather_fetch") == 1, f"duplicate declaration: {names}"
+
+
+# -- phantom tool calls blocked at activation (#701) --
+#
+# skill_validate catches these, but only if the agent chooses to run it — and
+# evals measured that choice as a coin flip, which capped the correct-outcome
+# rate at ~1/3. Checking at activation closes the "nobody validated it" gap:
+# the agent must activate a skill to use it, so this path cannot be skipped.
+#
+# Enforcement is keyed to trust tier. Workspace skills are agent-authored, so
+# refusing to load is the forcing function. Trusted tiers (bundled / admin /
+# extra) are the user's own code and may hold many working tools beside one
+# broken one, so they get a loud warning instead — and `activate_always_loaded`
+# skips workspace tier entirely, so startup can never be blocked by this.
+
+PHANTOM_TOOLS_PY = (
+    "from decafclaw.media import ToolResult\n\n"
+    "def start_it(ctx):\n"
+    "    return ctx.tools.shell_background_start(command='npm start')\n\n"
+    "TOOLS = {'start_it': start_it}\n"
+    "TOOL_DEFINITIONS = [{'type': 'function', "
+    "'function': {'name': 'start_it'}}]\n"
+)
+
+
+def _tiered_skill(skill_dir, name, tools_py, tier):
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    (skill_dir / "tools.py").write_text(tools_py)
+    return SkillInfo(
+        name=name, description="Tier probe.", location=skill_dir,
+        body="Body.", has_native_tools=True, trust_tier=tier,
+    )
+
+
+@pytest.mark.asyncio
+async def test_activation_blocked_for_workspace_skill_with_phantom_call(ctx, tmp_path):
+    skill = _tiered_skill(tmp_path / "ph", "ph", PHANTOM_TOOLS_PY, "workspace")
+    ctx.config.discovered_skills = [skill]
+    ctx.config.skill_tool_owners = {"shell_background_start": "background"}
+    _save_permission(ctx.config, "ph", "always")
+
+    result = await tool_activate_skill(ctx, name="ph")
+    text = _text(result)
+    assert "shell_background_start" in text
+    assert "start_it" not in ctx.tools.extra, "broken tool must not register"
+    assert "ph" not in ctx.skills.activated
+
+
+@pytest.mark.asyncio
+async def test_activation_blocked_for_default_api(ctx, tmp_path):
+    src = (
+        "def go(ctx):\n"
+        "    return default_api.workspace_read(path='x')\n"
+        "TOOLS = {'go': go}\nTOOL_DEFINITIONS = []\n"
+    )
+    skill = _tiered_skill(tmp_path / "da", "da", src, "workspace")
+    ctx.config.discovered_skills = [skill]
+    _save_permission(ctx.config, "da", "always")
+
+    result = await tool_activate_skill(ctx, name="da")
+    assert "default_api" in _text(result)
+    assert "go" not in ctx.tools.extra
+
+
+@pytest.mark.asyncio
+async def test_activation_warns_but_allows_trusted_tier(ctx, tmp_path):
+    """A bundled skill is the user's own code — warn, don't break their agent."""
+    skill = _tiered_skill(tmp_path / "bt", "bt", PHANTOM_TOOLS_PY, "bundled")
+    ctx.config.discovered_skills = [skill]
+    ctx.config.skill_tool_owners = {"shell_background_start": "background"}
+
+    result = await tool_activate_skill(ctx, name="bt")
+    text = _text(result)
+    assert "start_it" in ctx.tools.extra, "trusted skill must still load"
+    assert "bt" in ctx.skills.activated
+    assert "shell_background_start" in text, "but the problem must be surfaced"
+
+
+@pytest.mark.asyncio
+async def test_activation_unaffected_for_clean_workspace_skill(ctx, tmp_path):
+    src = (
+        "import subprocess\n"
+        "def go(ctx):\n"
+        "    subprocess.run(['npm', 'start'], check=False)\n"
+        "    ctx.publish('tool_status', {'text': 'ok'})\n"
+        "    return 'started'\n"
+        "TOOLS = {'go': go}\n"
+        "TOOL_DEFINITIONS = [{'type': 'function', 'function': {'name': 'go'}}]\n"
+    )
+    skill = _tiered_skill(tmp_path / "clean2", "clean2", src, "workspace")
+    ctx.config.discovered_skills = [skill]
+    ctx.config.skill_tool_owners = {"shell_background_start": "background"}
+    _save_permission(ctx.config, "clean2", "always")
+
+    result = await tool_activate_skill(ctx, name="clean2")
+    assert "go" in ctx.tools.extra
+    assert "cannot" not in _text(result).lower()
+
+
+@pytest.mark.asyncio
+async def test_reload_into_a_phantom_call_keeps_working_tools(ctx, tmp_path):
+    """Editing an active skill into a broken state must not strand it."""
+    skill_dir = tmp_path / "regress"
+    good = (
+        "def go(ctx):\n    return 'fine'\n"
+        "TOOLS = {'go': go}\n"
+        "TOOL_DEFINITIONS = [{'type': 'function', 'function': {'name': 'go'}}]\n"
+    )
+    skill = _tiered_skill(skill_dir, "regress", good, "workspace")
+    ctx.config.discovered_skills = [skill]
+    ctx.config.skill_tool_owners = {"shell_background_start": "background"}
+    _save_permission(ctx.config, "regress", "always")
+
+    await tool_activate_skill(ctx, name="regress")
+    assert "go" in ctx.tools.extra
+
+    (skill_dir / "tools.py").write_text(PHANTOM_TOOLS_PY)
+    result = await tool_activate_skill(ctx, name="regress")
+    assert "shell_background_start" in _text(result)
+    assert "go" in ctx.tools.extra, "the working tool must survive a bad reload"
+    assert "start_it" not in ctx.tools.extra
+
+
+# Two shapes the first version of the check missed, both produced by a real
+# eval run as the model worked around successive validation failures:
+#   context['shell_background_start'](...)   — subscript, not attribute
+#   context.shell_background_start(...)      — receiver isn't named `ctx`
+# The tool's first parameter is `ctx` by convention only; nothing enforces the
+# name. Keying on the receiver was the mistake — the tool *name* is the signal.
+
+
+def test_skill_validate_rejects_subscript_tool_call(ctx):
+    result = _validate_tools_py(ctx, "psub", (
+        "def get_tools(context):\n"
+        "    def go():\n"
+        "        return context['shell_background_start'](command='npm start')\n"
+        "    return {'go': go}, []\n"
+    ))
+    assert result.data["ok"] is False
+    assert "shell_background_start" in _phantom_check(result)["message"]
+
+
+def test_skill_validate_rejects_tool_call_on_renamed_receiver(ctx):
+    result = _validate_tools_py(ctx, "prenamed", (
+        "def go(context):\n"
+        "    return context.shell_background_start(command='npm start')\n"
+        "TOOLS = {'go': go}\nTOOL_DEFINITIONS = []\n"
+    ))
+    assert result.data["ok"] is False
+    assert "shell_background_start" in _phantom_check(result)["message"]
+
+
+def test_skill_validate_rejects_self_tool_call(ctx):
+    result = _validate_tools_py(ctx, "pself", (
+        "class Helper:\n"
+        "    def run(self):\n"
+        "        return self.shell_background_start(command='npm start')\n"
+        "TOOLS = {}\nTOOL_DEFINITIONS = []\n"
+    ))
+    assert result.data["ok"] is False
+
+
+def test_skill_validate_allows_same_named_local_variable(ctx):
+    """A dict lookup that isn't a call is not a phantom tool call."""
+    result = _validate_tools_py(ctx, "plocal", (
+        "def go(ctx):\n"
+        "    labels = {'shell_background_start': 'Start server'}\n"
+        "    return labels['shell_background_start']\n"
+        "TOOLS = {'go': go}\nTOOL_DEFINITIONS = []\n"
+    ))
+    assert result.data["ok"] is True
+
+
+# Bare tool names (`shell`, `wait` — 2 of ~107) collide with everyday Python
+# methods. A scan of every bundled and contrib tools.py caught the broadened
+# rule firing on `background` and `claude_code`, both of which call `.wait()`
+# on real objects. Underscored names flag anywhere; bare ones need a ctx-ish
+# receiver.
+
+
+def test_skill_validate_allows_wait_on_a_real_object(ctx):
+    result = _validate_tools_py(ctx, "pwait", (
+        "import asyncio\n"
+        "async def go(ctx):\n"
+        "    ev = asyncio.Event()\n"
+        "    await ev.wait()\n"
+        "    return 'done'\n"
+        "TOOLS = {'go': go}\nTOOL_DEFINITIONS = []\n"
+    ))
+    assert result.data["ok"] is True, _phantom_check(result)
+
+
+def test_skill_validate_allows_ctx_cancelled_wait(ctx):
+    """A real idiom in this codebase — the receiver check must stay shallow."""
+    result = _validate_tools_py(ctx, "pcancel", (
+        "async def go(ctx):\n"
+        "    await ctx.cancelled.wait()\n"
+        "    return 'done'\n"
+        "TOOLS = {'go': go}\nTOOL_DEFINITIONS = []\n"
+    ))
+    assert result.data["ok"] is True, _phantom_check(result)
+
+
+def test_skill_validate_allows_subprocess_wait(ctx):
+    result = _validate_tools_py(ctx, "psubwait", (
+        "import subprocess\n"
+        "def go(ctx):\n"
+        "    p = subprocess.Popen(['npm', 'start'])\n"
+        "    return p.wait()\n"
+        "TOOLS = {'go': go}\nTOOL_DEFINITIONS = []\n"
+    ))
+    assert result.data["ok"] is True, _phantom_check(result)
+
+
+def test_skill_validate_rejects_bare_tool_name_on_ctx(ctx):
+    """`ctx.shell(...)` is still the mistake, bare name notwithstanding."""
+    ctx.config.skill_tool_owners = {"shell": "core"}
+    _write_ws_skill(
+        ctx, "pbare", "name: pbare\ndescription: Bare.",
+        tools_py=(
+            "def go(ctx):\n"
+            "    return ctx.shell(command='ls')\n"
+            "TOOLS = {'go': go}\nTOOL_DEFINITIONS = []\n"
+        ),
+    )
+    result = tool_skill_validate(ctx, path="skills/pbare")
+    assert result.data["ok"] is False
+    assert "shell" in _phantom_check(result)["message"]
+
+
+# -- shadowing survives a reload (Copilot review, #700) --
+#
+# Shadowing is legal: execute_tool checks ctx.tools.extra before the global
+# registry, so a later-activated skill's tool of the same name genuinely wins.
+# Retracting purely by name therefore had a hole — renaming a shadowing tool
+# removed the name outright, taking the still-active shadowed skill's version
+# with it. Before this PR retraction never ran, so the loss is new.
+
+
+def _two_tool_skill(skill_dir, name, tool_name, body_ret):
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    (skill_dir / "tools.py").write_text(
+        f"def fn(ctx):\n    return {body_ret!r}\n"
+        f"TOOLS = {{{tool_name!r}: fn}}\n"
+        f"TOOL_DEFINITIONS = [{{'type': 'function', "
+        f"'function': {{'name': {tool_name!r}}}}}]\n"
+    )
+    return SkillInfo(
+        name=name, description="Shadow probe.", location=skill_dir,
+        body="Body.", has_native_tools=True,
+    )
+
+
+@pytest.mark.asyncio
+async def test_reload_of_a_shadowing_skill_restores_the_shadowed_tool(ctx, tmp_path):
+    provider = _two_tool_skill(tmp_path / "prov", "prov", "shared_tool", "from-provider")
+    shadower_dir = tmp_path / "shad"
+    shadower = _two_tool_skill(shadower_dir, "shad", "shared_tool", "from-shadower")
+    ctx.config.discovered_skills = [provider, shadower]
+    for n in ("prov", "shad"):
+        _save_permission(ctx.config, n, "always")
+
+    await tool_activate_skill(ctx, name="prov")
+    await tool_activate_skill(ctx, name="shad")
+    assert ctx.tools.extra["shared_tool"](ctx) == "from-shadower"
+
+    # The shadower renames its tool. `prov` is still active, so shared_tool
+    # must remain callable — and must resolve to prov's implementation.
+    (shadower_dir / "tools.py").write_text(
+        "def fn(ctx):\n    return 'renamed'\n"
+        "TOOLS = {'own_tool': fn}\n"
+        "TOOL_DEFINITIONS = [{'type': 'function', 'function': {'name': 'own_tool'}}]\n"
+    )
+    await tool_activate_skill(ctx, name="shad")
+
+    assert "own_tool" in ctx.tools.extra
+    assert "shared_tool" in ctx.tools.extra, "shadowed skill's tool was dropped"
+    assert ctx.tools.extra["shared_tool"](ctx) == "from-provider"
+    names = [
+        td.get("function", {}).get("name") for td in ctx.tools.extra_definitions
+    ]
+    assert names.count("shared_tool") == 1, f"duplicate declaration: {names}"
+
+
+@pytest.mark.asyncio
+async def test_reload_after_restore_still_retracts(ctx, tmp_path):
+    """restore_skills is the post-restart registration path. If it doesn't
+    record what it registered, the first reload afterwards can't retract and
+    the old tool name lingers."""
+    from decafclaw.tools.skill_tools import restore_skills
+
+    skill_dir = tmp_path / "restored"
+    skill = _two_tool_skill(skill_dir, "restored", "old_name", "v1")
+    ctx.config.discovered_skills = [skill]
+    ctx.skills.activated.add("restored")
+    await restore_skills(ctx)
+    assert "old_name" in ctx.tools.extra
+
+    (skill_dir / "tools.py").write_text(
+        "def fn(ctx):\n    return 'v2'\n"
+        "TOOLS = {'new_name': fn}\n"
+        "TOOL_DEFINITIONS = [{'type': 'function', 'function': {'name': 'new_name'}}]\n"
+    )
+    _save_permission(ctx.config, "restored", "always")
+    await tool_activate_skill(ctx, name="restored")
+
+    assert "new_name" in ctx.tools.extra
+    assert "old_name" not in ctx.tools.extra, "restore path left an un-retractable tool"

@@ -1,14 +1,21 @@
 """Skill activation tool — lazy-loads skills with permission checking."""
 
+import ast
 import asyncio
 import importlib.util
 import inspect
 import json
 import logging
+import re
 from pathlib import Path
 
 from ..media import ToolResult
-from ..skills import CheckResult, validate_skill_md
+from ..skills import (
+    CheckResult,
+    find_misplaced_skills,
+    is_discoverable_skill_dir,
+    validate_skill_md,
+)
 from .confirmation import request_confirmation
 
 log = logging.getLogger(__name__)
@@ -80,6 +87,131 @@ def check_tools_contract(module) -> list[str]:
     return problems
 
 
+def _import_tools_module(module_name: str, tools_path: Path):
+    """Import a skill's tools.py from source, bypassing the bytecode cache.
+
+    Skill modules are edited live and re-imported in-process, which is
+    exactly the workload CPython's bytecode cache handles badly: a cached
+    .pyc is validated against the source's size and its mtime *truncated to
+    whole seconds*, so an edit that keeps the file the same size and lands
+    in the same second as the previous import re-executes the STALE
+    bytecode. The edit then appears to have had no effect at all — a
+    symptom indistinguishable from a reload that never ran, and one that
+    sends the author looking for the bug in code that isn't executing.
+
+    Compiling the source ourselves takes the cache out of the picture. It
+    also stops littering the agent-writable workspace with `__pycache__`
+    directories, which the agent cannot remove with `workspace_delete`.
+    """
+    spec = importlib.util.spec_from_file_location(module_name, tools_path)
+    if spec is None:
+        raise ImportError(f"Could not load module spec for {tools_path}")
+    module = importlib.util.module_from_spec(spec)
+    code = compile(tools_path.read_text(), str(tools_path), "exec")
+    exec(code, module.__dict__)  # noqa: S102 — skill tools are trusted code by placement
+    return module
+
+
+_CTX_RECEIVERS = frozenset({"ctx", "context"})
+
+
+def _is_tool_namespace_receiver(func: ast.expr) -> bool:
+    """True when the call's receiver is `ctx` / `context`, or `<that>.tools`.
+
+    Used only to gate tool names that collide with ordinary Python methods.
+    Deliberately shallow: `ctx.cancelled.wait()` is a real idiom in this
+    codebase and must not be flagged, while `ctx.wait()` and
+    `ctx.tools.shell()` should be.
+    """
+    value = func.value if isinstance(func, ast.Attribute | ast.Subscript) else None
+    if isinstance(value, ast.Attribute):  # ctx.tools.X
+        return (value.attr == "tools"
+                and isinstance(value.value, ast.Name)
+                and value.value.id in _CTX_RECEIVERS)
+    return isinstance(value, ast.Name) and value.id in _CTX_RECEIVERS
+
+
+def _called_tool_name(func: ast.expr) -> str | None:
+    """The decaf tool name a call target names, however it was reached.
+
+    Handles the shapes that actually turn up:
+
+        ctx.shell_background_start(...)          Attribute
+        ctx.tools.shell_background_start(...)    Attribute chain
+        context.shell_background_start(...)      receiver renamed
+        self.shell_background_start(...)         inside a helper class
+        context['shell_background_start'](...)   Subscript
+
+    Keyed on the *name being called*, not on the receiver. The receiver was the
+    original mistake: a tool's first parameter is `ctx` by convention only, and
+    an eval produced `context['shell_background_start'](...)` specifically while
+    working around earlier validation failures. The tool name is the signal —
+    these are specific identifiers like `shell_background_start`, not words that
+    show up by chance.
+    """
+    if isinstance(func, ast.Attribute):
+        return func.attr
+    if isinstance(func, ast.Subscript):
+        key = func.slice
+        if isinstance(key, ast.Constant) and isinstance(key.value, str):
+            return key.value
+    return None
+
+
+def _phantom_tool_calls(source: str, tool_names: set[str]) -> list[str]:
+    """Find calls to decaf tools from inside a skill's tools.py.
+
+    A skill tool is a plain Python function with no channel back into the tool
+    layer, so `default_api.shell_background_start(...)`,
+    `ctx.shell_background_start(...)` and `ctx.tools.shell_background_start(...)`
+    are all impossible. They are also *popular*: all three variants appeared in
+    a single session, and evals confirmed that documenting the constraint in
+    skill-creator does not suppress it (0/6 with the guidance loaded).
+
+    They cannot be caught at import — the call sits in a function body, so the
+    module imports cleanly and the skill activates. It fails only when the user
+    invokes the tool. Detecting it statically is the difference between a
+    validator that says PASS on a broken skill and one that names the problem,
+    which is the same lesson as the #675 export-shape contract.
+
+    Deliberately narrow to stay free of false positives: only a `default_api`
+    reference, or a call whose attribute chain roots at `ctx` AND whose final
+    attribute is a real decaf tool name. `ctx.publish(...)` and
+    `ctx.config.workspace_path` are untouched.
+    """
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return []  # tools_import reports this; don't double-report
+
+    problems: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and node.id == "default_api":
+            problems.append(
+                "references `default_api`, which does not exist in decafclaw — "
+                "there is no way to call a decaf tool from inside a skill tool"
+            )
+        elif isinstance(node, ast.Call):
+            called = _called_tool_name(node.func)
+            # Two of ~107 tool names (`shell`, `wait`) are bare words that
+            # collide with everyday Python methods — `process.wait()`,
+            # `event.wait()`. For those, require a ctx-ish receiver; the
+            # underscored names are distinctive enough to flag anywhere.
+            # Without this the check fires on the bundled background and
+            # claude_code skills, both of which call `.wait()` legitimately.
+            if called in tool_names and (
+                    "_" in called or _is_tool_namespace_receiver(node.func)):
+                problems.append(
+                    f"tries to call the decaf tool `{called}` — a skill tool "
+                    f"cannot call another tool, and `ctx` is the runtime "
+                    f"context, not a tool namespace. Use a library directly "
+                    f"(e.g. `subprocess` / `pathlib`), or drop tools.py and "
+                    f"document `{called}` in SKILL.md so the agent calls it"
+                )
+    # Same wrong call in five places is one problem, not five.
+    return list(dict.fromkeys(problems))
+
+
 def _permissions_path(config) -> Path:
     """Path to the skill permissions file (outside workspace, read-only to agent)."""
     return config.agent_path / "skill_permissions.json"
@@ -123,7 +255,36 @@ def _rejection_display_path(config, path: Path) -> str:
     return str(Path(*path.parts[-2:])) if len(path.parts) >= 2 else str(path)
 
 
-def _lint_tools_py(skill_dir: Path) -> list[CheckResult]:
+def _skill_phantom_calls(skill_info, config) -> list[str]:
+    """Phantom decaf-tool calls in a skill's tools.py, for the activation path.
+
+    `skill_validate` reports the same thing, but only when the author chooses
+    to run it — evals measured that choice as a coin flip, which capped the
+    rate of correct outcomes at roughly 1/3 (#701). Activation cannot be
+    skipped: a skill's tools do not exist until it is activated. Checking here
+    closes the gap.
+
+    Returns [] when the source can't be read; the import that follows will
+    report that far better than a guess from here.
+    """
+    tools_path = skill_info.location / "tools.py"
+    try:
+        source = tools_path.read_text()
+    except OSError:
+        return []
+    return _phantom_tool_calls(source, _known_tool_names(config))
+
+
+def _known_tool_names(config) -> set[str]:
+    """Every decaf tool name a skill might wrongly try to call.
+
+    Core tools plus every discovered skill's tools (which is where
+    `shell_background_start` — the most-wrapped tool — actually lives).
+    """
+    return _core_tool_names() | set(config.skill_tool_owners)
+
+
+def _lint_tools_py(skill_dir: Path, tool_names: set[str]) -> list[CheckResult]:
     """tools.py-specific checks for skill_validate.
 
     Returns [] for a text-only skill (no tools.py and no stray entrypoint).
@@ -145,17 +306,34 @@ def _lint_tools_py(skill_dir: Path) -> list[CheckResult]:
 
     checks.append(CheckResult("tools_filename", True, "tools.py present"))
 
+    # Source-level check, before the import: these calls import cleanly and
+    # only fail when the tool is invoked, so nothing downstream will catch them.
     try:
-        spec = importlib.util.spec_from_file_location(
+        source = tools_py.read_text()
+    except OSError as exc:
+        source = ""
+        checks.append(CheckResult(
+            "tools_readable", False, f"cannot read tools.py: {exc}",
+        ))
+    if source:
+        phantom = _phantom_tool_calls(source, tool_names)
+        if phantom:
+            checks.append(CheckResult(
+                "no_phantom_tool_calls", False, "; ".join(phantom),
+            ))
+        else:
+            checks.append(CheckResult(
+                "no_phantom_tool_calls", True,
+                "no attempts to call decaf tools from inside a tool",
+            ))
+
+    try:
+        # Same source-compiled import the loader uses — a validator that
+        # checked stale bytecode could report a SyntaxError the author has
+        # already fixed, or pass source the loader will reject.
+        module = _import_tools_module(
             f"decafclaw_skill_validate_{skill_dir.name}", tools_py
         )
-        if spec is None or spec.loader is None:
-            checks.append(CheckResult(
-                "tools_import", False, "could not create an import spec for tools.py",
-            ))
-            return checks
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
     except Exception as exc:
         checks.append(CheckResult(
             "tools_import", False,
@@ -218,13 +396,56 @@ def _lint_tools_py(skill_dir: Path) -> list[CheckResult]:
     return checks
 
 
-def _render_validation(path: str, checks: list[CheckResult]) -> ToolResult:
-    """Render a checklist of CheckResults as a ToolResult (text + data)."""
+def _name_advisories(meta: dict | None, skill_dir: Path) -> list[str]:
+    """Non-blocking notes about a skill's `name` field.
+
+    Neither of these prevents loading — a skill activates under its
+    frontmatter `name` whatever the directory is called, and the bundled
+    catalog contains names with spaces, capitals, and underscores. So they
+    must NOT fail validation: reporting FAIL on a skill the loader accepts
+    is the validator-contradicts-loader trap in reverse, and it trains the
+    author to ignore the validator.
+    """
+    if not meta:
+        return []
+    name = meta.get("name")
+    if not isinstance(name, str) or not name:
+        return []
+
+    advisories: list[str] = []
+    if name != skill_dir.name:
+        advisories.append(
+            f"frontmatter name '{name}' differs from the directory "
+            f"'{skill_dir.name}' — this loads fine, but you activate it as "
+            f"'{name}' while its files live under '{skill_dir.name}'. "
+            f"Matching them avoids the confusion."
+        )
+    if not re.fullmatch(r"[a-z0-9]+(-[a-z0-9]+)*", name):
+        advisories.append(
+            f"name '{name}' isn't the conventional format (lowercase letters, "
+            f"numbers, and single hyphens). This loads fine; the convention "
+            f"comes from the Agent Skills standard."
+        )
+    return advisories
+
+
+def _render_validation(path: str, checks: list[CheckResult],
+                       advisories: list[str] | None = None) -> ToolResult:
+    """Render a checklist of CheckResults as a ToolResult (text + data).
+
+    `ok` reflects the checks only. Advisories are things that will load but
+    may surprise the author later, so they never flip the verdict.
+    """
+    advisories = advisories or []
     ok = all(c.passed for c in checks)
     header = "PASS" if ok else "FAIL"
     lines = [f"skill_validate '{path}': {header}", ""]
     for c in checks:
         lines.append(f"  {'[x]' if c.passed else '[ ]'} {c.name}: {c.message}")
+    if advisories:
+        lines.append("")
+        lines.append("Advisories (will load, but worth a look):")
+        lines.extend(f"  ! {a}" for a in advisories)
     if not ok:
         lines.append("")
         lines.append(
@@ -240,6 +461,7 @@ def _render_validation(path: str, checks: list[CheckResult]) -> ToolResult:
                 {"name": c.name, "passed": c.passed, "message": c.message}
                 for c in checks
             ],
+            "advisories": advisories,
         },
     )
 
@@ -251,13 +473,9 @@ def _load_native_tools(skill_info) -> tuple[dict, list, object]:
     via getattr(module, "get_tools", None) by the caller.
     """
     tools_path = skill_info.location / "tools.py"
-    spec = importlib.util.spec_from_file_location(
+    module = _import_tools_module(
         f"decafclaw_skill_{skill_info.name}", tools_path
     )
-    if spec is None or spec.loader is None:
-        raise ImportError(f"Could not load module spec for {tools_path}")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
 
     # Reject wrong-shaped exports here rather than letting them surface
     # downstream as `cannot convert dictionary update sequence element #0`
@@ -330,8 +548,7 @@ async def restore_skills(ctx) -> None:
                 log.debug(f"Skill '{name}' tools already loaded, skipping restore")
                 continue
             await _call_init(module, ctx.config, name)
-            ctx.tools.extra.update(tools)
-            ctx.tools.extra_definitions.extend(tool_defs)
+            _register_skill_tools(ctx, name, tools, tool_defs)
 
             # Register dynamic tool provider if available
             get_tools_fn = getattr(module, "get_tools", None)
@@ -387,10 +604,18 @@ async def tool_activate_skill(ctx, name: str) -> str | ToolResult:
     if skill_info is None:
         return ToolResult(text=f"[error: skill '{name}' not found. Check Available Skills in your instructions.]")
 
-    # Check if already activated
+    # Already active. For a text-only skill there is nothing to do, but for a
+    # native skill this is the author's edit-and-reload path: re-import
+    # tools.py so a fix to the file actually takes effect. Returning a bare
+    # "already active" here made editing an active skill's tools impossible
+    # — refresh_skills only rebuilds the catalog on
+    # `config`, never the live callables in ctx.tools.extra, so the loop
+    # could not converge and the only escape was restarting the process.
     activated = ctx.skills.activated
     if name in activated:
-        return f"Skill '{name}' is already active."
+        if not skill_info.has_native_tools:
+            return f"Skill '{name}' is already active."
+        return await activate_skill_internal(ctx, skill_info, reloading=True)
 
     # Permission resolution, highest precedence first:
     # 1. User's explicit "deny" in skill_permissions.json — always wins
@@ -435,12 +660,98 @@ async def tool_activate_skill(ctx, name: str) -> str | ToolResult:
     return result
 
 
-async def activate_skill_internal(ctx, skill_info) -> str | ToolResult:
+def _retract_skill_tools(ctx, name: str) -> None:
+    """Remove the tools a previous activation of `name` registered.
+
+    Called after a successful re-import and before registering the new
+    generation, so a failed reload leaves the working tools untouched.
+
+    Shadowing makes this more than a delete. `execute_tool` checks
+    `ctx.tools.extra` before the global registry, so a later-activated skill's
+    tool of the same name genuinely wins — and if the reloaded skill was the
+    shadower and drops that name, the shadowed skill is still active and its
+    tool must stay callable. So after removing this skill's names, any name
+    another active skill also provides is rebound from that skill's recorded
+    contribution. A core tool needs no rebinding: removing the shadow from
+    `extra` already lets the global registry answer for it again.
+    """
+    stale = ctx.tools.skill_tool_names.get(name, set())
+    if not stale:
+        return
+    for tool_name in stale:
+        ctx.tools.extra.pop(tool_name, None)
+    ctx.tools.extra_definitions[:] = [
+        td for td in ctx.tools.extra_definitions
+        if td.get("function", {}).get("name") not in stale
+    ]
+    ctx.config.always_loaded_skill_tools = (
+        ctx.config.always_loaded_skill_tools - stale
+    )
+
+    # Later activation wins, so walk providers in reverse activation order and
+    # let the first match claim each name. Exactly one definition per name —
+    # two would be a duplicate function declaration, which providers reject
+    # outright (#684).
+    unclaimed = set(stale)
+    for other, (tools, tool_defs) in reversed(list(ctx.tools.skill_contributions.items())):
+        if not unclaimed:
+            break
+        if other == name or other not in ctx.skills.activated:
+            continue
+        for tool_name in sorted(unclaimed & set(tools)):
+            ctx.tools.extra[tool_name] = tools[tool_name]
+            unclaimed.discard(tool_name)
+            log.debug(
+                "Rebound %r to skill %r after %r stopped providing it",
+                tool_name, other, name,
+            )
+        recovered = {
+            td.get("function", {}).get("name") for td in tool_defs
+        } & (set(stale) - unclaimed)
+        ctx.tools.extra_definitions.extend(
+            td for td in tool_defs
+            if td.get("function", {}).get("name") in recovered
+        )
+
+
+def _register_skill_tools(ctx, name: str, tools: dict, tool_defs: list) -> None:
+    """Retract a skill's previous generation, then register this one.
+
+    The single registration path for both activation and post-restart restore.
+    Two call sites that each half-updated this bookkeeping would drift, and the
+    symptom is invisible until the next reload: `restore_skills` originally
+    recorded nothing, so the first reload after a server restart had no idea
+    what to retract and left the pre-edit tool bound.
+    """
+    _retract_skill_tools(ctx, name)
+    ctx.tools.extra.update(tools)
+    ctx.tools.extra_definitions.extend(tool_defs)
+    # Record BOTH the TOOLS keys and the declared function names. They need not
+    # match, and retracting by keys alone leaves an orphaned declaration that
+    # the next reload duplicates — which providers reject outright (Vertex:
+    # `400 Duplicate function declaration found`) at the provider call, before
+    # any tool runs (#684).
+    declared = {
+        td.get("function", {}).get("name") for td in tool_defs
+    } - {None, ""}
+    ctx.tools.skill_tool_names[name] = set(tools.keys()) | declared
+    # Re-inserted so insertion order stays activation order — the reload of an
+    # existing skill makes it the most recent provider again.
+    ctx.tools.skill_contributions.pop(name, None)
+    ctx.tools.skill_contributions[name] = (dict(tools), list(tool_defs))
+
+
+async def activate_skill_internal(ctx, skill_info, reloading: bool = False) -> str | ToolResult:
     """Activate a skill: load tools, register on ctx, mark active.
 
     Shared by tool_activate_skill (with permission checks) and
     command execution (without permission checks). Returns the
     skill body text on success.
+
+    `reloading=True` is the re-activation path for a skill whose tools.py
+    changed on disk: the previous generation's tool names are retracted
+    before the new ones register, and the result says "reloaded" so the
+    caller can tell an edit took effect from a no-op.
     """
     name = skill_info.name
     # Substitute $SKILL_DIR in the body so the LLM sees usable paths.
@@ -453,12 +764,48 @@ async def activate_skill_internal(ctx, skill_info) -> str | ToolResult:
     result_parts = [body]
 
     if skill_info.has_native_tools:
+        # Phantom decaf-tool calls, before the import. They import cleanly and
+        # fail only when the tool is invoked, so this is the last point at
+        # which the author can be told without the user hitting it first.
+        #
+        # Workspace tier is agent-authored: refuse to load, which is the
+        # forcing function #701 is about. Trusted tiers are the user's own
+        # code and may hold many working tools beside one broken one, so warn
+        # instead of breaking their agent — and `activate_always_loaded` skips
+        # workspace tier entirely, so startup is never gated on this.
+        phantom = _skill_phantom_calls(skill_info, ctx.config)
+        if phantom:
+            detail = "; ".join(phantom)
+            if skill_info.trust_tier == "workspace":
+                log.warning(
+                    "Refusing to activate skill %r — phantom tool call: %s",
+                    name, detail,
+                )
+                still_active = (
+                    " The previously loaded tools are still active."
+                    if reloading else ""
+                )
+                return ToolResult(text=(
+                    f"[error: skill '{name}' cannot be activated: {detail}."
+                    f"{still_active} Fix tools.py and activate the skill "
+                    f"again.]"
+                ))
+            log.warning(
+                "Skill %r (%s tier) has a phantom tool call: %s",
+                name, skill_info.trust_tier, detail,
+            )
+            result_parts.append(
+                f"\n\nWarning: this skill's tools.py {detail}. It loaded, but "
+                f"that call will raise when the tool runs."
+            )
+
         try:
             tools, tool_defs, module = _load_native_tools(skill_info)
             await _call_init(module, ctx.config, skill_info.name)
 
-            ctx.tools.extra.update(tools)
-            ctx.tools.extra_definitions.extend(tool_defs)
+            # Import succeeded, so it's safe to drop the previous generation.
+            # A no-op on first activation (nothing recorded yet).
+            _register_skill_tools(ctx, name, tools, tool_defs)
 
             # Register dynamic tool provider if the skill exports get_tools()
             get_tools_fn = getattr(module, "get_tools", None)
@@ -470,10 +817,18 @@ async def activate_skill_internal(ctx, skill_info) -> str | ToolResult:
                 log.info(f"Registered dynamic tool provider for skill '{name}'")
 
             tool_names = list(tools.keys())
-            result_parts.append(
-                f"\n\nThe following tools are now available: {', '.join(tool_names)}"
-            )
-            log.info(f"Activated native skill '{name}' with tools: {tool_names}")
+            if reloading:
+                result_parts.append(
+                    f"\n\nReloaded tools.py. The following tools are now "
+                    f"available (previous versions discarded): "
+                    f"{', '.join(tool_names)}"
+                )
+                log.info(f"Reloaded native skill '{name}' with tools: {tool_names}")
+            else:
+                result_parts.append(
+                    f"\n\nThe following tools are now available: {', '.join(tool_names)}"
+                )
+                log.info(f"Activated native skill '{name}' with tools: {tool_names}")
 
             # Shadowing a core tool name is legal — execute_tool checks
             # ctx.tools.extra before the global registry, so the skill's
@@ -506,7 +861,20 @@ async def activate_skill_internal(ctx, skill_info) -> str | ToolResult:
 
         except Exception as e:
             log.error(f"Failed to load skill '{name}' tools: {e}")
-            return ToolResult(text=f"[error: failed to load skill '{name}': {e}]")
+            # Name the exception type, as skill_validate does — a bare
+            # str(SyntaxError) is just "invalid syntax (tools.py, line 1)",
+            # which reads like a description rather than a Python error.
+            detail = f"{type(e).__name__}: {e}"
+            if reloading:
+                # Nothing was retracted (the retract happens only after a
+                # successful import), so say so explicitly rather than leave
+                # the caller guessing whether the skill is now half-loaded.
+                return ToolResult(text=(
+                    f"[error: failed to reload skill '{name}': {detail}. "
+                    f"The previously loaded tools are still active — fix "
+                    f"tools.py and activate the skill again.]"
+                ))
+            return ToolResult(text=f"[error: failed to load skill '{name}': {detail}]")
     else:
         log.info(f"Activated shell-based skill '{name}'")
 
@@ -543,6 +911,24 @@ def tool_skill_validate(ctx, path: str) -> ToolResult:
         )
 
     checks: list[CheckResult] = []
+
+    # Location first: a skill in the wrong directory is invisible to
+    # discovery, so every other check below is beside the point. Reporting
+    # PASS here while refresh_skills silently found nothing gives the author
+    # two tools that contradict each other and no way to reconcile them.
+    if is_discoverable_skill_dir(ctx.config, skill_dir):
+        checks.append(CheckResult(
+            "discoverable", True, "location is scanned by skill discovery",
+        ))
+    else:
+        checks.append(CheckResult(
+            "discoverable", False,
+            f"nothing scans '{path}' — a workspace skill must be an immediate "
+            f"child of the workspace 'skills/' directory. Move it to "
+            f"'skills/{skill_dir.name}' (workspace_write paths are already "
+            f"workspace-relative, so do NOT prefix them with 'workspace/').",
+        ))
+
     skill_md = skill_dir / "SKILL.md"
     if not skill_md.exists():
         checks.append(CheckResult(
@@ -553,11 +939,14 @@ def tool_skill_validate(ctx, path: str) -> ToolResult:
     checks.append(CheckResult("skill_md_present", True, "SKILL.md present"))
 
     # Discovery-level checks — shared source of truth with refresh_skills.
-    checks.extend(validate_skill_md(skill_md).checks)
+    validation = validate_skill_md(skill_md)
+    checks.extend(validation.checks)
     # tools.py checks run regardless of frontmatter validity (filesystem-based).
-    checks.extend(_lint_tools_py(skill_dir))
+    checks.extend(_lint_tools_py(skill_dir, _known_tool_names(ctx.config)))
 
-    return _render_validation(path, checks)
+    return _render_validation(
+        path, checks, _name_advisories(validation.meta, skill_dir)
+    )
 
 
 def rediscover_skills(config) -> list:
@@ -588,15 +977,45 @@ def tool_refresh_skills(ctx) -> str | ToolResult:
     """Re-discover skills and update the system prompt catalog."""
     log.info("[tool:refresh_skills]")
     config = ctx.config
+    # Snapshot before rediscovery replaces the catalog, so the result can say
+    # what actually changed. The full list runs to dozens of names, and
+    # "did the skill I just wrote show up?" is the only question the caller
+    # usually has — answering it directly beats making them diff the list.
+    before = {s.name for s in config.discovered_skills}
     rejections = rediscover_skills(config)
     # List all discovered skills — text-only, native-tools, and user-invocable
     # are all valid activatable skills
     names = [s.name for s in config.discovered_skills]
     text = f"Skills refreshed. Available skills: {', '.join(names) or '(none)'}"
+
+    after = set(names)
+    # An empty baseline means the catalog hadn't been populated yet (a fresh
+    # Context), not that every skill is new. Reporting a diff against nothing
+    # would print the whole list a second time under a "New:" heading.
+    if before:
+        added = sorted(after - before)
+        removed = sorted(before - after)
+        if added:
+            text += f"\nNew: {', '.join(added)}"
+        if removed:
+            text += f"\nNo longer found: {', '.join(removed)}"
+        if not added and not removed:
+            text += "\nNo change since the last refresh."
+
     if rejections:
         text += "\nRejected (found but not loaded):\n" + "\n".join(
             f"  - {_rejection_display_path(config, r.path)} — {r.reason}"
             for r in rejections
+        )
+
+    # A skill in an unscanned directory produces no rejection — discovery
+    # never walks there — so without this the author sees only an absence.
+    misplaced = find_misplaced_skills(config)
+    if misplaced:
+        text += "\nPossibly misplaced (found but not scanned):\n" + "\n".join(
+            f"  - {found} — nothing scans this path; did you mean "
+            f"'{suggested}'?"
+            for found, suggested in misplaced
         )
     return text
 

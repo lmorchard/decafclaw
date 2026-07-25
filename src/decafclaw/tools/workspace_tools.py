@@ -6,7 +6,7 @@ import difflib
 import fnmatch
 import logging
 import re
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from ..media import ToolResult, WidgetRequest
 
@@ -45,6 +45,30 @@ def _mini_diff(old_text: str, new_text: str, path: str = "") -> str:
     if not diff:
         return ""
     return "".join(diff)
+
+
+def _redundant_prefix_note(path: str) -> str:
+    """Flag a leading 'workspace/' on an already-workspace-relative path.
+
+    Writing to 'workspace/skills/x/SKILL.md' silently lands at
+    <workspace>/workspace/skills/x/SKILL.md — one level too deep, and for a
+    skill that means somewhere discovery never looks. The write still goes
+    where it was asked: 'workspace' is a legal directory name inside a
+    workspace, so silently stripping the prefix would make a legitimate path
+    unreachable and hide the mistake. A note is the honest middle ground, and
+    the write result is the earliest place the author can notice.
+
+    Only a *leading* segment counts — 'notes/workspace/plan.md' is ordinary.
+    """
+    parts = PurePosixPath(path).parts
+    if len(parts) < 2 or parts[0] != "workspace":
+        return ""
+    suggested = "/".join(parts[1:])
+    return (
+        f"\n\nNote: this path starts with 'workspace/', but paths are already "
+        f"relative to the workspace root, so it was written one level deeper "
+        f"than you may have intended. Did you mean '{suggested}'?"
+    )
 
 
 def _resolve_safe(config, path_str: str) -> Path | None:
@@ -188,7 +212,7 @@ def tool_workspace_write(ctx, path: str, content: str) -> str | ToolResult:
     try:
         resolved.parent.mkdir(parents=True, exist_ok=True)
         resolved.write_text(content)
-        return f"Wrote {len(content)} characters to {path}"
+        return f"Wrote {len(content)} characters to {path}{_redundant_prefix_note(path)}"
     except PermissionError as e:
         return _file_error(e, path)
 
