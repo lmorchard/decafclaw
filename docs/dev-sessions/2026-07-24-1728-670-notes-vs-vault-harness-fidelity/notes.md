@@ -209,3 +209,107 @@ The trend table now carries seven short probe runs from this session
 (`1734`–`1819`, 2–20 cases each) interleaved with the real 52-case runs. The
 file is gitignored so this stays local, but `make eval-history` output is noisy
 until those age out.
+
+---
+
+## Retrospective
+
+Shipped as [#689](https://github.com/lmorchard/decafclaw/pull/689), merged
+`5285cb3`, closing #670.
+
+### Recap
+
+The reported bug was "two eval harnesses disagree on the same prompt." The
+actual defect was that the full-agent eval runner had **never** assembled a
+system prompt — `config.system_prompt` is set only in `decafclaw/__init__.py`,
+and the eval CLI doesn't go through it. Fix is ~10 lines in `run_test` plus a
+sandbox change; the value is in what it revealed.
+
+### Scope drift
+
+Two deliberate expansions, both approved before acting:
+
+1. **Full-suite re-baseline** (planned from the start). Justified: 45/52 was
+   measured against an agent that doesn't ship.
+2. **Clearing `extra_skill_paths`** (unplanned, from Copilot). This one changed
+   the shape of the fix — the "hermetic" design decision Les picked at
+   brainstorm wasn't actually delivered by the first implementation.
+
+One adjacent fix: a stale `docs/eval-loop.md` claim that `evals/history.jsonl`
+is committed to git. Flagged rather than done silently, and only because the
+new text sat beside it.
+
+What *didn't* drift: no tool-description changes, despite that being the issue
+body's proposed fix. Measurement said 20/20 correct with the prompt present.
+Holding that line was the single most valuable scope decision — the issue's
+own correction comment predicted it as the main hazard, and it was right.
+
+### Surprises
+
+- **The direction of the fidelity gap was backwards from the hypothesis.**
+  `tool_choice` was the *higher*-fidelity harness. The issue ranked "tool_choice
+  under-reports" as hypothesis 1; the truth was the full-agent runner had no
+  prompt at all. Cheap to discover — one grep of `src/decafclaw/eval/`.
+- **Six of seven baseline failures were harness artifacts.** Expected the fix to
+  close two cases; it closed seven. Anyone who had picked up #671 or the
+  postmortem/dream cases would have been debugging a phantom.
+- **A third of the eval prompt was one developer's personal skill catalog** —
+  113 skills from `~/.agents/skills` vs 12 bundled. Nothing in the issue or the
+  brainstorm pointed at this.
+- **Case 43 was flaky, not deterministic** (13/15), which quietly undercut the
+  issue's "two cases failed identically → not a one-off" reasoning.
+
+### Workflow friction
+
+- **Brainstorm's hypothesis list was the highest-value artifact.** Les ranked
+  five hypotheses and said "rule out 4 and 5 first, they're cheap." Both were
+  ruled out in ~2 minutes of LLM time, which cleared the field fast. Worth
+  keeping as a habit for diagnosis-shaped issues: rank by suspicion, but
+  execute by cost.
+- **The plan's per-phase verification checkboxes earned their keep** in an
+  unexpected way: one Phase 3 checkbox turned out to be *false as written*
+  (`the four #676 failures are the only other failures`). Having it written
+  down forced marking it `[!]` with an explanation rather than quietly moving
+  on. A vaguer plan would have hidden that.
+- **Measuring before believing was the whole session.** Every hypothesis
+  verdict, the flakiness of three separate cases, and the 33% figure all came
+  from running things N times rather than reasoning once. The 2x2 crossing
+  (5 reps/cell) cost ~240k tokens and definitively killed the trailing-clause
+  hypothesis that reading alone would have left open.
+
+### Misses
+
+- **Should have grepped `extra_skill_paths` during brainstorm.** The design
+  decision hinged on "what does `load_system_prompt` actually read?" and that
+  question was answered only for the `data_home` half. Copilot caught it. The
+  general lesson: when a design decision claims *hermeticity*, enumerate every
+  input to the thing being sandboxed, not just the obvious one.
+- **Asserted "the four #676 failures" from a single run** in the plan, taking
+  the issue's snapshot as a stable set. Three runs later it was 4/6/4. Should
+  treat any "the N failures are X" claim as needing repetition before it goes
+  into a plan as a checkable assertion.
+- **The PR title went stale** after the second re-baseline (said 51/52, shipped
+  53/54) and needed a manual fix after opening. Worth re-reading the title, not
+  just the body, after any late number change.
+
+### Memory candidates
+
+1. Eval runner hermeticity: `_build_test_config` clears both `agent.data_home`
+   and `extra_skill_paths`; `extra_skill_paths` is the non-obvious one because
+   it lives outside `data_home`. → better as a `docs/eval-loop.md` fact, which
+   the PR already added. **No memory needed.**
+2. `make eval-tools` failure sets are unstable run-to-run (4/6/4 observed);
+   only the two tabstack cases are deterministic. → **worth saving**, it changes
+   how to read #676 and any future eval-tools triage.
+3. Diagnosis-shaped issues: rank hypotheses by suspicion, execute by cost;
+   ruling out the cheap ones first clears the field. → **worth saving** as
+   feedback.
+
+### Skill candidates
+
+- The dev-session `plan` phase could say explicitly: **a verification checkbox
+  that turns out false should be marked `[!]` with evidence, not silently
+  dropped or force-ticked.** That behavior emerged ad hoc here and was useful.
+- `retro` currently assumes it runs before the PR. When the PR is already
+  merged (as here), the retro needs its own branch — worth a line in the phase
+  file about landing retro-only doc commits.
