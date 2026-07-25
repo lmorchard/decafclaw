@@ -344,6 +344,20 @@ async def restore_skills(ctx) -> None:
             log.error(f"Failed to restore skill '{name}': {e}")
 
 
+def _core_tool_names() -> set[str]:
+    """Names of the always-registered core tools.
+
+    Function-level import: `tools/__init__` imports this module, so a
+    module-level import would close the cycle.
+    """
+    from . import TOOL_DEFINITIONS  # noqa: PLC0415 — breaks an import cycle
+
+    return {
+        td.get("function", {}).get("name", "")
+        for td in TOOL_DEFINITIONS
+    }
+
+
 def _find_skill(discovered, name: str):
     """Return the discovered SkillInfo named `name`, or None."""
     for s in discovered:
@@ -460,6 +474,28 @@ async def activate_skill_internal(ctx, skill_info) -> str | ToolResult:
                 f"\n\nThe following tools are now available: {', '.join(tool_names)}"
             )
             log.info(f"Activated native skill '{name}' with tools: {tool_names}")
+
+            # Shadowing a core tool name is legal — execute_tool checks
+            # ctx.tools.extra before the global registry, so the skill's
+            # version really does win — but it used to happen in total
+            # silence, and the agent authoring the skill has no way to know
+            # which names are taken. Say so, in the result the LLM reads
+            # (#684).
+            # sorted(): set iteration order for strings varies between
+            # processes (hash randomization), and this text goes into the
+            # activation result the LLM reads. Stable ordering keeps the
+            # output reproducible when a skill shadows more than one name.
+            for shadowed in sorted(_core_tool_names() & set(tool_names)):
+                result_parts.append(
+                    f"\n\nNote: this skill's '{shadowed}' shadows the "
+                    f"built-in tool of the same name. The skill's version "
+                    f"will be used for the rest of this conversation. Rename "
+                    f"it if that wasn't intended."
+                )
+                log.warning(
+                    "Skill %r tool %r shadows a core tool of the same name.",
+                    name, shadowed,
+                )
 
             # Cache tool names for always-loaded skills so tool_registry
             # can exempt them from deferral

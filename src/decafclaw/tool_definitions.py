@@ -120,7 +120,50 @@ def collect_all_tool_defs(ctx) -> list:
     if mcp_registry:
         all_tools = all_tools + mcp_registry.get_tool_definitions()
 
-    return all_tools
+    return _dedupe_by_name(all_tools)
+
+
+def _dedupe_by_name(tool_defs: list) -> list:
+    """Drop later declarations of an already-declared function name.
+
+    Providers reject a request carrying the same function name twice outright
+    — Vertex answers 400 "Duplicate function declaration found: X" — and that
+    lands at the provider call, before any tool runs. The agent never sees a
+    tool result, so it cannot diagnose or recover; from inside the
+    conversation the model simply appears to break (#684).
+
+    The sources concatenated above are not disjoint. An activated skill can
+    export a tool named for a core one (the agent may author workspace skills,
+    and the names it reaches for first are the ones already taken), and
+    nothing upstream prevents it.
+
+    Keep-FIRST is the required tiebreak, not an arbitrary one. Skill
+    definitions are positioned first, and ``execute_tool`` checks
+    ``ctx.tools.extra`` before the global registry — so keeping the first
+    declaration means the schema the model is shown belongs to the same
+    implementation that will run. Keep-last would leave the two silently
+    disagreeing, which is worse than the crash it replaces.
+    """
+    seen: set[str] = set()
+    deduped = []
+    for td in tool_defs:
+        name = td.get("function", {}).get("name")
+        if not name:
+            # Malformed entries aren't this function's business — pass them
+            # through so whatever validates shape still gets to complain.
+            deduped.append(td)
+            continue
+        if name in seen:
+            log.warning(
+                "Dropping duplicate declaration of tool %r — an earlier "
+                "definition of that name wins (skill tools shadow core "
+                "tools, matching execute_tool's dispatch order).",
+                name,
+            )
+            continue
+        seen.add(name)
+        deduped.append(td)
+    return deduped
 
 
 def build_tool_list(ctx) -> tuple[list, str | None]:
