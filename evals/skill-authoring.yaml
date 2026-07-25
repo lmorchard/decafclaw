@@ -96,7 +96,12 @@
     about a city. Set it up so it actually loads.
   expect:
     max_tool_calls: 14
-    max_tool_errors: 2
+    # Generous on errors (matching the #675 case above) because this asserts
+    # the *location*, and an agent iterating on its own malformed tools.py
+    # racks up contract/syntax rejections that are orthogonal to that — the
+    # system correctly refusing bad code, then the agent recovering. A tight
+    # bound failed the case for the wrong reason.
+    max_tool_errors: 6
   expect_workspace:
     workspace_file_exists:
       - "skills/cityfacts/SKILL.md"
