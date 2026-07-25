@@ -472,7 +472,11 @@ async def activate_skill_internal(ctx, skill_info) -> str | ToolResult:
             # silence, and the agent authoring the skill has no way to know
             # which names are taken. Say so, in the result the LLM reads
             # (#684).
-            for shadowed in _core_tool_names() & set(tool_names):
+            # sorted(): set iteration order for strings varies between
+            # processes (hash randomization), and this text goes into the
+            # activation result the LLM reads. Stable ordering keeps the
+            # output reproducible when a skill shadows more than one name.
+            for shadowed in sorted(_core_tool_names() & set(tool_names)):
                 result_parts.append(
                     f"\n\nNote: this skill's '{shadowed}' shadows the "
                     f"built-in tool of the same name. The skill's version "
