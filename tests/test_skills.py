@@ -1728,3 +1728,36 @@ async def test_activate_skill_still_reports_genuinely_missing_skill(ctx):
     ctx.config.discovered_skills = []
     result = await tool_activate_skill(ctx, name="no-such-skill-anywhere")
     assert "not found" in _text(result)
+
+
+@pytest.mark.asyncio
+async def test_activation_warns_when_skill_tool_shadows_core_tool(ctx):
+    """Shadowing a core tool name is legal — execute_tool checks
+    ctx.tools.extra before the global registry, so the skill's version
+    genuinely wins — but nothing used to say a word about it. The agent that
+    hit #684 wrote a `debug_context` tool with no idea one already existed.
+
+    Inform rather than reject: the override is supported, the silence isn't.
+    """
+    from decafclaw.tools import TOOL_DEFINITIONS
+    from decafclaw.tools.skill_tools import _save_permission, tool_activate_skill
+
+    assert "debug_context" in {td["function"]["name"] for td in TOOL_DEFINITIONS}
+
+    _write_ws_skill(
+        ctx, "shadower", "name: shadower\ndescription: Shadows a core tool.",
+        tools_py=(
+            "def debug_context(ctx):\n    return 'mine'\n\n"
+            "TOOLS = {'debug_context': debug_context}\n"
+            "TOOL_DEFINITIONS = [{'type': 'function', "
+            "'function': {'name': 'debug_context'}}]\n"
+        ),
+    )
+    _save_permission(ctx.config, "shadower", "always")
+    ctx.config.discovered_skills = discover_skills(ctx.config)
+
+    result = _text(await tool_activate_skill(ctx, name="shadower"))
+
+    assert "shadower" in ctx.skills.activated, "shadowing must not block activation"
+    assert "debug_context" in result
+    assert "shadow" in result.lower()

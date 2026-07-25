@@ -537,3 +537,66 @@ class TestCoreToolsDeclarePriority:
                 name = td.get("function", {}).get("name", "<unknown>")
                 invalid.append((name, prio))
         assert not invalid, f"Invalid priority values: {invalid}"
+
+
+# -- No duplicate function declarations reach the provider (#684) --------------
+#
+# Providers reject a request carrying two declarations of the same function
+# name outright (Vertex: 400 "Duplicate function declaration found: X"). That
+# failure lands at the provider call, before any tool runs, so the agent never
+# sees a tool result and can't diagnose it. The agent can also cause it
+# unaided, since it may author workspace skills and the tool names it reaches
+# for first are the ones already taken.
+
+
+def _shadow_def(name):
+    return _make_tool_def(name, description="Shadowing definition from a skill.")
+
+
+def test_collect_dedupes_skill_tool_shadowing_core_tool(ctx):
+    """The live failure: a workspace skill exporting `debug_context`, which
+    is already a core tool."""
+    from decafclaw.tool_definitions import collect_all_tool_defs
+
+    core_names = {td["function"]["name"] for td in TOOL_DEFINITIONS}
+    assert "debug_context" in core_names, "fixture assumes debug_context is core"
+
+    ctx.tools.extra_definitions.extend([_shadow_def("debug_context")])
+
+    names = [td.get("function", {}).get("name")
+             for td in collect_all_tool_defs(ctx)]
+    assert names.count("debug_context") == 1
+
+
+def test_collect_keeps_the_skill_definition_on_collision(ctx):
+    """Keep-first, and skill defs come first — so the schema the model sees
+    belongs to the same implementation `execute_tool` will dispatch to
+    (ctx.tools.extra is checked before the global registry). A keep-last
+    dedup would silently desync the two."""
+    from decafclaw.tool_definitions import collect_all_tool_defs
+
+    ctx.tools.extra_definitions.extend([_shadow_def("debug_context")])
+
+    kept = next(td for td in collect_all_tool_defs(ctx)
+                if td.get("function", {}).get("name") == "debug_context")
+    assert kept["function"]["description"] == "Shadowing definition from a skill."
+
+
+def test_collect_never_emits_duplicate_names(ctx):
+    """The general invariant, not just the one reported collision — covers
+    MCP defs and any future concatenated source."""
+    from decafclaw.tool_definitions import collect_all_tool_defs
+
+    ctx.tools.extra_definitions.extend([
+        _shadow_def("debug_context"),
+        _shadow_def("shell"),
+        _shadow_def("a_genuinely_new_tool"),
+        _shadow_def("a_genuinely_new_tool"),  # skill duplicating itself
+    ])
+
+    names = [td.get("function", {}).get("name")
+             for td in collect_all_tool_defs(ctx)]
+    dupes = {n for n in names if names.count(n) > 1}
+    assert not dupes, f"duplicate declarations would be sent to the provider: {dupes}"
+    # Deduping must not drop the tool entirely.
+    assert "a_genuinely_new_tool" in names
