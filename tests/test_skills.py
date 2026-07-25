@@ -2054,3 +2054,106 @@ async def test_shadow_warnings_are_ordered_deterministically(ctx):
 
     # Both reported, in sorted order.
     assert result.index("'debug_context' shadows") < result.index("'shell' shadows")
+
+
+# -- refresh_skills: misplaced-skill hint --
+#
+# A skill written to a path discovery doesn't scan is invisible to
+# refresh_skills by construction: discover_skills never walks there, so there
+# is no SKILL.md to reject and nothing to report. The author sees a normal
+# skill list with their skill simply absent, and no reason why. These checks
+# probe the two known-wrong shapes so the hint exists even when the author
+# never calls skill_validate.
+
+
+def test_refresh_skills_hints_at_redundant_workspace_prefix(ctx):
+    d = ctx.config.workspace_path / "workspace" / "skills" / "blog-tools"
+    d.mkdir(parents=True)
+    (d / "SKILL.md").write_text(
+        "---\nname: blog-tools\ndescription: Blog.\n---\nBody.\n"
+    )
+    text = _text(tool_refresh_skills(ctx))
+    assert "workspace/skills/blog-tools" in text
+    assert "skills/blog-tools" in text  # the suggested corrected path
+
+
+def test_refresh_skills_hints_at_overly_nested_skill(ctx):
+    d = ctx.config.workspace_path / "skills" / "group" / "nested"
+    d.mkdir(parents=True)
+    (d / "SKILL.md").write_text(
+        "---\nname: nested\ndescription: Too deep.\n---\nBody.\n"
+    )
+    text = _text(tool_refresh_skills(ctx))
+    assert "skills/group/nested" in text
+
+
+def test_refresh_skills_no_hint_when_everything_is_placed_right(ctx):
+    _write_ws_skill(ctx, "fine", "name: fine\ndescription: Correct place.")
+    text = _text(tool_refresh_skills(ctx))
+    assert "misplaced" not in text.lower()
+
+
+# -- refresh_skills: what changed --
+
+
+def test_refresh_skills_reports_a_newly_discovered_skill(ctx):
+    tool_refresh_skills(ctx)  # establish the baseline
+    _write_ws_skill(ctx, "brandnew", "name: brandnew\ndescription: New one.")
+    text = _text(tool_refresh_skills(ctx))
+    assert "brandnew" in text
+    assert "New:" in text
+
+
+def test_refresh_skills_reports_no_change(ctx):
+    tool_refresh_skills(ctx)
+    text = _text(tool_refresh_skills(ctx))
+    assert "no change" in text.lower()
+
+
+def test_refresh_skills_reports_a_removed_skill(ctx):
+    d = _write_ws_skill(ctx, "goingaway", "name: goingaway\ndescription: Bye.")
+    tool_refresh_skills(ctx)
+    (d / "SKILL.md").unlink()
+    text = _text(tool_refresh_skills(ctx))
+    assert "goingaway" in text
+    assert "no longer" in text.lower()
+
+
+# -- skill_validate advisories --
+#
+# `ok` must keep meaning exactly "the loader will accept this". A name that
+# disagrees with its directory, or uses spaces and capitals, loads perfectly
+# well (the bundled catalog has both), so flagging either as a FAILURE would
+# recreate the validator-contradicts-loader trap in reverse. They are
+# reported as advisories instead.
+
+
+def test_skill_validate_advises_on_name_directory_mismatch(ctx):
+    _write_ws_skill(ctx, "blog-tools", "name: blogtools\ndescription: Mismatch.")
+    result = tool_skill_validate(ctx, path="skills/blog-tools")
+    assert result.data["ok"] is True, "a name mismatch still loads"
+    advisories = " ".join(result.data["advisories"])
+    assert "blogtools" in advisories
+    assert "blog-tools" in advisories
+
+
+def test_skill_validate_advises_on_nonstandard_name_format(ctx):
+    _write_ws_skill(ctx, "shouty", "name: Shouty Skill\ndescription: Caps.")
+    result = tool_skill_validate(ctx, path="skills/shouty")
+    assert result.data["ok"] is True
+    assert any("lowercase" in a for a in result.data["advisories"])
+
+
+def test_skill_validate_no_advisories_when_name_is_clean(ctx):
+    _write_ws_skill(ctx, "tidy", "name: tidy\ndescription: All good.")
+    result = tool_skill_validate(ctx, path="skills/tidy")
+    assert result.data["ok"] is True
+    assert result.data["advisories"] == []
+
+
+def test_refresh_skills_does_not_call_everything_new_on_a_cold_catalog(ctx):
+    """An empty baseline is initial population, not 38 new skills."""
+    ctx.config.discovered_skills = []
+    text = _text(tool_refresh_skills(ctx))
+    assert "New:" not in text
+    assert "no change" not in text.lower()

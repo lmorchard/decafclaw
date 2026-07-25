@@ -5,10 +5,16 @@ import importlib.util
 import inspect
 import json
 import logging
+import re
 from pathlib import Path
 
 from ..media import ToolResult
-from ..skills import CheckResult, is_discoverable_skill_dir, validate_skill_md
+from ..skills import (
+    CheckResult,
+    find_misplaced_skills,
+    is_discoverable_skill_dir,
+    validate_skill_md,
+)
 from .confirmation import request_confirmation
 
 log = logging.getLogger(__name__)
@@ -239,13 +245,56 @@ def _lint_tools_py(skill_dir: Path) -> list[CheckResult]:
     return checks
 
 
-def _render_validation(path: str, checks: list[CheckResult]) -> ToolResult:
-    """Render a checklist of CheckResults as a ToolResult (text + data)."""
+def _name_advisories(meta: dict | None, skill_dir: Path) -> list[str]:
+    """Non-blocking notes about a skill's `name` field.
+
+    Neither of these prevents loading — a skill activates under its
+    frontmatter `name` whatever the directory is called, and the bundled
+    catalog contains names with spaces, capitals, and underscores. So they
+    must NOT fail validation: reporting FAIL on a skill the loader accepts
+    is the validator-contradicts-loader trap in reverse, and it trains the
+    author to ignore the validator.
+    """
+    if not meta:
+        return []
+    name = meta.get("name")
+    if not isinstance(name, str) or not name:
+        return []
+
+    advisories: list[str] = []
+    if name != skill_dir.name:
+        advisories.append(
+            f"frontmatter name '{name}' differs from the directory "
+            f"'{skill_dir.name}' — this loads fine, but you activate it as "
+            f"'{name}' while its files live under '{skill_dir.name}'. "
+            f"Matching them avoids the confusion."
+        )
+    if not re.fullmatch(r"[a-z0-9]+(-[a-z0-9]+)*", name):
+        advisories.append(
+            f"name '{name}' isn't the conventional format (lowercase letters, "
+            f"numbers, and single hyphens). This loads fine; the convention "
+            f"comes from the Agent Skills standard."
+        )
+    return advisories
+
+
+def _render_validation(path: str, checks: list[CheckResult],
+                       advisories: list[str] | None = None) -> ToolResult:
+    """Render a checklist of CheckResults as a ToolResult (text + data).
+
+    `ok` reflects the checks only. Advisories are things that will load but
+    may surprise the author later, so they never flip the verdict.
+    """
+    advisories = advisories or []
     ok = all(c.passed for c in checks)
     header = "PASS" if ok else "FAIL"
     lines = [f"skill_validate '{path}': {header}", ""]
     for c in checks:
         lines.append(f"  {'[x]' if c.passed else '[ ]'} {c.name}: {c.message}")
+    if advisories:
+        lines.append("")
+        lines.append("Advisories (will load, but worth a look):")
+        lines.extend(f"  ! {a}" for a in advisories)
     if not ok:
         lines.append("")
         lines.append(
@@ -261,6 +310,7 @@ def _render_validation(path: str, checks: list[CheckResult]) -> ToolResult:
                 {"name": c.name, "passed": c.passed, "message": c.message}
                 for c in checks
             ],
+            "advisories": advisories,
         },
     )
 
@@ -647,11 +697,14 @@ def tool_skill_validate(ctx, path: str) -> ToolResult:
     checks.append(CheckResult("skill_md_present", True, "SKILL.md present"))
 
     # Discovery-level checks — shared source of truth with refresh_skills.
-    checks.extend(validate_skill_md(skill_md).checks)
+    validation = validate_skill_md(skill_md)
+    checks.extend(validation.checks)
     # tools.py checks run regardless of frontmatter validity (filesystem-based).
     checks.extend(_lint_tools_py(skill_dir))
 
-    return _render_validation(path, checks)
+    return _render_validation(
+        path, checks, _name_advisories(validation.meta, skill_dir)
+    )
 
 
 def rediscover_skills(config) -> list:
@@ -682,15 +735,45 @@ def tool_refresh_skills(ctx) -> str | ToolResult:
     """Re-discover skills and update the system prompt catalog."""
     log.info("[tool:refresh_skills]")
     config = ctx.config
+    # Snapshot before rediscovery replaces the catalog, so the result can say
+    # what actually changed. The full list runs to dozens of names, and
+    # "did the skill I just wrote show up?" is the only question the caller
+    # usually has — answering it directly beats making them diff the list.
+    before = {s.name for s in config.discovered_skills}
     rejections = rediscover_skills(config)
     # List all discovered skills — text-only, native-tools, and user-invocable
     # are all valid activatable skills
     names = [s.name for s in config.discovered_skills]
     text = f"Skills refreshed. Available skills: {', '.join(names) or '(none)'}"
+
+    after = set(names)
+    # An empty baseline means the catalog hadn't been populated yet (a fresh
+    # Context), not that every skill is new. Reporting a diff against nothing
+    # would print the whole list a second time under a "New:" heading.
+    if before:
+        added = sorted(after - before)
+        removed = sorted(before - after)
+        if added:
+            text += f"\nNew: {', '.join(added)}"
+        if removed:
+            text += f"\nNo longer found: {', '.join(removed)}"
+        if not added and not removed:
+            text += "\nNo change since the last refresh."
+
     if rejections:
         text += "\nRejected (found but not loaded):\n" + "\n".join(
             f"  - {_rejection_display_path(config, r.path)} — {r.reason}"
             for r in rejections
+        )
+
+    # A skill in an unscanned directory produces no rejection — discovery
+    # never walks there — so without this the author sees only an absence.
+    misplaced = find_misplaced_skills(config)
+    if misplaced:
+        text += "\nPossibly misplaced (found but not scanned):\n" + "\n".join(
+            f"  - {found} — nothing scans this path; did you mean "
+            f"'{suggested}'?"
+            for found, suggested in misplaced
         )
     return text
 

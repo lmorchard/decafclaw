@@ -365,6 +365,52 @@ def is_discoverable_skill_dir(config, skill_dir: Path) -> bool:
     return False
 
 
+def find_misplaced_skills(config) -> list[tuple[str, str]]:
+    """Find SKILL.md files in the two locations authors actually get wrong.
+
+    Returns ``(found_path, suggested_path)`` pairs, both workspace-relative.
+
+    A skill in an unscanned directory is invisible to `discover_skills` by
+    construction — there is no SKILL.md for it to reject, so `refresh_skills`
+    reports a normal list with the skill simply missing and no reason why.
+    This probes for it directly:
+
+    1. ``workspace/skills/<name>/`` — the redundant-prefix trap. Agent-facing
+       paths are already workspace-relative, so a `workspace/` prefix writes
+       one level too deep.
+    2. ``skills/<group>/<name>/`` — one level too deep. Discovery only walks
+       the immediate children of a scan root.
+
+    Deliberately NOT a recursive walk: the workspace can contain checked-out
+    repos with `node_modules`, and `refresh_skills` is called often enough
+    that an rglob would be a real cost. These two shapes cover the observed
+    failures for a handful of stat calls.
+    """
+    ws = config.workspace_path
+    found: list[tuple[str, str]] = []
+
+    def _children_with_skill_md(base: Path) -> list[Path]:
+        if not base.is_dir():
+            return []
+        return [d for d in sorted(base.iterdir())
+                if d.is_dir() and (d / "SKILL.md").exists()]
+
+    for d in _children_with_skill_md(ws / "workspace" / "skills"):
+        found.append((f"workspace/skills/{d.name}/SKILL.md", f"skills/{d.name}"))
+
+    skills_root = ws / "skills"
+    if skills_root.is_dir():
+        for group in sorted(skills_root.iterdir()):
+            if not group.is_dir() or (group / "SKILL.md").exists():
+                continue  # a real skill, not a container
+            for d in _children_with_skill_md(group):
+                found.append((
+                    f"skills/{group.name}/{d.name}/SKILL.md", f"skills/{d.name}",
+                ))
+
+    return found
+
+
 def discover_skills(config, rejections: list | None = None) -> list[SkillInfo]:
     """Scan skill directories and return discovered skills.
 

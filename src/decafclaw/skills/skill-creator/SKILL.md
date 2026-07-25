@@ -61,8 +61,11 @@ Work down this list instead of retrying the same call:
 
 | Symptom | Cause |
 |---|---|
-| Not in `refresh_skills` output | Wrong location. See "Where the files go". |
+| Not in `refresh_skills` output | Wrong location. See "Where the files go". `refresh_skills` flags the two common wrong paths under `Possibly misplaced` — read that first. |
 | `skill_validate` fails on `discoverable` | Same — the message names the correct path. |
+| A `workspace_write` result says "Did you mean …?" | You prefixed the path with `workspace/`. The file was written where you asked, one level too deep — rewrite it at the suggested path. |
+| `refresh_skills` says `No change since the last refresh.` | Your file didn't land where discovery scans, or you didn't write it. |
+| Skill loads but activating `<dirname>` fails | Your frontmatter `name` differs from the directory; activate the `name`. `skill_validate` reports this as an advisory. |
 | Listed but `activate_skill` errors | `tools.py` doesn't import or its exports are the wrong shape. The error names which. |
 | Your edit had no effect | You didn't re-run `activate_skill`, so the old module is still loaded. |
 | `TypeError` "raised inside the tool's own code" | The bug is in your `tools.py`, not in how you called the tool. |

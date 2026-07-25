@@ -390,9 +390,24 @@ during discovery** — the loader requires a `SKILL.md` that starts with a `---`
 YAML frontmatter block containing both `name` and `description`. Two tools
 surface the reason instead of failing silently:
 
-- **`refresh_skills`** re-scans every skill directory and now lists any
-  found-but-rejected skills under `Rejected (found but not loaded):`, each with
-  the reason (e.g. *no valid YAML frontmatter*).
+- **`refresh_skills`** re-scans every skill directory and reports three things
+  beyond the skill list:
+  - **What changed** — `New: <names>` / `No longer found: <names>`, or
+    `No change since the last refresh.` The full list runs to dozens of names,
+    and "did the skill I just wrote appear?" is usually the only question, so
+    it's answered directly instead of by diffing. Suppressed when the catalog
+    was empty beforehand (initial population, not a change).
+  - **Rejections** — found-but-rejected skills under
+    `Rejected (found but not loaded):`, each with the reason (e.g. *no valid
+    YAML frontmatter*).
+  - **Possibly misplaced skills** — a `SKILL.md` sitting in a directory nothing
+    scans. Such a skill produces no rejection, because discovery never walks
+    there; without this the author sees only an unexplained absence.
+    `find_misplaced_skills` probes the two shapes that actually occur —
+    `workspace/skills/<name>/` (the redundant-prefix trap) and
+    `skills/<group>/<name>/` (one level too deep) — and names the corrected
+    path. Deliberately not a recursive walk: workspaces contain checked-out
+    repos with `node_modules`, and this runs on every refresh.
 - **`skill_validate('skills/<name>')`** is the pre-flight, single-skill check.
   It reports a pass/fail checklist:
   - the location is one discovery actually **scans** (see below)
@@ -436,6 +451,33 @@ This is the same class of bug as the shape contract above: before it existed,
 reported a fully-green **PASS** on a location `refresh_skills` would never list.
 An author facing a validator and a loader that flatly contradict each other has
 nothing to reconcile them with, and no amount of retrying either one helps.
+
+`workspace_write` also flags a leading `workspace/` on the path it just wrote,
+naming the path without the prefix. The prefix is **not** stripped —
+`workspace` is a legal directory name inside a workspace, so stripping it would
+make a legitimate path unreachable and hide the mistake — but the write result
+is the earliest point the author can notice. Between that, the `discoverable`
+check, and the misplaced-skill hint in `refresh_skills`, the mistake now
+surfaces at three independent points instead of none.
+
+#### Advisories
+
+`skill_validate` also reports **advisories**: things that load correctly but may
+surprise you later. They appear under `Advisories (will load, but worth a look):`
+and never change the PASS/FAIL verdict, because `ok` means exactly *"the loader
+will accept this"*. Reporting FAIL on a skill that loads fine is the
+validator-contradicts-loader trap in reverse, and it teaches the author to
+ignore the validator.
+
+Currently advisory:
+
+- **`name` disagrees with the directory.** A skill activates under its
+  frontmatter `name` whatever its directory is called, so
+  `skills/blog-tools/` containing `name: blogtools` works — you just activate
+  `blogtools` while the files live under `blog-tools`.
+- **`name` isn't the conventional format** (lowercase letters, numbers, single
+  hyphens). The bundled catalog itself contains names with spaces, capitals, and
+  underscores, which is exactly why this cannot be a hard failure.
 
 Minimal correct workspace skill:
 
