@@ -1409,7 +1409,11 @@ async def vault_write(request: Request, username: str) -> JSONResponse:
             status_code=400,
         )
     if new_body is None and fm_patch is None and fm_raw is None:
-        return JSONResponse({"error": "content (string) required"}, status_code=400)
+        return JSONResponse(
+            {"error": "request must include body (or its alias content), "
+                      "frontmatter, or frontmatter_raw"},
+            status_code=400,
+        )
 
     modified = body.get("modified")
     if modified is not None:

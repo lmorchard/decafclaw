@@ -962,6 +962,22 @@ async def test_vault_write_frontmatter_both_shapes_rejected(
 
 
 @pytest.mark.asyncio
+async def test_vault_write_empty_payload_names_every_accepted_key(
+    client, http_config,
+):
+    """A payload with no writable key must name all three shapes, not just body."""
+    path = http_config.vault_agent_pages_dir / "Empty.md"
+    original = "---\nimportance: 0.4\n---\nBody.\n"
+    path.write_text(original)
+    resp = await client.put("/api/vault/agent/pages/Empty", json={})
+    assert resp.status_code == 400
+    error = resp.json()["error"]
+    for key in ("body", "content", "frontmatter", "frontmatter_raw"):
+        assert key in error, f"400 message does not mention {key!r}: {error!r}"
+    assert path.read_text() == original
+
+
+@pytest.mark.asyncio
 async def test_vault_rename_rejects_combined_write_payloads(client, http_config):
     """Every write key must collide with rename_to, not just `content`.
 
