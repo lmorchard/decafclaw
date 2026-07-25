@@ -94,8 +94,12 @@
   margin: 0 0.3rem;
 }
 
+/* Shared conflict/notice strip: body editor, file editor, metadata panel,
+   and the host-level "saved to the wrong page" notice. */
 .wiki-editor-conflict,
-.file-editor-conflict {
+.file-editor-conflict,
+.wiki-md-conflict,
+.wiki-page-orphan-error {
   background: var(--pico-mark-background-color, #ffeeba);
   color: var(--pico-color);
   padding: 0.5rem 0.75rem;
@@ -103,6 +107,7 @@
   margin-bottom: 0.5rem;
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 0.5rem;
   font-size: 0.85rem;
 }

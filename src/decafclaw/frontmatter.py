@@ -55,6 +55,53 @@ def serialize_frontmatter(metadata: dict, body: str) -> str:
     return f"---\n{yaml_text}---\n{body}"
 
 
+def split_frontmatter(text: str) -> tuple[str | None, str]:
+    """Split off the raw frontmatter block *without* parsing its YAML.
+
+    Returns ``(raw_yaml, body)``. *raw_yaml* is the text between the ``---``
+    delimiters exactly as written, with no trailing newline; ``None`` means the
+    file has no frontmatter block at all (distinct from ``""``, an empty one).
+
+    Purely lexical, so malformed YAML round-trips byte-for-byte. That is what
+    lets body-only writes preserve a block they cannot parse — reserializing
+    through ``parse_frontmatter`` + ``serialize_frontmatter`` would silently
+    delete malformed frontmatter, since the parser reports ``{}`` on error.
+    """
+    match = _FRONTMATTER_RE.match(text)
+    if not match:
+        return None, text
+    return match.group(1), text[match.end():]
+
+
+def join_frontmatter(raw_yaml: str | None, body: str) -> str:
+    """Re-attach a raw block from :func:`split_frontmatter`.
+
+    ``join_frontmatter(*split_frontmatter(t)) == t`` for any *t*.
+    """
+    if raw_yaml is None:
+        return body
+    return f"---\n{raw_yaml}\n---\n{body}"
+
+
+def parse_frontmatter_block(raw_yaml: str | None) -> tuple[dict, str | None]:
+    """Parse a raw block from :func:`split_frontmatter`.
+
+    Returns ``(metadata, error)``. On success *error* is ``None``; on malformed
+    YAML or a non-mapping document *metadata* is ``{}`` and *error* carries a
+    human-readable message. Unlike :func:`parse_frontmatter`, which logs and
+    swallows both cases, this reports them so callers can refuse to write.
+    """
+    if raw_yaml is None or not raw_yaml.strip():
+        return {}, None
+    try:
+        parsed = yaml.safe_load(raw_yaml)
+    except yaml.YAMLError as exc:
+        return {}, str(exc)
+    if not isinstance(parsed, dict):
+        return {}, "frontmatter is not a mapping"
+    return parsed, None
+
+
 def get_frontmatter_field(metadata: dict, field: str, default=None):
     """Type-safe getter for frontmatter fields.
 
@@ -83,6 +130,33 @@ def get_frontmatter_field(metadata: dict, field: str, default=None):
         return str(value)
 
     return value
+
+
+def merge_frontmatter(existing: dict, fields: dict, overwrite: bool) -> dict:
+    """Merge coerced field values into existing frontmatter metadata.
+
+    Pure function — no ctx, no I/O — so callers (dream generation, the
+    backfill CLI, garden importance tuning, the vault REST API) can reuse the
+    merge logic without a running agent context. Coercion goes through
+    `get_frontmatter_field` (importance clamped to [0, 1]; tags/keywords to
+    list[str]; summary to str) so the merged result and the parser agree on
+    shape.
+
+    When `overwrite` is False, only fields that are absent or empty in
+    `existing` are filled. When True, every field in `fields` is set,
+    replacing any existing value.
+
+    Note there is no deletion path: a ``None`` value coerces to ``None`` and
+    is *set*, producing ``field: null`` rather than removing the key. Callers
+    that need deletion strip null values from the result themselves.
+    """
+    merged = dict(existing)
+    for field, raw_value in fields.items():
+        coerced = get_frontmatter_field({field: raw_value}, field)
+        if not overwrite and merged.get(field) not in (None, "", []):
+            continue
+        merged[field] = coerced
+    return merged
 
 
 def build_composite_text(metadata: dict, body: str) -> str:

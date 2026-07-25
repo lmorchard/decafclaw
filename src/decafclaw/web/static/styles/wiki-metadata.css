@@ -1,0 +1,155 @@
+/* Vault page metadata panel. Sits between the toolbar and the page body in
+   both view and edit mode. */
+
+.wiki-metadata {
+  display: flex;
+  gap: 0.5rem;
+  align-items: flex-start;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--pico-muted-border-color);
+  font-size: 0.8125rem;
+}
+
+.wiki-md-content {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Tag-qualified: Pico's `button:not(...)` is 0,1,1 and would otherwise win. */
+button.wiki-md-toggle {
+  width: auto;
+  margin: 0;
+  padding: 0 0.25rem;
+  border: none;
+  background: none;
+  /* Pico re-scopes --pico-color inside <button> to white-on-blue. */
+  color: inherit;
+  line-height: 1.4;
+}
+
+.wiki-md-summary-line {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  color: var(--pico-muted-color);
+}
+
+.wiki-md-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+  align-items: center;
+  margin-top: 0.25rem;
+}
+
+.wiki-md-importance {
+  font-variant-numeric: tabular-nums;
+  color: var(--pico-muted-color);
+}
+
+.wiki-md-chip {
+  padding: 0.0625rem 0.375rem;
+  border: 1px solid var(--pico-muted-border-color);
+  border-radius: 1rem;
+  color: var(--pico-muted-color);
+  white-space: nowrap;
+}
+
+.wiki-md-overflow {
+  color: var(--pico-muted-color);
+}
+
+.wiki-md-error {
+  margin-bottom: 0.375rem;
+  color: var(--pico-del-color);
+}
+
+/* .wiki-md-conflict itself is styled with the other conflict strips in
+   wiki-editor.css — this file only adds its button. */
+
+/* Tag-qualified so Pico's button:not(...) (0,1,1) doesn't win. */
+button.wiki-md-conflict-btn {
+  width: auto;
+  margin: 0;
+  padding: 0.125rem 0.5rem;
+  font-size: 0.75rem;
+  color: inherit;
+}
+
+.wiki-md-detail {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.25rem 0.75rem;
+  margin: 0;
+}
+
+.wiki-md-detail dt {
+  color: var(--pico-muted-color);
+  font-weight: 600;
+}
+
+.wiki-md-detail dd {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  margin: 0;
+}
+
+.wiki-md-summary-input,
+.wiki-md-raw-input {
+  width: 100%;
+  margin: 0;
+  font-size: 0.8125rem;
+}
+
+.wiki-md-raw-input {
+  font-family: var(--pico-font-family-monospace);
+}
+
+.wiki-md-chip-input {
+  width: 6rem;
+  margin: 0;
+  padding: 0 0.25rem;
+  font-size: 0.75rem;
+}
+
+/* Tag-qualified so Pico's button:not(...) (0,1,1) doesn't win. */
+button.wiki-md-chip-x,
+button.wiki-md-raw-toggle {
+  width: auto;
+  margin: 0;
+  border: none;
+  background: none;
+  color: inherit;
+}
+
+button.wiki-md-chip-x {
+  padding: 0 0 0 0.25rem;
+  font-size: 0.875rem;
+  line-height: 1;
+}
+
+button.wiki-md-raw-toggle {
+  padding: 0.25rem 0;
+  font-size: 0.75rem;
+  color: var(--pico-muted-color);
+}
+
+.wiki-md-raw {
+  margin-top: 0.5rem;
+}
+
+.wiki-md-raw-actions {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  margin-top: 0.375rem;
+}
+
+.wiki-md-raw-actions button {
+  width: auto;
+  margin: 0;
+  padding: 0.125rem 0.5rem;
+  font-size: 0.75rem;
+}
