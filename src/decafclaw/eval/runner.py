@@ -16,7 +16,7 @@ from ..context_composer import read_context_sidecar
 from ..conversation_manager import ConversationManager
 from ..events import EventBus
 from ..skills import discover_skills as _discover_skills_fn
-from .diagnostics import aggregate_by_axis, build_turn_diagnostics
+from .diagnostics import aggregate_by_axis, build_turn_diagnostics, validate_axes
 
 log = logging.getLogger(__name__)
 
@@ -873,6 +873,8 @@ async def run_eval(yaml_data: list[dict], config: Config,
     Tests run concurrently (up to `concurrency` at a time) but results
     are printed in test order after all complete.
     """
+    validate_axes(yaml_data)
+
     import asyncio
     import tempfile
 

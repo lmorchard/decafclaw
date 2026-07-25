@@ -13,6 +13,7 @@ from decafclaw.eval.diagnostics import (
     detect_files_cited,
     detect_files_read,
     parse_axes,
+    validate_axes,
 )
 from decafclaw.eval.runner import _build_test_config, run_test
 
@@ -37,6 +38,18 @@ def test_parse_axes_unknown_raises():
 def test_parse_axes_unknown_in_list_raises():
     with pytest.raises(ValueError, match="unknown axis"):
         parse_axes({"tests": ["retrieval", "bogus"]})
+
+
+def test_validate_axes_passes_for_valid_cases():
+    validate_axes([{"name": "a", "tests": "retrieval"},
+                   {"name": "b", "tests": ["routing", "answer_quality"]},
+                   {"name": "c"}])  # untagged is fine
+
+
+def test_validate_axes_raises_on_unknown_axis_naming_the_case():
+    with pytest.raises(ValueError, match="bad-case"):
+        validate_axes([{"name": "ok", "tests": "retrieval"},
+                       {"name": "bad-case", "tests": "smartness"}])
 
 
 def test_canonical_axes_exact_set():

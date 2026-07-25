@@ -42,6 +42,19 @@ def parse_axes(case: dict) -> list[str]:
     return axes
 
 
+def validate_axes(cases: list[dict]) -> None:
+    """Validate every case's ``tests:`` axis tag up front, raising on the
+    first unknown value so a typo fails fast BEFORE a paid real-LLM run
+    rather than after (see #528). Names the offending case for quick fixing.
+    """
+    for case in cases:
+        try:
+            parse_axes(case)
+        except ValueError as exc:
+            name = case.get("name", "<unnamed>")
+            raise ValueError(f"case {name!r}: {exc}") from exc
+
+
 def aggregate_by_axis(test_results: list[dict], cases: list[dict]) -> dict:
     """Pass-rate per failure-mode axis for the #528 scorecard.
 
