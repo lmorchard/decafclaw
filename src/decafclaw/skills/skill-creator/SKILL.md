@@ -37,15 +37,20 @@ first thing to check — call `skill_validate` and read its `discoverable` line.
    line-number surgery on source you can't run corrupts the file, and each
    failed edit costs a round-trip. `claude_code` can write it, import it, and
    iterate until it's clean.
-2. Create `skills/<name>/SKILL.md` (and `tools.py` only if the skill needs
-   native tools — see "Do you even need tools.py?" below).
-3. Validate before loading: call `skill_validate('skills/<name>')`. It reports a
+2. **Decide whether you need `tools.py` at all — most skills do not.** If the
+   job is "run this command", "read this file", or "fetch this URL", an existing
+   tool already does it, and you MUST document that tool in SKILL.md rather than
+   wrap it. See "Do you even need `tools.py`?" — read it before writing any
+   Python.
+3. Create `skills/<name>/SKILL.md`, plus `tools.py` only if step 2 said you
+   need it.
+4. Validate before loading: call `skill_validate('skills/<name>')`. It reports a
    pass/fail checklist — location, frontmatter, `tools.py` filename, clean
    import, the `get_tools(ctx)` signature, and the exports' shape.
-4. Fix every ✗ item, then re-run `skill_validate`.
-5. Load it into the catalog: call `refresh_skills`. It lists any skills it
+5. Fix every ✗ item, then re-run `skill_validate`.
+6. Load it into the catalog: call `refresh_skills`. It lists any skills it
    rejected and why.
-6. Activate it with `activate_skill` to use it.
+7. Activate it with `activate_skill` to use it.
 
 To change an **already-active** skill's `tools.py`: edit the file, then call
 `activate_skill` again. That re-imports the module and replaces the old tools.
@@ -101,24 +106,53 @@ Optional fields decaf understands include `user-invocable`, `context`,
 
 ## Do you even need `tools.py`?
 
-Usually not. A skill's SKILL.md body is loaded into context on activation, so
-**prose that tells you how to do the job with existing tools is a complete
-skill.** Reach for `tools.py` only when you need Python that no existing tool
-can express.
+**Usually not — and a wrapper around an existing tool is not merely redundant,
+it cannot work.** A skill tool has no way to call another decaf tool (see the
+next section), so "a tool that runs the dev server" is not a thing you can
+build. The working version is prose.
 
-Before writing a tool, check whether one already exists — `tool_search` finds
-the deferred catalog. In particular:
+A skill's SKILL.md body is loaded into context on activation. **Prose naming the
+tool to call, with the arguments to call it with, IS a complete and working
+skill.** That is the normal case, not a lesser one.
 
-- Running a command in the background → `shell_background_start` (with
-  `shell_background_status` / `_stop` / `_list`), from the always-loaded
-  `background` skill. A skill tool that wraps it adds nothing.
-- Running a command and waiting → `shell`.
-- Reading/writing files → `workspace_read` / `workspace_write`.
-- Fetching a URL → `http_get` / the `tabstack` skill.
+So: before writing any Python, check whether a tool already does the work
+(`tool_search` searches the deferred catalog). **You MUST NOT write a skill tool
+that:**
 
-A skill for a project you work on repeatedly is usually just SKILL.md
-recording the commands, paths, and conventions — e.g. "the dev server is
-`npm start` in `blog.lmorchard.com/`; start it with `shell_background_start`."
+| If the job is… | Use this instead | Never write |
+|---|---|---|
+| run a command in the background (dev server, watcher) | `shell_background_start`, then `shell_background_status` / `_stop` / `_list` — always loaded | a `start_*_server` tool |
+| run a command and wait | `shell` | a `run_*` tool |
+| read or write a workspace file | `workspace_read` / `workspace_write` | a `read_*` / `save_*` tool |
+| fetch a URL | `http_get`, or the `tabstack` skill | a `fetch_*` tool |
+
+Write `tools.py` only for Python that no existing tool can express — parsing,
+computation, calling a third-party library, talking to an API with a client.
+
+### Worked example: "a skill for my blog that starts the dev server"
+
+✅ Correct. `SKILL.md` only, no `tools.py`:
+
+```markdown
+---
+name: blogdev
+description: Working on the blog at blog.lmorchard.com. Use when previewing or building blog changes.
+---
+
+# Blog dev
+
+The blog lives at `blog.lmorchard.com/` in the workspace.
+
+- **Start the dev server:** call `shell_background_start` with
+  command `npm start` and cwd `blog.lmorchard.com`.
+- **Check on it:** `shell_background_status` with the returned job id.
+- **Stop it:** `shell_background_stop`.
+- **Build:** `shell` with `./index.js build` in the same directory.
+```
+
+❌ Wrong: a `tools.py` exporting `start_dev_server`. It cannot work — the
+function has no way to reach `shell_background_start`, and there is no
+`default_api` to reach it through.
 
 ## What `tools.py` can and cannot reach
 

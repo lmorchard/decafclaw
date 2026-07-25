@@ -104,6 +104,71 @@
       # The redundant-prefix trap. Nothing scans this path.
       - "workspace/skills/cityfacts/SKILL.md"
 
+# The phantom-tool-call recovery path. A skill tool cannot call another decaf
+# tool, but the model's prior that it can is strong and recurring: one real
+# session produced three variants in a row (`default_api.shell_background_start`,
+# `ctx.shell_background_start`, `ctx.tools.shell_background_start`), and evals
+# showed prose in skill-creator does NOT suppress it (0/6 with the guidance
+# loaded, including a run where the model invented a `skill.py` defining a
+# `Skill` class purely to expose `ctx.tools`).
+#
+# So the guardrail is mechanical, like #675's shape contract: skill_validate
+# statically flags the call and names the fix. This case is the recovery test —
+# the defect is seeded, and the assertion is the outcome (the phantom call is
+# gone), not the route.
+#
+# The call imports perfectly cleanly, so nothing but the static check catches
+# it; the skill activates and fails only when the tool is invoked.
+- name: "fixes a phantom ctx tool call instead of trusting it"
+  setup:
+    workspace_files:
+      "skills/phantomblog/SKILL.md": |
+        ---
+        name: phantomblog
+        description: Starts the blog dev server. Use when previewing blog changes.
+        ---
+
+        # Phantom blog (eval fixture)
+
+        A one-tool skill whose tool tries to call a decaf tool through `ctx`.
+      "skills/phantomblog/tools.py": |
+        from decafclaw.media import ToolResult
+
+
+        def start_blog_server(ctx) -> ToolResult:
+            """Start the blog dev server in the background."""
+            result = ctx.tools.shell_background_start(command="npm start")
+            return ToolResult(text=f"started: {result}")
+
+
+        TOOLS = {"start_blog_server": start_blog_server}
+
+        TOOL_DEFINITIONS = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "start_blog_server",
+                    "description": "Start the blog dev server in the background.",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            },
+        ]
+  # "Keep it as a native tool" removes the ambiguity: dropping tools.py and
+  # documenting shell_background_start in SKILL.md is ALSO a correct fix, but it
+  # deletes the file this assertion reads, so the prompt picks one route.
+  input: >
+    The "phantomblog" skill in my workspace is broken — its start_blog_server tool
+    fails when I call it. Figure out why and fix it. Keep it as a native tool in
+    tools.py.
+  expect:
+    max_tool_calls: 15
+    max_tool_errors: 6
+  expect_workspace:
+    workspace_files:
+      # ctx must no longer be treated as a tool namespace. Negative lookahead
+      # over the whole file (the matcher runs with DOTALL).
+      "skills/phantomblog/tools.py": "re:\\A(?!.*ctx\\.tools\\.shell_background_start)"
+
 # Don't wrap a tool that already exists. `shell_background_start` is
 # always-loaded (bundled `background` skill), so a skill tool that shells out
 # to run a dev server adds nothing — and a skill tool cannot call another decaf
@@ -111,17 +176,12 @@
 # the tool to run it with. A real session instead wrote a tools.py wrapper, then
 # invented `default_api.shell_background_start` and `ctx.shell_background_start`
 # to implement it, neither of which exists.
-- name: "documents an existing tool instead of wrapping it in tools.py"
-  input: >
-    Create a workspace skill named exactly "blogdev" for my blog, which lives at
-    blog.lmorchard.com/ in my workspace. It needs to cover starting the blog's
-    dev server (npm start) as a background process so I can preview changes.
-  expect:
-    max_tool_calls: 14
-    max_tool_errors: 2
-  expect_workspace:
-    workspace_files:
-      # The body should point at the real tool by name.
-      "skills/blogdev/SKILL.md": "shell_background_start"
-    workspace_file_absent:
-      - "skills/blogdev/tools.py"
+
+# NOTE: a fifth case — "documents an existing tool instead of wrapping it in
+# tools.py" — was removed rather than shipped flaky. The prose-over-a-wrapper
+# preference measured 0/6 on gemini-flash before the phantom-call check existed
+# (including with skill-creator pre-activated), and 1/3 after it. The check
+# gives the agent a recovery path but only once it chooses to run
+# skill_validate, which is itself a coin flip. Tracked as an issue with the
+# measurements; the deterministic half of that behavior is covered by "fixes a
+# phantom ctx tool call" above, which seeds the defect instead of hoping for it.

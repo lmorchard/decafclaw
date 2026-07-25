@@ -2157,3 +2157,137 @@ def test_refresh_skills_does_not_call_everything_new_on_a_cold_catalog(ctx):
     text = _text(tool_refresh_skills(ctx))
     assert "New:" not in text
     assert "no change" not in text.lower()
+
+
+# -- phantom tool calls in tools.py --
+#
+# A skill tool cannot call another decaf tool. The model's prior that it can is
+# strong and recurring: three separate variants appeared in one session
+# (`default_api.shell_background_start`, `ctx.shell_background_start`,
+# `ctx.tools.shell_background_start`), and evals showed prose in skill-creator
+# does not suppress it (0/6 with the guidance loaded). These calls import
+# cleanly and only explode when the tool is invoked, so static detection is the
+# only thing that catches them before the user does. Same lesson as #675: the
+# validator has to enforce what documentation cannot.
+
+
+def _validate_tools_py(ctx, name, source):
+    # The check matches against the live tool catalog. At runtime
+    # skill_tool_owners is populated at startup (which is how
+    # shell_background_start — a bundled `background` skill tool — is known);
+    # a bare test ctx has none, so stand it in explicitly.
+    # test_phantom_check_sees_bundled_skill_tools covers the real wiring.
+    ctx.config.skill_tool_owners = {"shell_background_start": "background"}
+    _write_ws_skill(
+        ctx, name, f"name: {name}\ndescription: Phantom probe.", tools_py=source,
+    )
+    return tool_skill_validate(ctx, path=f"skills/{name}")
+
+
+def test_phantom_check_sees_bundled_skill_tools(config):
+    """Discovery must actually put shell_background_start in the catalog the
+    check consults — otherwise the check silently passes everything."""
+    from decafclaw.tools.skill_tools import _known_tool_names, rediscover_skills
+    rediscover_skills(config)
+    names = _known_tool_names(config)
+    assert "shell_background_start" in names, "the most-wrapped tool must be known"
+    assert "workspace_write" in names, "core tools must be known"
+
+
+def _phantom_check(result):
+    return next(
+        (c for c in result.data["checks"] if c["name"] == "no_phantom_tool_calls"),
+        None,
+    )
+
+
+def test_skill_validate_rejects_default_api(ctx):
+    result = _validate_tools_py(ctx, "pdefault", (
+        "def go(ctx):\n"
+        "    return default_api.shell_background_start(command='npm start')\n"
+        "TOOLS = {'go': go}\nTOOL_DEFINITIONS = []\n"
+    ))
+    assert result.data["ok"] is False
+    assert "default_api" in _phantom_check(result)["message"]
+
+
+def test_skill_validate_rejects_ctx_tool_call(ctx):
+    result = _validate_tools_py(ctx, "pctx", (
+        "def go(ctx):\n"
+        "    return ctx.shell_background_start(command='npm start')\n"
+        "TOOLS = {'go': go}\nTOOL_DEFINITIONS = []\n"
+    ))
+    assert result.data["ok"] is False
+    assert "shell_background_start" in _phantom_check(result)["message"]
+
+
+def test_skill_validate_rejects_ctx_tools_namespace_call(ctx):
+    """The variant the eval actually produced."""
+    result = _validate_tools_py(ctx, "pctxtools", (
+        "def go(ctx):\n"
+        "    return ctx.tools.shell_background_start(command='npm start')\n"
+        "TOOLS = {'go': go}\nTOOL_DEFINITIONS = []\n"
+    ))
+    assert result.data["ok"] is False
+    assert "shell_background_start" in _phantom_check(result)["message"]
+
+
+def test_skill_validate_allows_legitimate_ctx_use(ctx):
+    """ctx.publish / ctx.config are real. Only decaf *tool* names are phantom."""
+    result = _validate_tools_py(ctx, "goodctx", (
+        "def go(ctx):\n"
+        "    ctx.publish('tool_status', {'text': 'hi'})\n"
+        "    return str(ctx.config.workspace_path)\n"
+        "TOOLS = {'go': go}\nTOOL_DEFINITIONS = []\n"
+    ))
+    assert result.data["ok"] is True
+    assert _phantom_check(result)["passed"] is True
+
+
+def test_skill_validate_allows_subprocess(ctx):
+    """The documented way to run a command from inside a tool."""
+    result = _validate_tools_py(ctx, "subproc", (
+        "import subprocess\n"
+        "def go(ctx):\n"
+        "    return subprocess.run(['npm', 'start'], capture_output=True).stdout\n"
+        "TOOLS = {'go': go}\nTOOL_DEFINITIONS = []\n"
+    ))
+    assert result.data["ok"] is True
+
+
+def test_skill_validate_phantom_check_survives_syntax_error(ctx):
+    """A SyntaxError is tools_import's job; the phantom check must not crash."""
+    result = _validate_tools_py(ctx, "psyntax", "def go(ctx\n    pass\n")
+    assert result.data["ok"] is False
+    imp = next(c for c in result.data["checks"] if c["name"] == "tools_import")
+    assert imp["passed"] is False
+
+
+@pytest.mark.asyncio
+async def test_reactivate_does_not_duplicate_mismatched_definition_names(ctx, tmp_path):
+    """A TOOLS key and its TOOL_DEFINITIONS function.name need not match.
+
+    Retracting by TOOLS keys while filtering definitions by function.name
+    leaves the old definition behind, and the reload appends a second copy.
+    Providers reject duplicate function declarations outright — Vertex answers
+    `400 Duplicate function declaration found: <name>` at the provider call,
+    before any tool runs, so the conversation just breaks (#684).
+    """
+    skill_dir = tmp_path / "mismatch"
+    src = (
+        "def fn(ctx):\n    return 'x'\n\n"
+        "TOOLS = {'internal_key': fn}\n"
+        "TOOL_DEFINITIONS = [{'type': 'function', "
+        "'function': {'name': 'weather_fetch'}}]\n"
+    )
+    skill = _native_skill(skill_dir, name="mismatch", tools_py=src)
+    ctx.config.discovered_skills = [skill]
+    _save_permission(ctx.config, "mismatch", "always")
+
+    await tool_activate_skill(ctx, name="mismatch")
+    await tool_activate_skill(ctx, name="mismatch")  # reload, same source
+
+    names = [
+        td.get("function", {}).get("name") for td in ctx.tools.extra_definitions
+    ]
+    assert names.count("weather_fetch") == 1, f"duplicate declaration: {names}"

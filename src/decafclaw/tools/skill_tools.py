@@ -1,5 +1,6 @@
 """Skill activation tool — lazy-loads skills with permission checking."""
 
+import ast
 import asyncio
 import importlib.util
 import inspect
@@ -111,6 +112,61 @@ def _import_tools_module(module_name: str, tools_path: Path):
     return module
 
 
+def _attr_root(node: ast.expr) -> str | None:
+    """Name at the root of an attribute chain: `ctx.tools.foo` -> "ctx"."""
+    while isinstance(node, ast.Attribute):
+        node = node.value
+    return node.id if isinstance(node, ast.Name) else None
+
+
+def _phantom_tool_calls(source: str, tool_names: set[str]) -> list[str]:
+    """Find calls to decaf tools from inside a skill's tools.py.
+
+    A skill tool is a plain Python function with no channel back into the tool
+    layer, so `default_api.shell_background_start(...)`,
+    `ctx.shell_background_start(...)` and `ctx.tools.shell_background_start(...)`
+    are all impossible. They are also *popular*: all three variants appeared in
+    a single session, and evals confirmed that documenting the constraint in
+    skill-creator does not suppress it (0/6 with the guidance loaded).
+
+    They cannot be caught at import — the call sits in a function body, so the
+    module imports cleanly and the skill activates. It fails only when the user
+    invokes the tool. Detecting it statically is the difference between a
+    validator that says PASS on a broken skill and one that names the problem,
+    which is the same lesson as the #675 export-shape contract.
+
+    Deliberately narrow to stay free of false positives: only a `default_api`
+    reference, or a call whose attribute chain roots at `ctx` AND whose final
+    attribute is a real decaf tool name. `ctx.publish(...)` and
+    `ctx.config.workspace_path` are untouched.
+    """
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return []  # tools_import reports this; don't double-report
+
+    problems: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and node.id == "default_api":
+            problems.append(
+                "references `default_api`, which does not exist in decafclaw — "
+                "there is no way to call a decaf tool from inside a skill tool"
+            )
+        elif (isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr in tool_names
+                and _attr_root(node.func) == "ctx"):
+            problems.append(
+                f"calls the decaf tool `{node.func.attr}` via `ctx` — `ctx` is "
+                f"the runtime context, not a tool namespace. A skill tool "
+                f"cannot call another tool: use a library directly (e.g. "
+                f"`subprocess` / `pathlib`), or drop tools.py and document "
+                f"`{node.func.attr}` in SKILL.md so the agent calls it"
+            )
+    # Same wrong call in five places is one problem, not five.
+    return list(dict.fromkeys(problems))
+
+
 def _permissions_path(config) -> Path:
     """Path to the skill permissions file (outside workspace, read-only to agent)."""
     return config.agent_path / "skill_permissions.json"
@@ -154,7 +210,16 @@ def _rejection_display_path(config, path: Path) -> str:
     return str(Path(*path.parts[-2:])) if len(path.parts) >= 2 else str(path)
 
 
-def _lint_tools_py(skill_dir: Path) -> list[CheckResult]:
+def _known_tool_names(config) -> set[str]:
+    """Every decaf tool name a skill might wrongly try to call.
+
+    Core tools plus every discovered skill's tools (which is where
+    `shell_background_start` — the most-wrapped tool — actually lives).
+    """
+    return _core_tool_names() | set(config.skill_tool_owners)
+
+
+def _lint_tools_py(skill_dir: Path, tool_names: set[str]) -> list[CheckResult]:
     """tools.py-specific checks for skill_validate.
 
     Returns [] for a text-only skill (no tools.py and no stray entrypoint).
@@ -175,6 +240,27 @@ def _lint_tools_py(skill_dir: Path) -> list[CheckResult]:
         return checks
 
     checks.append(CheckResult("tools_filename", True, "tools.py present"))
+
+    # Source-level check, before the import: these calls import cleanly and
+    # only fail when the tool is invoked, so nothing downstream will catch them.
+    try:
+        source = tools_py.read_text()
+    except OSError as exc:
+        source = ""
+        checks.append(CheckResult(
+            "tools_readable", False, f"cannot read tools.py: {exc}",
+        ))
+    if source:
+        phantom = _phantom_tool_calls(source, tool_names)
+        if phantom:
+            checks.append(CheckResult(
+                "no_phantom_tool_calls", False, "; ".join(phantom),
+            ))
+        else:
+            checks.append(CheckResult(
+                "no_phantom_tool_calls", True,
+                "no attempts to call decaf tools from inside a tool",
+            ))
 
     try:
         # Same source-compiled import the loader uses — a validator that
@@ -563,7 +649,15 @@ async def activate_skill_internal(ctx, skill_info, reloading: bool = False) -> s
 
             ctx.tools.extra.update(tools)
             ctx.tools.extra_definitions.extend(tool_defs)
-            ctx.tools.skill_tool_names[name] = set(tools.keys())
+            # Record BOTH the TOOLS keys and the declared function names. They
+            # need not match, and retracting by keys alone leaves an orphaned
+            # declaration that the next reload duplicates — which providers
+            # reject outright (Vertex: `400 Duplicate function declaration
+            # found`) at the provider call, before any tool runs (#684).
+            declared = {
+                td.get("function", {}).get("name") for td in tool_defs
+            } - {None, ""}
+            ctx.tools.skill_tool_names[name] = set(tools.keys()) | declared
 
             # Register dynamic tool provider if the skill exports get_tools()
             get_tools_fn = getattr(module, "get_tools", None)
@@ -700,7 +794,7 @@ def tool_skill_validate(ctx, path: str) -> ToolResult:
     validation = validate_skill_md(skill_md)
     checks.extend(validation.checks)
     # tools.py checks run regardless of frontmatter validity (filesystem-based).
-    checks.extend(_lint_tools_py(skill_dir))
+    checks.extend(_lint_tools_py(skill_dir, _known_tool_names(ctx.config)))
 
     return _render_validation(
         path, checks, _name_advisories(validation.meta, skill_dir)

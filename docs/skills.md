@@ -464,10 +464,11 @@ surfaces at three independent points instead of none.
 
 `skill_validate` also reports **advisories**: things that load correctly but may
 surprise you later. They appear under `Advisories (will load, but worth a look):`
-and never change the PASS/FAIL verdict, because `ok` means exactly *"the loader
-will accept this"*. Reporting FAIL on a skill that loads fine is the
-validator-contradicts-loader trap in reverse, and it teaches the author to
-ignore the validator.
+and never change the PASS/FAIL verdict. `ok` means *"this skill will load and
+its tools can actually run"* — so a defect that guarantees a runtime failure is
+a check, while a stylistic difference is an advisory. Reporting FAIL on a skill
+that works fine is the validator-contradicts-loader trap in reverse, and it
+teaches the author to ignore the validator.
 
 Currently advisory:
 
