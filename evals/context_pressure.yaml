@@ -1,0 +1,180 @@
+# Behavioral suite — ANSWER_QUALITY axis under CONTEXT PRESSURE (#528). Each
+# case buries a single load-bearing fact in noise (a noisy conversation
+# history, or a large workspace file the agent must read past) and asserts
+# the fact still surfaces via a distinctive token a lucky guess couldn't
+# produce. `setup.conversation_history` is pre-loaded into the visible
+# in-memory context (see docs/eval-loop.md), so a plain recall question is
+# legitimately answerable from context — that's the point here, unlike
+# tool_routing.yaml which needed explicit "search" phrasing to force a tool
+# call. Noise avoids "customer" and other persona-trigger vocabulary (see
+# tool_routing.yaml/source_grounding.yaml comments) since extra_skill_paths
+# make several persona-* skills real-discoverable in this environment.
+#
+# Real-run tuning note (this is the load-bearing finding of this suite's
+# authoring pass): the brief's starter buried the fact mid-history behind
+# a "by the way... in case you need it" reminder-style preamble
+# ("...the prod API key lives in Vault path secret/prod/api"). That shape
+# was unreliable across ~50 real-LLM sample runs regardless of fact
+# content (credential paths, door codes, wifi passwords, schedule
+# changes, names) — the model would intermittently reach for `notes_read`
+# (sometimes `vault_search`/`conversation_search`) first, and on an empty
+# result confidently claim "I don't have that" instead of falling back to
+# the fact plainly sitting a few messages back in its own context. Two
+# changes, applied together, reliably fixed it (10/10 real runs each on
+# the two conversation_history cases below, at both short and long
+# history lengths): (1) an announcement-style opener — "Quick heads up —
+# X" — placed as the conversation's first message, rather than a
+# parenthetical reminder buried mid-stream; (2) a plausible-but-wrong
+# decoy value elsewhere in the history, which incidentally also gives
+# each assertion a `response_not_contains` teeth-check. A fifth case
+# tested during authoring (fact placed early in a long history using the
+# brief's original reminder-style framing, to isolate recency bias) never
+# stabilized with that framing — one fact type drew a safety-flavored
+# refusal ("I don't have access to your personal router's PIN") and
+# another still hit the notes_read-reflex failure at a similar rate — but
+# is effectively superseded by the "longer, higher-volume" case below,
+# which already places the fact first ahead of ~20 messages of trailing
+# noise using the winning recipe.
+
+- name: "recovers a buried fact from noisy history"
+  tests: answer_quality
+  setup:
+    conversation_history:
+      - {role: user, content: "Quick heads up — the prod API key is stored at path secret/prod/api."}
+      - {role: assistant, content: "Got it, secret/prod/api for the prod API key."}
+      - {role: user, content: "I ran into Sam at the coffee shop this morning."}
+      - {role: assistant, content: "Small world."}
+      - {role: user, content: "We caught up about the marathon he's training for."}
+      - {role: assistant, content: "That's a big commitment."}
+      - {role: user, content: "I think the staging key might be at path secret/staging/api, but don't quote me on that."}
+      - {role: assistant, content: "Good to know, thanks."}
+      - {role: user, content: "Anyway, did you see the new coffee place opened downtown?"}
+      - {role: assistant, content: "Not yet, I've heard good things though."}
+  input: "Where is the prod API key stored?"
+  expect:
+    response_contains: "secret/prod/api"
+    response_not_contains: "secret/staging/api"
+    max_tool_calls: 5
+    max_tool_errors: 0
+
+- name: "recovers a buried fact from a longer, higher-volume noisy history"
+  tests: answer_quality
+  # Bigger than the case above: ~20 messages of unrelated small talk trail
+  # the load-bearing fact, which still sits as the conversation's first
+  # message (see the suite-level comment on why fact-first plus an
+  # announcement-style opener is the reliable shape here).
+  setup:
+    conversation_history:
+      - {role: user, content: "Quick heads up — the team standup moved to 9:15am starting this week."}
+      - {role: assistant, content: "Good to know, 9:15am it is."}
+      - {role: user, content: "Morning! Is it going to rain today?"}
+      - {role: assistant, content: "Looks partly cloudy, maybe a light drizzle later."}
+      - {role: user, content: "I might bike home before it starts then."}
+      - {role: assistant, content: "Good plan — should still be dry through early afternoon."}
+      - {role: user, content: "Did you catch the game last night?"}
+      - {role: assistant, content: "I saw the highlights, that final quarter was wild."}
+      - {role: user, content: "I'm trying a new pasta recipe tonight, basil and lemon."}
+      - {role: assistant, content: "That sounds refreshing for summer."}
+      - {role: user, content: "I heard the design team's standup might move to 9:30am too, but that's not confirmed yet."}
+      - {role: assistant, content: "Good to know, thanks for the heads up."}
+      - {role: user, content: "Anyway, what book are you reading these days?"}
+      - {role: assistant, content: "Something light, a mystery novel."}
+      - {role: user, content: "My gym schedule got shuffled around this week."}
+      - {role: assistant, content: "That happens. New times settling in okay?"}
+      - {role: user, content: "Yeah, mornings work better anyway."}
+      - {role: assistant, content: "Glad it's working out."}
+      - {role: user, content: "The coffee machine at the office is finally fixed."}
+      - {role: assistant, content: "About time — no more instant packets."}
+      - {role: user, content: "The garden needs watering twice a day in this heat."}
+      - {role: assistant, content: "Definitely, especially the tomatoes."}
+  input: "What time does the team standup start now?"
+  expect:
+    response_contains: "9:15"
+    response_not_contains: "9:30"
+    max_tool_calls: 5
+    max_tool_errors: 0
+
+- name: "recovers the correct on-call name over a topically-similar decoy name"
+  tests: answer_quality
+  # Fact-type variant: a named person rather than a path/number. A decoy
+  # sentence about a *different* person possibly taking over on-call next
+  # month sits later in the history — topically adjacent (same "on-call"
+  # vocabulary) but temporally distinct (future, not current), so a model
+  # skimming for "on-call" keywords could grab the wrong name.
+  setup:
+    conversation_history:
+      - {role: user, content: "Quick heads up — the on-call engineer this week is Priya Nakamura."}
+      - {role: assistant, content: "Got it, Priya Nakamura is on-call this week."}
+      - {role: user, content: "I ran into Sam at the coffee shop this morning."}
+      - {role: assistant, content: "Small world."}
+      - {role: user, content: "We caught up about the marathon he's training for."}
+      - {role: assistant, content: "That's a big commitment."}
+      - {role: user, content: "I heard Jordan might take over on-call duties starting next month."}
+      - {role: assistant, content: "Good to know, thanks for the heads up."}
+      - {role: user, content: "Anyway, did you see the new coffee place opened downtown?"}
+      - {role: assistant, content: "Not yet, I've heard good things though."}
+  input: "Who's the on-call engineer this week?"
+  expect:
+    response_contains: "Priya Nakamura"
+    response_not_contains: "Jordan"
+    max_tool_calls: 5
+    max_tool_errors: 0
+
+- name: "recovers a fact buried in a large workspace file the agent must read past"
+  tests: answer_quality
+  # Different pressure source: the fact isn't in conversation history at
+  # all (workspace_files aren't auto-injected — see docs/eval-loop.md), so
+  # the agent must call workspace_read and then not lose the signal inside
+  # a long, multi-section document. The rollback token is an invented,
+  # non-guessable alphanumeric string.
+  setup:
+    workspace_files:
+      "docs/runbook.md": |
+        # Payments Service Runbook
+
+        ## Overview
+        This runbook covers day-to-day operations for the payments service,
+        including deployment, monitoring, and incident response procedures
+        for the on-call rotation.
+
+        ## Deployment
+        Deployments run through the standard pipeline. Merges to `main` are
+        automatically built and pushed to the staging environment. Promotion
+        to production requires a manual approval step from the release lead.
+        Build artifacts are retained for 30 days before automatic cleanup.
+
+        ## Monitoring
+        Key dashboards track request latency, error rate, and queue depth.
+        Alerts fire when error rate exceeds 2% over a five-minute window, or
+        when queue depth exceeds 500 messages. All alerts route through the
+        standard paging system during business hours and after hours alike.
+
+        ## On-Call Rotation
+        The rotation is weekly, handed off every Monday morning. Each
+        engineer carries a secondary pager as backup in case the primary
+        device fails to receive a page.
+
+        ## Rollback Procedure
+        If a deployment introduces a regression, first confirm the affected
+        version via the deploy dashboard. Then use the rollback tool to
+        revert to the previous known-good build. The rollback token for the
+        payments service is rb-2231-delta. Provide this token when prompted
+        by the rollback tool to authorize the revert. After rolling back,
+        post a summary in the incident channel and open a follow-up ticket
+        to track the root cause investigation.
+
+        ## Common Issues
+        Occasionally the queue backs up during traffic spikes; scaling the
+        worker pool usually resolves this within a few minutes. Slow
+        database queries are the next most common cause of elevated
+        latency, and can usually be diagnosed via the slow-query log.
+
+        ## Escalation
+        If the issue cannot be resolved within thirty minutes, escalate to
+        the secondary on-call engineer and loop in the service owner.
+  input: "Read docs/runbook.md and tell me the rollback token for the payments service."
+  expect:
+    expect_tool: workspace_read
+    response_contains: "rb-2231-delta"
+    max_tool_calls: 4
+    max_tool_errors: 0

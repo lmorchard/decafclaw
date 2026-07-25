@@ -12,11 +12,13 @@ from ..agent import run_agent_turn
 from ..commands import dispatch_command
 from ..config import Config
 from ..context import Context
+from ..context_composer import read_context_sidecar
 from ..conversation_manager import ConversationManager
 from ..events import EventBus
 from ..prompts import load_system_prompt
 from ..skills import build_skill_tool_owners
 from ..skills import discover_skills as _discover_skills_fn
+from .diagnostics import aggregate_by_axis, build_turn_diagnostics, validate_axes
 
 log = logging.getLogger(__name__)
 
@@ -819,12 +821,18 @@ async def run_test(config: Config, test_case: dict) -> dict:
 
         # Per-turn counts (delta from pre-turn snapshot)
         tool_calls = _count_tool_calls(history) - pre_turn_tool_calls
+        turn_slice = history[pre_turn_history_len:]
+        sidecar = read_context_sidecar(config, ctx.conv_id)
+        diagnostics = build_turn_diagnostics(
+            sidecar, _collect_tool_calls(turn_slice), response,
+        )
         all_responses.append({
             "turn": turn_idx + 1,
             "input": turn["input"],
             "response": response,
             "duration_sec": round(duration, 1),
             "tool_calls": tool_calls,
+            "diagnostics": diagnostics,
         })
 
         # Check assertions for this turn
@@ -875,6 +883,10 @@ async def run_test(config: Config, test_case: dict) -> dict:
         "response": final_response,
         "failure_reason": failure_reason,
     }
+    if all_responses:
+        # help/fork command-dispatch turns (~line 759) don't build a
+        # diagnostics block — .get() degrades to None rather than KeyError.
+        result["diagnostics"] = all_responses[-1].get("diagnostics")
 
     # Include turn details for multi-turn tests
     if len(turns) > 1:
@@ -896,6 +908,8 @@ async def run_eval(yaml_data: list[dict], config: Config,
     Tests run concurrently (up to `concurrency` at a time) but results
     are printed in test order after all complete.
     """
+    validate_axes(yaml_data)
+
     import asyncio
     import tempfile
 
@@ -964,6 +978,21 @@ async def run_eval(yaml_data: list[dict], config: Config,
 
         if verbose and result.get("response"):
             print(f"         Response: {result['response'][:200]}")
+            diag = result.get("diagnostics")
+            if diag:
+                tbs = diag.get("tokens_by_section") or {}
+                tok = "  ".join(f"{k}={v}" for k, v in tbs.items())
+                print(f"         Tokens: {tok}"
+                      f"  (active={diag.get('active_tools')}, "
+                      f"deferred={diag.get('deferred_tools')})")
+                cands = diag.get("retrieved_candidates") or []
+                top = ", ".join(f"{c['file_path']}:{c.get('composite_score')}"
+                                for c in cands[:3])
+                if top:
+                    print(f"         Candidates: {top}")
+                print(f"         Read: {diag.get('files_read')}  "
+                      f"Cited: {diag.get('files_cited')}  "
+                      f"Tools: {diag.get('tool_calls', {}).get('names')}")
 
         if result["status"] == "fail":
             print(f"         {result.get('failure_reason', '')}")
@@ -975,5 +1004,17 @@ async def run_eval(yaml_data: list[dict], config: Config,
         results["summary"]["duration_sec"] += dur
         results["summary"]["total_tokens"] += tokens
 
+    # Per-axis failure-mode scorecard (#528). Cases align with results by index.
+    results["summary"]["by_axis"] = aggregate_by_axis(results["tests"], yaml_data)
+
     results["summary"]["duration_sec"] = round(results["summary"]["duration_sec"], 1)
+
+    by_axis = results["summary"]["by_axis"]
+    if by_axis:
+        print("\nBy axis (failure-mode scorecard):")
+        for axis in sorted(by_axis):
+            b = by_axis[axis]
+            print(f"  {axis:<22} {b['passed']}/{b['total']}  "
+                  f"({b['pass_rate'] * 100:.0f}%)")
+
     return results, timestamp, effective_model

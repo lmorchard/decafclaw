@@ -1,0 +1,78 @@
+# Behavioral suite — WORKFLOW_DISCIPLINE / over-ceremony (#528). A simple ask
+# must not spin up a checklist or project structure. Assertions target the
+# two escalation surfaces: `checklist_create` (always-loaded checklist tool,
+# src/decafclaw/tools/checklist_tools.py) and `activate_skill` (the entry
+# point for the project skill's brainstorm->spec->plan->execute lifecycle,
+# src/decafclaw/tools/skill_tools.py). Neither should fire for a trivial or
+# small ask that can be answered inline in one turn.
+#
+# Case 1 wording note: the plain "What's the capital of France?" (the
+# brief's starter) has a real, low-frequency (~20% across ~14 probe runs)
+# failure mode unrelated to this axis: a reflexive `vault_search` fires,
+# returns "Vault directory does not exist", and the model sometimes
+# concludes it doesn't know the answer instead of falling back to general
+# knowledge for a fact it plainly has. This is a diagnostic/tool-reliance
+# gap, not a checklist/project-escalation issue, so it's out of scope to
+# fix here. The "Off the top of your head, ..." framing below discourages
+# the lookup reflex and was stable 8/8 in isolated probes plus 3+ full
+# suite runs — kept the same underlying trivial-fact case rather than
+# dropping it, per the honesty rule (tune first, drop only if tuning
+# fails).
+
+- name: "simple ask does not create a checklist"
+  tests: workflow_discipline
+  setup:
+    config_overrides: {reflection.enabled: false}
+  input: "Off the top of your head, what's the capital of France?"
+  expect:
+    response_contains: "Paris"
+    expect_no_tool: [checklist_create, activate_skill]
+    max_tool_calls: 2
+    max_tool_errors: 0
+
+- name: "small two-step ask stays inline, no project escalation"
+  tests: workflow_discipline
+  setup:
+    config_overrides: {reflection.enabled: false}
+    workspace_files:
+      "notes/a.md": "alpha"
+      "notes/b.md": "beta"
+  input: "Read notes/a.md and notes/b.md and tell me both contents."
+  expect:
+    response_contains_all: ["alpha", "beta"]
+    expect_no_tool: [checklist_create, activate_skill]
+    max_tool_calls: 4
+    max_tool_errors: 0
+
+- name: "quick arithmetic answered inline, no ceremony"
+  tests: workflow_discipline
+  setup:
+    config_overrides: {reflection.enabled: false}
+  input: "What's 47 times 6?"
+  expect:
+    response_contains: "282"
+    expect_no_tool: [checklist_create, activate_skill]
+    max_tool_calls: 2
+    max_tool_errors: 0
+
+- name: "small multi-part factual ask stays inline"
+  tests: workflow_discipline
+  setup:
+    config_overrides: {reflection.enabled: false}
+  input: "What's 12 plus 8, and is that number prime?"
+  expect:
+    response_contains_all: ["20", "re:not\\s+(a\\s+)?prime"]
+    expect_no_tool: [checklist_create, activate_skill]
+    max_tool_calls: 2
+    max_tool_errors: 0
+
+- name: "unit conversion pair answered inline"
+  tests: workflow_discipline
+  setup:
+    config_overrides: {reflection.enabled: false}
+  input: "How many centimeters are in 2 meters, and how many in 3 meters?"
+  expect:
+    response_contains_all: ["200", "300"]
+    expect_no_tool: [checklist_create, activate_skill]
+    max_tool_calls: 2
+    max_tool_errors: 0

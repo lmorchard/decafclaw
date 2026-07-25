@@ -1,0 +1,169 @@
+# Behavioral suite — RETRIEVAL axis (#528). Each case pressures the vault
+# retrieval path with adversarial seeding: a similar-but-wrong distractor page
+# next to the right one, filenames sharing a stem, a page reachable only via
+# vault_search (not auto-injected), and a question with no matching page at
+# all (the agent must admit absence rather than answer from a distractor).
+
+- name: "retrieves the right page past a similar-but-wrong distractor"
+  tests: retrieval
+  setup:
+    workspace_files:
+      "vault/agent/pages/staging-deploy.md": |
+        # Staging Deploy
+        Staging deploys run automatically on every merge to `develop`.
+      "vault/agent/pages/production-deploy.md": |
+        # Production Deploy
+        Production deploys are manual: run `./scripts/deploy.sh prod` after a
+        release tag is cut. Requires the on-call lead's approval.
+  input: "How do we deploy to production?"
+  expect:
+    response_contains_all: ["deploy.sh", "approval"]
+    response_contains: "manual"
+    max_tool_calls: 4
+    max_tool_errors: 0
+
+- name: "admits absence when no vault page covers the question"
+  tests: retrieval
+  setup:
+    config_overrides: {reflection.enabled: false}
+    workspace_files:
+      "vault/agent/pages/staging-deploy.md": |
+        # Staging Deploy
+        Staging deploys run automatically on every merge to `develop`.
+  # Deliberately avoids the word "customer" — in this environment it real-
+  # discovers an unrelated `persona-customer-support` skill (a personal
+  # skill outside this repo's fixtures, reachable via the resolved config's
+  # `extra_skill_paths`), which derails the model into an irrelevant
+  # `activate_skill` detour and destabilized this case's final phrasing in
+  # real runs. "personal data" tests the same absence-of-a-matching-page
+  # behavior without tripping that unrelated skill.
+  input: "What's our data-retention policy for personal data we store?"
+  expect:
+    # Must NOT fabricate a policy; hedge/deny instead. A LIST on
+    # `response_contains` is ANY-match (see runner.py:364) — there is no
+    # separate `response_contains_any` assertion.
+    response_contains: ["don't have", "not find", "unable to find", "haven't found", "nothing", "couldn't find", "no information", "no relevant"]
+    # A thorough model tries several rephrasings (up to 5 observed in real
+    # runs) before giving up and admitting absence — that persistence is
+    # legitimate, not thrash, so the bound allows for it while still
+    # capping runaway search loops.
+    max_tool_calls: 6
+    max_tool_errors: 0
+
+- name: "picks correct page among distractor filenames sharing a stem"
+  tests: retrieval
+  # `vault_search`'s optional `tags` filter is exact-string AND-logic
+  # (tags.py:normalize_tag doesn't merge space/hyphen variants) and applies
+  # to substring search too, not just semantic. The model sometimes
+  # self-attaches a `tags` array lifted straight from the input wording
+  # (e.g. tags=["onboarding", "new hire", "laptop", "checklist"]); with no
+  # frontmatter tags on any page, that AND-filter zeroes an otherwise-exact
+  # substring hit on ALL three pages, and the agent reports "not found"
+  # instead of answering — observed flaky in real runs. Frontmatter tags
+  # covering the query's own vocabulary (including the space-vs-hyphen
+  # "new hire" variant) act as a safety net so a tags-qualified search
+  # still returns results. Critically, the SAME tags are on all three
+  # pages (not just the correct one) — otherwise a tags-qualified search
+  # would filter straight down to the one right answer and bypass the
+  # three-way body disambiguation this case exists to test. With shared
+  # tags, a tags-qualified search still returns all three candidates (or
+  # none), forcing the model to read bodies and pick the current one on
+  # every code path.
+  setup:
+    workspace_files:
+      "vault/agent/pages/onboarding-checklist.md": |
+        ---
+        tags: [onboarding, checklist, "new hire", new-hire, laptop, setup]
+        ---
+        # Onboarding Checklist
+        New-hire laptop setup: enroll in MDM, install the VPN client, and
+        request access to the shared drive.
+      "vault/agent/pages/onboarding-checklist-draft.md": |
+        ---
+        tags: [onboarding, checklist, "new hire", new-hire, laptop, setup]
+        ---
+        # Onboarding Checklist (Draft — DO NOT USE)
+        This is an old draft. New-hire laptop setup used to require a manual
+        disk encryption step that has since been automated away.
+      "vault/agent/pages/onboarding-checklist-archive-2023.md": |
+        ---
+        tags: [onboarding, checklist, "new hire", new-hire, laptop, setup]
+        ---
+        # Onboarding Checklist (2023 Archive — superseded)
+        Historical: new hires used to get a physical security key mailed to
+        their home address before day one.
+  input: "What's the current onboarding checklist for a new hire's laptop setup?"
+  expect:
+    response_contains_all: ["MDM", "VPN"]
+    max_tool_calls: 4
+    max_tool_errors: 0
+
+- name: "surfaces a page reachable only by semantic match, not keyword overlap"
+  tests: retrieval
+  # Two turns, mirroring evals/retrieval-quality.yaml's proven pattern. A
+  # single-turn version (ask the semantically-related question directly,
+  # forcing embedding.search_strategy: semantic for vault_search) was tried
+  # and dropped: the model sometimes attaches a `tags` filter of its own
+  # invention to the vault_search call (e.g. tags=["incident response",
+  # "SRE"]); tag matching is exact-string AND-logic (tags.py:normalize_tag
+  # doesn't merge space/hyphen variants), so an invented tag with no match
+  # on the page silently zeroes out an otherwise-good semantic hit and the
+  # tool falls back to substring (which never matches this page's wording).
+  # That made the single-turn form flaky against the real model. This
+  # two-turn form sidesteps it entirely: turn 1's explicit search indexes
+  # the page for real (semantic search lazily reindexes on first use), then
+  # turn 2 asks the differently-worded question with NO tool call, relying
+  # on proactive memory-context auto-injection (memory_context.py), which
+  # scores by embedding similarity only — no tag filter in that path.
+  setup:
+    config_overrides:
+      reflection.enabled: false
+      embedding.search_strategy: semantic
+    workspace_files:
+      "vault/agent/pages/incident-comms.md": |
+        # Incident Communications
+        When a customer-facing outage happens, post an update to the status
+        page within 15 minutes and notify the support team lead directly.
+  turns:
+    - input: "Search the vault for anything about incident communications."
+      expect:
+        expect_tool: vault_search
+        max_tool_calls: 3
+        max_tool_errors: 0
+    - input: "If our service goes down for customers, what's the first thing we should do?"
+      expect:
+        response_contains_all: ["status page"]
+        response_contains: "re:15\\s*min"
+        expect_no_tool: [vault_search, vault_read, vault_recent]
+        max_tool_calls: 0
+        max_tool_errors: 0
+
+- name: "prefers the specific matching page over a broader distractor covering the same topic"
+  tests: retrieval
+  setup:
+    workspace_files:
+      "vault/agent/pages/api-rate-limits.md": |
+        # API Rate Limits
+        The public API allows 100 requests per minute per API key. Exceeding
+        this returns a 429 status code.
+      "vault/agent/pages/api-overview.md": |
+        # API Overview
+        Our public API is REST-based, versioned via the `/v2/` path prefix,
+        and uses bearer-token authentication.
+  # Phrased as two explicit sub-questions (limit + consequence) so a
+  # complete, correct answer naturally requires BOTH "100" and "429" — a
+  # narrower "what happens if exceeded?" framing let the model answer with
+  # only the consequence (429) and legitimately omit the limit itself
+  # (100), which the response_contains_all assertion then flagged as
+  # missing. That was an over-strict-assertion/question-framing flake, not
+  # a retrieval failure: diagnostics showed vault_search found this exact
+  # page at relevance 0.96 with both numbers in its result text (#528/#531
+  # post-rebase behavioral run). "100"/"429" remain the right discriminator
+  # tokens — the broader distractor page (api-overview.md) contains
+  # neither, so both still prove the SPECIFIC page was read, not the
+  # distractor.
+  input: "What's our API rate limit, and what happens if a client exceeds it?"
+  expect:
+    response_contains_all: ["429", "100"]
+    max_tool_calls: 4
+    max_tool_errors: 0
