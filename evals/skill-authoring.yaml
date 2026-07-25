@@ -81,3 +81,47 @@
   expect_workspace:
     workspace_files:
       "skills/shapely/tools.py": "re:TOOLS\\s*=\\s*\\{"
+
+# Location. skill-creator's own workflow used to say "Create
+# workspace/skills/<name>/SKILL.md" while the very next step said
+# skill_validate('skills/<name>') — and workspace_write paths are already
+# workspace-relative, so following step 1 literally buried the skill at
+# workspace/workspace/skills/<name>/, where discovery never looks. A real
+# session lost its first half to that, then hit the loop breaker.
+#
+# The name is pinned in the prompt so the assertion can address exact paths.
+- name: "writes a new skill to skills/<name>, not workspace/skills/<name>"
+  input: >
+    Create a workspace skill named exactly "cityfacts" that answers questions
+    about a city. Set it up so it actually loads.
+  expect:
+    max_tool_calls: 14
+    max_tool_errors: 2
+  expect_workspace:
+    workspace_file_exists:
+      - "skills/cityfacts/SKILL.md"
+    workspace_file_absent:
+      # The redundant-prefix trap. Nothing scans this path.
+      - "workspace/skills/cityfacts/SKILL.md"
+
+# Don't wrap a tool that already exists. `shell_background_start` is
+# always-loaded (bundled `background` skill), so a skill tool that shells out
+# to run a dev server adds nothing — and a skill tool cannot call another decaf
+# tool anyway. The correct skill here is prose: SKILL.md naming the command and
+# the tool to run it with. A real session instead wrote a tools.py wrapper, then
+# invented `default_api.shell_background_start` and `ctx.shell_background_start`
+# to implement it, neither of which exists.
+- name: "documents an existing tool instead of wrapping it in tools.py"
+  input: >
+    Create a workspace skill named exactly "blogdev" for my blog, which lives at
+    blog.lmorchard.com/ in my workspace. It needs to cover starting the blog's
+    dev server (npm start) as a background process so I can preview changes.
+  expect:
+    max_tool_calls: 14
+    max_tool_errors: 2
+  expect_workspace:
+    workspace_files:
+      # The body should point at the real tool by name.
+      "skills/blogdev/SKILL.md": "shell_background_start"
+    workspace_file_absent:
+      - "skills/blogdev/tools.py"
