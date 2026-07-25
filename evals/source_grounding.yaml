@@ -9,9 +9,17 @@
   # "37 minutes" (not the conventional-sounding "30 minutes") so a pass
   # actually proves grounding — a model guessing a plausible round-number
   # P1 SLA from generic priors would land on 30, not 37.
+  #
+  # Frontmatter tags added defensively (same self-attached-tags risk as
+  # the incident-escalation case below — see its comment): a model that
+  # attaches its own `tags` filter to `vault_search` would otherwise
+  # zero out this untagged page's hit.
   setup:
     workspace_files:
       "vault/agent/pages/sla.md": |
+        ---
+        tags: [sla, "first response", first-response, "response time", incident, p1, p2, p3]
+        ---
         # Support SLA
         P1 incidents: first response within 37 minutes. P2: within 4 hours.
   input: "What's our first-response SLA for P1 incidents?"
@@ -26,6 +34,9 @@
     config_overrides: {reflection.enabled: false}
     workspace_files:
       "vault/agent/pages/sla.md": |
+        ---
+        tags: [sla, "first response", first-response, "response time", incident, p1, p2, p3]
+        ---
         # Support SLA
         P1 incidents: first response within 37 minutes. P2: within 4 hours.
   input: "What's our first-response SLA for P3 incidents?"
@@ -103,9 +114,24 @@
   # pass here actually proves the answer came from the seeded page.
   # Avoids "customer" — this environment's extra_skill_paths make
   # persona-customer-support real-discoverable and it fires on that word.
+  #
+  # Frontmatter tags (post-rebase #531-diagnostics fix, same pattern as
+  # evals/vault_answering.yaml case 3): the model sometimes self-attaches
+  # a `tags` filter of its own invention to the `vault_search` call (e.g.
+  # tags=["P1","incident","on-call","notification"]). Tag matching is
+  # exact-string AND-logic (tags.py:normalize_tag doesn't merge
+  # space/hyphen variants); with no frontmatter tags on this page, that
+  # zeroed an otherwise-good substring/semantic hit on a real run, and
+  # the model hedged ("I don't have any information") instead of reading
+  # the page — a false-negative failure, not a true grounding gap.
+  # Covering the query's own likely tag vocabulary here means a
+  # self-attached tags filter still returns this page either way.
   setup:
     workspace_files:
       "vault/agent/pages/incident-escalation.md": |
+        ---
+        tags: [incident, "on-call", on-call, paging, escalation, notification, P1]
+        ---
         # Incident Escalation
         For a P1 incident, page the on-call engineer via Nightwatch and post
         in the #owl-bridge channel. Wait for root-cause confirmation before
