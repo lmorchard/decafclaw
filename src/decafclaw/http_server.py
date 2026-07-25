@@ -2134,7 +2134,15 @@ async def schedules_get(request: Request, username: str) -> JSONResponse:
     task = tasks.get(name)
     if task is None:
         return JSONResponse({"error": "not found"}, status_code=404)
-    return JSONResponse({"schedule": _schedule_to_dict(config, task)})
+    sched = _schedule_to_dict(config, task)
+    # wiki-editor's conflict-banner reload reads body/modified at the top
+    # level and knows nothing of the `schedule` envelope — same alias
+    # schedules_update applies above for the same consumer.
+    return JSONResponse({
+        "schedule": sched,
+        "body": sched["body"],
+        "modified": sched["modified"],
+    })
 
 
 @_authenticated

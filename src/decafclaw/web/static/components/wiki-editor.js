@@ -5,7 +5,10 @@
  *   page (String) — page name for API path
  *   content (String) — initial markdown
  *   modified (Number) — file mtime for conflict detection
- *   saveEndpoint (String) — API prefix, default '/api/vault/'
+ *   saveEndpoint (String) — API prefix, default '/api/vault/'. Used by every
+ *     request the editor makes — save, force-save, and conflict reload. A host
+ *     that sets it must serve GET and PUT at `{saveEndpoint}{page}`; see
+ *     docs/web-ui.md for the shared request/response contract.
  *
  * Behavior:
  *   Dispatches a 'close' CustomEvent when the public close() method is called.
@@ -240,14 +243,13 @@ export class WikiEditor extends LitElement {
 
   async #reload() {
     try {
-      const res = await fetch(`/api/vault/${encodePagePath(this.page)}`);
+      const res = await fetch(
+        `${this.saveEndpoint}${encodePagePath(this.page)}`,
+      );
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
-      // The vault endpoint returns `body`; `content` is insurance only. Note
-      // this fetch is hardcoded to /api/vault regardless of `saveEndpoint`, so
-      // schedule-page / config-panel *do* reach this path — it's wired to their
-      // conflict banner — but they reach it against the wrong endpoint. The
-      // `content` fallback exists for whenever that hardcoding is fixed.
+      // Every host's GET returns the editable markdown at the top level: the
+      // vault and schedule endpoints as `body`, config files as `content`.
       // Assigned once so all four uses stay in sync.
       const newContent = data.body ?? data.content ?? '';
       this.content = newContent;

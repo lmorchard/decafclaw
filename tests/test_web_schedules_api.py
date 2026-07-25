@@ -229,6 +229,20 @@ class TestSchedulesAPI:
         assert r.status_code == 404
 
     @pytest.mark.asyncio
+    async def test_get_single_schedule_aliases_body_and_modified(self, client):
+        """wiki-editor's reload reads body/modified at the top level (#666).
+
+        It has no knowledge of this endpoint's `schedule` envelope, so the GET
+        must alias both the way the PUT already aliases `modified`.
+        """
+        r = await client.get("/api/schedules/dream")
+        assert r.status_code == 200
+        data = r.json()
+        assert data["body"] == data["schedule"]["body"]
+        assert data["modified"] == data["schedule"]["modified"]
+        assert isinstance(data["modified"], (int, float))
+
+    @pytest.mark.asyncio
     async def test_put_response_includes_modified(self, client):
         r = await client.put("/api/schedules/dream", json={"enabled": False})
         assert r.status_code == 200

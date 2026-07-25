@@ -271,7 +271,7 @@ Returns all discovered schedules with metadata.
 
 ### `GET /api/schedules/{name}`
 
-Returns a single schedule entry by name. Same shape as a list entry wrapped in `{"schedule": ...}`.
+Returns a single schedule entry by name. Same shape as a list entry wrapped in `{"schedule": ...}`, plus top-level `body` and `modified` mirroring `schedule.body` / `schedule.modified` — the same wiki-editor contract the `PUT` response satisfies (see [web-ui.md](web-ui.md#the-wiki-editor-host-contract)). The editor's conflict-banner Reload fetches this endpoint and has no knowledge of the `schedule` envelope.
 
 **Error codes:**
 - `404` — name not found
