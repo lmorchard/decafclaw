@@ -235,6 +235,18 @@ make config       # Show resolved config
 - Move to **In progress** on start, **In review** on PR, **Done** on merge (or let `Closes #N` auto-close).
 - File new issues onto the board with priority and size.
 
+Machine-readable declaration, for tools that automate the transitions above. Column values are
+the board's exact option names — note the lowercase `progress`/`review`:
+
+- **Owner:** `lmorchard`
+- **Number:** `6`
+- **Status field:** `Status`
+- **Columns:**
+  - `ready: Ready`
+  - `in_progress: In progress`
+  - `in_review: In review`
+  - `done: Done`
+
 ## Dev sessions
 
 Session docs at `docs/dev-sessions/YYYY-MM-DD-HHMM-slug/` (`spec.md`, `plan.md`, `notes.md`).
