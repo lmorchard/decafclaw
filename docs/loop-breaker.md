@@ -39,6 +39,17 @@ sorted-JSON arguments) and asks the breaker for a verdict.
    `user`-role rather than `system` because models weight user-role directives
    more heavily for mid-turn corrections (matching `_run_grace_turn`). The
    turn continues normally into the next iteration.
+
+   The text opens by disclaiming authorship — *"Automated diagnostic from the
+   agent runtime — the user did not send this."* That isn't decoration. The
+   `user` role means the model reads the nudge as the human speaking: in the
+   session behind #675 it replied *"You're right. I was stuck in a loop"* to a
+   correction the user never made, then carried the fabricated exchange
+   forward as context. Confabulated agreement is its own failure mode — an
+   agent that believes it was just criticized over-corrects and abandons lines
+   of investigation that were fine, invisibly. The `[loop-breaker]` prefix
+   alone wasn't enough; it reads as a label on a human's message rather than
+   as the sender (#680).
 2. **Any subsequent trip → hard stop.** The turn ends immediately with a
    short summary of what was tried and the same diagnostic next step,
    delivered as the turn's final response — the same termination path used
