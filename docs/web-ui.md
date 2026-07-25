@@ -247,7 +247,7 @@ Lit web components in `src/decafclaw/web/static/`:
 | `chat-input` | `components/chat-input.js` | Message input with file upload |
 | `chat-message` | `components/chat-message.js` | Individual message rendering |
 | `conversation-sidebar` | `components/conversation-sidebar.js` | Conversation list, folders, vault browser, model picker |
-| `wiki-editor` | `components/wiki-editor.js` | WYSIWYG markdown page editor |
+| `wiki-editor` | `components/wiki-editor.js` | WYSIWYG markdown page editor (see [host contract](#the-wiki-editor-host-contract)) |
 | `wiki-page` | `components/wiki-page.js` | Page viewer/renderer |
 | `wiki-metadata` | `components/wiki-metadata.js` | Frontmatter strip/panel: view-mode summary + tags, edit-mode typed controls and raw YAML editor |
 | `context-inspector` | `components/context-inspector.js` | Context diagnostics popover |
@@ -259,6 +259,34 @@ Lit web components in `src/decafclaw/web/static/`:
 | `theme-toggle` | `components/theme-toggle.js` | Light/dark mode switch |
 
 Service layer: `AuthClient`, `WebSocketClient`, `ConversationStore`, `MessageStore`, `ToolStatusStore`, `CanvasState`.
+
+#### The wiki-editor host contract
+
+`<wiki-editor>` is shared by three hosts, each pointing it at a different API
+prefix via `save-endpoint`:
+
+| Host | `save-endpoint` |
+|------|-----------------|
+| `wiki-page` | `/api/vault/` (default) |
+| `schedule-page` | `/api/schedules/` |
+| `config-panel` | `/api/config/files/` |
+
+Every request the editor makes — autosave, force-save, and the conflict
+banner's **Reload** — goes to `{saveEndpoint}{page}`. A host that sets
+`save-endpoint` must therefore serve both verbs there, and both responses must
+put the editor's fields at the **top level**, since the component knows nothing
+about any per-endpoint envelope:
+
+- `GET` returns the editable markdown as `body` (`content` is accepted as a
+  fallback, which is how config files are served) and its mtime as `modified`.
+- `PUT` accepts `{content, modified}` and returns `modified`.
+
+`/api/schedules/{name}` wraps its payload in `{"schedule": ...}` for
+`schedule-page`, so it aliases `body` and `modified` to the top level for this
+contract. Before [#666](https://github.com/lmorchard/decafclaw/issues/666)
+Reload ignored `save-endpoint` entirely and always fetched `/api/vault/`,
+which 404'd on a schedule or config file — or loaded a same-named vault page's
+body into the wrong editor.
 
 ### Backend
 
