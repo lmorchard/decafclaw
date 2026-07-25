@@ -14,6 +14,72 @@ from .confirmation import request_confirmation
 log = logging.getLogger(__name__)
 
 
+class SkillContractError(Exception):
+    """A skill's tools.py exports don't match the native-tool contract.
+
+    Raised at load time so the failure names the contract instead of
+    surfacing downstream as an opaque `dict.update()` TypeError (#675).
+    """
+
+
+def check_tools_contract(module) -> list[str]:
+    """Return contract violations in a skill's imported tools.py module.
+
+    The loader requires `TOOLS` to be a dict mapping tool name -> callable
+    and `TOOL_DEFINITIONS` to be a list of OpenAI function schemas; a skill
+    exporting only `get_tools(ctx)` has neither and is fine. Both an empty
+    list of problems and the absence of the exports mean "no violations".
+
+    Shared by `skill_validate` (reports them as a check) and
+    `_load_native_tools` (raises), so the validator can never green-light a
+    skill the loader will reject.
+    """
+    problems: list[str] = []
+
+    tools = getattr(module, "TOOLS", None)
+    if tools is not None:
+        if not isinstance(tools, dict):
+            problems.append(
+                "TOOLS must be a dict mapping tool name -> function "
+                f"(e.g. {{'my_tool': my_tool}}), got {type(tools).__name__}"
+            )
+        else:
+            for key, value in tools.items():
+                if not isinstance(key, str):
+                    problems.append(
+                        f"TOOLS keys must be str tool names, got {type(key).__name__}"
+                    )
+                elif not callable(value):
+                    problems.append(
+                        f"TOOLS[{key!r}] must be callable, got {type(value).__name__}"
+                    )
+
+    tool_defs = getattr(module, "TOOL_DEFINITIONS", None)
+    if tool_defs is not None:
+        if not isinstance(tool_defs, list | tuple):
+            problems.append(
+                "TOOL_DEFINITIONS must be a list of function schemas "
+                "(e.g. [{'type': 'function', 'function': {'name': 'my_tool'}}]), "
+                f"got {type(tool_defs).__name__}"
+            )
+        else:
+            for i, td in enumerate(tool_defs):
+                if not isinstance(td, dict):
+                    problems.append(
+                        f"TOOL_DEFINITIONS[{i}] must be a dict, got "
+                        f"{type(td).__name__}"
+                    )
+                    continue
+                fn = td.get("function")
+                if not isinstance(fn, dict) or not isinstance(fn.get("name"), str) \
+                        or not fn["name"]:
+                    problems.append(
+                        f"TOOL_DEFINITIONS[{i}] needs a non-empty function.name string"
+                    )
+
+    return problems
+
+
 def _permissions_path(config) -> Path:
     """Path to the skill permissions file (outside workspace, read-only to agent)."""
     return config.agent_path / "skill_permissions.json"
@@ -133,6 +199,22 @@ def _lint_tools_py(skill_dir: Path) -> list[CheckResult]:
             "tools_exports", False,
             "tools.py exports neither get_tools(ctx) nor TOOLS / TOOL_DEFINITIONS",
         ))
+
+    # Shape, not just presence: exports of the wrong type import cleanly
+    # and pass every check above, then fail at activation with an opaque
+    # error. A validator that green-lights an unloadable skill is worse
+    # than none — it makes the failure unresolvable (#675).
+    if has_static:
+        problems = check_tools_contract(module)
+        if problems:
+            checks.append(CheckResult(
+                "tools_shape", False, "; ".join(problems),
+            ))
+        else:
+            checks.append(CheckResult(
+                "tools_shape", True,
+                "TOOLS / TOOL_DEFINITIONS match the native-tool contract",
+            ))
     return checks
 
 
@@ -176,6 +258,21 @@ def _load_native_tools(skill_info) -> tuple[dict, list, object]:
         raise ImportError(f"Could not load module spec for {tools_path}")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
+
+    # Reject wrong-shaped exports here rather than letting them surface
+    # downstream as `cannot convert dictionary update sequence element #0`
+    # from ctx.tools.extra.update() or `'str' object has no attribute 'get'`
+    # from a consumer iterating TOOL_DEFINITIONS (#675). Callers that
+    # already guard _load_native_tools (activation, build_skill_tool_owners)
+    # get an actionable message and skip the skill instead of crashing.
+    problems = check_tools_contract(module)
+    if problems:
+        raise SkillContractError(
+            f"{tools_path} does not match the native-tool contract "
+            f"(TOOLS: dict[str, callable], TOOL_DEFINITIONS: list of function "
+            f"schemas) — {'; '.join(problems)}"
+        )
+
     tools = getattr(module, "TOOLS", {})
     tool_defs = getattr(module, "TOOL_DEFINITIONS", [])
     return tools, tool_defs, module
@@ -247,17 +344,31 @@ async def restore_skills(ctx) -> None:
             log.error(f"Failed to restore skill '{name}': {e}")
 
 
+def _find_skill(discovered, name: str):
+    """Return the discovered SkillInfo named `name`, or None."""
+    for s in discovered:
+        if s.name == name:
+            return s
+    return None
+
+
 async def tool_activate_skill(ctx, name: str) -> str | ToolResult:
     """Activate a skill to make its capabilities available in this conversation."""
     log.info(f"[tool:activate_skill] name={name}")
 
     # Find the skill in discovered skills
-    discovered = ctx.config.discovered_skills
-    skill_info = None
-    for s in discovered:
-        if s.name == name:
-            skill_info = s
-            break
+    skill_info = _find_skill(ctx.config.discovered_skills, name)
+
+    if skill_info is None:
+        # Catalog miss. The skill may have been written earlier in this same
+        # turn, or a `refresh_skills` call in the same batch may still be
+        # running — tool calls in a batch run concurrently under
+        # asyncio.gather, so this read can race the catalog replacement and
+        # report "not found" for a skill refresh_skills just listed (#675).
+        # Re-scan once before giving up, which also repairs the catalog so
+        # restore_skills finds the skill on later turns.
+        await asyncio.to_thread(rediscover_skills, ctx.config)
+        skill_info = _find_skill(ctx.config.discovered_skills, name)
 
     if skill_info is None:
         return ToolResult(text=f"[error: skill '{name}' not found. Check Available Skills in your instructions.]")
@@ -404,22 +515,35 @@ def tool_skill_validate(ctx, path: str) -> ToolResult:
     return _render_validation(path, checks)
 
 
-def tool_refresh_skills(ctx) -> str | ToolResult:
-    """Re-discover skills and update the system prompt catalog."""
-    log.info("[tool:refresh_skills]")
+def rediscover_skills(config) -> list:
+    """Re-scan skill directories and update `config` in place.
+
+    The single mutation path for the runtime skill catalog — used by
+    `refresh_skills` and by `activate_skill`'s catalog-miss path. Returns
+    the list of SkillRejections so callers can surface them.
+
+    Intentional mutation: runtime fields need to update the shared config
+    object that the agent loop holds. dataclasses.replace() would create
+    a disconnected copy.
+    """
     from ..prompts import load_system_prompt
-    from ..tool_definitions import invalidate_skill_cache  # deferred: circular dep
-    # Intentional mutation: runtime fields need to update the shared config
-    # object that the agent loop holds. dataclasses.replace() would create
-    # a disconnected copy.
-    config = ctx.config
     from ..skills import build_skill_tool_owners
+    from ..tool_definitions import invalidate_skill_cache  # deferred: circular dep
+
     rejections: list = []
     config.system_prompt, config.discovered_skills = load_system_prompt(
         config, rejections=rejections
     )
     config.skill_tool_owners = build_skill_tool_owners(config.discovered_skills)
     invalidate_skill_cache(config)
+    return rejections
+
+
+def tool_refresh_skills(ctx) -> str | ToolResult:
+    """Re-discover skills and update the system prompt catalog."""
+    log.info("[tool:refresh_skills]")
+    config = ctx.config
+    rejections = rediscover_skills(config)
     # List all discovered skills — text-only, native-tools, and user-invocable
     # are all valid activatable skills
     names = [s.name for s in config.discovered_skills]
@@ -486,11 +610,13 @@ SKILL_TOOL_DEFINITIONS = [
                 "Validate a workspace skill directory BEFORE it loads, and get the "
                 "specific reasons it would be rejected. Checks SKILL.md frontmatter "
                 "(must have name + description), that native tools live in tools.py "
-                "(NOT main.py), that tools.py imports without error, and that it "
-                "exports get_tools(ctx) or TOOLS/TOOL_DEFINITIONS. Use this when a "
-                "skill you authored isn't appearing, or before refresh_skills, "
-                "instead of guessing. Takes a workspace-relative path like "
-                "'skills/my-skill'."
+                "(NOT main.py), that tools.py imports without error, and that its "
+                "exports match the loader's contract: TOOLS must be a dict mapping "
+                "tool name -> function, TOOL_DEFINITIONS must be a list of "
+                "OpenAI-style function schemas, and/or get_tools(ctx) -> (dict, list). "
+                "Use this when a skill you authored isn't appearing, or before "
+                "refresh_skills, instead of guessing. Takes a workspace-relative path "
+                "like 'skills/my-skill'."
             ),
             "parameters": {
                 "type": "object",

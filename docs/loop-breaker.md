@@ -60,6 +60,17 @@ hard-stop's final summary, by contrast, *is* archived normally — it's a
 real assistant response the user should see and the agent should remember
 saying.
 
+### The hard stop archives only its own note
+
+A turn that ran many iterations has already archived each iteration's
+assistant preamble as it was emitted (`_handle_tool_calls`). The finalizer
+therefore delivers the accumulated preambles plus the note to the transport
+— so the turn reads as a whole — but persists **only the note**. Archiving
+the joined text as well duplicated every preamble in the record: invisible
+on a one-preamble turn, a wall of repeated text on a long thrash, which is
+exactly when the transcript most needs to be readable (#675). The
+iteration-limit finalizer shares the same helper (`_finalize_with_note`).
+
 ## Prompt guardrails (`AGENT.md`)
 
 Two related, prompt-only behaviors from the same investigation live as
