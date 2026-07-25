@@ -1,14 +1,27 @@
 ---
 name: claude_code
-description: "Delegate coding tasks to Claude Code as a subagent. Use when asked to fix bugs, add features, refactor code, write tests, review code, or do any work that requires reading and editing files in a codebase. Triggers on: 'fix this bug', 'add a feature', 'refactor', 'write a test', 'review this code', 'update the config', 'clean up', or any request involving code changes in a repository."
+description: "Delegate any programming or code-related tasks to Claude Code as a specialized subagent. This skill provides a dedicated context for all things code, making it ideal for generating new code, debugging, refactoring, writing tests, or analyzing programming problems. Prefer activating this skill for programming tasks to leverage its specialized context and structured approach, even if the task seems straightforward."
 requires:
   env:
     - ANTHROPIC_API_KEY
 ---
 
-# Claude Code — Coding Subagent
+# Claude Code (Subagent)
 
-Claude Code is a powerful coding agent that can read, edit, and execute code in repositories. Use this skill to delegate coding tasks that require file manipulation.
+Delegate *any* programming or code-related tasks to Claude Code as a specialized subagent. This skill provides a dedicated context for all things code, making it ideal for:
+
+- **Generating new code or scripts**
+- **Debugging and troubleshooting programming issues**
+- **Fixing bugs, adding features, or refactoring existing code**
+- **Writing tests or performing code reviews**
+- **Analyzing programming problems or design patterns**
+- **Any work that involves interacting with a codebase, generating code, or requires a focused programming environment.**
+
+Prefer activating this skill for programming tasks to leverage its specialized context and structured approach, even if the task seems straightforward.
+
+## Triggers
+
+This skill can be activated when requests include phrases like: 'fix this bug', 'add a feature', 'refactor', 'write a test', 'review this code', 'update the config', 'clean up', 'write code', 'implement', 'debug', 'solve this programming problem', 'generate a script', 'develop', 'create a function', or any request involving code or programming in a repository.
 
 ## Delegation Philosophy
 
