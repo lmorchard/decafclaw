@@ -8,5 +8,6 @@ data/
 evals/results/
 evals/history.jsonl
 node_modules/
+tmp/
 .playwright-mcp/
 .claude/
