@@ -69,6 +69,7 @@
   input: "What's 9 times 8?"
   expect:
     response_contains: "72"
+    response_not_contains: ["email", "schedule change"]
     expect_no_tool: send_email
     max_tool_calls: 2
     max_tool_errors: 0
