@@ -2519,3 +2519,83 @@ def test_skill_validate_rejects_bare_tool_name_on_ctx(ctx):
     result = tool_skill_validate(ctx, path="skills/pbare")
     assert result.data["ok"] is False
     assert "shell" in _phantom_check(result)["message"]
+
+
+# -- shadowing survives a reload (Copilot review, #700) --
+#
+# Shadowing is legal: execute_tool checks ctx.tools.extra before the global
+# registry, so a later-activated skill's tool of the same name genuinely wins.
+# Retracting purely by name therefore had a hole — renaming a shadowing tool
+# removed the name outright, taking the still-active shadowed skill's version
+# with it. Before this PR retraction never ran, so the loss is new.
+
+
+def _two_tool_skill(skill_dir, name, tool_name, body_ret):
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    (skill_dir / "tools.py").write_text(
+        f"def fn(ctx):\n    return {body_ret!r}\n"
+        f"TOOLS = {{{tool_name!r}: fn}}\n"
+        f"TOOL_DEFINITIONS = [{{'type': 'function', "
+        f"'function': {{'name': {tool_name!r}}}}}]\n"
+    )
+    return SkillInfo(
+        name=name, description="Shadow probe.", location=skill_dir,
+        body="Body.", has_native_tools=True,
+    )
+
+
+@pytest.mark.asyncio
+async def test_reload_of_a_shadowing_skill_restores_the_shadowed_tool(ctx, tmp_path):
+    provider = _two_tool_skill(tmp_path / "prov", "prov", "shared_tool", "from-provider")
+    shadower_dir = tmp_path / "shad"
+    shadower = _two_tool_skill(shadower_dir, "shad", "shared_tool", "from-shadower")
+    ctx.config.discovered_skills = [provider, shadower]
+    for n in ("prov", "shad"):
+        _save_permission(ctx.config, n, "always")
+
+    await tool_activate_skill(ctx, name="prov")
+    await tool_activate_skill(ctx, name="shad")
+    assert ctx.tools.extra["shared_tool"](ctx) == "from-shadower"
+
+    # The shadower renames its tool. `prov` is still active, so shared_tool
+    # must remain callable — and must resolve to prov's implementation.
+    (shadower_dir / "tools.py").write_text(
+        "def fn(ctx):\n    return 'renamed'\n"
+        "TOOLS = {'own_tool': fn}\n"
+        "TOOL_DEFINITIONS = [{'type': 'function', 'function': {'name': 'own_tool'}}]\n"
+    )
+    await tool_activate_skill(ctx, name="shad")
+
+    assert "own_tool" in ctx.tools.extra
+    assert "shared_tool" in ctx.tools.extra, "shadowed skill's tool was dropped"
+    assert ctx.tools.extra["shared_tool"](ctx) == "from-provider"
+    names = [
+        td.get("function", {}).get("name") for td in ctx.tools.extra_definitions
+    ]
+    assert names.count("shared_tool") == 1, f"duplicate declaration: {names}"
+
+
+@pytest.mark.asyncio
+async def test_reload_after_restore_still_retracts(ctx, tmp_path):
+    """restore_skills is the post-restart registration path. If it doesn't
+    record what it registered, the first reload afterwards can't retract and
+    the old tool name lingers."""
+    from decafclaw.tools.skill_tools import restore_skills
+
+    skill_dir = tmp_path / "restored"
+    skill = _two_tool_skill(skill_dir, "restored", "old_name", "v1")
+    ctx.config.discovered_skills = [skill]
+    ctx.skills.activated.add("restored")
+    await restore_skills(ctx)
+    assert "old_name" in ctx.tools.extra
+
+    (skill_dir / "tools.py").write_text(
+        "def fn(ctx):\n    return 'v2'\n"
+        "TOOLS = {'new_name': fn}\n"
+        "TOOL_DEFINITIONS = [{'type': 'function', 'function': {'name': 'new_name'}}]\n"
+    )
+    _save_permission(ctx.config, "restored", "always")
+    await tool_activate_skill(ctx, name="restored")
+
+    assert "new_name" in ctx.tools.extra
+    assert "old_name" not in ctx.tools.extra, "restore path left an un-retractable tool"

@@ -548,8 +548,7 @@ async def restore_skills(ctx) -> None:
                 log.debug(f"Skill '{name}' tools already loaded, skipping restore")
                 continue
             await _call_init(module, ctx.config, name)
-            ctx.tools.extra.update(tools)
-            ctx.tools.extra_definitions.extend(tool_defs)
+            _register_skill_tools(ctx, name, tools, tool_defs)
 
             # Register dynamic tool provider if available
             get_tools_fn = getattr(module, "get_tools", None)
@@ -666,6 +665,15 @@ def _retract_skill_tools(ctx, name: str) -> None:
 
     Called after a successful re-import and before registering the new
     generation, so a failed reload leaves the working tools untouched.
+
+    Shadowing makes this more than a delete. `execute_tool` checks
+    `ctx.tools.extra` before the global registry, so a later-activated skill's
+    tool of the same name genuinely wins — and if the reloaded skill was the
+    shadower and drops that name, the shadowed skill is still active and its
+    tool must stay callable. So after removing this skill's names, any name
+    another active skill also provides is rebound from that skill's recorded
+    contribution. A core tool needs no rebinding: removing the shadow from
+    `extra` already lets the global registry answer for it again.
     """
     stale = ctx.tools.skill_tool_names.get(name, set())
     if not stale:
@@ -679,6 +687,58 @@ def _retract_skill_tools(ctx, name: str) -> None:
     ctx.config.always_loaded_skill_tools = (
         ctx.config.always_loaded_skill_tools - stale
     )
+
+    # Later activation wins, so walk providers in reverse activation order and
+    # let the first match claim each name. Exactly one definition per name —
+    # two would be a duplicate function declaration, which providers reject
+    # outright (#684).
+    unclaimed = set(stale)
+    for other, (tools, tool_defs) in reversed(list(ctx.tools.skill_contributions.items())):
+        if not unclaimed:
+            break
+        if other == name or other not in ctx.skills.activated:
+            continue
+        for tool_name in sorted(unclaimed & set(tools)):
+            ctx.tools.extra[tool_name] = tools[tool_name]
+            unclaimed.discard(tool_name)
+            log.debug(
+                "Rebound %r to skill %r after %r stopped providing it",
+                tool_name, other, name,
+            )
+        recovered = {
+            td.get("function", {}).get("name") for td in tool_defs
+        } & (set(stale) - unclaimed)
+        ctx.tools.extra_definitions.extend(
+            td for td in tool_defs
+            if td.get("function", {}).get("name") in recovered
+        )
+
+
+def _register_skill_tools(ctx, name: str, tools: dict, tool_defs: list) -> None:
+    """Retract a skill's previous generation, then register this one.
+
+    The single registration path for both activation and post-restart restore.
+    Two call sites that each half-updated this bookkeeping would drift, and the
+    symptom is invisible until the next reload: `restore_skills` originally
+    recorded nothing, so the first reload after a server restart had no idea
+    what to retract and left the pre-edit tool bound.
+    """
+    _retract_skill_tools(ctx, name)
+    ctx.tools.extra.update(tools)
+    ctx.tools.extra_definitions.extend(tool_defs)
+    # Record BOTH the TOOLS keys and the declared function names. They need not
+    # match, and retracting by keys alone leaves an orphaned declaration that
+    # the next reload duplicates — which providers reject outright (Vertex:
+    # `400 Duplicate function declaration found`) at the provider call, before
+    # any tool runs (#684).
+    declared = {
+        td.get("function", {}).get("name") for td in tool_defs
+    } - {None, ""}
+    ctx.tools.skill_tool_names[name] = set(tools.keys()) | declared
+    # Re-inserted so insertion order stays activation order — the reload of an
+    # existing skill makes it the most recent provider again.
+    ctx.tools.skill_contributions.pop(name, None)
+    ctx.tools.skill_contributions[name] = (dict(tools), list(tool_defs))
 
 
 async def activate_skill_internal(ctx, skill_info, reloading: bool = False) -> str | ToolResult:
@@ -745,19 +805,7 @@ async def activate_skill_internal(ctx, skill_info, reloading: bool = False) -> s
 
             # Import succeeded, so it's safe to drop the previous generation.
             # A no-op on first activation (nothing recorded yet).
-            _retract_skill_tools(ctx, name)
-
-            ctx.tools.extra.update(tools)
-            ctx.tools.extra_definitions.extend(tool_defs)
-            # Record BOTH the TOOLS keys and the declared function names. They
-            # need not match, and retracting by keys alone leaves an orphaned
-            # declaration that the next reload duplicates — which providers
-            # reject outright (Vertex: `400 Duplicate function declaration
-            # found`) at the provider call, before any tool runs (#684).
-            declared = {
-                td.get("function", {}).get("name") for td in tool_defs
-            } - {None, ""}
-            ctx.tools.skill_tool_names[name] = set(tools.keys()) | declared
+            _register_skill_tools(ctx, name, tools, tool_defs)
 
             # Register dynamic tool provider if the skill exports get_tools()
             get_tools_fn = getattr(module, "get_tools", None)
