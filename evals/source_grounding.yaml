@@ -6,14 +6,17 @@
 
 - name: "grounds the answer in the seeded page, no invented figures"
   tests: answer_quality
+  # "37 minutes" (not the conventional-sounding "30 minutes") so a pass
+  # actually proves grounding — a model guessing a plausible round-number
+  # P1 SLA from generic priors would land on 30, not 37.
   setup:
     workspace_files:
       "vault/agent/pages/sla.md": |
         # Support SLA
-        P1 incidents: first response within 30 minutes. P2: within 4 hours.
+        P1 incidents: first response within 37 minutes. P2: within 4 hours.
   input: "What's our first-response SLA for P1 incidents?"
   expect:
-    response_contains: "30 minutes"
+    response_contains: "37 minutes"
     max_tool_calls: 4
     max_tool_errors: 0
 
@@ -24,7 +27,7 @@
     workspace_files:
       "vault/agent/pages/sla.md": |
         # Support SLA
-        P1 incidents: first response within 30 minutes. P2: within 4 hours.
+        P1 incidents: first response within 37 minutes. P2: within 4 hours.
   input: "What's our first-response SLA for P3 incidents?"
   expect:
     # P3 is not in the page — must not invent a number. List = ANY-match.
@@ -33,6 +36,12 @@
     # explicitly listed", "does not contain any information") that a
     # literal-substring list kept missing one variant at a time.
     response_contains: ["couldn't find", "could not find", "don't have", "re:(no|not|isn.t|doesn.t)\\b.{0,40}(mention|information|contain|specif|list|explicit)"]
+    # Canonical SLA-tier guesses a hedge could still smuggle a fabricated
+    # figure past (e.g. "P3 isn't listed, but it's probably within an
+    # hour"). "4 hours" is deliberately NOT on this list — it's the
+    # page's real, legitimately-citable P2 value, and hedge responses
+    # routinely echo it for context ("...only P1 and P2, at 4 hours...").
+    response_not_contains: ["24 hours", "1 hour", "one hour", "2 hours", "8 hours", "next business day", "1 business day", "one business day", "same day"]
     max_tool_calls: 4
     max_tool_errors: 0
 
@@ -86,18 +95,23 @@
   tests: answer_quality
   # Diversifies fact type: the SLA/rate-limit cases above are both
   # numeric grounding; this checks a procedural fact (a named tool/
-  # channel), where the distinctive token is a proper noun rather than a
-  # number. Avoids "customer" — this environment's extra_skill_paths make
+  # channel). Uses an invented paging tool ("Nightwatch") and channel
+  # ("#owl-bridge") rather than "PagerDuty"/"#incidents" — those are the
+  # dominant real-world/training-data answer for "how do we page
+  # on-call," so a model could emit them from generic priors with zero
+  # grounding and still pass. Fabricated, non-guessable values mean a
+  # pass here actually proves the answer came from the seeded page.
+  # Avoids "customer" — this environment's extra_skill_paths make
   # persona-customer-support real-discoverable and it fires on that word.
   setup:
     workspace_files:
       "vault/agent/pages/incident-escalation.md": |
         # Incident Escalation
-        For a P1 incident, page the on-call engineer via PagerDuty and post
-        in the #incidents Slack channel. Wait for root-cause confirmation
-        before notifying any user-facing accounts.
+        For a P1 incident, page the on-call engineer via Nightwatch and post
+        in the #owl-bridge channel. Wait for root-cause confirmation before
+        notifying any user-facing accounts.
   input: "During a P1 incident, how do we notify the on-call engineer?"
   expect:
-    response_contains: "PagerDuty"
+    response_contains_all: ["Nightwatch", "owl-bridge"]
     max_tool_calls: 4
     max_tool_errors: 0
