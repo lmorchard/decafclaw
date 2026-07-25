@@ -667,12 +667,18 @@ async def tool_vault_journal_append(ctx, tags: list[str], content: str) -> ToolR
     )
 
 
-async def tool_vault_search(ctx, query: str, source_type: str = "",
+async def tool_vault_search(ctx, query: str = "", source_type: str = "",
                             days: int = 0, folder: str = "",
                             tags: list[str] | None = None,
                             any_tag: bool = False) -> str | ToolResult:
     """Search the vault using semantic or substring matching, optionally
     filtered by tag.
+
+    ``query`` defaults to ``""`` so the tags-only mode below is callable at
+    all. It was a required positional until #669, which made the pure tag
+    filter documented here raise ``TypeError`` — the schema advertised the
+    mode via the ``tags`` description while simultaneously marking ``query``
+    required, so a compliant tags-only call could not succeed.
 
     Tag filtering has two modes:
     - Empty ``query`` + non-empty ``tags``: pure tag filter, bypasses
@@ -702,6 +708,7 @@ async def tool_vault_search(ctx, query: str, source_type: str = "",
         return _tag_filter_search(ctx.config, req_tags, any_tag,
                                   source_type=source_type, folder=folder,
                                   days=days)
+
 
     # Try semantic search first
     if ctx.config.embedding.search_strategy == "semantic":
@@ -1801,7 +1808,16 @@ TOOL_DEFINITIONS = [
                 "properties": {
                     "query": {
                         "type": "string",
-                        "description": "Search text (natural language or keywords)",
+                        "description": (
+                            "Search text (natural language or keywords). "
+                            "Optional: omit it (or pass an empty string) "
+                            "together with `tags` to run a pure tag filter "
+                            "that skips search entirely. Do NOT omit it with "
+                            "no other filter — an empty query with no `tags`/"
+                            "`folder`/`source_type`/`days` lists every page in "
+                            "the vault rather than searching. Use `vault_list` "
+                            "when you want to enumerate pages."
+                        ),
                     },
                     "source_type": {
                         "type": "string",
@@ -1847,7 +1863,10 @@ TOOL_DEFINITIONS = [
                         ),
                     },
                 },
-                "required": ["query"],
+                # No required params: `query` is optional so a tags-only call
+                # is possible (#669). Marking it required contradicted the
+                # `tags` description's "empty query + tags = pure tag filter".
+                "required": [],
             },
         },
     },

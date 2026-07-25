@@ -32,3 +32,8 @@
     max_tool_calls: 4
     max_tool_errors: 0
     expect_tool: vault_search
+    # #669 regression coverage lives here incidentally: with `query` a required
+    # positional, the model's tags-only call raised TypeError and this case
+    # failed on `max_tool_errors: 0` (verified by reverting the fix). The
+    # deterministic guard is tests/test_vault_search_tags_only.py — an eval
+    # can't guarantee the model omits `query`, so it can't reliably discriminate.
