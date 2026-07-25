@@ -9,6 +9,7 @@ import { WebSocketClient } from './lib/websocket-client.js';
 import { ConversationStore } from './lib/conversation-store.js';
 import { MESSAGE_TYPES, KNOWN_MESSAGE_TYPES } from './lib/message-types.js';
 import { setupResizeHandle } from './lib/utils.js';
+import { shouldFocusChatInput } from './lib/chat-focus.js';
 import { showToast } from './lib/toast.js';
 import {
   setActiveConv,
@@ -69,19 +70,31 @@ if (chatView) chatView.store = store;
 let wasBusy = false;
 let lastConvId = null;
 store.addEventListener('change', () => {
+  const cur = store.currentConvId || null;
+  const convChanged = cur !== lastConvId;
   if (chatInput) {
     chatInput.busy = store.isBusy;
     chatInput.disabled = store.isReadOnly;
     chatInput.convId = store.currentConvId || '';
     chatInput.placeholder = store.isReadOnly ? 'Read-only conversation' : 'Type a message...';
-    // Focus when agent finishes or conversation changes
-    if (!store.isReadOnly && ((wasBusy && !store.isBusy) || store.currentConvId)) {
-      requestAnimationFrame(() => chatInput.focus());
+    // `change` fires on every WebSocket message, so the focus decision has to
+    // name the transitions it cares about — see lib/chat-focus.js.
+    const focusOpts = {
+      readOnly: store.isReadOnly,
+      convChanged: convChanged && !!cur,
+      turnFinished: wasBusy && !store.isBusy,
+      chatInputEl: chatInput,
+    };
+    if (shouldFocusChatInput(focusOpts)) {
+      // Re-check after layout: an in-flight click may land focus elsewhere
+      // between the store event and the frame.
+      requestAnimationFrame(() => {
+        if (shouldFocusChatInput(focusOpts)) chatInput.focus();
+      });
     }
     wasBusy = store.isBusy;
   }
-  const cur = store.currentConvId || null;
-  if (cur !== lastConvId) {
+  if (convChanged) {
     lastConvId = cur;
     setActiveConv(cur);
     stickySetActiveConv(cur);

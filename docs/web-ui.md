@@ -38,6 +38,14 @@ Real-time streaming chat over WebSocket. Messages stream token-by-token as the L
 - Cancel in-progress turns
 - Confirmation prompts for shell commands and skill activation
 
+**Input focus.** The composer takes focus on a conversation switch, and again
+when the agent finishes a turn — but only if the user hasn't moved focus
+somewhere else in the meantime (canvas terminal, wiki editor, a widget). It
+never grabs focus mid-turn. The policy lives in `static/lib/chat-focus.js`;
+`app.js` consults it from the conversation store's `change` handler, which
+fires on *every* WebSocket message, so a looser condition there steals focus
+on each streamed chunk.
+
 ### Conversations
 
 The sidebar lists conversations organized into folders:
