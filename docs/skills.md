@@ -114,7 +114,19 @@ TOOL_DEFINITIONS = [
         }
     }
 ]
+```
 
+#### Tool names must not collide with core tools
+
+Pick a name no core tool already uses. `debug_context`, `shell`, `read_file` and friends are taken — check `docs/tools.md` or the catalog before choosing.
+
+Shadowing is *permitted*: `execute_tool` checks `ctx.tools.extra` before the global registry, so an activated skill's version genuinely wins, and activation now says so in its result rather than overriding in silence. What you must not do is assume it's free.
+
+Until #684 a collision was fatal. Both declarations were concatenated into the list sent to the provider, and providers reject duplicate function names outright — Vertex answers `400 Duplicate function declaration found: <name>`. That lands at the provider call, *before* any tool runs, so the agent never sees a tool result and cannot diagnose or recover; from inside the conversation the model just appears to break. `collect_all_tool_defs` now dedupes by name, keeping the first declaration (skill defs are positioned first, matching dispatch order, so the schema the model sees belongs to the implementation that will run).
+
+The reason this bites in practice: the agent can write `workspace/skills/` itself, and the tool names it reaches for first are exactly the ones already taken.
+
+```python
 def init(config, skill_config: SkillConfig):
     """Optional. Called once on first activation. Can be async.
 
