@@ -150,7 +150,19 @@
         # API Overview
         Our public API is REST-based, versioned via the `/v2/` path prefix,
         and uses bearer-token authentication.
-  input: "What happens if a client exceeds our API rate limit?"
+  # Phrased as two explicit sub-questions (limit + consequence) so a
+  # complete, correct answer naturally requires BOTH "100" and "429" — a
+  # narrower "what happens if exceeded?" framing let the model answer with
+  # only the consequence (429) and legitimately omit the limit itself
+  # (100), which the response_contains_all assertion then flagged as
+  # missing. That was an over-strict-assertion/question-framing flake, not
+  # a retrieval failure: diagnostics showed vault_search found this exact
+  # page at relevance 0.96 with both numbers in its result text (#528/#531
+  # post-rebase behavioral run). "100"/"429" remain the right discriminator
+  # tokens — the broader distractor page (api-overview.md) contains
+  # neither, so both still prove the SPECIFIC page was read, not the
+  # distractor.
+  input: "What's our API rate limit, and what happens if a client exceeds it?"
   expect:
     response_contains_all: ["429", "100"]
     max_tool_calls: 4
