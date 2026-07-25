@@ -78,6 +78,7 @@ Tests are YAML files with a list of test cases. Single-turn form:
 | `setup` | Fixture setup — see [Setup fields](#setup-fields) |
 | `expect` | Assertions to check — see [Expect assertions](#expect-assertions) |
 | `allowed_tools` | List of tool names; the agent can only call these. Unlisted tool calls return an error. |
+| `tests` | Failure-mode axis tag(s) for the scorecard — a string or list of strings. See [Axis tagging & the failure-mode scorecard](#axis-tagging--the-failure-mode-scorecard) |
 
 ### Setup fields
 
@@ -231,6 +232,101 @@ evals/results/
     reflections/              # LLM-generated analysis of failures
       test-name.md
 ```
+
+## Per-turn diagnostics
+
+Each turn's result (each entry in `result["turns"]` for multi-turn tests, or the top-level `result` for single-turn tests) carries a `"diagnostics"` block built by `decafclaw.eval.diagnostics.build_turn_diagnostics`. It reuses the per-conversation context sidecar the agent already writes on turn-exit (see [Context inspection](context-composer.md#context-inspection)) — no separate recompute — plus a few fields derived from the turn's own history slice:
+
+| Key | Source | Notes |
+|-----|--------|-------|
+| `tokens_by_section` | sidecar | `{source: tokens_estimated}` per context source (`system`, `tools`, `retrieved_context`, ...) |
+| `total_tokens_estimated` / `total_tokens_actual` | sidecar | Whole-turn totals |
+| `context_window_size` / `compaction_threshold` | sidecar | Model's configured limits |
+| `active_tools` / `deferred_tools` | sidecar | `items_included` / `items_truncated` for the `tools` source |
+| `retrieved_candidates` | sidecar | Memory-retrieval candidates with `file_path`, `composite_score`, `similarity`, `recency`, `importance` |
+| `files_read` | derived | Vault/workspace paths read via tool calls this turn |
+| `files_cited` | derived | Of `files_read` plus retrieved-candidate paths, which ones the response text actually references — case-insensitive substring match on the full path, basename, or stem, plus any `[[wiki link]]` mention in the response |
+| `tool_calls` | derived | `{names: [...], count: N}` for this turn |
+
+A missing or unreadable sidecar degrades to the derived fields only (`build_turn_diagnostics` never raises); sidecar-sourced fields come back `None`/empty.
+
+This block is what turns a bare pass/fail into an actionable failure diagnosis, roughly along four lines (independent of, though often correlated with, the [axis tags](#axis-tagging--the-failure-mode-scorecard) above):
+
+- **retrieval** — check `retrieved_candidates`: was the right page even a candidate, and how did it score?
+- **routing** — check `tool_calls.names` and `files_read`: did the agent reach for the right tool at all?
+- **answer** — check `files_cited` vs `files_read`: did the agent read the right thing but fail to ground the answer in it (or fabricate)?
+- **bloat** — check `tokens_by_section` and `active_tools`/`deferred_tools`: is the turn drowning in context it didn't need?
+
+Note what's *not* here: no per-tool-call durations (deferred — the sidecar doesn't currently time individual tool calls).
+
+`--verbose` prints a compact summary of this block after each test's response snippet:
+
+```
+[3/12] retrieves the right page for a vague query ....... PASS  (4.2s, 3100 tokens, 1 tools)
+         Response: Per the migration-plan page, the cutover is scheduled for...
+         Tokens: system=2400  tools=1800  retrieved_context=900  (active=6, deferred=31)
+         Candidates: agent/pages/migration-plan.md:0.87, agent/pages/rollout-notes.md:0.41
+         Read: ['agent/pages/migration-plan.md']  Cited: ['agent/pages/migration-plan.md']  Tools: ['vault_read']
+```
+
+## Axis tagging & the failure-mode scorecard
+
+A test case can tag itself with one or more failure-mode axes via the top-level `tests:` key — a string for a single axis, or a list for multiple:
+
+```yaml
+- name: "retrieves the right page for a vague query"
+  input: "what did I write about the migration plan?"
+  tests: retrieval
+  expect:
+    response_contains: "migration"
+
+- name: "routes to the right tool and answers correctly"
+  input: "what's on my calendar tomorrow?"
+  tests: [routing, answer_quality]
+  expect:
+    max_tool_calls: 3
+```
+
+The four canonical axes (`decafclaw.eval.diagnostics.CANONICAL_AXES`) are:
+
+| Axis | Covers |
+|------|--------|
+| `retrieval` | Finding/recalling the right memory, page, or context |
+| `routing` | Picking the right tool/skill for the task |
+| `answer_quality` | Correctness and completeness of the final response |
+| `workflow_discipline` | Following multi-step procedures, confirmations, and guardrails correctly |
+
+A case with no `tests:` key falls into the `untagged` bucket rather than being dropped from the scorecard. An axis value outside the canonical set raises `ValueError` and fails the run rather than silently vanishing.
+
+### Behavioral suites (#528, #531)
+
+Seven single-axis suites exercise the four canonical axes end-to-end with real LLM turns:
+
+| Suite | Axis | Cases |
+|-------|------|-------|
+| `evals/vault_answering.yaml` | `retrieval` | 5 |
+| `evals/tool_routing.yaml` | `routing` | 5 |
+| `evals/source_grounding.yaml` | `answer_quality` | 5 |
+| `evals/context_pressure.yaml` | `answer_quality` | 4 |
+| `evals/clarification.yaml` | `workflow_discipline` | 4 |
+| `evals/abort_recovery.yaml` | `workflow_discipline` | 4 |
+| `evals/over_ceremony.yaml` | `workflow_discipline` | 5 |
+
+`context_pressure.yaml` and `clarification.yaml` each landed at 4 cases rather than the 5 originally targeted — both suites' authoring comments document a fifth case that was tried against real LLM calls and dropped because it surfaced a genuine behavioral gap (not an eval-design artifact), per the no-silently-weakened-assertions rule. Existing pre-#528 suites (`evals/memory.yaml`, `evals/conversation.yaml`, etc.) are not retroactively axis-tagged; retagging them is a deferred follow-up (see the dev-session notes for #528/#531).
+
+After each run, `results["summary"]["by_axis"]` in the result bundle's `results.json` maps each axis (plus `untagged`) to `{total, passed, failed, pass_rate}`. `make eval` also prints a scorecard to the console:
+
+```
+By axis (failure-mode scorecard):
+  answer_quality         8/10  (80%)
+  retrieval              5/6  (83%)
+  routing                9/9  (100%)
+  untagged               12/15  (80%)
+```
+
+A case tagged with multiple axes counts once toward *each* of its axes, so axis totals summed across the table can exceed the total test count — that's expected, not a bug.
+
+Per-axis pass-rate trend over time (mirroring [Pass-rate history](#pass-rate-history) but broken out by axis) is a deferred follow-up, not yet implemented.
 
 ## Pass-rate history
 
