@@ -194,7 +194,7 @@ Full doc index: [docs/index.md](docs/index.md). Hot files for navigation:
 - `prompts/` — System prompt assembly
 - `commands.py` — User-invokable commands
 - `reflection.py` — Self-reflection (Reflexion pattern)
-- `loop_breaker.py` — Per-turn autonomous tool-call thrash detector (nudge → hard-stop escalation, #598)
+- `loop_breaker.py` — Per-turn autonomous tool-call thrash detector (watermarked trip detection; nudge → redirect → hard-stop escalation, #598/#707)
 - `tool_telemetry.py` — Tool-usage telemetry subscriber + report (#310); `make tool-usage-report`
 - `reflection_metrics.py` — Reflection cost/effectiveness telemetry subscriber + stats (#409); `make reflection-stats`
 - `heartbeat.py`, `schedules.py`, `polling.py`

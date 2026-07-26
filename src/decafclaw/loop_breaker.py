@@ -1,6 +1,9 @@
 """Per-turn loop-breaker: detects autonomous tool-call thrash and escalates
-a diagnostic nudge, then a hard stop. Pure/deterministic — no agent or LLM
-imports; driven by TurnRunner. See docs/loop-breaker.md (#598)."""
+through three rungs — a diagnostic nudge, then a redirect that demands a
+diagnosis before another action, then a hard stop. Trips are watermarked per
+fingerprint so a rung only advances on a genuinely fresh offense, not a
+standing condition. Pure/deterministic — no agent or LLM imports; driven by
+TurnRunner. See docs/loop-breaker.md (#598, #707)."""
 
 import dataclasses
 import enum

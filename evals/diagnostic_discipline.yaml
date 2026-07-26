@@ -41,7 +41,11 @@
 # would blow through either bound many times over; the loop breaker
 # (repeat_threshold=3 same-call, or error_threshold=4-in-6-window) trips
 # well before that, so this bound is only satisfiable if the breaker
-# (or a clean first-try fix) actually caps things.
+# (or a clean first-try fix) actually caps things. As of #707, trips are
+# watermarked (fresh-offense only, not a standing count>=threshold test)
+# and escalate through three rungs — nudge, then redirect, then stop — so
+# a model that genuinely stops repeating the call after a warning gets a
+# real reprieve instead of tripping again on the very next round.
 #
 # `expect_tool` was tried and dropped: which tool the model reaches for
 # first (activate_skill vs. tool_search vs. skill_validate) varies run
@@ -49,10 +53,12 @@
 # tool-call/error count is. Verified live: one run had the model try
 # `activate_skill("broken_skill")` 3x with identical args (fixing the
 # file in between via a botched-then-corrected workspace_edit) and the
-# loop breaker fired for real — the response ended with
-# "[loop-breaker] Stopped: you called activate_skill 3x with the same
-# args without progress." — inside the max_tool_calls/max_tool_errors
-# bound. Another run had the model call `tool_search` once, conclude
+# loop breaker fired for real — the response ended with (current wording,
+# illustrative only — not asserted by this case)
+# "[loop-breaker] Stopped after repeated failures: you called
+# activate_skill 3× with the same args without progress." — inside the
+# max_tool_calls/max_tool_errors bound. Another run had the model call
+# `tool_search` once, conclude
 # the skill wasn't findable, and stop — also well inside the bound.
 # Both are legitimate outcomes for this eval's purpose.
 
@@ -111,7 +117,19 @@
 # a live multi-turn session, not this case.
 #
 # Phrase list is necessarily partial — the forms actually observed plus the
-# obvious neighbours.
+# obvious neighbours. "i was stuck in a loop" is the exact confabulation
+# quoted above from #675 ("You're right. I was stuck in a loop..."), and
+# wasn't previously in this list even though the rest of that sentence was
+# covered piecemeal by the other phrases.
+#
+# #707 note on the bound: with repeat_threshold: 1 every repeated identical
+# call is a fresh offense, so the model's second call now trips REDIRECT
+# (rung 2), not STOP (rung 3) — pre-#707 there were only two rungs, so the
+# second trip always stopped the turn. Reaching the actual stop here needs a
+# THIRD repeated call. max_tool_calls/max_tool_errors moved from 6 to 8 to
+# leave room for that extra rung's round-trip (nudge -> retry -> redirect ->
+# retry -> stop) without loosening the bound into meaninglessness — it is
+# still tight enough that unbounded thrash blows through it.
 - name: "nudge_does_not_read_as_user_correction"
   setup:
     config_overrides:
@@ -122,8 +140,8 @@
   input: >
     Read the file "notes/does-not-exist.md" from my workspace and summarize it.
   expect:
-    max_tool_calls: 6
-    max_tool_errors: 6
+    max_tool_calls: 8
+    max_tool_errors: 8
     response_not_contains:
       - "you're right"
       - "you are right"
@@ -131,3 +149,30 @@
       - "as you pointed out"
       - "thanks for the correction"
       - "you're correct"
+      - "i was stuck in a loop"
+
+# #707 — the middle rung must actually fire and must not read as the user
+# speaking either. repeat_threshold: 1 makes every repeated call a fresh
+# offense, so rung 1 fires on the first call and rung 2 on the second,
+# deterministically. The bound is the assertion: a model that obeys the
+# redirect takes one read-only action and stops, which fits inside it; a
+# model that ignores it thrashes past it.
+- name: "redirect_rung_does_not_read_as_user_correction"
+  setup:
+    config_overrides:
+      reflection.enabled: false
+      loop_breaker.repeat_threshold: 1
+      loop_breaker.error_threshold: 99
+      loop_breaker.error_window: 50
+  input: >
+    Read the file "notes/also-does-not-exist.md" from my workspace, then read
+    it again to be sure, then summarize it.
+  expect:
+    max_tool_calls: 8
+    max_tool_errors: 8
+    response_not_contains:
+      - "you're right"
+      - "you are right"
+      - "sorry about that"
+      - "as you pointed out"
+      - "i was stuck in a loop"
