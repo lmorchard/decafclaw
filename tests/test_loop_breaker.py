@@ -5,6 +5,7 @@ from decafclaw.loop_breaker import (
     LoopVerdict,
     fingerprint,
     summarize_args,
+    summarize_error,
 )
 
 
@@ -85,7 +86,19 @@ def test_summarize_args_truncates_and_flattens():
     out = summarize_args(long_args)
     assert len(out) <= 401          # _MAX_ARG_CHARS + the ellipsis
     assert out.endswith("…")
+    # Newline-free, though trivially so: json.dumps already escapes a real
+    # newline to a two-character "\\n" before _truncate ever sees it. The
+    # genuine newline-collapsing path is summarize_error() below.
     assert "\n" not in summarize_args({"body": "a\nb"})
+
+
+def test_summarize_error_truncates_and_collapses_newlines():
+    """Error bodies are raw multi-line tracebacks, and they get interpolated
+    into a single-sentence prompt ("The error every time: ..."), so an
+    embedded newline would visibly mangle the diagnostic."""
+    assert "\n" not in summarize_error("Traceback:\n  File x\nImportError: boom")
+    assert summarize_error("e" * 5000).endswith("…")
+    assert len(summarize_error("e" * 5000)) <= 301  # _MAX_ERROR_CHARS + ellipsis
 
 
 def test_error_surge_offense_has_no_tool_name_but_keeps_error_text():
@@ -151,6 +164,95 @@ def test_repeating_the_same_call_after_nudge_advances_a_rung():
     assert lb.verdict() is LoopVerdict.NUDGE
     lb.record([CallSignature("edit", fp, False)])  # count 3 -> 4: a fresh offense
     assert lb.verdict() is LoopVerdict.REDIRECT
+
+
+def test_compliance_after_a_multi_call_batch_does_not_trip_again():
+    """#707 review: EVERY fresh offender's watermark must advance, not just the
+    worst one's.
+
+    Tool calls run concurrently (asyncio.gather), so a repeated multi-call
+    batch is the canonical thrash shape — and it pushes several fingerprints
+    over threshold in the same round. Advancing only the worst one's watermark
+    left the others permanently "fresh", so they re-tripped on later rounds
+    with counts that had stopped growing three rounds earlier: a fully
+    compliant agent got walked REDIRECT -> STOP anyway, quoting stale counts.
+    Every other repeat test records exactly ONE signature per round, which is
+    why this survived.
+    """
+    lb = _lb(repeat_threshold=3, error_threshold=99, error_window=50)
+    batch = [
+        CallSignature("shell", fingerprint("shell", {"c": "make test"}), False),
+        CallSignature("read", fingerprint("read", {"p": "a.py"}), False),
+        CallSignature("edit", fingerprint("edit", {"p": "b.py"}), False),
+    ]
+    verdict = None
+    for _ in range(3):
+        lb.record(batch)
+        verdict = lb.verdict()
+    assert verdict is LoopVerdict.NUDGE
+    # The agent obeys completely: brand-new, non-repeating, non-erroring calls.
+    for i in range(3):
+        lb.record([CallSignature(f"new{i}", fingerprint(f"new{i}", {"n": i}), False)])
+        assert lb.verdict() is LoopVerdict.NONE, (
+            "a compliant round escalated off a co-offender's stale count"
+        )
+
+
+def test_compliant_but_erroring_round_after_a_nudge_does_not_escalate():
+    """#707 review: the error signal must not enter its first round loaded.
+
+    The redirect *instructs* the model to "take exactly one read-only action",
+    and in the broken environments where the breaker fires that diagnostic read
+    frequently errors. Requiring only "any new error" on top of a window still
+    full of pre-trip failures meant the mechanism escalated on the very
+    behavior it had just demanded.
+    """
+    lb = _lb(repeat_threshold=3, error_threshold=4, error_window=6)
+    fp = fingerprint("edit", {"p": "b.py"})
+    verdict = None
+    for _ in range(3):
+        lb.record([CallSignature("edit", fp, True, '{"p": "b.py"}', "[error: boom]")])
+        verdict = lb.verdict()
+    assert verdict is LoopVerdict.NUDGE
+    # The agent obeys: distinct read-only calls — which happen to error.
+    for i in range(3):
+        lb.record([CallSignature(
+            f"read{i}", fingerprint("read", {"p": f"log{i}"}), True,
+            "{}", "[error: no such file]")])
+        assert lb.verdict() is LoopVerdict.NONE, (
+            "the ladder punished the diagnostic read it asked for"
+        )
+
+
+def test_a_genuine_new_error_surge_after_a_nudge_still_escalates():
+    """The counterpart to the test above: fixing the false positive must not
+    disable the signal. A full fresh threshold of errors still advances."""
+    lb = _lb(repeat_threshold=99, error_threshold=3, error_window=6)
+    verdict = None
+    for i in range(3):
+        lb.record([CallSignature(f"a{i}", fingerprint(f"a{i}", {}), True)])
+        verdict = lb.verdict()
+    assert verdict is LoopVerdict.NUDGE
+    for i in range(3):
+        lb.record([CallSignature(f"b{i}", fingerprint(f"b{i}", {}), True)])
+        verdict = lb.verdict()
+    assert verdict is LoopVerdict.REDIRECT
+
+
+def test_error_text_clears_when_the_call_starts_succeeding():
+    """The nudge says "the failure each time" — so a fingerprint that failed
+    early and then succeeded must not keep quoting the stale error. Repeated
+    *successful* identical calls trip the repeat signal too, so this is
+    reachable."""
+    lb = _lb(repeat_threshold=3, error_threshold=99, error_window=50)
+    fp = fingerprint("read", {"p": "x"})
+    lb.record([CallSignature("read", fp, True, "{}", "[error: transient]")])
+    assert lb.verdict() is LoopVerdict.NONE
+    for _ in range(2):
+        lb.record([CallSignature("read", fp, False, "{}", "")])
+        verdict = lb.verdict()
+    assert verdict is LoopVerdict.NUDGE
+    assert lb.offense().error_text == ""
 
 
 def test_ladder_is_nudge_then_redirect_then_stop():

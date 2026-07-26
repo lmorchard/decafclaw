@@ -102,12 +102,14 @@ class LoopBreaker:
 
     Trips on either signal:
     - the same (tool_name, args_fingerprint) seen >= repeat_threshold times
-    - >= error_threshold of the last error_window tool results are errors
+    - >= error_threshold errors, both within the last error_window results and
+      newly accrued since the last trip
 
     Escalation is one-way per instance and advances only on a *fresh* offense
-    (see verdict()): first trip returns NUDGE, second REDIRECT, third and
-    later STOP. `enabled=False` always returns NONE. One LoopBreaker per turn
-    — state is not meant to persist across turns.
+    (see verdict(), _fresh_repeat_offenders() and _fresh_error_surge()): first
+    trip returns NUDGE, second REDIRECT, third and later STOP.
+    `enabled=False` always returns NONE. One LoopBreaker per turn — state is
+    not meant to persist across turns.
     """
 
     def __init__(self, config):
@@ -138,9 +140,13 @@ class LoopBreaker:
             entry.tool_name = sig.tool_name
             entry.count += 1
             entry.args_text = sig.args_text
-            if sig.is_error:
-                # Keep the latest error for this call — the one a redirect quotes.
-                entry.error_text = sig.error_text
+            # Keep the latest error for this call — the one a redirect quotes.
+            # Cleared on a successful occurrence: the nudge/redirect wording is
+            # "the error every time", and a call that failed early then started
+            # succeeding would otherwise keep quoting a stale failure forever.
+            # Reachable because repeated *successful* identical calls trip the
+            # repeat signal too.
+            entry.error_text = sig.error_text if sig.is_error else ""
             self._recent_errors.append(bool(sig.is_error))
             if sig.is_error:
                 self._total_errors += 1
@@ -149,38 +155,75 @@ class LoopBreaker:
         if len(self._recent_errors) > window:
             self._recent_errors = self._recent_errors[-window:]
 
-    def _fresh_repeat_offender(self) -> "_Offender | None":
-        """The worst fingerprint that has grown since it last tripped."""
-        worst = None
-        for entry in self._counts.values():
-            if entry.count < self._cfg.repeat_threshold:
-                continue
-            if entry.count <= entry.last_tripped_count:
-                continue  # already tripped at this count — agent stopped repeating it
-            if worst is None or entry.count > worst.count:
-                worst = entry
-        return worst
+    def _fresh_repeat_offenders(self) -> "list[_Offender]":
+        """Every fingerprint at/over threshold that has grown since it last
+        tripped.
+
+        Returns all of them, not just the worst, because `verdict()` has to
+        watermark *all* of them when it trips — tool calls run concurrently
+        (`asyncio.gather`), so a repeated multi-call batch pushes several
+        fingerprints over threshold in the same round. Advancing only the
+        worst one's watermark left the rest permanently "fresh", so they
+        re-tripped on later rounds with counts that had stopped growing, and
+        a fully compliant agent still got walked to a hard stop (#707).
+        """
+        return [
+            entry for entry in self._counts.values()
+            if entry.count >= self._cfg.repeat_threshold
+            # count == last_tripped_count → already tripped at this count, so
+            # the agent stopped repeating it.
+            and entry.count > entry.last_tripped_count
+        ]
 
     def _fresh_error_surge(self) -> bool:
-        """True when the window is over threshold AND new errors have landed
-        since the last trip. The second half is the point: a rolling window
-        can stay over threshold on stale errors alone."""
+        """True when a full threshold's worth of *new* errors has landed since
+        the last trip, and those errors are recent.
+
+        Two necessary conditions, each doing a distinct job:
+
+        - `_total_errors - _errors_at_last_trip >= error_threshold` — the
+          freshness half. A whole new surge, not one new error tacked onto a
+          window still holding pre-trip failures. Requiring only "any new
+          error" meant the round after a trip started already loaded, so the
+          redirect's own instruction ("take exactly one read-only action")
+          escalated the ladder whenever that diagnostic read errored — the
+          mechanism punished the behavior it had just demanded (#707).
+        - `sum(_recent_errors) >= error_threshold` — the density half. A slow
+          trickle of errors interleaved with successes over many rounds isn't
+          thrash; `error_window` is what keeps it from accumulating into one.
+
+        The first trip is unaffected by the freshness half: with
+        `_errors_at_last_trip == 0`, a window sum at threshold implies a total
+        at threshold.
+        """
         if sum(self._recent_errors) < self._cfg.error_threshold:
             return False
-        return self._total_errors > self._errors_at_last_trip
+        return (self._total_errors - self._errors_at_last_trip
+                >= self._cfg.error_threshold)
 
     def verdict(self) -> LoopVerdict:
         """Compute the verdict for the most recently recorded round.
 
         Mutates escalation state: a trip advances the rung counter and moves
-        the tripping signal's watermark, so a later round only trips again on
-        a genuinely new offense. Call exactly once per recorded round.
+        *every* watermark the trip consumed, so a later round only trips again
+        on a genuinely new offense. Call exactly once per recorded round.
+
+        A repeat trip consumes the error credit too (`_errors_at_last_trip`).
+        The errors that piled up alongside the thrash have already been
+        accounted for by the rung the agent just got; leaving them uncounted
+        let the error signal fire on the very next round off the same
+        failures, double-charging one offense (#707). The reverse doesn't need
+        handling: when the error branch runs there are no fresh repeat
+        offenders by construction, since the repeat branch is checked first.
         """
         if not self._cfg.enabled:
             return LoopVerdict.NONE
-        offender = self._fresh_repeat_offender()
-        if offender is not None:
-            offender.last_tripped_count = offender.count
+        fresh = self._fresh_repeat_offenders()
+        if fresh:
+            offender = max(fresh, key=lambda e: e.count)
+            for entry in fresh:
+                entry.last_tripped_count = entry.count
+            self._errors_at_last_trip = self._total_errors
             self._offense = Offense(
                 reason=(f"called {offender.tool_name} {offender.count}× "
                         "with the same args"),
