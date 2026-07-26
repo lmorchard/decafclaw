@@ -27,7 +27,11 @@ from decafclaw.skills.vault._grants import (
     is_path_in_grants,
     normalize_folder,
 )
-from decafclaw.skills.vault._sections import Document, _insert_into_doc
+from decafclaw.skills.vault._sections import (
+    Document,
+    _insert_into_doc,
+    describe_section_miss,
+)
 from decafclaw.tags import collect_all_tags, extract_tags, normalize_tag, pages_with_tags
 from decafclaw.tools.confirmation import request_confirmation
 
@@ -1291,7 +1295,7 @@ async def tool_vault_show_sections(
     # Specific section: show heading + body with 1-based line numbers
     sec = doc.find_section(section)
     if sec is None:
-        return ToolResult(text=f"[error: section not found: {section}]")
+        return ToolResult(text=f"[error: {describe_section_miss(doc, section)}]")
     start = sec.heading_line
     end = sec.content_end  # exclusive
     numbered = [
@@ -1387,7 +1391,8 @@ async def tool_vault_section(
     action: str,
     section: str | None = None,
     title: str | None = None,
-    level: int = 1,
+    level: int | None = None,
+    content: str | None = None,
     after: str | None = None,
     before: str | None = None,
     parent: str | None = None,
@@ -1409,16 +1414,21 @@ async def tool_vault_section(
     if action == "add":
         if not title:
             return ToolResult(text="[error: 'title' required for add]")
-        if not isinstance(level, int) or level < 1 or level > 6:
+        # None means "infer from the anchor" — add_section resolves it.
+        if level is not None and (not isinstance(level, int) or level < 1 or level > 6):
             return ToolResult(text=f"[error: level must be between 1 and 6, got {level}]")
-        if doc.add_section(title, level=level, after=after, before=before, parent=parent):
+        if doc.add_section(
+            title, level=level, content=content or "",
+            after=after, before=before, parent=parent,
+        ):
             path.write_text(doc.to_text(), encoding="utf-8")
             await _reindex_page(ctx, path)
             await publish_vault_changed(
                 ctx.event_bus, ctx.config, kind=KIND_SECTION, path=path,
             )
             return ToolResult(text=f"Added section: {title}")
-        return ToolResult(text="[error: target section not found]")
+        target = after or before or parent or ""
+        return ToolResult(text=f"[error: {describe_section_miss(doc, target)}]")
 
     elif action == "remove":
         if not section:
@@ -1431,7 +1441,7 @@ async def tool_vault_section(
                 ctx.event_bus, ctx.config, kind=KIND_SECTION, path=path,
             )
             return ToolResult(text=f"Removed section: {section}")
-        return ToolResult(text=f"[error: section not found: {section}]")
+        return ToolResult(text=f"[error: {describe_section_miss(doc, section)}]")
 
     elif action == "rename":
         if not section or not title:
@@ -1443,7 +1453,7 @@ async def tool_vault_section(
                 ctx.event_bus, ctx.config, kind=KIND_SECTION, path=path,
             )
             return ToolResult(text=f"Renamed section: {section} → {title}")
-        return ToolResult(text=f"[error: section not found: {section}]")
+        return ToolResult(text=f"[error: {describe_section_miss(doc, section)}]")
 
     elif action == "move":
         if not section:
@@ -1570,6 +1580,16 @@ TOOLS = {
     "vault_section": tool_vault_section,
     "vault_update_frontmatter": tool_vault_update_frontmatter,
 }
+
+# Shared across every section-path parameter below. Section paths used to be
+# rooted at the page H1, which nothing conveyed and callers could not guess
+# (#671); they are suffix-matched now, and this says so.
+SECTION_PATH_HELP = (
+    "A bare heading title ('Background'), a partial path ('Archive/Background'), "
+    "or the full path from the page title ('Project Notes/Archive/Background') "
+    "all work — the path is matched against the end of each section's full path. "
+    "It must match exactly one section; if several match, the error lists them."
+)
 
 TOOL_DEFINITIONS = [
     {
@@ -1988,9 +2008,9 @@ TOOL_DEFINITIONS = [
                     "section": {
                         "type": "string",
                         "description": (
-                            "Optional slash-separated section path to show that "
-                            "section's content with line numbers "
-                            "(e.g. 'top/sub a'). Omit to get the full outline."
+                            "Optional section path to show that section's content "
+                            "with line numbers. " + SECTION_PATH_HELP + " "
+                            "Omit to get the full outline."
                         ),
                     },
                 },
@@ -2035,8 +2055,8 @@ TOOL_DEFINITIONS = [
                     "to_section": {
                         "type": "string",
                         "description": (
-                            "Slash-separated section path in the target page "
-                            "(e.g. 'today/inbox'). Omit to append to the whole file."
+                            "Section path in the target page. " + SECTION_PATH_HELP + " "
+                            "Omit to append to the whole file."
                         ),
                     },
                     "position": {
@@ -2080,8 +2100,8 @@ TOOL_DEFINITIONS = [
                     "section": {
                         "type": "string",
                         "description": (
-                            "Slash-separated section path to operate on "
-                            "(e.g. 'top/sub a'). Required for remove, rename, move."
+                            "Section path to operate on. " + SECTION_PATH_HELP + " "
+                            "Required for remove, rename, move."
                         ),
                     },
                     "title": {
@@ -2096,28 +2116,41 @@ TOOL_DEFINITIONS = [
                         "minimum": 1,
                         "maximum": 6,
                         "description": (
-                            "Heading level (1–6) for the new section. "
-                            "Only used by add. Default: 1."
+                            "Heading level (1–6) for the new section. Only used by "
+                            "add. Defaults to whatever the anchor implies: a sibling "
+                            "of the after/before section, or one level below parent. "
+                            "Leave it unset unless you specifically want a different "
+                            "level — forcing 1 next to a ## heading inserts a second "
+                            "top-level heading, which reparents every section below it."
+                        ),
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": (
+                            "Body text for the new section. Only used by add; "
+                            "omit for an empty section. Set it here rather than "
+                            "adding an empty section and rewriting the page to "
+                            "fill it — one call does both."
                         ),
                     },
                     "after": {
                         "type": "string",
                         "description": (
-                            "Slash-separated section path to insert/move after "
-                            "(e.g. 'top/first'). Used by add and move."
+                            "Section path to insert/move after. " + SECTION_PATH_HELP + " "
+                            "Used by add and move."
                         ),
                     },
                     "before": {
                         "type": "string",
                         "description": (
-                            "Slash-separated section path to insert/move before. "
+                            "Section path to insert/move before. " + SECTION_PATH_HELP + " "
                             "Used by add and move."
                         ),
                     },
                     "parent": {
                         "type": "string",
                         "description": (
-                            "Slash-separated section path to nest the new section under. "
+                            "Section path to nest the new section under. " + SECTION_PATH_HELP + " "
                             "Only used by add."
                         ),
                     },

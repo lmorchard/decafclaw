@@ -29,9 +29,14 @@ def extract_tags(text: str) -> list[str]:
 
 
 def normalize_title(raw: str) -> str:
-    """Strip wiki-links and lowercase for matching."""
+    """Strip wiki-links and leading heading hashes, then lowercase for matching.
+
+    Hashes are stripped so a caller can pass a heading as it appears in the
+    document ('## Background') and have it match the parsed title (#671).
+    Applied to both stored titles and lookup paths, so the two stay symmetric.
+    """
     stripped = WIKILINK_RE.sub(r"\1", raw)
-    return stripped.strip().lower()
+    return stripped.lstrip("#").strip().lower()
 
 
 def _ensure_newlines(text: str) -> list[str]:
@@ -153,9 +158,50 @@ class Document:
     # --- Section lookup ---
 
     def find_section(self, path: str) -> Section | None:
+        """Resolve a section path.
+
+        Tries the exact rooted path first, then falls back to a unique suffix
+        match, so a bare title ('Background') or a partial path
+        ('Archive/Background') resolves without knowing that paths are rooted
+        at the page H1 (#671).
+
+        An ambiguous path deliberately returns None. These back mutating
+        operations, so guessing would silently edit the wrong section. Callers
+        that need to tell ambiguous from missing use ``section_candidates``.
+        """
         self._ensure_parsed()
-        parts = [p.strip().lower() for p in path.split("/")]
-        return _walk_path(self._sections, parts)
+        parts = [normalize_title(p) for p in path.split("/") if p.strip()]
+        if not parts:
+            return None
+        exact = _walk_path(self._sections, parts)
+        if exact is not None:
+            return exact
+        matches = _find_by_suffix(self._sections, parts)
+        return matches[0] if len(matches) == 1 else None
+
+    def section_candidates(self, path: str) -> list[str]:
+        """Full paths of every section matching ``path`` as a suffix.
+
+        Empty means nothing matched; more than one means the path was
+        ambiguous, which is why ``find_section`` returned None. Rendered with
+        real titles for display — both forms resolve.
+        """
+        self._ensure_parsed()
+        parts = [normalize_title(p) for p in path.split("/") if p.strip()]
+        if not parts:
+            return []
+        return [
+            _section_path(sec, self._sections, display=True)
+            for sec in _find_by_suffix(self._sections, parts)
+        ]
+
+    def all_section_paths(self) -> list[str]:
+        """Full slash path of every section, in document order, for display."""
+        self._ensure_parsed()
+        return [
+            _section_path(sec, self._sections, display=True)
+            for _depth, sec in self.list_sections()
+        ]
 
     def list_sections(self, depth: int = 0) -> list[tuple[int, Section]]:
         self._ensure_parsed()
@@ -411,12 +457,47 @@ class Document:
     def add_section(
         self,
         title: str,
-        level: int = 1,
+        level: int | None = None,
         content: str = "",
         after: str | None = None,
         before: str | None = None,
         parent: str | None = None,
     ) -> bool:
+        """Insert a new section, optionally with body ``content``.
+
+        ``level`` defaults to whatever the anchor implies: a sibling of the
+        ``after`` / ``before`` section, or one level below ``parent``. Only an
+        unanchored add falls back to 1. Defaulting to 1 unconditionally meant
+        "add a section after ## Background" inserted an H1 mid-page, which
+        silently reparents every following section under the new heading
+        (#671).
+        """
+        # Resolve the anchor once; it fixes the insertion point, the placement
+        # rule, and the default level. `placement` is derived here rather than
+        # re-tested below, so a caller passing several of after/before/parent
+        # gets one consistent precedence instead of the anchor coming from one
+        # argument and the insertion point from another.
+        if after:
+            anchor_path, placement = after, "after"
+        elif before:
+            anchor_path, placement = before, "before"
+        elif parent:
+            anchor_path, placement = parent, "under"
+        else:
+            anchor_path, placement = None, "end"
+
+        anchor = self.find_section(anchor_path) if anchor_path else None
+        if anchor_path and anchor is None:
+            return False
+
+        if level is None:
+            if anchor is None:
+                level = 1
+            elif placement == "under":
+                level = min(anchor.level + 1, 6)
+            else:
+                level = anchor.level
+
         heading = f"{'#' * level} {title}\n"
         new_lines = ["\n", heading]
         if content:
@@ -424,23 +505,13 @@ class Document:
         if new_lines[-1].strip():
             new_lines.append("\n")
 
-        if after:
-            sec = self.find_section(after)
-            if not sec:
-                return False
-            self._insert_lines(sec.content_end, new_lines)
-        elif before:
-            sec = self.find_section(before)
-            if not sec:
-                return False
-            self._insert_lines(sec.heading_line, new_lines)
-        elif parent:
-            sec = self.find_section(parent)
-            if not sec:
-                return False
-            self._insert_lines(sec.content_end, new_lines)
-        else:
+        if placement == "end" or anchor is None:
             self._insert_lines(len(self.lines), new_lines)
+        elif placement == "before":
+            self._insert_lines(anchor.heading_line, new_lines)
+        else:
+            # "after" and "under" both append at the end of the anchor's content.
+            self._insert_lines(anchor.content_end, new_lines)
         return True
 
     def rename_section(self, path: str, new_title: str) -> bool:
@@ -557,6 +628,26 @@ def _walk_path(sections: list[Section], parts: list[str]) -> Section | None:
     return None
 
 
+def _find_by_suffix(sections: list[Section], parts: list[str]) -> list[Section]:
+    """Every section whose full path ends with ``parts``.
+
+    Lets a caller address a section by a bare title or any trailing portion of
+    its path, instead of rooting every path at the page H1 (#671). Returns all
+    matches so the caller can tell unique from ambiguous.
+    """
+    matches: list[Section] = []
+
+    def _walk(secs: list[Section], trail: list[str]) -> None:
+        for sec in secs:
+            current = trail + [sec.normalized_title]
+            if current[-len(parts):] == parts:
+                matches.append(sec)
+            _walk(sec.children, current)
+
+    _walk(sections, [])
+    return matches
+
+
 def _flatten_sections(
     sections: list[Section], depth: int, result: list[tuple[int, Section]]
 ) -> None:
@@ -565,17 +656,71 @@ def _flatten_sections(
         _flatten_sections(sec.children, depth + 1, result)
 
 
-def _section_path(sec: Section, top_sections: list[Section]) -> str:
+def _section_path(
+    sec: Section, top_sections: list[Section], *, display: bool = False,
+) -> str:
+    """Full slash path to ``sec``.
+
+    ``display=True`` renders the headings' real titles, for error messages and
+    anything else a human reads. The default normalized form stays the one used
+    for re-resolution after a mutation. Both are valid input to
+    ``find_section``, which normalizes whatever it is given.
+    """
     def _find(sections: list[Section], target_line: int, prefix: str) -> str | None:
         for s in sections:
-            current = f"{prefix}/{s.normalized_title}" if prefix else s.normalized_title
+            name = s.title.strip() if display else s.normalized_title
+            current = f"{prefix}/{name}" if prefix else name
             if s.heading_line == target_line:
                 return current
             found = _find(s.children, target_line, current)
             if found:
                 return found
         return None
-    return _find(top_sections, sec.heading_line, "") or sec.normalized_title
+    fallback = sec.title.strip() if display else sec.normalized_title
+    return _find(top_sections, sec.heading_line, "") or fallback
+
+
+# Cap on paths listed in a "not found" message. Pages rarely have more, and a
+# truncated list still teaches the path shape, which is the point.
+_MAX_LISTED_PATHS = 20
+
+
+def describe_section_miss(doc: Document, path: str) -> str:
+    """Explain why ``path`` didn't resolve, with enough detail to retry.
+
+    ``find_section`` returns None for both ambiguous and missing paths (#671);
+    this tells them apart. Ambiguous paths list every candidate, missing ones
+    list the page's known paths. Returns the message body without the
+    ``[error: ]`` wrapper, since ``_insert_into_doc`` returns bare strings that
+    its caller wraps.
+    """
+    candidates = doc.section_candidates(path)
+    if len(candidates) > 1:
+        if len(set(candidates)) == 1:
+            # Duplicate headings: every candidate renders identically, so
+            # "use a longer path" is impossible advice and sends the caller
+            # into a retry loop. Point at the only ways out instead.
+            return (
+                f"ambiguous section path {path!r} matches {len(candidates)} "
+                f"sections that share the path {candidates[0]!r}. No path can "
+                f"separate duplicate headings — rename or remove one, or use "
+                f"vault_show_sections and edit by line number."
+            )
+        listed = "\n  ".join(candidates)
+        return (
+            f"ambiguous section path {path!r} matches {len(candidates)} sections:\n"
+            f"  {listed}\n"
+            f"Use a longer path to disambiguate."
+        )
+    known = doc.all_section_paths()
+    if not known:
+        return f"section not found: {path!r} (page has no sections)"
+    listed = "\n  ".join(known[:_MAX_LISTED_PATHS])
+    more = (
+        "" if len(known) <= _MAX_LISTED_PATHS
+        else f"\n  … and {len(known) - _MAX_LISTED_PATHS} more"
+    )
+    return f"section not found: {path!r}. Known paths:\n  {listed}{more}"
 
 
 # ---------------------------------------------------------------------------
@@ -609,7 +754,7 @@ def _insert_into_doc(
     if to_section:
         sec = doc.find_section(to_section)
         if not sec:
-            return f"section not found: {to_section}"
+            return describe_section_miss(doc, to_section)
         if position == "prepend":
             # Insert before first list item in section, or at content start
             target = _find_first_list_item(doc.lines, sec.content_start, sec.content_end)
