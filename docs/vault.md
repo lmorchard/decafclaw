@@ -146,8 +146,45 @@ The vault skill is **always loaded** — its tools are available in every conver
 | `vault_backlinks(page)` | Find pages linking to this page via `[[wiki-links]]`. |
 | `vault_show_sections(page, section?)` | Show a page's section outline or a specific section's content with absolute line numbers. |
 | `vault_move_lines(from_page, to_page, lines, to_section?, position?)` | Move specific lines (by line number) from one agent page to another. Both pages must be under `agent/`. |
-| `vault_section(page, action, section?, title?, level?, after?, before?, parent?)` | Section ops: `add`, `remove`, `rename`, or `move`. Page must be under `agent/`. |
+| `vault_section(page, action, section?, title?, level?, content?, after?, before?, parent?)` | Section ops: `add`, `remove`, `rename`, or `move`. Page must be under `agent/`. `add` takes `content` so a new section arrives with its body in one call; `level` is inferred from the anchor when omitted (see [Section paths](#section-paths-671)). |
 | `vault_update_frontmatter(page, fields, overwrite?)` | Merge frontmatter fields (`summary`, `importance`, `tags`, `keywords`, etc.) into a page's existing metadata without touching the body. Fills absent/empty fields by default; `overwrite=true` replaces existing values. Reindexes the page. Shared write primitive for the self-improving vault arc (#197) — [dream](dream-consolidation.md) calls it (`overwrite=false`) after every `vault_write` in its Consolidate phase; the `backfill-frontmatter` CLI and garden importance tuning build on the same primitive. Interactive callers writing outside `agent/` go through the same confirmation gate as `vault_write`; non-interactive callers (scheduled dream/garden) proceed without confirmation by design — the one mutating vault tool that doesn't error in non-interactive contexts. |
+
+### Section paths (#671)
+
+Every section-path parameter — `vault_section`'s `section` / `after` / `before`
+/ `parent`, `vault_show_sections`' `section`, and `vault_move_lines`'
+`to_section` — accepts three equivalent forms:
+
+| form | example |
+|---|---|
+| bare heading title | `Background` |
+| partial path | `Archive/Background` |
+| full path from the page title | `Project Notes/Archive/Background` |
+
+The path is matched against the **end** of each section's full path, so
+qualifying a path further never makes it stop working. Matching is
+case-insensitive, ignores `[[wiki-link]]` syntax, and tolerates leading `#`
+characters (`## Background` is fine).
+
+A path must resolve to exactly one section. If it matches several, the
+operation fails rather than guessing — these tools mutate pages, so editing the
+wrong `## Notes` silently would be worse than a failed call — and the error
+lists every candidate:
+
+```
+[error: ambiguous section path 'Background' matches 2 sections:
+  Project Notes/Background
+  Project Notes/Archive/Background
+Use a longer path to disambiguate.]
+```
+
+When nothing matches, the error lists the page's known paths (capped at 20)
+so the next attempt can be correct.
+
+Before #671, paths were resolved strictly from the page's top level. Since an
+H1 page has exactly one top-level section — the H1 — every `##` heading was
+addressable *only* as `<H1 Title>/<Section>`, which nothing in the schema
+conveyed and a caller had no way to guess.
 
 ### Frontmatter merge (#197)
 
