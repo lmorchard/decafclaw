@@ -29,7 +29,14 @@ from .context_cleanup import clear_old_tool_results
 from .context_composer import ComposerMode, ContextComposer
 from .iteration_budget import IterationBudget
 from .llm import call_llm
-from .loop_breaker import LoopBreaker, LoopVerdict, fingerprint
+from .loop_breaker import (
+    CallSignature,
+    LoopBreaker,
+    LoopVerdict,
+    fingerprint,
+    summarize_args,
+    summarize_error,
+)
 from .media import EndTurnConfirm, ToolResult, WidgetInputPause, extract_workspace_media
 from .persistence import read_skill_data, read_skills_state, write_skill_data, write_skills_state
 from .reflection_metrics import classify_outcome, response_delta
@@ -121,11 +128,15 @@ async def _maybe_compact(ctx, config, history, prompt_tokens) -> None:
             log.error(f"Compaction failed: {e}")
 
 
-def _extract_call_signatures(tool_calls, messages):
-    """Map each tool_call to (tool_name, fingerprint, is_error) using the
-    tool-result messages just appended by execute_tool_calls. Errors are
-    tool-role messages whose content starts with '[error' (see
-    tool_execution.py:ToolResult(text="[error: ...]")).
+def _extract_call_signatures(tool_calls, messages) -> list[CallSignature]:
+    """Map each tool_call to a CallSignature using the tool-result messages
+    just appended by execute_tool_calls. Errors are tool-role messages whose
+    content starts with '[error' (see tool_execution.py:ToolResult(
+    text="[error: ...]")).
+
+    Arguments and error bodies are retained (truncated) so the loop-breaker's
+    redirect can name the actual failing call rather than giving generic
+    advice (#707).
     """
     results_by_id = {
         m.get("tool_call_id"): (m.get("content") or "")
@@ -142,7 +153,13 @@ def _extract_call_signatures(tool_calls, messages):
             args = raw_args
         content = results_by_id.get(tc.get("id"), "")
         is_error = content.lstrip().startswith("[error")
-        out.append((name, fingerprint(name, args), is_error))
+        out.append(CallSignature(
+            tool_name=name,
+            fingerprint=fingerprint(name, args),
+            is_error=is_error,
+            args_text=summarize_args(args),
+            error_text=summarize_error(content) if is_error else "",
+        ))
     return out
 
 
@@ -787,24 +804,29 @@ class TurnRunner:
                 # restore_history on a restart/reload (role "user" is equally an
                 # LLM role that gets resurrected), permanently polluting context
                 # on all later turns.
+                off = self.loop_breaker.offense()
+                failure = (f" The failure each time: {off.error_text}."
+                           if off.error_text else "")
                 nudge = {
                     "role": "user",
                     "content": (
                         "[loop-breaker] Automated diagnostic from the agent "
                         "runtime — the user did not send this, so do not "
                         "respond to it as if they had. "
-                        f"You {self.loop_breaker.last_signal()} without "
-                        "progress. STOP repeating it. Switch to root-cause diagnosis: "
-                        "read the relevant logs, build a minimal repro, and re-check the "
-                        "contract/interface before any further edits."
+                        f"You {off.reason} without progress.{failure} "
+                        "STOP repeating that move. Work out WHY it fails "
+                        "before trying it again: read the actual error text, "
+                        "re-check the contract/interface you are calling "
+                        "against, and make your next action one that gathers "
+                        "evidence rather than one that retries the same edit."
                     ),
                 }
                 self.messages.append(nudge)
                 await self.ctx.publish("loop_breaker", action="nudge",
-                                       reason=self.loop_breaker.last_signal())
+                                       reason=self.loop_breaker.offense().reason)
             elif verdict is LoopVerdict.STOP:
                 await self.ctx.publish("loop_breaker", action="stop",
-                                       reason=self.loop_breaker.last_signal())
+                                       reason=self.loop_breaker.offense().reason)
                 return _Final(result=await self._finalize_loop_break())
 
         return _Continue()
@@ -1087,14 +1109,21 @@ class TurnRunner:
         return await self._finalize_with_note(limit_note)
 
     async def _finalize_loop_break(self) -> "ToolResult":
-        """Loop-breaker hard-stop: end the turn with a summary of the thrash
-        and a diagnostic next step, preserving any accumulated text."""
-        note = (
-            f"\n\n[loop-breaker] Stopped: you {self.loop_breaker.last_signal()} "
-            "without progress. Next: read the relevant logs, build a minimal "
-            "repro, and re-check the contract before retrying."
+        """Loop-breaker hard-stop: end the turn with what was tried, what
+        failed, and what would unblock it. This is the message the user reads
+        when they come back, so it is a handoff rather than a bare notice."""
+        off = self.loop_breaker.offense()
+        parts = [f"\n\n[loop-breaker] Stopped after repeated failures: "
+                 f"you {off.reason} without progress."]
+        if off.error_text:
+            parts.append(f" The error each time: {off.error_text}")
+        parts.append(
+            "\n\nI stopped rather than retry again. To move this forward I "
+            "need either a look at the real failure (the logs or config for "
+            "that call) or a different approach — tell me which and I'll "
+            "pick it up."
         )
-        return await self._finalize_with_note(note)
+        return await self._finalize_with_note("".join(parts))
 
     async def _finalize_with_note(self, note: str) -> "ToolResult":
         """End an abnormally-terminated turn (iteration limit / loop-breaker)

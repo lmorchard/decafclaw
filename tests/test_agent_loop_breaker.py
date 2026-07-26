@@ -38,12 +38,27 @@ def test_extract_signatures_flags_errors():
 
 def test_extract_signatures_handles_missing_tool_result():
     """A tool_call with no matching tool-result message (shouldn't happen in
-    practice, but defend against it) is treated as non-error."""
+    practice, but defend against it) is treated as non-error, with no error
+    text to quote."""
     tool_calls = [
         {"id": "missing", "function": {"name": "edit", "arguments": "{}"}},
     ]
     sigs = _extract_call_signatures(tool_calls, [])
-    assert sigs[0] == ("edit", sigs[0][1], False)
+    assert sigs[0].tool_name == "edit"
+    assert sigs[0].is_error is False
+    assert sigs[0].error_text == ""
+
+
+def test_extract_signatures_retains_args_and_error_text():
+    tool_calls = [
+        {"id": "1", "function": {"name": "edit", "arguments": '{"path": "x"}'}},
+    ]
+    messages = [
+        {"role": "tool", "tool_call_id": "1", "content": "[error: bad edit]"},
+    ]
+    sigs = _extract_call_signatures(tool_calls, messages)
+    assert '"path": "x"' in sigs[0].args_text
+    assert "bad edit" in sigs[0].error_text
 
 
 def test_extract_signatures_handles_malformed_json_args():

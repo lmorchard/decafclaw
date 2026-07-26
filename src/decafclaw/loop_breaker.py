@@ -6,6 +6,7 @@ import dataclasses
 import enum
 import hashlib
 import json
+from typing import NamedTuple
 
 
 class LoopVerdict(enum.Enum):
@@ -14,13 +15,65 @@ class LoopVerdict(enum.Enum):
     STOP = "stop"
 
 
+_MAX_ARG_CHARS = 400
+_MAX_ERROR_CHARS = 300
+
+
+def _render_args(args) -> str:
+    """Canonical, order-insensitive text form of a call's arguments."""
+    try:
+        return json.dumps(args, sort_keys=True, default=str)
+    except (TypeError, ValueError):
+        return repr(args)
+
+
+def _truncate(text: str, limit: int) -> str:
+    """One-line, length-capped rendering for injection into prompt text."""
+    text = " ".join((text or "").split())
+    return text if len(text) <= limit else text[:limit] + "…"
+
+
 def fingerprint(tool_name: str, args) -> str:
     """Stable hash of a tool call's name + arguments (order-insensitive)."""
-    try:
-        arg_repr = json.dumps(args, sort_keys=True, default=str)
-    except (TypeError, ValueError):
-        arg_repr = repr(args)
-    return hashlib.sha1(f"{tool_name}\x00{arg_repr}".encode()).hexdigest()
+    return hashlib.sha1(f"{tool_name}\x00{_render_args(args)}".encode()).hexdigest()
+
+
+def summarize_args(args) -> str:
+    """Render a call's arguments as one truncated line for redirect text."""
+    return _truncate(_render_args(args), _MAX_ARG_CHARS)
+
+
+def summarize_error(text: str) -> str:
+    """Render a tool-result error body as one truncated line."""
+    return _truncate(text, _MAX_ERROR_CHARS)
+
+
+class CallSignature(NamedTuple):
+    """One tool call's loop-relevant record.
+
+    `args_text` and `error_text` are retained (pre-truncated) so a redirect
+    can name the actual offending call and its actual failure instead of
+    giving generic advice — the detector used to hash the args away and keep
+    only an is_error bool (#707).
+    """
+    tool_name: str
+    fingerprint: str
+    is_error: bool
+    args_text: str = ""
+    error_text: str = ""
+
+
+@dataclasses.dataclass(frozen=True)
+class Offense:
+    """What tripped the breaker, in enough detail to name it in a redirect.
+
+    `tool_name` and `args_text` are empty for an error-surge trip, which by
+    definition has no single offending call.
+    """
+    reason: str = ""
+    tool_name: str = ""
+    args_text: str = ""
+    error_text: str = ""
 
 
 @dataclasses.dataclass
@@ -36,6 +89,8 @@ class _Offender:
     tool_name: str
     count: int = 0
     last_tripped_count: int = 0
+    args_text: str = ""
+    error_text: str = ""
 
 
 class LoopBreaker:
@@ -58,7 +113,8 @@ class LoopBreaker:
         self._total_errors = 0                # monotonic; never trimmed
         self._errors_at_last_trip = 0         # watermark for the error signal
         self._trips = 0
-        self._last_signal = ""
+        self._last_error_text = ""
+        self._offense = Offense()
 
     @property
     def enabled(self) -> bool:
@@ -67,18 +123,24 @@ class LoopBreaker:
     def record(self, calls) -> None:
         """Record one iteration's tool calls.
 
-        calls: iterable of (tool_name, fingerprint, is_error).
+        calls: iterable of CallSignature.
         """
-        for tool_name, fp, is_error in calls:
-            entry = self._counts.get(fp)
+        for sig in calls:
+            entry = self._counts.get(sig.fingerprint)
             if entry is None:
-                entry = self._counts[fp] = _Offender(tool_name=tool_name)
-            entry.tool_name = tool_name
+                entry = self._counts[sig.fingerprint] = _Offender(
+                    tool_name=sig.tool_name,
+                )
+            entry.tool_name = sig.tool_name
             entry.count += 1
-            self._recent_errors.append(bool(is_error))
-            if is_error:
+            entry.args_text = sig.args_text
+            if sig.is_error:
+                # Keep the latest error for this call — the one a redirect quotes.
+                entry.error_text = sig.error_text
+            self._recent_errors.append(bool(sig.is_error))
+            if sig.is_error:
                 self._total_errors += 1
-        # Trim to a rolling window of the last N results.
+                self._last_error_text = sig.error_text
         window = self._cfg.error_window
         if len(self._recent_errors) > window:
             self._recent_errors = self._recent_errors[-window:]
@@ -115,19 +177,26 @@ class LoopBreaker:
         offender = self._fresh_repeat_offender()
         if offender is not None:
             offender.last_tripped_count = offender.count
-            self._last_signal = (
-                f"called {offender.tool_name} {offender.count}× with the same args"
+            self._offense = Offense(
+                reason=(f"called {offender.tool_name} {offender.count}× "
+                        "with the same args"),
+                tool_name=offender.tool_name,
+                args_text=offender.args_text,
+                error_text=offender.error_text,
             )
         elif self._fresh_error_surge():
             self._errors_at_last_trip = self._total_errors
             errs = sum(self._recent_errors)
-            self._last_signal = (
-                f"{errs} of the last {len(self._recent_errors)} tool results were errors"
+            self._offense = Offense(
+                reason=(f"{errs} of the last {len(self._recent_errors)} "
+                        "tool results were errors"),
+                error_text=self._last_error_text,
             )
         else:
             return LoopVerdict.NONE
         self._trips += 1
         return LoopVerdict.NUDGE if self._trips == 1 else LoopVerdict.STOP
 
-    def last_signal(self) -> str:
-        return self._last_signal
+    def offense(self) -> Offense:
+        """The most recent trip's evidence. Empty-field Offense before any trip."""
+        return self._offense
