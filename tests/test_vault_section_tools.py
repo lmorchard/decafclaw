@@ -411,3 +411,181 @@ async def test_vault_move_lines_publishes_vault_changed_for_both_pages(vault_ctx
     paths = {e["path"] for e in matching}
     assert any(p.endswith("src.md") for p in paths)
     assert any(p.endswith("dst.md") for p in paths)
+
+
+# --- Section path resolution and miss diagnostics (#671) --------------------
+
+
+@pytest.mark.asyncio
+async def test_section_add_after_bare_title(vault_ctx):
+    """#671: 'First' previously had to be spelled 'top/first'."""
+    vault = vault_ctx.config.vault_root
+    agent_pages = vault / "agent" / "pages"
+    agent_pages.mkdir(parents=True)
+    (agent_pages / "note.md").write_text("# Top\n\n## First\n")
+    result = await tool_vault_section(
+        vault_ctx,
+        page="agent/pages/note",
+        action="add",
+        title="Second",
+        level=2,
+        after="First",
+    )
+    assert "[error" not in result.text.lower()
+    assert "## Second" in (agent_pages / "note.md").read_text()
+
+
+@pytest.mark.asyncio
+async def test_section_miss_lists_known_paths(vault_ctx):
+    vault = vault_ctx.config.vault_root
+    agent_pages = vault / "agent" / "pages"
+    agent_pages.mkdir(parents=True)
+    (agent_pages / "note.md").write_text("# Top\n\n## First\n")
+    result = await tool_vault_section(
+        vault_ctx,
+        page="agent/pages/note",
+        action="rename",
+        section="Nonexistent",
+        title="X",
+    )
+    assert "not found" in result.text
+    assert "Top/First" in result.text
+
+
+@pytest.mark.asyncio
+async def test_section_add_miss_echoes_the_failed_path(vault_ctx):
+    """The add branch used to say 'target section not found' with no path."""
+    vault = vault_ctx.config.vault_root
+    agent_pages = vault / "agent" / "pages"
+    agent_pages.mkdir(parents=True)
+    (agent_pages / "note.md").write_text("# Top\n\n## First\n")
+    result = await tool_vault_section(
+        vault_ctx,
+        page="agent/pages/note",
+        action="add",
+        title="Second",
+        level=2,
+        after="Nowhere",
+    )
+    assert "Nowhere" in result.text
+    assert "Top/First" in result.text
+
+
+@pytest.mark.asyncio
+async def test_section_ambiguous_path_errors_with_candidates(vault_ctx):
+    vault = vault_ctx.config.vault_root
+    agent_pages = vault / "agent" / "pages"
+    agent_pages.mkdir(parents=True)
+    (agent_pages / "amb.md").write_text(
+        "# Top\n\n## Notes\n\na\n\n## Archive\n\n### Notes\n\nb\n"
+    )
+    result = await tool_vault_section(
+        vault_ctx,
+        page="agent/pages/amb",
+        action="rename",
+        section="Notes",
+        title="X",
+    )
+    assert "ambiguous" in result.text
+    assert "Top/Notes" in result.text
+    assert "Top/Archive/Notes" in result.text
+    # Nothing was renamed.
+    assert "## Notes" in (agent_pages / "amb.md").read_text()
+
+
+@pytest.mark.asyncio
+async def test_section_add_with_content(vault_ctx):
+    """One call should both create the section and fill it (#671 Phase 5).
+
+    Document.add_section always supported `content`; the tool didn't expose
+    it, so the agent had to add an empty section and then rewrite the page.
+    """
+    vault = vault_ctx.config.vault_root
+    agent_pages = vault / "agent" / "pages"
+    agent_pages.mkdir(parents=True)
+    (agent_pages / "note.md").write_text(
+        "# Project Notes\n\n## Background\n\nkeep me\n\n## TODO\n\n- Old item\n"
+    )
+    result = await tool_vault_section(
+        vault_ctx,
+        page="agent/pages/note",
+        action="add",
+        title="Status",
+        level=2,
+        content="Working on it.",
+        after="Background",
+    )
+    assert "[error" not in result.text.lower()
+    text = (agent_pages / "note.md").read_text()
+    assert "## Status" in text
+    assert "Working on it." in text
+    # Ordering holds and the untouched sections survive.
+    assert text.index("## Background") < text.index("## Status") < text.index("## TODO")
+    assert "keep me" in text
+    assert "- Old item" in text
+
+
+@pytest.mark.asyncio
+async def test_section_add_without_content_still_empty(vault_ctx):
+    """content is optional — omitting it keeps the old behavior."""
+    vault = vault_ctx.config.vault_root
+    agent_pages = vault / "agent" / "pages"
+    agent_pages.mkdir(parents=True)
+    (agent_pages / "note.md").write_text("# Top\n\n## First\n")
+    result = await tool_vault_section(
+        vault_ctx,
+        page="agent/pages/note",
+        action="add",
+        title="Second",
+        level=2,
+        after="First",
+    )
+    assert "[error" not in result.text.lower()
+    assert "## Second" in (agent_pages / "note.md").read_text()
+
+
+@pytest.mark.asyncio
+async def test_section_add_infers_level_from_anchor(vault_ctx):
+    """Omitting level must reach add_section's inference, not trip validation.
+
+    The tool guarded `not isinstance(level, int)` before `level` became
+    optional, so an omitted level failed with "level must be between 1 and 6,
+    got None" — caught only at the tool layer, since the Document-level tests
+    call add_section directly.
+    """
+    vault = vault_ctx.config.vault_root
+    agent_pages = vault / "agent" / "pages"
+    agent_pages.mkdir(parents=True)
+    (agent_pages / "note.md").write_text(
+        "# Project Notes\n\n## Background\n\nkeep me\n\n## TODO\n\n- Old item\n"
+    )
+    result = await tool_vault_section(
+        vault_ctx,
+        page="agent/pages/note",
+        action="add",
+        title="Status",
+        content="Working on it.",
+        after="Background",
+    )
+    assert "[error" not in result.text.lower()
+    text = (agent_pages / "note.md").read_text()
+    assert "## Status" in text
+    # A sibling, not a second H1 that would reparent TODO.
+    assert "\n# Status" not in text
+
+
+@pytest.mark.asyncio
+async def test_section_add_still_rejects_out_of_range_level(vault_ctx):
+    vault = vault_ctx.config.vault_root
+    agent_pages = vault / "agent" / "pages"
+    agent_pages.mkdir(parents=True)
+    (agent_pages / "note.md").write_text("# Top\n\n## First\n")
+    result = await tool_vault_section(
+        vault_ctx,
+        page="agent/pages/note",
+        action="add",
+        title="Nope",
+        level=9,
+        after="First",
+    )
+    assert "level must be between 1 and 6" in result.text
