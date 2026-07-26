@@ -29,9 +29,29 @@ install:
 	uv sync
 	cd src/decafclaw/web/static && npm install
 
-# Install JS dependencies in static/
+# Install JS dependencies in static/, failing if the install rewrites the
+# lockfile. `check` / `check-js` / `test-js` all depend on this, so a silent
+# rewrite here rides into whatever branch happens to be checked out — it has
+# swept into an unrelated PR once and nearly a second time (#706). Deliberate
+# dependency changes go through `make vendor`, which is allowed to write.
+#
+# Snapshots around the install rather than diffing against HEAD, so a lockfile
+# you were *already* editing doesn't trip it — only a rewrite caused by this
+# install does.
 install-js:
-	cd src/decafclaw/web/static && npm install
+	@cd src/decafclaw/web/static && \
+	  before=$$(git hash-object package-lock.json) && \
+	  npm install && \
+	  after=$$(git hash-object package-lock.json) && \
+	  if [ "$$before" != "$$after" ]; then \
+	    echo ""; \
+	    echo "ERROR: npm install rewrote package-lock.json during a check."; \
+	    echo "  Intentional dependency change?  run 'make vendor' and commit the lockfile."; \
+	    echo "  Otherwise restore it:  git checkout -- src/decafclaw/web/static/package-lock.json"; \
+	    echo "  Background: #706 (silent rewrites have ridden into unrelated PRs)."; \
+	    echo ""; \
+	    exit 1; \
+	  fi
 
 # Type check JS (runs npm install if needed)
 check-js: install-js
