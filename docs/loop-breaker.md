@@ -44,11 +44,39 @@ set the last time that signal tripped:
   being told to stop, not merely that the count is still at or above
   threshold.
 - The error signal tracks a monotonic `_total_errors` counter (never
-  trimmed) alongside `_errors_at_last_trip`. It trips again only once new
-  errors have landed since the last trip — a rolling window can stay over
-  threshold on stale errors alone, and that shouldn't re-trip anything.
+  trimmed) alongside `_errors_at_last_trip`. It trips again only once a
+  *full* `error_threshold` worth of new errors has landed since the last trip
+  (`_total_errors - _errors_at_last_trip >= error_threshold`), **and** those
+  errors are dense enough to still fill the `error_window`
+  (`sum(_recent_errors) >= error_threshold`). Two necessary conditions: the
+  delta is the freshness half, the window is the density half — a slow
+  trickle of errors interleaved with successes over many rounds isn't thrash,
+  and shouldn't accumulate into a trip. On the first trip the delta condition
+  is free, since a window sum at threshold implies a total at threshold.
 
-This matters because the old implementation tested a standing condition
+Both watermarks are advanced for *every* signal the trip consumed, not just
+the one named in the `Offense`:
+
+- A repeat trip watermarks **all** currently-fresh fingerprints, not only the
+  worst offender it quotes. Tool calls run concurrently
+  (`asyncio.gather` in `tool_execution.py`), so a repeated multi-call batch —
+  the canonical thrash shape — pushes several fingerprints over threshold in
+  the same round. Watermarking only the worst left the others permanently
+  "fresh", so they re-tripped on later rounds off counts that had stopped
+  growing.
+- A repeat trip also consumes the error credit (`_errors_at_last_trip`). The
+  errors that piled up alongside the thrash are already paid for by the rung
+  the agent just got; leaving them uncounted let the error signal fire on the
+  very next round off the same failures. That mattered most for the redirect,
+  which *instructs* the model to "take exactly one read-only action" — and in
+  the broken environments where the breaker fires, that diagnostic read
+  frequently errors. The mechanism was punishing the behavior it had just
+  demanded.
+- The reverse case needs no handling: when the error branch runs there are no
+  fresh repeat offenders by construction, because the repeat branch is
+  checked first.
+
+This all matters because the old implementation tested a standing condition
 (`count >= threshold`, forever true once crossed). That meant the very
 round *after* a nudge fired always tripped again too — compliance was
 mechanically impossible, because the count from before the nudge was still
@@ -107,7 +135,11 @@ repeatedly"). `CallSignature` (`tool_name`, `fingerprint`, `is_error`,
 error, the tool's error body, truncated one-line via `summarize_args()` /
 `summarize_error()` at `_MAX_ARG_CHARS = 400` / `_MAX_ERROR_CHARS = 300`.
 `LoopBreaker.record()` stores the latest values per fingerprint on
-`_Offender`; `verdict()` copies them into a frozen `Offense` dataclass
+`_Offender` — `error_text` is *cleared* on a successful occurrence, so the
+"the error every time" / "the failure each time" wording stays true for a
+call that failed early and then started succeeding (reachable because
+repeated *successful* identical calls trip the repeat signal too);
+`verdict()` copies them into a frozen `Offense` dataclass
 (`reason`, `tool_name`, `args_text`, `error_text`) retrievable via
 `LoopBreaker.offense()`, which **always** returns an `Offense` — an
 empty-field instance before any trip, never `None`, so callers need no
@@ -143,36 +175,49 @@ and abandons lines of investigation that were fine, invisibly. The
 human's message rather than as the sender (#680). Both rungs carry this
 disclaimer for the same reason.
 
-### The hard stop archives only its own note — and delivery splits on `ctx.is_child`
+### The hard stop archives only its own note — and delivery splits on "did anyone watch this live"
 
 A turn that ran many iterations has already archived each iteration's
 assistant preamble as it was emitted (`_handle_tool_calls`), and every
 preamble was also published live as `text_before_tools` — rendered by
-Mattermost (`mattermost_display.on_text_complete`), the web UI, and the
-terminal as the turn ran. `_finalize_with_note` (shared by the loop-breaker
-stop and the iteration-limit finalizer) always **archives only the note**.
-What it *delivers* as `ToolResult.text` depends on whether anyone was
-watching the turn live:
+Mattermost (`mattermost_display.on_text_complete`), the web UI
+(`web/websocket.py`), and the terminal (`interactive_terminal.on_event`) as
+the turn ran. `_finalize_with_note` (shared by the loop-breaker stop and the
+iteration-limit finalizer) always **archives only the note**. What it
+*delivers* as `ToolResult.text` depends on whether anyone was watching the
+turn live:
 
-- **Interactive turns** (Mattermost, web UI, terminal) deliver the note
-  alone. The transport already rendered each preamble live, so re-joining
-  them into the delivered text would duplicate the whole turn: invisible on
-  a one-preamble turn, a wall of repeated text on a long thrash, which is
-  exactly when the transcript most needs to be readable (#675). This
-  matches the normal end-of-turn path, which also delivers only its final
-  content.
-- **Child-agent turns** (`ctx.is_child`, i.e. a `delegate_task` sub-agent)
-  deliver the accumulated preamble join *plus* the note, same as before
-  #707. A parent agent consuming a child's output is not a transport — it
-  never subscribes to the event bus, so `ToolResult.text` (routed back
-  through `delegate.py`'s `run_child_turn`) is the child's *only* channel
-  for its own work. Dropping the join there would silently lose everything
-  the child did before hitting the wall. `delegate.py` also sets
-  `skip_reflection = True` for children, so the reflection judge doesn't
-  give the parent a second chance to see it either.
+- **Watched turns** deliver the note alone: interactive turns (Mattermost,
+  web UI, terminal) and background wakes, which fire on the user's *real*
+  conversation and therefore do have a live subscriber. The transport already
+  rendered each preamble live, so re-joining them into the delivered text
+  would duplicate the whole turn: invisible on a one-preamble turn, a wall of
+  repeated text on a long thrash, which is exactly when the transcript most
+  needs to be readable (#675). This matches the normal end-of-turn path,
+  which also delivers only its final content.
+- **Unwatched turns** deliver the accumulated preamble join *plus* the note,
+  same as before #707, because `ToolResult.text` is their only channel:
+  - a **child agent** (`ctx.is_child`, set by `delegate.py` and by
+    `compaction.py`'s memory sweep). A parent agent consuming a child's
+    output is not a transport — it never subscribes to the event bus, so
+    `ToolResult.text` (routed back through `delegate.py`'s `run_child_turn`
+    or the workflow `subagent` primitive) is the child's only channel for its
+    own work. `delegate.py` also sets `skip_reflection = True` for children,
+    so the reflection judge doesn't give the parent a second chance to see it
+    either.
+  - a **heartbeat or scheduled turn** (`ctx.task_mode`, checked against
+    `agent.py`'s `_UNWATCHED_TASK_MODES`). These run on synthetic conv_ids no
+    transport subscribed to, so nothing renders their `text_before_tools` —
+    yet their `ToolResult.text` *is* parsed (`heartbeat.py`) and displayed to
+    the user afterwards (`interactive_terminal.py`,
+    `tools/heartbeat_tools.py`, `schedules.py`). The original gate tested
+    `ctx.is_child` alone, which encoded "child == no live viewer" and dropped
+    everything these turns accumulated before hitting the wall.
 
-Archiving is identical in both cases — only `note` is ever appended to
-`self.history` / the archive.
+Dropping the join for any unwatched shape silently loses work no one ever
+saw; keeping it for a watched shape duplicates the turn. Archiving is
+identical in every case — only `note` is ever appended to `self.history` /
+the archive.
 
 ### Deferred: a diagnosis child-agent rung
 
@@ -250,6 +295,13 @@ behavior doesn't trip the breaker. Set `enabled: false` to disable the
 mechanism entirely (the `AGENT.md` prompt guardrails still apply either
 way).
 
+`error_threshold` is used twice by the error signal — as the size of the
+rolling `error_window` slice that must be errors (density) *and* as the
+number of new errors that must have accrued since the last trip (freshness).
+Widening `error_window` therefore makes the density half easier to satisfy
+but does nothing to the freshness half; it is a "how spread out may these
+errors be" knob, not a sensitivity knob.
+
 There is deliberately no `redirect_enabled` (or similar) knob. The redirect
 is rung 2 of one ladder driven by the same four fields above — it isn't a
 separately-togglable feature, and adding a knob for just that rung would let
@@ -264,10 +316,14 @@ rest, which doesn't correspond to any real intent.
   LLM imports
 - `src/decafclaw/agent.py` — `TurnRunner._handle_tool_calls` wiring
   (`_extract_call_signatures`, nudge/redirect injection, `_finalize_loop_break`,
-  `_finalize_with_note`)
+  `_finalize_with_note`, `_UNWATCHED_TASK_MODES`)
+- `src/decafclaw/interactive_terminal.py` — the terminal's
+  `text_before_tools` handler (streaming-guarded, so preambles render exactly
+  once whether or not the model streams)
 - `src/decafclaw/config_types.py` — `LoopBreakerConfig`
 - `src/decafclaw/prompts/AGENT.md` — the diagnosis / acknowledgement /
   phantom-call prompt guardrails
 - `tests/test_loop_breaker.py`, `tests/test_agent_loop_breaker.py` —
   detector unit tests + `TurnRunner` wiring tests
+- `tests/test_interactive_terminal.py` — terminal preamble rendering
 - `evals/diagnostic_discipline.yaml` — the bounded, real-LLM eval

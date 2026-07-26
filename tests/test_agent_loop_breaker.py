@@ -126,10 +126,9 @@ async def test_turn_runner_nudges_then_stops_on_repeated_tool_errors(ctx):
     # ...and confirm the nudge that WAS injected into the live LLM-facing
     # message list carries role "user", not "system" (models weight
     # user-role directives more heavily for mid-turn corrections). The same
-    # `messages` list object is mutated in place across LLM calls, so any
-    # recorded call's `messages` arg reflects the final state.
-    # `messages` is mutated in place across LLM calls, so the last recorded
-    # call's list reflects the final state — both injected diagnostics.
+    # `messages` list object is mutated in place across LLM calls, so the last
+    # recorded call's list reflects the final state — both injected
+    # diagnostics.
     sent_messages = mock_llm.call_args_list[-1][0][1]
     diagnostics = [m for m in sent_messages
                    if "[loop-breaker]" in (m.get("content") or "")]
@@ -368,6 +367,83 @@ async def test_loop_break_delivers_and_archives_only_the_note(ctx):
         f"preamble archived {occurrences}× across {iterations} iterations — "
         "the finalizer is re-archiving already-archived text"
     )
+
+
+@pytest.mark.parametrize("task_mode", ["heartbeat", "scheduled"])
+@pytest.mark.asyncio
+async def test_loop_break_delivers_preambles_for_unwatched_task_turns(ctx, task_mode):
+    """#707 review: the delivery gate is "did anyone watch this live", not
+    `ctx.is_child`.
+
+    Heartbeat and scheduled turns run on synthetic conv_ids no transport
+    subscribed to, so nothing rendered their `text_before_tools` — yet their
+    `ToolResult.text` is parsed (heartbeat.py) and shown to the user afterwards
+    (interactive_terminal.py, heartbeat_tools.py, schedules.py). Gating on
+    `is_child` alone dropped everything those turns did before hitting the
+    wall.
+    """
+    ctx.task_mode = task_mode
+    ctx.config.llm.streaming = False
+    ctx.config.agent.max_tool_iterations = 50
+    ctx.config.loop_breaker.repeat_threshold = 3
+    ctx.config.loop_breaker.error_threshold = 99
+    ctx.config.loop_breaker.error_window = 50
+
+    preamble = "Checking the feed again."
+    repeated_call = _mock_llm_response(
+        content=preamble,
+        tool_calls=[{
+            "id": "tc-repeat",
+            "function": {"name": "definitely_not_a_real_tool", "arguments": "{}"},
+        }],
+    )
+
+    with patch("decafclaw.agent.call_llm", new_callable=AsyncMock) as mock_llm:
+        mock_llm.side_effect = [repeated_call] * 10
+        result = await run_agent_turn(ctx, "check the feed", [])
+
+    assert "[loop-breaker] Stopped" in result.text
+    assert preamble in result.text, (
+        "an unwatched turn's accumulated work was dropped from delivery"
+    )
+
+    # Archiving stays note-only regardless of the delivery branch (#675).
+    from decafclaw.archive import read_archive
+    archived = read_archive(ctx.config, ctx.conv_id)
+    occurrences = sum(
+        (m.get("content") or "").count(preamble)
+        for m in archived if m.get("role") == "assistant"
+    )
+    assert occurrences == mock_llm.call_count
+
+
+@pytest.mark.asyncio
+async def test_loop_break_delivers_only_the_note_for_a_background_wake(ctx):
+    """A wake turn fires on the user's real conversation, which DOES have a
+    live subscriber — so it stays on the note-only branch. This is the
+    boundary of `_UNWATCHED_TASK_MODES`."""
+    ctx.task_mode = "background_wake"
+    ctx.config.llm.streaming = False
+    ctx.config.agent.max_tool_iterations = 50
+    ctx.config.loop_breaker.repeat_threshold = 3
+    ctx.config.loop_breaker.error_threshold = 99
+    ctx.config.loop_breaker.error_window = 50
+
+    preamble = "Following up on that job."
+    repeated_call = _mock_llm_response(
+        content=preamble,
+        tool_calls=[{
+            "id": "tc-repeat",
+            "function": {"name": "definitely_not_a_real_tool", "arguments": "{}"},
+        }],
+    )
+
+    with patch("decafclaw.agent.call_llm", new_callable=AsyncMock) as mock_llm:
+        mock_llm.side_effect = [repeated_call] * 10
+        result = await run_agent_turn(ctx, "wake up", [])
+
+    assert "[loop-breaker] Stopped" in result.text
+    assert preamble not in result.text
 
 
 # -- The nudge must not read as the user speaking (#680) -----------------------

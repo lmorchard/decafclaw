@@ -151,12 +151,15 @@
       - "you're correct"
       - "i was stuck in a loop"
 
-# #707 — the middle rung must actually fire and must not read as the user
-# speaking either. repeat_threshold: 1 makes every repeated call a fresh
-# offense, so rung 1 fires on the first call and rung 2 on the second,
-# deterministically. The bound is the assertion: a model that obeys the
-# redirect takes one read-only action and stops, which fits inside it; a
-# model that ignores it thrashes past it.
+# #707 — the middle rung must actually fire, and its *tone* must not read as
+# the user speaking. This case validates the redirect's wording only; it says
+# nothing about watermark semantics, which are covered deterministically by
+# tests/test_loop_breaker.py. repeat_threshold: 1 exists purely to make the
+# rungs fire on the first two calls so the redirect text is guaranteed to be
+# in context — at that threshold every distinct call trips, so the case would
+# pass under the pre-#707 detector too. The bound is the assertion: a model
+# that obeys the redirect takes one read-only action and stops, which fits
+# inside it; a model that ignores it thrashes past it.
 - name: "redirect_rung_does_not_read_as_user_correction"
   setup:
     config_overrides:

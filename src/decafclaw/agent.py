@@ -49,6 +49,15 @@ _TASK_MODE_TO_COMPOSER: dict[str, ComposerMode] = {
     "scheduled": ComposerMode.SCHEDULED,
 }
 
+# Task modes (KIND_TASK_MODE in conversation_manager.py) that run on a
+# synthetic conv_id no transport ever subscribed to, so nothing renders their
+# `text_before_tools` events live — the turn's `ToolResult.text` is the only
+# channel by which its work reaches anyone. Read by `_finalize_with_note`.
+# `background_wake` is deliberately EXCLUDED: a wake turn runs on the user's
+# real conversation, which does have a live subscriber. `""` (interactive) is
+# likewise excluded. See docs/loop-breaker.md.
+_UNWATCHED_TASK_MODES = frozenset({"heartbeat", "scheduled", "child_agent"})
+
 log = logging.getLogger(__name__)
 
 # Track background tasks to prevent GC and surface exceptions
@@ -823,7 +832,7 @@ class TurnRunner:
                 }
                 self.messages.append(nudge)
                 await self.ctx.publish("loop_breaker", action="nudge",
-                                       reason=self.loop_breaker.offense().reason)
+                                       reason=off.reason)
             elif verdict is LoopVerdict.REDIRECT:
                 # Second trip: the nudge was ignored and the agent re-offended.
                 # Same ephemerality and attribution rules as the nudge above —
@@ -1140,10 +1149,11 @@ class TurnRunner:
 
     async def _finalize_max_iterations(self) -> "ToolResult":
         """Hit max iterations without a final response. Always archives only
-        the notice; delivers the notice alone for interactive turns (the
-        accumulated text was already rendered live by the transport) or the
-        accumulated text plus the notice for child turns (the parent LLM has
-        no other way to see it). See _finalize_with_note."""
+        the notice; delivers the notice alone for turns with a live subscriber
+        (the accumulated text was already rendered live by the transport) or
+        the accumulated text plus the notice for unwatched turns (child /
+        heartbeat / scheduled, which have no other way to surface it). See
+        _finalize_with_note."""
         limit_note = (
             f"\n\n[Agent reached max tool iterations "
             f"({self.config.agent.max_tool_iterations}) without a final response]"
@@ -1174,9 +1184,10 @@ class TurnRunner:
 
         Every iteration's preamble was already published as
         `text_before_tools` — rendered live by Mattermost
-        (mattermost_display.on_text_complete), the web UI and the terminal —
-        and archived as it was emitted (see _handle_tool_calls). For an
-        interactive turn, re-joining the accumulated preambles into the
+        (mattermost_display.on_text_complete), the web UI
+        (websocket.py) and the terminal (interactive_terminal.on_event) —
+        and archived as it was emitted (see _handle_tool_calls). For a turn
+        someone is watching, re-joining the accumulated preambles into the
         delivered text duplicated the entire turn: invisible on a
         one-preamble turn, a wall of repeated text on a long thrash, which is
         exactly when the transcript most needs to be readable. #675 removed
@@ -1184,22 +1195,36 @@ class TurnRunner:
         removes it from delivery too. The normal end-of-turn path delivers
         only its final content, so this now matches it.
 
-        A child agent turn (`ctx.is_child`) has no transport rendering
-        anything live — the parent LLM never subscribes to the event bus, so
-        `ToolResult.text` (routed back through delegate.py's
-        `run_child_turn` / workflow `subagent`) is its *only* channel for
-        the child's work. Dropping the join there would silently lose
-        everything the child accumulated before hitting the wall. Children
-        also run with `skip_reflection=True` (delegate.py), so the
-        "`accumulated_text_parts` still feeds the reflection judge" argument
-        for keeping the field populated doesn't give the parent a second
-        chance to see it either — the join is the only way. So: interactive
-        turns deliver note-only; child turns deliver the accumulated join
-        plus the note, as before #707. Archiving is unaffected either way —
-        only `note` is ever appended to history/archive.
+        The real predicate is "did anyone see the preambles live", not
+        "is this a child". Three shapes of turn have no live subscriber:
+
+        - a child agent (`ctx.is_child`, set by delegate.py and
+          compaction.py's memory sweep) — the parent LLM never subscribes to
+          the event bus, so `ToolResult.text` (routed back through
+          delegate.py's `run_child_turn` / workflow `subagent`) is its *only*
+          channel for the child's work;
+        - heartbeat and scheduled turns (`ctx.task_mode`, see
+          `_UNWATCHED_TASK_MODES`) — they run on synthetic conv_ids no
+          transport subscribed to, yet their `ToolResult.text` is parsed
+          (heartbeat.py) and shown to the user afterwards
+          (interactive_terminal.py, heartbeat_tools.py, schedules.py).
+
+        Dropping the join for any of those silently loses everything the turn
+        accumulated before hitting the wall. Children also run with
+        `skip_reflection=True` (delegate.py), so the "`accumulated_text_parts`
+        still feeds the reflection judge" argument for keeping the field
+        populated doesn't give the parent a second chance to see it either —
+        the join is the only way. Background wakes are NOT in this set: they
+        fire on the user's real conversation, which does have a live
+        subscriber.
+
+        So: watched turns deliver note-only; unwatched turns deliver the
+        accumulated join plus the note, as before #707. Archiving is
+        unaffected either way — only `note` is ever appended to
+        history/archive.
         """
         note = note.strip()
-        if self.ctx.is_child:
+        if self.ctx.is_child or self.ctx.task_mode in _UNWATCHED_TASK_MODES:
             accumulated = "\n\n".join(self.accumulated_text_parts)
             delivered = accumulated + "\n\n" + note if accumulated else note
         else:
