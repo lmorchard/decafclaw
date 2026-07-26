@@ -2,6 +2,7 @@
 a diagnostic nudge, then a hard stop. Pure/deterministic — no agent or LLM
 imports; driven by TurnRunner. See docs/loop-breaker.md (#598)."""
 
+import dataclasses
 import enum
 import hashlib
 import json
@@ -22,6 +23,21 @@ def fingerprint(tool_name: str, args) -> str:
     return hashlib.sha1(f"{tool_name}\x00{arg_repr}".encode()).hexdigest()
 
 
+@dataclasses.dataclass
+class _Offender:
+    """Per-fingerprint tally, plus a watermark of where `count` stood the last
+    time this fingerprint tripped the breaker.
+
+    The watermark is what makes escalation event-shaped instead of
+    state-shaped (#707): a fingerprint that has already tripped at count N
+    only trips again once it reaches N+1, i.e. once the agent has repeated
+    the call *again* after being told to stop.
+    """
+    tool_name: str
+    count: int = 0
+    last_tripped_count: int = 0
+
+
 class LoopBreaker:
     """Detects tool-call thrash within a single turn and escalates.
 
@@ -37,11 +53,11 @@ class LoopBreaker:
 
     def __init__(self, config):
         self._cfg = config
-        # fingerprint -> [tool_name, count]. Tracks the name alongside the
-        # count so last_signal() can name the offending tool.
-        self._counts: dict[str, list] = {}
+        self._counts: dict[str, _Offender] = {}
         self._recent_errors: list[bool] = []  # rolling is_error flags
-        self._nudged = False
+        self._total_errors = 0                # monotonic; never trimmed
+        self._errors_at_last_trip = 0         # watermark for the error signal
+        self._trips = 0
         self._last_signal = ""
 
     @property
@@ -54,46 +70,64 @@ class LoopBreaker:
         calls: iterable of (tool_name, fingerprint, is_error).
         """
         for tool_name, fp, is_error in calls:
-            entry = self._counts.setdefault(fp, [tool_name, 0])
-            entry[0] = tool_name
-            entry[1] += 1
+            entry = self._counts.get(fp)
+            if entry is None:
+                entry = self._counts[fp] = _Offender(tool_name=tool_name)
+            entry.tool_name = tool_name
+            entry.count += 1
             self._recent_errors.append(bool(is_error))
+            if is_error:
+                self._total_errors += 1
         # Trim to a rolling window of the last N results.
         window = self._cfg.error_window
         if len(self._recent_errors) > window:
             self._recent_errors = self._recent_errors[-window:]
 
-    def _tripped_reason(self) -> str | None:
-        # Repeated identical call?
-        top_name, top_n = None, 0
-        for name, n in self._counts.values():
-            if n > top_n:
-                top_name, top_n = name, n
-        if top_n >= self._cfg.repeat_threshold:
-            return f"called {top_name} {top_n}× with the same args"
-        # Repeated errors in the window?
-        errs = sum(self._recent_errors)
-        if errs >= self._cfg.error_threshold:
-            return f"{errs} of the last {len(self._recent_errors)} tool results were errors"
-        return None
+    def _fresh_repeat_offender(self) -> "_Offender | None":
+        """The worst fingerprint that has grown since it last tripped."""
+        worst = None
+        for entry in self._counts.values():
+            if entry.count < self._cfg.repeat_threshold:
+                continue
+            if entry.count <= entry.last_tripped_count:
+                continue  # already tripped at this count — agent stopped repeating it
+            if worst is None or entry.count > worst.count:
+                worst = entry
+        return worst
+
+    def _fresh_error_surge(self) -> bool:
+        """True when the window is over threshold AND new errors have landed
+        since the last trip. The second half is the point: a rolling window
+        can stay over threshold on stale errors alone."""
+        if sum(self._recent_errors) < self._cfg.error_threshold:
+            return False
+        return self._total_errors > self._errors_at_last_trip
 
     def verdict(self) -> LoopVerdict:
         """Compute the verdict for the most recently recorded round.
 
-        Mutates escalation state: a NUDGE verdict flips the one-way "already
-        nudged" flag, so a second call without an intervening `record()`
-        will escalate NUDGE -> STOP. Call exactly once per recorded round.
+        Mutates escalation state: a trip advances the rung counter and moves
+        the tripping signal's watermark, so a later round only trips again on
+        a genuinely new offense. Call exactly once per recorded round.
         """
         if not self._cfg.enabled:
             return LoopVerdict.NONE
-        reason = self._tripped_reason()
-        if reason is None:
+        offender = self._fresh_repeat_offender()
+        if offender is not None:
+            offender.last_tripped_count = offender.count
+            self._last_signal = (
+                f"called {offender.tool_name} {offender.count}× with the same args"
+            )
+        elif self._fresh_error_surge():
+            self._errors_at_last_trip = self._total_errors
+            errs = sum(self._recent_errors)
+            self._last_signal = (
+                f"{errs} of the last {len(self._recent_errors)} tool results were errors"
+            )
+        else:
             return LoopVerdict.NONE
-        self._last_signal = reason
-        if not self._nudged:
-            self._nudged = True
-            return LoopVerdict.NUDGE
-        return LoopVerdict.STOP
+        self._trips += 1
+        return LoopVerdict.NUDGE if self._trips == 1 else LoopVerdict.STOP
 
     def last_signal(self) -> str:
         return self._last_signal
