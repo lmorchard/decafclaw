@@ -12,6 +12,7 @@ from typing import NamedTuple
 class LoopVerdict(enum.Enum):
     NONE = "none"
     NUDGE = "nudge"
+    REDIRECT = "redirect"
     STOP = "stop"
 
 
@@ -100,10 +101,10 @@ class LoopBreaker:
     - the same (tool_name, args_fingerprint) seen >= repeat_threshold times
     - >= error_threshold of the last error_window tool results are errors
 
-    Escalation is one-way per instance: the first trip returns NUDGE; any
-    subsequent trip after that returns STOP. `enabled=False` always returns
-    NONE. One LoopBreaker per turn — state is not meant to persist across
-    turns.
+    Escalation is one-way per instance and advances only on a *fresh* offense
+    (see verdict()): first trip returns NUDGE, second REDIRECT, third and
+    later STOP. `enabled=False` always returns NONE. One LoopBreaker per turn
+    — state is not meant to persist across turns.
     """
 
     def __init__(self, config):
@@ -195,7 +196,11 @@ class LoopBreaker:
         else:
             return LoopVerdict.NONE
         self._trips += 1
-        return LoopVerdict.NUDGE if self._trips == 1 else LoopVerdict.STOP
+        if self._trips == 1:
+            return LoopVerdict.NUDGE
+        if self._trips == 2:
+            return LoopVerdict.REDIRECT
+        return LoopVerdict.STOP
 
     def offense(self) -> Offense:
         """The most recent trip's evidence. Empty-field Offense before any trip."""

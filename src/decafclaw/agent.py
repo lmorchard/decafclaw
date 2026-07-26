@@ -824,6 +824,45 @@ class TurnRunner:
                 self.messages.append(nudge)
                 await self.ctx.publish("loop_breaker", action="nudge",
                                        reason=self.loop_breaker.offense().reason)
+            elif verdict is LoopVerdict.REDIRECT:
+                # Second trip: the nudge was ignored and the agent re-offended.
+                # Same ephemerality and attribution rules as the nudge above —
+                # user-role for directive weight, explicit non-authorship so the
+                # model does not confabulate agreement (#680), appended to
+                # self.messages only so restore_history can never resurrect it.
+                #
+                # "Do not call X again" is prose, not a mechanical block: the
+                # tool stays in the tool list. Enforcement comes from the
+                # ladder — re-issuing the forbidden call is exactly the fresh
+                # offense that advances this rung to STOP (#707).
+                off = self.loop_breaker.offense()
+                specifics = ""
+                if off.error_text:
+                    specifics += f" The error every time: {off.error_text}."
+                if off.args_text:
+                    specifics += f" The arguments every time: {off.args_text}."
+                if off.tool_name:
+                    specifics += (f" Do NOT call {off.tool_name} with those "
+                                  "arguments again this turn.")
+                redirect = {
+                    "role": "user",
+                    "content": (
+                        "[loop-breaker] Second automated diagnostic from the "
+                        "agent runtime — again, the user did not send this. "
+                        "You were already told to stop and you "
+                        f"{off.reason} anyway.{specifics} "
+                        "Stop acting and diagnose. Reply with, in this order: "
+                        "(1) your single best hypothesis for the root cause, "
+                        "stated as a claim that could turn out wrong; (2) the "
+                        "one observation that would confirm or kill it; "
+                        "(3) exactly one read-only action — read a file, "
+                        "search, check a log — that fetches that observation. "
+                        "Take that one action and nothing else."
+                    ),
+                }
+                self.messages.append(redirect)
+                await self.ctx.publish("loop_breaker", action="redirect",
+                                       reason=off.reason)
             elif verdict is LoopVerdict.STOP:
                 await self.ctx.publish("loop_breaker", action="stop",
                                        reason=self.loop_breaker.offense().reason)

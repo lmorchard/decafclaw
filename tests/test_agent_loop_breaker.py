@@ -128,11 +128,15 @@ async def test_turn_runner_nudges_then_stops_on_repeated_tool_errors(ctx):
     # user-role directives more heavily for mid-turn corrections). The same
     # `messages` list object is mutated in place across LLM calls, so any
     # recorded call's `messages` arg reflects the final state.
+    # `messages` is mutated in place across LLM calls, so the last recorded
+    # call's list reflects the final state — both injected diagnostics.
     sent_messages = mock_llm.call_args_list[-1][0][1]
-    nudge_msgs = [m for m in sent_messages
-                  if "[loop-breaker]" in (m.get("content") or "")]
-    assert len(nudge_msgs) == 1
-    assert nudge_msgs[0]["role"] == "user"
+    diagnostics = [m for m in sent_messages
+                   if "[loop-breaker]" in (m.get("content") or "")]
+    assert len(diagnostics) == 2, "expected both the nudge and the redirect"
+    assert all(m["role"] == "user" for m in diagnostics)
+    assert "STOP repeating that move" in diagnostics[0]["content"]
+    assert "single best hypothesis" in diagnostics[1]["content"]
 
     # ...while the hard-stop's final assistant message IS archived (it's the
     # turn's actual output, correctly durable).
@@ -149,10 +153,84 @@ async def test_turn_runner_nudges_then_stops_on_repeated_tool_errors(ctx):
     assert len(stop_events) == 1
 
     # Tripped at repeat_threshold=3, and the LLM was called once per
-    # iteration up to and including the stop iteration (NUDGE at 3rd call's
-    # iteration, STOP at the 4th) — well short of the 10 stubbed responses
-    # or the 50-iteration budget.
+    # iteration up to and including the stop iteration (NUDGE at the 3rd
+    # call's iteration, REDIRECT at the 4th, STOP at the 5th) — well short
+    # of the 10 stubbed responses or the 50-iteration budget.
     assert mock_llm.call_count < 10
+
+
+@pytest.mark.asyncio
+async def test_redirect_rung_fires_between_nudge_and_stop(ctx):
+    """The second trip must inject a diagnosis contract, not end the turn.
+
+    Asserts on the LLM-facing message list rather than the archive: the
+    redirect is ephemeral by design, so the archive can never show it.
+    """
+    ctx.config.llm.streaming = False
+    ctx.config.agent.max_tool_iterations = 50
+    ctx.config.loop_breaker.repeat_threshold = 3
+    ctx.config.loop_breaker.error_threshold = 99
+    ctx.config.loop_breaker.error_window = 50
+
+    published_events = []
+    ctx.event_bus.subscribe(lambda event: published_events.append(event))
+
+    repeated_call = _mock_llm_response(
+        content="Trying again.",
+        tool_calls=[{
+            "id": "tc-repeat",
+            "function": {"name": "definitely_not_a_real_tool", "arguments": "{}"},
+        }],
+    )
+
+    with patch("decafclaw.agent.call_llm", new_callable=AsyncMock) as mock_llm:
+        mock_llm.side_effect = [repeated_call] * 10
+        result = await run_agent_turn(ctx, "loop forever", [])
+
+    sent_messages = mock_llm.call_args_list[-1][0][1]
+    contents = [m.get("content") or "" for m in sent_messages]
+    assert any("STOP repeating that move" in c for c in contents), \
+        "rung 1 (nudge) never fired"
+    assert any("single best hypothesis" in c for c in contents), \
+        "rung 2 (redirect) never fired"
+    assert "[loop-breaker] Stopped" in result.text, "rung 3 (stop) never fired"
+
+    # The redirect names the actual offending tool, not generic advice (#707).
+    redirect = next(c for c in contents if "single best hypothesis" in c)
+    assert "definitely_not_a_real_tool" in redirect
+
+    actions = [e.get("action") for e in published_events
+               if e.get("type") == "loop_breaker"]
+    assert actions == ["nudge", "redirect", "stop"]
+
+
+@pytest.mark.asyncio
+async def test_redirect_is_never_archived(ctx):
+    """Same ephemerality contract as the nudge (#598): archiving a user-role
+    diagnostic would let restore_history resurrect it into every later turn."""
+    ctx.config.llm.streaming = False
+    ctx.config.agent.max_tool_iterations = 50
+    ctx.config.loop_breaker.repeat_threshold = 3
+    ctx.config.loop_breaker.error_threshold = 99
+    ctx.config.loop_breaker.error_window = 50
+
+    repeated_call = _mock_llm_response(
+        content="Trying again.",
+        tool_calls=[{
+            "id": "tc-repeat",
+            "function": {"name": "definitely_not_a_real_tool", "arguments": "{}"},
+        }],
+    )
+
+    with patch("decafclaw.agent.call_llm", new_callable=AsyncMock) as mock_llm:
+        mock_llm.side_effect = [repeated_call] * 10
+        await run_agent_turn(ctx, "loop forever", [])
+
+    from decafclaw.archive import read_archive
+    archived = read_archive(ctx.config, ctx.conv_id)
+    user_msgs = [m for m in archived if m.get("role") == "user"]
+    assert not any("[loop-breaker]" in (m.get("content") or "")
+                   for m in user_msgs), "an ephemeral diagnostic was archived"
 
 
 # -- Integration: a genuine end-turn signal always wins over the breaker ------

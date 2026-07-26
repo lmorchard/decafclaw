@@ -19,19 +19,6 @@ def test_fingerprint_stable_and_arg_sensitive():
     assert fingerprint("edit", {"a": 1}) != fingerprint("read", {"a": 1})
 
 
-def test_repeat_threshold_trips_nudge_then_stop():
-    lb = _lb(repeat_threshold=3, error_threshold=99, error_window=6)
-    fp = fingerprint("edit", {"path": "x"})
-    lb.record([CallSignature("edit", fp, False)])
-    assert lb.verdict() is LoopVerdict.NONE          # 1 occurrence
-    lb.record([CallSignature("edit", fp, False)])
-    assert lb.verdict() is LoopVerdict.NONE           # 2
-    lb.record([CallSignature("edit", fp, False)])
-    assert lb.verdict() is LoopVerdict.NUDGE           # 3 → first trip
-    lb.record([CallSignature("edit", fp, False)])
-    assert lb.verdict() is LoopVerdict.STOP            # trips again after nudge
-
-
 def test_error_window_trips():
     lb = _lb(repeat_threshold=99, error_threshold=4, error_window=6)
     # 3 distinct erroring calls, then a 4th → 4 errors in window
@@ -153,7 +140,7 @@ def test_error_surge_does_not_retrip_without_new_errors():
     assert lb.verdict() is LoopVerdict.NONE
 
 
-def test_repeating_the_same_call_after_nudge_does_escalate():
+def test_repeating_the_same_call_after_nudge_advances_a_rung():
     """The reprieve is conditional: re-offending still advances the ladder."""
     lb = _lb(repeat_threshold=3, error_threshold=99, error_window=6)
     fp = fingerprint("edit", {"path": "x"})
@@ -163,4 +150,22 @@ def test_repeating_the_same_call_after_nudge_does_escalate():
     lb.record([CallSignature("edit", fp, False)])
     assert lb.verdict() is LoopVerdict.NUDGE
     lb.record([CallSignature("edit", fp, False)])  # count 3 -> 4: a fresh offense
+    assert lb.verdict() is LoopVerdict.REDIRECT
+
+
+def test_ladder_is_nudge_then_redirect_then_stop():
+    """Three rungs: reaching STOP now requires re-offending twice after being
+    told twice, not merely one elapsed round (#707)."""
+    lb = _lb(repeat_threshold=3, error_threshold=99, error_window=6)
+    fp = fingerprint("edit", {"path": "x"})
+    for _ in range(2):
+        lb.record([CallSignature("edit", fp, False)])
+        assert lb.verdict() is LoopVerdict.NONE
+    lb.record([CallSignature("edit", fp, False)])
+    assert lb.verdict() is LoopVerdict.NUDGE
+    lb.record([CallSignature("edit", fp, False)])
+    assert lb.verdict() is LoopVerdict.REDIRECT
+    lb.record([CallSignature("edit", fp, False)])
+    assert lb.verdict() is LoopVerdict.STOP
+    lb.record([CallSignature("edit", fp, False)])
     assert lb.verdict() is LoopVerdict.STOP
