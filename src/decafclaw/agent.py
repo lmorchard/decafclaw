@@ -1166,24 +1166,30 @@ class TurnRunner:
 
     async def _finalize_with_note(self, note: str) -> "ToolResult":
         """End an abnormally-terminated turn (iteration limit / loop-breaker)
-        by appending `note` to whatever text the turn accumulated.
+        by delivering and persisting only `note`.
 
-        The delivered text includes the accumulated preambles so the turn
-        reads as a whole, but only the note is persisted: each preamble was
-        already appended to history and archived as it was emitted (see
-        _handle_tool_calls). Archiving the join too duplicated every
-        preamble in the record — invisible on a one-preamble turn, a wall of
-        repeated text on a long thrash (#675).
+        Every iteration's preamble was already published as
+        `text_before_tools` — rendered live by Mattermost
+        (mattermost_display.on_text_complete), the web UI and the terminal —
+        and archived as it was emitted (see _handle_tool_calls). Re-joining
+        them here duplicated the entire turn: invisible on a one-preamble
+        turn, a wall of repeated text on a long thrash, which is exactly when
+        the transcript most needs to be readable. #675 removed the join from
+        the archive and left it in the delivered text; #707 removes it from
+        both. The normal end-of-turn path delivers only its final content, so
+        this now matches it.
+
+        `accumulated_text_parts` is still populated — the reflection judge
+        genuinely needs the whole turn's text (see _run_reflection).
         """
-        accumulated = "\n\n".join(self.accumulated_text_parts)
-        delivered = accumulated + note if accumulated else note.strip()
-        final_msg = {"role": "assistant", "content": note.strip()}
+        note = note.strip()
+        final_msg = {"role": "assistant", "content": note}
         self.history.append(final_msg)
         _archive(self.ctx, final_msg)
         await _maybe_compact(
             self.ctx, self.config, self.history, self.prompt_tokens,
         )
-        return ToolResult(text=delivered)
+        return ToolResult(text=note)
 
     def _extract_workspace_media(self, content: str) -> "ToolResult":
         """Extract workspace:// refs only for channels that need it.

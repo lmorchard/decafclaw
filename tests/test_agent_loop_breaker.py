@@ -319,14 +319,17 @@ async def test_end_turn_signal_preempts_loop_breaker(ctx):
     assert mock_execute.call_count == 3
 
 
-# -- Hard-stop must not re-archive text it already archived (#675) -------------
+# -- Hard-stop must not re-deliver or re-archive text it already emitted (#675, #707) --
 
 
 @pytest.mark.asyncio
-async def test_loop_break_does_not_duplicate_accumulated_text(ctx):
-    """Each iteration's assistant preamble is archived as it happens. The
-    hard-stop finalizer must not re-emit all of them joined together — on a
-    long thrash that produced a wall of duplicated text in the transcript."""
+async def test_loop_break_delivers_and_archives_only_the_note(ctx):
+    """Each iteration's preamble is published as text_before_tools and
+    rendered live by every transport, then archived as it happens. The
+    finalizer must re-emit neither — #675 fixed the archive half and left the
+    delivery half, which is the wall of repeated text users actually see
+    (#707). The normal end-of-turn path (agent.py:865) likewise delivers only
+    its final content, so this matches it."""
     ctx.config.llm.streaming = False
     ctx.config.agent.max_tool_iterations = 50
     ctx.config.loop_breaker.repeat_threshold = 3
@@ -348,15 +351,18 @@ async def test_loop_break_does_not_duplicate_accumulated_text(ctx):
         result = await run_agent_turn(ctx, "loop forever", history)
 
     assert "[loop-breaker] Stopped" in result.text
+    # The delivery half (#707).
+    assert preamble not in result.text, (
+        "the finalizer re-delivered preambles the transport already rendered"
+    )
 
+    # The archive half (#675) — unchanged.
     from decafclaw.archive import read_archive
     archived = read_archive(ctx.config, ctx.conv_id)
     occurrences = sum(
         (m.get("content") or "").count(preamble)
         for m in archived if m.get("role") == "assistant"
     )
-    # The preamble was emitted once per iteration and archived once per
-    # iteration. The stop message must not repeat any of them.
     iterations = mock_llm.call_count
     assert occurrences == iterations, (
         f"preamble archived {occurrences}× across {iterations} iterations — "
