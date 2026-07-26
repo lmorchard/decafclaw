@@ -1139,8 +1139,11 @@ class TurnRunner:
         return self._extract_workspace_media(content)
 
     async def _finalize_max_iterations(self) -> "ToolResult":
-        """Hit max iterations without a final response. Preserve any
-        accumulated text from tool-call iterations and append a notice."""
+        """Hit max iterations without a final response. Always archives only
+        the notice; delivers the notice alone for interactive turns (the
+        accumulated text was already rendered live by the transport) or the
+        accumulated text plus the notice for child turns (the parent LLM has
+        no other way to see it). See _finalize_with_note."""
         limit_note = (
             f"\n\n[Agent reached max tool iterations "
             f"({self.config.agent.max_tool_iterations}) without a final response]"
@@ -1166,30 +1169,48 @@ class TurnRunner:
 
     async def _finalize_with_note(self, note: str) -> "ToolResult":
         """End an abnormally-terminated turn (iteration limit / loop-breaker)
-        by delivering and persisting only `note`.
+        by archiving only `note`, but choosing what to *deliver* based on
+        whether anyone is watching this turn live.
 
         Every iteration's preamble was already published as
         `text_before_tools` — rendered live by Mattermost
         (mattermost_display.on_text_complete), the web UI and the terminal —
-        and archived as it was emitted (see _handle_tool_calls). Re-joining
-        them here duplicated the entire turn: invisible on a one-preamble
-        turn, a wall of repeated text on a long thrash, which is exactly when
-        the transcript most needs to be readable. #675 removed the join from
-        the archive and left it in the delivered text; #707 removes it from
-        both. The normal end-of-turn path delivers only its final content, so
-        this now matches it.
+        and archived as it was emitted (see _handle_tool_calls). For an
+        interactive turn, re-joining the accumulated preambles into the
+        delivered text duplicated the entire turn: invisible on a
+        one-preamble turn, a wall of repeated text on a long thrash, which is
+        exactly when the transcript most needs to be readable. #675 removed
+        the join from the archive and left it in the delivered text; #707
+        removes it from delivery too. The normal end-of-turn path delivers
+        only its final content, so this now matches it.
 
-        `accumulated_text_parts` is still populated — the reflection judge
-        genuinely needs the whole turn's text (see _run_reflection).
+        A child agent turn (`ctx.is_child`) has no transport rendering
+        anything live — the parent LLM never subscribes to the event bus, so
+        `ToolResult.text` (routed back through delegate.py's
+        `run_child_turn` / workflow `subagent`) is its *only* channel for
+        the child's work. Dropping the join there would silently lose
+        everything the child accumulated before hitting the wall. Children
+        also run with `skip_reflection=True` (delegate.py), so the
+        "`accumulated_text_parts` still feeds the reflection judge" argument
+        for keeping the field populated doesn't give the parent a second
+        chance to see it either — the join is the only way. So: interactive
+        turns deliver note-only; child turns deliver the accumulated join
+        plus the note, as before #707. Archiving is unaffected either way —
+        only `note` is ever appended to history/archive.
         """
         note = note.strip()
+        if self.ctx.is_child:
+            accumulated = "\n\n".join(self.accumulated_text_parts)
+            delivered = accumulated + "\n\n" + note if accumulated else note
+        else:
+            delivered = note
         final_msg = {"role": "assistant", "content": note}
         self.history.append(final_msg)
         _archive(self.ctx, final_msg)
         await _maybe_compact(
             self.ctx, self.config, self.history, self.prompt_tokens,
         )
-        return ToolResult(text=note)
+        return ToolResult(text=delivered)
 
     def _extract_workspace_media(self, content: str) -> "ToolResult":
         """Extract workspace:// refs only for channels that need it.
