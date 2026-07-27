@@ -1453,16 +1453,9 @@ async def vault_write(request: Request, username: str) -> JSONResponse:
                     {"error": "frontmatter_raw must not contain a '---' line"},
                     status_code=400,
                 )
-            try:
-                parsed = yaml.safe_load(stripped)
-            except yaml.YAMLError as exc:
-                return JSONResponse(
-                    {"error": f"invalid YAML: {exc}"}, status_code=400,
-                )
-            if not isinstance(parsed, dict):
-                return JSONResponse(
-                    {"error": "frontmatter_raw must be a mapping"}, status_code=400,
-                )
+            _, fm_validation_error = parse_frontmatter_block(stripped)
+            if fm_validation_error is not None:
+                return JSONResponse({"error": fm_validation_error}, status_code=400)
             # Stored verbatim rather than re-dumped, so the comments and key
             # order the user typed survive.
             new_raw = fm_raw.strip("\n")
