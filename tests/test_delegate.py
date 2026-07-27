@@ -540,12 +540,15 @@ class TestDelegateTasks:
         """Three tasks all return prose; result has ok entries in
         input order, summary counts match, and the parent emits one
         progress event per child."""
-        published: list[tuple] = []
-
-        async def fake_publish(event_type, payload):
-            published.append((event_type, payload))
-
-        ctx.publish = fake_publish
+        # Subscribe to the real bus rather than replacing ctx.publish. An
+        # earlier version of this test installed a fake `publish(event_type,
+        # payload)` accepting a positional dict — which is exactly how
+        # delegate.py called it, and exactly what Context.publish does NOT
+        # accept. The mock encoded the bug as the contract, so the assertions
+        # below passed for two months while no event ever reached the bus
+        # in production (#721).
+        published: list[dict] = []
+        ctx.event_bus.subscribe(lambda event: published.append(event))
 
         async def fake_run(parent_ctx, task, **kwargs):
             return (f"result for {task}", None)
@@ -564,10 +567,17 @@ class TestDelegateTasks:
         assert results[1]["text"] == "result for b"
         assert results[2]["text"] == "result for c"
         assert "3 subtasks" in result.text
-        # One progress event per completion.
-        statuses = [p for p in published if p[0] == "tool_status"]
-        assert len(statuses) == 3
-        assert all(p[1]["tool"] == "delegate_tasks" for p in statuses)
+        # One progress event per completion, as delivered by the real bus.
+        statuses = [e for e in published if e.get("type") == "tool_status"]
+        assert len(statuses) == 3, (
+            f"expected 3 tool_status events on the bus, got {len(statuses)}: "
+            f"{published}"
+        )
+        assert all(e["tool"] == "delegate_tasks" for e in statuses)
+        # Payload keys must be top-level on the event — that is where every
+        # consumer reads them (web/websocket.py reads event["tool"]), and a
+        # positional dict would nest them under an argument instead.
+        assert all("subtasks complete" in e["message"] for e in statuses)
 
     @pytest.mark.asyncio
     async def test_mixed_failures(self, ctx):

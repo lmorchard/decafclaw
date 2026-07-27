@@ -409,10 +409,11 @@ async def _run_one_delegated(
             progress["done"] += 1
             done = progress["done"]
         try:
-            await parent_ctx.publish("tool_status", {
-                "tool": "delegate_tasks",
-                "message": f"{done}/{total} subtasks complete",
-            })
+            await parent_ctx.publish(
+                "tool_status",
+                tool="delegate_tasks",
+                message=f"{done}/{total} subtasks complete",
+            )
         except Exception:
             log.debug(
                 "delegate_tasks: failed to publish progress event "
