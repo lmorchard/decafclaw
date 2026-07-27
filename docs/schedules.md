@@ -123,6 +123,8 @@ The scheduled-task preamble instructs the agent to end its turn with a short nar
 
 When the cycle was genuinely quiet (nothing notable happened, no changes made), the agent prefixes its summary with `HEARTBEAT_OK` on a leading line before the quiet-cycle note. The scheduler's `is_heartbeat_ok()` check (case-insensitive, first 300 chars) picks up the marker and logs a tidy `Schedule 'name': HEARTBEAT_OK` line instead of the response preview. The narrative still gets archived in full so the newsletter has material to quote.
 
+A task whose turn ended abnormally is never treated as quiet: `is_heartbeat_ok()` returns `False` if the response carries `[Agent reached max tool iterations` or `[loop-breaker] Stopped`, regardless of a stray `HEARTBEAT_OK` in a mid-turn preamble. See [heartbeat docs](heartbeat.md#heartbeat_ok).
+
 Historical note: older runs may end with a bare `HEARTBEAT_OK` token without narrative; the newsletter's `_is_status_token` filter handles those correctly for retrospective windows that reach into pre-change archives. Heartbeat also uses `HEARTBEAT_OK`; see [heartbeat docs](heartbeat.md).
 
 ## Reporting

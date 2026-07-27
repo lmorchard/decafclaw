@@ -83,6 +83,8 @@ If a section has nothing to report, the agent should respond with `HEARTBEAT_OK`
 
 Set `HEARTBEAT_SUPPRESS_OK=false` to see full output for all sections.
 
+**An abnormally terminated section is never OK.** `is_heartbeat_ok()` returns `False` — whatever the text contains and wherever the sentinel sits — if the response carries one of the abnormal-termination markers the agent loop emits: `[Agent reached max tool iterations` or `[loop-breaker] Stopped`. Heartbeat and scheduled turns have no live transport subscriber, so `_finalize_with_note` delivers the turn's accumulated mid-turn preambles alongside the termination note; since the agent is told to say `HEARTBEAT_OK` when there's nothing to report, a preamble mentioning the sentinel could land inside the 300-char window and silently suppress the alert the termination should have raised ([#710](https://github.com/lmorchard/decafclaw/issues/710)). The markers are matched against the whole response, not just the window, so this doesn't depend on the note's position in the delivered text. [#712](https://github.com/lmorchard/decafclaw/issues/712) tracks replacing the substring match with a structured termination signal, which is what would remove the 300-char window itself.
+
 ## Mattermost reporting
 
 Each heartbeat cycle creates a thread:
