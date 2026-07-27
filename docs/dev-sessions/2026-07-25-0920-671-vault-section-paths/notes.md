@@ -150,3 +150,106 @@ duplicate-heading loop, now addressed.
 
 Still not a *reliable* case — this is a flaky corner of the suite and was before
 any of this. Recorded rather than chased.
+
+---
+
+## Retrospective
+
+Shipped as [#705](https://github.com/lmorchard/decafclaw/pull/705), merged
+`053c1bb`, closing #671.
+
+### Recap
+
+The reported bug — section paths silently required a page-H1 root — was fixed
+by ~20 lines in `find_section`. Everything else in the PR came from what that
+unblocked: two further defects in the same tool, better miss diagnostics, and
+an unrelated build trap found while preparing the PR.
+
+### Scope drift
+
+Three expansions, each surfaced and approved rather than absorbed:
+
+1. **`content` on `vault_section add`** (Phase 5) — the next blocker on the
+   eval case once paths resolved.
+2. **`level` inference** (Phase 6) — Phase 5 exposed it by making a one-call
+   path viable.
+3. **`describe_section_miss` duplicate-heading branch** — fixing a dead end in
+   my *own* Phase 2 message, found by an eval failure.
+
+The pattern is worth naming: **fixing an ergonomic blocker doesn't reveal a
+working tool, it reveals the next blocker.** Each fix moved the agent one step
+further down the happy path and into the next pothole. I'd expect that shape
+again on any "the tool won't let me do the obvious thing" issue, and would now
+plan for two or three rounds rather than treating the first fix as the whole
+job.
+
+One thing I deliberately did *not* absorb: the `## Status\nWorking on it.`
+missing-blank-line nit. Recorded, left alone.
+
+### Surprises
+
+- **My #670 retro hypothesis was wrong.** I'd speculated #671 might be a
+  harness artifact because its eval case started passing after the eval
+  system-prompt fix. One command disproved it: the bug reproduces
+  deterministically in plain Python. The eval passed because the agent spent
+  *4 tool calls instead of 2* working around it. **A test going green can mean
+  the workaround got cheaper, not that the defect went away.**
+- **Phase 5 made the measured outcome worse** — 2/4 → 0/3. Correct change,
+  worse number, because it exposed a bad default underneath. Worth remembering
+  that a regression in the metric isn't automatically a regression in the code.
+- **An H1 inserted mid-page silently reparents everything below it.** I went
+  looking for a heading-level cosmetic mismatch and found a document-structure
+  bug: `Project Notes/TODO` becomes `Status/TODO` with no error.
+- **`make check` rewrote a tracked lockfile.** Nothing to do with this work;
+  caught only because a final diffstat read `558 deletions` on a file the
+  branch never touched.
+
+### Workflow friction
+
+- **Running the real thing caught two defects the unit tests structurally
+  could not.** The `level=None` validation gap lived at the tool layer while my
+  tests called `Document.add_section` directly; the duplicate-heading dead end
+  only appears when an agent actually loops on it. This is
+  [[feedback_signature_change_test_scope]] again — and the fix is not "write
+  more unit tests" but "exercise the layer the caller actually uses."
+- **The `[!]` checkbox state earned its keep on its first outing.** Three
+  checkboxes ended `[!]` rather than ticked or deleted. Writing "DOES NOT HOLD
+  AS WRITTEN" next to the evidence kept the plan honest as a record and forced
+  the Phase 5 → Phase 6 investigation instead of quietly moving on.
+- **Re-running before concluding was load-bearing, repeatedly.** Every single
+  eval number in this session moved between runs. The one-sample conclusions I
+  would have drawn — "case 43 is deterministic", "Phase 5 broke it", "Phase 6
+  fixed it reliably" — were all wrong or overstated.
+
+### Misses
+
+- **`git add -A src/` is too broad a habit.** It swept in a lockfile rewrite
+  and would have shipped it silently in an unrelated PR. #709 notes the same
+  thing already happened in #700. Stage named paths, or read the diffstat before
+  every squash — I caught it only at the last review gate.
+- **I checked `_section_path`'s output format late.** The candidate paths in my
+  new error messages would have rendered lowercase (`project notes/background`)
+  if I hadn't happened to look while writing the plan. Worth checking what a
+  helper *renders* before building user-facing text on it.
+- **Copilot found a genuine regression in my own refactor** — mixed anchor
+  precedence when `after` and `before` are both passed. My tests covered each
+  argument alone and never the combination. When a refactor collapses several
+  branches into one resolution step, test the argument combinations the old
+  branches kept separate.
+
+### Memory candidates
+
+1. "A green test can mean the workaround got cheaper" — the #671-was-not-a-
+   harness-artifact lesson. Generalizes past this repo. **Worth saving.**
+2. `git add -A` / `git add <dir>` sweeping unrelated tracked modifications into
+   a commit; read the diffstat before squashing. **Worth saving** — it has now
+   cost real work twice in this repo.
+3. Ergonomic fixes reveal the next blocker; plan for rounds. **Worth saving.**
+4. `make check` rewriting the lockfile → now guarded by #709, and the
+   background is in that PR. **No memory needed.**
+
+### Skill candidates
+
+- `pr` phase could make "read the full `--stat` before squashing, and account
+  for every file" an explicit step rather than something I did by habit. It is
+  what caught the lockfile here.
