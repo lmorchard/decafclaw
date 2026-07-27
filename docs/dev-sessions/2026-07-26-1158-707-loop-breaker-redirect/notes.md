@@ -158,3 +158,77 @@ failed on the bound, so there was nothing to tune down either.
   live verification in a real session (deliberately deferred — no bot
   instance was started per instructions), and filing the follow-up issue
   about `interactive_terminal.py` having no `text_before_tools` handler.
+
+## Retro
+
+**The reported symptom was not the bug.** Les reported that the loop-breaker
+stops the agent without prompting it to do anything different. The natural
+reading is "the message is too generic" — and the message *was* generic. But
+the actual cause was that the detector latched: `_counts` never decayed and
+`_tripped_reason` tested `count >= threshold`, a standing condition that stays
+true forever once crossed. The round after a nudge therefore always tripped
+again and hard-stopped the turn, *no matter what the agent did*. No wording
+could have fixed that, because there was no round in which complying could pay
+off. Grounding the text (Task 2) and adding the redirect rung (Task 3) are only
+worth anything on top of Task 1.
+
+**The bug lived in the gap between two individually-correct components.** The
+detector answered "does a bad condition hold?" while the escalator asked "did
+something new go wrong?" Both were reasonable in isolation and both were
+tested. Wiring one-way escalation to a latching predicate is what produced the
+symptom. Worth watching for wherever a state-check feeds an event-driven state
+machine.
+
+**Test design hid it, and then hid it again.** `test_repeat_threshold_trips_nudge_then_stop`
+replayed the *same* fingerprint every round, which makes latching and correct
+escalation observationally identical. The discriminating case is always the
+*compliance* path — and nobody writes that one, because the interesting-looking
+assertion is on the offense path. Then the exact same blind spot recurred one
+level down: after Task 1, every repeat test still recorded exactly ONE
+`CallSignature` per round, which is why the final review's Critical (watermarks
+advancing for only the worst offender in a batched round) survived four task
+reviews. Tool calls run concurrently via `asyncio.gather` here, so batched
+repeats are the *normal* thrash shape, not an edge case.
+
+**The plan caused both of the final review's serious findings.** Neither was an
+implementer slip — the implementers transcribed `plan.md`'s pseudocode
+faithfully. The plan under-specified the multi-fingerprint case and the
+cross-signal interaction. Writing complete code into a plan buys transcription
+accuracy and transfers the design risk to the plan author; it does not remove
+it.
+
+**"All transports render it live" was a true sentence doing false work.** The
+justification for dropping the accumulated-preamble join enumerated
+*transports* when the real question was *consumers of the return value*. A
+parent agent consuming `delegate_task` output is a consumer and not a
+transport, and `delegate.py:254` also disables reflection for children, so both
+of the mitigations that supposedly covered them were inapplicable in exactly
+the case that mattered. Reviewing against a named list of callers
+(`delegate.py`, `eval/runner.py`, `schedules.py`, `compaction.py`,
+`workflow/handle.py`) is what caught it; "check for other consumers" would not
+have.
+
+**#675 is a good example of a half-fix passing review.** It correctly diagnosed
+preamble duplication, fixed the archive, documented the reasoning, and added a
+test — but the test asserted on `read_archive()` while the user-visible symptom
+lives in `result.text`. It then recorded a justification for keeping the
+delivery half ("so the turn reads as a whole") that was already false for every
+transport we ship.
+
+**Incidental find:** `interactive_terminal.py` read `config.heartbeat_suppress_ok`,
+which does not exist (`config.heartbeat.suppress_ok` does), so `make run` has
+crashed at startup since `2e5ff3f` in March. It surfaced only because making the
+terminal's missing `text_before_tools` handler testable required driving
+`run_interactive` at all — there was no test coverage of that function
+whatsoever. Interactive mode now has its first two tests.
+
+**Open, tracked:** #710 — `is_heartbeat_ok` substring-matches a sentinel in the
+first 300 chars, so an abnormally-terminated heartbeat turn whose preamble
+mentions `HEARTBEAT_OK` can suppress its own alert. Note-first ordering closes
+this for the ~336-char loop-breaker note and only narrows it for the ~65-char
+max-iterations note (measured, see above). Pre-existing on `main`, which
+delivers `accumulated + note` unconditionally for every turn kind.
+
+**Still to do after merge:** live verification in a real Mattermost/web session.
+No bot instance was started during this work — Les likely has `make dev`
+running and a second instance silently misses websocket events.
