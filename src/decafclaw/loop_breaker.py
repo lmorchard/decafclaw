@@ -32,9 +32,26 @@ def _render_args(args) -> str:
 
 
 def _truncate(text: str, limit: int) -> str:
-    """One-line, length-capped rendering for injection into prompt text."""
-    text = " ".join((text or "").split())
+    """Length-cap only. Preserves the text otherwise (no whitespace changes)."""
+    text = text or ""
     return text if len(text) <= limit else text[:limit] + "…"
+
+
+def _neutralize_linebreaks(text: str) -> str:
+    """Strip CR/LF so the text can't break a single-line prompt sentence.
+
+    Unlike `_flatten`, this leaves runs of spaces/tabs alone — only line
+    breaks are prompt-structurally dangerous for `summarize_args`, and the
+    normal `json.dumps` path already escapes them (`\\n` stays literal
+    backslash-n), so this only ever fires via `_render_args`'s `repr()`
+    fallback for inputs `json.dumps` rejects (e.g. a circular reference).
+    """
+    return (text or "").replace("\r", "").replace("\n", " ")
+
+
+def _flatten(text: str) -> str:
+    """Collapse all whitespace runs to single spaces (for raw error bodies)."""
+    return " ".join((text or "").split())
 
 
 def fingerprint(tool_name: str, args) -> str:
@@ -43,13 +60,22 @@ def fingerprint(tool_name: str, args) -> str:
 
 
 def summarize_args(args) -> str:
-    """Render a call's arguments as one truncated line for redirect text."""
-    return _truncate(_render_args(args), _MAX_ARG_CHARS)
+    """Render a call's arguments as one length-capped line for redirect text.
+
+    Must not otherwise alter `_render_args()`'s output: the model is told
+    these are the arguments being counted toward the loop-breaker's
+    fingerprint, so this can only line-break-neutralize (in case of the
+    `repr()` fallback) and length-cap — never whitespace-collapse, since a
+    JSON string value's internal whitespace is call data, not formatting,
+    and collapsing it can make two calls that fingerprint differently
+    display identically (#711 review).
+    """
+    return _truncate(_neutralize_linebreaks(_render_args(args)), _MAX_ARG_CHARS)
 
 
 def summarize_error(text: str) -> str:
-    """Render a tool-result error body as one truncated line."""
-    return _truncate(text, _MAX_ERROR_CHARS)
+    """Render a tool-result error body as one flattened, truncated line."""
+    return _truncate(_flatten(text), _MAX_ERROR_CHARS)
 
 
 class CallSignature(NamedTuple):

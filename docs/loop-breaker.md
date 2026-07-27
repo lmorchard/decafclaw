@@ -132,8 +132,16 @@ The old detector hashed the args away and kept only an `is_error` bool, so
 its diagnostic text could only ever be generic ("you called a tool
 repeatedly"). `CallSignature` (`tool_name`, `fingerprint`, `is_error`,
 `args_text`, `error_text`) now carries the call's rendered arguments and, on
-error, the tool's error body, truncated one-line via `summarize_args()` /
+error, the tool's error body, one-line via `summarize_args()` /
 `summarize_error()` at `_MAX_ARG_CHARS = 400` / `_MAX_ERROR_CHARS = 300`.
+The two are *not* truncated the same way: `summarize_error()` flattens all
+whitespace (real tool-result bodies are multi-line tracebacks, and the
+collapsed form reads fine in a single-sentence prompt), but `summarize_args()`
+only length-caps and neutralizes raw line breaks — it must not otherwise
+touch whitespace, because whitespace inside a JSON string argument value is
+call data, not formatting, and collapsing it would let two calls that
+`fingerprint()` treats as distinct (e.g. `"a  b"` vs `"a b"`) render
+identically in the text shown to the model.
 `LoopBreaker.record()` stores the latest values per fingerprint on
 `_Offender` — `error_text` is *cleared* on a successful occurrence, so the
 "the error every time" / "the failure each time" wording stays true for a
@@ -148,7 +156,10 @@ actual failing call and its actual error instead of giving generic advice.
 `_render_args()` is the single canonical-JSON renderer shared by
 `fingerprint()` and `summarize_args()`, so the text shown to the model
 always matches the text that was hashed and counted — there is no path
-where the displayed args drift from what actually tripped the breaker.
+where the displayed args drift from what actually tripped the breaker. That
+guarantee is exactly why `summarize_args()` may only length-cap: any
+whitespace normalization on top of `_render_args()`'s output would
+reintroduce drift between what's displayed and what's counted.
 
 ### Nudge and redirect are ephemeral, deliberately
 

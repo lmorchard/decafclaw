@@ -3,6 +3,7 @@ from decafclaw.loop_breaker import (
     CallSignature,
     LoopBreaker,
     LoopVerdict,
+    _render_args,
     fingerprint,
     summarize_args,
     summarize_error,
@@ -81,15 +82,60 @@ def test_offense_carries_args_and_error_text():
     assert "workspace_write" in off.reason
 
 
-def test_summarize_args_truncates_and_flattens():
+def test_summarize_args_matches_render_args_byte_for_byte_under_cap():
+    """summarize_args() must not alter _render_args()'s output beyond a
+    length cap — the model is told the summary IS the arguments being
+    counted toward the loop-breaker's fingerprint, so any extra
+    normalization (e.g. whitespace-collapsing) would let the displayed args
+    disagree with what was actually hashed."""
+    args = {"body": "hello  world", "cmd": "grep\tfoo"}
+    assert summarize_args(args) == _render_args(args)
+
+
+def test_summarize_args_does_not_collapse_whitespace_inside_values():
+    """Whitespace inside a JSON string argument value is call data, not
+    formatting. Two dicts that fingerprint differently (#711) must not
+    summarize identically."""
+    a, b = {"body": "a  b"}, {"body": "a b"}
+    assert fingerprint("t", a) != fingerprint("t", b)
+    assert summarize_args(a) != summarize_args(b)
+
+
+def test_summarize_args_truncates_long_values():
     long_args = {"body": "x" * 5000}
     out = summarize_args(long_args)
     assert len(out) <= 401          # _MAX_ARG_CHARS + the ellipsis
     assert out.endswith("…")
-    # Newline-free, though trivially so: json.dumps already escapes a real
-    # newline to a two-character "\\n" before _truncate ever sees it. The
-    # genuine newline-collapsing path is summarize_error() below.
-    assert "\n" not in summarize_args({"body": "a\nb"})
+
+
+def test_summarize_args_neutralizes_raw_linebreaks_from_repr_fallback():
+    """json.dumps escapes real newlines inside string *values* to a literal
+    two-char "\\n", so the normal path can't introduce a raw line break.
+    But _render_args() falls back to repr() when json.dumps rejects the
+    input outright (e.g. a non-str/int/float/bool/None dict key raises
+    TypeError) — and if that key's own __repr__ returns a raw multi-line
+    string, dict repr embeds it verbatim, with a genuine newline character.
+    summarize_args() must still neutralize that without collapsing
+    surrounding whitespace runs."""
+
+    class Weird:
+        def __repr__(self):
+            return "weird\nkey"
+
+        def __hash__(self):
+            return 1
+
+        def __eq__(self, other):
+            return self is other
+
+    args = {Weird(): "a  b"}
+    rendered = _render_args(args)
+    assert "\n" in rendered  # confirms the repr() fallback path is in play
+    out = summarize_args(args)
+    assert "\n" not in out
+    assert "\r" not in out
+    # Line-break neutralization only — whitespace elsewhere is untouched.
+    assert "a  b" in out
 
 
 def test_summarize_error_truncates_and_collapses_newlines():
