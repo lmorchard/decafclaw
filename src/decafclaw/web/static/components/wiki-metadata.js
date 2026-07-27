@@ -31,6 +31,7 @@ export class WikiMetadata extends LitElement {
     _rawOpen: { state: true },
     _rawText: { state: true },
     _rawError: { state: true },
+    _rawDirty: { state: true },
   };
 
   createRenderRoot() { return this; }
@@ -52,13 +53,15 @@ export class WikiMetadata extends LitElement {
     this._rawOpen = false;
     this._rawText = '';
     this._rawError = '';
+    this._rawDirty = false;
   }
 
   /** @param {Map<string, any>} changed */
   willUpdate(changed) {
     // Reseed the raw editor from the server's bytes whenever the page's
-    // frontmatter changes underneath us, unless the user is mid-edit.
-    if (changed.has('frontmatterRaw') && !this._rawOpen) {
+    // frontmatter changes underneath us, unless the user is mid-edit or
+    // typed while a save was in flight.
+    if (changed.has('frontmatterRaw') && !this._rawOpen && !this._rawDirty) {
       this._rawText = this.frontmatterRaw;
     }
   }
@@ -105,11 +108,15 @@ export class WikiMetadata extends LitElement {
   #toggleRaw() {
     this._rawOpen = !this._rawOpen;
     this._rawError = '';
-    if (this._rawOpen) this._rawText = this.frontmatterRaw;
+    if (this._rawOpen) {
+      this._rawText = this.frontmatterRaw;
+      this._rawDirty = false;  // Fresh copy from server
+    }
   }
 
   #saveRaw() {
     this._rawError = '';
+    this._rawDirty = false;  // About to save; reset so we can detect typing during flight
     this.dispatchEvent(new CustomEvent('metadata-raw-save', {
       detail: { raw: this._rawText },
       bubbles: true,
@@ -243,6 +250,7 @@ export class WikiMetadata extends LitElement {
             .value=${this._rawText}
             @input=${(/** @type {Event} */ e) => {
               this._rawText = /** @type {HTMLTextAreaElement} */ (e.target).value;
+              this._rawDirty = true;  // User typed; don't reseed from server response
             }}
           ></textarea>
           <div class="wiki-md-raw-actions">
