@@ -18,7 +18,7 @@ Replay invariants the orchestrator author must respect:
 """
 import asyncio
 import logging
-from typing import Any, Awaitable, Callable, Coroutine
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Coroutine
 
 from decafclaw.tools import delegate as _delegate
 from decafclaw.tools import execute_tool
@@ -31,10 +31,13 @@ from .errors import (
 )
 from .journal import fingerprint, save_journal
 
+if TYPE_CHECKING:
+    from decafclaw.context import Context
+
 log = logging.getLogger(__name__)
 
 
-async def _default_llm_call(ctx, **kw):
+async def _default_llm_call(ctx: "Context", **kw):
     return await wf_llm.call_structured(ctx, **kw)
 
 

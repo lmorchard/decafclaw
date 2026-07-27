@@ -9,14 +9,18 @@ them. See ``docs/notes.md``.
 from __future__ import annotations
 
 import logging
+from typing import TYPE_CHECKING
 
 from .. import notes as notes_core
 from ..media import ToolResult
 
+if TYPE_CHECKING:
+    from decafclaw.context import Context
+
 log = logging.getLogger(__name__)
 
 
-def _resolve_conv_id(ctx) -> str:
+def _resolve_conv_id(ctx: "Context") -> str:
     """Match the fallback chain `_compose_notes` uses so writes and
     reads always target the same file. ``ctx.conv_id`` may be empty
     in contexts that key off ``channel_id`` instead (top-level
@@ -24,7 +28,7 @@ def _resolve_conv_id(ctx) -> str:
     return ctx.conv_id or ctx.channel_id or "default"
 
 
-def tool_notes_append(ctx, text: str) -> ToolResult:
+def tool_notes_append(ctx: "Context", text: str) -> ToolResult:
     """Append one entry to the conversation's scratchpad."""
     if not ctx.config.notes.enabled:
         return ToolResult(text="[error: notes are disabled in this config]")
@@ -48,7 +52,7 @@ def tool_notes_append(ctx, text: str) -> ToolResult:
     )
 
 
-def tool_notes_read(ctx, limit: int = 20) -> ToolResult:
+def tool_notes_read(ctx: "Context", limit: int = 20) -> ToolResult:
     """Return the most recent N notes."""
     if not ctx.config.notes.enabled:
         return ToolResult(text="[error: notes are disabled in this config]")

@@ -6,8 +6,12 @@ import re
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import yaml
+
+if TYPE_CHECKING:
+    from decafclaw.context import Context
 
 log = logging.getLogger(__name__)
 
@@ -586,7 +590,7 @@ def build_catalog_text(skills: list[SkillInfo]) -> str:
     return "\n".join(lines)
 
 
-async def activate_always_loaded(ctx) -> None:
+async def activate_always_loaded(ctx: "Context") -> None:
     """Activate every always-loaded discovered skill against `ctx`.
 
     Fail-soft per skill — a failed activation logs but does not block

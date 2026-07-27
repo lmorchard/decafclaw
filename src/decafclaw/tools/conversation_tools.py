@@ -3,12 +3,16 @@
 import heapq
 import json
 import logging
+from typing import TYPE_CHECKING
 
 import snowballstemmer
 
 from ..conversation_paths import iter_conversation_archives
 from ..media import ToolResult
 from ..preempt_search import tokenize
+
+if TYPE_CHECKING:
+    from decafclaw.context import Context
 
 log = logging.getLogger(__name__)
 
@@ -30,7 +34,7 @@ def _stemmed_tokens(text: str) -> set[str]:
     return {_STEMMER.stemWord(t) for t in tokenize(text)}
 
 
-def tool_conversation_search(ctx, query: str) -> str:
+def tool_conversation_search(ctx: "Context", query: str) -> str:
     """Search conversation archives by stemmed-token overlap plus substring."""
     log.info(f"[tool:conversation_search] query={query}")
 
@@ -94,7 +98,7 @@ def tool_conversation_search(ctx, query: str) -> str:
     return f"Found {len(results)} matching conversation entries:\n\n" + "\n\n".join(results)
 
 
-async def tool_conversation_compact(ctx) -> str | ToolResult:
+async def tool_conversation_compact(ctx: "Context") -> str | ToolResult:
     """Manually trigger conversation compaction."""
     log.info("[tool:conversation_compact]")
     from ..compaction import compact_history

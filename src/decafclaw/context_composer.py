@@ -14,6 +14,7 @@ import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from decafclaw.skills.background.tools import format_status_text
 from decafclaw.skills.vault.tools import (
@@ -47,6 +48,9 @@ from .tools.tool_registry import (
     get_fetched_tools,
 )
 from .util import estimate_tokens
+
+if TYPE_CHECKING:
+    from decafclaw.context import Context
 
 log = logging.getLogger(__name__)
 
@@ -304,7 +308,7 @@ class ContextComposer:
 
     async def compose(
         self,
-        ctx,
+        ctx: "Context",
         user_message: str,
         history: list,
         *,

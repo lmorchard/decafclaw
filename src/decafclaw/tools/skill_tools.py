@@ -8,6 +8,7 @@ import json
 import logging
 import re
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from ..media import ToolResult
 from ..skills import (
@@ -17,6 +18,9 @@ from ..skills import (
     validate_skill_md,
 )
 from .confirmation import request_confirmation
+
+if TYPE_CHECKING:
+    from decafclaw.context import Context
 
 log = logging.getLogger(__name__)
 
@@ -525,7 +529,7 @@ async def _call_init(module, config, skill_name: str = "") -> None:
             await asyncio.to_thread(init_fn, config)
 
 
-async def restore_skills(ctx) -> None:
+async def restore_skills(ctx: "Context") -> None:
     """Re-activate skills recorded in ctx.skills.activated, without permission checks.
 
     Called at the start of each web gateway turn to restore skills that were
@@ -583,7 +587,7 @@ def _find_skill(discovered, name: str):
     return None
 
 
-async def tool_activate_skill(ctx, name: str) -> str | ToolResult:
+async def tool_activate_skill(ctx: "Context", name: str) -> str | ToolResult:
     """Activate a skill to make its capabilities available in this conversation."""
     log.info(f"[tool:activate_skill] name={name}")
 
@@ -660,7 +664,7 @@ async def tool_activate_skill(ctx, name: str) -> str | ToolResult:
     return result
 
 
-def _retract_skill_tools(ctx, name: str) -> None:
+def _retract_skill_tools(ctx: "Context", name: str) -> None:
     """Remove the tools a previous activation of `name` registered.
 
     Called after a successful re-import and before registering the new
@@ -714,7 +718,7 @@ def _retract_skill_tools(ctx, name: str) -> None:
         )
 
 
-def _register_skill_tools(ctx, name: str, tools: dict, tool_defs: list) -> None:
+def _register_skill_tools(ctx: "Context", name: str, tools: dict, tool_defs: list) -> None:
     """Retract a skill's previous generation, then register this one.
 
     The single registration path for both activation and post-restart restore.
@@ -741,7 +745,7 @@ def _register_skill_tools(ctx, name: str, tools: dict, tool_defs: list) -> None:
     ctx.tools.skill_contributions[name] = (dict(tools), list(tool_defs))
 
 
-async def activate_skill_internal(ctx, skill_info, reloading: bool = False) -> str | ToolResult:
+async def activate_skill_internal(ctx: "Context", skill_info, reloading: bool = False) -> str | ToolResult:
     """Activate a skill: load tools, register on ctx, mark active.
 
     Shared by tool_activate_skill (with permission checks) and
@@ -882,7 +886,7 @@ async def activate_skill_internal(ctx, skill_info, reloading: bool = False) -> s
     return "\n".join(result_parts)
 
 
-async def _request_skill_confirmation(ctx, skill_name: str) -> tuple[bool, bool]:
+async def _request_skill_confirmation(ctx: "Context", skill_name: str) -> tuple[bool, bool]:
     """Request user confirmation for skill activation.
 
     Returns (approved, always) tuple.
@@ -896,7 +900,7 @@ async def _request_skill_confirmation(ctx, skill_name: str) -> tuple[bool, bool]
     return result.get("approved", False), result.get("always", False)
 
 
-def tool_skill_validate(ctx, path: str) -> ToolResult:
+def tool_skill_validate(ctx: "Context", path: str) -> ToolResult:
     """Pre-flight validate a single workspace skill directory."""
     log.info(f"[tool:skill_validate] {path}")
     workspace = ctx.config.workspace_path.resolve()
@@ -973,7 +977,7 @@ def rediscover_skills(config) -> list:
     return rejections
 
 
-def tool_refresh_skills(ctx) -> str | ToolResult:
+def tool_refresh_skills(ctx: "Context") -> str | ToolResult:
     """Re-discover skills and update the system prompt catalog."""
     log.info("[tool:refresh_skills]")
     config = ctx.config

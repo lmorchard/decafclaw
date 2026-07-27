@@ -3,8 +3,12 @@
 import json
 import logging
 from enum import Enum
+from typing import TYPE_CHECKING
 
 from ..util import estimate_tokens
+
+if TYPE_CHECKING:
+    from decafclaw.context import Context
 
 log = logging.getLogger(__name__)
 
@@ -292,7 +296,7 @@ def build_deferred_list_text(
 # -- Fetched tools helpers (list↔set for JSON serialization) -----------------
 
 
-def get_fetched_tools(ctx) -> set[str]:
+def get_fetched_tools(ctx: "Context") -> set[str]:
     """Read the fetched tools set from ctx.skills.data."""
     skill_data = ctx.skills.data
     raw = skill_data.get("fetched_tools", [])
@@ -301,7 +305,7 @@ def get_fetched_tools(ctx) -> set[str]:
     return set(raw)
 
 
-def add_fetched_tools(ctx, names: set[str]) -> None:
+def add_fetched_tools(ctx: "Context", names: set[str]) -> None:
     """Add tool names to the fetched set in ctx.skills.data."""
     existing = get_fetched_tools(ctx)
     ctx.skills.data["fetched_tools"] = sorted(existing | names)

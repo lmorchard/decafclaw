@@ -13,6 +13,7 @@ import asyncio
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from decafclaw import sticky as sticky_mod
 from decafclaw.media import EndTurnConfirm, ToolResult
@@ -35,6 +36,9 @@ from decafclaw.skills.project.state import (
     validate_transition,
 )
 
+if TYPE_CHECKING:
+    from decafclaw.context import Context
+
 log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -53,17 +57,17 @@ def _load_prompt(name: str, **kwargs) -> str:
     return text
 
 
-def _get_current_project(ctx) -> str | None:
+def _get_current_project(ctx: "Context") -> str | None:
     return (ctx.skills.data or {}).get("current_project")
 
 
-def _set_current_project(ctx, slug: str) -> None:
+def _set_current_project(ctx: "Context", slug: str) -> None:
     if ctx.skills.data is None:
         ctx.skills.data = {}
     ctx.skills.data["current_project"] = slug
 
 
-def _resolve_project(ctx, project: str = "") -> str:
+def _resolve_project(ctx: "Context", project: str = "") -> str:
     if project:
         return project
     current = _get_current_project(ctx)
@@ -82,7 +86,7 @@ def _load_or_error(config, project: str) -> ProjectInfo | ToolResult:
     return info
 
 
-def _load_current(ctx) -> ProjectInfo | ToolResult:
+def _load_current(ctx: "Context") -> ProjectInfo | ToolResult:
     """Load the current project or return an error."""
     try:
         project = _resolve_project(ctx)
@@ -91,7 +95,7 @@ def _load_current(ctx) -> ProjectInfo | ToolResult:
     return _load_or_error(ctx.config, project)
 
 
-def _emit_for_ctx(ctx):
+def _emit_for_ctx(ctx: "Context"):
     manager = getattr(ctx, "manager", None)
     if manager is None:
         return None
@@ -124,7 +128,7 @@ def _progress_data_from_plan(info: ProjectInfo, steps: list[Step]) -> dict:
     return {"steps": widget_steps, "title": info.description, "summary": summary}
 
 
-async def _emit_project_progress(ctx, info: ProjectInfo) -> None:
+async def _emit_project_progress(ctx: "Context", info: ProjectInfo) -> None:
     """Mirror an EXECUTING project's plan into the sticky slot. Fail-open."""
     if info.status != ProjectState.EXECUTING:
         return
@@ -148,7 +152,7 @@ async def _emit_project_progress(ctx, info: ProjectInfo) -> None:
         log.warning("project sticky emit failed", exc_info=True)
 
 
-async def _clear_project_progress(ctx) -> None:
+async def _clear_project_progress(ctx: "Context") -> None:
     """Clear the sticky slot for a project. Fail-open."""
     try:
         result = await sticky_mod.clear_sticky(
@@ -163,7 +167,7 @@ async def _clear_project_progress(ctx) -> None:
 # Tool implementations
 # ---------------------------------------------------------------------------
 
-async def tool_project_create(ctx, description: str, slug: str = "") -> str | ToolResult:
+async def tool_project_create(ctx: "Context", description: str, slug: str = "") -> str | ToolResult:
     """Create a new structured project."""
     info = create_project(ctx.config, description, slug=slug)
     _set_current_project(ctx, info.slug)
@@ -175,7 +179,7 @@ async def tool_project_create(ctx, description: str, slug: str = "") -> str | To
     )
 
 
-async def tool_project_next_task(ctx) -> str | ToolResult:
+async def tool_project_next_task(ctx: "Context") -> str | ToolResult:
     """Get the current instruction for the project phase.
 
     Returns what to do right now. Does NOT advance phases — call
@@ -234,7 +238,7 @@ async def tool_project_next_task(ctx) -> str | ToolResult:
     return ToolResult(text=f"[error: unexpected state '{info.status.value}']")
 
 
-async def tool_project_task_done(ctx) -> str | ToolResult:
+async def tool_project_task_done(ctx: "Context") -> str | ToolResult:
     """Signal that the current phase's work is complete and advance.
 
     Call this after you've done the work for the current phase:
@@ -370,7 +374,7 @@ def _next_execution_step(info: ProjectInfo) -> str:
         )
 
 
-async def tool_project_status(ctx) -> str | ToolResult:
+async def tool_project_status(ctx: "Context") -> str | ToolResult:
     """Check the current state of a project."""
     result = _load_current(ctx)
     if isinstance(result, ToolResult):
@@ -398,7 +402,7 @@ async def tool_project_status(ctx) -> str | ToolResult:
     return "\n".join(lines)
 
 
-async def tool_project_list(ctx) -> str | ToolResult:
+async def tool_project_list(ctx: "Context") -> str | ToolResult:
     """List all projects with their status."""
     projects = list_projects(ctx.config)
     if not projects:
@@ -410,7 +414,7 @@ async def tool_project_list(ctx) -> str | ToolResult:
     return "\n".join(lines)
 
 
-async def tool_project_switch(ctx, project: str) -> str | ToolResult:
+async def tool_project_switch(ctx: "Context", project: str) -> str | ToolResult:
     """Switch the current project context."""
     result = _load_or_error(ctx.config, project)
     if isinstance(result, ToolResult):
@@ -420,7 +424,7 @@ async def tool_project_switch(ctx, project: str) -> str | ToolResult:
     return f"Switched to project '{info.slug}' ({info.status.value}). Call project_next_task."
 
 
-async def tool_project_update_spec(ctx, spec_text: str) -> str | ToolResult:
+async def tool_project_update_spec(ctx: "Context", spec_text: str) -> str | ToolResult:
     """Write or update the project spec."""
 
     result = _load_current(ctx)
@@ -463,7 +467,7 @@ async def tool_project_update_spec(ctx, spec_text: str) -> str | ToolResult:
     )
 
 
-async def tool_project_update_plan(ctx, plan_text: str) -> str | ToolResult:
+async def tool_project_update_plan(ctx: "Context", plan_text: str) -> str | ToolResult:
     """Write or update the project plan."""
 
     result = _load_current(ctx)
@@ -579,7 +583,7 @@ async def tool_project_add_steps(
     return f"Added {len(steps)} step(s) after step {after_step}. Plan now has {total} steps."
 
 
-async def tool_project_advance(ctx, target_status: str = "") -> str | ToolResult:
+async def tool_project_advance(ctx: "Context", target_status: str = "") -> str | ToolResult:
     """Go back to an earlier phase (e.g. replanning). Use project_task_done to go forward."""
 
     result = _load_current(ctx)
@@ -616,7 +620,7 @@ async def tool_project_advance(ctx, target_status: str = "") -> str | ToolResult
     return f"Project reverted to {target.value}. Call project_next_task."
 
 
-async def tool_project_note(ctx, note_text: str) -> str | ToolResult:
+async def tool_project_note(ctx: "Context", note_text: str) -> str | ToolResult:
     """Append a timestamped note to the project."""
 
     result = _load_current(ctx)
@@ -842,7 +846,7 @@ def _tools_for_phase(phase: ProjectState | None) -> tuple[dict, list]:
     return tools, defs
 
 
-def get_tools(ctx) -> tuple[dict, list]:
+def get_tools(ctx: "Context") -> tuple[dict, list]:
     """Dynamic tool provider — returns phase-appropriate tools each turn."""
     slug = _get_current_project(ctx)
     if not slug:

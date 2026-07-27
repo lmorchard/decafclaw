@@ -6,9 +6,12 @@ import logging
 import re
 import secrets
 from dataclasses import replace
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ..media import ToolResult
+
+if TYPE_CHECKING:
+    from decafclaw.context import Context
 
 log = logging.getLogger(__name__)
 
@@ -114,7 +117,7 @@ def _parse_structured_output(text: str) -> tuple[Any | None, str]:
     return parsed, prose
 
 
-async def run_child_turn(parent_ctx, task, model: str = "",
+async def run_child_turn(parent_ctx: "Context", task, model: str = "",
                          max_iterations: int = 0,
                          *,
                          allowed_tools: list[str] | None = None,
@@ -202,7 +205,7 @@ async def run_child_turn(parent_ctx, task, model: str = "",
     child_conv_id = f"{parent_conv}--child-{secrets.token_hex(4)}"
     parent_event_id = parent_ctx.event_context_id or parent_ctx.context_id
 
-    def setup(child_ctx):
+    def setup(child_ctx: "Context"):
         # Swap in the child-specific config (smaller iteration budget + child
         # system prompt). Context was already built with parent's config by
         # Context.for_task, so we overwrite here.
@@ -298,7 +301,7 @@ async def run_child_turn(parent_ctx, task, model: str = "",
 
 
 async def tool_delegate_task(
-    ctx,
+    ctx: "Context",
     task: str,
     model: str = "",
     allow_vault_retrieval: bool = False,
@@ -349,7 +352,7 @@ async def tool_delegate_task(
 
 
 async def _run_one_delegated(
-    parent_ctx,
+    parent_ctx: "Context",
     *,
     task: str,
     idx: int,
@@ -423,7 +426,7 @@ async def _run_one_delegated(
 
 
 async def tool_delegate_tasks(
-    ctx,
+    ctx: "Context",
     tasks: list[str],
     model: str = "",
     allow_vault_retrieval: bool = False,

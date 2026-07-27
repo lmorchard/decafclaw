@@ -6,13 +6,17 @@ vertex-gemini-flash by the #255 spike.
 """
 import json
 import logging
+from typing import TYPE_CHECKING
 
 from decafclaw.llm import call_llm
+
+if TYPE_CHECKING:
+    from decafclaw.context import Context
 
 log = logging.getLogger(__name__)
 
 
-async def call_structured(ctx, *, system: str, user_msg: str, schema: dict,
+async def call_structured(ctx: "Context", *, system: str, user_msg: str, schema: dict,
                           tool_name: str, model: str, description: str = "",
                           retries: int = 1) -> dict:
     """Force a structured response. Returns parsed tool args, or raises."""

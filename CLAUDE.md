@@ -30,7 +30,9 @@ AI agent testbed: chat bot (Mattermost), web UI, terminal REPL. Multi-provider L
 
 See [docs/tools.md](docs/tools.md), [docs/tool-priority.md](docs/tool-priority.md), [docs/tool-search.md](docs/tool-search.md), [docs/preemptive-tool-search.md](docs/preemptive-tool-search.md).
 
-- **Tools receive `ctx` as first param.** Always, even if unused.
+- **Tools receive `ctx` as first param.** Always, even if unused. **Annotate it** — `ctx: "Context"`, with the import under `if TYPE_CHECKING:`. An unannotated `ctx` is implicit `Any`, so pyright cannot check a single `ctx.*` call: that is how #721 shipped a `ctx.publish("tool_status", {...})` positional-dict call that raised `TypeError` on every invocation while `make check` stayed green for two months. Two constraints make the exact form load-bearing:
+  - **The import must be `TYPE_CHECKING`-guarded.** `decafclaw.context` → `context_composer` → skill modules is a real cycle; a runtime `from decafclaw.context import Context` in a tool or skill module raises `cannot import name 'Context' from partially initialized module`.
+  - **Quote the annotation; do NOT add `from __future__ import annotations`** to a skill's `tools.py`. The skill loader `exec`s modules without registering them in `sys.modules`, and CPython's `dataclasses._is_type` resolves *string* annotations via `sys.modules.get(cls.__module__).__dict__` — so the future import turns any `@dataclass` in that file into `AttributeError: 'NoneType' object has no attribute '__dict__'` at load time, which surfaces as a skill silently missing from the tool catalog.
 - **`execute_tool` auto-detects sync vs async.** Sync tools run via `asyncio.to_thread`.
 - **Tool calls run concurrently** via `asyncio.gather` with a semaphore (`max_concurrent_tools`, default 5). Each call gets a forked ctx with its own `current_tool_call_id`.
 - **Errors return `ToolResult(text="[error: ...]")`**, not bare strings. `ToolResult.data` for structured results — auto-rendered as a fenced JSON block.
