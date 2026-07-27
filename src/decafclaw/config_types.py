@@ -458,6 +458,24 @@ class WorkflowConfig:
 
 
 @dataclass
+class PreScriptConfig:
+    """Pre-agent scripts for scheduled tasks (#450).
+
+    A scheduled task may declare `pre_script:` in its frontmatter; the runner
+    executes it with the project interpreter before the turn and injects stdout
+    into the prompt, so mechanical work (fetch, query, diff) costs no LLM
+    round-trips.
+
+    The timeout is deliberately NOT charged against `agent.max_tool_iterations`.
+    Nothing has been inferred yet when the script runs, so a slow fetch must not
+    shrink the reasoning budget it was gathering data for.
+    """
+    enabled: bool = True
+    # Float so tests can use sub-second values; ints work fine in config.json.
+    timeout_sec: float = 60.0
+
+
+@dataclass
 class LoopBreakerConfig:
     """Diagnostic guardrails for infinite loop detection (#598).
 
