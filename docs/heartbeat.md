@@ -75,7 +75,7 @@ Each `##` section gets its own agent turn with fresh history. This means:
 
 ## HEARTBEAT_OK
 
-If a section has nothing to report, the agent should respond with `HEARTBEAT_OK` (case-insensitive, within the first 300 characters). When `HEARTBEAT_SUPPRESS_OK` is `true` (default):
+If a section has nothing to report, the agent should respond with `HEARTBEAT_OK`. The marker must **start** the response — leading whitespace is fine, matching is case-insensitive, and only the first 300 characters are scanned. Since [#450](https://github.com/lmorchard/decafclaw/issues/450) every response sentinel shares one start-anchored matcher, `heartbeat.response_starts_with_sentinel`, so a response that merely *mentions* `HEARTBEAT_OK` mid-text is not a quiet section. When `HEARTBEAT_SUPPRESS_OK` is `true` (default):
 
 - OK sections show as `✅ Title — OK` in the thread (compact)
 - Non-OK sections show the full response
@@ -83,7 +83,7 @@ If a section has nothing to report, the agent should respond with `HEARTBEAT_OK`
 
 Set `HEARTBEAT_SUPPRESS_OK=false` to see full output for all sections.
 
-**An abnormally terminated section is never OK.** `is_heartbeat_ok()` returns `False` — whatever the text contains and wherever the sentinel sits — if the response carries one of the abnormal-termination markers the agent loop emits: `[Agent reached max tool iterations` or `[loop-breaker] Stopped`. Heartbeat and scheduled turns have no live transport subscriber, so `_finalize_with_note` delivers the turn's accumulated mid-turn preambles alongside the termination note; since the agent is told to say `HEARTBEAT_OK` when there's nothing to report, a preamble mentioning the sentinel could land inside the 300-char window and silently suppress the alert the termination should have raised ([#710](https://github.com/lmorchard/decafclaw/issues/710)). The markers are matched against the whole response, not just the window, so this doesn't depend on the note's position in the delivered text. [#712](https://github.com/lmorchard/decafclaw/issues/712) tracks replacing the substring match with a structured termination signal, which is what would remove the 300-char window itself.
+**An abnormally terminated section is never OK.** `is_heartbeat_ok()` returns `False` — whatever the text contains and wherever the sentinel sits — if the response carries one of the abnormal-termination markers the agent loop emits: `[Agent reached max tool iterations` or `[loop-breaker] Stopped`. Heartbeat and scheduled turns have no live transport subscriber, so `_finalize_with_note` delivers the turn's accumulated mid-turn preambles alongside the termination note; since the agent is told to say `HEARTBEAT_OK` when there's nothing to report, a sentinel-bearing preamble is a plausible utterance, and one reaching the front of the response would silently suppress the alert the termination should have raised ([#710](https://github.com/lmorchard/decafclaw/issues/710)). Start-anchoring the sentinel (#450) narrows that window but does not close it — "did this turn end normally" is a different question from where the sentinel sits, which is why the override is a separate check. The markers are matched against the whole response, not just the scanned prefix, so this doesn't depend on the note's position in the delivered text. [#712](https://github.com/lmorchard/decafclaw/issues/712) tracks replacing the substring match with a structured termination signal, which is what would remove the 300-char window itself.
 
 ## Mattermost reporting
 

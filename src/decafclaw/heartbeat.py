@@ -1,6 +1,7 @@
 """Heartbeat — periodic agent wake-up that reads HEARTBEAT.md and performs tasks."""
 
 import asyncio
+import functools
 import logging
 import re
 import time
@@ -11,9 +12,9 @@ log = logging.getLogger(__name__)
 # Interval parsing: 30m, 1h, 1h30m, or plain seconds
 _INTERVAL_RE = re.compile(r"^(?:(\d+)h)?(?:(\d+)m)?$")
 
-# BACKGROUND_WAKE_OK sentinel: must appear at start (leading whitespace OK),
-# followed by a word boundary so "BACKGROUND_WAKE_OKAY" doesn't match.
-_BACKGROUND_WAKE_OK_RE = re.compile(r"^\s*background_wake_ok\b", re.IGNORECASE)
+# How far into a response a sentinel may appear. Sentinels are start-anchored
+# (see response_starts_with_sentinel); the cap bounds work on long responses.
+_SENTINEL_SCAN_CHARS = 300
 
 
 def parse_interval(value: str) -> int | None:
@@ -122,48 +123,80 @@ _ABNORMAL_TERMINATION_MARKERS = (
 )
 
 
+def response_starts_with_sentinel(response: str | None, sentinel: str) -> bool:
+    """True when `response` begins with `sentinel`, ignoring leading whitespace.
+
+    THE matcher for every response sentinel. Start-anchored on purpose: the
+    original HEARTBEAT_OK check matched anywhere in the first 300 characters, so
+    a response that merely *mentioned* the sentinel counted as a quiet cycle.
+    That already forced unrelated code to work around it — `agent.py` orders the
+    loop-breaker note ahead of accumulated preambles precisely so a preamble
+    mentioning HEARTBEAT_OK can't land in the window and bury the alert.
+    BACKGROUND_WAKE_OK was written start-anchored to dodge the same trap; this is
+    that rule, shared instead of duplicated (#450).
+
+    Safe to tighten because `polling.py:build_task_preamble` — the only producer
+    of these instructions — already asks for the marker first: "respond with
+    HEARTBEAT_OK" (heartbeat) and "begin your summary with HEARTBEAT_OK on its
+    own line" (scheduled, worded that way in #362).
+
+    A trailing word boundary is applied only when the sentinel ends in a word
+    character, so HEARTBEAT_OKAY doesn't match HEARTBEAT_OK. It cannot be applied
+    to a sentinel ending in punctuation — `\\b` after `]` asserts that a word
+    character follows, which would make "[SILENT]" alone fail while
+    "[SILENT] x" passed.
+    """
+    if not response or not sentinel.strip():
+        # An empty sentinel compiles to `^\\s*`, which matches every response —
+        # a config-driven empty value would silently suppress everything.
+        return False
+    return _sentinel_re(sentinel).match(response[:_SENTINEL_SCAN_CHARS]) is not None
+
+
+@functools.lru_cache(maxsize=None)
+def _sentinel_re(sentinel: str) -> re.Pattern[str]:
+    """Compiled start-anchored matcher for `sentinel`. Cached — the set of
+    sentinels is tiny and fixed at import time in practice."""
+    boundary = r"\b" if sentinel[-1:].isalnum() or sentinel.endswith("_") else ""
+    return re.compile(rf"^\s*{re.escape(sentinel)}{boundary}", re.IGNORECASE)
+
+
 def is_heartbeat_ok(response: str | None) -> bool:
     """Check if a response indicates nothing to report.
 
-    Returns True if HEARTBEAT_OK appears (case-insensitive) within the first
-    300 characters — but always False for an abnormally terminated turn.
+    True when the response *starts* with HEARTBEAT_OK (leading whitespace
+    allowed, case-insensitive, first `_SENTINEL_SCAN_CHARS` characters) — but
+    always False for an abnormally terminated turn.
 
-    The override exists because heartbeat and scheduled turns have no live
-    transport subscriber, so agent.py's _finalize_with_note delivers the turn's
-    accumulated mid-turn preambles alongside the termination note. Since
-    polling.py tells the agent to say HEARTBEAT_OK when there is nothing to
-    report, a preamble mentioning the sentinel is a plausible utterance, and one
-    landing inside the 300-char window used to suppress the very alert the
-    abnormal termination should have raised (#710). The real predicate is "did
-    this turn end normally", not "how long is the prefix".
+    The abnormal-termination override (#710) is a separate predicate from where
+    the sentinel sits, and start-anchoring does not subsume it. Heartbeat and
+    scheduled turns have no live transport subscriber, so agent.py's
+    `_finalize_with_note` delivers the turn's accumulated mid-turn preambles
+    alongside the termination note — and polling.py tells the agent to say
+    HEARTBEAT_OK when there is nothing to report, which makes a sentinel-bearing
+    preamble a plausible utterance. Should such a preamble ever reach the front
+    of the response, the start-anchored match would fire and suppress the very
+    alert the abnormal termination should have raised. The real predicate is
+    "did this turn end normally".
 
-    Markers are matched against the whole response, not the first 300
-    characters: #707 puts the note first, but scoping the marker check to the
-    window would quietly re-couple this to that ordering. Matching is
-    case-sensitive — these are literal strings the code emits, not user prose.
-    #712 tracks replacing the substring match with a structured termination
-    signal, which is what removes the 300-char window itself.
+    Markers are matched against the whole response, not the scan window: #707
+    puts the note first, but scoping the marker check to the window would
+    quietly re-couple this to that ordering. Matching is case-sensitive — these
+    are literal strings the code emits, not user prose. #712 tracks replacing
+    the substring match with a structured termination signal.
     """
-    if not response:
+    if response and any(m in response for m in _ABNORMAL_TERMINATION_MARKERS):
         return False
-    if any(marker in response for marker in _ABNORMAL_TERMINATION_MARKERS):
-        return False
-    return "heartbeat_ok" in response[:300].lower()
+    return response_starts_with_sentinel(response, "HEARTBEAT_OK")
 
 
 def is_background_wake_ok(response: str | None) -> bool:
-    """Return True if the response starts with the BACKGROUND_WAKE_OK sentinel
-    (allowing only leading whitespace). Case-insensitive. Checks only the first
-    300 characters.
+    """True when a wake turn's result is not worth surfacing to the user.
 
-    Parallel to is_heartbeat_ok — the agent uses BACKGROUND_WAKE_OK to signal
-    that a wake turn's result is not worth surfacing to the user. Requiring the
-    sentinel at the start prevents mid-response mentions from accidentally
-    suppressing the message.
+    The agent emits BACKGROUND_WAKE_OK to say so. Same start-anchored rule as
+    every other sentinel — see `response_starts_with_sentinel`.
     """
-    if not response:
-        return False
-    return _BACKGROUND_WAKE_OK_RE.match(response[:300]) is not None
+    return response_starts_with_sentinel(response, "BACKGROUND_WAKE_OK")
 
 
 def build_section_prompt(section: dict) -> str:

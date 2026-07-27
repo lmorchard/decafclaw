@@ -231,6 +231,17 @@ Periodic wake-up settings.
 | `channel` | str | `""` | `HEARTBEAT_CHANNEL` |
 | `suppress_ok` | bool | `true` | `HEARTBEAT_SUPPRESS_OK` |
 
+### `pre_script`
+
+Pre-agent scripts for scheduled tasks (#450). A schedule declaring `pre_script:` runs it with the project interpreter before the turn and injects stdout into the prompt, so mechanical work costs no LLM round-trips. See [schedules.md#pre-agent-scripts](schedules.md#pre-agent-scripts).
+
+| Field | Type | Default | Env Var |
+|-------|------|---------|---------|
+| `enabled` | bool | `true` | `PRE_SCRIPT_ENABLED` |
+| `timeout_sec` | float | `60.0` | `PRE_SCRIPT_TIMEOUT_SEC` |
+
+`timeout_sec` is deliberately **not** charged against `agent.max_tool_iterations` — the script runs before any reasoning, so a slow fetch must not shrink the budget it is gathering data for. Setting `enabled = false` makes every task's `pre_script` a no-op without editing schedule files.
+
 ### `notifications`
 
 Inbox settings for the notification system (see [Notifications](notifications.md)).

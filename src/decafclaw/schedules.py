@@ -3,7 +3,9 @@
 import asyncio
 import html
 import logging
+import os
 import re
+import sys
 import time
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
@@ -41,6 +43,9 @@ class ScheduleTask:
     # `@domain.com` suffix patterns that bypass confirmation. Merged
     # with `config.email.allowed_recipients` at tool-call time.
     email_recipients: list[str] = field(default_factory=list)
+    # Path to a Python script run before the turn; its stdout is injected into
+    # the prompt. Relative to workspace/ or data/{agent_id}/ (#450).
+    pre_script: str = ""
 
 
 def parse_schedule_file(path: Path) -> ScheduleTask | None:
@@ -92,6 +97,7 @@ def parse_schedule_file(path: Path) -> ScheduleTask | None:
         source="",  # set by caller
         path=path,
         channel=str(meta.get("channel", "")),
+        pre_script=str(meta.get("pre_script", "")),
         enabled=enabled,
         model=str(meta.get("model", meta.get("effort", ""))),
         allowed_tools=allowed_tools,
@@ -190,7 +196,7 @@ def serialize_to_markdown(task: ScheduleTask) -> str:
 
     Frontmatter includes only fields with values. Field order:
     schedule, enabled (only if false), channel, model, allowed-tools,
-    required-skills, email-recipients.
+    pre_script, required-skills, email-recipients.
     """
     fm: dict = {"schedule": task.schedule}
     if not task.enabled:
@@ -203,6 +209,8 @@ def serialize_to_markdown(task: ScheduleTask) -> str:
         entries = list(task.allowed_tools)
         entries.extend(f"shell({p})" for p in task.shell_patterns)
         fm["allowed-tools"] = ", ".join(entries)
+    if task.pre_script:
+        fm["pre_script"] = task.pre_script
     if task.required_skills:
         fm["required-skills"] = list(task.required_skills)
     if task.email_recipients:
@@ -225,7 +233,7 @@ def write_overlay(config, name: str, patch: dict) -> ScheduleTask:
 
     Patch keys (all optional): enabled (bool), schedule (str), body (str),
     channel (str), allowed_tools (list[str]), required_skills (list[str]),
-    model (str).
+    model (str), pre_script (str).
 
     Write targets:
     - workspace source → workspace/schedules/{name}.md (in-place edit)
@@ -267,6 +275,7 @@ def write_overlay(config, name: str, patch: dict) -> ScheduleTask:
         allowed_tools=list(patch.get("allowed_tools", base.allowed_tools)),
         required_skills=list(patch.get("required_skills", base.required_skills)),
         model=patch.get("model", base.model),
+        pre_script=patch.get("pre_script", base.pre_script),
     )
 
     if base.source == "workspace":
@@ -358,6 +367,144 @@ def is_due(config, task: ScheduleTask) -> bool:
 # and ship a tight allowed-tools list, so without this exemption the model
 # has no escape hatch if the task is under-spec'd or the body fails to land.
 _SCHEDULE_ESCAPE_HATCH_TOOLS = frozenset({"tool_search", "activate_skill"})
+
+# A scheduled response starting with this suppresses notification delivery — no
+# inbox entry, so no channel delivers either (every adapter subscribes to the
+# notification). Start-anchored like every other sentinel; see
+# heartbeat.response_starts_with_sentinel.
+#
+# Inert unless a task's own body asks for it. Deliberately NOT added to
+# build_task_preamble: telling every scheduled task to consider suppressing
+# itself is a policy change, and this is a mechanism (#450).
+SILENT_SENTINEL = "[SILENT]"
+
+# Cap on injected pre_script stdout. A module constant, not config: there is no
+# reason to tune it per agent, and every knob is surface area.
+_PRE_SCRIPT_MAX_CHARS = 8000
+
+
+def _resolve_pre_script_path(config, pre_script: str) -> Path | None:
+    """Resolve `pre_script` against workspace/ then data/{agent_id}/.
+
+    Returns None when the path escapes both roots. Containment is checked with
+    `is_relative_to` after resolution, not by string prefix, so `..` segments
+    and symlinks can't walk out — same approach as
+    `tools/workspace_tools.py:_resolve_safe`.
+    """
+    for root in (config.workspace_path, config.agent_path):
+        root = root.resolve()
+        candidate = (root / pre_script).resolve()
+        if candidate.is_relative_to(root):
+            return candidate
+    return None
+
+
+# Inherited env vars a script plausibly needs to run at all. Everything else is
+# withheld: provider credentials live in this process's environment, and a
+# pre_script's stdout goes straight into the model's context, so `print(os.environ)`
+# in an otherwise innocent script would exfiltrate them (#450 review).
+_PRE_SCRIPT_ENV_PASSTHROUGH = (
+    "PATH", "HOME", "LANG", "LC_ALL", "TZ", "TMPDIR",
+    "SSL_CERT_FILE", "SSL_CERT_DIR", "REQUESTS_CA_BUNDLE",
+    "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY",
+    "http_proxy", "https_proxy", "no_proxy",
+)
+
+
+def _pre_script_env(config, task: ScheduleTask) -> dict[str, str]:
+    """The explicit environment a pre_script runs with.
+
+    An allowlist, not `os.environ` — see _PRE_SCRIPT_ENV_PASSTHROUGH. A script
+    that genuinely needs a secret should read it from a file it is pointed at,
+    which leaves a reviewable trail.
+    """
+    env = {
+        k: os.environ[k]
+        for k in _PRE_SCRIPT_ENV_PASSTHROUGH
+        if k in os.environ
+    }
+    env.update({
+        "DECAFCLAW_AGENT_ID": config.agent.id,
+        "DECAFCLAW_ROUTINE_NAME": task.name,
+        "DECAFCLAW_WORKSPACE": str(config.workspace_path),
+    })
+    return env
+
+
+def _neutralize_delimiter(text: str) -> str:
+    """Defuse a closing `</pre_script_output>` inside the payload.
+
+    Otherwise a script that printed the closing tag would end the block early and
+    everything after it would read as prompt text rather than data. The tag is
+    replaced rather than escaped so the result stays plain and obvious to a model.
+    """
+    return text.replace("</pre_script_output>", "<\\/pre_script_output>")
+
+
+async def _run_pre_script(config, task: ScheduleTask) -> str:
+    """Run a task's pre_script and return the text to inject, or "".
+
+    Fail-open with disclosure. A missing file, a non-zero exit, or a timeout
+    returns an error string rather than raising, so the agent gets to say "the
+    fetch failed" instead of the run disappearing. Aborting the turn would
+    produce silence — which is what `[SILENT]` exists to make a *deliberate*
+    choice about, not something a transient network blip should cause.
+    """
+    if not task.pre_script or not config.pre_script.enabled:
+        return ""
+    script = _resolve_pre_script_path(config, task.pre_script)
+    if script is None:
+        log.warning("Scheduled task %r: pre_script %r escapes the allowed roots",
+                    task.name, task.pre_script)
+        return f"[pre_script error: {task.pre_script!r} is outside the allowed roots]"
+    if not script.is_file():
+        return f"[pre_script error: {task.pre_script!r} not found]"
+
+    timeout = config.pre_script.timeout_sec
+    proc = None
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            sys.executable, str(script),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=str(config.workspace_path),
+            env=_pre_script_env(config, task),
+        )
+        out, err = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+    except asyncio.TimeoutError:
+        if proc is not None:
+            proc.kill()
+            # Reap it. kill() only signals; without the wait the child stays a
+            # zombie until GC and asyncio complains about the transport on
+            # shutdown — the kind of "harmless" noise CLAUDE.md rules out.
+            await proc.wait()
+        log.warning("Scheduled task %r: pre_script timed out after %ss",
+                    task.name, timeout)
+        return f"[pre_script error: timed out after {timeout}s]"
+    except OSError as exc:
+        log.warning("Scheduled task %r: pre_script failed to start: %s",
+                    task.name, exc)
+        return f"[pre_script error: {type(exc).__name__}: {exc}]"
+
+    if err:
+        # stderr is diagnostics, not interface — logged, never injected, so a
+        # script's warnings don't end up in the model's context.
+        log.warning("Scheduled task %r pre_script stderr: %s",
+                    task.name, err.decode(errors="replace")[:500])
+    if proc.returncode != 0:
+        return f"[pre_script error: exited {proc.returncode}]"
+
+    text = _neutralize_delimiter(out.decode(errors="replace"))
+    if len(text) > _PRE_SCRIPT_MAX_CHARS:
+        # Say so rather than cutting silently. A truncated JSON array or item
+        # list reads as a complete one, and the agent would summarize a partial
+        # payload as if it were everything.
+        log.warning("Scheduled task %r: pre_script output truncated from %d chars",
+                    task.name, len(text))
+        text = (text[:_PRE_SCRIPT_MAX_CHARS]
+                + f"\n[pre_script output truncated at {_PRE_SCRIPT_MAX_CHARS} "
+                  f"characters — {len(text)} were produced]")
+    return text
 
 
 def _resolve_skill_dir(config, task: "ScheduleTask") -> str:
@@ -498,7 +645,17 @@ async def run_schedule_task(config, event_bus, manager, task: ScheduleTask,
     preamble = build_task_preamble("scheduled task", task.name)
     body = substitute_body(task.body, skill_dir=skill_dir)
     loaded_skills = _render_required_skill_bodies(config, required_skills)
-    prompt = preamble + (f"{loaded_skills}\n\n" if loaded_skills else "") + body
+    # Data goes between the instructions and the ask, so the agent reads what
+    # it's doing, then what it has, then what to do with it.
+    pre_output = await _run_pre_script(config, task)
+    pre_block = (
+        f"<pre_script_output>\n{pre_output.rstrip()}\n</pre_script_output>\n\n"
+        if pre_output else ""
+    )
+    prompt = (preamble
+              + (f"{loaded_skills}\n\n" if loaded_skills else "")
+              + pre_block
+              + body)
 
     try:
         future = await manager.enqueue_turn(
@@ -512,11 +669,18 @@ async def run_schedule_task(config, event_bus, manager, task: ScheduleTask,
             metadata={"task_name": task.name, "channel": channel},
         )
         result_text = (await future) or "(no response)"
-        from .heartbeat import is_heartbeat_ok
+        from .heartbeat import is_heartbeat_ok, response_starts_with_sentinel
         ok = is_heartbeat_ok(result_text)
-        await _notify_task_complete(
-            config, event_bus, task.name, result_text, ok, conv_id,
-        )
+        if response_starts_with_sentinel(result_text, SILENT_SENTINEL):
+            # Suppressed cycles must stay distinguishable from crashed ones in
+            # the log — the notification that didn't happen is otherwise the
+            # only trace, and an absence isn't diagnosable.
+            log.info("Scheduled task %r returned %s — suppressing notification",
+                     task.name, SILENT_SENTINEL)
+        else:
+            await _notify_task_complete(
+                config, event_bus, task.name, result_text, ok, conv_id,
+            )
         return {
             "task_name": task.name,
             "channel": channel,

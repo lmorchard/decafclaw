@@ -1234,6 +1234,14 @@ class TurnRunner:
         alert. Putting the note first instead means an abnormally-terminated
         turn's own text occupies the front of the window. Don't move this
         back for "readability" — it's the fix for that failure mode.
+
+        Two later changes made this ordering belt-and-braces rather than the
+        sole defence: #710 makes `is_heartbeat_ok` return False outright when
+        the response carries an abnormal-termination marker anywhere, and #450
+        start-anchored the sentinels (`heartbeat.response_starts_with_sentinel`)
+        so a mid-response mention no longer matches at all. Keep the ordering
+        anyway: it costs nothing, and it keeps the abnormal-termination note
+        where a reader looks first.
         """
         note = note.strip()
         if self.ctx.is_child or self.ctx.task_mode in _UNWATCHED_TASK_MODES:

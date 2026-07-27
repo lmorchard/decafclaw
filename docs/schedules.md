@@ -35,6 +35,7 @@ Report key themes and anything that needs attention.
 | `enabled` | bool | no | `true` | Quick toggle without deleting the file |
 | `model` | string | no | — | Named model config for this task. Omit to use `default_model`. |
 | `allowed-tools` | list | no | all | Restrict which tools the task can use |
+| `pre_script` | string | no | — | Python script run **before** the turn; its stdout is injected into the prompt. Relative to `workspace/` or `data/{agent_id}/`. See [Pre-agent scripts](#pre-agent-scripts). |
 | `required-skills` | list | no | — | Skills to pre-activate before running the task |
 | `email-recipients` | list | no | — | Pre-approved email addresses for `send_email` that bypass confirmation for this task only. See [email.md](email.md#scheduled-task-integration). Exact addresses or `@domain.com` suffix patterns. |
 
@@ -121,11 +122,66 @@ If a task is still running from a previous tick, it's skipped. This prevents run
 
 The scheduled-task preamble instructs the agent to end its turn with a short narrative summary of what happened this cycle — always, even when the cycle was quiet. This keeps archived scheduled-task conversations readable and gives retrospective tools (e.g., the `!newsletter` composer) real material to quote.
 
-When the cycle was genuinely quiet (nothing notable happened, no changes made), the agent prefixes its summary with `HEARTBEAT_OK` on a leading line before the quiet-cycle note. The scheduler's `is_heartbeat_ok()` check (case-insensitive, first 300 chars) picks up the marker and logs a tidy `Schedule 'name': HEARTBEAT_OK` line instead of the response preview. The narrative still gets archived in full so the newsletter has material to quote.
+When the cycle was genuinely quiet (nothing notable happened, no changes made), the agent prefixes its summary with `HEARTBEAT_OK` on a leading line before the quiet-cycle note. The scheduler's `is_heartbeat_ok()` check picks up the marker and logs a tidy `Schedule 'name': HEARTBEAT_OK` line instead of the response preview. The narrative still gets archived in full so the newsletter has material to quote.
+
+The marker must **start** the response (leading whitespace is fine, case-insensitive, first 300 characters). As of #450 all response sentinels share one start-anchored matcher, `heartbeat.response_starts_with_sentinel` — a response that merely *mentions* `HEARTBEAT_OK` mid-text is not a quiet cycle. That matches what the preamble has always asked for, so no task wording needs to change.
 
 A task whose turn ended abnormally is never treated as quiet: `is_heartbeat_ok()` returns `False` if the response carries `[Agent reached max tool iterations` or `[loop-breaker] Stopped`, regardless of a stray `HEARTBEAT_OK` in a mid-turn preamble. See [heartbeat docs](heartbeat.md#heartbeat_ok).
 
 Historical note: older runs may end with a bare `HEARTBEAT_OK` token without narrative; the newsletter's `_is_status_token` filter handles those correctly for retrospective windows that reach into pre-change archives. Heartbeat also uses `HEARTBEAT_OK`; see [heartbeat docs](heartbeat.md).
+
+### Pre-agent scripts
+
+Mechanical work — fetch a feed, query a database, diff against the last run — does not need an LLM. A task can declare a script that runs *before* the turn:
+
+```markdown
+---
+schedule: "0 9 * * *"
+pre_script: scripts/fetch_feeds.py
+---
+
+Summarize anything new in the feed data above. If there are no new items,
+reply with `[SILENT]` and nothing else.
+```
+
+The runner executes the script with the project interpreter and injects its stdout between the preamble and your task body:
+
+```
+<pre_script_output>
+{"items": [...]}
+</pre_script_output>
+```
+
+So the agent reads its instructions, then the data, then what to do with it — and spends no tool calls fetching.
+
+**Mechanics**
+
+- **Python only, no shell.** The script runs via the project interpreter directly (`sys.executable`), never through a shell, so there is no quoting or word-splitting surface. Schedules already have `allowed-tools: shell(...)` for shell work.
+- **Path is sandboxed.** Resolved against `workspace/` then `data/{agent_id}/`, with containment checked after resolution — `../` escapes are rejected rather than followed.
+- **stdout is the interface.** stderr is logged, never injected, so a script's warnings don't land in the model's context. Output is truncated at 8000 characters.
+- **Environment.** The script gets `DECAFCLAW_AGENT_ID`, `DECAFCLAW_ROUTINE_NAME`, and `DECAFCLAW_WORKSPACE`, and runs with `workspace/` as its working directory. It has no access to decafclaw internals — it is an ordinary subprocess.
+- **Failures are disclosed, not fatal.** A missing file, a non-zero exit, or a timeout injects an error line (`[pre_script error: exited 3]`) and the turn runs anyway, so the agent can report that the fetch failed. Aborting would produce silence, and silence is what `[SILENT]` exists to make a deliberate choice about.
+- **Timeout** is `pre_script.timeout_sec` (default 60s), and is deliberately *not* charged against `agent.max_tool_iterations` — no reasoning has happened yet, so a slow fetch must not shrink the budget it is gathering data for. Disable the feature entirely with `pre_script.enabled = false`.
+
+### Suppressing delivery with `[SILENT]`
+
+A response that **starts** with `[SILENT]` emits no notification at all — and because every channel adapter (Mattermost DM, email, vault page) subscribes to that notification, suppressing it suppresses every channel. The turn is still archived in full.
+
+Use it for "monitor X, alert only on change" routines, where the normal outcome is that there is nothing to say and a notification per run is just noise.
+
+**`[SILENT]` does nothing unless your task body asks for it.** It is a mechanism, not a default: the shared scheduled-task preamble is deliberately left alone, because instructing *every* task to consider suppressing itself would be a policy change. Opt in per task:
+
+```markdown
+---
+schedule: "*/15 * * * *"
+---
+
+Check the build status endpoint. If it is still green and unchanged since the
+last run, reply with `[SILENT]` and nothing else. Otherwise describe what
+changed.
+```
+
+Same rules as the other sentinels: start-anchored, leading whitespace allowed, case-insensitive, first 300 characters. A mid-response mention (`"not [SILENT] though"`) does not suppress. Failures are never suppressed — if the task raises, the alert notification is sent regardless of what the response said. A suppressed run logs one `Scheduled task 'name' returned [SILENT] — suppressing notification` line, so a quiet cycle stays distinguishable from a crashed one.
 
 ## Reporting
 

@@ -34,6 +34,7 @@ from .config_types import (
     ModelConfig,
     NotesConfig,
     NotificationsConfig,
+    PreScriptConfig,
     ProviderConfig,
     RecentJournalConfig,
     ReflectionConfig,
@@ -193,6 +194,7 @@ class Config:
     background: BackgroundConfig = field(default_factory=BackgroundConfig)
     workflow: WorkflowConfig = field(default_factory=WorkflowConfig)
     loop_breaker: LoopBreakerConfig = field(default_factory=LoopBreakerConfig)
+    pre_script: PreScriptConfig = field(default_factory=PreScriptConfig)
     telemetry: TelemetryConfig = field(default_factory=TelemetryConfig)
     widgets: WidgetsConfig = field(default_factory=WidgetsConfig)
 
@@ -489,6 +491,9 @@ def load_config() -> Config:
     loop_breaker = load_sub_config(
         LoopBreakerConfig, file_data.get("loop_breaker", {}), "LOOP_BREAKER")
 
+    pre_script = load_sub_config(
+        PreScriptConfig, file_data.get("pre_script", {}), "PRE_SCRIPT")
+
     telemetry = load_sub_config(
         TelemetryConfig, file_data.get("telemetry", {}), "TELEMETRY")
 
@@ -583,6 +588,7 @@ def load_config() -> Config:
         background=background,
         workflow=workflow,
         loop_breaker=loop_breaker,
+        pre_script=pre_script,
         telemetry=telemetry,
         widgets=widgets,
         env=env_vars,
