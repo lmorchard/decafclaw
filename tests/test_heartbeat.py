@@ -147,6 +147,53 @@ def test_is_heartbeat_ok_not_present():
     assert is_heartbeat_ok("Something happened that needs attention.") is False
 
 
+def test_is_heartbeat_ok_false_on_abnormal_termination():
+    """An abnormally-terminated heartbeat/scheduled turn must never be reported
+    as OK, even when the HEARTBEAT_OK sentinel lands inside the 300-char window
+    (#710).
+
+    `_finalize_with_note` in agent.py delivers the termination note first and
+    the turn's accumulated mid-turn preambles after it, so an abnormally
+    terminated turn's `ToolResult.text` always carries one of the two markers.
+    polling.py instructs the agent to say "HEARTBEAT_OK" when there is nothing
+    to report, which makes a sentinel-bearing preamble a plausible utterance —
+    and the old "sentinel anywhere in the first 300 characters wins" rule then
+    reported the turn as OK, silently suppressing the alert the user should
+    have seen. Both markers are covered here; asserting only the max-iterations
+    one would let the loop-breaker path stay broken.
+    """
+    # Mirrors _finalize_max_iterations / _finalize_loop_break (agent.py). The
+    # real loop-breaker note continues with a handoff paragraph; trimmed here
+    # so the sentinel genuinely lands inside the 300-char window.
+    max_iterations_text = (
+        "\n\n[Agent reached max tool iterations (30) without a final response]"
+        "\n\nNothing new since the last check — HEARTBEAT_OK."
+    )
+    loop_breaker_text = (
+        "\n\n[loop-breaker] Stopped after repeated failures: you called "
+        "vault_search 3 times with identical arguments without progress."
+        "\n\nNothing new since the last check — HEARTBEAT_OK."
+    )
+
+    # Premise guards: the markers really are present, verbatim.
+    assert "[Agent reached max tool iterations" in max_iterations_text
+    assert "[loop-breaker] Stopped" in loop_breaker_text
+
+    for label, text in (
+        ("max-iterations", max_iterations_text),
+        ("loop-breaker", loop_breaker_text),
+    ):
+        sentinel_index = text.lower().index("heartbeat_ok")
+        # Premise guard: this is the in-window case, not the beyond-300-chars
+        # case that test_is_heartbeat_ok_beyond_300_chars already covers.
+        assert sentinel_index < 300, (
+            f"{label}: sentinel at index {sentinel_index}, outside the window"
+        )
+        assert is_heartbeat_ok(text) is False, (
+            f"{label}: abnormal termination reported as OK"
+        )
+
+
 # -- BACKGROUND_WAKE_OK detection tests --
 
 
