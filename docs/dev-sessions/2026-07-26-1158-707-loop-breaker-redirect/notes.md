@@ -232,3 +232,67 @@ delivers `accumulated + note` unconditionally for every turn kind.
 **Still to do after merge:** live verification in a real Mattermost/web session.
 No bot instance was started during this work — Les likely has `make dev`
 running and a second instance silently misses websocket events.
+
+## Live verification (2026-07-27)
+
+Run against a real model with real tools, in an isolated `DATA_HOME=/tmp/dc-live-707`
+so the real conversation archive and vault were untouched.
+
+**`make run` starts again.** The full runner reached "Application startup complete",
+confirming the `config.heartbeat_suppress_ok` → `config.heartbeat.suppress_ok` fix.
+Before it, interactive mode died at startup.
+
+**Run 1 — `repeat_threshold=2`, the behaviour the PR exists to produce.**
+The agent read a nonexistent file, repeated the identical call once, and the nudge
+fired. Its next move was genuinely different:
+
+> "I understand that `workspace_read` failed twice … I should not repeat that action
+> without further investigation" → `workspace_list` → `workspace_glob`
+
+Rung events for the whole turn: `['nudge']`. **Because it stopped repeating, no further
+rung fired.** Under the pre-#707 detector this round would have hard-stopped regardless.
+The turn ended normally with a real conclusion (341 chars) and no preamble duplication.
+
+**Run 2 — `repeat_threshold=1`, forcing all three rungs.**
+Rung events: `['nudge', 'redirect', 'stop']`. The redirect produced exactly the response
+shape it demands — and the hypothesis was correct (it had passed `folder` where the tool
+wanted `path`):
+
+> Hypothesis: The `workspace_list` tool expects the argument `path` … not `folder`.
+> Observation: A successful listing of the contents of the `notes/` directory when …
+
+The hard stop delivered **only** its note (360 chars, no preambles), quoting the real
+error: `[error: path not found: notes/]`.
+
+**Attribution held (#680).** The agent referred to "the system has indicated that I should
+not retry" — it never attributed the diagnostic to Les, and never produced the
+"You're right, I was stuck in a loop" confabulation from #675.
+
+Caveats, stated plainly:
+- `repeat_threshold=1` in run 2 is artificial (every distinct call is a fresh offense). It
+  was needed to force all three rungs inside one short turn.
+- The standalone harness skipped `init_providers()` (called at
+  `src/decafclaw/__init__.py:33` during real startup), so model resolution fell back to the
+  litellm proxy (`gemini-2.5-flash`) instead of the direct Vertex path. Real LLM and real
+  tools either way; the loop-breaker logic under test is provider-independent.
+- A first attempt used the full runner, which connected to the real Mattermost account and
+  fired the bundled `dream`/`garden`/`newsletter` schedules — a fresh `DATA_HOME` makes them
+  "never run → due", the same trap CLAUDE.md documents for tests. Killed and replaced with
+  the direct-turn harness.
+
+## PR review follow-up
+
+Copilot flagged one real defect in `summarize_args()` (fixed in `b2afec7`): `_truncate`
+collapsed *all* whitespace, including whitespace inside JSON string values, so displayed
+args could differ from the args `fingerprint()` hashed — and two calls with different
+fingerprints could display identically. That defeated the whole reason `_render_args` is
+shared between the two. `summarize_args` now length-caps only; `summarize_error` keeps
+collapsing, since it receives raw multi-line tracebacks.
+
+Line-break neutralisation was kept on the args path: `_render_args` falls back to
+`repr(args)` when `json.dumps` raises, and a dict key whose `__repr__` returns a raw newline
+does reach the output that way — verified, not assumed, and now tested.
+
+The old args test asserted "flattens" via `{"body": "a\nb"}`, which was vacuous because
+`json.dumps` escapes the newline first. This is the third instance in this session of a test
+that restated the implementation instead of constraining it.
