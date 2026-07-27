@@ -4,6 +4,7 @@ import asyncio
 import difflib
 import inspect
 import logging
+from typing import TYPE_CHECKING
 
 from ..media import ToolResult
 from .attachment_tools import ATTACHMENT_TOOL_DEFINITIONS, ATTACHMENT_TOOLS
@@ -25,6 +26,9 @@ from .shell_tools import SHELL_TOOL_DEFINITIONS, SHELL_TOOLS
 from .skill_tools import SKILL_TOOL_DEFINITIONS, SKILL_TOOLS
 from .sticky_tools import STICKY_TOOL_DEFINITIONS, STICKY_TOOLS
 from .workspace_tools import WORKSPACE_TOOL_DEFINITIONS, WORKSPACE_TOOLS
+
+if TYPE_CHECKING:
+    from decafclaw.context import Context
 
 log = logging.getLogger(__name__)
 
@@ -114,7 +118,7 @@ async def _run_with_cancel(coro, cancel_event, timeout_sec=None, tool_name=""):
 _MISSING = object()
 
 
-def _resolve_tool_timeout(ctx, name: str) -> int | None:
+def _resolve_tool_timeout(ctx: "Context", name: str) -> int | None:
     """Resolve the wall-clock timeout for `name`.
 
     Walks skill-provided defs first, then the global TOOL_DEFINITIONS,
@@ -207,7 +211,7 @@ def _format_suggestions(suggestions: list[str]) -> str:
     return f" Did you mean: {', '.join(suggestions)}."
 
 
-def _typeerror_result(ctx, name: str, fn, arguments: dict, exc: TypeError) -> ToolResult:
+def _typeerror_result(ctx: "Context", name: str, fn, arguments: dict, exc: TypeError) -> ToolResult:
     """Attribute a TypeError to either the call arguments or the tool body.
 
     The call and the entire tool body sit inside one `except TypeError`, so
@@ -255,7 +259,7 @@ def _typeerror_result(ctx, name: str, fn, arguments: dict, exc: TypeError) -> To
     )
 
 
-async def execute_tool(ctx, name: str, arguments: dict) -> ToolResult:
+async def execute_tool(ctx: "Context", name: str, arguments: dict) -> ToolResult:
     """Execute a tool by name and return the result.
 
     Returns a ToolResult with text (for LLM history) and optional media

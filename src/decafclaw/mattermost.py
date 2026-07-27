@@ -413,7 +413,7 @@ class MattermostClient:
                                 app_ctx, manager)
 
         # Transport-specific context setup
-        def context_setup(ctx):
+        def context_setup(ctx: "Context"):
             from .media import MattermostMediaHandler
             ctx.media_handler = MattermostMediaHandler(self._http, channel_id=channel_id)
             ctx.channel_id = channel_id

@@ -2,16 +2,20 @@
 
 import json
 import logging
+from typing import TYPE_CHECKING
 
 import httpx
 
 from ..media import ToolResult, WidgetRequest
 from ..util import estimate_tokens
 
+if TYPE_CHECKING:
+    from decafclaw.context import Context
+
 log = logging.getLogger(__name__)
 
 
-async def tool_web_fetch(ctx, url: str) -> str | ToolResult:
+async def tool_web_fetch(ctx: "Context", url: str) -> str | ToolResult:
     """Fetch a URL and return the raw response body as text."""
     log.info(f"[tool:web_fetch] {url}")
     try:
@@ -26,7 +30,7 @@ async def tool_web_fetch(ctx, url: str) -> str | ToolResult:
         return ToolResult(text=f"[error: {e}]")
 
 
-def tool_debug_context(ctx) -> str | ToolResult:
+def tool_debug_context(ctx: "Context") -> str | ToolResult:
     """Dump the current conversation context for debugging."""
     log.info("[tool:debug_context]")
     messages = ctx.messages
@@ -113,14 +117,14 @@ def tool_debug_context(ctx) -> str | ToolResult:
 
 
 
-def tool_current_time(ctx) -> str | ToolResult:
+def tool_current_time(ctx: "Context") -> str | ToolResult:
     """Return the current date and time."""
     from datetime import datetime
     now = datetime.now()
     return now.strftime("%Y-%m-%d %H:%M:%S (%A)")
 
 
-async def tool_wait(ctx, seconds: int = 30) -> str | ToolResult:
+async def tool_wait(ctx: "Context", seconds: int = 30) -> str | ToolResult:
     """Wait for the specified number of seconds before returning.
 
     Use this when waiting for a background process or external operation
@@ -192,7 +196,7 @@ def _default_multiple_choice_callback(options: list[dict],
     return _cb
 
 
-async def tool_ask_user_multiple_choice(ctx, prompt: str, options: list,
+async def tool_ask_user_multiple_choice(ctx: "Context", prompt: str, options: list,
                                         allow_multiple: bool = False) -> ToolResult:
     """Pause the turn and ask the user to pick from a fixed list of options."""
     log.info(f"[tool:ask_user_multiple_choice] prompt={prompt!r} "
@@ -296,7 +300,7 @@ def _default_text_input_callback(field_keys: list[str]):
     return _cb
 
 
-async def tool_ask_user_text(ctx, prompt: str, fields: list | None = None,
+async def tool_ask_user_text(ctx: "Context", prompt: str, fields: list | None = None,
                              submit_label: str = "Submit") -> ToolResult:
     """Pause the turn and ask the user for free-form text input."""
     log.info(f"[tool:ask_user_text] prompt={prompt!r} "
@@ -332,7 +336,7 @@ async def tool_ask_user_text(ctx, prompt: str, fields: list | None = None,
     )
 
 
-def tool_context_stats(ctx) -> str | ToolResult:
+def tool_context_stats(ctx: "Context") -> str | ToolResult:
     """Report token budget statistics for the current conversation."""
     log.info("[tool:context_stats]")
 

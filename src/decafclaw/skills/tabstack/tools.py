@@ -8,11 +8,15 @@ discriminated union of events (`event` discriminator + typed `.data` payload), a
 import json
 import logging
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from tabstack import APIStatusError, AsyncTabstack
 
 from decafclaw.media import ToolResult
 from decafclaw.tools.confirmation import request_confirmation
+
+if TYPE_CHECKING:
+    from decafclaw.context import Context
 
 log = logging.getLogger(__name__)
 
@@ -48,7 +52,7 @@ def _get_client() -> AsyncTabstack:
 
 # -- Read / extract tools ---------------------------------------------------
 
-async def tool_tabstack_extract_markdown(ctx, url: str) -> ToolResult:
+async def tool_tabstack_extract_markdown(ctx: "Context", url: str) -> ToolResult:
     """Extract clean Markdown from a web page or PDF."""
     log.info(f"[tool:tabstack_extract_markdown] {url}")
     try:
@@ -61,7 +65,7 @@ async def tool_tabstack_extract_markdown(ctx, url: str) -> ToolResult:
         return ToolResult(text=f"[error: {e}]")
 
 
-async def tool_tabstack_extract_json(ctx, url: str, json_schema: dict) -> ToolResult:
+async def tool_tabstack_extract_json(ctx: "Context", url: str, json_schema: dict) -> ToolResult:
     """Extract structured JSON data from a web page or PDF."""
     log.info(f"[tool:tabstack_extract_json] {url}")
     try:
@@ -75,7 +79,7 @@ async def tool_tabstack_extract_json(ctx, url: str, json_schema: dict) -> ToolRe
         return ToolResult(text=f"[error: {e}]")
 
 
-async def tool_tabstack_generate(ctx, url: str, json_schema: dict, instructions: str) -> str:
+async def tool_tabstack_generate(ctx: "Context", url: str, json_schema: dict, instructions: str) -> str:
     """Transform web/PDF content into structured JSON using LLM instructions."""
     log.info(f"[tool:tabstack_generate] {url}")
     try:
@@ -100,7 +104,7 @@ _AUTOMATE_FORM_EVENTS = frozenset(
 
 
 async def tool_tabstack_automate(
-    ctx,
+    ctx: "Context",
     task: str,
     url: str | None = None,
     data: dict | None = None,
@@ -264,7 +268,7 @@ def _compose_automate_result(
     return "\n\n".join(parts)
 
 
-async def _handle_form_request(ctx, client, event, data: dict) -> str | None:
+async def _handle_form_request(ctx: "Context", client, event, data: dict) -> str | None:
     """Answer (or cancel) an interactive form-data request.
 
     Returns a human-readable note to fold into the tool result, or None.
@@ -375,7 +379,7 @@ async def _safe_input(client, request_id, *, fields=None, cancelled=False) -> No
 
 # -- Research ---------------------------------------------------------------
 
-async def tool_tabstack_research(ctx, query: str, mode: str = "balanced") -> ToolResult:
+async def tool_tabstack_research(ctx: "Context", query: str, mode: str = "balanced") -> ToolResult:
     """Search the web, analyze multiple sources, and synthesize an answer."""
     log.info(f"[tool:tabstack_research] query={query} mode={mode}")
     try:

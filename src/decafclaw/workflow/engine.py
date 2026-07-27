@@ -6,11 +6,14 @@ input, or errored. The orchestrator itself is plain async Python.
 """
 import dataclasses
 import logging
-from typing import Any, Awaitable, Callable
+from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 from .errors import WorkflowNonDeterministic, WorkflowSuspended
 from .handle import WorkflowHandle
 from .journal import Journal, save_journal
+
+if TYPE_CHECKING:
+    from decafclaw.context import Context
 
 log = logging.getLogger(__name__)
 
@@ -24,7 +27,7 @@ class WorkflowOutcome:
 
 
 async def run_workflow(
-    ctx,
+    ctx: "Context",
     workflow_fn: Callable[[WorkflowHandle], Awaitable[Any]],
     journal: Journal,
     *,

@@ -7,15 +7,19 @@ full state for grounding.
 """
 
 import logging
+from typing import TYPE_CHECKING
 from urllib.parse import quote
 
 from .. import canvas as canvas_mod
 from ..media import ToolResult
 
+if TYPE_CHECKING:
+    from decafclaw.context import Context
+
 log = logging.getLogger(__name__)
 
 
-def _emit_for_ctx(ctx):
+def _emit_for_ctx(ctx: "Context"):
     manager = getattr(ctx, "manager", None)
     if manager is None:
         return None
@@ -29,7 +33,7 @@ def _canvas_url(conv_id: str, tab_id: str | None = None) -> str:
     return base
 
 
-async def tool_canvas_new_tab(ctx,
+async def tool_canvas_new_tab(ctx: "Context",
                               widget_type: str,
                               data: dict,
                               label: str | None = None) -> ToolResult:
@@ -48,7 +52,7 @@ async def tool_canvas_new_tab(ctx,
     )
 
 
-async def tool_canvas_update(ctx, tab_id: str, data: dict) -> ToolResult:
+async def tool_canvas_update(ctx: "Context", tab_id: str, data: dict) -> ToolResult:
     """Replace data of an existing tab. Preserves widget_type + label."""
     log.info("[tool:canvas_update] tab=%s", tab_id)
     result = await canvas_mod.update_tab(
@@ -59,7 +63,7 @@ async def tool_canvas_update(ctx, tab_id: str, data: dict) -> ToolResult:
     return ToolResult(text=result.text)
 
 
-async def tool_canvas_close_tab(ctx, tab_id: str) -> ToolResult:
+async def tool_canvas_close_tab(ctx: "Context", tab_id: str) -> ToolResult:
     """Close a single tab by id. If it was active, the panel switches or hides."""
     log.info("[tool:canvas_close_tab] tab=%s", tab_id)
     result = await canvas_mod.close_tab(
@@ -70,7 +74,7 @@ async def tool_canvas_close_tab(ctx, tab_id: str) -> ToolResult:
     return ToolResult(text=result.text)
 
 
-async def tool_canvas_clear(ctx) -> ToolResult:
+async def tool_canvas_clear(ctx: "Context") -> ToolResult:
     """Close all canvas tabs and hide the panel."""
     log.info("[tool:canvas_clear]")
     state = canvas_mod.read_canvas_state(ctx.config, ctx.conv_id)
@@ -85,7 +89,7 @@ async def tool_canvas_clear(ctx) -> ToolResult:
     return ToolResult(text=result.text)
 
 
-async def tool_canvas_read(ctx) -> ToolResult:
+async def tool_canvas_read(ctx: "Context") -> ToolResult:
     """Return the full canvas state including all tabs and active_tab."""
     log.info("[tool:canvas_read]")
     state = canvas_mod.read_canvas_state(ctx.config, ctx.conv_id)

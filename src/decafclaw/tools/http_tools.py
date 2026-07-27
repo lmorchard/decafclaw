@@ -5,11 +5,15 @@ import json
 import logging
 import time
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import httpx
 
 from ..media import ToolResult
 from .confirmation import request_confirmation
+
+if TYPE_CHECKING:
+    from decafclaw.context import Context
 
 log = logging.getLogger(__name__)
 
@@ -79,7 +83,7 @@ def _suggest_pattern(url: str) -> str:
 
 # -- Tool function ------------------------------------------------------------
 
-async def tool_http_request(ctx, url: str, method: str = "GET",
+async def tool_http_request(ctx: "Context", url: str, method: str = "GET",
                             headers: dict | None = None,
                             body: str = "",
                             max_response_size: int = _DEFAULT_MAX_RESPONSE_SIZE,

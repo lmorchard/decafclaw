@@ -1,13 +1,17 @@
 """MCP management tools — status, resources, prompts, restart."""
 
 import logging
+from typing import TYPE_CHECKING
 
 from decafclaw.media import ToolResult
+
+if TYPE_CHECKING:
+    from decafclaw.context import Context
 
 log = logging.getLogger(__name__)
 
 
-async def tool_mcp_status(ctx, action: str = "status", server: str = "") -> str | ToolResult:
+async def tool_mcp_status(ctx: "Context", action: str = "status", server: str = "") -> str | ToolResult:
     """Show MCP server status or restart servers."""
     from decafclaw.mcp_client import get_registry
 
@@ -43,7 +47,7 @@ async def tool_mcp_status(ctx, action: str = "status", server: str = "") -> str 
     return "\n".join(lines)
 
 
-async def _restart(ctx, registry, server_name) -> str | ToolResult:
+async def _restart(ctx: "Context", registry, server_name) -> str | ToolResult:
     """Restart MCP servers by scheduling a restart and reporting status.
 
     Due to anyio/asyncio cancel scope incompatibilities, MCP servers
@@ -90,7 +94,7 @@ async def _restart(ctx, registry, server_name) -> str | ToolResult:
         return ToolResult(text=f"[error: MCP restart failed: {e}]")
 
 
-async def tool_mcp_list_resources(ctx) -> str | ToolResult:
+async def tool_mcp_list_resources(ctx: "Context") -> str | ToolResult:
     """List all MCP resources and resource templates."""
     from decafclaw.mcp_client import get_registry
 
@@ -137,7 +141,7 @@ async def tool_mcp_list_resources(ctx) -> str | ToolResult:
     return "\n".join(lines)
 
 
-async def tool_mcp_read_resource(ctx, server: str = "", uri: str = "") -> str | ToolResult:
+async def tool_mcp_read_resource(ctx: "Context", server: str = "", uri: str = "") -> str | ToolResult:
     """Read a resource from an MCP server by URI."""
     import asyncio
 
@@ -170,7 +174,7 @@ async def tool_mcp_read_resource(ctx, server: str = "", uri: str = "") -> str | 
         return ToolResult(text=f"[error: failed to read resource: {e}]")
 
 
-async def tool_mcp_list_prompts(ctx) -> str | ToolResult:
+async def tool_mcp_list_prompts(ctx: "Context") -> str | ToolResult:
     """List all MCP prompts from connected servers."""
     from decafclaw.mcp_client import get_registry
 
@@ -206,7 +210,7 @@ async def tool_mcp_list_prompts(ctx) -> str | ToolResult:
     return "\n".join(lines)
 
 
-async def tool_mcp_get_prompt(ctx, server: str = "", name: str = "",
+async def tool_mcp_get_prompt(ctx: "Context", server: str = "", name: str = "",
                                arguments: str = "{}") -> str | ToolResult:
     """Get a prompt from an MCP server and return its messages."""
     import asyncio

@@ -8,6 +8,10 @@ legacy event-bus pattern.
 
 import asyncio
 import logging
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from decafclaw.context import Context
 
 log = logging.getLogger(__name__)
 
@@ -29,7 +33,7 @@ def _get_tool_action_map():
     return _TOOL_ACTION_MAP
 
 
-async def _request_via_manager(ctx, tool_name, command, message, timeout,
+async def _request_via_manager(ctx: "Context", tool_name, command, message, timeout,
                                **extra_event_fields) -> dict:
     """Bridge to the ConversationManager's confirmation flow."""
     from ..confirmations import ConfirmationAction, ConfirmationRequest
@@ -64,7 +68,7 @@ async def _request_via_manager(ctx, tool_name, command, message, timeout,
     return result
 
 
-async def _request_via_event_bus(ctx, tool_name, command, message, timeout,
+async def _request_via_event_bus(ctx: "Context", tool_name, command, message, timeout,
                                  **extra_event_fields) -> dict:
     """Legacy event-bus confirmation flow."""
     confirm_event = asyncio.Event()
@@ -104,7 +108,7 @@ async def _request_via_event_bus(ctx, tool_name, command, message, timeout,
 
 
 async def request_confirmation(
-    ctx,
+    ctx: "Context",
     tool_name: str,
     command: str,
     message: str,

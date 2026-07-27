@@ -17,10 +17,14 @@ import json
 import logging
 import re as _re
 import time
+from typing import TYPE_CHECKING
 
 from .archive import append_message
 from .media import EndTurnConfirm, ToolResult, WidgetInputPause
 from .tools import execute_tool
+
+if TYPE_CHECKING:
+    from decafclaw.context import Context
 
 log = logging.getLogger(__name__)
 
@@ -33,12 +37,12 @@ log = logging.getLogger(__name__)
 # and the helpers should change together if they change at all.
 
 
-def _conv_id(ctx) -> str:
+def _conv_id(ctx: "Context") -> str:
     """Get conversation ID from context."""
     return ctx.conv_id or ctx.channel_id or "unknown"
 
 
-def _archive(ctx, msg) -> None:
+def _archive(ctx: "Context", msg) -> None:
     """Archive a message, logging errors but never raising."""
     if ctx.skip_archive:
         return
@@ -48,7 +52,7 @@ def _archive(ctx, msg) -> None:
         log.error(f"Archive write failed: {e}")
 
 
-def _check_cancelled(ctx, history):
+def _check_cancelled(ctx: "Context", history):
     """Check if the agent turn has been cancelled. Returns ToolResult or None."""
     if ctx.cancelled and ctx.cancelled.is_set():
         log.info("Agent turn cancelled by user")
@@ -68,7 +72,7 @@ def _media_placeholder_pattern(filename: str) -> _re.Pattern:
     )
 
 
-async def process_tool_media(ctx, result: ToolResult) -> list[str]:
+async def process_tool_media(ctx: "Context", result: ToolResult) -> list[str]:
     """Process media items on a tool result — save/upload and replace placeholders.
 
     For handlers returning workspace_ref: replaces placeholder text with markdown refs.
@@ -289,7 +293,7 @@ async def execute_single_tool(call_ctx, tc, semaphore):
     return tool_msg, result.end_turn
 
 
-async def execute_tool_calls(ctx, tool_calls, history, messages):
+async def execute_tool_calls(ctx: "Context", tool_calls, history, messages):
     """Execute tool calls concurrently, add results to history.
 
     Returns (ToolResult, False) if cancelled, (None, end_turn_signal) otherwise.
