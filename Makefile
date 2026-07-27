@@ -29,26 +29,35 @@ install:
 	uv sync
 	cd src/decafclaw/web/static && npm install
 
-# Install JS dependencies in static/, failing if the install rewrites the
-# lockfile. `check` / `check-js` / `test-js` all depend on this, so a silent
-# rewrite here rides into whatever branch happens to be checked out — it has
-# swept into an unrelated PR once and nearly a second time (#706). Deliberate
-# dependency changes go through `make vendor`, which is allowed to write.
+# Install JS dependencies in static/ for a *check*. Uses `npm ci`, which installs
+# strictly from the lockfile and cannot write it — `npm install` can and does.
 #
-# Snapshots around the install rather than diffing against HEAD, so a lockfile
-# you were *already* editing doesn't trip it — only a rewrite caused by this
-# install does.
+# `check` / `check-js` / `test-js` all depend on this, so a rewrite here rides
+# into whatever branch happens to be checked out; it swept into an unrelated PR
+# once and nearly a second time (#706). Deliberate dependency changes go through
+# `make vendor`, which is allowed to write.
+#
+# Why `npm ci` rather than the guard alone (#716): npm 11 prunes nested optional
+# `@esbuild/*` platform entries that npm 10 records, so on any machine whose npm
+# is newer than CI's (node 22 per .nvmrc / ci.yml) `npm install` rewrote the
+# lockfile deterministically and the guard failed *every* run — leaving `make
+# check` unpassable locally while CI stayed green. `npm ci` removes the mutation
+# instead of detecting it, and is stricter: it fails outright when package.json
+# and package-lock.json disagree, which is the drift #706 was about.
+#
+# The guard stays as a regression detector. Under `npm ci` it should never fire.
 install-js:
 	@cd src/decafclaw/web/static && \
 	  before=$$(git hash-object package-lock.json) && \
-	  npm install && \
+	  npm ci && \
 	  after=$$(git hash-object package-lock.json) && \
 	  if [ "$$before" != "$$after" ]; then \
 	    echo ""; \
-	    echo "ERROR: npm install rewrote package-lock.json during a check."; \
+	    echo "ERROR: npm ci rewrote package-lock.json during a check."; \
+	    echo "  This should be impossible — npm ci does not write the lockfile."; \
 	    echo "  Intentional dependency change?  run 'make vendor' and commit the lockfile."; \
 	    echo "  Otherwise restore it:  git checkout -- src/decafclaw/web/static/package-lock.json"; \
-	    echo "  Background: #706 (silent rewrites have ridden into unrelated PRs)."; \
+	    echo "  Background: #706 (silent rewrites have ridden into unrelated PRs), #716."; \
 	    echo ""; \
 	    exit 1; \
 	  fi
