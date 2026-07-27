@@ -734,3 +734,131 @@ class TestDelegateTasks:
 
         child_ctx = mock_run.call_args[0][0]
         assert child_ctx.event_context_id == "parent-subscriber-id"
+
+
+# -- Abnormal child termination must still hand back accumulated work (#707 round 1) --
+
+
+class TestChildAbnormalTermination:
+    """#707 stopped `_finalize_with_note` from re-delivering accumulated
+    preambles on abnormal turn end, because interactive transports already
+    render each one live via `text_before_tools`. A child agent turn has no
+    transport watching it live — the parent LLM never subscribes to the
+    event bus — so `ToolResult.text` (routed back through
+    `run_child_turn`) is its only channel for the child's work. These tests
+    drive a REAL child turn (only `call_llm` is mocked, not
+    `run_agent_turn`) through `ConversationManager.enqueue_turn` so the
+    actual `TurnRunner._finalize_max_iterations` /
+    `_finalize_with_note` code runs with a real `ctx.is_child` flag,
+    matching the review finding that flagged this as an untested
+    programmatic-caller path."""
+
+    @pytest.mark.asyncio
+    async def test_child_max_iterations_delivers_accumulated_text(self, ctx):
+        """Child hits max_tool_iterations; the grace-turn LLM call returns
+        empty content, so the turn falls back to `_finalize_max_iterations`.
+        Because the real child ctx has `is_child=True`, the delivered text
+        must still include what the child accumulated before hitting the
+        wall — dropping it here would silently lose the child's work with
+        no other channel back to the parent (children also run with
+        `skip_reflection=True`, so the reflection judge doesn't get a
+        second look either)."""
+        ctx.config.llm.streaming = False
+
+        preamble = "Let me check the workspace files for that."
+        tool_call_response = {
+            "content": preamble,
+            "tool_calls": [{
+                "id": "tc1",
+                "function": {
+                    "name": "definitely_not_a_real_tool",
+                    "arguments": "{}",
+                },
+            }],
+            "role": "assistant",
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5},
+        }
+        empty_grace_response = {
+            "content": "",
+            "tool_calls": None,
+            "role": "assistant",
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5},
+        }
+
+        with patch("decafclaw.agent.call_llm", new_callable=AsyncMock) as mock_llm:
+            # Two tool-call iterations (budget=2), then the grace-turn call
+            # returns empty content, forcing the max-iterations fallback.
+            mock_llm.side_effect = [
+                tool_call_response,
+                tool_call_response,
+                empty_grace_response,
+            ]
+            text, data = await run_child_turn(ctx, "loop forever", max_iterations=2)
+
+        assert data is None
+        assert "max tool iterations" in text
+        assert preamble in text, (
+            "child's accumulated preamble was dropped from the delivered "
+            "text — the parent agent has no other channel to see it"
+        )
+
+    @pytest.mark.asyncio
+    async def test_child_max_iterations_archives_only_the_note(self, ctx, monkeypatch):
+        """The is_child delivery gate must not reopen the archive
+        duplication #675 fixed: only the note is ever appended to
+        history/archive, for children exactly as for interactive turns."""
+        ctx.config.llm.streaming = False
+
+        seen_conv_ids: list[str] = []
+        orig_enqueue = ctx.manager.enqueue_turn
+
+        async def spy_enqueue(conv_id, *, kind, prompt, **kwargs):
+            seen_conv_ids.append(conv_id)
+            return await orig_enqueue(conv_id, kind=kind, prompt=prompt, **kwargs)
+
+        monkeypatch.setattr(ctx.manager, "enqueue_turn", spy_enqueue)
+
+        preamble = "Let me check the workspace files for that."
+        tool_call_response = {
+            "content": preamble,
+            "tool_calls": [{
+                "id": "tc1",
+                "function": {
+                    "name": "definitely_not_a_real_tool",
+                    "arguments": "{}",
+                },
+            }],
+            "role": "assistant",
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5},
+        }
+        empty_grace_response = {
+            "content": "",
+            "tool_calls": None,
+            "role": "assistant",
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5},
+        }
+
+        with patch("decafclaw.agent.call_llm", new_callable=AsyncMock) as mock_llm:
+            mock_llm.side_effect = [
+                tool_call_response,
+                tool_call_response,
+                empty_grace_response,
+            ]
+            text, _ = await run_child_turn(ctx, "loop forever", max_iterations=2)
+
+        assert preamble in text  # sanity: delivery half still holds here
+
+        from decafclaw.archive import read_archive
+        assert len(seen_conv_ids) == 1
+        archived = read_archive(ctx.config, seen_conv_ids[0])
+        occurrences = sum(
+            (m.get("content") or "").count(preamble)
+            for m in archived if m.get("role") == "assistant"
+        )
+        # The preamble was emitted and archived once per tool-call iteration
+        # (2). The finalizer's note must not add a third occurrence.
+        assert occurrences == 2, (
+            f"preamble archived {occurrences}x — the finalizer is "
+            "re-archiving already-archived text even though it now "
+            "re-delivers it to the parent"
+        )

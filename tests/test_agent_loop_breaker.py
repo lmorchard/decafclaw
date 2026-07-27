@@ -38,12 +38,27 @@ def test_extract_signatures_flags_errors():
 
 def test_extract_signatures_handles_missing_tool_result():
     """A tool_call with no matching tool-result message (shouldn't happen in
-    practice, but defend against it) is treated as non-error."""
+    practice, but defend against it) is treated as non-error, with no error
+    text to quote."""
     tool_calls = [
         {"id": "missing", "function": {"name": "edit", "arguments": "{}"}},
     ]
     sigs = _extract_call_signatures(tool_calls, [])
-    assert sigs[0] == ("edit", sigs[0][1], False)
+    assert sigs[0].tool_name == "edit"
+    assert sigs[0].is_error is False
+    assert sigs[0].error_text == ""
+
+
+def test_extract_signatures_retains_args_and_error_text():
+    tool_calls = [
+        {"id": "1", "function": {"name": "edit", "arguments": '{"path": "x"}'}},
+    ]
+    messages = [
+        {"role": "tool", "tool_call_id": "1", "content": "[error: bad edit]"},
+    ]
+    sigs = _extract_call_signatures(tool_calls, messages)
+    assert '"path": "x"' in sigs[0].args_text
+    assert "bad edit" in sigs[0].error_text
 
 
 def test_extract_signatures_handles_malformed_json_args():
@@ -111,13 +126,16 @@ async def test_turn_runner_nudges_then_stops_on_repeated_tool_errors(ctx):
     # ...and confirm the nudge that WAS injected into the live LLM-facing
     # message list carries role "user", not "system" (models weight
     # user-role directives more heavily for mid-turn corrections). The same
-    # `messages` list object is mutated in place across LLM calls, so any
-    # recorded call's `messages` arg reflects the final state.
+    # `messages` list object is mutated in place across LLM calls, so the last
+    # recorded call's list reflects the final state — both injected
+    # diagnostics.
     sent_messages = mock_llm.call_args_list[-1][0][1]
-    nudge_msgs = [m for m in sent_messages
-                  if "[loop-breaker]" in (m.get("content") or "")]
-    assert len(nudge_msgs) == 1
-    assert nudge_msgs[0]["role"] == "user"
+    diagnostics = [m for m in sent_messages
+                   if "[loop-breaker]" in (m.get("content") or "")]
+    assert len(diagnostics) == 2, "expected both the nudge and the redirect"
+    assert all(m["role"] == "user" for m in diagnostics)
+    assert "STOP repeating that move" in diagnostics[0]["content"]
+    assert "single best hypothesis" in diagnostics[1]["content"]
 
     # ...while the hard-stop's final assistant message IS archived (it's the
     # turn's actual output, correctly durable).
@@ -134,10 +152,84 @@ async def test_turn_runner_nudges_then_stops_on_repeated_tool_errors(ctx):
     assert len(stop_events) == 1
 
     # Tripped at repeat_threshold=3, and the LLM was called once per
-    # iteration up to and including the stop iteration (NUDGE at 3rd call's
-    # iteration, STOP at the 4th) — well short of the 10 stubbed responses
-    # or the 50-iteration budget.
+    # iteration up to and including the stop iteration (NUDGE at the 3rd
+    # call's iteration, REDIRECT at the 4th, STOP at the 5th) — well short
+    # of the 10 stubbed responses or the 50-iteration budget.
     assert mock_llm.call_count < 10
+
+
+@pytest.mark.asyncio
+async def test_redirect_rung_fires_between_nudge_and_stop(ctx):
+    """The second trip must inject a diagnosis contract, not end the turn.
+
+    Asserts on the LLM-facing message list rather than the archive: the
+    redirect is ephemeral by design, so the archive can never show it.
+    """
+    ctx.config.llm.streaming = False
+    ctx.config.agent.max_tool_iterations = 50
+    ctx.config.loop_breaker.repeat_threshold = 3
+    ctx.config.loop_breaker.error_threshold = 99
+    ctx.config.loop_breaker.error_window = 50
+
+    published_events = []
+    ctx.event_bus.subscribe(lambda event: published_events.append(event))
+
+    repeated_call = _mock_llm_response(
+        content="Trying again.",
+        tool_calls=[{
+            "id": "tc-repeat",
+            "function": {"name": "definitely_not_a_real_tool", "arguments": "{}"},
+        }],
+    )
+
+    with patch("decafclaw.agent.call_llm", new_callable=AsyncMock) as mock_llm:
+        mock_llm.side_effect = [repeated_call] * 10
+        result = await run_agent_turn(ctx, "loop forever", [])
+
+    sent_messages = mock_llm.call_args_list[-1][0][1]
+    contents = [m.get("content") or "" for m in sent_messages]
+    assert any("STOP repeating that move" in c for c in contents), \
+        "rung 1 (nudge) never fired"
+    assert any("single best hypothesis" in c for c in contents), \
+        "rung 2 (redirect) never fired"
+    assert "[loop-breaker] Stopped" in result.text, "rung 3 (stop) never fired"
+
+    # The redirect names the actual offending tool, not generic advice (#707).
+    redirect = next(c for c in contents if "single best hypothesis" in c)
+    assert "definitely_not_a_real_tool" in redirect
+
+    actions = [e.get("action") for e in published_events
+               if e.get("type") == "loop_breaker"]
+    assert actions == ["nudge", "redirect", "stop"]
+
+
+@pytest.mark.asyncio
+async def test_redirect_is_never_archived(ctx):
+    """Same ephemerality contract as the nudge (#598): archiving a user-role
+    diagnostic would let restore_history resurrect it into every later turn."""
+    ctx.config.llm.streaming = False
+    ctx.config.agent.max_tool_iterations = 50
+    ctx.config.loop_breaker.repeat_threshold = 3
+    ctx.config.loop_breaker.error_threshold = 99
+    ctx.config.loop_breaker.error_window = 50
+
+    repeated_call = _mock_llm_response(
+        content="Trying again.",
+        tool_calls=[{
+            "id": "tc-repeat",
+            "function": {"name": "definitely_not_a_real_tool", "arguments": "{}"},
+        }],
+    )
+
+    with patch("decafclaw.agent.call_llm", new_callable=AsyncMock) as mock_llm:
+        mock_llm.side_effect = [repeated_call] * 10
+        await run_agent_turn(ctx, "loop forever", [])
+
+    from decafclaw.archive import read_archive
+    archived = read_archive(ctx.config, ctx.conv_id)
+    user_msgs = [m for m in archived if m.get("role") == "user"]
+    assert not any("[loop-breaker]" in (m.get("content") or "")
+                   for m in user_msgs), "an ephemeral diagnostic was archived"
 
 
 # -- Integration: a genuine end-turn signal always wins over the breaker ------
@@ -226,14 +318,17 @@ async def test_end_turn_signal_preempts_loop_breaker(ctx):
     assert mock_execute.call_count == 3
 
 
-# -- Hard-stop must not re-archive text it already archived (#675) -------------
+# -- Hard-stop must not re-deliver or re-archive text it already emitted (#675, #707) --
 
 
 @pytest.mark.asyncio
-async def test_loop_break_does_not_duplicate_accumulated_text(ctx):
-    """Each iteration's assistant preamble is archived as it happens. The
-    hard-stop finalizer must not re-emit all of them joined together — on a
-    long thrash that produced a wall of duplicated text in the transcript."""
+async def test_loop_break_delivers_and_archives_only_the_note(ctx):
+    """Each iteration's preamble is published as text_before_tools and
+    rendered live by every transport, then archived as it happens. The
+    finalizer must re-emit neither — #675 fixed the archive half and left the
+    delivery half, which is the wall of repeated text users actually see
+    (#707). The normal end-of-turn path (agent.py:865) likewise delivers only
+    its final content, so this matches it."""
     ctx.config.llm.streaming = False
     ctx.config.agent.max_tool_iterations = 50
     ctx.config.loop_breaker.repeat_threshold = 3
@@ -255,20 +350,158 @@ async def test_loop_break_does_not_duplicate_accumulated_text(ctx):
         result = await run_agent_turn(ctx, "loop forever", history)
 
     assert "[loop-breaker] Stopped" in result.text
+    # The delivery half (#707).
+    assert preamble not in result.text, (
+        "the finalizer re-delivered preambles the transport already rendered"
+    )
 
+    # The archive half (#675) — unchanged.
     from decafclaw.archive import read_archive
     archived = read_archive(ctx.config, ctx.conv_id)
     occurrences = sum(
         (m.get("content") or "").count(preamble)
         for m in archived if m.get("role") == "assistant"
     )
-    # The preamble was emitted once per iteration and archived once per
-    # iteration. The stop message must not repeat any of them.
     iterations = mock_llm.call_count
     assert occurrences == iterations, (
         f"preamble archived {occurrences}× across {iterations} iterations — "
         "the finalizer is re-archiving already-archived text"
     )
+
+
+@pytest.mark.parametrize("task_mode", ["heartbeat", "scheduled"])
+@pytest.mark.asyncio
+async def test_loop_break_delivers_preambles_for_unwatched_task_turns(ctx, task_mode):
+    """#707 review: the delivery gate is "did anyone watch this live", not
+    `ctx.is_child`.
+
+    Heartbeat and scheduled turns run on synthetic conv_ids no transport
+    subscribed to, so nothing rendered their `text_before_tools` — yet their
+    `ToolResult.text` is parsed (heartbeat.py) and shown to the user afterwards
+    (interactive_terminal.py, heartbeat_tools.py, schedules.py). Gating on
+    `is_child` alone dropped everything those turns did before hitting the
+    wall.
+    """
+    ctx.task_mode = task_mode
+    ctx.config.llm.streaming = False
+    ctx.config.agent.max_tool_iterations = 50
+    ctx.config.loop_breaker.repeat_threshold = 3
+    ctx.config.loop_breaker.error_threshold = 99
+    ctx.config.loop_breaker.error_window = 50
+
+    preamble = "Checking the feed again."
+    repeated_call = _mock_llm_response(
+        content=preamble,
+        tool_calls=[{
+            "id": "tc-repeat",
+            "function": {"name": "definitely_not_a_real_tool", "arguments": "{}"},
+        }],
+    )
+
+    with patch("decafclaw.agent.call_llm", new_callable=AsyncMock) as mock_llm:
+        mock_llm.side_effect = [repeated_call] * 10
+        result = await run_agent_turn(ctx, "check the feed", [])
+
+    assert "[loop-breaker] Stopped" in result.text
+    assert preamble in result.text, (
+        "an unwatched turn's accumulated work was dropped from delivery"
+    )
+
+    # Archiving stays note-only regardless of the delivery branch (#675).
+    from decafclaw.archive import read_archive
+    archived = read_archive(ctx.config, ctx.conv_id)
+    occurrences = sum(
+        (m.get("content") or "").count(preamble)
+        for m in archived if m.get("role") == "assistant"
+    )
+    assert occurrences == mock_llm.call_count
+
+
+@pytest.mark.asyncio
+async def test_loop_break_note_comes_first_for_unwatched_turns(ctx):
+    """The note must lead the unwatched-turn join, not trail it.
+
+    heartbeat.py's `is_heartbeat_ok` only scans the first 300 characters of
+    `ToolResult.text`, and polling.py tells the agent to say HEARTBEAT_OK
+    when there's nothing to report — a plausible substring of a mid-turn
+    preamble. If the accumulated preamble came first, a preamble mentioning
+    the sentinel would sit inside that window and bury the loop-breaker
+    note that should have been the visible signal. Note-first fixes that
+    for this (long) loop-breaker note; see task-5-report.md for the
+    max-iterations note's narrower case.
+    """
+    ctx.task_mode = "heartbeat"
+    ctx.config.llm.streaming = False
+    ctx.config.agent.max_tool_iterations = 50
+    ctx.config.loop_breaker.repeat_threshold = 3
+    ctx.config.loop_breaker.error_threshold = 99
+    ctx.config.loop_breaker.error_window = 50
+
+    preamble = "Checking the feed again, HEARTBEAT_OK for now."
+    repeated_call = _mock_llm_response(
+        content=preamble,
+        tool_calls=[{
+            "id": "tc-repeat",
+            "function": {"name": "definitely_not_a_real_tool", "arguments": "{}"},
+        }],
+    )
+
+    with patch("decafclaw.agent.call_llm", new_callable=AsyncMock) as mock_llm:
+        mock_llm.side_effect = [repeated_call] * 10
+        result = await run_agent_turn(ctx, "check the feed", [])
+
+    note_index = result.text.find("[loop-breaker] Stopped")
+    preamble_index = result.text.find(preamble)
+    assert note_index != -1 and preamble_index != -1
+    assert note_index < preamble_index, (
+        "the note must lead the delivered text so the sentinel check's "
+        "300-char window sees the abnormal-termination note, not a stray "
+        "preamble mention of HEARTBEAT_OK"
+    )
+
+    from decafclaw.heartbeat import is_heartbeat_ok
+    assert not is_heartbeat_ok(result.text), (
+        "note-first should push this (long) loop-breaker note's own text "
+        "to the front, keeping the sentinel out of the 300-char window"
+    )
+
+    # Archiving stays note-only regardless of delivery ordering (#675).
+    from decafclaw.archive import read_archive
+    archived = read_archive(ctx.config, ctx.conv_id)
+    occurrences = sum(
+        (m.get("content") or "").count(preamble)
+        for m in archived if m.get("role") == "assistant"
+    )
+    assert occurrences == mock_llm.call_count
+
+
+@pytest.mark.asyncio
+async def test_loop_break_delivers_only_the_note_for_a_background_wake(ctx):
+    """A wake turn fires on the user's real conversation, which DOES have a
+    live subscriber — so it stays on the note-only branch. This is the
+    boundary of `_UNWATCHED_TASK_MODES`."""
+    ctx.task_mode = "background_wake"
+    ctx.config.llm.streaming = False
+    ctx.config.agent.max_tool_iterations = 50
+    ctx.config.loop_breaker.repeat_threshold = 3
+    ctx.config.loop_breaker.error_threshold = 99
+    ctx.config.loop_breaker.error_window = 50
+
+    preamble = "Following up on that job."
+    repeated_call = _mock_llm_response(
+        content=preamble,
+        tool_calls=[{
+            "id": "tc-repeat",
+            "function": {"name": "definitely_not_a_real_tool", "arguments": "{}"},
+        }],
+    )
+
+    with patch("decafclaw.agent.call_llm", new_callable=AsyncMock) as mock_llm:
+        mock_llm.side_effect = [repeated_call] * 10
+        result = await run_agent_turn(ctx, "wake up", [])
+
+    assert "[loop-breaker] Stopped" in result.text
+    assert preamble not in result.text
 
 
 # -- The nudge must not read as the user speaking (#680) -----------------------

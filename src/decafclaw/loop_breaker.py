@@ -1,25 +1,126 @@
 """Per-turn loop-breaker: detects autonomous tool-call thrash and escalates
-a diagnostic nudge, then a hard stop. Pure/deterministic — no agent or LLM
-imports; driven by TurnRunner. See docs/loop-breaker.md (#598)."""
+through three rungs — a diagnostic nudge, then a redirect that demands a
+diagnosis before another action, then a hard stop. Trips are watermarked per
+fingerprint so a rung only advances on a genuinely fresh offense, not a
+standing condition. Pure/deterministic — no agent or LLM imports; driven by
+TurnRunner. See docs/loop-breaker.md (#598, #707)."""
 
+import dataclasses
 import enum
 import hashlib
 import json
+from typing import NamedTuple
 
 
 class LoopVerdict(enum.Enum):
     NONE = "none"
     NUDGE = "nudge"
+    REDIRECT = "redirect"
     STOP = "stop"
+
+
+_MAX_ARG_CHARS = 400
+_MAX_ERROR_CHARS = 300
+
+
+def _render_args(args) -> str:
+    """Canonical, order-insensitive text form of a call's arguments."""
+    try:
+        return json.dumps(args, sort_keys=True, default=str)
+    except (TypeError, ValueError):
+        return repr(args)
+
+
+def _truncate(text: str, limit: int) -> str:
+    """Length-cap only. Preserves the text otherwise (no whitespace changes)."""
+    text = text or ""
+    return text if len(text) <= limit else text[:limit] + "…"
+
+
+def _neutralize_linebreaks(text: str) -> str:
+    """Strip CR/LF so the text can't break a single-line prompt sentence.
+
+    Unlike `_flatten`, this leaves runs of spaces/tabs alone — only line
+    breaks are prompt-structurally dangerous for `summarize_args`, and the
+    normal `json.dumps` path already escapes them (`\\n` stays literal
+    backslash-n), so this only ever fires via `_render_args`'s `repr()`
+    fallback for inputs `json.dumps` rejects (e.g. a circular reference).
+    """
+    return (text or "").replace("\r", "").replace("\n", " ")
+
+
+def _flatten(text: str) -> str:
+    """Collapse all whitespace runs to single spaces (for raw error bodies)."""
+    return " ".join((text or "").split())
 
 
 def fingerprint(tool_name: str, args) -> str:
     """Stable hash of a tool call's name + arguments (order-insensitive)."""
-    try:
-        arg_repr = json.dumps(args, sort_keys=True, default=str)
-    except (TypeError, ValueError):
-        arg_repr = repr(args)
-    return hashlib.sha1(f"{tool_name}\x00{arg_repr}".encode()).hexdigest()
+    return hashlib.sha1(f"{tool_name}\x00{_render_args(args)}".encode()).hexdigest()
+
+
+def summarize_args(args) -> str:
+    """Render a call's arguments as one length-capped line for redirect text.
+
+    Must not otherwise alter `_render_args()`'s output: the model is told
+    these are the arguments being counted toward the loop-breaker's
+    fingerprint, so this can only line-break-neutralize (in case of the
+    `repr()` fallback) and length-cap — never whitespace-collapse, since a
+    JSON string value's internal whitespace is call data, not formatting,
+    and collapsing it can make two calls that fingerprint differently
+    display identically (#711 review).
+    """
+    return _truncate(_neutralize_linebreaks(_render_args(args)), _MAX_ARG_CHARS)
+
+
+def summarize_error(text: str) -> str:
+    """Render a tool-result error body as one flattened, truncated line."""
+    return _truncate(_flatten(text), _MAX_ERROR_CHARS)
+
+
+class CallSignature(NamedTuple):
+    """One tool call's loop-relevant record.
+
+    `args_text` and `error_text` are retained (pre-truncated) so a redirect
+    can name the actual offending call and its actual failure instead of
+    giving generic advice — the detector used to hash the args away and keep
+    only an is_error bool (#707).
+    """
+    tool_name: str
+    fingerprint: str
+    is_error: bool
+    args_text: str = ""
+    error_text: str = ""
+
+
+@dataclasses.dataclass(frozen=True)
+class Offense:
+    """What tripped the breaker, in enough detail to name it in a redirect.
+
+    `tool_name` and `args_text` are empty for an error-surge trip, which by
+    definition has no single offending call.
+    """
+    reason: str = ""
+    tool_name: str = ""
+    args_text: str = ""
+    error_text: str = ""
+
+
+@dataclasses.dataclass
+class _Offender:
+    """Per-fingerprint tally, plus a watermark of where `count` stood the last
+    time this fingerprint tripped the breaker.
+
+    The watermark is what makes escalation event-shaped instead of
+    state-shaped (#707): a fingerprint that has already tripped at count N
+    only trips again once it reaches N+1, i.e. once the agent has repeated
+    the call *again* after being told to stop.
+    """
+    tool_name: str
+    count: int = 0
+    last_tripped_count: int = 0
+    args_text: str = ""
+    error_text: str = ""
 
 
 class LoopBreaker:
@@ -27,22 +128,25 @@ class LoopBreaker:
 
     Trips on either signal:
     - the same (tool_name, args_fingerprint) seen >= repeat_threshold times
-    - >= error_threshold of the last error_window tool results are errors
+    - >= error_threshold errors, both within the last error_window results and
+      newly accrued since the last trip
 
-    Escalation is one-way per instance: the first trip returns NUDGE; any
-    subsequent trip after that returns STOP. `enabled=False` always returns
-    NONE. One LoopBreaker per turn — state is not meant to persist across
-    turns.
+    Escalation is one-way per instance and advances only on a *fresh* offense
+    (see verdict(), _fresh_repeat_offenders() and _fresh_error_surge()): first
+    trip returns NUDGE, second REDIRECT, third and later STOP.
+    `enabled=False` always returns NONE. One LoopBreaker per turn — state is
+    not meant to persist across turns.
     """
 
     def __init__(self, config):
         self._cfg = config
-        # fingerprint -> [tool_name, count]. Tracks the name alongside the
-        # count so last_signal() can name the offending tool.
-        self._counts: dict[str, list] = {}
+        self._counts: dict[str, _Offender] = {}
         self._recent_errors: list[bool] = []  # rolling is_error flags
-        self._nudged = False
-        self._last_signal = ""
+        self._total_errors = 0                # monotonic; never trimmed
+        self._errors_at_last_trip = 0         # watermark for the error signal
+        self._trips = 0
+        self._last_error_text = ""
+        self._offense = Offense()
 
     @property
     def enabled(self) -> bool:
@@ -51,49 +155,125 @@ class LoopBreaker:
     def record(self, calls) -> None:
         """Record one iteration's tool calls.
 
-        calls: iterable of (tool_name, fingerprint, is_error).
+        calls: iterable of CallSignature.
         """
-        for tool_name, fp, is_error in calls:
-            entry = self._counts.setdefault(fp, [tool_name, 0])
-            entry[0] = tool_name
-            entry[1] += 1
-            self._recent_errors.append(bool(is_error))
-        # Trim to a rolling window of the last N results.
+        for sig in calls:
+            entry = self._counts.get(sig.fingerprint)
+            if entry is None:
+                entry = self._counts[sig.fingerprint] = _Offender(
+                    tool_name=sig.tool_name,
+                )
+            entry.tool_name = sig.tool_name
+            entry.count += 1
+            entry.args_text = sig.args_text
+            # Keep the latest error for this call — the one a redirect quotes.
+            # Cleared on a successful occurrence: the nudge/redirect wording is
+            # "the error every time", and a call that failed early then started
+            # succeeding would otherwise keep quoting a stale failure forever.
+            # Reachable because repeated *successful* identical calls trip the
+            # repeat signal too.
+            entry.error_text = sig.error_text if sig.is_error else ""
+            self._recent_errors.append(bool(sig.is_error))
+            if sig.is_error:
+                self._total_errors += 1
+                self._last_error_text = sig.error_text
         window = self._cfg.error_window
         if len(self._recent_errors) > window:
             self._recent_errors = self._recent_errors[-window:]
 
-    def _tripped_reason(self) -> str | None:
-        # Repeated identical call?
-        top_name, top_n = None, 0
-        for name, n in self._counts.values():
-            if n > top_n:
-                top_name, top_n = name, n
-        if top_n >= self._cfg.repeat_threshold:
-            return f"called {top_name} {top_n}× with the same args"
-        # Repeated errors in the window?
-        errs = sum(self._recent_errors)
-        if errs >= self._cfg.error_threshold:
-            return f"{errs} of the last {len(self._recent_errors)} tool results were errors"
-        return None
+    def _fresh_repeat_offenders(self) -> "list[_Offender]":
+        """Every fingerprint at/over threshold that has grown since it last
+        tripped.
+
+        Returns all of them, not just the worst, because `verdict()` has to
+        watermark *all* of them when it trips — tool calls run concurrently
+        (`asyncio.gather`), so a repeated multi-call batch pushes several
+        fingerprints over threshold in the same round. Advancing only the
+        worst one's watermark left the rest permanently "fresh", so they
+        re-tripped on later rounds with counts that had stopped growing, and
+        a fully compliant agent still got walked to a hard stop (#707).
+        """
+        return [
+            entry for entry in self._counts.values()
+            if entry.count >= self._cfg.repeat_threshold
+            # count == last_tripped_count → already tripped at this count, so
+            # the agent stopped repeating it.
+            and entry.count > entry.last_tripped_count
+        ]
+
+    def _fresh_error_surge(self) -> bool:
+        """True when a full threshold's worth of *new* errors has landed since
+        the last trip, and those errors are recent.
+
+        Two necessary conditions, each doing a distinct job:
+
+        - `_total_errors - _errors_at_last_trip >= error_threshold` — the
+          freshness half. A whole new surge, not one new error tacked onto a
+          window still holding pre-trip failures. Requiring only "any new
+          error" meant the round after a trip started already loaded, so the
+          redirect's own instruction ("take exactly one read-only action")
+          escalated the ladder whenever that diagnostic read errored — the
+          mechanism punished the behavior it had just demanded (#707).
+        - `sum(_recent_errors) >= error_threshold` — the density half. A slow
+          trickle of errors interleaved with successes over many rounds isn't
+          thrash; `error_window` is what keeps it from accumulating into one.
+
+        The first trip is unaffected by the freshness half: with
+        `_errors_at_last_trip == 0`, a window sum at threshold implies a total
+        at threshold.
+        """
+        if sum(self._recent_errors) < self._cfg.error_threshold:
+            return False
+        return (self._total_errors - self._errors_at_last_trip
+                >= self._cfg.error_threshold)
 
     def verdict(self) -> LoopVerdict:
         """Compute the verdict for the most recently recorded round.
 
-        Mutates escalation state: a NUDGE verdict flips the one-way "already
-        nudged" flag, so a second call without an intervening `record()`
-        will escalate NUDGE -> STOP. Call exactly once per recorded round.
+        Mutates escalation state: a trip advances the rung counter and moves
+        *every* watermark the trip consumed, so a later round only trips again
+        on a genuinely new offense. Call exactly once per recorded round.
+
+        A repeat trip consumes the error credit too (`_errors_at_last_trip`).
+        The errors that piled up alongside the thrash have already been
+        accounted for by the rung the agent just got; leaving them uncounted
+        let the error signal fire on the very next round off the same
+        failures, double-charging one offense (#707). The reverse doesn't need
+        handling: when the error branch runs there are no fresh repeat
+        offenders by construction, since the repeat branch is checked first.
         """
         if not self._cfg.enabled:
             return LoopVerdict.NONE
-        reason = self._tripped_reason()
-        if reason is None:
+        fresh = self._fresh_repeat_offenders()
+        if fresh:
+            offender = max(fresh, key=lambda e: e.count)
+            for entry in fresh:
+                entry.last_tripped_count = entry.count
+            self._errors_at_last_trip = self._total_errors
+            self._offense = Offense(
+                reason=(f"called {offender.tool_name} {offender.count}× "
+                        "with the same args"),
+                tool_name=offender.tool_name,
+                args_text=offender.args_text,
+                error_text=offender.error_text,
+            )
+        elif self._fresh_error_surge():
+            self._errors_at_last_trip = self._total_errors
+            errs = sum(self._recent_errors)
+            self._offense = Offense(
+                reason=(f"{errs} of the last {len(self._recent_errors)} "
+                        "tool results were errors"),
+                error_text=self._last_error_text,
+            )
+        else:
             return LoopVerdict.NONE
-        self._last_signal = reason
-        if not self._nudged:
-            self._nudged = True
+        self._trips += 1
+        if self._trips == 1:
             return LoopVerdict.NUDGE
+        if self._trips == 2:
+            return LoopVerdict.REDIRECT
         return LoopVerdict.STOP
 
-    def last_signal(self) -> str:
-        return self._last_signal
+    def offense(self) -> Offense:
+        """The most recent trip's evidence. Empty-field Offense before any trip."""
+        return self._offense

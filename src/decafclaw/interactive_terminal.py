@@ -65,12 +65,29 @@ async def run_interactive(ctx):
     turn_done = asyncio.Event()
     last_response_text = {"text": ""}
 
+    def is_streaming():
+        """Resolve streaming for the conversation's active model."""
+        conv_state = manager.get_state(conv_id)
+        model = conv_state.persisted.active_model if conv_state else ""
+        return resolve_streaming(config, model)
+
     # Subscribe to conversation events for terminal display
     async def on_event(event):
         event_type = event.get("type", "")
 
         if event_type == "chunk":
             print(event.get("text", ""), end="", flush=True)
+
+        elif event_type == "text_before_tools":
+            # An iteration's prose preamble before its tool calls. When
+            # streaming is ON the same text already arrived as `chunk`s above,
+            # so printing it here would duplicate it; when streaming is OFF
+            # nothing else renders it and the terminal showed the agent's
+            # mid-turn reasoning nowhere at all. Same guard as
+            # mattermost.py's text_before_tools handler.
+            text = event.get("text", "")
+            if text and not is_streaming():
+                print(f"\nagent> {text}")
 
         elif event_type == "tool_call_start":
             name = event.get("name", "tool")
@@ -140,7 +157,10 @@ async def run_interactive(ctx):
 
     # Start heartbeat timer
     shutdown_event = asyncio.Event()
-    suppress_ok = config.heartbeat_suppress_ok
+    # `config.heartbeat_suppress_ok` (no such attribute) raised AttributeError
+    # here on every `make run`, so interactive mode never started — found by
+    # the first test to actually drive run_interactive (#707 review).
+    suppress_ok = config.heartbeat.suppress_ok
 
     async def interactive_heartbeat_reporter(results):
         from datetime import datetime
@@ -186,7 +206,7 @@ async def run_interactive(ctx):
             # Wait for the turn to complete
             await turn_done.wait()
 
-            if resolve_streaming(config):
+            if is_streaming():
                 print()  # final newline after streamed text
             else:
                 text = last_response_text["text"]

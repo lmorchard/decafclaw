@@ -696,7 +696,12 @@ async def test_run_agent_turn_empty_retry_refunds_budget(ctx):
 @pytest.mark.asyncio
 async def test_run_agent_turn_grace_turn_fallback_on_empty_content(ctx):
     """When the grace LLM call succeeds but returns empty content, fall back
-    to accumulated text + notice (always-something contract)."""
+    to the notice alone (always-something contract) — not accumulated text
+    joined with the notice. Each iteration's preamble ("Working on it...")
+    was already published as text_before_tools and rendered live by every
+    transport, then archived as it happened; re-delivering it here would
+    duplicate the whole turn (#707), same reasoning as
+    test_loop_break_delivers_and_archives_only_the_note."""
     ctx.config.llm.streaming = False
     ctx.config.system_prompt = "You are a test bot."
     ctx.config.agent.max_tool_iterations = 2
@@ -722,14 +727,20 @@ async def test_run_agent_turn_grace_turn_fallback_on_empty_content(ctx):
         history = []
         result = await run_agent_turn(ctx, "loop forever", history)
 
-    # Falls back to accumulated text + notice (always-something contract).
-    assert "Working on it..." in result.text
+    # Falls back to the notice only — accumulated text was already delivered
+    # live by the transport, so it must not be re-delivered here (#707).
+    assert "Working on it..." not in result.text
     assert "max tool iterations" in result.text
 
 
 @pytest.mark.asyncio
 async def test_run_agent_turn_grace_turn_fallback_on_exception(ctx):
-    """When the grace LLM call raises, fall back to accumulated text + notice."""
+    """When the grace LLM call raises, fall back to the notice alone — not
+    accumulated text joined with the notice. Each iteration's preamble ("Let
+    me check that for you.") was already published as text_before_tools and
+    rendered live by every transport, then archived as it happened;
+    re-delivering it here would duplicate the whole turn (#707), same
+    reasoning as test_loop_break_delivers_and_archives_only_the_note."""
     ctx.config.llm.streaming = False
     ctx.config.system_prompt = "You are a test bot."
     ctx.config.agent.max_tool_iterations = 2
@@ -755,8 +766,9 @@ async def test_run_agent_turn_grace_turn_fallback_on_exception(ctx):
         history = []
         result = await run_agent_turn(ctx, "loop forever", history)
 
-    # Falls back to accumulated text + notice.
-    assert "Let me check that for you." in result.text
+    # Falls back to the notice only — accumulated text was already delivered
+    # live by the transport, so it must not be re-delivered here (#707).
+    assert "Let me check that for you." not in result.text
     assert "max tool iterations" in result.text
 
 
