@@ -10,6 +10,7 @@ from decafclaw.heartbeat import (
     is_heartbeat_ok,
     load_heartbeat_sections,
     parse_interval,
+    response_starts_with_sentinel,
     run_heartbeat_cycle,
     run_heartbeat_timer,
 )
@@ -135,7 +136,53 @@ def test_is_heartbeat_ok_present():
 
 
 def test_is_heartbeat_ok_case_insensitive():
-    assert is_heartbeat_ok("Everything is fine. heartbeat_ok") is True
+    assert is_heartbeat_ok("heartbeat_ok") is True
+    assert is_heartbeat_ok("Heartbeat_OK — nothing to report") is True
+
+
+def test_is_heartbeat_ok_ignores_mid_response_mention():
+    """Tightened in #450: merely *mentioning* the sentinel is not a quiet cycle.
+
+    The old substring rule is what forced agent.py to order the loop-breaker
+    note ahead of accumulated preambles — a preamble mentioning HEARTBEAT_OK
+    landed in the 300-char window and suppressed the alert.
+    """
+    assert is_heartbeat_ok("Everything is fine. heartbeat_ok") is False
+    assert is_heartbeat_ok("I could say HEARTBEAT_OK but things changed") is False
+
+
+def test_is_heartbeat_ok_allows_leading_whitespace():
+    assert is_heartbeat_ok("  \n HEARTBEAT_OK") is True
+
+
+def test_is_heartbeat_ok_requires_a_word_boundary():
+    """HEARTBEAT_OKAY is not HEARTBEAT_OK — the property _BACKGROUND_WAKE_OK_RE
+    already had, now shared rather than duplicated."""
+    assert is_heartbeat_ok("HEARTBEAT_OKAY then more") is False
+
+
+# -- shared sentinel matcher --
+
+
+def test_sentinel_helper_is_start_anchored():
+    from decafclaw.heartbeat import response_starts_with_sentinel
+    assert response_starts_with_sentinel("FOO_OK trailing", "foo_ok") is True
+    assert response_starts_with_sentinel("  \n FOO_OK", "FOO_OK") is True
+    assert response_starts_with_sentinel("prefix FOO_OK", "FOO_OK") is False
+    assert response_starts_with_sentinel("x" * 300 + "FOO_OK", "FOO_OK") is False
+    assert response_starts_with_sentinel(None, "FOO_OK") is False
+    assert response_starts_with_sentinel("", "FOO_OK") is False
+
+
+def test_sentinel_helper_word_boundary_only_for_word_endings():
+    """A sentinel ending in a word char gets \\b; one ending in punctuation
+    can't (\\b after ']' would demand a following word char, so "[SILENT] x"
+    would match but "[SILENT]" alone would not)."""
+    from decafclaw.heartbeat import response_starts_with_sentinel
+    assert response_starts_with_sentinel("FOO_OKAY", "FOO_OK") is False
+    assert response_starts_with_sentinel("[SILENT]", "[SILENT]") is True
+    assert response_starts_with_sentinel("[SILENT] nothing changed", "[SILENT]") is True
+    assert response_starts_with_sentinel("[SILENTLY] hmm", "[SILENT]") is False
 
 
 def test_is_heartbeat_ok_beyond_300_chars():
@@ -149,30 +196,33 @@ def test_is_heartbeat_ok_not_present():
 
 def test_is_heartbeat_ok_false_on_abnormal_termination():
     """An abnormally-terminated heartbeat/scheduled turn must never be reported
-    as OK, even when the HEARTBEAT_OK sentinel lands inside the 300-char window
-    (#710).
+    as OK, however its text reads (#710).
 
     `_finalize_with_note` in agent.py delivers the termination note first and
     the turn's accumulated mid-turn preambles after it, so an abnormally
     terminated turn's `ToolResult.text` always carries one of the two markers.
     polling.py instructs the agent to say "HEARTBEAT_OK" when there is nothing
-    to report, which makes a sentinel-bearing preamble a plausible utterance —
-    and the old "sentinel anywhere in the first 300 characters wins" rule then
-    reported the turn as OK, silently suppressing the alert the user should
-    have seen. Both markers are covered here; asserting only the max-iterations
-    one would let the loop-breaker path stay broken.
+    to report, which makes a sentinel-bearing preamble a plausible utterance.
+
+    The sentinel is placed FIRST here, with the marker after it. #450 tightened
+    the sentinel match to start-anchored, which already rejects the original
+    note-first fixture — so a note-first fixture no longer exercises the
+    override at all, and this guard would pass with
+    `_ABNORMAL_TERMINATION_MARKERS` deleted. Sentinel-first is the arrangement
+    only the whole-response marker check can catch, which is exactly why #714
+    scoped that check to the whole response rather than to the scan window.
+    Both markers are covered; asserting only the max-iterations one would let
+    the loop-breaker path stay broken.
     """
-    # Mirrors _finalize_max_iterations / _finalize_loop_break (agent.py). The
-    # real loop-breaker note continues with a handoff paragraph; trimmed here
-    # so the sentinel genuinely lands inside the 300-char window.
+    # Markers mirror _finalize_max_iterations / _finalize_loop_break (agent.py).
     max_iterations_text = (
+        "HEARTBEAT_OK — nothing new since the last check."
         "\n\n[Agent reached max tool iterations (30) without a final response]"
-        "\n\nNothing new since the last check — HEARTBEAT_OK."
     )
     loop_breaker_text = (
+        "HEARTBEAT_OK — nothing new since the last check."
         "\n\n[loop-breaker] Stopped after repeated failures: you called "
         "vault_search 3 times with identical arguments without progress."
-        "\n\nNothing new since the last check — HEARTBEAT_OK."
     )
 
     # Premise guards: the markers really are present, verbatim.
@@ -183,15 +233,28 @@ def test_is_heartbeat_ok_false_on_abnormal_termination():
         ("max-iterations", max_iterations_text),
         ("loop-breaker", loop_breaker_text),
     ):
-        sentinel_index = text.lower().index("heartbeat_ok")
-        # Premise guard: this is the in-window case, not the beyond-300-chars
-        # case that test_is_heartbeat_ok_beyond_300_chars already covers.
-        assert sentinel_index < 300, (
-            f"{label}: sentinel at index {sentinel_index}, outside the window"
+        # Premise guard: absent the override, the tightened matcher WOULD call
+        # this OK — so the assertion below is discriminating, not incidental.
+        assert response_starts_with_sentinel(text, "HEARTBEAT_OK") is True, (
+            f"{label}: fixture no longer exercises the override"
         )
         assert is_heartbeat_ok(text) is False, (
             f"{label}: abnormal termination reported as OK"
         )
+
+
+def test_is_heartbeat_ok_abnormal_marker_matched_beyond_scan_window():
+    """The marker check spans the whole response, not `_SENTINEL_SCAN_CHARS`.
+
+    #707 puts the termination note first, but scoping the marker check to the
+    window would re-couple this to that ordering — the length-contingency #710
+    exists to remove.
+    """
+    text = "HEARTBEAT_OK — nothing to report.\n\n" + "detail. " * 60 + (
+        "\n\n[Agent reached max tool iterations (30) without a final response]"
+    )
+    assert text.index("[Agent reached max tool iterations") > 300
+    assert is_heartbeat_ok(text) is False
 
 
 # -- BACKGROUND_WAKE_OK detection tests --
@@ -500,3 +563,11 @@ async def test_timer_respects_shutdown(config):
         )
     finally:
         hb._POLL_INTERVAL = original_poll
+
+
+def test_sentinel_helper_rejects_an_empty_sentinel():
+    """An empty sentinel compiles to `^\\s*`, which matches everything — a
+    config-driven empty value would silently suppress every response."""
+    from decafclaw.heartbeat import response_starts_with_sentinel
+    assert response_starts_with_sentinel("anything at all", "") is False
+    assert response_starts_with_sentinel("anything at all", "   ") is False
