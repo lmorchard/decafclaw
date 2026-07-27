@@ -1219,14 +1219,26 @@ class TurnRunner:
         subscriber.
 
         So: watched turns deliver note-only; unwatched turns deliver the
-        accumulated join plus the note, as before #707. Archiving is
-        unaffected either way — only `note` is ever appended to
-        history/archive.
+        note followed by the accumulated join. Archiving is unaffected
+        either way — only `note` is ever appended to history/archive.
+
+        Note comes FIRST in the unwatched join, not last. heartbeat.py's
+        `is_heartbeat_ok` and its background-wake counterpart only look at
+        the first 300 characters of `ToolResult.text`, and polling.py tells
+        the agent to say "HEARTBEAT_OK" when there's nothing to report — a
+        plausible substring of a mid-turn preamble on a heartbeat/scheduled
+        turn. If the accumulated preambles came first, a preamble mentioning
+        the sentinel would land inside that 300-char window and the
+        abnormal-termination note (which should have been the visible
+        signal) gets buried after it, silently suppressing the loop-breaker
+        alert. Putting the note first instead means an abnormally-terminated
+        turn's own text occupies the front of the window. Don't move this
+        back for "readability" — it's the fix for that failure mode.
         """
         note = note.strip()
         if self.ctx.is_child or self.ctx.task_mode in _UNWATCHED_TASK_MODES:
             accumulated = "\n\n".join(self.accumulated_text_parts)
-            delivered = accumulated + "\n\n" + note if accumulated else note
+            delivered = note + "\n\n" + accumulated if accumulated else note
         else:
             delivered = note
         final_msg = {"role": "assistant", "content": note}

@@ -418,6 +418,64 @@ async def test_loop_break_delivers_preambles_for_unwatched_task_turns(ctx, task_
 
 
 @pytest.mark.asyncio
+async def test_loop_break_note_comes_first_for_unwatched_turns(ctx):
+    """The note must lead the unwatched-turn join, not trail it.
+
+    heartbeat.py's `is_heartbeat_ok` only scans the first 300 characters of
+    `ToolResult.text`, and polling.py tells the agent to say HEARTBEAT_OK
+    when there's nothing to report — a plausible substring of a mid-turn
+    preamble. If the accumulated preamble came first, a preamble mentioning
+    the sentinel would sit inside that window and bury the loop-breaker
+    note that should have been the visible signal. Note-first fixes that
+    for this (long) loop-breaker note; see task-5-report.md for the
+    max-iterations note's narrower case.
+    """
+    ctx.task_mode = "heartbeat"
+    ctx.config.llm.streaming = False
+    ctx.config.agent.max_tool_iterations = 50
+    ctx.config.loop_breaker.repeat_threshold = 3
+    ctx.config.loop_breaker.error_threshold = 99
+    ctx.config.loop_breaker.error_window = 50
+
+    preamble = "Checking the feed again, HEARTBEAT_OK for now."
+    repeated_call = _mock_llm_response(
+        content=preamble,
+        tool_calls=[{
+            "id": "tc-repeat",
+            "function": {"name": "definitely_not_a_real_tool", "arguments": "{}"},
+        }],
+    )
+
+    with patch("decafclaw.agent.call_llm", new_callable=AsyncMock) as mock_llm:
+        mock_llm.side_effect = [repeated_call] * 10
+        result = await run_agent_turn(ctx, "check the feed", [])
+
+    note_index = result.text.find("[loop-breaker] Stopped")
+    preamble_index = result.text.find(preamble)
+    assert note_index != -1 and preamble_index != -1
+    assert note_index < preamble_index, (
+        "the note must lead the delivered text so the sentinel check's "
+        "300-char window sees the abnormal-termination note, not a stray "
+        "preamble mention of HEARTBEAT_OK"
+    )
+
+    from decafclaw.heartbeat import is_heartbeat_ok
+    assert not is_heartbeat_ok(result.text), (
+        "note-first should push this (long) loop-breaker note's own text "
+        "to the front, keeping the sentinel out of the 300-char window"
+    )
+
+    # Archiving stays note-only regardless of delivery ordering (#675).
+    from decafclaw.archive import read_archive
+    archived = read_archive(ctx.config, ctx.conv_id)
+    occurrences = sum(
+        (m.get("content") or "").count(preamble)
+        for m in archived if m.get("role") == "assistant"
+    )
+    assert occurrences == mock_llm.call_count
+
+
+@pytest.mark.asyncio
 async def test_loop_break_delivers_only_the_note_for_a_background_wake(ctx):
     """A wake turn fires on the user's real conversation, which DOES have a
     live subscriber — so it stays on the note-only branch. This is the
