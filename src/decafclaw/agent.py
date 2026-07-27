@@ -29,7 +29,14 @@ from .context_cleanup import clear_old_tool_results
 from .context_composer import ComposerMode, ContextComposer
 from .iteration_budget import IterationBudget
 from .llm import call_llm
-from .loop_breaker import LoopBreaker, LoopVerdict, fingerprint
+from .loop_breaker import (
+    CallSignature,
+    LoopBreaker,
+    LoopVerdict,
+    fingerprint,
+    summarize_args,
+    summarize_error,
+)
 from .media import EndTurnConfirm, ToolResult, WidgetInputPause, extract_workspace_media
 from .persistence import read_skill_data, read_skills_state, write_skill_data, write_skills_state
 from .reflection_metrics import classify_outcome, response_delta
@@ -41,6 +48,15 @@ _TASK_MODE_TO_COMPOSER: dict[str, ComposerMode] = {
     "heartbeat": ComposerMode.HEARTBEAT,
     "scheduled": ComposerMode.SCHEDULED,
 }
+
+# Task modes (KIND_TASK_MODE in conversation_manager.py) that run on a
+# synthetic conv_id no transport ever subscribed to, so nothing renders their
+# `text_before_tools` events live — the turn's `ToolResult.text` is the only
+# channel by which its work reaches anyone. Read by `_finalize_with_note`.
+# `background_wake` is deliberately EXCLUDED: a wake turn runs on the user's
+# real conversation, which does have a live subscriber. `""` (interactive) is
+# likewise excluded. See docs/loop-breaker.md.
+_UNWATCHED_TASK_MODES = frozenset({"heartbeat", "scheduled", "child_agent"})
 
 log = logging.getLogger(__name__)
 
@@ -121,11 +137,15 @@ async def _maybe_compact(ctx, config, history, prompt_tokens) -> None:
             log.error(f"Compaction failed: {e}")
 
 
-def _extract_call_signatures(tool_calls, messages):
-    """Map each tool_call to (tool_name, fingerprint, is_error) using the
-    tool-result messages just appended by execute_tool_calls. Errors are
-    tool-role messages whose content starts with '[error' (see
-    tool_execution.py:ToolResult(text="[error: ...]")).
+def _extract_call_signatures(tool_calls, messages) -> list[CallSignature]:
+    """Map each tool_call to a CallSignature using the tool-result messages
+    just appended by execute_tool_calls. Errors are tool-role messages whose
+    content starts with '[error' (see tool_execution.py:ToolResult(
+    text="[error: ...]")).
+
+    Arguments and error bodies are retained (truncated) so the loop-breaker's
+    redirect can name the actual failing call rather than giving generic
+    advice (#707).
     """
     results_by_id = {
         m.get("tool_call_id"): (m.get("content") or "")
@@ -142,7 +162,13 @@ def _extract_call_signatures(tool_calls, messages):
             args = raw_args
         content = results_by_id.get(tc.get("id"), "")
         is_error = content.lstrip().startswith("[error")
-        out.append((name, fingerprint(name, args), is_error))
+        out.append(CallSignature(
+            tool_name=name,
+            fingerprint=fingerprint(name, args),
+            is_error=is_error,
+            args_text=summarize_args(args),
+            error_text=summarize_error(content) if is_error else "",
+        ))
     return out
 
 
@@ -787,24 +813,68 @@ class TurnRunner:
                 # restore_history on a restart/reload (role "user" is equally an
                 # LLM role that gets resurrected), permanently polluting context
                 # on all later turns.
+                off = self.loop_breaker.offense()
+                failure = (f" The failure each time: {off.error_text}."
+                           if off.error_text else "")
                 nudge = {
                     "role": "user",
                     "content": (
                         "[loop-breaker] Automated diagnostic from the agent "
                         "runtime — the user did not send this, so do not "
                         "respond to it as if they had. "
-                        f"You {self.loop_breaker.last_signal()} without "
-                        "progress. STOP repeating it. Switch to root-cause diagnosis: "
-                        "read the relevant logs, build a minimal repro, and re-check the "
-                        "contract/interface before any further edits."
+                        f"You {off.reason} without progress.{failure} "
+                        "STOP repeating that move. Work out WHY it fails "
+                        "before trying it again: read the actual error text, "
+                        "re-check the contract/interface you are calling "
+                        "against, and make your next action one that gathers "
+                        "evidence rather than one that retries the same edit."
                     ),
                 }
                 self.messages.append(nudge)
                 await self.ctx.publish("loop_breaker", action="nudge",
-                                       reason=self.loop_breaker.last_signal())
+                                       reason=off.reason)
+            elif verdict is LoopVerdict.REDIRECT:
+                # Second trip: the nudge was ignored and the agent re-offended.
+                # Same ephemerality and attribution rules as the nudge above —
+                # user-role for directive weight, explicit non-authorship so the
+                # model does not confabulate agreement (#680), appended to
+                # self.messages only so restore_history can never resurrect it.
+                #
+                # "Do not call X again" is prose, not a mechanical block: the
+                # tool stays in the tool list. Enforcement comes from the
+                # ladder — re-issuing the forbidden call is exactly the fresh
+                # offense that advances this rung to STOP (#707).
+                off = self.loop_breaker.offense()
+                specifics = ""
+                if off.error_text:
+                    specifics += f" The error every time: {off.error_text}."
+                if off.args_text:
+                    specifics += f" The arguments every time: {off.args_text}."
+                if off.tool_name:
+                    specifics += (f" Do NOT call {off.tool_name} with those "
+                                  "arguments again this turn.")
+                redirect = {
+                    "role": "user",
+                    "content": (
+                        "[loop-breaker] Second automated diagnostic from the "
+                        "agent runtime — again, the user did not send this. "
+                        "You were already told to stop and you "
+                        f"{off.reason} anyway.{specifics} "
+                        "Stop acting and diagnose. Reply with, in this order: "
+                        "(1) your single best hypothesis for the root cause, "
+                        "stated as a claim that could turn out wrong; (2) the "
+                        "one observation that would confirm or kill it; "
+                        "(3) exactly one read-only action — read a file, "
+                        "search, check a log — that fetches that observation. "
+                        "Take that one action and nothing else."
+                    ),
+                }
+                self.messages.append(redirect)
+                await self.ctx.publish("loop_breaker", action="redirect",
+                                       reason=off.reason)
             elif verdict is LoopVerdict.STOP:
                 await self.ctx.publish("loop_breaker", action="stop",
-                                       reason=self.loop_breaker.last_signal())
+                                       reason=self.loop_breaker.offense().reason)
                 return _Final(result=await self._finalize_loop_break())
 
         return _Continue()
@@ -1078,8 +1148,12 @@ class TurnRunner:
         return self._extract_workspace_media(content)
 
     async def _finalize_max_iterations(self) -> "ToolResult":
-        """Hit max iterations without a final response. Preserve any
-        accumulated text from tool-call iterations and append a notice."""
+        """Hit max iterations without a final response. Always archives only
+        the notice; delivers the notice alone for turns with a live subscriber
+        (the accumulated text was already rendered live by the transport) or
+        the accumulated text plus the notice for unwatched turns (child /
+        heartbeat / scheduled, which have no other way to surface it). See
+        _finalize_with_note."""
         limit_note = (
             f"\n\n[Agent reached max tool iterations "
             f"({self.config.agent.max_tool_iterations}) without a final response]"
@@ -1087,29 +1161,87 @@ class TurnRunner:
         return await self._finalize_with_note(limit_note)
 
     async def _finalize_loop_break(self) -> "ToolResult":
-        """Loop-breaker hard-stop: end the turn with a summary of the thrash
-        and a diagnostic next step, preserving any accumulated text."""
-        note = (
-            f"\n\n[loop-breaker] Stopped: you {self.loop_breaker.last_signal()} "
-            "without progress. Next: read the relevant logs, build a minimal "
-            "repro, and re-check the contract before retrying."
+        """Loop-breaker hard-stop: end the turn with what was tried, what
+        failed, and what would unblock it. This is the message the user reads
+        when they come back, so it is a handoff rather than a bare notice."""
+        off = self.loop_breaker.offense()
+        parts = [f"\n\n[loop-breaker] Stopped after repeated failures: "
+                 f"you {off.reason} without progress."]
+        if off.error_text:
+            parts.append(f" The error each time: {off.error_text}")
+        parts.append(
+            "\n\nI stopped rather than retry again. To move this forward I "
+            "need either a look at the real failure (the logs or config for "
+            "that call) or a different approach — tell me which and I'll "
+            "pick it up."
         )
-        return await self._finalize_with_note(note)
+        return await self._finalize_with_note("".join(parts))
 
     async def _finalize_with_note(self, note: str) -> "ToolResult":
         """End an abnormally-terminated turn (iteration limit / loop-breaker)
-        by appending `note` to whatever text the turn accumulated.
+        by archiving only `note`, but choosing what to *deliver* based on
+        whether anyone is watching this turn live.
 
-        The delivered text includes the accumulated preambles so the turn
-        reads as a whole, but only the note is persisted: each preamble was
-        already appended to history and archived as it was emitted (see
-        _handle_tool_calls). Archiving the join too duplicated every
-        preamble in the record — invisible on a one-preamble turn, a wall of
-        repeated text on a long thrash (#675).
+        Every iteration's preamble was already published as
+        `text_before_tools` — rendered live by Mattermost
+        (mattermost_display.on_text_complete), the web UI
+        (websocket.py) and the terminal (interactive_terminal.on_event) —
+        and archived as it was emitted (see _handle_tool_calls). For a turn
+        someone is watching, re-joining the accumulated preambles into the
+        delivered text duplicated the entire turn: invisible on a
+        one-preamble turn, a wall of repeated text on a long thrash, which is
+        exactly when the transcript most needs to be readable. #675 removed
+        the join from the archive and left it in the delivered text; #707
+        removes it from delivery too. The normal end-of-turn path delivers
+        only its final content, so this now matches it.
+
+        The real predicate is "did anyone see the preambles live", not
+        "is this a child". Three shapes of turn have no live subscriber:
+
+        - a child agent (`ctx.is_child`, set by delegate.py and
+          compaction.py's memory sweep) — the parent LLM never subscribes to
+          the event bus, so `ToolResult.text` (routed back through
+          delegate.py's `run_child_turn` / workflow `subagent`) is its *only*
+          channel for the child's work;
+        - heartbeat and scheduled turns (`ctx.task_mode`, see
+          `_UNWATCHED_TASK_MODES`) — they run on synthetic conv_ids no
+          transport subscribed to, yet their `ToolResult.text` is parsed
+          (heartbeat.py) and shown to the user afterwards
+          (interactive_terminal.py, heartbeat_tools.py, schedules.py).
+
+        Dropping the join for any of those silently loses everything the turn
+        accumulated before hitting the wall. Children also run with
+        `skip_reflection=True` (delegate.py), so the "`accumulated_text_parts`
+        still feeds the reflection judge" argument for keeping the field
+        populated doesn't give the parent a second chance to see it either —
+        the join is the only way. Background wakes are NOT in this set: they
+        fire on the user's real conversation, which does have a live
+        subscriber.
+
+        So: watched turns deliver note-only; unwatched turns deliver the
+        note followed by the accumulated join. Archiving is unaffected
+        either way — only `note` is ever appended to history/archive.
+
+        Note comes FIRST in the unwatched join, not last. heartbeat.py's
+        `is_heartbeat_ok` and its background-wake counterpart only look at
+        the first 300 characters of `ToolResult.text`, and polling.py tells
+        the agent to say "HEARTBEAT_OK" when there's nothing to report — a
+        plausible substring of a mid-turn preamble on a heartbeat/scheduled
+        turn. If the accumulated preambles came first, a preamble mentioning
+        the sentinel would land inside that 300-char window and the
+        abnormal-termination note (which should have been the visible
+        signal) gets buried after it, silently suppressing the loop-breaker
+        alert. Putting the note first instead means an abnormally-terminated
+        turn's own text occupies the front of the window. Don't move this
+        back for "readability" — it's the fix for that failure mode.
         """
-        accumulated = "\n\n".join(self.accumulated_text_parts)
-        delivered = accumulated + note if accumulated else note.strip()
-        final_msg = {"role": "assistant", "content": note.strip()}
+        note = note.strip()
+        if self.ctx.is_child or self.ctx.task_mode in _UNWATCHED_TASK_MODES:
+            accumulated = "\n\n".join(self.accumulated_text_parts)
+            delivered = note + "\n\n" + accumulated if accumulated else note
+        else:
+            delivered = note
+        final_msg = {"role": "assistant", "content": note}
         self.history.append(final_msg)
         _archive(self.ctx, final_msg)
         await _maybe_compact(
