@@ -5,13 +5,17 @@ Not registered in the agent's tool registry (cost control — see #245).
 """
 
 import logging
+from typing import TYPE_CHECKING
 
 from ..media import ToolResult
+
+if TYPE_CHECKING:
+    from decafclaw.context import Context
 
 log = logging.getLogger(__name__)
 
 
-async def tool_set_model(ctx, model: str) -> str | ToolResult:
+async def tool_set_model(ctx: "Context", model: str) -> str | ToolResult:
     """Change the active model for this conversation."""
     log.info("[tool:set_model] model=%s", model)
 

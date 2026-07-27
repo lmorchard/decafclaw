@@ -6,9 +6,13 @@ import logging
 import os
 import subprocess
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from ..media import ToolResult
 from .confirmation import request_confirmation
+
+if TYPE_CHECKING:
+    from decafclaw.context import Context
 
 log = logging.getLogger(__name__)
 
@@ -133,7 +137,7 @@ def _suggest_pattern(command: str) -> str:
     return command
 
 
-async def check_shell_approval(ctx, command: str, tool_name: str = "shell",
+async def check_shell_approval(ctx: "Context", command: str, tool_name: str = "shell",
                                message: str = "") -> dict:
     """Check whether a shell command is approved (shared by shell + background tools).
 
@@ -173,7 +177,7 @@ async def check_shell_approval(ctx, command: str, tool_name: str = "shell",
     return result
 
 
-async def tool_shell(ctx, command: str) -> ToolResult:
+async def tool_shell(ctx: "Context", command: str) -> ToolResult:
     """Run a shell command after user confirmation."""
     log.info(f"[tool:shell] requesting confirmation for: {command}")
 
@@ -185,7 +189,7 @@ async def tool_shell(ctx, command: str) -> ToolResult:
     return _execute_command(ctx, command)
 
 
-def _execute_command(ctx, command: str) -> ToolResult:
+def _execute_command(ctx: "Context", command: str) -> ToolResult:
     """Execute a shell command and return the output."""
     log.info(f"[tool:shell] executing command: {command}")
     # Expose the runtime workspace explicitly so skill scripts can place
@@ -209,7 +213,7 @@ def _execute_command(ctx, command: str) -> ToolResult:
         return ToolResult(text="[error: command timed out after 30 seconds]")
 
 
-async def tool_shell_patterns(ctx, action: str = "list", pattern: str = "") -> str | ToolResult:
+async def tool_shell_patterns(ctx: "Context", action: str = "list", pattern: str = "") -> str | ToolResult:
     """Manage shell command allow patterns."""
     log.info(f"[tool:shell_patterns] action={action} pattern={pattern}")
 

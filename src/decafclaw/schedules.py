@@ -10,6 +10,7 @@ import time
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import yaml
 from croniter import croniter
@@ -21,6 +22,9 @@ from .skills import (
     _resolve_extra_skill_paths,
     _split_frontmatter,
 )
+
+if TYPE_CHECKING:
+    from decafclaw.context import Context
 
 log = logging.getLogger(__name__)
 
@@ -611,7 +615,7 @@ async def run_schedule_task(config, event_bus, manager, task: ScheduleTask,
     task_model = task.model
     email_recipients = task.email_recipients or None
 
-    async def setup_schedule_ctx(ctx) -> None:
+    async def setup_schedule_ctx(ctx: "Context") -> None:
         """Apply per-task settings (model, tools, skills) to the context."""
         if task_model:
             ctx.active_model = task_model

@@ -21,12 +21,15 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 from decafclaw import backlinks, retrieval_telemetry
 from decafclaw.frontmatter import get_frontmatter_field, parse_frontmatter
 from decafclaw.media import ToolResult
 from decafclaw.skills.vault.tools import tool_vault_update_frontmatter
+
+if TYPE_CHECKING:
+    from decafclaw.context import Context
 
 log = logging.getLogger(__name__)
 
@@ -119,7 +122,7 @@ def compute_importance_scores(config) -> dict[str, float]:
     }
 
 
-async def tool_vault_recompute_importance(ctx, dry_run: bool = False) -> ToolResult:
+async def tool_vault_recompute_importance(ctx: "Context", dry_run: bool = False) -> ToolResult:
     """Recompute every agent page's importance score deterministically.
 
     Scores come from `compute_importance_scores` (retrieval frequency +

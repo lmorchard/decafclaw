@@ -6,10 +6,13 @@ import time
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from decafclaw.media import ToolResult
+
+if TYPE_CHECKING:
+    from decafclaw.context import Context
 
 log = logging.getLogger(__name__)
 
@@ -439,7 +442,7 @@ class BackgroundJobManager:
 _managers: dict[str, BackgroundJobManager] = {}
 
 
-def _get_job_manager(ctx) -> BackgroundJobManager:
+def _get_job_manager(ctx: "Context") -> BackgroundJobManager:
     """Get or create the per-conversation BackgroundJobManager."""
     conv_id = ctx.conv_id or ctx.context_id
     if conv_id not in _managers:
@@ -454,7 +457,7 @@ def _get_job_manager(ctx) -> BackgroundJobManager:
 
 # -- Tool functions -----------------------------------------------------------
 
-async def tool_shell_background_start(ctx, command: str,
+async def tool_shell_background_start(ctx: "Context", command: str,
                                       completion_tail_lines: int | None = None) -> ToolResult:
     """Start a background process. Returns immediately with a job ID."""
     log.info(f"[tool:shell_background_start] command={command[:80]}")
@@ -507,7 +510,7 @@ async def tool_shell_background_start(ctx, command: str,
     )
 
 
-async def tool_shell_background_status(ctx, job_id: str) -> ToolResult:
+async def tool_shell_background_status(ctx: "Context", job_id: str) -> ToolResult:
     """Check the status of a background job and get recent output."""
     log.info(f"[tool:shell_background_status] job_id={job_id}")
 
@@ -558,7 +561,7 @@ async def tool_shell_background_status(ctx, job_id: str) -> ToolResult:
     )
 
 
-async def tool_shell_background_stop(ctx, job_id: str) -> ToolResult:
+async def tool_shell_background_stop(ctx: "Context", job_id: str) -> ToolResult:
     """Terminate a background job."""
     log.info(f"[tool:shell_background_stop] job_id={job_id}")
 
@@ -589,7 +592,7 @@ async def tool_shell_background_stop(ctx, job_id: str) -> ToolResult:
     )
 
 
-async def tool_shell_background_list(ctx) -> ToolResult:
+async def tool_shell_background_list(ctx: "Context") -> ToolResult:
     """List all background jobs for the current conversation."""
     log.info("[tool:shell_background_list]")
 

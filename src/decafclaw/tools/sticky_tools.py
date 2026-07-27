@@ -7,21 +7,25 @@ directly; these tools are the agent's explicit surface.
 """
 
 import logging
+from typing import TYPE_CHECKING
 
 from .. import sticky as sticky_mod
 from ..media import ToolResult
 
+if TYPE_CHECKING:
+    from decafclaw.context import Context
+
 log = logging.getLogger(__name__)
 
 
-def _emit_for_ctx(ctx):
+def _emit_for_ctx(ctx: "Context"):
     manager = getattr(ctx, "manager", None)
     if manager is None:
         return None
     return manager.emit
 
 
-async def tool_widget_pin_sticky(ctx, widget_type: str, data: dict) -> ToolResult:
+async def tool_widget_pin_sticky(ctx: "Context", widget_type: str, data: dict) -> ToolResult:
     """Pin a widget into the sticky slot above the chat input."""
     log.info("[tool:widget_pin_sticky] widget=%s", widget_type)
     result = await sticky_mod.set_sticky(
@@ -31,7 +35,7 @@ async def tool_widget_pin_sticky(ctx, widget_type: str, data: dict) -> ToolResul
     return ToolResult(text=result.text)
 
 
-async def tool_widget_unpin_sticky(ctx) -> ToolResult:
+async def tool_widget_unpin_sticky(ctx: "Context") -> ToolResult:
     """Clear the sticky slot."""
     log.info("[tool:widget_unpin_sticky]")
     result = await sticky_mod.clear_sticky(

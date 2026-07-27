@@ -2,14 +2,18 @@
 
 import json
 import logging
+from typing import TYPE_CHECKING
 
 from ..media import ToolResult
 from .tool_registry import add_fetched_tools, get_description
 
+if TYPE_CHECKING:
+    from decafclaw.context import Context
+
 log = logging.getLogger(__name__)
 
 
-def tool_search(ctx, query: str, max_results: int = 10) -> ToolResult:
+def tool_search(ctx: "Context", query: str, max_results: int = 10) -> ToolResult:
     """Search for tools / skills and load matched tool definitions.
 
     Matches against:

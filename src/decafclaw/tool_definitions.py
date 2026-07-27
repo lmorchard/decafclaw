@@ -14,6 +14,7 @@ pulling in execution internals.
 from __future__ import annotations
 
 import logging
+from typing import TYPE_CHECKING
 
 from .tools import TOOL_DEFINITIONS
 from .tools.search_tools import SEARCH_TOOL_DEFINITIONS
@@ -22,6 +23,9 @@ from .tools.tool_registry import (
     classify_tools,
     get_fetched_tools,
 )
+
+if TYPE_CHECKING:
+    from decafclaw.context import Context
 
 log = logging.getLogger(__name__)
 
@@ -35,7 +39,7 @@ def invalidate_skill_cache(config) -> None:
     _skill_def_cache.pop(id(config), None)
 
 
-def refresh_dynamic_tools(ctx) -> None:
+def refresh_dynamic_tools(ctx: "Context") -> None:
     """Call dynamic tool providers to refresh skill tools for this turn.
 
     Skills that export get_tools(ctx) have their tools and definitions
@@ -82,7 +86,7 @@ def refresh_dynamic_tools(ctx) -> None:
         ctx.tools.extra_definitions.extend(tool_defs)
 
 
-def collect_all_tool_defs(ctx) -> list:
+def collect_all_tool_defs(ctx: "Context") -> list:
     """Gather all available tool definitions (core + skill + MCP + extra).
 
     Does NOT apply allowed_tools filter — returns the full unfiltered set
@@ -166,7 +170,7 @@ def _dedupe_by_name(tool_defs: list) -> list:
     return deduped
 
 
-def build_tool_list(ctx) -> tuple[list, str | None]:
+def build_tool_list(ctx: "Context") -> tuple[list, str | None]:
     """Build the tool list, with optional deferred mode.
 
     Returns (tool_definitions, deferred_text) where deferred_text is

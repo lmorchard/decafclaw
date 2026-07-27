@@ -4,8 +4,12 @@ import fnmatch
 import json
 import logging
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from claude_code_sdk import PermissionResultAllow, PermissionResultDeny
+
+if TYPE_CHECKING:
+    from decafclaw.context import Context
 
 log = logging.getLogger(__name__)
 
@@ -54,7 +58,7 @@ def matches_allowlist(tool_name: str, patterns: list[str]) -> bool:
     return False
 
 
-def make_permission_handler(ctx, config):
+def make_permission_handler(ctx: "Context", config):
     """Create a can_use_tool callback that bridges to DecafClaw's confirmation flow.
 
     Returns an async function compatible with ClaudeCodeOptions.can_use_tool.

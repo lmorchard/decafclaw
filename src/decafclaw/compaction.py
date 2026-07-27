@@ -3,6 +3,7 @@
 import asyncio
 import logging
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from .archive import read_archive, read_compacted_history, write_compacted_history
 from .compaction_decisions import (
@@ -16,6 +17,9 @@ from .compaction_decisions import (
 from .llm import call_llm
 from .prompts import wrap_xml
 from .util import estimate_tokens
+
+if TYPE_CHECKING:
+    from decafclaw.context import Context
 
 log = logging.getLogger(__name__)
 
@@ -35,7 +39,7 @@ def _build_sweep_user_input(flattened: str) -> str:
     return wrap_xml("messages_to_compact", flattened)
 
 
-async def _run_memory_sweep(ctx, old_messages: list[dict]) -> None:
+async def _run_memory_sweep(ctx: "Context", old_messages: list[dict]) -> None:
     """Run a background memory sweep over messages about to be compacted.
 
     Fires off an isolated child agent turn with vault tools to save
@@ -272,7 +276,7 @@ def flatten_messages(messages: list[dict]) -> str:
     return "\n".join(lines)
 
 
-async def _single_summarize(ctx, config, flattened_text: str, prompt: str) -> str:
+async def _single_summarize(ctx: "Context", config, flattened_text: str, prompt: str) -> str:
     """Summarize a single block of flattened text."""
     summary_messages = [
         {"role": "system", "content": prompt},
@@ -293,7 +297,7 @@ async def _single_summarize(ctx, config, flattened_text: str, prompt: str) -> st
     return response.get("content", "")
 
 
-async def _chunked_summarize(ctx, config, turns: list[list[dict]],
+async def _chunked_summarize(ctx: "Context", config, turns: list[list[dict]],
                               prompt: str, budget: int) -> str:
     """Summarize turns in chunks that fit the compaction LLM's context window."""
     chunks = []
@@ -510,7 +514,7 @@ def _rebuild_history(
     )
 
 
-async def compact_history(ctx, history: list) -> bool:
+async def compact_history(ctx: "Context", history: list) -> bool:
     """Compact conversation history using the archive as source.
 
     If a previous compaction exists, performs incremental compaction:

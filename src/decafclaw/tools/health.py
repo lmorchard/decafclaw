@@ -8,6 +8,10 @@ import logging
 import resource
 import sys
 import time
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from decafclaw.context import Context
 
 log = logging.getLogger(__name__)
 
@@ -319,7 +323,7 @@ def _heartbeat_section(config) -> list[str]:
     return lines
 
 
-def _tools_section(ctx) -> list[str]:
+def _tools_section(ctx: "Context") -> list[str]:
     """Gather tool deferral stats."""
     from . import TOOL_DEFINITIONS
     from .tool_registry import classify_tools, estimate_tool_tokens
@@ -382,7 +386,7 @@ def _schedule_section(config) -> list[str]:
     return lines
 
 
-async def tool_health_status(ctx) -> str:
+async def tool_health_status(ctx: "Context") -> str:
     """Show agent health and diagnostic status."""
     log.info("[tool:health_status]")
 

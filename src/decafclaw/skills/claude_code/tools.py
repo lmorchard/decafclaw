@@ -6,6 +6,7 @@ import shutil
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from claude_code_sdk import (
     AssistantMessage,
@@ -21,6 +22,9 @@ from claude_code_sdk import (
 from decafclaw.media import ToolResult
 from decafclaw.skills.claude_code.output import SessionLogger
 from decafclaw.skills.claude_code.sessions import SessionManager
+
+if TYPE_CHECKING:
+    from decafclaw.context import Context
 
 log = logging.getLogger(__name__)
 
@@ -242,7 +246,7 @@ async def _capture_git_diff(cwd: str, baseline_ref: str | None) -> str | None:
         return None
 
 
-async def tool_claude_code_start(ctx, cwd: str, description: str = "",
+async def tool_claude_code_start(ctx: "Context", cwd: str, description: str = "",
                                   model: str = "", budget_usd: float = 0,
                                   setup_command: str = "",
                                   instructions: str = "") -> ToolResult:
@@ -468,7 +472,7 @@ def _summarize_tool_result(tool_name: str, content: "str | list | None",
     return f"{tool_name} — {first_line}" if first_line else f"{tool_name} — done"
 
 
-async def tool_claude_code_send(ctx, session_id: str, prompt: str,
+async def tool_claude_code_send(ctx: "Context", session_id: str, prompt: str,
                                 context: str = "",
                                 include_diff: bool = True) -> ToolResult:
     """Send a prompt to an active Claude Code session."""
@@ -665,7 +669,7 @@ async def tool_claude_code_send(ctx, session_id: str, prompt: str,
     return ToolResult(text=summary, data=data, display_short_text=short_text)
 
 
-async def tool_claude_code_exec(ctx, session_id: str, command: str,
+async def tool_claude_code_exec(ctx: "Context", session_id: str, command: str,
                                 timeout: int = 30) -> ToolResult:
     """Run a shell command in a session's cwd without an LLM turn."""
     log.info(f"[tool:claude_code_exec] session={session_id} command={command[:80]}")
@@ -779,7 +783,7 @@ async def tool_claude_code_exec(ctx, session_id: str, command: str,
     return ToolResult(text="\n".join(parts), data=data)
 
 
-async def tool_claude_code_push_file(ctx, session_id: str, source_path: str,
+async def tool_claude_code_push_file(ctx: "Context", session_id: str, source_path: str,
                                      dest_name: str = "") -> ToolResult:
     """Copy a file from the parent's workspace into the session's cwd."""
     log.info(f"[tool:claude_code_push_file] session={session_id} source={source_path}")
@@ -840,7 +844,7 @@ async def tool_claude_code_push_file(ctx, session_id: str, source_path: str,
     )
 
 
-async def tool_claude_code_pull_file(ctx, session_id: str, source_name: str,
+async def tool_claude_code_pull_file(ctx: "Context", session_id: str, source_name: str,
                                      dest_path: str = "") -> ToolResult:
     """Copy a file from the session's cwd to the parent's workspace."""
     log.info(f"[tool:claude_code_pull_file] session={session_id} source={source_name}")
@@ -901,7 +905,7 @@ async def tool_claude_code_pull_file(ctx, session_id: str, source_name: str,
     )
 
 
-async def tool_claude_code_stop(ctx, session_id: str) -> str | ToolResult:
+async def tool_claude_code_stop(ctx: "Context", session_id: str) -> str | ToolResult:
     """Stop a Claude Code session and clean up."""
     log.info(f"[tool:claude_code_stop] session={session_id}")
     manager = _get_manager()
@@ -921,7 +925,7 @@ async def tool_claude_code_stop(ctx, session_id: str) -> str | ToolResult:
     )
 
 
-async def tool_claude_code_sessions(ctx) -> str:
+async def tool_claude_code_sessions(ctx: "Context") -> str:
     """List active Claude Code sessions."""
     log.info("[tool:claude_code_sessions]")
     manager = _get_manager()

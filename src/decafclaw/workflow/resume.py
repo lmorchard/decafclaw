@@ -6,6 +6,7 @@ ConfirmationRegistry; it fires via the confirmation *recovery* path
 (no awaiting waiter) because a workflow suspend ends the turn.
 """
 import logging
+from typing import TYPE_CHECKING
 
 from decafclaw.confirmations import (
     ConfirmationAction,
@@ -23,6 +24,9 @@ from .errors import WorkflowSkillActivationFailed
 from .journal import Journal, load_journal, path_from_any, path_to_str, save_journal
 from .registry import get_workflow
 
+if TYPE_CHECKING:
+    from decafclaw.context import Context
+
 log = logging.getLogger(__name__)
 
 
@@ -32,7 +36,7 @@ def _render_artifact(result) -> str:
     return str(result)
 
 
-async def run_workflow_turn(ctx, manager, *,
+async def run_workflow_turn(ctx: "Context", manager, *,
                             workflow_name: str, resume: bool) -> ToolResult:
     spec = get_workflow(workflow_name)
     if spec is None:

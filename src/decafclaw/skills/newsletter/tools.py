@@ -6,11 +6,15 @@ import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from decafclaw.conversation_paths import iter_conversation_archives
 from decafclaw.mail import send_mail
 from decafclaw.media import ToolResult
 from decafclaw.skills.vault.tools import collect_recent_pages
+
+if TYPE_CHECKING:
+    from decafclaw.context import Context
 
 log = logging.getLogger(__name__)
 
@@ -163,7 +167,7 @@ def _extract_activity(path: Path) -> tuple[str, list[str]]:
     return final_text, touched
 
 
-def _collect_scheduled_activity(ctx, hours: int = 24) -> list[dict]:
+def _collect_scheduled_activity(ctx: "Context", hours: int = 24) -> list[dict]:
     """Gather scheduled-task activity records. Returns the raw list
     used by newsletter_list_scheduled_activity."""
     cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
@@ -220,7 +224,7 @@ async def newsletter_list_scheduled_activity(
     )
 
 
-def _collect_vault_changes(ctx, hours: int = 24) -> list[dict]:
+def _collect_vault_changes(ctx: "Context", hours: int = 24) -> list[dict]:
     """Gather vault markdown files modified in the last `hours` (mtime-based).
 
     Returns a list of {path (str, relative to vault root), mtime (ISO-8601), size (int)}.
@@ -273,7 +277,7 @@ async def newsletter_list_vault_changes(
 
 
 async def newsletter_publish(
-    ctx,
+    ctx: "Context",
     markdown: str,
     subject_hint: str | None = None,
     has_content: bool = True,

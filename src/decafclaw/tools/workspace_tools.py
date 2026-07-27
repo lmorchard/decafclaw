@@ -7,8 +7,12 @@ import fnmatch
 import logging
 import re
 from pathlib import Path, PurePosixPath
+from typing import TYPE_CHECKING
 
 from ..media import ToolResult, WidgetRequest
+
+if TYPE_CHECKING:
+    from decafclaw.context import Context
 
 log = logging.getLogger(__name__)
 
@@ -84,7 +88,7 @@ def _resolve_safe(config, path_str: str) -> Path | None:
     return target
 
 
-def tool_workspace_read(ctx, path: str, start_line: int | None = None,
+def tool_workspace_read(ctx: "Context", path: str, start_line: int | None = None,
                         end_line: int | None = None) -> str | ToolResult:
     """Read a file from the agent's workspace, optionally a line range."""
     log.info(f"[tool:workspace_read] {path}")
@@ -145,7 +149,7 @@ def tool_workspace_read(ctx, path: str, start_line: int | None = None,
 _MARKDOWN_EXTS = (".md", ".markdown")
 
 
-def tool_workspace_preview_markdown(ctx, path: str) -> ToolResult:
+def tool_workspace_preview_markdown(ctx: "Context", path: str) -> ToolResult:
     """Read a workspace markdown file and return it as an inline markdown widget.
 
     The web UI renders the content as rich markdown via the
@@ -203,7 +207,7 @@ def tool_workspace_preview_markdown(ctx, path: str) -> ToolResult:
     )
 
 
-def tool_workspace_write(ctx, path: str, content: str) -> str | ToolResult:
+def tool_workspace_write(ctx: "Context", path: str, content: str) -> str | ToolResult:
     """Write content to a file in the agent's workspace."""
     log.info(f"[tool:workspace_write] {path}")
     resolved = _resolve_safe(ctx.config, path)
@@ -217,7 +221,7 @@ def tool_workspace_write(ctx, path: str, content: str) -> str | ToolResult:
         return _file_error(e, path)
 
 
-def tool_workspace_list(ctx, path: str = ".") -> str | ToolResult:
+def tool_workspace_list(ctx: "Context", path: str = ".") -> str | ToolResult:
     """List files and directories in the agent's workspace."""
     log.info(f"[tool:workspace_list] {path}")
     resolved = _resolve_safe(ctx.config, path)
@@ -252,7 +256,7 @@ def tool_workspace_list(ctx, path: str = ".") -> str | ToolResult:
         return _file_error(e, path)
 
 
-def tool_file_share(ctx, path: str, message: str = "") -> "ToolResult":
+def tool_file_share(ctx: "Context", path: str, message: str = "") -> "ToolResult":
     """Share a file from the workspace as an attachment."""
     import mimetypes
 
@@ -281,7 +285,7 @@ def tool_file_share(ctx, path: str, message: str = "") -> "ToolResult":
         return _file_error(e, path)
 
 
-def tool_workspace_move(ctx, path: str, destination: str) -> str | ToolResult:
+def tool_workspace_move(ctx: "Context", path: str, destination: str) -> str | ToolResult:
     """Move or rename a file within the workspace."""
     log.info(f"[tool:workspace_move] {path} -> {destination}")
     resolved_src = _resolve_safe(ctx.config, path)
@@ -302,7 +306,7 @@ def tool_workspace_move(ctx, path: str, destination: str) -> str | ToolResult:
         return _file_error(e, path)
 
 
-def tool_workspace_delete(ctx, path: str) -> str | ToolResult:
+def tool_workspace_delete(ctx: "Context", path: str) -> str | ToolResult:
     """Delete a file from the workspace."""
     log.info(f"[tool:workspace_delete] {path}")
     resolved = _resolve_safe(ctx.config, path)
@@ -319,7 +323,7 @@ def tool_workspace_delete(ctx, path: str) -> str | ToolResult:
         return _file_error(e, path)
 
 
-def tool_workspace_edit(ctx, path: str, old_text: str, new_text: str,
+def tool_workspace_edit(ctx: "Context", path: str, old_text: str, new_text: str,
                        replace_all: bool = False) -> str | ToolResult:
     """Edit a file by replacing exact text matches."""
     log.info(f"[tool:workspace_edit] {path}")
@@ -352,7 +356,7 @@ def tool_workspace_edit(ctx, path: str, old_text: str, new_text: str,
     return summary
 
 
-def tool_workspace_insert(ctx, path: str, line_number: int, content: str) -> str | ToolResult:
+def tool_workspace_insert(ctx: "Context", path: str, line_number: int, content: str) -> str | ToolResult:
     """Insert text at a specific line number in a workspace file."""
     log.info(f"[tool:workspace_insert] {path} at line {line_number}")
     resolved = _resolve_safe(ctx.config, path)
@@ -382,7 +386,7 @@ def tool_workspace_insert(ctx, path: str, line_number: int, content: str) -> str
     return summary
 
 
-def tool_workspace_replace_lines(ctx, path: str, start_line: int, end_line: int,
+def tool_workspace_replace_lines(ctx: "Context", path: str, start_line: int, end_line: int,
                                  content: str = "") -> str | ToolResult:
     """Replace a range of lines in a workspace file."""
     log.info(f"[tool:workspace_replace_lines] {path} lines {start_line}-{end_line}")
@@ -418,7 +422,7 @@ def tool_workspace_replace_lines(ctx, path: str, start_line: int, end_line: int,
     return summary
 
 
-def tool_workspace_append(ctx, path: str, content: str) -> str | ToolResult:
+def tool_workspace_append(ctx: "Context", path: str, content: str) -> str | ToolResult:
     """Append content to a file in the agent's workspace."""
     log.info(f"[tool:workspace_append] {path}")
     resolved = _resolve_safe(ctx.config, path)
@@ -438,7 +442,7 @@ def tool_workspace_append(ctx, path: str, content: str) -> str | ToolResult:
         return _file_error(e, path)
 
 
-def tool_workspace_diff(ctx, path1: str, path2: str, context_lines: int = 3) -> str | ToolResult:
+def tool_workspace_diff(ctx: "Context", path1: str, path2: str, context_lines: int = 3) -> str | ToolResult:
     """Show a unified diff between two workspace files."""
     log.info(f"[tool:workspace_diff] {path1} vs {path2}")
     resolved1 = _resolve_safe(ctx.config, path1)
@@ -466,7 +470,7 @@ def tool_workspace_diff(ctx, path1: str, path2: str, context_lines: int = 3) -> 
     return "".join(diff)
 
 
-def tool_workspace_search(ctx, pattern: str, path: str = ".",
+def tool_workspace_search(ctx: "Context", pattern: str, path: str = ".",
                           glob: str = "*", context_lines: int = 2) -> str | ToolResult:
     """Search for a regex pattern across workspace files."""
     log.info(f"[tool:workspace_search] pattern={pattern!r} path={path} glob={glob}")
@@ -559,7 +563,7 @@ def tool_workspace_search(ctx, pattern: str, path: str = ".",
     return ToolResult(text=result, data=base_data)
 
 
-def tool_workspace_glob(ctx, pattern: str, path: str = ".") -> str | ToolResult:
+def tool_workspace_glob(ctx: "Context", pattern: str, path: str = ".") -> str | ToolResult:
     """Find files by glob pattern in the workspace."""
     log.info(f"[tool:workspace_glob] pattern={pattern!r} path={path}")
     resolved = _resolve_safe(ctx.config, path)

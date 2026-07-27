@@ -2,10 +2,14 @@
 
 import asyncio
 import logging
+from typing import TYPE_CHECKING
 
 import httpx
 
 from ..media import ToolResult
+
+if TYPE_CHECKING:
+    from decafclaw.context import Context
 
 log = logging.getLogger(__name__)
 
@@ -13,7 +17,7 @@ log = logging.getLogger(__name__)
 _heartbeat_lock = asyncio.Lock()
 
 
-async def tool_heartbeat_trigger(ctx) -> str | ToolResult:
+async def tool_heartbeat_trigger(ctx: "Context") -> str | ToolResult:
     """Manually trigger a heartbeat cycle, posting results to the configured channel."""
     log.info("[tool:heartbeat_trigger]")
 

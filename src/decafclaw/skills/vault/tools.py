@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from decafclaw.media import ToolResult, WidgetRequest
 from decafclaw.skills.vault._events import (
@@ -34,6 +35,9 @@ from decafclaw.skills.vault._sections import (
 )
 from decafclaw.tags import collect_all_tags, extract_tags, normalize_tag, pages_with_tags
 from decafclaw.tools.confirmation import request_confirmation
+
+if TYPE_CHECKING:
+    from decafclaw.context import Context
 
 log = logging.getLogger(__name__)
 
@@ -173,7 +177,7 @@ def _is_in_user_writable_paths(config, path: Path) -> bool:
     return False
 
 
-def _check_user_write_allowed(ctx, path: Path) -> GateOutcome:
+def _check_user_write_allowed(ctx: "Context", path: Path) -> GateOutcome:
     """Decide how to handle a vault write/delete/rename for the given path.
 
     Returns:
@@ -193,7 +197,7 @@ def _check_user_write_allowed(ctx, path: Path) -> GateOutcome:
 
 
 async def _run_gate_or_confirm(
-    ctx,
+    ctx: "Context",
     outcomes: list[GateOutcome],
     *,
     tool_name: str,
@@ -305,7 +309,7 @@ def _source_type_for_path(config, path: Path) -> str:
 # Tools
 # ---------------------------------------------------------------------------
 
-async def tool_vault_read(ctx, page: str) -> str | ToolResult:
+async def tool_vault_read(ctx: "Context", page: str) -> str | ToolResult:
     """Read a vault page by name or path."""
     log.info(f"[tool:vault_read] page={page}")
     path = resolve_page(ctx.config, page)
@@ -330,7 +334,7 @@ async def tool_vault_read(ctx, page: str) -> str | ToolResult:
     )
 
 
-async def tool_vault_write(ctx, page: str, content: str) -> str | ToolResult:
+async def tool_vault_write(ctx: "Context", page: str, content: str) -> str | ToolResult:
     """Create or overwrite a vault page."""
     log.info(f"[tool:vault_write] page={page}")
     path = _safe_write_path(ctx.config, page)
@@ -390,7 +394,7 @@ async def tool_vault_write(ctx, page: str, content: str) -> str | ToolResult:
     )
 
 
-async def tool_vault_delete(ctx, page: str) -> ToolResult:
+async def tool_vault_delete(ctx: "Context", page: str) -> ToolResult:
     """Delete a vault page. Agent pages allow direct delete; user pages
     require confirmation per call (or grant/allowlist short-circuit)."""
     log.info(f"[tool:vault_delete] page={page}")
@@ -445,7 +449,7 @@ async def tool_vault_delete(ctx, page: str) -> ToolResult:
     return ToolResult(text=f"Vault page '{page}' deleted.")
 
 
-async def tool_vault_rename(ctx, page: str, rename_to: str) -> ToolResult:
+async def tool_vault_rename(ctx: "Context", page: str, rename_to: str) -> ToolResult:
     """Rename or move a vault page. Agent pages allow direct rename; user pages
     require confirmation per call (or grant/allowlist short-circuit). A single
     confirmation covers both source and target paths."""
@@ -520,7 +524,7 @@ async def tool_vault_rename(ctx, page: str, rename_to: str) -> ToolResult:
     return ToolResult(text=f"Vault page '{page}' renamed to '{rename_to}'.")
 
 
-async def tool_vault_grant_folder(ctx, folder: str, reason: str) -> ToolResult:
+async def tool_vault_grant_folder(ctx: "Context", folder: str, reason: str) -> ToolResult:
     """Request per-conversation trust for a vault folder.
 
     The folder is normalized via `normalize_folder` (leading `/` stripped,
@@ -600,7 +604,7 @@ async def tool_vault_grant_folder(ctx, folder: str, reason: str) -> ToolResult:
     return ToolResult(text=f"Folder '{rel}' trusted for this conversation.")
 
 
-async def tool_vault_journal_append(ctx, tags: list[str], content: str) -> ToolResult:
+async def tool_vault_journal_append(ctx: "Context", tags: list[str], content: str) -> ToolResult:
     """Append a timestamped entry to today's journal file."""
     log.info(f"[tool:vault_journal_append] tags={tags}")
     now = datetime.now()
@@ -671,7 +675,7 @@ async def tool_vault_journal_append(ctx, tags: list[str], content: str) -> ToolR
     )
 
 
-async def tool_vault_search(ctx, query: str = "", source_type: str = "",
+async def tool_vault_search(ctx: "Context", query: str = "", source_type: str = "",
                             days: int = 0, folder: str = "",
                             tags: list[str] | None = None,
                             any_tag: bool = False) -> str | ToolResult:
@@ -998,7 +1002,7 @@ def _substring_results_widget(query: str,
     )
 
 
-async def tool_vault_list(ctx, folder: str = "", pattern: str = "") -> str | ToolResult:
+async def tool_vault_list(ctx: "Context", folder: str = "", pattern: str = "") -> str | ToolResult:
     """List vault pages, optionally filtered by folder and pattern."""
     log.info(f"[tool:vault_list] folder={folder} pattern={pattern}")
     if folder:
@@ -1145,7 +1149,7 @@ def format_recent_journal_for_context(
     return f"{header}\n\n{body}"
 
 
-async def tool_vault_recent(ctx, days: int = 7, folder: str = "",
+async def tool_vault_recent(ctx: "Context", days: int = 7, folder: str = "",
                             source_type: str = "") -> str | ToolResult:
     """List vault pages modified within the last `days`, newest first."""
     log.info(f"[tool:vault_recent] days={days} folder={folder} "
@@ -1204,7 +1208,7 @@ async def tool_vault_recent(ctx, days: int = 7, folder: str = "",
     )
 
 
-async def tool_vault_tags(ctx) -> ToolResult:
+async def tool_vault_tags(ctx: "Context") -> ToolResult:
     """List all tags currently in use across the vault, with usage counts."""
     log.info("[tool:vault_tags]")
     tag_map = collect_all_tags(ctx.config)
@@ -1224,7 +1228,7 @@ async def tool_vault_tags(ctx) -> ToolResult:
 _WIKI_LINK_RE = re.compile(r"\[\[([^\]]+)\]\]")
 
 
-async def tool_vault_backlinks(ctx, page: str) -> str:
+async def tool_vault_backlinks(ctx: "Context", page: str) -> str:
     """Find all vault pages that link to the given page via [[wiki-links]]."""
     log.info(f"[tool:vault_backlinks] page={page}")
     from decafclaw.backlinks import _build_page_lookup, _resolve_link_target, load_index
@@ -1304,7 +1308,7 @@ async def tool_vault_show_sections(
     return ToolResult(text="\n".join(numbered))
 
 
-async def _reindex_page(ctx, path: Path) -> None:
+async def _reindex_page(ctx: "Context", path: Path) -> None:
     """Reindex a single vault page in the embedding index (fail-open)."""
     try:
         from decafclaw.embeddings import delete_entries, index_entry
@@ -1386,7 +1390,7 @@ async def tool_vault_update_frontmatter(
 
 
 async def tool_vault_section(
-    ctx,
+    ctx: "Context",
     page: str,
     action: str,
     section: str | None = None,
@@ -1474,7 +1478,7 @@ async def tool_vault_section(
 
 
 async def tool_vault_move_lines(
-    ctx,
+    ctx: "Context",
     from_page: str,
     to_page: str,
     lines: str,

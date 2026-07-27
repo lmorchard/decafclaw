@@ -8,9 +8,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from typing import TYPE_CHECKING
 
 from .config import resolve_streaming
 from .tools import TOOL_DEFINITIONS
+
+if TYPE_CHECKING:
+    from decafclaw.context import Context
 
 log = logging.getLogger(__name__)
 
@@ -37,7 +41,7 @@ def _print_banner(config) -> None:
 # -- Interactive mode ----------------------------------------------------------
 
 
-async def run_interactive(ctx):
+async def run_interactive(ctx: "Context"):
     """Run the agent in interactive terminal mode (stdin/stdout)."""
     from .conversation_manager import ConversationManager
     from .heartbeat import run_heartbeat_timer

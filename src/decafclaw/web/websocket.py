@@ -12,6 +12,7 @@ import os
 import re
 import uuid
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
@@ -30,6 +31,9 @@ from decafclaw.web.message_types import (
     WSMessageType,
     WSSendCallable,
 )
+
+if TYPE_CHECKING:
+    from decafclaw.context import Context
 
 log = logging.getLogger(__name__)
 
@@ -345,7 +349,7 @@ async def _handle_send(ws_send: WSSendCallable, index, username, msg, state) -> 
         if name in workflow_commands():
             wf_trigger = name
     if wf_trigger:
-        def context_setup(ctx):
+        def context_setup(ctx: "Context"):
             from ..media import LocalFileMediaHandler
             ctx.media_handler = LocalFileMediaHandler(state["config"])
             ctx.channel_name = "web"
@@ -419,7 +423,7 @@ async def _handle_send(ws_send: WSSendCallable, index, username, msg, state) -> 
     _subscribe_to_conv(state, conv_id)
 
     # Transport-specific context setup
-    def context_setup(ctx):
+    def context_setup(ctx: "Context"):
         from ..media import LocalFileMediaHandler
         ctx.media_handler = LocalFileMediaHandler(state["config"])
         ctx.channel_name = "web"

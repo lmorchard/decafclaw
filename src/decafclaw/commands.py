@@ -3,8 +3,12 @@
 import logging
 import re
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from .skills import SkillInfo, find_command, list_commands
+
+if TYPE_CHECKING:
+    from decafclaw.context import Context
 
 log = logging.getLogger(__name__)
 
@@ -190,7 +194,7 @@ class CommandResult:
     skill: SkillInfo | None = None
 
 
-async def _execute_mcp_prompt_command(ctx, server_name: str, prompt_name: str,
+async def _execute_mcp_prompt_command(ctx: "Context", server_name: str, prompt_name: str,
                                        arguments: str, prefix: str = "!") -> CommandResult:
     """Execute an MCP prompt as a user-invokable command."""
     import asyncio
@@ -276,7 +280,7 @@ async def _execute_mcp_prompt_command(ctx, server_name: str, prompt_name: str,
                          display_text=f"{prefix}{cmd_display} {arguments}".strip())
 
 
-async def dispatch_command(ctx, text: str, prefixes: list[str] | None = None,
+async def dispatch_command(ctx: "Context", text: str, prefixes: list[str] | None = None,
                            ) -> CommandResult:
     """Detect, validate, and execute a command from user text.
 
@@ -355,7 +359,7 @@ async def dispatch_command(ctx, text: str, prefixes: list[str] | None = None,
                          display_text=display, skill=skill)
 
 
-async def execute_command(ctx, skill: SkillInfo, arguments: str) -> tuple[str, str]:
+async def execute_command(ctx: "Context", skill: SkillInfo, arguments: str) -> tuple[str, str]:
     """Execute a user-invoked command.
 
     Sets up the context (preapproved tools, required skills) and either

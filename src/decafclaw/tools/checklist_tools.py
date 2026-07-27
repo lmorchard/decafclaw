@@ -12,15 +12,19 @@ The mirror is fail-open — a sticky failure never breaks the checklist.
 
 import asyncio
 import logging
+from typing import TYPE_CHECKING
 
 from .. import checklist
 from .. import sticky as sticky_mod
 from ..media import ToolResult
 
+if TYPE_CHECKING:
+    from decafclaw.context import Context
+
 log = logging.getLogger(__name__)
 
 
-def _emit_for_ctx(ctx):
+def _emit_for_ctx(ctx: "Context"):
     manager = getattr(ctx, "manager", None)
     if manager is None:
         return None
@@ -57,7 +61,7 @@ def _progress_data_from_checklist(items: list[dict]) -> dict:
     return {"steps": steps, "title": "Checklist", "summary": summary}
 
 
-async def _mirror_to_sticky(ctx, conv_id: str) -> None:
+async def _mirror_to_sticky(ctx: "Context", conv_id: str) -> None:
     """Sync the sticky slot with current checklist state. Fail-open.
 
     Clears the slot when there is no active checklist or every step is
@@ -83,7 +87,7 @@ async def _mirror_to_sticky(ctx, conv_id: str) -> None:
                     exc_info=True)
 
 
-async def tool_checklist_create(ctx, steps: list[str]) -> ToolResult:
+async def tool_checklist_create(ctx: "Context", steps: list[str]) -> ToolResult:
     """Create a checklist and return the first step."""
     conv_id = ctx.conv_id or "default"
     if not steps:
@@ -99,7 +103,7 @@ async def tool_checklist_create(ctx, steps: list[str]) -> ToolResult:
     )
 
 
-async def tool_checklist_step_done(ctx, note: str = "") -> ToolResult:
+async def tool_checklist_step_done(ctx: "Context", note: str = "") -> ToolResult:
     """Mark current step done and advance. end_turn=True only when all complete."""
     conv_id = ctx.conv_id or "default"
     next_item = await asyncio.to_thread(
@@ -124,7 +128,7 @@ async def tool_checklist_step_done(ctx, note: str = "") -> ToolResult:
     )
 
 
-async def tool_checklist_abort(ctx, reason: str = "") -> ToolResult:
+async def tool_checklist_abort(ctx: "Context", reason: str = "") -> ToolResult:
     """Abandon the current checklist."""
     conv_id = ctx.conv_id or "default"
     items = await asyncio.to_thread(
@@ -140,7 +144,7 @@ async def tool_checklist_abort(ctx, reason: str = "") -> ToolResult:
     return ToolResult(text=msg)
 
 
-def tool_checklist_status(ctx) -> ToolResult:
+def tool_checklist_status(ctx: "Context") -> ToolResult:
     """Show current checklist progress."""
     conv_id = ctx.conv_id or "default"
     items = checklist.checklist_status(ctx.config, conv_id)

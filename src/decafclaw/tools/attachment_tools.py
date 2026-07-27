@@ -1,12 +1,16 @@
 """Attachment tools — list and retrieve conversation file attachments."""
 
 import json
+from typing import TYPE_CHECKING
 
 from ..attachments import list_conversation_attachments, read_attachment_base64
 from ..media import ToolResult
 
+if TYPE_CHECKING:
+    from decafclaw.context import Context
 
-async def tool_list_attachments(ctx) -> str | ToolResult:
+
+async def tool_list_attachments(ctx: "Context") -> str | ToolResult:
     """List files uploaded to the current conversation."""
     conv_id = ctx.conv_id or ctx.channel_id
     if not conv_id:
@@ -19,7 +23,7 @@ async def tool_list_attachments(ctx) -> str | ToolResult:
     return json.dumps(items, indent=2)
 
 
-async def tool_get_attachment(ctx, filename: str) -> str | ToolResult:
+async def tool_get_attachment(ctx: "Context", filename: str) -> str | ToolResult:
     """Retrieve a file's content from the conversation uploads."""
     conv_id = ctx.conv_id or ctx.channel_id
     if not conv_id:

@@ -19,6 +19,9 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from decafclaw.context import Context
+
+if TYPE_CHECKING:
     from .context_composer import ComposedContext
     from .reflection import ReflectionResult
 
@@ -63,12 +66,12 @@ log = logging.getLogger(__name__)
 # Track background tasks to prevent GC and surface exceptions
 
 
-def _conv_id(ctx) -> str:
+def _conv_id(ctx: "Context") -> str:
     """Get conversation ID from context."""
     return ctx.conv_id or ctx.channel_id or "unknown"
 
 
-def _archive(ctx, msg) -> None:
+def _archive(ctx: "Context", msg) -> None:
     """Archive a message, logging errors but never raising."""
     if ctx.skip_archive:
         return
@@ -95,7 +98,7 @@ def _archive(ctx, msg) -> None:
 
 
 
-async def _maybe_compact(ctx, config, history, prompt_tokens) -> None:
+async def _maybe_compact(ctx: "Context", config, history, prompt_tokens) -> None:
     """Run the lightweight tool-result clear pass, then trigger
     full compaction if the token budget is exceeded.
 
@@ -175,7 +178,7 @@ def _extract_call_signatures(tool_calls, messages) -> list[CallSignature]:
 # -- Agent turn helpers --------------------------------------------------------
 
 
-def _check_cancelled(ctx, history):
+def _check_cancelled(ctx: "Context", history):
     """Check if the agent turn has been cancelled. Returns ToolResult or None.
 
     Appends an in-memory marker to history so the iteration loop's
@@ -196,7 +199,7 @@ def _check_cancelled(ctx, history):
     return None
 
 
-def _note_cancel_observed(ctx) -> None:
+def _note_cancel_observed(ctx: "Context") -> None:
     """Tell the manager the agent observed the cancel signal cleanly,
     so the normal-completion path persists the marker. No-op when no
     manager is attached (e.g. unit tests calling the helper directly).
@@ -226,7 +229,7 @@ class ReflectionOutcome:
     should_retry: bool
 
 
-def _should_reflect(ctx, config, content: str, reflection_retries: int) -> bool:
+def _should_reflect(ctx: "Context", config, content: str, reflection_retries: int) -> bool:
     """Check whether reflection should run on this response."""
     if not config.reflection.enabled:
         return False
@@ -241,7 +244,7 @@ def _should_reflect(ctx, config, content: str, reflection_retries: int) -> bool:
     return True
 
 
-async def _handle_widget_input_pause(ctx, signal: WidgetInputPause
+async def _handle_widget_input_pause(ctx: "Context", signal: WidgetInputPause
                                      ) -> str | None:
     """Pause the agent turn on an input widget and resume with the
     user's answer formatted as a synthetic user-message string.
@@ -341,7 +344,7 @@ async def _handle_widget_input_pause(ctx, signal: WidgetInputPause
     return default_inject_message(response.data)
 
 
-async def _handle_end_turn_confirm(ctx, action: EndTurnConfirm) -> bool:
+async def _handle_end_turn_confirm(ctx: "Context", action: EndTurnConfirm) -> bool:
     """Handle an EndTurnConfirm action via the event bus.
 
     Publishes a confirmation request and waits for the user to click
@@ -362,7 +365,7 @@ async def _handle_end_turn_confirm(ctx, action: EndTurnConfirm) -> bool:
     return result.get("approved", False)
 
 
-async def _call_llm_with_events(ctx, config, messages, tools,
+async def _call_llm_with_events(ctx: "Context", config, messages, tools,
                                 model_name=None,
                                 llm_url=None, llm_model=None,
                                 llm_api_key=None) -> dict:
@@ -421,7 +424,7 @@ async def _call_llm_with_events(ctx, config, messages, tools,
 # -- Turn setup helpers ---------------------------------------------------------
 
 
-async def _setup_turn_state(ctx, config, history) -> dict[str, str]:
+async def _setup_turn_state(ctx: "Context", config, history) -> dict[str, str]:
     """Restore persisted skill/model state and resolve model overrides.
 
     Handles:
@@ -1302,7 +1305,7 @@ class TurnRunner:
                 log.debug("skill state persistence failed for %s: %s", conv_id, exc)
 
 
-async def run_agent_turn(ctx, user_message: str, history: list,
+async def run_agent_turn(ctx: "Context", user_message: str, history: list,
                          archive_text: str = "",
                          attachments: list[dict] | None = None) -> "ToolResult":
     """Process a single user message through the agent loop.

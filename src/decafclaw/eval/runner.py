@@ -97,7 +97,7 @@ class _EvalConversationManager(ConversationManager):
         self.subscribe(conv_id, _resolver)
 
 
-async def _setup_skills(ctx, test_case: dict):
+async def _setup_skills(ctx: "Context", test_case: dict):
     """Pre-activate skills specified in setup.skills."""
     setup = _setup_of(test_case)
     skill_names = setup.get("skills", [])
