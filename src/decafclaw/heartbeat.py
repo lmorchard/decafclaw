@@ -112,13 +112,41 @@ def _split_sections(text: str) -> list[dict]:
     return sections
 
 
+# Substrings that mark a turn as abnormally terminated, emitted verbatim by
+# agent.py's _finalize_max_iterations / _finalize_loop_break. A turn that ended
+# this way is never "nothing to report", whatever its text happens to contain —
+# see is_heartbeat_ok.
+_ABNORMAL_TERMINATION_MARKERS = (
+    "[Agent reached max tool iterations",
+    "[loop-breaker] Stopped",
+)
+
+
 def is_heartbeat_ok(response: str | None) -> bool:
     """Check if a response indicates nothing to report.
 
-    Returns True if HEARTBEAT_OK appears (case-insensitive) within
-    the first 300 characters.
+    Returns True if HEARTBEAT_OK appears (case-insensitive) within the first
+    300 characters — but always False for an abnormally terminated turn.
+
+    The override exists because heartbeat and scheduled turns have no live
+    transport subscriber, so agent.py's _finalize_with_note delivers the turn's
+    accumulated mid-turn preambles alongside the termination note. Since
+    polling.py tells the agent to say HEARTBEAT_OK when there is nothing to
+    report, a preamble mentioning the sentinel is a plausible utterance, and one
+    landing inside the 300-char window used to suppress the very alert the
+    abnormal termination should have raised (#710). The real predicate is "did
+    this turn end normally", not "how long is the prefix".
+
+    Markers are matched against the whole response, not the first 300
+    characters: #707 puts the note first, but scoping the marker check to the
+    window would quietly re-couple this to that ordering. Matching is
+    case-sensitive — these are literal strings the code emits, not user prose.
+    #712 tracks replacing the substring match with a structured termination
+    signal, which is what removes the 300-char window itself.
     """
     if not response:
+        return False
+    if any(marker in response for marker in _ABNORMAL_TERMINATION_MARKERS):
         return False
     return "heartbeat_ok" in response[:300].lower()
 
