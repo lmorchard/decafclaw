@@ -169,6 +169,13 @@ async def _clear_project_progress(ctx: "Context") -> None:
 
 async def tool_project_create(ctx: "Context", description: str, slug: str = "") -> str | ToolResult:
     """Create a new structured project."""
+    # Clear sticky if outgoing project is EXECUTING (#656)
+    outgoing_slug = _get_current_project(ctx)
+    if outgoing_slug:
+        outgoing_info = load_project(ctx.config, outgoing_slug)
+        if outgoing_info and outgoing_info.status == ProjectState.EXECUTING:
+            await _clear_project_progress(ctx)
+
     info = create_project(ctx.config, description, slug=slug)
     _set_current_project(ctx, info.slug)
     return (
@@ -416,10 +423,19 @@ async def tool_project_list(ctx: "Context") -> str | ToolResult:
 
 async def tool_project_switch(ctx: "Context", project: str) -> str | ToolResult:
     """Switch the current project context."""
+    outgoing_slug = _get_current_project(ctx)
+
     result = _load_or_error(ctx.config, project)
     if isinstance(result, ToolResult):
         return result
     info = result
+
+    # Clear sticky if outgoing project is EXECUTING and we're actually changing (#656)
+    if outgoing_slug and outgoing_slug != info.slug:
+        outgoing_info = load_project(ctx.config, outgoing_slug)
+        if outgoing_info and outgoing_info.status == ProjectState.EXECUTING:
+            await _clear_project_progress(ctx)
+
     _set_current_project(ctx, info.slug)
     return f"Switched to project '{info.slug}' ({info.status.value}). Call project_next_task."
 
