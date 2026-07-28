@@ -476,3 +476,40 @@ class TestProgressTrackerEmit:
         result = await tool_project_advance(ctx, target_status="planning")
         assert "reverted" in _text(result).lower()
         assert clear_mock.await_count >= 1
+
+    @pytest.mark.asyncio
+    async def test_switch_away_from_executing_clears(self, ctx, monkeypatch):
+        """C1: Switching to another project while current is EXECUTING clears its tracker."""
+        from unittest.mock import AsyncMock
+        clear_mock = AsyncMock()
+        monkeypatch.setattr("decafclaw.sticky.set_sticky", AsyncMock())
+        monkeypatch.setattr("decafclaw.sticky.clear_sticky", clear_mock)
+        # Create and advance project A to EXECUTING
+        await _advance_to_executing(ctx, slug="pt-switch-a")
+        # Create project B (which will be in BRAINSTORMING)
+        await tool_project_create(ctx, description="Project B", slug="pt-switch-b")
+        clear_mock.reset_mock()
+        # Switch back to project A (still EXECUTING) then switch to B
+        await tool_project_switch(ctx, project="pt-switch-a")
+        clear_mock.reset_mock()  # reset again after switch to A
+        # Now switch away from the EXECUTING project A to project B
+        result = await tool_project_switch(ctx, project="pt-switch-b")
+        assert "pt-switch-b" in _text(result).lower()
+        # The sticky slot should have been cleared when leaving the EXECUTING project
+        assert clear_mock.await_count >= 1
+
+    @pytest.mark.asyncio
+    async def test_create_while_executing_clears(self, ctx, monkeypatch):
+        """C2: Creating a new project while current is EXECUTING clears the tracker."""
+        from unittest.mock import AsyncMock
+        clear_mock = AsyncMock()
+        monkeypatch.setattr("decafclaw.sticky.set_sticky", AsyncMock())
+        monkeypatch.setattr("decafclaw.sticky.clear_sticky", clear_mock)
+        # Create and advance project A to EXECUTING
+        await _advance_to_executing(ctx, slug="pt-create-a")
+        clear_mock.reset_mock()
+        # Create a new project, which makes it active — should clear A's tracker
+        result = await tool_project_create(ctx, description="Project B", slug="pt-create-b")
+        assert "pt-create-b" in _text(result).lower()
+        # The sticky slot should have been cleared when leaving the EXECUTING project
+        assert clear_mock.await_count >= 1
