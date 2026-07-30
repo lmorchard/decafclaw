@@ -37,6 +37,7 @@
 | `src/decafclaw/web/static/components/schedule-metadata.js` | **New.** The schedules metadata panel |
 | `src/decafclaw/web/static/components/schedule-metadata.test.js` | **New.** |
 | `src/decafclaw/web/static/components/schedule-page.js` | Host the panel; drop the three inline controls |
+| `src/decafclaw/web/static/components/schedule-page.test.js` | **New.** Panel wiring, model-list fetch, 400 surfacing |
 | `src/decafclaw/web/static/styles/chip-list.css` | **New.** |
 | `src/decafclaw/web/static/styles/schedule-metadata.css` | **New.** |
 | `src/decafclaw/web/static/styles/wiki-metadata.css` | Remove the chip rules that moved |
@@ -990,6 +991,22 @@ Replace the whole `#renderChipInput` method with:
 
 `#emitList` already maps an empty array to `null` (key removal), so vault semantics are unchanged. `#removeTag` and `#addTagKey` are now unused — delete both.
 
+**Also update the read-only chip renderer.** `wiki-metadata` has a *second*
+chip renderer: `#renderChips` (around line 292) emits `<span class="wiki-md-chip">`
+for the collapsed strip and the read-only detail view, and it is not going
+away. Since Step 4 deletes the `.wiki-md-chip` rule, this method must move to
+the shared class or those chips lose their styling:
+
+```js
+  /** @param {string[]} tags */
+  #renderChips(tags) {
+    return tags.map(tag => html`<span class="dc-chip">${tag}</span>`);
+  }
+```
+
+After this, `grep -n "wiki-md-chip" src/decafclaw/web/static/components/wiki-metadata.js`
+must return nothing. Run it as a check.
+
 - [ ] **Step 6: Run all JS tests**
 
 ```bash
@@ -1223,11 +1240,6 @@ Create `src/decafclaw/web/static/components/schedule-metadata.js`:
 import { LitElement, html, nothing } from 'lit';
 import './chip-list.js';
 
-/** Chip-backed fields: [patch key, label]. */
-const PLAIN_LISTS = [
-  ['required_skills', 'Required skills'],
-];
-
 /** Chip-backed fields that pre-approve actions past confirmation. */
 const PERMISSION_LISTS = [
   ['allowed_tools', 'Allowed tools'],
@@ -1392,7 +1404,7 @@ export class ScheduleMetadata extends LitElement {
               @change=${(/** @type {Event} */ e) => this.#onText('pre_script', e)}
             />
           </label>
-          ${PLAIN_LISTS.map(([f, l]) => this.#renderChips(f, l))}
+          ${this.#renderChips('required_skills', 'Required skills')}
         </div>
 
         <div class="sched-md-permissions">
