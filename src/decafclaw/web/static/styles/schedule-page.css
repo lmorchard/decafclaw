@@ -74,6 +74,23 @@ button.schedule-reset-btn:hover {
   color: var(--pico-primary-inverse);
 }
 
+/* Shrink budget between the two body children. These two rules are a
+   pair: wiki-editor is `flex: 1` with a 0 basis, so it contributes no
+   weighted shrink and every pixel of shrink would otherwise land on the
+   metadata panel — which has grown from three controls to eight fields
+   plus a permissions box plus a raw block. Without `flex-shrink: 0` a
+   short viewport clips the permissions group and the unrecognized-key
+   warning unreachably and collapses the editor toward 0px. The panel
+   scrolls itself instead, capped so it can never crowd the editor out.
+   (Internal padding/border live in schedule-metadata.css.) */
+.schedule-page schedule-metadata {
+  display: block;
+  flex-shrink: 0;
+  max-height: 45%;
+  overflow-y: auto;
+  border-bottom: 1px solid var(--pico-muted-border-color);
+}
+
 /* wiki-editor fills the remaining height */
 .schedule-page wiki-editor {
   flex: 1;

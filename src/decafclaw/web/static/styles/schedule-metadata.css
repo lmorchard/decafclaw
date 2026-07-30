@@ -1,10 +1,73 @@
-/* Schedule metadata panel. */
+/* Schedule metadata panel.
+
+   The host's flex/scroll behaviour inside the page column lives in
+   schedule-page.css; this file owns the panel's own padding, border and
+   field layout. Both halves replace the `.schedule-page-form` rules the
+   inline three-field form used to carry — without them the panel renders
+   on bare Pico defaults (full-width stacked controls, no label column). */
+
+.sched-md {
+  padding: 0.6rem 1rem;
+}
 
 .sched-md-form,
 .sched-md-permissions {
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
+}
+
+/* One row per field: fixed label column, control takes the rest. */
+.sched-md label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0;
+  color: var(--pico-muted-color);
+  font-size: 0.8rem;
+}
+
+.sched-md label > span:first-child {
+  flex-shrink: 0;
+  width: 7.5rem;
+  white-space: nowrap;
+}
+
+.sched-md input[type="text"],
+.sched-md select {
+  flex: 1;
+  min-width: 0;
+  height: auto;
+  margin: 0;
+  padding: 0.2rem 0.4rem;
+  font-size: 0.85rem;
+}
+
+/* Checkbox keeps its intrinsic size rather than stretching to fill. */
+.sched-md label.sched-md-inline input[type="checkbox"] {
+  flex: 0 0 auto;
+  width: 1rem;
+  height: 1rem;
+  margin: 0;
+}
+
+/* chip-list is a light-DOM custom element with no display of its own. */
+.sched-md chip-list {
+  display: flex;
+  flex: 1;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem;
+  min-width: 0;
+}
+
+/* Sits below the fallback text input, aligned under the control column
+   (7.5rem label + 0.5rem gap). */
+.sched-md-model-note {
+  margin-left: 8rem;
+  color: var(--pico-muted-color);
+  font-size: 0.7rem;
+  font-style: italic;
 }
 
 .sched-md-permissions {
