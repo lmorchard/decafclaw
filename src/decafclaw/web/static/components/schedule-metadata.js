@@ -81,21 +81,30 @@ export class ScheduleMetadata extends LitElement {
     // option rather than a blank field — blank reads as "unset", which
     // is exactly how #729 stayed invisible.
     const unconfigured = current && !this.models.includes(current);
+    // Selection is expressed per-option, never via `.value` on the
+    // <select>. lit commits parts in tree order, so a `.value` binding
+    // lands before the option child part has produced any options:
+    // selectedIndex goes to -1, appending options triggers the select
+    // reset algorithm, and "(default)" wins. lit then never re-commits
+    // the unchanged string, so it cannot self-heal — a configured model
+    // would read as unset, which is #729's ambiguity all over again.
+    // Same pattern as the model picker in conversation-sidebar.js.
     return html`
       <label>
         <span>Model</span>
         <select
           class="sched-md-model"
           ?disabled=${this.readonly}
-          .value=${current}
           @change=${(/** @type {Event} */ e) =>
             this.#emit('model', /** @type {HTMLSelectElement} */ (e.target).value)}
         >
-          <option value="">(default)</option>
+          <option value="" ?selected=${!current}>(default)</option>
           ${unconfigured ? html`
             <option value=${current} selected>⚠ ${current} (not configured)</option>
           ` : nothing}
-          ${this.models.map(m => html`<option value=${m}>${m}</option>`)}
+          ${this.models.map(m => html`
+            <option value=${m} ?selected=${m === current}>${m}</option>
+          `)}
         </select>
       </label>
     `;

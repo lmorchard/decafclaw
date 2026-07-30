@@ -96,6 +96,36 @@ describe('schedule-metadata', () => {
     expect(seen).toEqual([{ shell_patterns: ['curl *'] }]);
   });
 
+  // Both orderings matter: schedule-page fetches the schedule and the
+  // model list independently, so `models` can land before or after
+  // `data`. A `.value` binding on the <select> loses in both — lit
+  // commits it before the option child part exists, and never
+  // re-commits an unchanged string afterwards.
+  it('selects the configured model when models arrive before data', async () => {
+    const el = /** @type {any} */ (document.createElement('schedule-metadata'));
+    el.models = ['vertex-gemini-flash', 'vertex-gemini-pro'];
+    el.data = { ...BASE, model: 'vertex-gemini-pro' };
+    document.body.appendChild(el);
+    await el.updateComplete;
+
+    const select = /** @type {HTMLSelectElement} */ (el.querySelector('.sched-md-model'));
+    expect(select.value).toBe('vertex-gemini-pro');
+  });
+
+  it('selects the configured model when models arrive after data', async () => {
+    const el = /** @type {any} */ (document.createElement('schedule-metadata'));
+    el.data = { ...BASE, model: 'vertex-gemini-pro' };
+    el.models = [];
+    document.body.appendChild(el);
+    await el.updateComplete;
+
+    el.models = ['vertex-gemini-flash', 'vertex-gemini-pro'];
+    await el.updateComplete;
+
+    const select = /** @type {HTMLSelectElement} */ (el.querySelector('.sched-md-model'));
+    expect(select.value).toBe('vertex-gemini-pro');
+  });
+
   it('flags a stored model that is not configured', async () => {
     // #729: a blank field would read as "no model set", which is the
     // ambiguity that kept the bug invisible.
