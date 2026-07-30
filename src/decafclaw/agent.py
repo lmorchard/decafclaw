@@ -467,12 +467,37 @@ async def _setup_turn_state(ctx: "Context", config, history) -> dict[str, str]:
                     ctx.active_model = name
                     break
 
-    # Build model override for the LLM call
+    return _resolve_model_override(ctx, config)
+
+
+def _resolve_model_override(ctx: "Context", config) -> dict[str, str]:
+    """Turn ``ctx.active_model`` into LLM config overrides.
+
+    An ``active_model`` that isn't a key in ``config.model_configs`` warns
+    rather than silently falling back. Model names reach here from several
+    unvalidated sources — a schedule's ``model:`` frontmatter, a forked
+    skill's ``model:``, ``delegate_task``'s ``model`` argument — and a
+    stale one is otherwise indistinguishable from no selection at all
+    (#729: bundled ``dream``/``garden`` carried ``model: strong``, a
+    leftover from the removed effort system, and ran on the default model
+    for months without a single log line saying so).
+    """
     model_override: dict[str, str] = {}
     if ctx.active_model and ctx.active_model in config.model_configs:
         model_override = {"model_name": ctx.active_model}
         log.info("Agent turn: model=%s", ctx.active_model)
-    elif config.default_model:
+        return model_override
+
+    if ctx.active_model:
+        known = ", ".join(sorted(config.model_configs)) or "(none configured)"
+        fallback = config.default_model or config.llm.model
+        log.warning(
+            "Unknown model %r requested — falling back to %s. "
+            "Configured model_configs: %s",
+            ctx.active_model, fallback, known,
+        )
+
+    if config.default_model:
         model_override = {"model_name": config.default_model}
         log.info("Agent turn: model=%s (default)", config.default_model)
     else:

@@ -1,6 +1,5 @@
 ---
 schedule: "0 6 * * *"
-model: strong
 required-skills:
   - blog-ideas
   - vault

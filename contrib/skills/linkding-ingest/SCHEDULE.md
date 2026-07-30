@@ -1,6 +1,5 @@
 ---
 schedule: "45 */12 * * *"
-model: default
 required-skills:
   - linkding-ingest
   - tabstack

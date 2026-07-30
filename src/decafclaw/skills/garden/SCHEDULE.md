@@ -1,6 +1,5 @@
 ---
 schedule: "0 3 * * 0"
-model: strong
 required-skills:
   - garden
   - vault
