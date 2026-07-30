@@ -35,9 +35,24 @@ Report key themes and anything that needs attention.
 | `enabled` | bool | no | `true` | Quick toggle without deleting the file |
 | `model` | string | no | — | Named model config for this task. Omit to use `default_model`. |
 | `allowed-tools` | list | no | all | Restrict which tools the task can use |
+| `shell_patterns` | list | no | — | Derived from `shell(...)` entries in `allowed-tools`. Pre-approves matching commands. |
+| `email-recipients` | list | no | — | Pre-approved email addresses for `send_email` that bypass confirmation for this task only. See [email.md](email.md#scheduled-task-integration). Exact addresses or `@domain.com` suffix patterns. |
 | `pre_script` | string | no | — | Python script run **before** the turn; its stdout is injected into the prompt. Relative to `workspace/` or `data/{agent_id}/`. See [Pre-agent scripts](#pre-agent-scripts). |
 | `required-skills` | list | no | — | Skills to pre-activate before running the task |
-| `email-recipients` | list | no | — | Pre-approved email addresses for `send_email` that bypass confirmation for this task only. See [email.md](email.md#scheduled-task-integration). Exact addresses or `@domain.com` suffix patterns. |
+
+### Unrecognized keys
+
+The parser reads only the keys above. Anything else in a schedule's
+frontmatter is ignored, logged at WARNING on load, and listed in the web
+UI's raw section:
+
+```
+⚠ 2 keys in this file are not recognized and are ignored: modle, efort
+```
+
+This exists because a silently-dropped key is indistinguishable from a
+key that took effect — the failure mode behind #729, where `model: strong`
+was accepted and discarded for months.
 
 ### Cron expressions
 
@@ -90,6 +105,21 @@ The three bundled skills `dream`, `garden`, and `newsletter` each ship a `SCHEDU
 **Contrib default-disable:** Skills discovered from `extra_skill_paths` have their `enabled` flag forced to `false` regardless of what the SCHEDULE.md says. Installing a contrib skill should not silently activate a cron job. Users opt in via the admin overlay (see below).
 
 **Workspace skills excluded:** Workspace skill directories (`workspace/skills/`) are not scanned for SCHEDULE.md — parallels the existing rule that workspace skills cannot self-schedule.
+
+## Editing from the web UI
+
+The schedules page exposes every frontmatter field. Edits PUT to
+`/api/schedules/{name}`, which writes an admin overlay for skill-supplied
+schedules and edits standalone files in place.
+
+`allowed-tools`, shell patterns and `email-recipients` are grouped and
+marked separately: they pre-approve actions that would otherwise require
+confirmation.
+
+The raw section is read-only. Schedule frontmatter maps onto a fixed set
+of fields, so once each has a control there is nothing an editable raw
+box could reach — and a key typed there would be dropped on the next
+write.
 
 ### Discovery precedence
 
