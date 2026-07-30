@@ -83,17 +83,28 @@ describe('schedule-metadata', () => {
     expect(seen).toEqual([{ enabled: false }]);
   });
 
-  it('forwards chip edits under the right patch key', async () => {
+  // Every chip field, not just one: a typo in a patch key produces a
+  // PUT the server answers 200 to with the field untouched, _saveError
+  // clears, and the edit silently evaporates — this branch's own thesis
+  // bug, on the write path.
+  it.each([
+    ['required_skills', 'Required skills'],
+    ['allowed_tools', 'Allowed tools'],
+    ['shell_patterns', 'Shell patterns'],
+    ['email_recipients', 'Email recipients'],
+  ])('forwards %s chip edits under that exact patch key', async (field, label) => {
     const el = mount();
     await el.updateComplete;
     const seen = changes(el);
 
-    const chips = /** @type {any} */ (el.querySelector('chip-list[data-field="shell_patterns"]'));
+    const chips = /** @type {any} */ (el.querySelector(`chip-list[data-field="${field}"]`));
+    expect(chips, `no chip-list rendered for ${field}`).toBeTruthy();
+    expect(chips.label).toBe(label);
     chips.dispatchEvent(new CustomEvent('chips-change', {
-      detail: { items: ['curl *'] }, bubbles: true, composed: true,
+      detail: { items: ['probe-value'] }, bubbles: true, composed: true,
     }));
 
-    expect(seen).toEqual([{ shell_patterns: ['curl *'] }]);
+    expect(seen).toEqual([{ [field]: ['probe-value'] }]);
   });
 
   // Both orderings matter: schedule-page fetches the schedule and the
