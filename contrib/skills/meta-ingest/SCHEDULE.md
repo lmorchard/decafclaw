@@ -1,7 +1,6 @@
 ---
 schedule: "15 */12 * * *"
 enabled: false
-model: default
 required-skills:
   - meta-ingest
   - tabstack

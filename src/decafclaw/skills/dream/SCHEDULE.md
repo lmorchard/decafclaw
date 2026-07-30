@@ -1,6 +1,5 @@
 ---
 schedule: "0 3 * * *"
-model: strong
 required-skills:
   - dream
   - vault
