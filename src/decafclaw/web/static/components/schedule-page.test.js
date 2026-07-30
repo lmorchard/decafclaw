@@ -38,6 +38,60 @@ describe('schedule-page', () => {
     expect(panel.models).toEqual(['a', 'b']);
   });
 
+  it('tells the panel the model list is unavailable after an HTTP failure', async () => {
+    /** @type {any} */ (globalThis.fetch).mockImplementation(async (/** @type {string} */ url) => {
+      if (url.startsWith('/api/models')) return { ok: false, status: 500, json: async () => ({}) };
+      return { ok: true, json: async () => ({ schedule: SCHEDULE }) };
+    });
+
+    const el = /** @type {any} */ (document.createElement('schedule-page'));
+    el.name = 'dream';
+    document.body.appendChild(el);
+    await el.updateComplete;
+    await new Promise(r => setTimeout(r, 0));
+    await el.updateComplete;
+
+    const panel = /** @type {any} */ (el.querySelector('schedule-metadata'));
+    expect(panel.modelsUnavailable).toBe(true);
+  });
+
+  it('tells the panel the model list is unavailable after a network error', async () => {
+    /** @type {any} */ (globalThis.fetch).mockImplementation(async (/** @type {string} */ url) => {
+      if (url.startsWith('/api/models')) throw new TypeError('Failed to fetch');
+      return { ok: true, json: async () => ({ schedule: SCHEDULE }) };
+    });
+
+    const el = /** @type {any} */ (document.createElement('schedule-page'));
+    el.name = 'dream';
+    document.body.appendChild(el);
+    await el.updateComplete;
+    await new Promise(r => setTimeout(r, 0));
+    await el.updateComplete;
+
+    const panel = /** @type {any} */ (el.querySelector('schedule-metadata'));
+    expect(panel.modelsUnavailable).toBe(true);
+  });
+
+  it('does not flag an empty-but-successful model list as unavailable', async () => {
+    /** @type {any} */ (globalThis.fetch).mockImplementation(async (/** @type {string} */ url) => {
+      if (url.startsWith('/api/models')) {
+        return { ok: true, json: async () => ({ models: [], default: '' }) };
+      }
+      return { ok: true, json: async () => ({ schedule: SCHEDULE }) };
+    });
+
+    const el = /** @type {any} */ (document.createElement('schedule-page'));
+    el.name = 'dream';
+    document.body.appendChild(el);
+    await el.updateComplete;
+    await new Promise(r => setTimeout(r, 0));
+    await el.updateComplete;
+
+    const panel = /** @type {any} */ (el.querySelector('schedule-metadata'));
+    expect(panel.models).toEqual([]);
+    expect(panel.modelsUnavailable).toBe(false);
+  });
+
   it('PUTs the patch when the panel emits metadata-change', async () => {
     const el = /** @type {any} */ (document.createElement('schedule-page'));
     el.name = 'dream';
@@ -82,6 +136,31 @@ describe('schedule-page', () => {
 
     expect(/** @type {any} */ (el.querySelector('schedule-metadata')).error)
       .toContain('invalid cron');
+  });
+
+  it('surfaces a network-level PUT failure instead of only logging it', async () => {
+    const el = /** @type {any} */ (document.createElement('schedule-page'));
+    el.name = 'dream';
+    document.body.appendChild(el);
+    await el.updateComplete;
+    await new Promise(r => setTimeout(r, 0));
+    await el.updateComplete;
+
+    // fetch rejects outright (offline, server restarting) — never
+    // reaches the res.ok branch.
+    /** @type {any} */ (globalThis.fetch).mockImplementation(async () => {
+      throw new TypeError('Failed to fetch');
+    });
+
+    const panel = /** @type {any} */ (el.querySelector('schedule-metadata'));
+    panel.dispatchEvent(new CustomEvent('metadata-change', {
+      detail: { fields: { channel: 'abc' } }, bubbles: true, composed: true,
+    }));
+    await new Promise(r => setTimeout(r, 0));
+    await el.updateComplete;
+
+    expect(/** @type {any} */ (el.querySelector('schedule-metadata')).error)
+      .toContain('could not reach the server');
   });
 
   it('clears the previous save error when switching to a different schedule', async () => {

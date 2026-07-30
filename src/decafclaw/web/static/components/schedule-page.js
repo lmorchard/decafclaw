@@ -18,6 +18,7 @@ export class SchedulePage extends LitElement {
     _runStatus: { state: true },
     _runError: { state: true },
     _models: { state: true },
+    _modelsUnavailable: { state: true },
     _saveError: { state: true },
   };
 
@@ -34,6 +35,7 @@ export class SchedulePage extends LitElement {
     this._runError = '';
     /** @type {string[]} */
     this._models = [];
+    this._modelsUnavailable = false;
     this._saveError = '';
   }
 
@@ -69,11 +71,20 @@ export class SchedulePage extends LitElement {
   async #fetchModels() {
     try {
       const res = await fetch('/api/models');
-      if (!res.ok) return;
+      if (!res.ok) {
+        this._modelsUnavailable = true;
+        console.warn('schedule-page: model list fetch failed:', res.status);
+        return;
+      }
       const data = await res.json();
       this._models = data.models || [];
+      // An empty list from a 200 is a real state (no model_configs), so
+      // it stays "available" — the panel shows an honest one-entry
+      // dropdown rather than the manual-entry fallback.
+      this._modelsUnavailable = false;
     } catch (e) {
-      // Non-fatal: the panel falls back to whatever is stored.
+      // Non-fatal: the panel falls back to a free-text model field.
+      this._modelsUnavailable = true;
       console.warn('schedule-page: model list fetch failed:', e);
     }
   }
@@ -107,6 +118,10 @@ export class SchedulePage extends LitElement {
       this._data = data.schedule;
       window.dispatchEvent(new CustomEvent('schedule-saved'));
     } catch (e) {
+      // Offline or a restarting server never reaches the HTTP-error
+      // path above, so without this the edit vanishes with no feedback
+      // at all — the same invisibility the status-code branch fixes.
+      this._saveError = 'save failed: could not reach the server';
       console.warn('schedule-page: PUT error:', e);
     }
   }
@@ -219,6 +234,7 @@ export class SchedulePage extends LitElement {
         <schedule-metadata
           .data=${d}
           .models=${this._models}
+          .modelsUnavailable=${this._modelsUnavailable}
           .error=${this._saveError}
           @metadata-change=${(/** @type {CustomEvent} */ e) => this.#onMetadataChange(e)}
         ></schedule-metadata>

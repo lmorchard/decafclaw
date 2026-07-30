@@ -18,10 +18,11 @@ const BASE = {
 };
 
 /** @returns {any} */
-function mount(overrides = {}) {
+function mount(overrides = {}, props = {}) {
   const el = /** @type {any} */ (document.createElement('schedule-metadata'));
   el.data = { ...BASE, ...overrides };
   el.models = ['vertex-gemini-flash', 'vertex-gemini-pro'];
+  Object.assign(el, props);
   document.body.appendChild(el);
   return el;
 }
@@ -147,12 +148,57 @@ describe('schedule-metadata', () => {
     expect(select.textContent).toContain('not configured');
   });
 
-  it('names unrecognized keys', async () => {
+  it('falls back to a text input when the model list is unavailable', async () => {
+    // An expired session or a 500 on /api/models must not leave the
+    // field uneditable with no explanation.
+    const el = mount({ model: 'vertex-gemini-pro' }, { models: [], modelsUnavailable: true });
+    await el.updateComplete;
+
+    expect(el.querySelector('.sched-md-model')).toBeNull();
+    const input = /** @type {HTMLInputElement} */ (el.querySelector('.sched-md-model-text'));
+    expect(input).toBeTruthy();
+    expect(input.value).toBe('vertex-gemini-pro');
+
+    const seen = changes(el);
+    input.value = 'vertex-gemini-flash';
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+    expect(seen).toEqual([{ model: 'vertex-gemini-flash' }]);
+  });
+
+  it('keeps the dropdown when the model list loaded but is empty', async () => {
+    // A fresh agent with no model_configs is a real state, not an
+    // error — it must not look like the fetch failed.
+    const el = mount({ model: '' }, { models: [] });
+    await el.updateComplete;
+
+    expect(el.querySelector('.sched-md-model-text')).toBeNull();
+    const select = /** @type {HTMLSelectElement} */ (el.querySelector('.sched-md-model'));
+    expect(select).toBeTruthy();
+    expect(select.querySelectorAll('option')).toHaveLength(1);
+    expect(el.querySelector('.sched-md-model-note')).toBeNull();
+  });
+
+  it('names unrecognized keys and warns they will be removed', async () => {
     const el = mount({ unknown_keys: ['modle', 'efort'] });
     await el.updateComplete;
-    const warning = el.querySelector('.sched-md-unknown');
-    expect(warning?.textContent).toContain('modle');
-    expect(warning?.textContent).toContain('efort');
+    const warning = /** @type {string} */ (
+      el.querySelector('.sched-md-unknown')?.textContent.replace(/\s+/g, ' '));
+    expect(warning).toContain('modle');
+    expect(warning).toContain('efort');
+    // "ignored" understates it: the next save rewrites the file through
+    // serialize_to_markdown, which drops them.
+    expect(warning).toContain('2 keys are not recognized');
+    expect(warning).toContain('will remove them');
+    expect(warning).not.toContain('ignored');
+  });
+
+  it('phrases the unrecognized-key warning in the singular for one key', async () => {
+    const el = mount({ unknown_keys: ['modle'] });
+    await el.updateComplete;
+    const warning = /** @type {string} */ (
+      el.querySelector('.sched-md-unknown')?.textContent.replace(/\s+/g, ' '));
+    expect(warning).toContain('1 key is not recognized');
+    expect(warning).toContain('will remove it');
   });
 
   it('shows no warning when every key is recognized', async () => {
@@ -165,6 +211,16 @@ describe('schedule-metadata', () => {
     const el = mount();
     await el.updateComplete;
     expect(el.querySelector('.sched-md-permissions')).toBeTruthy();
+  });
+
+  it('groups pre_script with the permissions, not the plain form', async () => {
+    // pre_script executes arbitrary Python as the bot process on the
+    // next fire — the most powerful field on the panel. Unmarked in the
+    // plain form it read as an ordinary path setting.
+    const el = mount();
+    await el.updateComplete;
+    expect(el.querySelector('.sched-md-permissions .sched-md-pre-script')).toBeTruthy();
+    expect(el.querySelector('.sched-md-form .sched-md-pre-script')).toBeNull();
   });
 
   it('renders raw frontmatter read-only', async () => {

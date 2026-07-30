@@ -17,7 +17,13 @@
 import { LitElement, html, nothing } from 'lit';
 import './chip-list.js';
 
-/** Chip-backed fields that pre-approve actions past confirmation. */
+/** Chip-backed fields that pre-approve actions past confirmation.
+ *
+ * `pre_script` belongs to the same group but is a plain text field, so
+ * it is rendered separately at the end of the permissions box rather
+ * than through this list. It runs arbitrary Python as the bot process
+ * on the next fire — the most powerful control on the panel — and read
+ * as an ordinary path field when it sat unmarked in the plain form. */
 const PERMISSION_LISTS = [
   ['allowed_tools', 'Allowed tools'],
   ['shell_patterns', 'Shell patterns'],
@@ -28,6 +34,7 @@ export class ScheduleMetadata extends LitElement {
   static properties = {
     data: { attribute: false },
     models: { attribute: false },
+    modelsUnavailable: { type: Boolean },
     readonly: { type: Boolean },
     error: { type: String },
     _rawOpen: { state: true },
@@ -39,6 +46,9 @@ export class ScheduleMetadata extends LitElement {
     super();
     /** @type {any} */ this.data = null;
     /** @type {string[]} */ this.models = [];
+    /** True only when the `/api/models` fetch failed — not when it
+     * succeeded with an empty list. */
+    this.modelsUnavailable = false;
     this.readonly = false;
     /** Server message for the last failed write; '' when clear. */
     this.error = '';
@@ -75,8 +85,36 @@ export class ScheduleMetadata extends LitElement {
     `;
   }
 
+  /**
+   * Fallback when `/api/models` could not be reached. Without it an
+   * expired session or a 500 leaves the field uneditable and unexplained.
+   * Deliberately keyed off an explicit failure flag rather than an empty
+   * `models` array: a fresh agent with no `model_configs` is a real
+   * state, and it should show an honest one-entry dropdown, not an error.
+   * @param {string} current
+   */
+  #renderModelText(current) {
+    return html`
+      <label>
+        <span>Model</span>
+        <input
+          class="sched-md-model-text"
+          type="text"
+          placeholder="(default)"
+          ?disabled=${this.readonly}
+          .value=${current}
+          @change=${(/** @type {Event} */ e) => this.#onText('model', e)}
+        />
+      </label>
+      <div class="sched-md-model-note">
+        Model list unavailable — type a model config name.
+      </div>
+    `;
+  }
+
   #renderModel() {
     const current = this.data?.model ?? '';
+    if (this.modelsUnavailable) return this.#renderModelText(current);
     // A stored value absent from model_configs renders as a flagged
     // option rather than a blank field — blank reads as "unset", which
     // is exactly how #729 stayed invisible.
@@ -113,11 +151,15 @@ export class ScheduleMetadata extends LitElement {
   #renderUnknown() {
     const keys = this.data?.unknown_keys ?? [];
     if (!keys.length) return nothing;
-    const plural = keys.length === 1 ? 'key is' : 'keys are';
+    const one = keys.length === 1;
+    // Not merely "ignored": any field edit rewrites the whole file
+    // through serialize_to_markdown, which emits only recognized keys —
+    // so these disappear, and so do any YAML comments.
     return html`
       <div class="sched-md-unknown">
-        ⚠ ${keys.length} ${plural} not recognized and ${keys.length === 1 ? 'is' : 'are'}
-        ignored: ${keys.join(', ')}
+        ⚠ ${keys.length} ${one ? 'key is' : 'keys are'} not recognized. Saving any
+        field rewrites this file and will remove ${one ? 'it' : 'them'}, along with
+        any YAML comments: ${keys.join(', ')}
       </div>
     `;
   }
@@ -168,7 +210,8 @@ export class ScheduleMetadata extends LitElement {
             />
           </label>
           ${this.#renderModel()}
-          <label class="inline">
+          <label class="sched-md-inline">
+            <span>Enabled</span>
             <input
               class="sched-md-enabled"
               type="checkbox"
@@ -177,8 +220,15 @@ export class ScheduleMetadata extends LitElement {
               @change=${(/** @type {Event} */ e) =>
                 this.#emit('enabled', /** @type {HTMLInputElement} */ (e.target).checked)}
             />
-            <span>Enabled</span>
           </label>
+          ${this.#renderChips('required_skills', 'Required skills')}
+        </div>
+
+        <div class="sched-md-permissions">
+          <div class="sched-md-permissions-title">
+            ⚠ Permissions — these bypass confirmation
+          </div>
+          ${PERMISSION_LISTS.map(([f, l]) => this.#renderChips(f, l))}
           <label>
             <span>Pre-script</span>
             <input
@@ -190,14 +240,6 @@ export class ScheduleMetadata extends LitElement {
               @change=${(/** @type {Event} */ e) => this.#onText('pre_script', e)}
             />
           </label>
-          ${this.#renderChips('required_skills', 'Required skills')}
-        </div>
-
-        <div class="sched-md-permissions">
-          <div class="sched-md-permissions-title">
-            ⚠ Permissions — these bypass confirmation
-          </div>
-          ${PERMISSION_LISTS.map(([f, l]) => this.#renderChips(f, l))}
         </div>
 
         ${this.#renderRaw()}
