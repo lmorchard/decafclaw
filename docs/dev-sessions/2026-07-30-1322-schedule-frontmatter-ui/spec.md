@@ -130,7 +130,14 @@ Vault refactors onto it (2 uses: tags, keywords); schedules consumes it
 - emits `metadata-change {fields: {...}}` for typed edits
 - the host owns every PUT, so metadata writes serialize against the body
   autosave and keep mtime in sync
-- same 409 conflict banner shape (Reload / Overwrite / Retry)
+
+It does **not** copy `wiki-metadata`'s 409 conflict banner. `schedules_update`
+pops the `modified` hint and does not enforce it — `docs/web-ui.md` states the
+schedules surface is last-write-wins — so there is no 409 to handle and a
+Reload/Overwrite affordance would imply a guarantee the server does not make.
+The panel gets a plain error banner instead, for the 400s `write_overlay` does
+raise (invalid cron, non-list value). Adding conflict detection to the
+schedules endpoint is a separate concern from exposing its fields.
 
 Props: `data` (schedule dict), `models` (from `/api/models`), `readonly`,
 `metaError`.
@@ -182,7 +189,7 @@ reusing its existing `#patchField` PUT path.
 |---|---|
 | Invalid cron | Existing 400 from `write_overlay`, into the panel's error banner |
 | Non-list value for a list field | Existing 400, same banner |
-| Concurrent write (409) | Existing Reload / Overwrite / Retry banner |
+| Concurrent write | Last-write-wins, unchanged. Out of scope; see above |
 | Stored model not in `model_configs` | Flagged option in the dropdown, not an error |
 | Unrecognized frontmatter keys | Non-blocking warning strip above the raw block |
 | `/api/models` unreachable | Dropdown falls back to a plain text input; the field stays editable |
