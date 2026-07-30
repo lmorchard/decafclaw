@@ -16,6 +16,7 @@ from decafclaw.schedules import (
     read_last_run,
     run_schedule_task,
     run_schedule_timer,
+    serialize_to_markdown,
     write_last_run,
 )
 
@@ -1213,3 +1214,72 @@ class TestPreScriptRoundTrip:
         assert updated.pre_script == "scripts/fetch.py"
         reread = {t.name: t for t in discover_schedules(config)}["keeper"]
         assert reread.pre_script == "scripts/fetch.py"
+
+
+class TestUnknownFrontmatterKeys:
+    """#729 one layer up: a key the parser ignores must not vanish silently."""
+
+    def _write(self, tmp_path, text):
+        path = tmp_path / "task.md"
+        path.write_text(text)
+        return path
+
+    def test_unrecognized_keys_are_captured_sorted(self, tmp_path):
+        path = self._write(tmp_path, (
+            "---\n"
+            'schedule: "0 3 * * *"\n'
+            "modle: vertex-gemini-pro\n"
+            "efort: strong\n"
+            "---\n\n"
+            "Do the thing.\n"
+        ))
+        task = parse_schedule_file(path)
+        assert task is not None
+        assert task.unknown_keys == ["efort", "modle"]
+
+    def test_recognized_keys_are_never_flagged(self, tmp_path):
+        path = self._write(tmp_path, (
+            "---\n"
+            'schedule: "0 3 * * *"\n'
+            "enabled: false\n"
+            "channel: ops\n"
+            "model: gemini-flash\n"
+            "effort: strong\n"
+            "pre_script: scripts/x.py\n"
+            "allowed-tools: vault_read\n"
+            "required-skills:\n  - vault\n"
+            "email-recipients:\n  - a@example.com\n"
+            "---\n\n"
+            "Body.\n"
+        ))
+        task = parse_schedule_file(path)
+        assert task is not None
+        assert task.unknown_keys == []
+
+    def test_unknown_keys_are_not_written_back(self, tmp_path):
+        """serialize_to_markdown must not resurrect keys nothing reads."""
+        path = self._write(tmp_path, (
+            "---\n"
+            'schedule: "0 3 * * *"\n'
+            "modle: pro\n"
+            "---\n\n"
+            "Body.\n"
+        ))
+        task = parse_schedule_file(path)
+        assert task is not None
+        assert "modle" not in serialize_to_markdown(task)
+
+
+class TestExtractFrontmatterText:
+    def test_returns_the_raw_block_without_delimiters(self):
+        from decafclaw.skills import _extract_frontmatter_text
+        raw = _extract_frontmatter_text('---\na: 1\nb: 2\n---\n\nBody.\n')
+        assert raw == "a: 1\nb: 2"
+
+    def test_returns_empty_when_absent(self):
+        from decafclaw.skills import _extract_frontmatter_text
+        assert _extract_frontmatter_text("No frontmatter here.\n") == ""
+
+    def test_returns_empty_when_unterminated(self):
+        from decafclaw.skills import _extract_frontmatter_text
+        assert _extract_frontmatter_text("---\na: 1\n") == ""

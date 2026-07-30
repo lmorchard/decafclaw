@@ -50,6 +50,18 @@ class ScheduleTask:
     # Path to a Python script run before the turn; its stdout is injected into
     # the prompt. Relative to workspace/ or data/{agent_id}/ (#450).
     pre_script: str = ""
+    # Frontmatter keys the parser does not recognize. Diagnostic only —
+    # never serialized back, never patchable. Exists so a typo'd key is
+    # visible in the UI instead of being silently dropped (#729).
+    unknown_keys: list[str] = field(default_factory=list)
+
+
+# Frontmatter keys `parse_schedule_file` understands. Anything else lands
+# in `ScheduleTask.unknown_keys`. `effort` is the legacy alias for `model`.
+_KNOWN_FRONTMATTER_KEYS = frozenset({
+    "schedule", "enabled", "channel", "model", "effort",
+    "allowed-tools", "pre_script", "required-skills", "email-recipients",
+})
 
 
 def parse_schedule_file(path: Path) -> ScheduleTask | None:
@@ -94,6 +106,11 @@ def parse_schedule_file(path: Path) -> ScheduleTask | None:
     if not isinstance(email_recipients, list):
         email_recipients = [str(email_recipients)] if email_recipients else []
 
+    unknown_keys = sorted(set(meta) - _KNOWN_FRONTMATTER_KEYS)
+    if unknown_keys:
+        log.warning("Unrecognized frontmatter in %s: %s (ignored)",
+                    path.name, ", ".join(unknown_keys))
+
     return ScheduleTask(
         name=path.stem,
         schedule=schedule,
@@ -108,6 +125,7 @@ def parse_schedule_file(path: Path) -> ScheduleTask | None:
         shell_patterns=shell_patterns,
         required_skills=[str(s) for s in required_skills],
         email_recipients=[str(r) for r in email_recipients],
+        unknown_keys=unknown_keys,
     )
 
 
