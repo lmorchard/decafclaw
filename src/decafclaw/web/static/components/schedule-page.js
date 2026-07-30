@@ -8,6 +8,7 @@
 
 import { LitElement, html, nothing } from 'lit';
 import './wiki-editor.js';
+import './schedule-metadata.js';
 
 export class SchedulePage extends LitElement {
   static properties = {
@@ -16,6 +17,8 @@ export class SchedulePage extends LitElement {
     _loading: { state: true },
     _runStatus: { state: true },
     _runError: { state: true },
+    _models: { state: true },
+    _saveError: { state: true },
   };
 
   createRenderRoot() { return this; }
@@ -29,12 +32,16 @@ export class SchedulePage extends LitElement {
     /** @type {''|'running'|'started'|'error'} */
     this._runStatus = '';
     this._runError = '';
+    /** @type {string[]} */
+    this._models = [];
+    this._saveError = '';
   }
 
   /** @param {Map<string, any>} changedProps */
   updated(changedProps) {
     if (changedProps.has('name') && this.name) {
       this.#fetchSchedule();
+      if (!this._models.length) this.#fetchModels();
     }
   }
 
@@ -55,6 +62,18 @@ export class SchedulePage extends LitElement {
     }
   }
 
+  async #fetchModels() {
+    try {
+      const res = await fetch('/api/models');
+      if (!res.ok) return;
+      const data = await res.json();
+      this._models = data.models || [];
+    } catch (e) {
+      // Non-fatal: the panel falls back to whatever is stored.
+      console.warn('schedule-page: model list fetch failed:', e);
+    }
+  }
+
   /**
    * @param {string} field
    * @param {unknown} value
@@ -68,14 +87,31 @@ export class SchedulePage extends LitElement {
         body: JSON.stringify({ [field]: value }),
       });
       if (!res.ok) {
+        let message = `save failed (${res.status})`;
+        try {
+          const err = await res.json();
+          if (err?.error) message = err.error;
+        } catch {
+          // Non-JSON error body; the status line is all we have.
+        }
+        this._saveError = message;
         console.warn(`schedule-page: PUT ${field} failed:`, res.status);
         return;
       }
+      this._saveError = '';
       const data = await res.json();
       this._data = data.schedule;
       window.dispatchEvent(new CustomEvent('schedule-saved'));
     } catch (e) {
       console.warn('schedule-page: PUT error:', e);
+    }
+  }
+
+  /** @param {CustomEvent} e */
+  async #onMetadataChange(e) {
+    const fields = e.detail?.fields ?? {};
+    for (const [field, value] of Object.entries(fields)) {
+      await this.#patchField(field, value);
     }
   }
 
@@ -176,23 +212,12 @@ export class SchedulePage extends LitElement {
             <button class="outline schedule-reset-btn" @click=${this.#resetOverlay}>Reset to default</button>
           ` : nothing}
         </div>
-        <div class="schedule-page-form">
-          <label>
-            <span>Cron</span>
-            <input type="text" .value=${d.schedule}
-              @change=${(/** @type {Event} */ e) => this.#patchField('schedule', /** @type {HTMLInputElement} */ (e.target).value)} />
-          </label>
-          <label>
-            <span>Channel</span>
-            <input type="text" .value=${d.channel || ''} placeholder="(default channel)"
-              @change=${(/** @type {Event} */ e) => this.#patchField('channel', /** @type {HTMLInputElement} */ (e.target).value)} />
-          </label>
-          <label class="inline">
-            <input type="checkbox" .checked=${d.enabled}
-              @change=${(/** @type {Event} */ e) => this.#patchField('enabled', /** @type {HTMLInputElement} */ (e.target).checked)} />
-            <span>Enabled</span>
-          </label>
-        </div>
+        <schedule-metadata
+          .data=${d}
+          .models=${this._models}
+          .error=${this._saveError}
+          @metadata-change=${(/** @type {CustomEvent} */ e) => this.#onMetadataChange(e)}
+        ></schedule-metadata>
         <wiki-editor
           .page=${d.name}
           .content=${d.body}
