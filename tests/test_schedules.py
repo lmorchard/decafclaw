@@ -1302,10 +1302,21 @@ class TestWriteOverlayListFields:
 
     def test_allowed_tools_patch_preserves_shell_patterns(self, config):
         self._seed(config)
-        write_overlay(config, "seeded", {"allowed_tools": ["vault_write"]})
+        # Patch both list fields in the same call. A naive implementation
+        # that carries shell_patterns/email_recipients through only "by
+        # omission" (never passing them to replace() at all) would let this
+        # allowed_tools patch through but silently drop the shell_patterns
+        # patch, leaving the pre-patch value in place — so asserting both
+        # land here fails against that implementation, unlike asserting
+        # only that an *unpatched* field survives (which passes either way).
+        write_overlay(
+            config,
+            "seeded",
+            {"allowed_tools": ["vault_write"], "shell_patterns": ["curl *"]},
+        )
         task = {t.name: t for t in discover_schedules(config)}["seeded"]
         assert task.allowed_tools == ["vault_write"]
-        assert task.shell_patterns == ["echo hi"]
+        assert task.shell_patterns == ["curl *"]
 
     def test_non_list_shell_patterns_rejected(self, config):
         self._seed(config)
