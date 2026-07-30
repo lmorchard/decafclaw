@@ -1,0 +1,58 @@
+/* Schedule metadata panel. */
+
+.sched-md-form,
+.sched-md-permissions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.sched-md-permissions {
+  margin-top: 0.75rem;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--pico-del-color);
+  border-radius: var(--pico-border-radius);
+}
+
+.sched-md-permissions-title {
+  color: var(--pico-del-color);
+  font-size: 0.75rem;
+}
+
+.sched-md-unknown {
+  margin-top: 0.5rem;
+  color: var(--pico-del-color);
+  font-size: 0.75rem;
+}
+
+.sched-md-error {
+  margin-bottom: 0.5rem;
+  padding: 0.375rem 0.5rem;
+  border: 1px solid var(--pico-del-color);
+  border-radius: var(--pico-border-radius);
+  color: var(--pico-del-color);
+  font-size: 0.75rem;
+}
+
+.sched-md-raw {
+  margin-top: 0.75rem;
+}
+
+.sched-md-raw-body {
+  margin: 0.25rem 0 0;
+  padding: 0.5rem;
+  overflow-x: auto;
+  background: var(--pico-card-background-color);
+  font-size: 0.75rem;
+}
+
+/* Tag-qualified so Pico's button:not(...) (0,1,1) doesn't win. */
+button.sched-md-raw-toggle {
+  width: auto;
+  margin: 0;
+  padding: 0.25rem 0;
+  border: none;
+  background: none;
+  color: var(--pico-muted-color);
+  font-size: 0.75rem;
+}
