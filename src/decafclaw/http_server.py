@@ -34,6 +34,7 @@ from .schedules import (
     write_last_run,
     write_overlay,
 )
+from .skills import _extract_frontmatter_text
 from .skills.vault._events import (
     KIND_CREATE,
     KIND_DELETE,
@@ -2053,6 +2054,20 @@ def _last_run_iso(config, task) -> str | None:
     return datetime.fromtimestamp(last_run, tz=timezone.utc).isoformat()
 
 
+def _read_frontmatter_raw(task) -> str:
+    """The frontmatter block as it appears on disk.
+
+    Deliberately not a re-serialization of the parsed task:
+    ``serialize_to_markdown`` writes only recognized fields, which would
+    omit exactly the unrecognized keys this view exists to surface.
+    """
+    try:
+        return _extract_frontmatter_text(task.path.read_text())
+    except OSError as exc:
+        log.debug("frontmatter_raw: cannot read %s: %s", task.path, exc)
+        return ""
+
+
 def _schedule_to_dict(config, task, skill_schedule_names: set | None = None) -> dict:
     """Serialize a ScheduleTask to a JSON-serializable dict.
 
@@ -2070,6 +2085,11 @@ def _schedule_to_dict(config, task, skill_schedule_names: set | None = None) -> 
         "model": task.model,
         "allowed_tools": list(task.allowed_tools),
         "required_skills": list(task.required_skills),
+        "shell_patterns": list(task.shell_patterns),
+        "email_recipients": list(task.email_recipients),
+        "pre_script": task.pre_script,
+        "unknown_keys": list(task.unknown_keys),
+        "frontmatter_raw": _read_frontmatter_raw(task),
         "body": task.body,
         "modified": task.path.stat().st_mtime if task.path.exists() else 0,
         "next_run_iso": _next_run_iso(config, task),
