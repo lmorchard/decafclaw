@@ -25,8 +25,28 @@ from decafclaw.schedules import ScheduleTask, discover_schedules, write_overlay
 WIRE_RENAMES = {"source": "source_tier", "path": "source_path"}
 
 # Not patchable: identity and provenance (the file's location is not
-# user-editable content) plus the parser's read-only diagnostic.
+# user-editable content) plus the parser's read-only diagnostic. All
+# four are read-only for structural reasons, not by policy choice, so
+# there is no positive patchability counter-test for this set:
+# `unknown_keys` in particular can never be observed to "take" through
+# `write_overlay`, because `serialize_to_markdown` never emits it —
+# any patch is silently discarded by the reparse on the next
+# `discover_schedules` regardless of what write_overlay does with it
+# in memory. That non-persistence guarantee is covered directly by
+# `test_unknown_keys_are_not_written_back` in test_schedules.py.
 NOT_PATCHABLE = {"name", "source", "path", "unknown_keys"}
+
+# Wire keys `_schedule_to_dict` emits that have no backing ScheduleTask
+# field: computed/derived data (overlay status, raw frontmatter text,
+# file mtime, next/last run timestamps). Kept explicit so
+# test_wire_renames_are_injective can check rename targets against the
+# *whole* emitted keyspace, not just other field names — a rename
+# pointing at one of these passes a field-only injectivity check (no
+# other field maps there either) while still masking the renamed field
+# behind an already-populated key.
+NON_FIELD_WIRE_KEYS = {
+    "has_overlay", "frontmatter_raw", "modified", "next_run_iso", "last_run_iso",
+}
 
 # Sample values by annotated type. A field with a new type raises
 # KeyError here, which is the point: it forces a decision instead of
@@ -44,8 +64,14 @@ SAMPLE_OVERRIDES = {"schedule": "*/5 * * * *"}
 # test_wire_values_match_task_fields below. Distinct *per field* (not
 # just non-default) so a wire value that got misrouted onto the wrong
 # key — not merely dropped — still fails the comparison.
+#
+# `enabled` is deliberately excluded: it's the only bool field, and a
+# bool's value space is two elements, so any single seeded value can
+# be matched by a hardcoded constant purely by chance (a constant
+# "False" wire value passes as easily as the real field). No single
+# seed closes that hole — see test_wire_value_for_bool_field_round_trips
+# below, which probes both True and False instead.
 DISTINCT_VALUES = {
-    "enabled": False,
     "schedule": "*/5 * * * *",
     "body": "Distinct body.",
     "channel": "distinct-channel",
@@ -87,18 +113,30 @@ def test_every_dataclass_field_reaches_the_wire(config):
 
 
 def test_wire_renames_are_injective(config):
-    """A rename target must be unique, or a masking rename can silence
-    the presence check while making the field invisible.
+    """A rename target must be unique — across *all* wire keys, not
+    just other field names — or a masking rename can silence the
+    presence check while making the field invisible.
 
     Concretely: delete a field's wire line, then "fix" the resulting
     failure by adding ``WIRE_RENAMES["that_field"] = "some_other_key"``
     that already exists in the payload — the presence check in
     ``test_every_dataclass_field_reaches_the_wire`` would go green
-    while the field is still absent from the UI.
+    while the field is still absent from the UI. The existing key can
+    belong to another field (checked below) or to a computed,
+    non-field wire key like ``has_overlay`` (checked against
+    NON_FIELD_WIRE_KEYS, since those don't show up in ``mapped`` at
+    all and a field-only injectivity check can't see them).
     """
     mapped = [WIRE_RENAMES.get(f.name, f.name) for f in fields(ScheduleTask)]
     assert len(set(mapped)) == len(mapped), (
         f"two or more fields map to the same wire key: {mapped}"
+    )
+
+    masked = set(WIRE_RENAMES.values()) & NON_FIELD_WIRE_KEYS
+    assert not masked, (
+        f"WIRE_RENAMES targets a computed wire key with no backing field "
+        f"({masked}) — this masks the renamed field behind an "
+        f"already-populated key just as surely as a field-to-field collision."
     )
 
 
@@ -112,7 +150,10 @@ def test_wire_values_match_task_fields(config):
     stubbed one.
     """
     path = _seed(config, name="value-probe")
-    patchable = [f.name for f in fields(ScheduleTask) if f.name not in NOT_PATCHABLE]
+    patchable = [
+        f.name for f in fields(ScheduleTask)
+        if f.name not in NOT_PATCHABLE and f.name != "enabled"
+    ]
     write_overlay(config, "value-probe", {name: DISTINCT_VALUES[name] for name in patchable})
 
     # unknown_keys is read-only: write_overlay's serialize_to_markdown
@@ -131,24 +172,37 @@ def test_wire_values_match_task_fields(config):
             continue  # source/path hold derived values; presence-only
             # (already asserted by test_every_dataclass_field_reaches_the_wire)
             # is correct for those.
+        if f.name == "enabled":
+            continue  # two-valued; see test_wire_value_for_bool_field_round_trips
         assert payload[f.name] == getattr(task, f.name), (
             f"wire value for {f.name!r} does not match the parsed task "
             f"— check for a hardcoded stub or a misrouted field."
         )
 
 
-def test_unknown_keys_is_not_patchable(config):
-    """unknown_keys is a read-only parser diagnostic. A patch for it
-    must not take — this is the positive half of NOT_PATCHABLE; without
-    it, a patchability regression could be silenced by adding the field
-    to NOT_PATCHABLE (as the failure message for
-    test_every_editable_field_is_patchable explicitly suggests) even if
-    it should have been wired through instead.
+def test_wire_value_for_bool_field_round_trips(config):
+    """`enabled` needs both of its two possible values probed.
+
+    A single seeded value can't distinguish a hardcoded constant from
+    the real field for a two-valued type: hardcoding
+    ``"enabled": False`` (or ``True``) in ``_schedule_to_dict`` would
+    satisfy a comparison against a single seeded value purely by
+    chance. Two fixtures with opposite values close that hole — no
+    constant can satisfy both.
     """
-    _seed(config, name="not-patchable-probe")
-    write_overlay(config, "not-patchable-probe", {"unknown_keys": ["should-not-take"]})
-    task = {t.name: t for t in discover_schedules(config)}["not-patchable-probe"]
-    assert task.unknown_keys == []
+    _seed(config, name="bool-probe-true")
+    _seed(config, name="bool-probe-false")
+    write_overlay(config, "bool-probe-false", {"enabled": False})
+
+    tasks = {t.name: t for t in discover_schedules(config)}
+    for name, expected in [("bool-probe-true", True), ("bool-probe-false", False)]:
+        task = tasks[name]
+        assert task.enabled is expected  # sanity: the overlay took
+        payload = _schedule_to_dict(config, task)
+        assert payload["enabled"] == expected, (
+            f"wire value for 'enabled' does not match the parsed task "
+            f"for {name!r} (expected {expected!r})"
+        )
 
 
 @pytest.mark.parametrize(
