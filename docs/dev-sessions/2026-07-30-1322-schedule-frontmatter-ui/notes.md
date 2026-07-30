@@ -154,3 +154,56 @@ usable height.
 
 **Cross-cutting, pre-existing.** The vault / files / schedules sidebars use
 plain `<div @click>` rows with no `role` or `tabindex`; tracked as #555.
+
+### Raised by the final whole-branch review, after the fix wave
+
+These came out of the last re-review and were adjudicated as non-blocking.
+Recorded here because the SDD ledger they came from is gitignored.
+
+**Needs a browser — nothing on this branch has ever been opened in one.**
+This is the largest known gap. Six of the seven client-side defects the final
+review found would have surfaced in about ninety seconds of manual use, and
+jsdom cannot see any of them. Specifically unverified:
+
+- `max-height: 45%` on `.schedule-page schedule-metadata` may not resolve at
+  all — `#wiki-main` has no explicit `height` and relies on flex stretch for a
+  definite cross size. If the percentage doesn't resolve, the panel keeps
+  `flex-shrink: 0` (so nothing is clipped) but won't scroll internally and can
+  crowd `wiki-editor`. Watch for double scrollbars between `#wiki-main` and the
+  panel.
+- Whether 45% is the right number, and whether the permissions group and the
+  unrecognized-keys warning are reachable by scrolling on a short viewport
+  while `wiki-editor` keeps a usable height.
+- `.sched-md input[type="text"]` (0-2-0) outranks `.dc-chip-input` (0-1-0), so
+  inside the schedule panel the chip "add…" inputs pick up `flex: 1` and the
+  panel's padding/font-size instead of staying compact at `width: 6rem`.
+  Cosmetic and almost certainly unintended — the rule's comment is about the
+  cron/channel/model/pre-script fields, not chips.
+- The 7.5rem label column and the hardcoded `margin-left: 8rem` on
+  `.sched-md-model-note` must be kept in sync by hand.
+
+**Test-coverage residuals.**
+
+- The model-select tests pin the observable outcome (`select.value`), which is
+  the right assertion — but that means re-adding a `.value` binding on top of
+  the `?selected=` options would not fail anything. Only the comment at
+  `schedule-metadata.js:122-129` stops someone reintroducing the original bug.
+- No test pins the `/api/models` *recovery* path. `does not flag an
+  empty-but-successful model list` starts from the `_modelsUnavailable = false`
+  default, so it would still pass if the success branch never cleared a
+  previously-set `true`.
+- In the drift guard, a future `bool` field declared with **no default** yields
+  `spec.default is MISSING`, so `not spec.default` is `False` — quietly
+  reintroducing the blindness the `not spec.default` fix removed for the
+  has-a-default case.
+- `_sample_for` is defined above `SAMPLE_OVERRIDES` in
+  `test_schedule_wire_drift.py`. Works, reads oddly.
+
+**A design gap worth its own issue.** This branch made unrecognized keys *in a
+schedule file* visible, but unrecognized keys *in a PATCH* are still silently
+dropped: `schedules_update` forwards the whole body to `write_overlay`, which
+ignores any key it doesn't know. A typo'd patch key returns 200 with unchanged
+data and the edit vanishes — the same "accepted and discarded" shape as #729,
+on the write path. A 400 on unrecognized patch keys would close the symmetry.
+The new `it.each` over all four chip fields guards our own callers; it does not
+protect a third-party client.
