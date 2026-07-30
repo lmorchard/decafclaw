@@ -18,6 +18,7 @@ from decafclaw.schedules import (
     run_schedule_timer,
     serialize_to_markdown,
     write_last_run,
+    write_overlay,
 )
 
 # -- Parsing -------------------------------------------------------------------
@@ -1268,6 +1269,53 @@ class TestUnknownFrontmatterKeys:
         task = parse_schedule_file(path)
         assert task is not None
         assert "modle" not in serialize_to_markdown(task)
+
+
+class TestWriteOverlayListFields:
+    """shell_patterns / email_recipients were unreachable through the API."""
+
+    def _seed(self, config):
+        path = config.workspace_path / "schedules" / "seeded.md"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            "---\n"
+            'schedule: "0 3 * * *"\n'
+            "allowed-tools: vault_read, shell(echo hi)\n"
+            "---\n\n"
+            "Body.\n"
+        )
+        return path
+
+    def test_shell_patterns_round_trip(self, config):
+        self._seed(config)
+        write_overlay(config, "seeded", {"shell_patterns": ["curl *"]})
+        task = {t.name: t for t in discover_schedules(config)}["seeded"]
+        assert task.shell_patterns == ["curl *"]
+        # Patching one must not clear the other.
+        assert task.allowed_tools == ["vault_read"]
+
+    def test_email_recipients_round_trip(self, config):
+        self._seed(config)
+        write_overlay(config, "seeded", {"email_recipients": ["a@example.com"]})
+        task = {t.name: t for t in discover_schedules(config)}["seeded"]
+        assert task.email_recipients == ["a@example.com"]
+
+    def test_allowed_tools_patch_preserves_shell_patterns(self, config):
+        self._seed(config)
+        write_overlay(config, "seeded", {"allowed_tools": ["vault_write"]})
+        task = {t.name: t for t in discover_schedules(config)}["seeded"]
+        assert task.allowed_tools == ["vault_write"]
+        assert task.shell_patterns == ["echo hi"]
+
+    def test_non_list_shell_patterns_rejected(self, config):
+        self._seed(config)
+        with pytest.raises(ValueError, match="shell_patterns must be a list"):
+            write_overlay(config, "seeded", {"shell_patterns": "curl *"})
+
+    def test_non_list_email_recipients_rejected(self, config):
+        self._seed(config)
+        with pytest.raises(ValueError, match="email_recipients must be a list"):
+            write_overlay(config, "seeded", {"email_recipients": "a@example.com"})
 
 
 class TestExtractFrontmatterText:

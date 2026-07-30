@@ -255,7 +255,8 @@ def write_overlay(config, name: str, patch: dict) -> ScheduleTask:
 
     Patch keys (all optional): enabled (bool), schedule (str), body (str),
     channel (str), allowed_tools (list[str]), required_skills (list[str]),
-    model (str), pre_script (str).
+    shell_patterns (list[str]), email_recipients (list[str]), model (str),
+    pre_script (str).
 
     Write targets:
     - workspace source → workspace/schedules/{name}.md (in-place edit)
@@ -284,7 +285,8 @@ def write_overlay(config, name: str, patch: dict) -> ScheduleTask:
 
     # Validate list fields — reject non-list values (e.g. comma-separated strings)
     # rather than silently iterating characters.
-    for list_field in ("allowed_tools", "required_skills"):
+    for list_field in ("allowed_tools", "required_skills",
+                       "shell_patterns", "email_recipients"):
         if list_field in patch and not isinstance(patch[list_field], list):
             raise ValueError(f"{list_field} must be a list of strings")
 
@@ -296,6 +298,8 @@ def write_overlay(config, name: str, patch: dict) -> ScheduleTask:
         channel=patch.get("channel", base.channel),
         allowed_tools=list(patch.get("allowed_tools", base.allowed_tools)),
         required_skills=list(patch.get("required_skills", base.required_skills)),
+        shell_patterns=list(patch.get("shell_patterns", base.shell_patterns)),
+        email_recipients=list(patch.get("email_recipients", base.email_recipients)),
         model=patch.get("model", base.model),
         pre_script=patch.get("pre_script", base.pre_script),
     )
