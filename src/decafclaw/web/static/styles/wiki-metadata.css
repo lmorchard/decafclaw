@@ -103,12 +103,11 @@ button.wiki-md-conflict-btn {
 button.wiki-md-raw-toggle {
   width: auto;
   margin: 0;
+  padding: 0.25rem 0;
   border: none;
   background: none;
-  color: inherit;
-  padding: 0.25rem 0;
-  font-size: 0.75rem;
   color: var(--pico-muted-color);
+  font-size: 0.75rem;
 }
 
 .wiki-md-raw {
