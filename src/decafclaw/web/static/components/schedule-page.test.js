@@ -83,4 +83,46 @@ describe('schedule-page', () => {
     expect(/** @type {any} */ (el.querySelector('schedule-metadata')).error)
       .toContain('invalid cron');
   });
+
+  it('clears the previous save error when switching to a different schedule', async () => {
+    const el = /** @type {any} */ (document.createElement('schedule-page'));
+    el.name = 'dream';
+    document.body.appendChild(el);
+    await el.updateComplete;
+    await new Promise(r => setTimeout(r, 0));
+    await el.updateComplete;
+
+    // Induce a failed patch on schedule "dream".
+    /** @type {any} */ (globalThis.fetch).mockImplementation(async (/** @type {string} */ url) => {
+      if (url.startsWith('/api/schedules/dream')) {
+        return { ok: false, status: 400, json: async () => ({ error: "invalid cron expression: 'nope'" }) };
+      }
+      return { ok: true, json: async () => ({ schedule: SCHEDULE }) };
+    });
+
+    let panel = /** @type {any} */ (el.querySelector('schedule-metadata'));
+    panel.dispatchEvent(new CustomEvent('metadata-change', {
+      detail: { fields: { schedule: 'nope' } }, bubbles: true, composed: true,
+    }));
+    await new Promise(r => setTimeout(r, 0));
+    await el.updateComplete;
+
+    panel = /** @type {any} */ (el.querySelector('schedule-metadata'));
+    expect(panel.error).toContain('invalid cron');
+
+    // Switch to a different schedule; its own GET succeeds.
+    /** @type {any} */ (globalThis.fetch).mockImplementation(async (/** @type {string} */ url) => {
+      if (url.startsWith('/api/models')) {
+        return { ok: true, json: async () => ({ models: ['a', 'b'], default: 'a' }) };
+      }
+      return { ok: true, json: async () => ({ schedule: { ...SCHEDULE, name: 'garden' } }) };
+    });
+    el.name = 'garden';
+    await el.updateComplete;
+    await new Promise(r => setTimeout(r, 0));
+    await el.updateComplete;
+
+    panel = /** @type {any} */ (el.querySelector('schedule-metadata'));
+    expect(panel.error).toBe('');
+  });
 });

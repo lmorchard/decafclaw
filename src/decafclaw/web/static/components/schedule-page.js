@@ -40,6 +40,10 @@ export class SchedulePage extends LitElement {
   /** @param {Map<string, any>} changedProps */
   updated(changedProps) {
     if (changedProps.has('name') && this.name) {
+      // schedule-page is a singleton (app.js reassigns .name rather than
+      // recreating the element); a save error from the previous schedule
+      // must not linger and get misattributed to the newly selected one.
+      this._saveError = '';
       this.#fetchSchedule();
       if (!this._models.length) this.#fetchModels();
     }
