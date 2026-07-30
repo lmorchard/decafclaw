@@ -2097,6 +2097,21 @@ def _schedule_to_dict(config, task, skill_schedule_names: set | None = None) -> 
     }
 
 
+@_authenticated
+async def models_list(request: Request, username: str) -> JSONResponse:
+    """GET /api/models — named model configs for UI pickers.
+
+    A standalone route rather than a field on the schedules payload: the
+    schedules page is reachable with no conversation open, and the WS
+    `available_models` push is only populated once one loads.
+    """
+    config = request.app.state.config
+    return JSONResponse({
+        "models": sorted(config.model_configs),
+        "default": config.default_model,
+    })
+
+
 # -- Schedule handlers --------------------------------------------------------
 
 
@@ -2271,6 +2286,7 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> Starlette:
         Route("/api/config/files", config_list_files, methods=["GET"]),
         Route("/api/config/files/{path:path}", config_read_file, methods=["GET"]),
         Route("/api/config/files/{path:path}", config_write_file, methods=["PUT"]),
+        Route("/api/models", models_list, methods=["GET"]),
         Route("/api/schedules", schedules_list, methods=["GET"]),
         Route("/api/schedules/{name}/run", schedules_run, methods=["POST"]),
         Route("/api/schedules/{name}/overlay", schedules_reset, methods=["DELETE"]),
