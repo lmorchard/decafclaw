@@ -35,19 +35,19 @@ Report key themes and anything that needs attention.
 | `enabled` | bool | no | `true` | Quick toggle without deleting the file |
 | `model` | string | no | — | Named model config for this task. Omit to use `default_model`. |
 | `allowed-tools` | list | no | all | Restrict which tools the task can use |
-| `shell_patterns` | list | no | — | Derived from `shell(...)` entries in `allowed-tools`. Pre-approves matching commands. |
+| `shell_patterns` | list | no (derived) | — | **Derived only** — extracted from `shell(...)` entries in `allowed-tools`. Not settable in frontmatter; appears in the UI as a read-only summary and can be edited via the `allowed-tools` picker. Pre-approves matching commands. |
 | `email-recipients` | list | no | — | Pre-approved email addresses for `send_email` that bypass confirmation for this task only. See [email.md](email.md#scheduled-task-integration). Exact addresses or `@domain.com` suffix patterns. |
 | `pre_script` | string | no | — | Python script run **before** the turn; its stdout is injected into the prompt. Relative to `workspace/` or `data/{agent_id}/`. See [Pre-agent scripts](#pre-agent-scripts). |
 | `required-skills` | list | no | — | Skills to pre-activate before running the task |
 
 ### Unrecognized keys
 
-The parser reads only the keys above. Anything else in a schedule's
-frontmatter is ignored, logged at WARNING on load, and listed in the web
-UI's raw section:
+The parser recognizes the keys in the table above, plus `effort` as a
+legacy alias for `model`. Anything else in a schedule's frontmatter is
+ignored, logged at WARNING on load, and listed in the web UI's raw section:
 
 ```
-⚠ 2 keys in this file are not recognized and are ignored: modle, efort
+⚠ 2 keys are not recognized and are ignored: modle, efort
 ```
 
 This exists because a silently-dropped key is indistinguishable from a
@@ -105,21 +105,6 @@ The three bundled skills `dream`, `garden`, and `newsletter` each ship a `SCHEDU
 **Contrib default-disable:** Skills discovered from `extra_skill_paths` have their `enabled` flag forced to `false` regardless of what the SCHEDULE.md says. Installing a contrib skill should not silently activate a cron job. Users opt in via the admin overlay (see below).
 
 **Workspace skills excluded:** Workspace skill directories (`workspace/skills/`) are not scanned for SCHEDULE.md — parallels the existing rule that workspace skills cannot self-schedule.
-
-## Editing from the web UI
-
-The schedules page exposes every frontmatter field. Edits PUT to
-`/api/schedules/{name}`, which writes an admin overlay for skill-supplied
-schedules and edits standalone files in place.
-
-`allowed-tools`, shell patterns and `email-recipients` are grouped and
-marked separately: they pre-approve actions that would otherwise require
-confirmation.
-
-The raw section is read-only. Schedule frontmatter maps onto a fixed set
-of fields, so once each has a control there is nothing an editable raw
-box could reach — and a key typed there would be dropped on the next
-write.
 
 ### Discovery precedence
 
@@ -436,6 +421,38 @@ Only meaningful when `has_overlay: true`. If no overlay exists, returns **404**.
 **Error codes:**
 - `404` — no overlay exists for this name, or name not found after overlay removal
 
+### `GET /api/models`
+
+Returns all available model configs for populating UI dropdowns.
+
+**Response:**
+
+```json
+{
+  "models": ["gemini-flash", "gemini-pro", "vertex-gemini-flash"],
+  "default": "gemini-flash"
+}
+```
+
+**Fields:**
+- **`models`** — sorted list of model config names available in `config.model_configs`
+- **`default`** — the `config.default_model` used when a schedule omits the `model` field
+
+## Editing from the web UI
+
+The schedules page exposes every frontmatter field. Edits PUT to
+`/api/schedules/{name}`, which writes an admin overlay for skill-supplied
+schedules and edits standalone files in place.
+
+`allowed-tools`, shell patterns and `email-recipients` are grouped and
+marked separately: they pre-approve actions that would otherwise require
+confirmation.
+
+The raw section is read-only. Schedule frontmatter maps onto a fixed set
+of fields, so once each has a control there is nothing an editable raw
+box could reach — and a key typed there would be dropped on the next
+write.
+
 ## Sidebar UI
 
 The **Schedules** tab in the conversation sidebar (`schedules-sidebar.js`) provides a point-and-click interface for the REST API described above. Open it by clicking "Schedules" in the sidebar tab strip.
@@ -453,9 +470,10 @@ Each row displays:
 
 Clicking a row opens the schedule in the `#wiki-main` side panel — the same surface used by vault pages, workspace files, and agent config. The panel shows:
 
-- **Header**: back arrow (closes the panel), name, source tier badge, "overridden" pill, a **"Run now"** button, and a "Reset to default" button when `has_overlay: true`.
-- **Form row**: cron expression input, channel input, and enabled checkbox. Each field saves on `change` — no separate Save button.
-- **Body editor**: a `<wiki-editor>` (Milkdown) for the prompt body. Autosaves after 1 second of inactivity or on Ctrl+S / focus-out. Conflict detection via file mtime.
+- **Header**: back arrow (closes the panel), name, source tier badge, "overridden" pill, a **"Run now"** button (fires the task immediately, bypassing cron and the enabled flag), and a "Reset to default" button when an overlay is shadowing a skill SCHEDULE.md.
+- **Metadata panel** (`<schedule-metadata>`): every frontmatter field — cron expression, channel, model, enabled checkbox, pre-script path, and chip lists for required skills, allowed tools, shell patterns, and email recipients. The last three are grouped under a **"Permissions — these bypass confirmation"** header. Each field saves on `change`; no separate Save button.
+- **Raw section**: a read-only view of the schedule's frontmatter as it sits on disk, with a warning naming any unrecognized keys. Read-only because the field set is closed — anything typed there that is not a known field would be dropped on the next write.
+- **Body editor**: a `<wiki-editor>` (Milkdown) for the prompt body. Autosaves after 1 second of inactivity or on Ctrl+S / focus-out.
 - **URL deep-linking**: opening a schedule sets `?schedule={name}` in the URL; the panel restores on page reload or direct link.
 
 ### Workspace-tier entries
