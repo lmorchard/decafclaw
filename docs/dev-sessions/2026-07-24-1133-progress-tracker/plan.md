@@ -16,6 +16,7 @@
 - `ToolResult(text="[error: ...]")` for tool errors, never bare strings/raises.
 - **Auto-emit is fail-open:** wrap every `set_sticky`/`clear_sticky` call in `try/except Exception: log.warning(...)`; the checklist/project tool returns its normal result regardless.
 - Skills use **absolute imports** (`from decafclaw...`). Do not import private helpers across modules — replicate the 3-line `_emit_for_ctx` locally where needed.
+  - **Superseded by [#657](https://github.com/lmorchard/decafclaw/issues/657) (2026-07-29).** The "replicate locally" instruction was a deliberate scope limit for *this* session, and it left four identical copies behind. The helper is now public and shared as `emit_for_ctx` in `src/decafclaw/events.py`; import it rather than replicating it. The absolute-imports-in-skills rule still stands, and is exactly why the shared version is imported as `from decafclaw.events import emit_for_ctx` in `skills/project/tools.py`.
 - `execute_tool` auto-detects sync vs async, so making the checklist tools async is runtime-safe.
 - Sticky emit in non-web (terminal/Mattermost) conversations is a harmless no-op (web-only surface; sidecar write is cheap).
 - Commit after each task. Run `make check` + `make test` green before the PR.

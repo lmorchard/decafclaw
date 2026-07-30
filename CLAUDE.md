@@ -158,7 +158,7 @@ Full doc index: [docs/index.md](docs/index.md). Hot files for navigation:
 - `conversation_manager.py` — Central orchestrator: TurnKind dispatch, confirmation persistence, per-conversation event streams
 - `context.py` — Forkable runtime context (TokenUsage, ToolState, SkillState, ComposerState)
 - `context_composer.py` — Unified context assembly, relevance scoring, dynamic budget allocation
-- `events.py` — Pub/sub event bus
+- `events.py` — Pub/sub event bus; also hosts the shared `emit_for_ctx(ctx)` helper (the manager's `emit` or `None`) that canvas / sticky / checklist / project all import rather than replicate
 - `runner.py` — Top-level orchestrator: MCP, HTTP, Mattermost, heartbeat as parallel tasks
 - `tool_definitions.py` — Tool-registry assembly: classification, deferral, dynamic-skill providers (`build_tool_list`, `collect_all_tool_defs`, `refresh_dynamic_tools`)
 - `tool_execution.py` — Concurrent tool-call execution: media handling, widget validation, end-turn signals (`execute_tool_calls`, `execute_single_tool`, `process_tool_media`, `resolve_widget`)

@@ -16,19 +16,13 @@ from typing import TYPE_CHECKING
 
 from .. import checklist
 from .. import sticky as sticky_mod
+from ..events import emit_for_ctx
 from ..media import ToolResult
 
 if TYPE_CHECKING:
     from decafclaw.context import Context
 
 log = logging.getLogger(__name__)
-
-
-def _emit_for_ctx(ctx: "Context"):
-    manager = getattr(ctx, "manager", None)
-    if manager is None:
-        return None
-    return manager.emit
 
 
 def _progress_data_from_checklist(items: list[dict]) -> dict:
@@ -72,14 +66,14 @@ async def _mirror_to_sticky(ctx: "Context", conv_id: str) -> None:
             checklist.checklist_status, ctx.config, conv_id)
         if not items or all(i["done"] for i in items):
             result = await sticky_mod.clear_sticky(
-                ctx.config, conv_id, emit=_emit_for_ctx(ctx))
+                ctx.config, conv_id, emit=emit_for_ctx(ctx))
             if result is not None and not result.ok:
                 log.warning("checklist sticky clear failed: %s", result.error)
             return
         data = _progress_data_from_checklist(items)
         result = await sticky_mod.set_sticky(
             ctx.config, conv_id, "progress_tracker", data,
-            emit=_emit_for_ctx(ctx))
+            emit=emit_for_ctx(ctx))
         if result is not None and not result.ok:
             log.warning("checklist sticky set failed: %s", result.error)
     except Exception:
