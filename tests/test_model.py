@@ -1,6 +1,7 @@
 """Tests for model selection and routing (replaces old effort tests)."""
 
 import dataclasses
+import logging
 
 import pytest
 
@@ -150,3 +151,90 @@ def test_skill_model_default_empty(tmp_path):
     info = parse_skill_md(skill_md)
     assert info is not None
     assert info.model == ""
+
+
+# -- Unrecognized model names (#729) -------------------------------------------
+
+
+def _config_with_models(config):
+    """Config with two named models and a default, for override tests."""
+    return dataclasses.replace(config, providers={
+        "vertex": ProviderConfig(type="vertex", project="test"),
+    }, model_configs={
+        "vertex-gemini-flash": ModelConfig(provider="vertex", model="gemini-2.5-flash"),
+        "vertex-gemini-pro": ModelConfig(provider="vertex", model="gemini-2.5-pro"),
+    }, default_model="vertex-gemini-flash")
+
+
+def test_unrecognized_active_model_warns(ctx, caplog):
+    """An active_model that isn't a model_configs key warns loudly.
+
+    Regression for #729: `model: strong` in a SCHEDULE.md (a leftover from
+    the removed effort system) fell through to the default model with only
+    an INFO line, so bundled `dream`/`garden` ran on Flash for months.
+    """
+    from decafclaw.agent import _resolve_model_override
+
+    config = _config_with_models(ctx.config)
+    ctx.active_model = "strong"
+
+    with caplog.at_level(logging.WARNING, logger="decafclaw.agent"):
+        override = _resolve_model_override(ctx, config)
+
+    assert override == {"model_name": "vertex-gemini-flash"}
+
+    warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
+    assert len(warnings) == 1, f"expected one warning, got {warnings}"
+    msg = warnings[0].getMessage()
+    assert "strong" in msg
+    # The warning must name the fallback and the valid choices, or it's
+    # not actionable from a log line alone.
+    assert "vertex-gemini-flash" in msg
+    assert "vertex-gemini-pro" in msg
+
+
+def test_recognized_active_model_does_not_warn(ctx, caplog):
+    """A valid active_model is used and produces no warning."""
+    from decafclaw.agent import _resolve_model_override
+
+    config = _config_with_models(ctx.config)
+    ctx.active_model = "vertex-gemini-pro"
+
+    with caplog.at_level(logging.WARNING, logger="decafclaw.agent"):
+        override = _resolve_model_override(ctx, config)
+
+    assert override == {"model_name": "vertex-gemini-pro"}
+    assert [r for r in caplog.records if r.levelno >= logging.WARNING] == []
+
+
+def test_empty_active_model_does_not_warn(ctx, caplog):
+    """No active_model is the normal case, not a misconfiguration."""
+    from decafclaw.agent import _resolve_model_override
+
+    config = _config_with_models(ctx.config)
+    ctx.active_model = ""
+
+    with caplog.at_level(logging.WARNING, logger="decafclaw.agent"):
+        override = _resolve_model_override(ctx, config)
+
+    assert override == {"model_name": "vertex-gemini-flash"}
+    assert [r for r in caplog.records if r.levelno >= logging.WARNING] == []
+
+
+def test_no_bundled_schedule_declares_a_stale_model():
+    """Bundled SCHEDULE.md files must not name a model.
+
+    Model config names are per-deployment (`vertex-gemini-pro` exists in one
+    agent's config.json and not another's), so a bundled skill has nothing
+    portable to declare. Upgrading a bundled task's model is an admin-overlay
+    decision. This guards against reintroducing `model: strong`.
+    """
+    from decafclaw.schedules import parse_schedule_file
+    from decafclaw.skills import _BUNDLED_SKILLS_DIR
+
+    offenders = []
+    for sched_md in sorted(_BUNDLED_SKILLS_DIR.glob("*/SCHEDULE.md")):
+        task = parse_schedule_file(sched_md)
+        if task is not None and task.model:
+            offenders.append(f"{sched_md.parent.name}: model={task.model!r}")
+    assert offenders == []

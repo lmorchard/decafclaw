@@ -74,7 +74,6 @@ Any skill (bundled, admin-level, or contrib/`extra_skill_paths`) may ship a `SCH
 ```markdown
 ---
 schedule: "0 3 * * *"
-model: strong
 required-skills:
   - vault
 ---
@@ -85,6 +84,8 @@ Review recent journal entries ...
 ```
 
 The three bundled skills `dream`, `garden`, and `newsletter` each ship a `SCHEDULE.md` this way.
+
+**Bundled and contrib SCHEDULE.md do not declare `model`.** Model config names are per-deployment — `vertex-gemini-pro` is a key in one agent's `config.json` and absent from another's — so a shipped skill has no portable name to reference. A task that wants a stronger model than `default_model` gets one through the admin overlay, where the names are known to exist. See [Model selection](#model-selection).
 
 **Contrib default-disable:** Skills discovered from `extra_skill_paths` have their `enabled` flag forced to `false` regardless of what the SCHEDULE.md says. Installing a contrib skill should not silently activate a cron job. Users opt in via the admin overlay (see below).
 
@@ -200,6 +201,15 @@ model: gemini-flash   # use a specific named model config
 
 Omit to use the `default_model` from config. See [Model Selection](model-selection.md).
 
+The value must be a key in `model_configs`. An unrecognized name falls back to `default_model` and logs:
+
+```
+WARNING Unknown model 'strong' requested — falling back to vertex-gemini-flash.
+        Configured model_configs: vertex-gemini-flash, vertex-gemini-pro
+```
+
+Watch for this after upgrading. The old effort levels (`fast` / `default` / `strong`) are not model names and have not been since the effort system was removed — before the warning existed they were accepted and silently discarded (#729).
+
 ### Tool restrictions
 
 Use `allowed-tools` to limit what the task can do:
@@ -307,7 +317,7 @@ Returns all discovered schedules with metadata.
       "enabled": true,
       "schedule": "0 3 * * *",
       "channel": "",
-      "model": "strong",
+      "model": "",
       "allowed_tools": [],
       "required_skills": ["vault"],
       "body": "# Memory Consolidation\n...",

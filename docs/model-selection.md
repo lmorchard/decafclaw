@@ -106,3 +106,12 @@ At the start of each agent turn, the active model is resolved through the provid
 ## Migration from effort levels
 
 The old effort system (`fast`/`default`/`strong`, `set_effort` tool, `!think-harder` commands) has been replaced. If your `config.json` has an `llm` section but no `providers`/`model_configs`, the system auto-generates a "default" openai-compat provider and model config from the old values.
+
+Effort levels are not model names. A leftover `model: strong` in a `SCHEDULE.md` or a forked skill's frontmatter resolves to nothing and the turn runs on `default_model`. This used to be silent; it now warns:
+
+```
+WARNING Unknown model 'strong' requested — falling back to vertex-gemini-flash.
+        Configured model_configs: vertex-gemini-flash, vertex-gemini-pro
+```
+
+Grep your schedules and skill frontmatter for `fast` / `default` / `strong` after upgrading (#729).
