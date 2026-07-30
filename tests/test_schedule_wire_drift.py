@@ -51,11 +51,36 @@ NON_FIELD_WIRE_KEYS = {
 # Sample values by annotated type. A field with a new type raises
 # KeyError here, which is the point: it forces a decision instead of
 # silently skipping the field.
+#
+# Keying on `f.type` works only because `schedules.py` has no
+# `from __future__ import annotations`; with it, `f.type` would be the
+# *string* `"bool"` rather than the type object and every lookup here
+# would KeyError. That failure is loud and immediate, which is the
+# behaviour we want — but the coupling is worth knowing about before
+# adding the future import.
+#
+# `bool` is absent on purpose: see `_sample_for` below.
 SAMPLES = {
     str: "sample-value",
-    bool: False,
     list[str]: ["sample-value"],
 }
+
+
+def _sample_for(spec):
+    """A patch value that a no-op write_overlay cannot satisfy by luck.
+
+    For a bool the value space has two elements, so a fixed sample is
+    only discriminating when it differs from the field's default: patch
+    a `False`-defaulting field to `False` and the assertion passes
+    whether or not write_overlay ever wired the field up. Derive the
+    sample from the field's own default instead, so it is always the
+    value the field does *not* already hold.
+    """
+    if spec.name in SAMPLE_OVERRIDES:
+        return SAMPLE_OVERRIDES[spec.name]
+    if spec.type is bool:
+        return not spec.default
+    return SAMPLES[spec.type]
 
 # Values that must satisfy a validator rather than merely round-trip.
 SAMPLE_OVERRIDES = {"schedule": "*/5 * * * *"}
@@ -140,6 +165,32 @@ def test_wire_renames_are_injective(config):
     )
 
 
+def test_non_field_wire_keys_is_exactly_the_computed_remainder(config):
+    """The one hand-maintained list left in the anti-enumeration guard.
+
+    ``NON_FIELD_WIRE_KEYS`` is consumed by the masking check above, so a
+    stale copy silently narrows that check: add a computed key to
+    ``_schedule_to_dict`` without updating the set and a WIRE_RENAMES
+    entry pointing at the new key sails through, reopening the exact
+    hole the masking check closed. Derive the set from the payload and
+    pin it, so a new computed key fails here until the author looks at
+    it.
+    """
+    _seed(config, name="nonfield-probe")
+    task = {t.name: t for t in discover_schedules(config)}["nonfield-probe"]
+    payload = _schedule_to_dict(config, task)
+
+    computed = set(payload) - {
+        WIRE_RENAMES.get(f.name, f.name) for f in fields(ScheduleTask)
+    }
+    assert NON_FIELD_WIRE_KEYS == computed, (
+        f"NON_FIELD_WIRE_KEYS is stale. _schedule_to_dict emits computed keys "
+        f"{sorted(computed)}; the set lists {sorted(NON_FIELD_WIRE_KEYS)}. "
+        f"Update it — the masking check in test_wire_renames_are_injective "
+        f"can only see the keys named here."
+    )
+
+
 def test_wire_values_match_task_fields(config):
     """A hardcoded stub (e.g. ``"pre_script": ""``) must fail, not just
     a missing key.
@@ -213,7 +264,7 @@ def test_every_editable_field_is_patchable(config, field_name):
     """write_overlay must accept a patch for each editable field."""
     _seed(config)
     spec = {f.name: f for f in fields(ScheduleTask)}[field_name]
-    sample = SAMPLE_OVERRIDES.get(field_name, SAMPLES[spec.type])
+    sample = _sample_for(spec)
 
     write_overlay(config, "drift-probe", {field_name: sample})
     task = {t.name: t for t in discover_schedules(config)}["drift-probe"]
