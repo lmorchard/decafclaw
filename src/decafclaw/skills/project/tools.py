@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from decafclaw import sticky as sticky_mod
+from decafclaw.events import emit_for_ctx
 from decafclaw.media import EndTurnConfirm, ToolResult
 from decafclaw.skills.project.plan_parser import (
     Step,
@@ -95,13 +96,6 @@ def _load_current(ctx: "Context") -> ProjectInfo | ToolResult:
     return _load_or_error(ctx.config, project)
 
 
-def _emit_for_ctx(ctx: "Context"):
-    manager = getattr(ctx, "manager", None)
-    if manager is None:
-        return None
-    return manager.emit
-
-
 def _flatten_leaf_steps(steps: list[Step]) -> list[Step]:
     """Depth-first list of leaf steps (those without children)."""
     out: list[Step] = []
@@ -145,7 +139,7 @@ async def _emit_project_progress(ctx: "Context", info: ProjectInfo) -> None:
         data = _progress_data_from_plan(info, steps)
         result = await sticky_mod.set_sticky(
             ctx.config, ctx.conv_id, "progress_tracker", data,
-            emit=_emit_for_ctx(ctx))
+            emit=emit_for_ctx(ctx))
         if result is not None and not result.ok:
             log.warning("project sticky set failed: %s", result.error)
     except Exception:
@@ -156,7 +150,7 @@ async def _clear_project_progress(ctx: "Context") -> None:
     """Clear the sticky slot for a project. Fail-open."""
     try:
         result = await sticky_mod.clear_sticky(
-            ctx.config, ctx.conv_id, emit=_emit_for_ctx(ctx))
+            ctx.config, ctx.conv_id, emit=emit_for_ctx(ctx))
         if result is not None and not result.ok:
             log.warning("project sticky clear failed: %s", result.error)
     except Exception:

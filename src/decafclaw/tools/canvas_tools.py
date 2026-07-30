@@ -11,19 +11,13 @@ from typing import TYPE_CHECKING
 from urllib.parse import quote
 
 from .. import canvas as canvas_mod
+from ..events import emit_for_ctx
 from ..media import ToolResult
 
 if TYPE_CHECKING:
     from decafclaw.context import Context
 
 log = logging.getLogger(__name__)
-
-
-def _emit_for_ctx(ctx: "Context"):
-    manager = getattr(ctx, "manager", None)
-    if manager is None:
-        return None
-    return manager.emit
 
 
 def _canvas_url(conv_id: str, tab_id: str | None = None) -> str:
@@ -41,7 +35,7 @@ async def tool_canvas_new_tab(ctx: "Context",
     log.info("[tool:canvas_new_tab] widget=%s label=%r", widget_type, label)
     result = await canvas_mod.new_tab(
         ctx.config, ctx.conv_id, widget_type, data,
-        label=label, emit=_emit_for_ctx(ctx),
+        label=label, emit=emit_for_ctx(ctx),
     )
     if not result.ok:
         return ToolResult(text=f"[error: {result.error}]")
@@ -56,7 +50,7 @@ async def tool_canvas_update(ctx: "Context", tab_id: str, data: dict) -> ToolRes
     """Replace data of an existing tab. Preserves widget_type + label."""
     log.info("[tool:canvas_update] tab=%s", tab_id)
     result = await canvas_mod.update_tab(
-        ctx.config, ctx.conv_id, tab_id, data, emit=_emit_for_ctx(ctx),
+        ctx.config, ctx.conv_id, tab_id, data, emit=emit_for_ctx(ctx),
     )
     if not result.ok:
         return ToolResult(text=f"[error: {result.error}]")
@@ -67,7 +61,7 @@ async def tool_canvas_close_tab(ctx: "Context", tab_id: str) -> ToolResult:
     """Close a single tab by id. If it was active, the panel switches or hides."""
     log.info("[tool:canvas_close_tab] tab=%s", tab_id)
     result = await canvas_mod.close_tab(
-        ctx.config, ctx.conv_id, tab_id, emit=_emit_for_ctx(ctx),
+        ctx.config, ctx.conv_id, tab_id, emit=emit_for_ctx(ctx),
     )
     if not result.ok:
         return ToolResult(text=f"[error: {result.error}]")
@@ -82,7 +76,7 @@ async def tool_canvas_clear(ctx: "Context") -> ToolResult:
         return ToolResult(text="canvas already empty")
     # Reuse canvas_mod.clear_canvas (existing) — emits kind="clear".
     result = await canvas_mod.clear_canvas(
-        ctx.config, ctx.conv_id, emit=_emit_for_ctx(ctx),
+        ctx.config, ctx.conv_id, emit=emit_for_ctx(ctx),
     )
     if not result.ok:
         return ToolResult(text=f"[error: {result.error}]")
