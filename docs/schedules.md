@@ -35,7 +35,7 @@ Report key themes and anything that needs attention.
 | `enabled` | bool | no | `true` | Quick toggle without deleting the file |
 | `model` | string | no | — | Named model config for this task. Omit to use `default_model`. |
 | `allowed-tools` | list | no | all | Restrict which tools the task can use |
-| `shell_patterns` | list | no (derived) | — | **Derived only** — extracted from `shell(...)` entries in `allowed-tools`. Not settable in frontmatter; appears in the UI as a read-only summary and can be edited via the `allowed-tools` picker. Pre-approves matching commands. |
+| `shell_patterns` | list | no (derived) | — | **Derived only** — extracted from `shell(...)` entries in `allowed-tools` on parse. Not settable as a literal frontmatter key (writing `shell_patterns:` lands in `unknown_keys` and is ignored). Appears as an independently-editable chip list in the UI under the Permissions group, and is round-tripped back to `allowed-tools` as `shell(...)` entries on save. Pre-approves matching commands. |
 | `email-recipients` | list | no | — | Pre-approved email addresses for `send_email` that bypass confirmation for this task only. See [email.md](email.md#scheduled-task-integration). Exact addresses or `@domain.com` suffix patterns. |
 | `pre_script` | string | no | — | Python script run **before** the turn; its stdout is injected into the prompt. Relative to `workspace/` or `data/{agent_id}/`. See [Pre-agent scripts](#pre-agent-scripts). |
 | `required-skills` | list | no | — | Skills to pre-activate before running the task |
