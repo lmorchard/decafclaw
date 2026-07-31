@@ -131,14 +131,48 @@ keep the security fix small.
   body presented as the default. Pre-existing, out of scope, and it *chains
   with vector 5*: the "default" a user resets to may be agent-written, and that
   file's `required-skills` is the thing the tier gate now has to hold against.
-- **`_render_required_skill_bodies` is not tier-gated.** A workspace skill
-  named in `required-skills` no longer *activates*, but its `SKILL.md` body is
-  still rendered into the prompt's `<loaded_skills>` block. That's prompt
-  content, not a capability grant — roughly the same trust level as the skill
-  catalog the agent can already write into — so it was left alone. It is an
-  inconsistency someone will trip over.
-- **`test_trust_sets_are_disjoint` can't fail** as written. Flagged in the
-  final review, not fixed here.
+- **`_render_required_skill_bodies` is not tier-gated — filed, not settled.**
+  A workspace skill named in `required-skills` no longer *activates*, but its
+  `SKILL.md` body is still rendered into the prompt's `<loaded_skills>` block.
+  The fix-wave implementer judged this "prompt content, not a capability
+  grant" and left it; the re-reviewer disagreed and demonstrated why, and the
+  re-reviewer is right:
+  - `prompts/__init__.py:101` already skips `trust_tier == "workspace"` when
+    building `<loaded_skills>`, for exactly this reason. `schedules.py` is now
+    the only place that renders a workspace skill body into that block.
+  - "Same trust level as the skill catalog" doesn't hold. The catalog is a
+    one-line menu entry; `<loaded_skills>` is the full body presented as
+    instructions in force — and every bundled SCHEDULE.md body says "Follow
+    the X skill instructions to completion."
+  - The same trusted schedule installs real pre-approvals alongside those
+    instructions, unattended.
+
+  Not a settled decision. One-line fix mirroring `prompts/__init__.py`.
+- **`test_trust_sets_are_disjoint` DOES have teeth.** An earlier review
+  claimed it could not fail; the final re-reviewer disproved that by setting
+  `_PREAPPROVAL_TIERS = {"admin", "bundled", "workspace"}` — completeness
+  still passes because the union still equals `SCHEDULE_TIERS`, while
+  disjointness fails on the `{workspace}` intersection. The two guards are not
+  redundant. Recorded here because the earlier claim was itself wrong and
+  briefly made it into this file.
+- **`$SKILL_DIR` resolves through an agent-writable path (filed).**
+  `_resolve_skill_dir` reads `info.location` straight off `discovered_skills`
+  with no tier check, so a workspace shadow repoints `$SKILL_DIR`. A
+  **trusted** admin-tier schedule with `shell_patterns: ["$SKILL_DIR/fetch.sh*"]`
+  therefore installs `<workspace>/skills/<name>/fetch.sh*` as a *pre-approved*
+  pattern on an unattended turn. Confirmed by test during the final
+  re-review. This survives everything on this branch. Four contrib skills ship
+  that pattern today (`rss-ingest`, `mastodon-ingest`, `linkding-ingest`,
+  `meta-ingest`), and the prerequisite — a user copies a contrib SCHEDULE.md
+  to the admin dir — is the documented opt-in path.
+- **The unifying diagnosis, and the reason this branch is not the end of it.**
+  The gate is on *activation*. But `workspace/skills/` is the
+  highest-precedence skill scan entry, so every other consumer of
+  `discovered_skills` leaks past it: `info.location` (above) and `info.body`
+  (the `_render_required_skill_bodies` item). Five vectors were closed by
+  finding them one at a time; the remaining ones are the same hole with
+  different exits. The structural fix is to tier-check at the consumers, or
+  to stop letting workspace skills shadow trusted ones at all.
 - **No test pins `_PREAPPROVAL_TIERS`'s exact value.** Deliberate. The JS in
   `schedule-metadata.js` duplicates `['admin','bundled']` for display, and a
   test asserting the Python constant equals `{"admin","bundled"}` would be an
