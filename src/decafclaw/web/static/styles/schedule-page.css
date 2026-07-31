@@ -74,49 +74,21 @@ button.schedule-reset-btn:hover {
   color: var(--pico-primary-inverse);
 }
 
-/* Form row — cron/channel/enabled fields */
-.schedule-page-form {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 0.5rem 1rem;
-  padding: 0.6rem 1rem;
+/* Shrink budget between the two body children. These two rules are a
+   pair: wiki-editor is `flex: 1` with a 0 basis, so it contributes no
+   weighted shrink and every pixel of shrink would otherwise land on the
+   metadata panel — which has grown from three controls to eight fields
+   plus a permissions box plus a raw block. Without `flex-shrink: 0` a
+   short viewport clips the permissions group and the unrecognized-key
+   warning unreachably and collapses the editor toward 0px. The panel
+   scrolls itself instead, capped so it can never crowd the editor out.
+   (Internal padding/border live in schedule-metadata.css.) */
+.schedule-page schedule-metadata {
+  display: block;
+  flex-shrink: 0;
+  max-height: 45%;
+  overflow-y: auto;
   border-bottom: 1px solid var(--pico-muted-border-color);
-  flex-shrink: 0;
-}
-
-.schedule-page-form label {
-  display: flex;
-  align-items: center;
-  gap: 0.35rem;
-  font-size: 0.8rem;
-  color: var(--pico-muted-color);
-  margin: 0;
-}
-
-.schedule-page-form label span {
-  white-space: nowrap;
-  flex-shrink: 0;
-}
-
-.schedule-page-form label input[type="text"] {
-  font-size: 0.85rem;
-  padding: 0.2rem 0.4rem;
-  margin: 0;
-  width: 10rem;
-}
-
-/* Enabled checkbox row — horizontal label + checkbox */
-.schedule-page-form label.inline {
-  flex-direction: row;
-  align-items: center;
-}
-
-.schedule-page-form label.inline input[type="checkbox"] {
-  margin: 0;
-  width: 1rem;
-  height: 1rem;
-  flex-shrink: 0;
 }
 
 /* wiki-editor fills the remaining height */

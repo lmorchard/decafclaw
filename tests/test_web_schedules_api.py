@@ -313,3 +313,42 @@ class TestSchedulesAPI:
 
         await asyncio.sleep(0)
         assert fired["count"] == 1
+
+
+class TestModelsEndpoint:
+    """Backs the schedules page's model dropdown (#729 follow-on)."""
+
+    @pytest.mark.asyncio
+    async def test_lists_configured_models_sorted(self, client, http_config):
+        from decafclaw.config_types import ModelConfig, ProviderConfig
+
+        http_config.providers = {"vertex": ProviderConfig(type="vertex", project="p")}
+        http_config.model_configs = {
+            "vertex-gemini-pro": ModelConfig(provider="vertex", model="gemini-2.5-pro"),
+            "vertex-gemini-flash": ModelConfig(provider="vertex", model="gemini-2.5-flash"),
+        }
+        http_config.default_model = "vertex-gemini-flash"
+
+        res = await client.get("/api/models")
+        assert res.status_code == 200
+        assert res.json() == {
+            "models": ["vertex-gemini-flash", "vertex-gemini-pro"],
+            "default": "vertex-gemini-flash",
+        }
+
+    @pytest.mark.asyncio
+    async def test_empty_config_is_not_an_error(self, client, http_config):
+        """A fresh agent with no model_configs must not 500 the page."""
+        http_config.model_configs = {}
+        http_config.default_model = ""
+
+        res = await client.get("/api/models")
+        assert res.status_code == 200
+        assert res.json() == {"models": [], "default": ""}
+
+    @pytest.mark.asyncio
+    async def test_requires_auth(self, app):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as anon:
+            res = await anon.get("/api/models")
+        assert res.status_code == 401

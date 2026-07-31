@@ -50,6 +50,18 @@ class ScheduleTask:
     # Path to a Python script run before the turn; its stdout is injected into
     # the prompt. Relative to workspace/ or data/{agent_id}/ (#450).
     pre_script: str = ""
+    # Frontmatter keys the parser does not recognize. Diagnostic only —
+    # never serialized back, never patchable. Exists so a typo'd key is
+    # visible in the UI instead of being silently dropped (#729).
+    unknown_keys: list[str] = field(default_factory=list)
+
+
+# Frontmatter keys `parse_schedule_file` understands. Anything else lands
+# in `ScheduleTask.unknown_keys`. `effort` is the legacy alias for `model`.
+_KNOWN_FRONTMATTER_KEYS = frozenset({
+    "schedule", "enabled", "channel", "model", "effort",
+    "allowed-tools", "pre_script", "required-skills", "email-recipients",
+})
 
 
 def parse_schedule_file(path: Path) -> ScheduleTask | None:
@@ -94,6 +106,11 @@ def parse_schedule_file(path: Path) -> ScheduleTask | None:
     if not isinstance(email_recipients, list):
         email_recipients = [str(email_recipients)] if email_recipients else []
 
+    unknown_keys = sorted(set(meta) - _KNOWN_FRONTMATTER_KEYS)
+    if unknown_keys:
+        log.warning("Unrecognized frontmatter in %s: %s (ignored)",
+                    path.name, ", ".join(unknown_keys))
+
     return ScheduleTask(
         name=path.stem,
         schedule=schedule,
@@ -108,6 +125,7 @@ def parse_schedule_file(path: Path) -> ScheduleTask | None:
         shell_patterns=shell_patterns,
         required_skills=[str(s) for s in required_skills],
         email_recipients=[str(r) for r in email_recipients],
+        unknown_keys=unknown_keys,
     )
 
 
@@ -237,7 +255,8 @@ def write_overlay(config, name: str, patch: dict) -> ScheduleTask:
 
     Patch keys (all optional): enabled (bool), schedule (str), body (str),
     channel (str), allowed_tools (list[str]), required_skills (list[str]),
-    model (str), pre_script (str).
+    shell_patterns (list[str]), email_recipients (list[str]), model (str),
+    pre_script (str).
 
     Write targets:
     - workspace source → workspace/schedules/{name}.md (in-place edit)
@@ -266,7 +285,8 @@ def write_overlay(config, name: str, patch: dict) -> ScheduleTask:
 
     # Validate list fields — reject non-list values (e.g. comma-separated strings)
     # rather than silently iterating characters.
-    for list_field in ("allowed_tools", "required_skills"):
+    for list_field in ("allowed_tools", "required_skills",
+                       "shell_patterns", "email_recipients"):
         if list_field in patch and not isinstance(patch[list_field], list):
             raise ValueError(f"{list_field} must be a list of strings")
 
@@ -278,6 +298,8 @@ def write_overlay(config, name: str, patch: dict) -> ScheduleTask:
         channel=patch.get("channel", base.channel),
         allowed_tools=list(patch.get("allowed_tools", base.allowed_tools)),
         required_skills=list(patch.get("required_skills", base.required_skills)),
+        shell_patterns=list(patch.get("shell_patterns", base.shell_patterns)),
+        email_recipients=list(patch.get("email_recipients", base.email_recipients)),
         model=patch.get("model", base.model),
         pre_script=patch.get("pre_script", base.pre_script),
     )

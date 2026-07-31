@@ -249,23 +249,42 @@ def _coerce_bool(value) -> bool:
     return str(value).lower() not in ("false", "0", "no", "off")
 
 
+def _frontmatter_span(text: str) -> tuple[str, str] | None:
+    """Locate the frontmatter block. Returns (frontmatter_text, body_text).
+
+    Returns None when the text has no opening ``---`` or no closing
+    delimiter. Sole owner of the delimiter arithmetic so the parsed and
+    raw views cannot disagree about where the block ends.
+    """
+    stripped = text.strip()
+    if not stripped.startswith("---"):
+        return None
+    end = stripped.find("\n---", 3)
+    if end == -1:
+        return None
+    return stripped[3:end].strip(), stripped[end + 4:]
+
+
+def _extract_frontmatter_text(text: str) -> str:
+    """The raw YAML frontmatter block, without the ``---`` delimiters.
+
+    Empty string when there is no well-formed frontmatter. Used to show
+    what is actually on disk, including keys the parser ignores.
+    """
+    span = _frontmatter_span(text)
+    return span[0] if span else ""
+
+
 def _split_frontmatter(text: str) -> tuple[dict | None, str]:
     """Split YAML frontmatter from markdown body.
 
     Returns (parsed_dict, body_str). parsed_dict is None
     if no valid frontmatter delimiters found or YAML is invalid.
     """
-    stripped = text.strip()
-    if not stripped.startswith("---"):
+    span = _frontmatter_span(text)
+    if span is None:
         return None, text
-
-    # Find the closing --- (skip the opening one)
-    end = stripped.find("\n---", 3)
-    if end == -1:
-        return None, text
-
-    frontmatter_str = stripped[3:end].strip()
-    body = stripped[end + 4:]  # skip past \n---
+    frontmatter_str, body = span
 
     try:
         parsed = yaml.safe_load(frontmatter_str)
