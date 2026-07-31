@@ -123,3 +123,9 @@ button.sched-md-raw-toggle {
   color: var(--pico-muted-color);
   font-size: 0.75rem;
 }
+
+.sched-md-permissions-note {
+  margin-bottom: 0.375rem;
+  color: var(--pico-muted-color);
+  font-size: 0.7rem;
+}

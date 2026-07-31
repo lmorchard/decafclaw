@@ -126,6 +126,17 @@ Compose the weekly digest and email it to the team.
 
 The `email-recipients` entries merge with `config.email.allowed_recipients` only for this task's run — they populate `ctx.tools.preapproved_email_recipients`. Any send by this task whose recipient matches either list bypasses confirmation (which is important because scheduled runs have no user present to click Approve).
 
+This applies only to schedules at admin or bundled tier. At workspace tier
+the file is agent-writable, and at `extra` tier it is third-party contrib
+code, so in both cases `email-recipients` is ignored for pre-approval — see
+[Schedules](schedules.md#permissions-are-tier-dependent) and #731.
+
+Note what that does *not* mean: `config.email.allowed_recipients` is still
+consulted at every tier, so a send to a globally-allowlisted address still
+bypasses confirmation regardless of the schedule's tier. Gating the per-task
+list removes the task's ability to *add* recipients, not the global
+allowlist's ability to approve them.
+
 Entries follow the same "exact addresses or `@domain` suffix" rules as the global allowlist.
 
 ## Testing

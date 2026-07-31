@@ -164,6 +164,28 @@ export class ScheduleMetadata extends LitElement {
     `;
   }
 
+  /** Fail closed like the runtime gate, not open: name the trusted tiers
+   * explicitly and show the note for anything else, including an
+   * unrecognized or missing `source_tier` — never key off the untrusted
+   * tiers, which would default to "no note" for a value this list
+   * doesn't happen to enumerate. Mirrors `_PREAPPROVAL_TIERS` in
+   * schedules.py, which stays the source of truth and sole enforcement
+   * point; this duplication is a display decision only. */
+  #renderPermissionsNote() {
+    if (['admin', 'bundled'].includes(this.data?.source_tier)) return nothing;
+    return html`
+      <div class="sched-md-permissions-note">
+        Allowed tools and shell patterns still narrow what this task can
+        call, but do not pre-approve past confirmation at this tier.
+        This list of email recipients grants nothing here either — though
+        <code>send_email</code> still skips confirmation for anyone on the
+        agent's global allowlist, at any tier. pre_script will not run at
+        all — this schedule is not at admin- or bundled-tier. Pre-approval
+        requires that tier.
+      </div>
+    `;
+  }
+
   #renderRaw() {
     return html`
       <div class="sched-md-raw">
@@ -228,6 +250,7 @@ export class ScheduleMetadata extends LitElement {
           <div class="sched-md-permissions-title">
             ⚠ Permissions — these bypass confirmation
           </div>
+          ${this.#renderPermissionsNote()}
           ${PERMISSION_LISTS.map(([f, l]) => this.#renderChips(f, l))}
           <label>
             <span>Pre-script</span>

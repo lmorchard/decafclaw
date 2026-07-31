@@ -15,6 +15,7 @@ const BASE = {
   email_recipients: [],
   unknown_keys: [],
   frontmatter_raw: 'schedule: "0 3 * * *"',
+  source_tier: 'admin',
 };
 
 /** @returns {any} */
@@ -243,5 +244,62 @@ describe('schedule-metadata', () => {
     el.error = '';
     await el.updateComplete;
     expect(el.querySelector('.sched-md-error')).toBeNull();
+  });
+
+  it('notes that permissions do not pre-approve at workspace tier', async () => {
+    const el = mount({ source_tier: 'workspace' });
+    await el.updateComplete;
+    const note = el.querySelector('.sched-md-permissions-note');
+    expect(note).toBeTruthy();
+    // Load-bearing on content, not just presence: a note that renders but
+    // misnames the trust boundary or omits pre_script would still pass an
+    // existence-only check.
+    expect(note?.textContent).toMatch(/admin/i);
+    expect(note?.textContent).toMatch(/bundled/i);
+    expect(note?.textContent).toMatch(/pre_script/i);
+  });
+
+  it('scopes the email claim to this field, not to send_email as a whole', async () => {
+    // check_email_approval unions config.email.allowed_recipients with the
+    // per-task list. Gating the per-task half does NOT mean email always
+    // requires confirmation — a globally-allowlisted recipient still
+    // bypasses it at any tier. The note must not claim otherwise.
+    const el = mount({ source_tier: 'workspace' });
+    await el.updateComplete;
+    const text = el.querySelector('.sched-md-permissions-note')?.textContent ?? '';
+    expect(text).not.toMatch(/email recipients still require confirmation/i);
+    expect(text).toMatch(/this list/i);
+  });
+
+  it('notes that permissions do not pre-approve at extra tier', async () => {
+    const el = mount({ source_tier: 'extra' });
+    await el.updateComplete;
+    const note = el.querySelector('.sched-md-permissions-note');
+    expect(note).toBeTruthy();
+    expect(note?.textContent).toMatch(/admin/i);
+    expect(note?.textContent).toMatch(/bundled/i);
+    expect(note?.textContent).toMatch(/pre_script/i);
+  });
+
+  // Documents the fail-closed intent: the condition is an allowlist of
+  // trusted tiers (mirroring _PREAPPROVAL_TIERS), not an enumeration of
+  // untrusted ones, so a source_tier this list doesn't recognize still
+  // gets the note rather than silently reading as trusted.
+  it('shows the note for an unrecognized source_tier', async () => {
+    const el = mount({ source_tier: 'some-future-tier' });
+    await el.updateComplete;
+    expect(el.querySelector('.sched-md-permissions-note')).toBeTruthy();
+  });
+
+  it('shows no such note at admin tier', async () => {
+    const el = mount({ source_tier: 'admin' });
+    await el.updateComplete;
+    expect(el.querySelector('.sched-md-permissions-note')).toBeNull();
+  });
+
+  it('shows no such note at bundled tier', async () => {
+    const el = mount({ source_tier: 'bundled' });
+    await el.updateComplete;
+    expect(el.querySelector('.sched-md-permissions-note')).toBeNull();
   });
 });
