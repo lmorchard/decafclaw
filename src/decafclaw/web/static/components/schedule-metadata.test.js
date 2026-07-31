@@ -15,6 +15,7 @@ const BASE = {
   email_recipients: [],
   unknown_keys: [],
   frontmatter_raw: 'schedule: "0 3 * * *"',
+  source_tier: 'admin',
 };
 
 /** @returns {any} */
@@ -243,5 +244,25 @@ describe('schedule-metadata', () => {
     el.error = '';
     await el.updateComplete;
     expect(el.querySelector('.sched-md-error')).toBeNull();
+  });
+
+  it('notes that permissions do not pre-approve at workspace tier', async () => {
+    const el = mount({ source_tier: 'workspace' });
+    await el.updateComplete;
+    const note = el.querySelector('.sched-md-permissions-note');
+    expect(note).toBeTruthy();
+    expect(note?.textContent).toMatch(/admin/i);
+  });
+
+  it('shows no such note at admin tier', async () => {
+    const el = mount({ source_tier: 'admin' });
+    await el.updateComplete;
+    expect(el.querySelector('.sched-md-permissions-note')).toBeNull();
+  });
+
+  it('shows no such note at bundled tier', async () => {
+    const el = mount({ source_tier: 'bundled' });
+    await el.updateComplete;
+    expect(el.querySelector('.sched-md-permissions-note')).toBeNull();
   });
 });

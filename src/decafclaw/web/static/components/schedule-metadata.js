@@ -228,6 +228,13 @@ export class ScheduleMetadata extends LitElement {
           <div class="sched-md-permissions-title">
             ⚠ Permissions — these bypass confirmation
           </div>
+          ${this.data?.source_tier === 'workspace' ? html`
+            <div class="sched-md-permissions-note">
+              At workspace tier these restrict which tools the task may use,
+              but do not pre-approve them — this file is agent-writable.
+              Pre-approval requires admin tier.
+            </div>
+          ` : nothing}
           ${PERMISSION_LISTS.map(([f, l]) => this.#renderChips(f, l))}
           <label>
             <span>Pre-script</span>
