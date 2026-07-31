@@ -81,7 +81,7 @@ See [docs/config.md](docs/config.md), [docs/data-layout.md](docs/data-layout.md)
 - **MCP servers** ([docs/mcp-servers.md](docs/mcp-servers.md)) globally available, configured in `data/{agent_id}/mcp_servers.json`. Tools namespaced `mcp__<server>__<tool>`. Stdio servers auto-restart with backoff.
 - **Scheduled tasks** ([docs/schedules.md](docs/schedules.md)) — cron-style markdown files in `data/{agent_id}/schedules/` (admin) and `workspace/schedules/` (agent-writable). 60s poll loop via `croniter`.
 - **Notification inbox** ([docs/notifications.md](docs/notifications.md)) — append-only JSONL under `workspace/notifications/`. Web UI bell is push-driven over WebSocket. Producers fail-open. Channel adapters (Mattermost DM, email, vault page) are EventBus subscribers in `notification_channels/`; adding a channel touches only its module + `notification_channels/__init__.py`. For agent-side wakes on job completion, see [docs/background-wake.md](docs/background-wake.md).
-- **Email** ([docs/email.md](docs/email.md)) is dual-surface: the `send_email` tool (allowlist-gated, falls through to confirmation; allowlist is a union of config + per-task `email-recipients` frontmatter) and the email notification channel (its `recipient_addresses` config IS the trust boundary).
+- **Email** ([docs/email.md](docs/email.md)) is dual-surface: the `send_email` tool (allowlist-gated, falls through to confirmation; allowlist is a union of config + per-task `email-recipients` frontmatter, the latter only at admin/bundled schedule tier — see [docs/schedules.md](docs/schedules.md#permissions-are-tier-dependent)) and the email notification channel (its `recipient_addresses` config IS the trust boundary).
 - **`LOG_LEVEL=DEBUG`** for verbose logging.
 
 ### Context assembly
