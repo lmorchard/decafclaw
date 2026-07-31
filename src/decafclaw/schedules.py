@@ -28,6 +28,23 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
+# Every source tier `discover_schedules` can assign. Declared in one place
+# so the trust classification below can be checked for completeness.
+SCHEDULE_TIERS = ("admin", "workspace", "bundled", "extra")
+
+# Tiers whose frontmatter may GRANT capability — pre-approve tools, shell
+# patterns, or email recipients. An allowlist, not a denylist: an
+# unrecognized tier gets no pre-approval, because a security gate must
+# fail closed.
+#
+# `workspace` is excluded because `workspace/schedules/*.md` is
+# agent-writable by design, so an agent could otherwise approve its own
+# shell commands (#731). `extra` (contrib) is excluded as defense in
+# depth — it is force-disabled at discovery today, and a user opts in by
+# copying the file to the admin dir, which makes its source `admin`.
+_PREAPPROVAL_TIERS = frozenset({"admin", "bundled"})
+_UNTRUSTED_TIERS = frozenset({"workspace", "extra"})
+
 
 @dataclass
 class ScheduleTask:
@@ -613,6 +630,11 @@ async def run_schedule_task(config, event_bus, manager, task: ScheduleTask,
         conv_id = f"schedule-{task.name}-{timestamp}"
     channel = task.channel or f"schedule:{task.name}"
 
+    # Frontmatter always RESTRICTS which tools are visible. It only GRANTS
+    # pre-approval at a human-controlled tier — an agent-writable schedule
+    # must not be able to approve its own shell commands (#731).
+    trusted = task.source in _PREAPPROVAL_TIERS
+
     allowed_tools_set = None
     preapproved = set()
     if task.allowed_tools or task.shell_patterns:
@@ -623,11 +645,12 @@ async def run_schedule_task(config, event_bus, manager, task: ScheduleTask,
         # an escape hatch if the task is under-spec'd. They don't grant
         # capabilities on their own.
         allowed_tools_set |= _SCHEDULE_ESCAPE_HATCH_TOOLS
-        preapproved = set(task.allowed_tools)
+        if trusted:
+            preapproved = set(task.allowed_tools)
 
     skill_dir = _resolve_skill_dir(config, task)
     shell_patterns = None
-    if task.shell_patterns:
+    if trusted and task.shell_patterns:
         shell_patterns = [
             p.replace("$SKILL_DIR", skill_dir) for p in task.shell_patterns
         ]
@@ -635,7 +658,7 @@ async def run_schedule_task(config, event_bus, manager, task: ScheduleTask,
     # Per-task settings applied after the manager creates the context
     required_skills = list(task.required_skills)
     task_model = task.model
-    email_recipients = task.email_recipients or None
+    email_recipients = (task.email_recipients or None) if trusted else None
 
     async def setup_schedule_ctx(ctx: "Context") -> None:
         """Apply per-task settings (model, tools, skills) to the context."""
