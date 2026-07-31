@@ -8,6 +8,7 @@
 
 import { LitElement, html, nothing } from 'lit';
 import './wiki-editor.js';
+import './schedule-metadata.js';
 
 export class SchedulePage extends LitElement {
   static properties = {
@@ -16,6 +17,10 @@ export class SchedulePage extends LitElement {
     _loading: { state: true },
     _runStatus: { state: true },
     _runError: { state: true },
+    _models: { state: true },
+    _modelsLoaded: { state: true },
+    _modelsUnavailable: { state: true },
+    _saveError: { state: true },
   };
 
   createRenderRoot() { return this; }
@@ -29,12 +34,27 @@ export class SchedulePage extends LitElement {
     /** @type {''|'running'|'started'|'error'} */
     this._runStatus = '';
     this._runError = '';
+    /** @type {string[]} */
+    this._models = [];
+    /** True once a fetch has succeeded, empty list or not. */
+    this._modelsLoaded = false;
+    this._modelsUnavailable = false;
+    this._saveError = '';
   }
 
   /** @param {Map<string, any>} changedProps */
   updated(changedProps) {
     if (changedProps.has('name') && this.name) {
+      // schedule-page is a singleton (app.js reassigns .name rather than
+      // recreating the element); a save error from the previous schedule
+      // must not linger and get misattributed to the newly selected one.
+      this._saveError = '';
       this.#fetchSchedule();
+      // Gate on "did a fetch succeed", not on "is the list non-empty" —
+      // no model_configs is a legitimate 200 with an empty list, and
+      // keying on length refetched on every schedule selection. A failed
+      // fetch leaves this false so the next selection retries.
+      if (!this._modelsLoaded) this.#fetchModels();
     }
   }
 
@@ -55,6 +75,28 @@ export class SchedulePage extends LitElement {
     }
   }
 
+  async #fetchModels() {
+    try {
+      const res = await fetch('/api/models');
+      if (!res.ok) {
+        this._modelsUnavailable = true;
+        console.warn('schedule-page: model list fetch failed:', res.status);
+        return;
+      }
+      const data = await res.json();
+      this._models = data.models || [];
+      // An empty list from a 200 is a real state (no model_configs), so
+      // it stays "available" — the panel shows an honest one-entry
+      // dropdown rather than the manual-entry fallback.
+      this._modelsUnavailable = false;
+      this._modelsLoaded = true;
+    } catch (e) {
+      // Non-fatal: the panel falls back to a free-text model field.
+      this._modelsUnavailable = true;
+      console.warn('schedule-page: model list fetch failed:', e);
+    }
+  }
+
   /**
    * @param {string} field
    * @param {unknown} value
@@ -68,14 +110,35 @@ export class SchedulePage extends LitElement {
         body: JSON.stringify({ [field]: value }),
       });
       if (!res.ok) {
+        let message = `save failed (${res.status})`;
+        try {
+          const err = await res.json();
+          if (err?.error) message = err.error;
+        } catch {
+          // Non-JSON error body; the status line is all we have.
+        }
+        this._saveError = message;
         console.warn(`schedule-page: PUT ${field} failed:`, res.status);
         return;
       }
+      this._saveError = '';
       const data = await res.json();
       this._data = data.schedule;
       window.dispatchEvent(new CustomEvent('schedule-saved'));
     } catch (e) {
+      // Offline or a restarting server never reaches the HTTP-error
+      // path above, so without this the edit vanishes with no feedback
+      // at all — the same invisibility the status-code branch fixes.
+      this._saveError = 'save failed: could not reach the server';
       console.warn('schedule-page: PUT error:', e);
+    }
+  }
+
+  /** @param {CustomEvent} e */
+  async #onMetadataChange(e) {
+    const fields = e.detail?.fields ?? {};
+    for (const [field, value] of Object.entries(fields)) {
+      await this.#patchField(field, value);
     }
   }
 
@@ -176,23 +239,13 @@ export class SchedulePage extends LitElement {
             <button class="outline schedule-reset-btn" @click=${this.#resetOverlay}>Reset to default</button>
           ` : nothing}
         </div>
-        <div class="schedule-page-form">
-          <label>
-            <span>Cron</span>
-            <input type="text" .value=${d.schedule}
-              @change=${(/** @type {Event} */ e) => this.#patchField('schedule', /** @type {HTMLInputElement} */ (e.target).value)} />
-          </label>
-          <label>
-            <span>Channel</span>
-            <input type="text" .value=${d.channel || ''} placeholder="(default channel)"
-              @change=${(/** @type {Event} */ e) => this.#patchField('channel', /** @type {HTMLInputElement} */ (e.target).value)} />
-          </label>
-          <label class="inline">
-            <input type="checkbox" .checked=${d.enabled}
-              @change=${(/** @type {Event} */ e) => this.#patchField('enabled', /** @type {HTMLInputElement} */ (e.target).checked)} />
-            <span>Enabled</span>
-          </label>
-        </div>
+        <schedule-metadata
+          .data=${d}
+          .models=${this._models}
+          .modelsUnavailable=${this._modelsUnavailable}
+          .error=${this._saveError}
+          @metadata-change=${(/** @type {CustomEvent} */ e) => this.#onMetadataChange(e)}
+        ></schedule-metadata>
         <wiki-editor
           .page=${d.name}
           .content=${d.body}

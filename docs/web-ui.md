@@ -89,7 +89,8 @@ The **Schedules** tab lists all discovered scheduled tasks and lets you manage t
 
 **Side panel editor** (`<schedule-page>`):
 - **Header**: back arrow (closes the panel), name, source tier badge, "overridden" pill, a **"Run now"** button (fires the task immediately, bypassing the enabled flag and cron timer), and a "Reset to default" button when an overlay is shadowing a skill SCHEDULE.md.
-- **Form row**: cron expression input, channel input, and an enabled checkbox. Each field saves on `change` — no separate Save button needed.
+- **Metadata panel** (`<schedule-metadata>`): every frontmatter field the schedule format supports — cron, channel, model, enabled, and required skills in the main section; allowed tools, shell patterns, email recipients, and pre-script in a permissions group. Each field saves on `change`; no separate Save button. The permissions group is marked and grouped, because these pre-approve actions that would otherwise need confirmation.
+- **Raw section**: a read-only view of the frontmatter as it sits on disk, plus a warning naming any key the parser does not recognize. Read-only because the field set is closed — anything typed there that is not a known field would be dropped on the next write.
 - **Body editor**: a full `<wiki-editor>` for the prompt body. Autosaves after 1 second of inactivity or on Ctrl+S / focus-out. The editor sends the file's `mtime` as a `modified` field, but the server does not enforce conflict detection — concurrent edits are last-write-wins. Refresh before editing if you need the latest version.
 - **Workspace-tier schedules**: fully editable. Changes write in-place to `workspace/schedules/{name}.md`.
 - **URL deep-linking**: opening a schedule sets `?schedule={name}` in the URL. Pasting the URL in a new tab opens the same schedule page directly.

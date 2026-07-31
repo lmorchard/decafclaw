@@ -35,6 +35,7 @@ from .schedules import (
     write_last_run,
     write_overlay,
 )
+from .skills import _extract_frontmatter_text
 from .skills.vault._events import (
     KIND_CREATE,
     KIND_DELETE,
@@ -2057,6 +2058,20 @@ def _last_run_iso(config, task) -> str | None:
     return datetime.fromtimestamp(last_run, tz=timezone.utc).isoformat()
 
 
+def _read_frontmatter_raw(task) -> str:
+    """The frontmatter block as it appears on disk.
+
+    Deliberately not a re-serialization of the parsed task:
+    ``serialize_to_markdown`` writes only recognized fields, which would
+    omit exactly the unrecognized keys this view exists to surface.
+    """
+    try:
+        return _extract_frontmatter_text(task.path.read_text())
+    except OSError as exc:
+        log.debug("frontmatter_raw: cannot read %s: %s", task.path, exc)
+        return ""
+
+
 def _schedule_to_dict(config, task, skill_schedule_names: set | None = None) -> dict:
     """Serialize a ScheduleTask to a JSON-serializable dict.
 
@@ -2074,11 +2089,31 @@ def _schedule_to_dict(config, task, skill_schedule_names: set | None = None) -> 
         "model": task.model,
         "allowed_tools": list(task.allowed_tools),
         "required_skills": list(task.required_skills),
+        "shell_patterns": list(task.shell_patterns),
+        "email_recipients": list(task.email_recipients),
+        "pre_script": task.pre_script,
+        "unknown_keys": list(task.unknown_keys),
+        "frontmatter_raw": _read_frontmatter_raw(task),
         "body": task.body,
         "modified": task.path.stat().st_mtime if task.path.exists() else 0,
         "next_run_iso": _next_run_iso(config, task),
         "last_run_iso": _last_run_iso(config, task),
     }
+
+
+@_authenticated
+async def models_list(request: Request, username: str) -> JSONResponse:
+    """GET /api/models — named model configs for UI pickers.
+
+    A standalone route rather than a field on the schedules payload: the
+    schedules page is reachable with no conversation open, and the WS
+    `available_models` push is only populated once one loads.
+    """
+    config = request.app.state.config
+    return JSONResponse({
+        "models": sorted(config.model_configs),
+        "default": config.default_model,
+    })
 
 
 # -- Schedule handlers --------------------------------------------------------
@@ -2255,6 +2290,7 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> Starlette:
         Route("/api/config/files", config_list_files, methods=["GET"]),
         Route("/api/config/files/{path:path}", config_read_file, methods=["GET"]),
         Route("/api/config/files/{path:path}", config_write_file, methods=["PUT"]),
+        Route("/api/models", models_list, methods=["GET"]),
         Route("/api/schedules", schedules_list, methods=["GET"]),
         Route("/api/schedules/{name}/run", schedules_run, methods=["POST"]),
         Route("/api/schedules/{name}/overlay", schedules_reset, methods=["DELETE"]),

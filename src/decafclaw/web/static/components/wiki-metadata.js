@@ -11,6 +11,7 @@
  */
 
 import { LitElement, html, nothing } from 'lit';
+import './chip-list.js';
 
 const EXPANDED_KEY = 'wiki-metadata-expanded';
 
@@ -88,23 +89,6 @@ export class WikiMetadata extends LitElement {
     this.#emitChange(field, tags.length ? tags : null);
   }
 
-  /** @param {string} field @param {string} tag */
-  #removeTag(field, tag) {
-    this.#emitList(field, this.#list(field).filter(t => t !== tag));
-  }
-
-  /** @param {string} field @param {KeyboardEvent} e */
-  #addTagKey(field, e) {
-    if (e.key !== 'Enter' && e.key !== ',') return;
-    e.preventDefault();
-    const input = /** @type {HTMLInputElement} */ (e.target);
-    const value = input.value.trim().replace(/,$/, '');
-    if (!value) return;
-    const existing = this.#list(field);
-    if (!existing.includes(value)) this.#emitList(field, [...existing, value]);
-    input.value = '';
-  }
-
   #toggleRaw() {
     this._rawOpen = !this._rawOpen;
     this._rawError = '';
@@ -174,29 +158,14 @@ export class WikiMetadata extends LitElement {
 
   /** @param {string} field @param {string} label */
   #renderChipInput(field, label) {
-    const tags = this.#list(field);
     return html`
       <dt>${label}</dt>
       <dd>
-        ${tags.map(tag => html`
-          <span class="wiki-md-chip">
-            ${tag}
-            <button
-              type="button"
-              class="wiki-md-chip-x"
-              title="Remove ${tag}"
-              aria-label="Remove ${tag}"
-              @click=${() => this.#removeTag(field, tag)}
-            >&times;</button>
-          </span>
-        `)}
-        <input
-          class="wiki-md-chip-input"
-          type="text"
-          placeholder="add…"
-          aria-label="Add ${label}"
-          @keydown=${(/** @type {KeyboardEvent} */ e) => this.#addTagKey(field, e)}
-        />
+        <chip-list
+          .label=${label}
+          .items=${this.#list(field)}
+          @chips-change=${(/** @type {any} */ e) => this.#emitList(field, e.detail.items)}
+        ></chip-list>
       </dd>
     `;
   }
@@ -289,7 +258,7 @@ export class WikiMetadata extends LitElement {
 
   /** @param {string[]} tags */
   #renderChips(tags) {
-    return tags.map(tag => html`<span class="wiki-md-chip">${tag}</span>`);
+    return tags.map(tag => html`<span class="dc-chip">${tag}</span>`);
   }
 
   #renderStrip() {
