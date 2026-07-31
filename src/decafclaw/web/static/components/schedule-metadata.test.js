@@ -251,7 +251,22 @@ describe('schedule-metadata', () => {
     await el.updateComplete;
     const note = el.querySelector('.sched-md-permissions-note');
     expect(note).toBeTruthy();
+    // Load-bearing on content, not just presence: a note that renders but
+    // misnames the trust boundary or omits pre_script would still pass an
+    // existence-only check.
     expect(note?.textContent).toMatch(/admin/i);
+    expect(note?.textContent).toMatch(/bundled/i);
+    expect(note?.textContent).toMatch(/pre_script/i);
+  });
+
+  it('notes that permissions do not pre-approve at extra tier', async () => {
+    const el = mount({ source_tier: 'extra' });
+    await el.updateComplete;
+    const note = el.querySelector('.sched-md-permissions-note');
+    expect(note).toBeTruthy();
+    expect(note?.textContent).toMatch(/admin/i);
+    expect(note?.textContent).toMatch(/bundled/i);
+    expect(note?.textContent).toMatch(/pre_script/i);
   });
 
   it('shows no such note at admin tier', async () => {

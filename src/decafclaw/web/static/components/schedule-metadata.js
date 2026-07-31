@@ -228,11 +228,13 @@ export class ScheduleMetadata extends LitElement {
           <div class="sched-md-permissions-title">
             ⚠ Permissions — these bypass confirmation
           </div>
-          ${this.data?.source_tier === 'workspace' ? html`
+          ${this.data?.source_tier === 'workspace' || this.data?.source_tier === 'extra' ? html`
             <div class="sched-md-permissions-note">
-              At workspace tier these restrict which tools the task may use,
-              but do not pre-approve them — this file is agent-writable.
-              Pre-approval requires admin tier.
+              Allowed tools and shell patterns still narrow what this task can
+              call, but do not pre-approve past confirmation at this tier.
+              Email recipients still require confirmation. pre_script will not
+              run at all — this file is agent-writable. Pre-approval requires
+              an admin- or bundled-tier schedule.
             </div>
           ` : nothing}
           ${PERMISSION_LISTS.map(([f, l]) => this.#renderChips(f, l))}
