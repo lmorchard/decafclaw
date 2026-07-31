@@ -35,9 +35,9 @@ Report key themes and anything that needs attention.
 | `enabled` | bool | no | `true` | Quick toggle without deleting the file |
 | `model` | string | no | — | Named model config for this task. Omit to use `default_model`. |
 | `allowed-tools` | list | no | all | Restrict which tools the task can use |
-| `shell_patterns` | list | no (derived) | — | **Derived only** — extracted from `shell(...)` entries in `allowed-tools` on parse. Not settable as a literal frontmatter key (writing `shell_patterns:` lands in `unknown_keys` and is ignored). Appears as an independently-editable chip list in the UI under the Permissions group, and is round-tripped back to `allowed-tools` as `shell(...)` entries on save. Pre-approves matching commands. |
-| `email-recipients` | list | no | — | Pre-approved email addresses for `send_email` that bypass confirmation for this task only. See [email.md](email.md#scheduled-task-integration). Exact addresses or `@domain.com` suffix patterns. |
-| `pre_script` | string | no | — | Python script run **before** the turn; its stdout is injected into the prompt. Relative to `workspace/` or `data/{agent_id}/`. See [Pre-agent scripts](#pre-agent-scripts). |
+| `shell_patterns` | list | no (derived) | — | **Derived only** — extracted from `shell(...)` entries in `allowed-tools` on parse. Not settable as a literal frontmatter key (writing `shell_patterns:` lands in `unknown_keys` and is ignored). Appears as an independently-editable chip list in the UI under the Permissions group, and is round-tripped back to `allowed-tools` as `shell(...)` entries on save. Pre-approves matching commands, but only at admin or bundled tier — see [Permissions are tier-dependent](#permissions-are-tier-dependent). |
+| `email-recipients` | list | no | — | Pre-approved email addresses for `send_email` that bypass confirmation for this task only, but only at admin or bundled tier — see [Permissions are tier-dependent](#permissions-are-tier-dependent). See [email.md](email.md#scheduled-task-integration). Exact addresses or `@domain.com` suffix patterns. |
+| `pre_script` | string | no | — | Python script run **before** the turn; its stdout is injected into the prompt. Relative to `workspace/` or `data/{agent_id}/`. Not run at all outside admin or bundled tier — see [Permissions are tier-dependent](#permissions-are-tier-dependent). See [Pre-agent scripts](#pre-agent-scripts). |
 | `required-skills` | list | no | — | Skills to pre-activate before running the task |
 
 ### Unrecognized keys
@@ -263,6 +263,37 @@ Skills are activated without permission checks (same as heartbeat admin sections
 
 When a schedule supplies `allowed-tools`, the resulting allow-list is automatically extended with `tool_search` and `activate_skill`. Both are no-cost meta-tools that let the model recover if a task is under-spec'd (e.g. a required skill body fails to inject, or the allow-list misses a needed dependency). They do not grant capabilities by themselves.
 
+### Permissions are tier-dependent
+
+`allowed-tools`, its `shell(...)` entries, `email-recipients`, and
+`pre_script` do two separate things:
+
+- **Restrict** which tools the task can see. This applies at every tier.
+- **Pre-approve** those tools, shell commands and recipients so they
+  bypass confirmation. This applies **only at admin and bundled tier**.
+
+`workspace/schedules/*.md` is agent-writable, so honouring its
+pre-approvals would let the agent grant itself un-confirmed shell
+execution — see #731. Contrib (`extra`) is excluded for the same reason;
+opting a contrib schedule in means copying it to
+`data/{agent_id}/schedules/`, which makes it admin tier and restores
+pre-approval as a deliberate human act.
+
+Scheduled turns are unattended, so a shell command that matches no
+pre-approval and no entry in `shell_allow_patterns.json` is **denied**,
+not prompted. At workspace tier, `shell(...)` in frontmatter therefore
+narrows what the task may attempt without granting anything.
+
+`pre_script` is not run at all at an untrusted tier. Unlike the others it
+has no approval path to fall through to — it executes arbitrary Python as
+the bot process — so the script is skipped and the prompt receives
+`[pre_script error: ignored — not permitted at this tier]` in place of its
+output. The task still runs; it just doesn't get the script's data.
+
+**Migration:** a workspace-tier schedule that relied on `shell(...)`
+pre-approval stops working. Move it to `data/{agent_id}/schedules/` to
+restore it — that move is the deliberate act the boundary requires.
+
 ## Examples
 
 ### Daily workspace summary
@@ -454,10 +485,13 @@ The schedules page exposes every frontmatter field. Edits PUT to
 schedules and edits standalone files in place.
 
 `allowed-tools`, shell patterns, `email-recipients` and `pre_script` are
-grouped and marked separately: they pre-approve actions that would
-otherwise require confirmation. `pre_script` is in that group because it
-runs arbitrary Python as the bot process on the next fire — the most
-powerful setting on the panel.
+grouped and marked separately: at admin or bundled tier they pre-approve
+actions that would otherwise require confirmation. At workspace or extra
+tier they still restrict, but grant no pre-approval — see
+[Permissions are tier-dependent](#permissions-are-tier-dependent). `pre_script`
+is in that group because it runs arbitrary Python as the bot process on
+the next fire — the most powerful setting on the panel — and unlike the
+others it doesn't run at all outside admin/bundled tier.
 
 The model field is a dropdown populated from
 [`GET /api/models`](#get-apimodels). If that request fails the field
@@ -488,7 +522,7 @@ Each row displays:
 Clicking a row opens the schedule in the `#wiki-main` side panel — the same surface used by vault pages, workspace files, and agent config. The panel shows:
 
 - **Header**: back arrow (closes the panel), name, source tier badge, "overridden" pill, a **"Run now"** button (fires the task immediately, bypassing cron and the enabled flag), and a "Reset to default" button when an overlay is shadowing a skill SCHEDULE.md.
-- **Metadata panel** (`<schedule-metadata>`): every frontmatter field — cron expression, channel, model, enabled checkbox, and chip lists for required skills, allowed tools, shell patterns, and email recipients. Allowed tools, shell patterns, email recipients and the pre-script path are grouped under a **"Permissions — these bypass confirmation"** header. Each field saves on `change`; no separate Save button. The panel scrolls independently of the body editor when the viewport is short.
+- **Metadata panel** (`<schedule-metadata>`): every frontmatter field — cron expression, channel, model, enabled checkbox, and chip lists for required skills, allowed tools, shell patterns, and email recipients. Allowed tools, shell patterns, email recipients and the pre-script path are grouped under a **"Permissions — these bypass confirmation"** header; at workspace or extra tier a note under that header names the tier condition (see [Permissions are tier-dependent](#permissions-are-tier-dependent)). Each field saves on `change`; no separate Save button. The panel scrolls independently of the body editor when the viewport is short.
 - **Raw section**: a read-only view of the schedule's frontmatter as it sits on disk, with a warning naming any unrecognized keys and noting that the next save removes them. Read-only because the field set is closed — anything typed there that is not a known field would be dropped on the next write.
 - **Body editor**: a `<wiki-editor>` (Milkdown) for the prompt body. Autosaves after 1 second of inactivity or on Ctrl+S / focus-out.
 - **URL deep-linking**: opening a schedule sets `?schedule={name}` in the URL; the panel restores on page reload or direct link.
