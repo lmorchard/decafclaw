@@ -274,10 +274,13 @@ When a schedule supplies `allowed-tools`, the resulting allow-list is automatica
 
 `workspace/schedules/*.md` is agent-writable, so honouring its
 pre-approvals would let the agent grant itself un-confirmed shell
-execution — see #731. Contrib (`extra`) is excluded for the same reason;
-opting a contrib schedule in means copying it to
-`data/{agent_id}/schedules/`, which makes it admin tier and restores
-pre-approval as a deliberate human act.
+execution — see #731. Contrib (`extra`) is excluded for a different
+reason: those files come from `extra_skill_paths` (third-party skill
+directories), not from anything the agent writes. They're excluded as
+defense in depth — a contrib SCHEDULE.md is force-disabled at discovery
+today, so it can't even fire until a human opts it in. Opting in means
+copying the file to `data/{agent_id}/schedules/`, which makes its source
+`admin` and restores pre-approval as a deliberate human act.
 
 Scheduled turns are unattended, so a shell command that matches no
 pre-approval and no entry in `shell_allow_patterns.json` is **denied**,
