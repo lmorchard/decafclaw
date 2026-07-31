@@ -696,7 +696,16 @@ async def run_schedule_task(config, event_bus, manager, task: ScheduleTask,
     loaded_skills = _render_required_skill_bodies(config, required_skills)
     # Data goes between the instructions and the ask, so the agent reads what
     # it's doing, then what it has, then what to do with it.
-    pre_output = await _run_pre_script(config, task)
+    if task.pre_script and not trusted:
+        # Same tier gate as the shell/email preapprovals above: pre_script
+        # runs arbitrary Python with no approval path at all (#731 fix
+        # round 1), so an agent-writable schedule must not be able to make
+        # itself one. Disclose rather than silently drop — matches the
+        # fail-open-with-disclosure convention in `_run_pre_script`.
+        log.warning("pre_script ignored at %s tier: %s", task.source, task.name)
+        pre_output = "[pre_script error: ignored — not permitted at this tier]"
+    else:
+        pre_output = await _run_pre_script(config, task)
     pre_block = (
         f"<pre_script_output>\n{pre_output.rstrip()}\n</pre_script_output>\n\n"
         if pre_output else ""

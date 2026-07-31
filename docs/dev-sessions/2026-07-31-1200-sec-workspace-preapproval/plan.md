@@ -534,8 +534,8 @@ Add a subsection under the task-configuration material, near where `allowed-tool
 ```markdown
 ### Permissions are tier-dependent
 
-`allowed-tools`, its `shell(...)` entries, and `email-recipients` do two
-separate things:
+`allowed-tools`, its `shell(...)` entries, `email-recipients`, and
+`pre_script` do two separate things:
 
 - **Restrict** which tools the task can see. This applies at every tier.
 - **Pre-approve** those tools, shell commands and recipients so they
@@ -552,6 +552,12 @@ Scheduled turns are unattended, so a shell command that matches no
 pre-approval and no entry in `shell_allow_patterns.json` is **denied**,
 not prompted. At workspace tier, `shell(...)` in frontmatter therefore
 narrows what the task may attempt without granting anything.
+
+`pre_script` is not run at all at an untrusted tier. Unlike the others it
+has no approval path to fall through to — it executes arbitrary Python as
+the bot process — so the script is skipped and the prompt receives
+`[pre_script error: ignored — not permitted at this tier]` in place of its
+output. The task still runs; it just doesn't get the script's data.
 
 **Migration:** a workspace-tier schedule that relied on `shell(...)`
 pre-approval stops working. Move it to `data/{agent_id}/schedules/` to

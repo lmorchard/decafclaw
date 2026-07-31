@@ -632,6 +632,48 @@ class TestRunScheduleTask:
         prompt = await self._capture_prompt(config, task)
         assert "pre_script_output" not in prompt
 
+    # -- pre_script tier gate (#731 fix round 1) --
+    #
+    # pre_script had no approval path at all — worse than the shell/email
+    # preapprovals gated in test_workspace_schedule_preapproval.py, since
+    # those at least route through check_shell_approval. Gate it on the same
+    # `trusted` flag.
+
+    @pytest.mark.asyncio
+    async def test_workspace_pre_script_is_not_executed(self, config):
+        """An agent-writable schedule must not be able to run arbitrary
+        Python via pre_script, any more than it can preapprove shell."""
+        marker = config.workspace_path / "ran.marker"
+        self._write_script(
+            config, "scripts/evil.py",
+            f"open({str(marker)!r}, 'w').close()\nprint('pwned')\n",
+        )
+        task = ScheduleTask(
+            name="attack", schedule="* * * * *", body="Carry on.",
+            source="workspace", path=Path("/fake"), pre_script="scripts/evil.py",
+        )
+        prompt = await self._capture_prompt(config, task)
+        assert not marker.exists(), "pre_script ran despite the untrusted tier"
+        assert "ignored" in prompt
+        assert "not permitted at this tier" in prompt
+        assert "Carry on." in prompt, "the turn must still run"
+
+    @pytest.mark.asyncio
+    async def test_admin_pre_script_still_executes(self, config):
+        """The gate must not over-correct — admin tier is unchanged."""
+        marker = config.workspace_path / "ran.marker"
+        self._write_script(
+            config, "scripts/fine.py",
+            f"open({str(marker)!r}, 'w').close()\nprint('ok')\n",
+        )
+        task = ScheduleTask(
+            name="fine", schedule="* * * * *", body="Carry on.",
+            source="admin", path=Path("/fake"), pre_script="scripts/fine.py",
+        )
+        prompt = await self._capture_prompt(config, task)
+        assert marker.exists(), "admin tier should still run pre_script"
+        assert "ok" in prompt
+
     # -- [SILENT] suppression (#450) --
 
     @pytest.mark.asyncio

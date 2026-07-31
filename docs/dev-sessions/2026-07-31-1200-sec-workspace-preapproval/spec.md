@@ -69,6 +69,31 @@ trusted = task.source in _PREAPPROVAL_TIERS
 
 Allowlist, not denylist: an unrecognized tier is untrusted. A security gate must fail closed.
 
+### Amendment: `pre_script` is a fourth vector
+
+Found during Task 1's review, not during design. `run_schedule_task` calls
+`_run_pre_script` with no tier check and **no approval path at all** —
+`_resolve_pre_script_path` resolves against `config.workspace_path` first, and
+the poll loop runs any enabled due task. The reviewer confirmed by execution
+that an agent writing `workspace/evil.py` plus a `workspace/schedules/*.md`
+declaring `pre_script: evil.py` gets arbitrary Python run as the bot process,
+with stdout injected into its own prompt.
+
+This is strictly worse than the three vectors above: `shell(...)` at least
+routed through `check_shell_approval`, which denies on an unattended turn.
+`pre_script` routes through nothing.
+
+Folded into this work rather than deferred, because shipping a gate whose
+comment says "an agent-writable schedule must not be able to approve its own
+shell commands" while a larger hole stands eleven lines below it would read as
+closed to the next person. Untrusted tiers skip the script and get a disclosed
+`[pre_script error: ...]` line in the prompt, matching the existing
+fail-open-with-disclosure convention.
+
+A third instance of the same pattern — `commands.py` pre-approving a
+`workspace/skills/` skill's tools — is tracked separately as #737 and is
+deliberately out of scope here.
+
 ### What changes at an untrusted tier
 
 Frontmatter keeps its *restricting* effect and loses its *granting* effect.
