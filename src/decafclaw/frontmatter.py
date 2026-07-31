@@ -6,7 +6,9 @@ at the start of a markdown file. Pure utility functions, no codebase dependencie
 
 from __future__ import annotations
 
+import datetime
 import logging
+import math
 import re
 
 import yaml
@@ -100,6 +102,44 @@ def parse_frontmatter_block(raw_yaml: str | None) -> tuple[dict, str | None]:
     if not isinstance(parsed, dict):
         return {}, "frontmatter is not a mapping"
     return parsed, None
+
+
+def to_json_safe(value):
+    """Coerce a parsed-YAML value into something ``json.dumps`` will accept.
+
+    Frontmatter is arbitrary user-authored YAML, and PyYAML's implicit
+    resolvers turn ordinary-looking lines into Python objects JSON has no
+    equivalent for. The one that bit us: ``date: 2026-06-22`` resolves to a
+    ``datetime.date``, so a single such line in a vault page made
+    ``GET /api/vault/<page>`` raise ``TypeError`` and 500 — the page simply
+    could not be viewed. Same for ``2026: notes`` (int key), ``!!set``,
+    ``!!binary``, and ``.nan`` / ``.inf`` (Starlette renders with
+    ``allow_nan=False``, so those are a ``ValueError``).
+
+    Coercion belongs here, at the JSON boundary, and NOT in the parser: the
+    write path re-dumps parsed metadata through ``yaml.dump``, which round-trips
+    a real ``date`` back to an unquoted ``2026-06-22``. Stringifying at parse
+    time would instead rewrite the user's file as ``'2026-06-22'`` the first
+    time anyone edited an unrelated field.
+
+    Dates/times become ISO strings, sequences and sets become lists, mapping
+    keys become strings, and anything else unrecognized falls back to ``str()``
+    — lossy, but a readable value beats a dead endpoint.
+    """
+    if isinstance(value, dict):
+        return {str(k): to_json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return [to_json_safe(v) for v in value]
+    if value is None or isinstance(value, (str, bool, int)):
+        return value
+    if isinstance(value, float):
+        # json.dumps emits bare NaN/Infinity, which is invalid JSON; Starlette
+        # passes allow_nan=False and raises instead.
+        return value if math.isfinite(value) else str(value)
+    # datetime.datetime is a datetime.date subclass, so this covers both.
+    if isinstance(value, (datetime.date, datetime.time)):
+        return value.isoformat()
+    return str(value)
 
 
 def get_frontmatter_field(metadata: dict, field: str, default=None):

@@ -1,5 +1,9 @@
 """Tests for YAML frontmatter parsing and serialization."""
 
+import datetime
+import json
+from pathlib import Path
+
 import pytest
 
 from decafclaw.frontmatter import (
@@ -11,6 +15,7 @@ from decafclaw.frontmatter import (
     parse_frontmatter_block,
     serialize_frontmatter,
     split_frontmatter,
+    to_json_safe,
 )
 
 # -- parse_frontmatter ---------------------------------------------------------
@@ -352,3 +357,63 @@ class TestMergeFrontmatter:
         coerces to None, so the key still ends up present but null."""
         merged = merge_frontmatter({}, {"summary": None}, overwrite=False)
         assert merged == {"summary": None}
+
+
+# -- to_json_safe --------------------------------------------------------------
+
+
+class TestToJsonSafe:
+    """Coercion of parsed-YAML values into shapes ``json.dumps`` accepts.
+
+    PyYAML's implicit resolvers turn ordinary-looking frontmatter into Python
+    objects JSON has no equivalent for; every case below is something a user
+    can write in a vault page without knowing they did anything unusual.
+    """
+
+    def test_plain_scalars_pass_through_unchanged(self):
+        value = {"title": "W26", "importance": 0.7, "n": 3,
+                 "flag": True, "empty": None}
+        assert to_json_safe(value) == value
+
+    def test_date_becomes_iso_string(self):
+        meta, _ = parse_frontmatter("---\ndate: 2026-06-22\n---\nBody\n")
+        assert isinstance(meta["date"], datetime.date)
+        assert to_json_safe(meta) == {"date": "2026-06-22"}
+
+    def test_datetime_becomes_iso_string(self):
+        meta, _ = parse_frontmatter("---\nwhen: 2026-06-22 14:30:00\n---\nB\n")
+        assert to_json_safe(meta)["when"].startswith("2026-06-22T14:30:00")
+
+    def test_nested_dates_in_lists_and_dicts(self):
+        value = {"outer": {"date": datetime.date(2026, 6, 22)},
+                 "seen": [datetime.date(2026, 1, 1), "x"]}
+        assert to_json_safe(value) == {
+            "outer": {"date": "2026-06-22"},
+            "seen": ["2026-01-01", "x"],
+        }
+
+    def test_tuples_and_sets_become_lists(self):
+        assert to_json_safe(("a", "b")) == ["a", "b"]
+        assert to_json_safe({"tags": frozenset(["only"])}) == {"tags": ["only"]}
+
+    def test_non_string_keys_become_strings(self):
+        """`2026: notes` parses to an int key, which JSON objects can't hold."""
+        meta, _ = parse_frontmatter("---\n2026: notes\n---\nBody\n")
+        assert to_json_safe(meta) == {"2026": "notes"}
+
+    def test_nan_and_infinity_become_strings(self):
+        """Starlette renders with allow_nan=False, so these raise ValueError."""
+        out = to_json_safe({"a": float("nan"), "b": float("inf")})
+        assert out == {"a": "nan", "b": "inf"}
+
+    def test_unknown_objects_fall_back_to_str(self):
+        assert to_json_safe({"p": Path("/tmp/x")}) == {"p": "/tmp/x"}
+
+    def test_result_actually_serializes(self):
+        """The whole point: the output survives a real json.dumps."""
+        meta, _ = parse_frontmatter(
+            "---\ndate: 2026-06-22\ntags: [blog]\nimportance: 0.5\n---\nB\n"
+        )
+        with pytest.raises(TypeError):
+            json.dumps(meta)
+        assert json.loads(json.dumps(to_json_safe(meta)))["date"] == "2026-06-22"

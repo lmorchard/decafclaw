@@ -172,6 +172,67 @@ async def test_vault_read_malformed_frontmatter(client, http_config):
 
 
 @pytest.mark.asyncio
+async def test_vault_read_date_frontmatter_serializes(client, http_config):
+    """An unquoted ISO date must not 500 the read.
+
+    PyYAML resolves `date: 2026-06-22` to a `datetime.date`, which
+    `json.dumps` rejects — so a single such line took down the whole page
+    view with a 500 rather than degrading. Dates come back as ISO strings.
+    """
+    pages_dir = http_config.vault_agent_pages_dir
+    (pages_dir / "Dated.md").write_text(
+        "---\ndate: 2026-06-22\nweek: 2026-W26\ntags:\n- blog\n---\nBody.\n"
+    )
+    resp = await client.get("/api/vault/agent/pages/Dated")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["frontmatter"] == {
+        "date": "2026-06-22",
+        # Not a YAML timestamp, so it was always a plain string.
+        "week": "2026-W26",
+        "tags": ["blog"],
+    }
+    assert data["body"] == "Body.\n"
+    # The raw block is still the real bytes, unquoted, for the raw editor.
+    assert "date: 2026-06-22" in data["frontmatter_raw"]
+
+
+@pytest.mark.asyncio
+async def test_vault_read_nested_date_serializes(client, http_config):
+    """Dates nested under a mapping/sequence are coerced too, not just top level."""
+    pages_dir = http_config.vault_agent_pages_dir
+    (pages_dir / "Nested.md").write_text(
+        "---\nreview:\n  due: 2026-07-01\nseen:\n- 2026-01-01\n---\nBody.\n"
+    )
+    resp = await client.get("/api/vault/agent/pages/Nested")
+    assert resp.status_code == 200
+    assert resp.json()["frontmatter"] == {
+        "review": {"due": "2026-07-01"},
+        "seen": ["2026-01-01"],
+    }
+
+
+@pytest.mark.asyncio
+async def test_vault_write_date_frontmatter_serializes(client, http_config):
+    """The write response echoes frontmatter, so it had the same 500.
+
+    The date must survive in the file unquoted — coercion is a JSON-boundary
+    concern, so it must not leak back into what gets written to disk.
+    """
+    path = http_config.vault_agent_pages_dir / "DatedWrite.md"
+    path.write_text("---\ndate: 2026-06-22\n---\nOld body.\n")
+
+    resp = await client.put(
+        "/api/vault/agent/pages/DatedWrite",
+        json={"frontmatter": {"summary": "A summary."}},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["frontmatter"] == {"date": "2026-06-22", "summary": "A summary."}
+    assert "date: 2026-06-22" in path.read_text()
+
+
+@pytest.mark.asyncio
 async def test_vault_read_by_stem(client, http_config):
     """Read a page by stem name (without full path)."""
     pages_dir = http_config.vault_agent_pages_dir

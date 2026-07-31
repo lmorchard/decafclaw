@@ -128,6 +128,16 @@ whole block through `yaml.dump`, which alphabetizes keys and drops comments. If
 a page's frontmatter is hand-curated, edit it through the raw editor rather than
 the typed controls.
 
+The parsed `frontmatter` object in a GET or PUT response is JSON-coerced through
+`to_json_safe` before it goes on the wire. Frontmatter is arbitrary user YAML,
+and PyYAML's implicit resolvers produce Python objects JSON has no type for — an
+unquoted `date: 2026-06-22` becomes a `datetime.date`, and one such line used to
+500 the whole page view. So dates and times arrive as ISO strings, `!!set` values
+as arrays, non-string mapping keys as strings, `.nan` / `.inf` as strings, and
+anything more exotic as its `str()`. The coercion is wire-only: `frontmatter_raw`
+and the file on disk keep the original bytes, and a typed-control patch re-dumps
+the native value, so a real date stays unquoted in the page.
+
 ## Tools
 
 The vault skill is **always loaded** — its tools are available in every conversation.

@@ -132,6 +132,28 @@ class TestVaultRead:
         assert "not found" in result.text
 
     @pytest.mark.asyncio
+    async def test_read_date_frontmatter_survives_json_serialization(
+        self, ctx, vault_dir,
+    ):
+        """`data` is json.dumps'd into a fenced block by tool_execution.
+
+        A `date:` line parses to a datetime.date, which used to make that dump
+        raise — tool_execution catches it, so the agent silently lost the whole
+        structured block instead of crashing. Assert it serializes for real.
+        """
+        import json
+
+        (vault_dir / "Dated.md").write_text(
+            "---\ndate: 2026-06-22\ntags:\n- blog\n---\n# Dated\n\nBody.\n"
+        )
+        result = await tool_vault_read(ctx, "Dated")
+        assert result.data is not None
+        assert json.loads(json.dumps(result.data))["frontmatter"] == {
+            "date": "2026-06-22",
+            "tags": ["blog"],
+        }
+
+    @pytest.mark.asyncio
     async def test_read_in_subdirectory(self, ctx, agent_pages):
         sub = agent_pages / "people"
         sub.mkdir()

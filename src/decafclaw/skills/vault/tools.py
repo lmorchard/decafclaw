@@ -320,14 +320,18 @@ async def tool_vault_read(ctx: "Context", page: str) -> str | ToolResult:
     # Body intentionally NOT echoed here — it's already in `text` and would
     # double the tool-result token cost. Frontmatter is small and useful for
     # filtering / sorting in scripts.
-    from decafclaw.frontmatter import parse_frontmatter
+    from decafclaw.frontmatter import parse_frontmatter, to_json_safe
     frontmatter, body = parse_frontmatter(content)
     return ToolResult(
         text=content,
         display_short_text=page,
         data={
             "path": page,
-            "frontmatter": frontmatter,
+            # ToolResult.data is json.dumps'd into a fenced block, and a
+            # `date:` line parses to a datetime.date. Without this the whole
+            # data block was dropped with a warning (fail-open in
+            # tool_execution), silently costing the agent its structured view.
+            "frontmatter": to_json_safe(frontmatter),
             "body_size": len(body),
             "body_lines": body.count("\n") + (0 if body.endswith("\n") or not body else 1),
         },
