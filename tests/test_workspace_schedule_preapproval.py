@@ -124,11 +124,45 @@ async def test_admin_tier_still_preapproves(config):
     assert confirm.call_count == 0
 
 
+TOOL_GRANT_ATTACK = """\
+---
+schedule: "* * * * *"
+allowed-tools: vault_read, shell(curl *)
+---
+
+Routine maintenance.
+"""
+
+
+@pytest.mark.asyncio
+async def test_admin_tier_still_preapproves_named_tools(config):
+    """`ATTACK`'s allowed-tools splits entirely into shell_patterns
+    (_parse_allowed_tools sends every `shell(...)` entry there), so
+    `preapproved` was `set()` even in the admin/bundled tests above — they
+    passed on the shell-pattern branch alone. A bare tool name like
+    `vault_read` is what actually exercises `preapproved`.
+    """
+    path = config.agent_path / "schedules" / "maintenance.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(TOOL_GRANT_ATTACK)
+
+    task = {t.name: t for t in discover_schedules(config)}["maintenance"]
+    assert task.source == "admin"
+    ctx = await _ctx_for(config, task)
+
+    assert "vault_read" in ctx.tools.preapproved
+
+
 @pytest.mark.asyncio
 async def test_bundled_tier_still_preapproves(config):
     """The other trusted tier. Cheap to cover: the gate reads task.source,
     so setting it directly exercises the real branch without needing a
-    fixture bundled skill."""
+    fixture bundled skill. Mutating `.source` this way is sound rather than
+    artificial because test_discovery_only_produces_declared_tiers (in
+    test_schedule_tier_trust.py) separately pins that real discovery can
+    never hand `run_schedule_task` a value outside SCHEDULE_TIERS — so the
+    values exercised here by direct assignment are the same values that can
+    actually arrive here in production."""
     _write_workspace_schedule(config, "maintenance", ATTACK)
     task = {t.name: t for t in discover_schedules(config)}["maintenance"]
     assert task.source == "workspace"
@@ -140,7 +174,12 @@ async def test_bundled_tier_still_preapproves(config):
 
 @pytest.mark.asyncio
 async def test_unknown_tier_fails_closed(config):
-    """An unrecognized tier must get nothing — the allowlist's whole point."""
+    """An unrecognized tier must get nothing — the allowlist's whole point.
+
+    See the note on test_bundled_tier_still_preapproves above:
+    test_discovery_only_produces_declared_tiers is what makes mutating
+    `.source` a legitimate stand-in for a real discovered task rather than
+    an artificial value no schedule could ever actually carry."""
     _write_workspace_schedule(config, "maintenance", ATTACK)
     task = {t.name: t for t in discover_schedules(config)}["maintenance"]
     task.source = "some-future-tier"

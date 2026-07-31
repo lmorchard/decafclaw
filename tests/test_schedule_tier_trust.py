@@ -67,11 +67,16 @@ def test_discovery_only_produces_declared_tiers(config, tmp_path, monkeypatch):
     tasks = discover_schedules(config)
     found = {t.source for t in tasks}
 
+    # Drift check first: a renamed tier literal at a discovery site must
+    # surface as "undeclared tier", not get shadowed by the fixture-coverage
+    # message below (a future reader could "fix" that one by weakening the
+    # assertion, per the brief's "fix the fixture, do not weaken the
+    # assertion" — this ordering keeps that mistake from being tempting).
+    assert found <= set(SCHEDULE_TIERS), (
+        f"discovery produced undeclared tier(s): {found - set(SCHEDULE_TIERS)}"
+    )
     # Bundled skills (dream, garden, newsletter) ship SCHEDULE.md, so the
     # bundled tier is exercised without any fixture setup.
     assert {"admin", "workspace", "extra", "bundled"} <= found, (
         f"fixture did not exercise every discovery path; got {found}"
-    )
-    assert found <= set(SCHEDULE_TIERS), (
-        f"discovery produced undeclared tier(s): {found - set(SCHEDULE_TIERS)}"
     )

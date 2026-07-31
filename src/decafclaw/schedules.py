@@ -43,6 +43,14 @@ SCHEDULE_TIERS = ("admin", "workspace", "bundled", "extra")
 # depth — it is force-disabled at discovery today, and a user opts in by
 # copying the file to the admin dir, which makes its source `admin`.
 _PREAPPROVAL_TIERS = frozenset({"admin", "bundled"})
+
+# Not read by any runtime gate — `trusted = task.source in _PREAPPROVAL_TIERS`
+# is the only check that matters, and it's an allowlist on purpose (see
+# above). This set exists solely so a new tier can't be added to
+# SCHEDULE_TIERS without its trust being decided: see
+# tests/test_schedule_tier_trust.py, whose completeness guard would go
+# false-negative (fail-open) if this were consulted anywhere production
+# code runs.
 _UNTRUSTED_TIERS = frozenset({"workspace", "extra"})
 
 
