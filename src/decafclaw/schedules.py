@@ -42,6 +42,12 @@ SCHEDULE_TIERS = ("admin", "workspace", "bundled", "extra")
 # shell commands (#731). `extra` (contrib) is excluded as defense in
 # depth — it is force-disabled at discovery today, and a user opts in by
 # copying the file to the admin dir, which makes its source `admin`.
+#
+# `web/static/components/schedule-metadata.js` hard-codes the same pair in
+# `#renderPermissionsNote` to decide whether to show the "does not
+# pre-approve at this tier" note. That copy is display-only — this set is
+# the sole enforcement point — but the two must not drift, or the UI will
+# promise pre-approval a run won't honour. Change one, change the other.
 _PREAPPROVAL_TIERS = frozenset({"admin", "bundled"})
 
 # Not read by any runtime gate — `trusted = task.source in _PREAPPROVAL_TIERS`
@@ -503,6 +509,18 @@ async def _run_pre_script(config, task: ScheduleTask) -> str:
     """
     if not task.pre_script or not config.pre_script.enabled:
         return ""
+    if task.source not in _PREAPPROVAL_TIERS:
+        # Same tier gate as the shell/email preapprovals in
+        # run_schedule_task: pre_script runs arbitrary Python with no
+        # approval path at all (#731), so an agent-writable schedule must
+        # not be able to make itself one. The gate lives here rather than
+        # at the call site so a second caller can't route around it — and
+        # so it sits *after* the `enabled` check, since "the feature is
+        # off" must not be reported as "your tier isn't permitted".
+        # Disclose rather than silently drop, matching the fail-open-with-
+        # disclosure convention below.
+        log.warning("pre_script ignored at %s tier: %s", task.source, task.name)
+        return "[pre_script error: ignored — not permitted at this tier]"
     script = _resolve_pre_script_path(config, task.pre_script)
     if script is None:
         log.warning("Scheduled task %r: pre_script %r escapes the allowed roots",
@@ -689,6 +707,21 @@ async def run_schedule_task(config, event_bus, manager, task: ScheduleTask,
             from .tools.skill_tools import activate_skill_internal
             for skill_name in required_skills:
                 skill_info = skill_map.get(skill_name)
+                if skill_info and skill_info.trust_tier == "workspace":
+                    # Activation imports and execs the skill's tools.py, so
+                    # `required-skills` is a code-execution grant (#731).
+                    # `workspace/skills/` is agent-writable AND the
+                    # highest-precedence scan entry, so an agent-authored
+                    # skill shadows a bundled one of the same name — which
+                    # makes this reachable from a *trusted* schedule too.
+                    # activate_skill already refuses workspace tier on an
+                    # unattended turn (#649); this is the same rule for the
+                    # path that never went through it.
+                    log.warning(
+                        "Skipping workspace-tier skill '%s' required by task "
+                        "'%s': workspace skills are not activated on "
+                        "scheduled turns", skill_name, task.name)
+                    continue
                 if skill_info:
                     try:
                         await activate_skill_internal(ctx, skill_info)
@@ -704,16 +737,9 @@ async def run_schedule_task(config, event_bus, manager, task: ScheduleTask,
     loaded_skills = _render_required_skill_bodies(config, required_skills)
     # Data goes between the instructions and the ask, so the agent reads what
     # it's doing, then what it has, then what to do with it.
-    if task.pre_script and not trusted:
-        # Same tier gate as the shell/email preapprovals above: pre_script
-        # runs arbitrary Python with no approval path at all (#731 fix
-        # round 1), so an agent-writable schedule must not be able to make
-        # itself one. Disclose rather than silently drop — matches the
-        # fail-open-with-disclosure convention in `_run_pre_script`.
-        log.warning("pre_script ignored at %s tier: %s", task.source, task.name)
-        pre_output = "[pre_script error: ignored — not permitted at this tier]"
-    else:
-        pre_output = await _run_pre_script(config, task)
+    # The pre_script tier gate lives inside `_run_pre_script`, on the
+    # dangerous function rather than at this call site (#731).
+    pre_output = await _run_pre_script(config, task)
     pre_block = (
         f"<pre_script_output>\n{pre_output.rstrip()}\n</pre_script_output>\n\n"
         if pre_output else ""
