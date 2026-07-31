@@ -259,6 +259,18 @@ describe('schedule-metadata', () => {
     expect(note?.textContent).toMatch(/pre_script/i);
   });
 
+  it('scopes the email claim to this field, not to send_email as a whole', async () => {
+    // check_email_approval unions config.email.allowed_recipients with the
+    // per-task list. Gating the per-task half does NOT mean email always
+    // requires confirmation — a globally-allowlisted recipient still
+    // bypasses it at any tier. The note must not claim otherwise.
+    const el = mount({ source_tier: 'workspace' });
+    await el.updateComplete;
+    const text = el.querySelector('.sched-md-permissions-note')?.textContent ?? '';
+    expect(text).not.toMatch(/email recipients still require confirmation/i);
+    expect(text).toMatch(/this list/i);
+  });
+
   it('notes that permissions do not pre-approve at extra tier', async () => {
     const el = mount({ source_tier: 'extra' });
     await el.updateComplete;

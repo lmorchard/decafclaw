@@ -177,9 +177,11 @@ export class ScheduleMetadata extends LitElement {
       <div class="sched-md-permissions-note">
         Allowed tools and shell patterns still narrow what this task can
         call, but do not pre-approve past confirmation at this tier.
-        Email recipients still require confirmation. pre_script will not
-        run at all — this schedule is not at admin- or bundled-tier.
-        Pre-approval requires that tier.
+        This list of email recipients grants nothing here either — though
+        <code>send_email</code> still skips confirmation for anyone on the
+        agent's global allowlist, at any tier. pre_script will not run at
+        all — this schedule is not at admin- or bundled-tier. Pre-approval
+        requires that tier.
       </div>
     `;
   }
