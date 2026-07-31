@@ -22,6 +22,7 @@ from .frontmatter import (
     merge_frontmatter,
     parse_frontmatter_block,
     split_frontmatter,
+    to_json_safe,
 )
 from .mattermost_ui import get_token_registry
 from .schedules import (
@@ -1278,7 +1279,8 @@ async def vault_read(request: Request, username: str) -> JSONResponse:
     payload = {
         "title": resolved.stem,
         "path": str(rel.with_suffix("")),
-        "frontmatter": metadata,
+        # Arbitrary user YAML: dates/sets/NaN would otherwise 500 the render.
+        "frontmatter": to_json_safe(metadata),
         # Always the real bytes: the raw editor has replace semantics, so
         # re-serializing the parsed dict would reorder keys and drop comments
         # the moment anyone opened the panel.
@@ -1497,7 +1499,9 @@ async def vault_write(request: Request, username: str) -> JSONResponse:
     return JSONResponse({
         "ok": True,
         "modified": target.stat().st_mtime,
-        "frontmatter": result_meta,
+        # Coerced for the wire only — `new_raw` above was already written to
+        # disk, so a real date stays unquoted in the user's file.
+        "frontmatter": to_json_safe(result_meta),
         # Returned so the client can reseed its raw editor without a second
         # GET. The metadata paths validate before writing, so they always leave
         # a parseable block — but a body-only write splices an existing block
