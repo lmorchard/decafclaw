@@ -204,4 +204,59 @@ describe('schedule-page', () => {
     panel = /** @type {any} */ (el.querySelector('schedule-metadata'));
     expect(panel.error).toBe('');
   });
+
+  it('does not refetch the model list when it loaded successfully but empty', async () => {
+    // A fresh agent with no model_configs is a real state. Gating the
+    // fetch on `_models.length` refetched on every schedule selection,
+    // because an empty list is indistinguishable from "never loaded".
+    vi.stubGlobal('fetch', vi.fn(async (/** @type {string} */ url) => {
+      if (url.startsWith('/api/models')) {
+        return { ok: true, json: async () => ({ models: [], default: '' }) };
+      }
+      return { ok: true, json: async () => ({ schedule: SCHEDULE }) };
+    }));
+
+    const el = /** @type {any} */ (document.createElement('schedule-page'));
+    el.name = 'dream';
+    document.body.appendChild(el);
+    await el.updateComplete;
+    await new Promise(r => setTimeout(r, 0));
+
+    el.name = 'garden';
+    await el.updateComplete;
+    await new Promise(r => setTimeout(r, 0));
+
+    const modelCalls = /** @type {any} */ (globalThis.fetch).mock.calls
+      .filter((/** @type {any[]} */ c) => String(c[0]).startsWith('/api/models'));
+    expect(modelCalls).toHaveLength(1);
+  });
+
+  it('retries the model list on the next schedule after a failed fetch', async () => {
+    // The flip side: a real failure must not be latched, or a transient
+    // 500 would leave the dropdown degraded for the rest of the session.
+    let modelAttempts = 0;
+    vi.stubGlobal('fetch', vi.fn(async (/** @type {string} */ url) => {
+      if (url.startsWith('/api/models')) {
+        modelAttempts += 1;
+        if (modelAttempts === 1) return { ok: false, status: 500, json: async () => ({}) };
+        return { ok: true, json: async () => ({ models: ['a'], default: 'a' }) };
+      }
+      return { ok: true, json: async () => ({ schedule: SCHEDULE }) };
+    }));
+
+    const el = /** @type {any} */ (document.createElement('schedule-page'));
+    el.name = 'dream';
+    document.body.appendChild(el);
+    await el.updateComplete;
+    await new Promise(r => setTimeout(r, 0));
+
+    el.name = 'garden';
+    await el.updateComplete;
+    await new Promise(r => setTimeout(r, 0));
+    await el.updateComplete;
+
+    expect(modelAttempts).toBe(2);
+    const panel = /** @type {any} */ (el.querySelector('schedule-metadata'));
+    expect(panel.models).toEqual(['a']);
+  });
 });

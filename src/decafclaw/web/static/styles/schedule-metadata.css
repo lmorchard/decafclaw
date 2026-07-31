@@ -33,8 +33,12 @@
   white-space: nowrap;
 }
 
-.sched-md input[type="text"],
-.sched-md select {
+/* Child combinator on purpose: the panel's own fields are direct children
+   of their <label>, while chip-list's "add…" input is a grandchild via
+   <chip-list>. Without it, `.sched-md input[type="text"]` (0-2-0) outranks
+   `.dc-chip-input` (0-1-0) and stretches the chip inputs to fill the row. */
+.sched-md label > input[type="text"],
+.sched-md label > select {
   flex: 1;
   min-width: 0;
   height: auto;

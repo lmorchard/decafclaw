@@ -18,6 +18,7 @@ export class SchedulePage extends LitElement {
     _runStatus: { state: true },
     _runError: { state: true },
     _models: { state: true },
+    _modelsLoaded: { state: true },
     _modelsUnavailable: { state: true },
     _saveError: { state: true },
   };
@@ -35,6 +36,8 @@ export class SchedulePage extends LitElement {
     this._runError = '';
     /** @type {string[]} */
     this._models = [];
+    /** True once a fetch has succeeded, empty list or not. */
+    this._modelsLoaded = false;
     this._modelsUnavailable = false;
     this._saveError = '';
   }
@@ -47,7 +50,11 @@ export class SchedulePage extends LitElement {
       // must not linger and get misattributed to the newly selected one.
       this._saveError = '';
       this.#fetchSchedule();
-      if (!this._models.length) this.#fetchModels();
+      // Gate on "did a fetch succeed", not on "is the list non-empty" —
+      // no model_configs is a legitimate 200 with an empty list, and
+      // keying on length refetched on every schedule selection. A failed
+      // fetch leaves this false so the next selection retries.
+      if (!this._modelsLoaded) this.#fetchModels();
     }
   }
 
@@ -82,6 +89,7 @@ export class SchedulePage extends LitElement {
       // it stays "available" — the panel shows an honest one-entry
       // dropdown rather than the manual-entry fallback.
       this._modelsUnavailable = false;
+      this._modelsLoaded = true;
     } catch (e) {
       // Non-fatal: the panel falls back to a free-text model field.
       this._modelsUnavailable = true;
