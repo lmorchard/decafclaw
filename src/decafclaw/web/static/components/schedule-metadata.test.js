@@ -269,6 +269,16 @@ describe('schedule-metadata', () => {
     expect(note?.textContent).toMatch(/pre_script/i);
   });
 
+  // Documents the fail-closed intent: the condition is an allowlist of
+  // trusted tiers (mirroring _PREAPPROVAL_TIERS), not an enumeration of
+  // untrusted ones, so a source_tier this list doesn't recognize still
+  // gets the note rather than silently reading as trusted.
+  it('shows the note for an unrecognized source_tier', async () => {
+    const el = mount({ source_tier: 'some-future-tier' });
+    await el.updateComplete;
+    expect(el.querySelector('.sched-md-permissions-note')).toBeTruthy();
+  });
+
   it('shows no such note at admin tier', async () => {
     const el = mount({ source_tier: 'admin' });
     await el.updateComplete;
