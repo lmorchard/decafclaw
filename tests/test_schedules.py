@@ -659,6 +659,25 @@ class TestRunScheduleTask:
         assert "Carry on." in prompt, "the turn must still run"
 
     @pytest.mark.asyncio
+    async def test_disabled_feature_reports_nothing_at_untrusted_tier(self, config):
+        """With the feature off, a workspace schedule's pre_script is not a
+        tier problem — it's a switched-off feature. Reporting
+        "not permitted at this tier" on every fire states a wrong reason and
+        adds a warning line to the log for a schedule that would have been
+        inert either way. `test_pre_script_disabled_by_config` above misses
+        this because it runs at admin tier."""
+        self._write_script(config, "scripts/fetch.py", "print('data')\n")
+        config.pre_script.enabled = False
+        task = ScheduleTask(
+            name="off-and-untrusted", schedule="* * * * *", body="Do it.",
+            source="workspace", path=Path("/fake"),
+            pre_script="scripts/fetch.py",
+        )
+        prompt = await self._capture_prompt(config, task)
+        assert "pre_script_output" not in prompt
+        assert "not permitted at this tier" not in prompt
+
+    @pytest.mark.asyncio
     async def test_admin_pre_script_still_executes(self, config):
         """The gate must not over-correct — admin tier is unchanged."""
         marker = config.workspace_path / "ran.marker"
