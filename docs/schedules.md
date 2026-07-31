@@ -37,8 +37,8 @@ Report key themes and anything that needs attention.
 | `allowed-tools` | list | no | all | Restrict which tools the task can use |
 | `shell_patterns` | list | no (derived) | — | **Derived only** — extracted from `shell(...)` entries in `allowed-tools` on parse. Not settable as a literal frontmatter key (writing `shell_patterns:` lands in `unknown_keys` and is ignored). Appears as an independently-editable chip list in the UI under the Permissions group, and is round-tripped back to `allowed-tools` as `shell(...)` entries on save. Pre-approves matching commands, but only at admin or bundled tier — see [Permissions are tier-dependent](#permissions-are-tier-dependent). |
 | `email-recipients` | list | no | — | Pre-approved email addresses for `send_email` that bypass confirmation for this task only, but only at admin or bundled tier — see [Permissions are tier-dependent](#permissions-are-tier-dependent). See [email.md](email.md#scheduled-task-integration). Exact addresses or `@domain.com` suffix patterns. |
-| `pre_script` | string | no | — | Python script run **before** the turn; its stdout is injected into the prompt. Relative to `workspace/` or `data/{agent_id}/`. Not run at all outside admin or bundled tier — see [Permissions are tier-dependent](#permissions-are-tier-dependent). See [Pre-agent scripts](#pre-agent-scripts). |
-| `required-skills` | list | no | — | Skills to pre-activate before running the task |
+| `pre_script` | string | no | — | Python script run **before** the turn; its stdout is injected into the prompt. Relative to `workspace/` or `data/{agent_id}/` — but the resolution order documented here is not what the code does today, see [#738](https://github.com/lmorchard/decafclaw/issues/738). Not run at all outside admin or bundled tier — see [Permissions are tier-dependent](#permissions-are-tier-dependent). See [Pre-agent scripts](#pre-agent-scripts). |
+| `required-skills` | list | no | — | Skills to pre-activate before running the task. Workspace-tier skills are never activated this way, at any schedule tier — see [Permissions are tier-dependent](#permissions-are-tier-dependent). |
 
 ### Unrecognized keys
 
@@ -257,7 +257,7 @@ required-skills:
   - health
 ```
 
-Skills are activated without permission checks (same as heartbeat admin sections). The full `SKILL.md` body of each listed skill is rendered as a `<loaded_skills><skill name="…">…</skill></loaded_skills>` block prepended to the task prompt, so a thin trigger body (e.g. *"Time for the scheduled Mastodon ingestion. Follow the mastodon-ingest skill instructions to completion."*) has the skill's instructions inline rather than relying on the LLM to ask for them. `$SKILL_DIR` is substituted to the skill's absolute location, matching `activate_skill`.
+Activation skips the interactive confirmation `activate_skill` would ask for — but **only for admin, bundled and extra tier skills**. A workspace-tier skill (`workspace/skills/`, agent-writable) named in `required-skills` is *not* activated, and a warning is logged naming the skill and the task. Activating a skill imports and execs its `tools.py`, so `required-skills` grants code execution; `workspace/skills/` is also the highest-precedence scan entry, so an agent-authored skill shadows a bundled one of the same name and the gate has to hold even when the schedule itself is admin or bundled. Same rule `activate_skill` already applies to workspace skills on unattended turns (see #649, #731). The full `SKILL.md` body of each listed skill is rendered as a `<loaded_skills><skill name="…">…</skill></loaded_skills>` block prepended to the task prompt, so a thin trigger body (e.g. *"Time for the scheduled Mastodon ingestion. Follow the mastodon-ingest skill instructions to completion."*) has the skill's instructions inline rather than relying on the LLM to ask for them. `$SKILL_DIR` is substituted to the skill's absolute location, matching `activate_skill`.
 
 ### Allow-list escape hatch
 
@@ -291,11 +291,23 @@ narrows what the task may attempt without granting anything.
 has no approval path to fall through to — it executes arbitrary Python as
 the bot process — so the script is skipped and the prompt receives
 `[pre_script error: ignored — not permitted at this tier]` in place of its
-output. The task still runs; it just doesn't get the script's data.
+output. The task still runs; it just doesn't get the script's data. (When
+`pre_script.enabled` is `false` the feature is simply off at every tier
+and nothing is injected — the tier message only appears when the feature
+is on.)
+
+`required-skills` is gated on the **skill's** tier rather than the
+schedule's, so it is the one field the table above does not cover with the
+"admin and bundled" rule. A workspace-tier skill is never pre-activated by
+a schedule, not even an admin or bundled one — see
+[Pre-activated skills](#pre-activated-skills).
 
 **Migration:** a workspace-tier schedule that relied on `shell(...)`
-pre-approval stops working. Move it to `data/{agent_id}/schedules/` to
-restore it — that move is the deliberate act the boundary requires.
+pre-approval stops working. Move the file on disk to
+`data/{agent_id}/schedules/` to restore it — that move is the deliberate
+act the boundary requires, and it is a filesystem operation: editing the
+schedule in the web UI writes it back to `workspace/`, so no UI action
+performs the move.
 
 ## Examples
 
