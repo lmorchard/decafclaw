@@ -184,7 +184,7 @@ When a fifth or sixth surface joins one of these patterns, that's the signal to 
 
 ## Cascade rules of engagement
 
-Six rules, each with the specific incident or Pico behavior that necessitates it. Knowing *why* lets you judge edge cases instead of mechanically applying.
+Seven rules, each with the specific incident or Pico behavior that necessitates it. Knowing *why* lets you judge edge cases instead of mechanically applying.
 
 ### 1. Tag-qualify custom button rules (`button.foo`, not `.foo`)
 
@@ -209,6 +209,51 @@ Six rules, each with the specific incident or Pico behavior that necessitates it
 ### 6. Inside a `<button>`, `--pico-color` and `--pico-background-color` are re-scoped
 
 *Why:* Pico v2 re-aliases these two CSS custom properties when the cascade enters a `<button>` context — see Pico-in-context section above. The names are misleading inside button scope. If you find yourself wanting "document text on document bg" inside a button, use `color: inherit` or a non-aliased var.
+
+### 7. Panel-scoped element+attribute selectors capture shared components' internals
+
+*Why:* An attribute selector adds a specificity point. `.sched-md input[type="text"]` is 0,2,0 and outranks `.dc-chip-input` (0,1,0) — so styling "the panel's text fields" silently restyled the `<chip-list>` "add…" inputs nested inside that panel, stretching them to fill the row instead of staying compact. Found twice independently during PR #732 review.
+
+The trap is that the rule *reads* narrow ("just my panel's inputs") while matching every descendant input, including ones belonging to a shared component you don't own. Use a child combinator to express what you actually mean:
+
+```css
+/* Captures chip-list's input too — it's an input[type=text] inside .sched-md */
+.sched-md input[type="text"] { flex: 1; }
+
+/* Only the panel's own fields: they're direct children of their <label>,
+   while chip-list's input is a grandchild via <chip-list>. */
+.sched-md label > input[type="text"] { flex: 1; }
+```
+
+Whenever a container rule uses a bare element or attribute selector, ask which custom elements render inside that container and whether any of them ship their own styles.
+
+---
+
+## Lit rendering traps
+
+Not cascade issues — these come from how lit-html commits template parts, and they produce wrong *behavior* rather than wrong appearance.
+
+### Don't bind `.value` on a `<select>` whose `<option>`s come from a child part
+
+lit-html commits parts in tree order, so a `.value` binding on the `<select>` runs **before** the options rendered by a nested expression exist. Setting `value` to a string with no matching option sets `selectedIndex = -1`; appending the options then triggers the select's "ask for a reset" algorithm, which selects the first one. lit won't re-commit `.value` on later renders because the string hasn't changed, so it never self-heals.
+
+```js
+// Wrong: renders the FIRST option regardless of `current`
+html`<select .value=${current}>
+  <option value="">(default)</option>
+  ${this.models.map(m => html`<option value=${m}>${m}</option>`)}
+</select>`
+
+// Right: let each option declare whether it's selected
+html`<select>
+  <option value="" ?selected=${!current}>(default)</option>
+  ${this.models.map(m => html`<option value=${m} ?selected=${m === current}>${m}</option>`)}
+</select>`
+```
+
+`conversation-sidebar.js`'s model picker has always used the `?selected=` form. `schedule-metadata.js` diverged from it in PR #732 and shipped a schedule's configured model rendering as "(default)" — reintroducing the [#729](https://github.com/lmorchard/decafclaw/issues/729) ambiguity (a blank field reads as "nothing is set") inside the component built to eliminate it.
+
+Two things about how it survived are worth knowing. A reviewer traced the mechanism and concluded the binding was fine — it *is* fine for the case that had a test, because that test's flagged option carried a static `selected` attribute in the template. And jsdom reproduces this faithfully, so it was always unit-testable; nobody had written the configured-model case. If you touch a `<select>`, test that the intended option is actually selected, in both orderings (options present at first render, and options arriving later from an async fetch).
 
 ---
 
