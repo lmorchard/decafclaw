@@ -66,8 +66,17 @@ class SkillInfo:
     #   "workspace" — data/{agent_id}/workspace/skills/ (agent writable)
     # The bundled/admin/extra tiers are "trusted" — activation skips
     # confirmation, always-loaded is permitted. Workspace remains the
-    # security boundary requiring explicit user approval.
-    trust_tier: str = "bundled"
+    # security boundary requiring explicit user approval. See
+    # `grants_capability` for the predicate every capability-granting
+    # consumer must route through.
+    #
+    # Defaults to the UNTRUSTED tier on purpose. `discover_skills` always
+    # assigns the real tier from placement, so a SkillInfo that reaches a
+    # consumer without one was built off the discovery path and has no
+    # placement to vouch for it. Failing closed here means a future
+    # constructor that forgets to set the tier loses capability rather than
+    # silently gaining it.
+    trust_tier: str = "workspace"
 
 
 @dataclass
@@ -351,6 +360,46 @@ def _iter_skill_dirs(base_path: Path) -> Iterator[Path]:
             yield entry
 
 
+# Skill trust tiers, matching what `skill_scan_entries` yields below.
+SKILL_TIERS = ("workspace", "admin", "bundled", "extra")
+
+# Tiers whose skills may GRANT capability: pre-approve tools, anchor a
+# `$SKILL_DIR` that a pre-approval expands, have their body injected as
+# instructions currently in force, or have their `tools.py` imported (which
+# execs module-level code).
+#
+# An allowlist on purpose. A denylist keyed off the untrusted tiers would fail
+# OPEN for any tier nobody thought to enumerate.
+#
+# NOT the same partition as `schedules._PREAPPROVAL_TIERS`, and the difference
+# is load-bearing. That set is {"admin", "bundled"} and describes a *schedule's*
+# `task.source`; it excludes "extra" as cheap defense in depth, because a
+# contrib SCHEDULE.md is force-disabled at discovery and opting in means copying
+# it to the admin dir — which makes its source "admin" anyway, so excluding
+# "extra" there costs nothing. Excluding it HERE would cost real function:
+# "extra" is where contrib *skills* live, and six ship user-invocable
+# `allowed-tools` containing `shell($SKILL_DIR/fetch.sh*)`. Keep this comment
+# and the one on `_PREAPPROVAL_TIERS` in sync.
+SKILL_CAPABILITY_TIERS = frozenset({"admin", "bundled", "extra"})
+
+
+def grants_capability(info: SkillInfo) -> bool:
+    """True when `info`'s placement makes it trusted to grant capability.
+
+    Placement IS the trust signal: bundled ships with the project, admin was
+    placed by hand, extra was configured in. `workspace/skills/` is
+    agent-writable, so a workspace skill may be agent-authored.
+
+    Fails closed — an unrecognized tier is simply not in the allowlist.
+
+    Every consumer of `config.discovered_skills` that grants capability must
+    route through here rather than spelling out its own tier check;
+    `tests/test_discovered_skills_consumers.py` enforces that each consumer
+    has made a recorded decision (#741).
+    """
+    return info.trust_tier in SKILL_CAPABILITY_TIERS
+
+
 def skill_scan_entries(config) -> list[tuple[str, Path]]:
     """The (trust tier, base path) scan entries, in discovery priority order.
 
@@ -540,15 +589,28 @@ def build_skill_tool_owners(skills: list[SkillInfo]) -> dict[str, str]:
     by the unknown-tool error path and by ``tool_search`` to route
     hidden-tool-name guesses back to the skill that owns the tool.
 
-    Importing tools.py here has a startup cost — same work as
-    ``_load_native_tools`` (which the activation path runs eventually
-    anyway), just front-loaded. ``init()`` is NOT called during the
-    indexing; only the module is imported and ``TOOL_DEFINITIONS``
-    is read.
+    Importing tools.py here has a startup cost — the same work
+    ``_load_native_tools`` does on the activation path, front-loaded.
+    ``init()`` is NOT called during the indexing; only the module is
+    imported and ``TOOL_DEFINITIONS`` is read.
+
+    Capability-tier skills only. Importing a module execs its top-level
+    code, and the activation path runs that work only *after* a
+    confirmation this path has no way to ask for — so indexing an
+    agent-authored workspace skill here would front-run the gate rather
+    than the cost (#744). Consequence: an unactivated workspace skill's
+    tools are absent from this map, so the unknown-tool recovery path in
+    ``tools/__init__.py`` can't name their owner. That path already has a
+    workspace-specific branch telling the agent to call ``activate_skill``,
+    which is the right next step anyway.
     """
     owners: dict[str, str] = {}
     for skill in skills:
         if not skill.has_native_tools:
+            continue
+        if not grants_capability(skill):
+            log.debug("Not indexing tools for %s-tier skill %r",
+                      skill.trust_tier, skill.name)
             continue
         try:
             from ..tools.skill_tools import _load_native_tools

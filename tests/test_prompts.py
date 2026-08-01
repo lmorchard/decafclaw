@@ -155,13 +155,18 @@ class TestSkillSections:
         skill author picks an unusual name."""
         nasty = 'weird"&<>'
         bundled_dir = _BUNDLED_SKILLS_DIR.resolve()
-        location = bundled_dir / "vault" / "SKILL.md"  # any bundled path for the trust check
+        location = bundled_dir / "vault" / "SKILL.md"
         rogue = SkillInfo(
             name=nasty,
             description="test",
             location=location,
             body="NASTY_BODY",
             always_loaded=True,
+            # Explicit: `trust_tier` (not `location`) is what the
+            # always-loaded trust check reads, and it now defaults to the
+            # untrusted tier. This test is about XML escaping, so it needs a
+            # tier whose body actually reaches the prompt.
+            trust_tier="bundled",
         )
         monkeypatch.setattr("decafclaw.skills.discover_skills", lambda _c, rejections=None: [rogue])
 

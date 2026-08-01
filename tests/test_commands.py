@@ -138,6 +138,10 @@ class TestExecuteCommand:
             name="test-cmd", description="Test", location=Path("."),
             body="Do $ARGUMENTS", context="inline",
             allowed_tools=["vault_read"],
+            # Explicit trusted tier: only capability tiers pre-approve (#737),
+            # and `trust_tier` defaults to the untrusted tier. This test's
+            # subject is inline-mode substitution, not tier policy.
+            trust_tier="bundled",
         )
         mode, result = await execute_command(ctx, skill, "the thing")
         assert mode == "inline"
@@ -150,6 +154,9 @@ class TestExecuteCommand:
             name="test-cmd", description="Test", location=Path("."),
             body="Do $ARGUMENTS", context="fork",
             allowed_tools=["shell"],
+            # Explicit trusted tier — see test_inline_mode. Subject here is
+            # fork-mode dispatch, not tier policy.
+            trust_tier="bundled",
         )
         with patch("decafclaw.tools.delegate.run_child_turn", new_callable=AsyncMock) as mock:
             mock.return_value = ("child result", None)
@@ -198,6 +205,11 @@ class TestExecuteCommand:
         dep_skill = SkillInfo(
             name="tabstack", description="Tabstack", location=Path("."),
             has_native_tools=True,
+            # Explicit trusted tier: a workspace-tier dependency is
+            # deliberately NOT activated (#737 — the human named the command,
+            # not its dependency list). See
+            # tests/test_command_tier_trust.py for that case.
+            trust_tier="bundled",
         )
         ctx.config.discovered_skills = [dep_skill]
 
