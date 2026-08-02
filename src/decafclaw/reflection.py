@@ -288,9 +288,17 @@ async def evaluate_response(
 
         messages = [{"role": "user", "content": prompt}]
 
-        # Route through named model config: explicit > default_model > legacy
+        # Route through named model config:
+        #   verifier_model > explicit > default_model > legacy
+        # The `in config.model_configs` half of the verifier branch is
+        # load-bearing, not defensive: an unknown name handed to the provider
+        # layer only logs a warning and falls through to the default provider,
+        # which would silently look like the judge honoured the setting (#591).
+        verifier = config.reflection.verifier_model
         rc_model = config.reflection.model
-        if rc_model and rc_model in config.model_configs:
+        if verifier and verifier in config.model_configs:
+            response = await call_llm(config, messages, model_name=verifier)
+        elif rc_model and rc_model in config.model_configs:
             response = await call_llm(config, messages, model_name=rc_model)
         elif config.default_model:
             response = await call_llm(config, messages, model_name=config.default_model)

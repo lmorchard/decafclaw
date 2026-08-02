@@ -240,6 +240,10 @@ class ReflectionConfig:
     enabled: bool = True
     url: str = ""       # empty = resolve from llm
     model: str = ""     # empty = resolve from llm
+    # A model_configs key. When set AND present in config.model_configs, every
+    # reflection judge routes through it, so the author does not grade its own
+    # homework (#591). Empty = today's chain (model -> default_model -> legacy).
+    verifier_model: str = ""
     api_key: str = field(default="", metadata={"secret": True})
     max_retries: int = 2
     visibility: str = "hidden"  # hidden | visible | debug

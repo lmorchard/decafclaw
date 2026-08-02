@@ -150,21 +150,24 @@ deliberately rejected it as a criterion and left it a PR review note. So:
   unfreezable today. Let #529 prove the reuse.
 
 **Verification — automated:**
-- [ ] C1's check passes:
+- [x] C1's check passes — `1 passed in 0.03s`:
       `uv run pytest tests/test_reflection.py::TestEvaluateResponse::test_verifier_model_routes_judge_call`
-- [ ] C2's check passes:
+- [x] C2's check passes — `1 passed in 0.03s`:
       `uv run pytest tests/test_reflection.py::TestEvaluateResponse::test_verifier_model_unset_preserves_fallback_chain`
-- [ ] C3's check passes:
+- [x] C3's check passes — `1 passed in 0.02s`:
       `uv run pytest tests/test_reflection.py::TestEvaluateResponse::test_unknown_verifier_model_falls_back`
-- [ ] G1 passes, `44 passed`, none skipped:
+- [x] G1 passes — **`44 passed in 1.21s`**, none skipped:
       `uv run pytest tests/test_reflection.py -q --deselect "tests/test_reflection.py::TestEvaluateResponse::test_verifier_model_routes_judge_call" --deselect "tests/test_reflection.py::TestEvaluateResponse::test_verifier_model_unset_preserves_fallback_chain" --deselect "tests/test_reflection.py::TestEvaluateResponse::test_unknown_verifier_model_falls_back"`
-- [ ] G2 passes, ≥71 passed (72 with the new env test), none skipped:
+- [x] G2 passes — **`73 passed in 1.59s`**, none skipped:
       `uv run pytest tests/test_config.py tests/test_config_cli.py -q`
-- [ ] G3 passes, `11 passed`: `uv run pytest tests/test_agent_turn.py -q -k reflection`
-- [ ] G4: `make test` — `3721 passed, 2 skipped` (3717 baseline + 3 criterion nodes + 1 new config
-      test), none lost, none newly skipped
-- [ ] `make check` passes (lint + pyright + JS)
-- [ ] Tamper diff empty: `git diff e99c860 -- tests/test_reflection.py`
+      (73, not the predicted 72: two config tests were added, not one — the env-override case plus a
+      default-is-empty case. Recorded as observed.)
+- [x] G3 passes — **`11 passed in 2.12s`**: `uv run pytest tests/test_agent_turn.py -q -k reflection`
+- [x] G4: `make test` — **`3722 passed, 2 skipped in 13.44s`** (3717 baseline + 3 criterion nodes +
+      2 new config tests), none lost, none newly skipped
+- [x] `make check` passes — `ruff: All checks passed!`, `pyright: 0 errors, 0 warnings`,
+      message-types drift check clean, `tsc --noEmit` clean
+- [x] Tamper diff empty: `git diff e99c860 -- tests/test_reflection.py` → no output
 
 **Verification — manual:**
 - [ ] No human-judgment criterion in this set — nothing to grade at the gate on behavior.
