@@ -11,6 +11,7 @@ from decafclaw.skills.project.state import (
     ProjectInfo,
     ProjectState,
     load_project,
+    save_project,
 )
 from decafclaw.skills.project.tools import (
     _PHASE_TOOLS,
@@ -537,14 +538,22 @@ class TestPhaseInstructionConsistency:
     """
 
     @staticmethod
-    async def _sites(ctx) -> list[tuple[str, str, list[ProjectState]]]:
-        """Build the (label, emitted text, phases that read it) table.
+    async def _sites(ctx) -> list[tuple[str, str, ProjectState]]:
+        """Build the (label, emitted text, the phase that reads it) table.
+
+        One entry per (site, reading phase) pair. Where a site's text varies
+        with the reading phase, the text is produced *for that phase* — grading
+        the text emitted for one phase against a different phase's tool set
+        describes a pairing that never occurs at runtime (see the amendment
+        logged in the session's checks.md).
 
         A general control-flow analysis is out of scope for #727; new
         instruction sites get appended to this table by hand.
         """
+        sites: list[tuple[str, str, ProjectState]] = []
+
         # 1. _next_execution_step, empty/missing-plan branch. Only EXECUTING
-        #    reaches it.
+        #    reaches it, and the text does not vary.
         no_plan_info = ProjectInfo(
             slug="pic-no-plan",
             description="Project whose plan file is missing",
@@ -557,58 +566,71 @@ class TestPhaseInstructionConsistency:
         assert not no_plan_info.plan_path.exists(), (
             "fixture error: this ProjectInfo must hit the missing-plan branch"
         )
-        no_plan_text = _next_execution_step(no_plan_info)
+        sites.append(
+            ("_next_execution_step", _next_execution_step(no_plan_info),
+             ProjectState.EXECUTING)
+        )
 
         # 2. tool_project_switch. The switched-to project's own status governs
-        #    the next turn, so any phase can read this text. The text does not
-        #    vary with that status, so produce it once.
-        await tool_project_create(ctx, "Switch target", slug="pic-switch")
-        switch_text = _text(await tool_project_switch(ctx, project="pic-switch"))
+        #    the next turn, so produce the text once per phase, with the target
+        #    project actually in that phase.
+        for i, phase in enumerate(ProjectState):
+            slug = f"pic-switch-{i}"
+            await tool_project_create(ctx, f"Switch target {i}", slug=slug)
+            info = load_project(ctx.config, slug)
+            assert info is not None, f"fixture error: {slug} did not persist"
+            info.status = phase
+            save_project(info)
+            text = _text(await tool_project_switch(ctx, project=slug))
+            assert phase.value in text, (
+                f"fixture error: switch text for {slug} does not report "
+                f"'{phase.value}' — the project was not in that phase"
+            )
+            sites.append(("tool_project_switch", text, phase))
 
         # 3. tool_project_advance success. The target phase reads it on the next
-        #    turn. The message is invariant over which target it names, so
-        #    produce it once and grade it against every state reachable from
-        #    EXECUTING — including the forward transition to DONE.
-        await _advance_to_executing(ctx, slug="pic-advance")
-        advance_text = _text(
-            await tool_project_advance(ctx, target_status="planning")
-        )
+        #    turn, so produce the text once per reachable target — including the
+        #    forward transition to DONE, which is the case #727 was filed for.
+        for i, target in enumerate(
+            sorted(TRANSITIONS[ProjectState.EXECUTING], key=lambda s: s.value)
+        ):
+            slug = f"pic-advance-{i}"
+            await tool_project_create(ctx, f"Advance source {i}", slug=slug)
+            info = load_project(ctx.config, slug)
+            assert info is not None, f"fixture error: {slug} did not persist"
+            info.status = ProjectState.EXECUTING
+            save_project(info)
+            await tool_project_switch(ctx, project=slug)
+            text = _text(await tool_project_advance(ctx, target_status=target.value))
+            assert target.value in text, (
+                f"fixture error: advance to '{target.value}' did not succeed; "
+                f"got {text!r}"
+            )
+            sites.append(("tool_project_advance", text, target))
 
         # 4. plan_no_steps.md. Returned from the PLANNING/PLAN_REVIEW branch of
         #    project_task_done before any status change, so the reading phase is
-        #    whichever of the two it already was.
+        #    whichever of the two it already was. Static file, same text for both.
         no_steps_text = _load_prompt("plan_no_steps")
+        for phase in (ProjectState.PLANNING, ProjectState.PLAN_REVIEW):
+            sites.append(("plan_no_steps", no_steps_text, phase))
 
-        return [
-            ("_next_execution_step", no_plan_text, [ProjectState.EXECUTING]),
-            ("tool_project_switch", switch_text, list(ProjectState)),
-            (
-                "tool_project_advance",
-                advance_text,
-                sorted(TRANSITIONS[ProjectState.EXECUTING], key=lambda s: s.value),
-            ),
-            (
-                "plan_no_steps",
-                no_steps_text,
-                [ProjectState.PLANNING, ProjectState.PLAN_REVIEW],
-            ),
-        ]
+        return sites
 
     @pytest.mark.asyncio
     async def test_no_instruction_names_undispatchable_tool(self, ctx):
         """C1: no instruction names a tool the reading phase cannot dispatch."""
         problems = []
-        for label, text, phases in await self._sites(ctx):
+        for label, text, phase in await self._sites(ctx):
             named = set(_PROJECT_TOOL_RE.findall(text))
-            for phase in phases:
-                dispatchable = set(_PHASE_TOOLS[phase])
-                undispatchable = sorted(named - dispatchable)
-                if undispatchable:
-                    problems.append(
-                        f"{label} → phase '{phase.value}' names "
-                        f"{', '.join(undispatchable)}; dispatchable there: "
-                        f"{', '.join(sorted(dispatchable))}"
-                    )
+            dispatchable = set(_PHASE_TOOLS[phase])
+            undispatchable = sorted(named - dispatchable)
+            if undispatchable:
+                problems.append(
+                    f"{label} → phase '{phase.value}' names "
+                    f"{', '.join(undispatchable)}; dispatchable there: "
+                    f"{', '.join(sorted(dispatchable))}"
+                )
         assert not problems, (
             f"{len(problems)} instruction/phase mismatch(es):\n  "
             + "\n  ".join(problems)
@@ -618,17 +640,16 @@ class TestPhaseInstructionConsistency:
     async def test_every_instruction_names_a_dispatchable_tool(self, ctx):
         """C2: every instruction still points at a usable next action."""
         problems = []
-        for label, text, phases in await self._sites(ctx):
+        for label, text, phase in await self._sites(ctx):
             named = set(_PROJECT_TOOL_RE.findall(text))
-            for phase in phases:
-                dispatchable = set(_PHASE_TOOLS[phase])
-                if not named & dispatchable:
-                    problems.append(
-                        f"{label} → phase '{phase.value}' names "
-                        f"{', '.join(sorted(named)) or '(no project_* tool)'}, "
-                        f"none of which is dispatchable there; dispatchable: "
-                        f"{', '.join(sorted(dispatchable))}"
-                    )
+            dispatchable = set(_PHASE_TOOLS[phase])
+            if not named & dispatchable:
+                problems.append(
+                    f"{label} → phase '{phase.value}' names "
+                    f"{', '.join(sorted(named)) or '(no project_* tool)'}, "
+                    f"none of which is dispatchable there; dispatchable: "
+                    f"{', '.join(sorted(dispatchable))}"
+                )
         assert not problems, (
             f"{len(problems)} instruction(s) leave the agent with no next "
             f"action:\n  " + "\n  ".join(problems)
