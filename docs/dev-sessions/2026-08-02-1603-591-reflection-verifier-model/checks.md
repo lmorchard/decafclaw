@@ -1,7 +1,7 @@
 # Frozen acceptance checks
 
 **Source:** https://github.com/lmorchard/decafclaw/issues/591
-**Frozen at:** (pending — recorded in the follow-up commit)
+**Frozen at:** `e99c860` (2026-08-02)
 **Check files — read-only from Phase 1 onward:**
 - `tests/test_reflection.py`
 
