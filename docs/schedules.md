@@ -257,7 +257,7 @@ required-skills:
   - health
 ```
 
-Activation skips the interactive confirmation `activate_skill` would ask for — but **only for admin, bundled and extra tier skills**. A workspace-tier skill (`workspace/skills/`, agent-writable) named in `required-skills` is *not* activated, and a warning is logged naming the skill and the task. Activating a skill imports and execs its `tools.py`, so `required-skills` grants code execution; `workspace/skills/` is also the highest-precedence scan entry, so an agent-authored skill shadows a bundled one of the same name and the gate has to hold even when the schedule itself is admin or bundled. Same rule `activate_skill` already applies to workspace skills on unattended turns (see #649, #731). The full `SKILL.md` body of each listed skill is rendered as a `<loaded_skills><skill name="…">…</skill></loaded_skills>` block prepended to the task prompt, so a thin trigger body (e.g. *"Time for the scheduled Mastodon ingestion. Follow the mastodon-ingest skill instructions to completion."*) has the skill's instructions inline rather than relying on the LLM to ask for them. `$SKILL_DIR` is substituted to the skill's absolute location, matching `activate_skill`.
+Activation skips the interactive confirmation `activate_skill` would ask for — but **only for admin, bundled and extra tier skills**. A workspace-tier skill (`workspace/skills/`, agent-writable) named in `required-skills` is *not* activated, and a warning is logged naming the skill and the task. Activating a skill imports and execs its `tools.py`, so `required-skills` grants code execution; `workspace/skills/` is also the highest-precedence scan entry, so an agent-authored skill shadows a bundled one of the same name and the gate has to hold even when the schedule itself is admin or bundled. Same rule `activate_skill` already applies to workspace skills on unattended turns (see #649, #731). The `SKILL.md` body of each listed **capability-tier** skill is rendered as a `<loaded_skills><skill name="…">…</skill></loaded_skills>` block prepended to the task prompt, so a thin trigger body (e.g. *"Time for the scheduled Mastodon ingestion. Follow the mastodon-ingest skill instructions to completion."*) has the skill's instructions inline rather than relying on the LLM to ask for them. A workspace-tier skill's body is skipped here too, with a warning logged — it is neither activated nor injected (#740), so a thin trigger naming one will find no instructions to follow. `$SKILL_DIR` is substituted to the skill's absolute location, matching `activate_skill`, and is likewise never resolved to a workspace-tier skill's directory (#739).
 
 ### Allow-list escape hatch
 
@@ -296,11 +296,48 @@ output. The task still runs; it just doesn't get the script's data. (When
 and nothing is injected — the tier message only appears when the feature
 is on.)
 
-`required-skills` is gated on the **skill's** tier rather than the
-schedule's, so it is the one field the table above does not cover with the
-"admin and bundled" rule. A workspace-tier skill is never pre-activated by
-a schedule, not even an admin or bundled one — see
-[Pre-activated skills](#pre-activated-skills).
+Two things are gated on the **skill's** tier rather than the schedule's, so
+they are not covered by the "admin and bundled" rule above. Both use
+`skills.grants_capability`, whose capability tiers are `admin` / `bundled` /
+`extra` — see [skills.md](skills.md#what-workspace-tier-cannot-do).
+
+- **`required-skills` activation.** A workspace-tier skill is never
+  pre-activated by a schedule, not even an admin or bundled one — see
+  [Pre-activated skills](#pre-activated-skills).
+- **`required-skills` body injection.** A workspace-tier skill's `SKILL.md`
+  body is not rendered into the turn's `<loaded_skills>` block either, and the
+  skip is logged. `<loaded_skills>` is not the catalog: it is the full body
+  presented as instructions in force, on a turn that installs real
+  pre-approvals (#740).
+
+### `$SKILL_DIR` resolution refuses workspace tier
+
+`$SKILL_DIR` resolves through `discovered_skills` rather than the schedule
+file's own directory, because an overlay at
+`data/{agent_id}/schedules/{name}.md` does not sit next to the skill's
+scripts. Resolution tries the schedule's name first, then each
+`required-skills` entry, then falls back to the schedule file's parent
+directory.
+
+**Only a capability-tier skill may anchor it.** `workspace/skills/` is
+agent-writable and the highest-precedence scan entry, so otherwise an
+agent-planted skill repoints `$SKILL_DIR` — and a *trusted* schedule
+declaring `shell_patterns: ["$SKILL_DIR/fetch.sh*"]` would install
+`<workspace>/skills/<name>/fetch.sh*` as a **pre-approved** pattern on an
+unattended turn, with no confirmation and no allow-pattern check (#739). A
+workspace-tier candidate is skipped with a warning and resolution continues
+to the next name, exactly as an unresolvable one does.
+
+The check does not depend on the schedule's own tier. The resolved value
+feeds both the `shell(...)` pattern and the prompt body's `$SKILL_DIR`
+substitution, and those two must point at the same directory — gating only
+the pre-approval would send the agent to one place while pre-approving
+another.
+
+What this looks like when it fires: the pattern anchors on the schedule
+file's parent instead, so `fetch.sh` is not pre-approved and the unattended
+turn is denied when it tries to run it. The warning names the task, the
+skill and its tier.
 
 **Migration:** a workspace-tier schedule that relied on `shell(...)`
 pre-approval stops working. Move the file on disk to

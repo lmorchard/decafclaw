@@ -5,7 +5,7 @@ import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from .skills import SkillInfo, find_command, list_commands
+from .skills import SkillInfo, find_command, grants_capability, list_commands
 
 if TYPE_CHECKING:
     from decafclaw.context import Context
@@ -381,11 +381,28 @@ async def execute_command(ctx: "Context", skill: SkillInfo, arguments: str) -> t
     # For fork mode, also hard-restrict to only these tools since the
     # child turn is isolated. Inline mode keeps the full tool set
     # available since the agent is still in the user's conversation.
-    ctx.tools.preapproved = set(skill.allowed_tools)
-    skill_dir = str(skill.location)
-    ctx.tools.preapproved_shell_patterns = [
-        p.replace("$SKILL_DIR", skill_dir) for p in skill.shell_patterns
-    ]
+    #
+    # Frontmatter RESTRICTS at every tier; it only GRANTS pre-approval at a
+    # capability tier. `workspace/skills/` is agent-writable and the
+    # highest-precedence scan entry, so a skill the agent wrote must not
+    # pre-approve its own shell commands (#737). Weaker than the schedules
+    # case (#731) because a human types `!name` — but shadowing means the
+    # agent can redefine a command the user runs by habit.
+    #
+    # Fork mode's hard restriction (`ctx.tools.allowed`, below) is
+    # unaffected and still applies at every tier. Nothing is assigned at an
+    # untrusted tier rather than assigning empty, so the ctx defaults stand
+    # and no grant is implied to have been computed.
+    if grants_capability(skill):
+        ctx.tools.preapproved = set(skill.allowed_tools)
+        ctx.tools.preapproved_shell_patterns = [
+            p.replace("$SKILL_DIR", str(skill.location))
+            for p in skill.shell_patterns
+        ]
+    elif skill.allowed_tools or skill.shell_patterns:
+        log.warning(
+            "Command %r is %s tier: its allowed-tools/shell patterns restrict "
+            "but do not pre-approve", skill.name, skill.trust_tier)
 
     # Auto-activate the skill ONLY if it has native tools to register.
     # Shell-based skills don't need activation — the command body IS the prompt.
@@ -404,6 +421,17 @@ async def execute_command(ctx: "Context", skill: SkillInfo, arguments: str) -> t
             if req_name in ctx.skills.activated:
                 continue
             req_info = skill_map.get(req_name)
+            if req_info is not None and not grants_capability(req_info):
+                # The implicit approval covers the skill the human NAMED, not
+                # a dependency list the agent controls. Activation imports the
+                # dependency's tools.py, which execs module-level code (#737).
+                # The command's own activation above stays ungated — the human
+                # typed its name.
+                log.warning(
+                    "Command %r: skipping %s-tier required skill %r — "
+                    "workspace skills are not activated as dependencies",
+                    skill.name, req_info.trust_tier, req_name)
+                continue
             if req_info:
                 try:
                     result = await activate_skill_internal(ctx, req_info)

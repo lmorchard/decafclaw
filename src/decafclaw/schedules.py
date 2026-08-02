@@ -21,6 +21,7 @@ from .skills import (
     _parse_allowed_tools,
     _resolve_extra_skill_paths,
     _split_frontmatter,
+    grants_capability,
 )
 
 if TYPE_CHECKING:
@@ -48,6 +49,13 @@ SCHEDULE_TIERS = ("admin", "workspace", "bundled", "extra")
 # pre-approve at this tier" note. That copy is display-only — this set is
 # the sole enforcement point — but the two must not drift, or the UI will
 # promise pre-approval a run won't honour. Change one, change the other.
+#
+# Distinct from `skills.SKILL_CAPABILITY_TIERS`, which DOES include `extra`.
+# The two describe different objects: this set is about a schedule's
+# `task.source`, that one is about a skill's `trust_tier`. Excluding `extra`
+# is free here (see above) but would break contrib skills there, since
+# `extra` is where they live. Don't collapse them into one constant — see the
+# comment on `SKILL_CAPABILITY_TIERS` for the full reasoning.
 _PREAPPROVAL_TIERS = frozenset({"admin", "bundled"})
 
 # Not read by any runtime gate — `trusted = task.source in _PREAPPROVAL_TIERS`
@@ -598,15 +606,34 @@ def _resolve_skill_dir(config, task: "ScheduleTask") -> str:
     names and injects whatever else resolves. Stopping at index 0 here
     would let an unresolvable primary entry quietly desync the shell
     pattern from a body that still got injected from a later entry.
+
+    **Only a capability-tier skill may anchor `$SKILL_DIR`.**
+    `workspace/skills/` is agent-writable AND the highest-precedence scan
+    entry, so without this an agent-planted skill repoints `$SKILL_DIR` and
+    a *trusted* schedule's `shell_patterns` expand it into a pre-approved
+    pattern on an unattended turn — no confirmation, no allow-pattern check
+    (#739). A rejected candidate falls through to the next exactly as an
+    unresolvable one does, so the fallback below still applies.
+
+    The tier check is **unconditional**, not gated on `task.source`. The
+    returned value feeds both the shell pattern and `substitute_body`, and
+    keeping those two pointing at the same directory is this function's whole
+    purpose (see above). Gating only the pre-approval path would desync them:
+    the body would send the agent to the workspace dir while the pattern
+    named somewhere else. One rule keeps the invariant, and keeps the trust
+    decision out of this signature.
     """
     skill_map = {s.name: s for s in (config.discovered_skills or [])}
-    info = skill_map.get(task.name)
-    if info is None:
-        for name in task.required_skills:
-            info = skill_map.get(name)
-            if info is not None:
-                break
-    if info is not None:
+    for candidate in (task.name, *task.required_skills):
+        info = skill_map.get(candidate)
+        if info is None:
+            continue
+        if not grants_capability(info):
+            log.warning(
+                "Scheduled task %r: ignoring %s-tier skill %r when resolving "
+                "$SKILL_DIR — only trusted-tier skills may anchor it",
+                task.name, info.trust_tier, candidate)
+            continue
         return str(info.location.resolve())
     return str(task.path.parent.resolve())
 
@@ -621,6 +648,15 @@ def _render_required_skill_bodies(config, skill_names: list[str]) -> str:
     tool-result messages — a path that doesn't fire for scheduled tasks
     (no prior turn). This helper builds the equivalent block so a thin
     trigger has something to act on. Returns "" if nothing resolves.
+
+    Capability-tier skills only, mirroring `prompts/__init__.py`, which
+    already skips workspace tier when building this same block. This is not
+    "just prompt content": `<loaded_skills>` is the full body presented as
+    instructions in force — every bundled SCHEDULE.md body says "Follow the
+    X skill instructions to completion" — and the same turn installs real
+    pre-approvals, unattended. Letting an agent-authored body in would tell
+    the agent to follow its own instructions under a trusted schedule's
+    permissions (#740).
     """
     if not skill_names:
         return ""
@@ -631,6 +667,15 @@ def _render_required_skill_bodies(config, skill_names: list[str]) -> str:
         if info is None:
             log.warning(f"Schedule references unknown required-skill {name!r}; "
                         f"skipping body injection")
+            continue
+        if not grants_capability(info):
+            # Logged, not silent: the agent gets a thin trigger referring to
+            # instructions that aren't there, and that needs to be diagnosable.
+            log.warning(
+                "Skipping body injection for %s-tier required-skill %r — "
+                "workspace skills are agent-writable and <loaded_skills> is "
+                "presented as instructions in force",
+                info.trust_tier, name)
             continue
         if not info.body:
             continue

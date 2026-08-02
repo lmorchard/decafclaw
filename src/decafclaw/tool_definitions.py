@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+from .skills import grants_capability
 from .tools import TOOL_DEFINITIONS
 from .tools.search_tools import SEARCH_TOOL_DEFINITIONS
 from .tools.tool_registry import (
@@ -103,7 +104,11 @@ def collect_all_tool_defs(ctx: "Context") -> list:
     if _cached is None:
         _cached = []
         for skill_info in ctx.config.discovered_skills:
-            if skill_info.has_native_tools:
+            # Capability tier only: `_load_native_tools` imports tools.py,
+            # which execs its module-level code, and `workspace/skills/` is
+            # agent-writable. Activation gates that behind a confirmation
+            # (#649); pre-loading here would front-run it (#744).
+            if skill_info.has_native_tools and grants_capability(skill_info):
                 try:
                     from .tools.skill_tools import _load_native_tools
                     _, tool_defs, _ = _load_native_tools(skill_info)
