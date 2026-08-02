@@ -1,7 +1,46 @@
 # Session notes — #727 phase-consistent project-skill instructions
 
-**Status: PARKED at 2c/execute, pending one decision from Les.** No PR opened. The branch and
-worktree are intact and either resolution resumes cheaply from here.
+**Status: RESUMED and completed.** Les chose **Option B** (the phase-aware hint) on 2026-08-02 and
+approved amendment A1. The run continued from 2c through the merge gate. Tier is now
+`needs-review` — the amendment's cost, not a reassessment of risk.
+
+The parked analysis below is kept verbatim as the record of why the stop happened; read it as
+history, not as current state. What changed after the approval:
+
+- `_sites()` amended to return one `(label, text, phase)` triple per reading phase, producing
+  switch's and advance's text with the project actually in that phase (asserted, so the fixture
+  can't silently miss the branch). C1/C2 lost their inner phase loop.
+- **Teeth re-verified before trusting the green:** ran the amended class against the freeze-tree
+  source (`git checkout eb32b8a -- src/decafclaw/skills/project/`). It fails there with **6** pairs
+  — the full original set — so the replacement discriminates identically to what it replaced and is
+  strictly no weaker. A replacement that had gone green at freeze would have been a defanged guard.
+- Re-frozen at `a985978`. Tier set to `needs-review` in `spec.md` (one `## Tier:` heading).
+- Phase 2 done: `docs/project-skill.md` gained a "Phase-gated tool exposure" subsection.
+
+### Incident during the resume — read this before probing again
+
+The first teeth probe was run as `git stash push -- src/decafclaw/skills/project/` followed by
+`git stash pop`. **The implementation was already committed**, so the push had nothing to save and
+created no stash entry. The pop therefore applied — and dropped — a *pre-existing, unrelated* stash
+from another session (`On 419-sticky-widget-slot`, touching `http_server.py` and
+`websocket-client.js`), silently mixing another session's WIP into this worktree. The probe result
+was also meaningless, since it ran against the committed implementation rather than the freeze tree.
+
+Recovered: the dropped stash was re-attached with `git stash store 850ca62` (it is back on the
+stack, now at `stash@{0}`; note the *ordering* changed relative to the other stash), and the two
+foreign files were reverted with `git restore` after confirming the working-tree diff matched the
+stash exactly and that no legitimate uncommitted work existed in them.
+
+Two lessons, both worth carrying:
+
+1. **`git stash push -- <path>` is silently a no-op when that path is clean, and the paired `pop`
+   then targets whatever unrelated stash is on top.** Never pair a conditional push with an
+   unconditional pop. Check `git stash list` before and after, or don't use the stash stack for
+   probes at all.
+2. **To probe "does this check still fail against the old code?", check out the old code
+   explicitly** — `git checkout <freeze-sha> -- <paths>`, then `git checkout HEAD -- <paths>`. It
+   is unambiguous, it can't touch a shared stack, and it is safe precisely when the paths have no
+   uncommitted changes (verify that first).
 
 ## What happened
 

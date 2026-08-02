@@ -3,8 +3,10 @@
 **Goal:** Make every instruction the project skill emits name only tools the reading phase can
 actually dispatch, while still naming a real next action.
 
-**Source issue:** https://github.com/lmorchard/decafclaw/issues/727 — **Tier:** `auto-ok`
-(both criteria are concrete-example assertions over pure in-process data; no risk-gated path)
+**Source issue:** https://github.com/lmorchard/decafclaw/issues/727 — **Tier:** `needs-review`
+(filed `auto-ok`; downgraded 2026-08-02 when amendment A1 to the C1/C2 check was approved and
+applied — see `checks.md`. The work's risk profile is unchanged; the downgrade is the amendment's
+cost.)
 
 **Approach:** Fix the four instruction sites, do **not** widen `_PHASE_TOOLS`. Two sites
 (`tool_project_switch`, `tool_project_advance`) currently emit an unconditional
@@ -70,7 +72,7 @@ def _next_action_hint(phase: ProjectState) -> str:
     if "project_next_task" in names:
         return "Call project_next_task."
     if "project_task_done" in names:
-        return "Call project_task_done when the review is complete, or project_status to review."
+        return "Call project_status to review, then project_task_done when it looks right."
     if "project_status" in names:
         return "Call project_status to see where the project stands."
     return "Call project_list to see available projects."
@@ -136,17 +138,17 @@ Site-by-site:
    non-empty in both.
 
 **Verification — automated:**
-- [ ] C1's check passes: `uv run pytest tests/test_project_tools.py::TestPhaseInstructionConsistency::test_no_instruction_names_undispatchable_tool`
-- [ ] C2's check passes: `uv run pytest tests/test_project_tools.py::TestPhaseInstructionConsistency::test_every_instruction_names_a_dispatchable_tool`
-- [ ] G1: `uv run pytest tests/test_project_tools.py -q` — no test lost, newly skipped, or newly
+- [x] C1's check passes: `uv run pytest tests/test_project_tools.py::TestPhaseInstructionConsistency::test_no_instruction_names_undispatchable_tool`
+- [x] C2's check passes: `uv run pytest tests/test_project_tools.py::TestPhaseInstructionConsistency::test_every_instruction_names_a_dispatchable_tool`
+- [x] G1: `uv run pytest tests/test_project_tools.py -q` — no test lost, newly skipped, or newly
       failing (41 nodes: 36 pre-existing + 5 frozen)
-- [ ] G2/G3/G4: `uv run pytest tests/test_project_tools.py -q -k "guard_"` → 3 passed
-- [ ] G5: `make test` — full suite green, no regression
-- [ ] `make check` passes (lint + pyright + JS)
+- [x] G2/G3/G4: `uv run pytest tests/test_project_tools.py -q -k "guard_"` → 3 passed
+- [x] G5: `make test` — full suite green, no regression
+- [x] `make check` passes (lint + pyright + JS)
 
 **Verification — manual:**
-- None. Both criteria are mechanical; the tier is `auto-ok` precisely because no human judgment
-  is involved.
+- None. Both criteria are mechanical — no human judgment is involved in grading them. (The
+  `needs-review` tier comes from amendment A1, not from any criterion needing a human eye.)
 
 ---
 
@@ -175,8 +177,8 @@ to `TestPhaseInstructionConsistency` as the enforcing test and a note that a new
 must be added to that test's table.
 
 **Verification — automated:**
-- [ ] `make check` passes
-- [ ] No claim in the subsection contradicts `_PHASE_TOOLS` — cross-read against
+- [x] `make check` passes
+- [x] No claim in the subsection contradicts `_PHASE_TOOLS` — cross-read against
       `tools.py:825-848`
 
 ---
