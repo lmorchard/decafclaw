@@ -1,7 +1,7 @@
 # Frozen acceptance checks
 
 **Source:** https://github.com/lmorchard/decafclaw/issues/727
-**Frozen at:** (recorded in the follow-up commit)
+**Frozen at:** `eb32b8a` (2026-08-01)
 **Check files — read-only from Phase 1 onward:**
 - `tests/test_project_tools.py`
 
