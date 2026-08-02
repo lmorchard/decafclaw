@@ -66,6 +66,34 @@ While a project is in the `executing` phase, `project_next_task`, `project_updat
 | `project_add_steps` | Insert new steps into the plan |
 | `project_note` | Append a timestamped note |
 
+### Phase-gated tool exposure
+
+The table above is the full registry, but the agent never sees all of it at once. `get_tools`
+(the skill's dynamic provider) recomputes the dispatchable set **every turn** from the current
+project's saved status, filtering through `_PHASE_TOOLS` in `skills/project/tools.py`. With no
+current project selected, only `project_create` / `project_list` / `project_switch` are offered.
+
+The exclusions are deliberate, not incidental:
+
+- The **review phases** (`spec_review`, `plan_review`) withhold `project_next_task`, so the agent
+  can only approve, revise, or check status — it cannot skip the review by asking for the next task.
+- **`executing`** withholds `project_update_plan`: the plan is settled by the time execution starts,
+  and reshaping it mid-flight is what `project_advance` back to `planning` is for.
+- **`done`** withholds both, keeping a finished project read-only apart from notes and switching.
+
+**Instruction text must name only tools the *reading* phase can dispatch.** Several tools return
+text telling the agent what to call next, and that text is read on the *following* turn — when the
+available tools are whatever `get_tools` returns for the phase in effect *then*. A hardcoded tool
+name therefore goes stale silently and dead-ends the agent, which is what [#727](https://github.com/lmorchard/decafclaw/issues/727)
+fixed at four sites. Where the reading phase is known at emit time (`project_switch` knows the
+switched-to project's status; `project_advance` knows its target), derive the hint from
+`_PHASE_TOOLS` via `_next_action_hint` rather than hardcoding. Where it isn't — a static prompt
+template read from more than one phase — name a tool dispatchable in *all* of them.
+
+`TestPhaseInstructionConsistency` in `tests/test_project_tools.py` enforces this. It carries a
+hand-maintained table of (instruction site → the phases that read it); **a new instruction site
+must be added to that table**, or it goes ungraded.
+
 ## User commands
 
 - `!project` / `/project` — list or show status

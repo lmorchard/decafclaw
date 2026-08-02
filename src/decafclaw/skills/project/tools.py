@@ -350,7 +350,12 @@ def _next_execution_step(info: ProjectInfo) -> str:
     """Build the next-step instruction for execution phase."""
     content = info.plan_path.read_text() if info.plan_path.exists() else ""
     if not content.strip():
-        return "No plan found. Use project_update_plan to write one."
+        # EXECUTING has no plan-writing tool at all, so don't name one (#727).
+        # project_advance back to PLANNING is the recovery available here.
+        return (
+            "No plan found — the plan file is empty or missing. Call project_advance "
+            "with target_status='planning' to go back and rewrite it."
+        )
 
     _, steps, _ = parse_plan(content)
     done, total = plan_progress(steps)
@@ -431,7 +436,12 @@ async def tool_project_switch(ctx: "Context", project: str) -> str | ToolResult:
             await _clear_project_progress(ctx)
 
     _set_current_project(ctx, info.slug)
-    return f"Switched to project '{info.slug}' ({info.status.value}). Call project_next_task."
+    # The switched-to project's own phase governs the next turn, so the hint
+    # has to come from that phase rather than being fixed text (#727).
+    return (
+        f"Switched to project '{info.slug}' ({info.status.value}). "
+        f"{_next_action_hint(info.status)}"
+    )
 
 
 async def tool_project_update_spec(ctx: "Context", spec_text: str) -> str | ToolResult:
@@ -627,7 +637,9 @@ async def tool_project_advance(ctx: "Context", target_status: str = "") -> str |
     save_project(info)
     if was_executing and target != ProjectState.EXECUTING:
         await _clear_project_progress(ctx)
-    return f"Project reverted to {target.value}. Call project_next_task."
+    # `target` is the phase that reads this message next turn. EXECUTING -> DONE is a
+    # permitted transition and DONE has no project_next_task, so derive the hint (#727).
+    return f"Project reverted to {target.value}. {_next_action_hint(target)}"
 
 
 async def tool_project_note(ctx: "Context", note_text: str) -> str | ToolResult:
@@ -846,6 +858,35 @@ _PHASE_TOOLS: dict[ProjectState | None, list[str]] = {
         "project_status", "project_list", "project_switch", "project_note",
     ],
 }
+
+
+# Most-useful-first. Every entry is checked against the phase's own tool list before
+# being offered, so no rung can name a tool the reading phase lacks.
+_NEXT_ACTION_HINTS: list[tuple[str, str]] = [
+    ("project_next_task", "Call project_next_task."),
+    ("project_task_done",
+     "Call project_status to review, then project_task_done when it looks right."),
+    ("project_status", "Call project_status to see where the project stands."),
+    ("project_list", "Call project_list to see available projects."),
+]
+
+
+def _next_action_hint(phase: ProjectState) -> str:
+    """Name a tool the given phase can actually dispatch.
+
+    Instruction text is read on the *next* turn, when the available tools are whatever
+    `get_tools` returns for `phase` — so a hardcoded tool name goes stale silently and
+    strands the agent at a dead end (#727).
+
+    Falls through to naming no tool rather than guessing: every phase currently offers
+    `project_status`, so that is unreachable today, but a future phase that offered none
+    of these should surface as a caught test failure, not as another wrong instruction.
+    """
+    names = _PHASE_TOOLS.get(phase, [])
+    for tool, hint in _NEXT_ACTION_HINTS:
+        if tool in names:
+            return hint
+    return "No further project tools are available in this phase."
 
 
 def _tools_for_phase(phase: ProjectState | None) -> tuple[dict, list]:
