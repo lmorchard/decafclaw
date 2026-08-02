@@ -1,7 +1,7 @@
 # Frozen acceptance checks
 
 **Source:** https://github.com/lmorchard/decafclaw/issues/704
-**Frozen at:** _(recorded in the follow-up commit)_
+**Frozen at:** `5bd6188` (2026-08-02) — the tamper-diff baseline.
 **Check files — read-only from Phase 1 onward:**
 - `src/decafclaw/web/static/lib/conversation-store.test.js`
 - `tests/test_ws_message_type_handlers.py`
