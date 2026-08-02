@@ -115,20 +115,22 @@ no outbound buffer, so the TUI's documented flush-before-resubscribe ordering ha
 resubscribe. Recorded so a future outbound buffer doesn't reintroduce it silently.
 
 **Verification — automated:**
-- [ ] C1's check passes: `cd src/decafclaw/web/static && npx vitest run lib/conversation-store.test.js`
-      — target `4 tests, 4 passed`, exit 0
-- [ ] G1 still passes: `cd src/decafclaw/web/static && npx vitest run` — target
-      `10 files / 87 tests, 87 passed`, exit 0. Read the printed counts, not just the exit code:
-      per the G1 adjudication, deletion and `describe.skip` both exit 0.
-- [ ] G2 still passes: `uv run pytest tests/test_system_conversations.py` — target `19 passed`
-- [ ] G3 still passes: `make check-message-types` — expected clean, and expected **vacuous**:
-      this design touches neither `message_types.json` nor any generated file, so a clean G3
-      carries no information here beyond "nothing was hand-edited"
-- [ ] G5 still passes: `uv run pytest tests/test_ws_message_type_handlers.py` — target `2 passed`
-- [ ] G6 still passes: `uv run pytest tests/test_web_websocket_workflow.py` — target `1 passed`
-- [ ] `make check` passes (lint + pyright + `tsc --checkJs` + message-type drift)
-- [ ] `make test` passes (no regression)
-- [ ] Tamper diff empty: `git diff 5bd6188 -- src/decafclaw/web/static/lib/conversation-store.test.js tests/test_ws_message_type_handlers.py`
+- [x] C1's check passes: `cd src/decafclaw/web/static && npx vitest run lib/conversation-store.test.js`
+      — observed `Test Files 1 passed (1) / Tests 4 passed (4)`, exit 0. Target met.
+- [x] G1 still passes: `cd src/decafclaw/web/static && npx vitest run` — observed
+      `Test Files 10 passed (10) / Tests 87 passed (87)`, exit 0. Counts read against the frozen
+      baseline (10/87 with C1 failing), not the exit code: no test lost, skipped, or newly failing.
+- [x] G2 still passes: `uv run pytest tests/test_system_conversations.py` — observed `19 passed`
+- [x] G3 still passes: `make check-message-types` — `git diff --exit-code` clean, exit 0. Vacuous
+      as predicted: this design touched neither `message_types.json` nor any generated file, so
+      G3 carries no information here beyond "nothing was hand-edited".
+- [x] G5 still passes: `uv run pytest tests/test_ws_message_type_handlers.py` — observed `2 passed`
+- [x] G6 still passes: `uv run pytest tests/test_web_websocket_workflow.py` — observed `1 passed`
+- [x] `make check` passes — ruff `All checks passed!`, pyright `0 errors, 0 warnings`,
+      `tsc --noEmit` clean, message-type drift clean
+- [x] `make test` passes — `3717 passed, 2 skipped in 16.95s`
+- [x] Tamper diff empty: `git diff 5bd6188 -- src/decafclaw/web/static/lib/conversation-store.test.js tests/test_ws_message_type_handlers.py`
+      produced no output
 
 **Verification — manual:**
 - [ ] None. C1 is fully automated and no criterion is human-judgment, which is what makes this
