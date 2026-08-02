@@ -230,3 +230,27 @@ code before being acted on.
 
 _(Append-only. Empty — no amendment was made. All changes above were made at freeze step 4,
 before the freeze commit, which is why none costs the tier.)_
+
+## Tamper verdict
+
+Recorded at `pr` step 5, against the tree that ships. **Verdict: `clean`** — not
+`clean-by-substitute`; `Check files` is non-empty, so the diff command is meaningful rather than
+vacuous.
+
+```
+git diff 5bd6188 -- src/decafclaw/web/static/lib/conversation-store.test.js tests/test_ws_message_type_handlers.py
+```
+
+Empty output. Both frozen check files are byte-identical to the freeze commit. Confirmed twice:
+once at the end of `execute` by the independent verifier (fresh context, given only this file and
+the repo), and again here immediately before pushing.
+
+No rebase was needed — `origin/main` did not advance during the run — so `5bd6188` was never
+rewritten and needs no re-anchoring. `git merge-base --is-ancestor 5bd6188 HEAD` succeeds, and the
+branch is pushed unsquashed, so a reviewer can re-run the command above themselves rather than
+taking this record on trust.
+
+Collateral check: `git diff 5bd6188 --stat` lists only `checks.md` (sanctioned appends),
+`plan.md`, `notes.md`, `docs/web-terminal.md`, `docs/web-ui.md`,
+`src/decafclaw/web/static/lib/canvas-state.test.js` (docstring prose only, no assertion), and
+`src/decafclaw/web/static/lib/conversation-store.js` (the fix). No frozen check file appears.
