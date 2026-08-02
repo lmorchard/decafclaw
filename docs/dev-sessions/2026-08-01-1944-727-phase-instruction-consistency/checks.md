@@ -158,4 +158,19 @@ per `frozen-checks.md` it costs no tier downgrade:
 
 ## Tamper verdict
 
-(Recorded at `pr.md` step 5.)
+**`clean`** — recorded at `pr.md` step 5, taken against the tree that ships.
+
+- `git diff a985978 -- tests/test_project_tools.py` → **empty.** No frozen check changed since the
+  re-freeze.
+- `git diff eb32b8a -- tests/test_project_tools.py` → non-empty, and every hunk is amendment A1
+  and nothing else. Independently confirmed by the verifier subagent (fresh context, `checks.md`
+  and the repo only): no test deleted or renamed, no assertion weakened, no `skip`/`xfail`
+  introduced, G2–G4 untouched. A1's added `fixture error:` assertions make the check stricter.
+- `Check files` is non-empty, so this is a real `clean`, not `clean-by-substitute`.
+- Both `eb32b8a` and `a985978` are **ancestors of the pushed head** (verified with
+  `git merge-base --is-ancestor`), so a reviewer can re-run either diff rather than trusting this
+  record. The branch was pushed unsquashed for exactly that reason.
+
+**Teeth, verified independently after the amendment:** the amended criteria fail 6-for-6 against
+the pre-fix source (`git checkout eb32b8a -- src/decafclaw/skills/project/`), matching the original
+AT FREEZE set exactly. The replacement oracle is no weaker than the one it replaced.
