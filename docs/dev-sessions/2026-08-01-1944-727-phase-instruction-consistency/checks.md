@@ -70,7 +70,50 @@ diff.
 
 (Append-only.)
 
-**None.** One **clarification** was logged — it changes no criterion's verdict at either tree, so
+### PROPOSED — NOT APPROVED, NOT APPLIED. Blocks the run.
+
+**Criteria:** C1 and C2 (both source their site table from `TestPhaseInstructionConsistency._sites`).
+
+**What the check asserts today:** `_sites()` produces `tool_project_switch`'s text **once** — from a
+freshly created, therefore `BRAINSTORMING`, project — and grades that single sample against all six
+`ProjectState` values. Likewise `tool_project_advance`, produced once with
+`target_status="planning"` and graded against all of `TRANSITIONS[EXECUTING]`.
+
+**What the criterion says:** "…naming a `project_*` tool that is not dispatchable in **the phase
+which reads that text**."
+
+**Why the check fails to test the criterion:** the two differ the moment the message becomes
+phase-dependent. The check grades the `BRAINSTORMING` text against the `DONE` tool set — a pairing
+that never occurs at runtime. Measured: an implementation whose every phase emits a hint
+dispatchable in that phase (0 failures under a faithful per-phase grading) is still reported as 4
+failures by the frozen check. A check that fails an implementation satisfying its own criterion is
+the amendment trigger. Consequence: the check permits only `project_status` at the switch site
+(the intersection of all six phase tool sets) and so mandates a phase-*independent* hint.
+
+**Origin:** the check-author's brief asserted "the text is invariant over the switched-to status,
+so you can produce it once" — a true statement about the *pre-fix* code that got encoded into the
+oracle. The brief described the code being replaced instead of the criterion.
+
+**Proposed replacement:** `_sites()` produces switch's and advance's text **per reading phase**
+(set the project's status, then invoke) and grades each against its own phase. C1 and C2 otherwise
+unchanged; sites 1 and 4 unchanged.
+
+**Amendment test, run against both trees** (freeze tree via `git stash push -- src/decafclaw/skills/project/`):
+
+| tree | old wording | new wording |
+|---|---|---|
+| freeze `eb32b8a` | FAIL — 4 pairs | FAIL — identical 4 pairs |
+| current implementation | FAIL — 4 pairs | PASS — 0 |
+
+Same verdict at freeze, differs against the implementation → **amendment**, not clarification.
+
+**Required before applying:** Les's confirmation, and a tier downgrade of this run to
+`needs-review`. Neither has happened, so the check stands unmodified and the run is parked. See
+`notes.md` for the alternative (Option A) that needs no amendment.
+
+---
+
+Otherwise **none**. One **clarification** was logged — it changes no criterion's verdict at either tree, so
 per `frozen-checks.md` it costs no tier downgrade:
 
 - **C1 prose said "all seven `ProjectState` values"; `ProjectState` has six members**
