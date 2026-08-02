@@ -209,7 +209,7 @@ Semantic search embedding settings. Empty `url`/`api_key` fall back to `llm` gro
 
 ### `reflection`
 
-Self-reflection judge settings. Empty `url`/`model`/`api_key` fall back to the `llm` group values via `config.reflection.resolved(config)`. `verifier_model` is a [`model_configs`](#model_configs) key that takes precedence over all of them — see [Judge model](reflection.md#judge-model). See [Self-Reflection](reflection.md) for full details.
+Self-reflection judge settings. Empty `url`/`model`/`api_key` fall back to the `llm` group values via `config.reflection.resolved(config)`. `verifier_model` is a [`model_configs`](#model_configs) key; when it is set **and** names an entry in `model_configs` it outranks every other judge-model setting, and otherwise it is ignored and resolution continues down the chain — see [Judge model](reflection.md#judge-model) for the full order. See [Self-Reflection](reflection.md) for full details.
 
 | Field | Type | Default | Env Var | Secret |
 |-------|------|---------|---------|--------|
