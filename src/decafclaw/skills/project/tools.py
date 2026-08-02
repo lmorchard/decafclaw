@@ -860,22 +860,33 @@ _PHASE_TOOLS: dict[ProjectState | None, list[str]] = {
 }
 
 
+# Most-useful-first. Every entry is checked against the phase's own tool list before
+# being offered, so no rung can name a tool the reading phase lacks.
+_NEXT_ACTION_HINTS: list[tuple[str, str]] = [
+    ("project_next_task", "Call project_next_task."),
+    ("project_task_done",
+     "Call project_status to review, then project_task_done when it looks right."),
+    ("project_status", "Call project_status to see where the project stands."),
+    ("project_list", "Call project_list to see available projects."),
+]
+
+
 def _next_action_hint(phase: ProjectState) -> str:
     """Name a tool the given phase can actually dispatch.
 
     Instruction text is read on the *next* turn, when the available tools are whatever
     `get_tools` returns for `phase` — so a hardcoded tool name goes stale silently and
-    strands the agent at a dead end (#727). Every rung of this ladder is checked against
-    `_PHASE_TOOLS`, so the hint cannot name a tool the phase lacks.
+    strands the agent at a dead end (#727).
+
+    Falls through to naming no tool rather than guessing: every phase currently offers
+    `project_status`, so that is unreachable today, but a future phase that offered none
+    of these should surface as a caught test failure, not as another wrong instruction.
     """
     names = _PHASE_TOOLS.get(phase, [])
-    if "project_next_task" in names:
-        return "Call project_next_task."
-    if "project_task_done" in names:
-        return "Call project_status to review, then project_task_done when it looks right."
-    if "project_status" in names:
-        return "Call project_status to see where the project stands."
-    return "Call project_list to see available projects."
+    for tool, hint in _NEXT_ACTION_HINTS:
+        if tool in names:
+            return hint
+    return "No further project tools are available in this phase."
 
 
 def _tools_for_phase(phase: ProjectState | None) -> tuple[dict, list]:
