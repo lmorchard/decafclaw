@@ -6,4 +6,4 @@ Rewrite it with project_update_plan using checkbox format:
 - [ ] 2. Second step
 ```
 
-Then call project_task_done to submit it for review.
+project_update_plan submits the rewritten plan for review on its own — nothing else to call.
