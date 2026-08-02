@@ -9,11 +9,11 @@ import {
  *
  * The server confirms a close by broadcasting `canvas_update` over /ws/chat,
  * but the terminal widget calls this when it discovers the server restarted —
- * exactly when that socket is least able to deliver. Worse, the app's
- * reconnect path (conversation-store) only re-runs listConversations() on
- * open; it never re-sends SELECT_CONV, so the reconnected socket is
- * subscribed to nothing and the broadcast reaches no one. Relying on the
- * push left dead tabs on screen until a full page reload.
+ * exactly when that socket is least able to deliver. The reconnect path does
+ * re-send SELECT_CONV now (#704), so the broadcast eventually reaches a
+ * subscribed socket, but only once the reconnect backoff has elapsed — long
+ * after this close completed. Relying on the push left dead tabs on screen
+ * until a full page reload.
  */
 describe('closeTabById', () => {
   beforeEach(async () => {

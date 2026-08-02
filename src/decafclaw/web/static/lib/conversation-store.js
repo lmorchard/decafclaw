@@ -126,6 +126,13 @@ export class ConversationStore extends EventTarget {
     this.#toolStatusStore = new ToolStatusStore(onChange, wsClient, this.#messageStore);
     this.#ws.addEventListener('message', (e) => this.#handleMessage(/** @type {CustomEvent} */(e).detail));
     this.#ws.addEventListener('open', () => this.listConversations());
+    // A reconnect gives us a brand-new socket, and the server tracks stream
+    // subscriptions per socket — so without this, every per-conversation push
+    // (canvas_update, sticky, tool status, streamed output) is delivered to
+    // nobody until a full page reload. Deliberately NOT selectConversation():
+    // that clears the message store and re-issues LOAD_HISTORY, which would
+    // blank the transcript and refetch 50 messages on every transient blip.
+    this.#ws.addEventListener('open', () => this.#resubscribe());
   }
 
   // -- Getters (read by components) -------------------------------------------
@@ -432,6 +439,22 @@ export class ConversationStore extends EventTarget {
     this.#ws.send({ type: MESSAGE_TYPES.SELECT_CONV, conv_id: convId });
     this.#ws.send({ type: MESSAGE_TYPES.LOAD_HISTORY, conv_id: convId, limit: 50 });
     this.#emitChange();
+  }
+
+  /**
+   * Re-subscribe the (re)connected socket to the current conversation.
+   *
+   * Reuses `select_conv` rather than a bespoke wire type because
+   * `_handle_select_conv` already subscribes the socket (`web/websocket.py:173`)
+   * and its `conv_selected` reply is idempotent for the client. Mirrors the
+   * TUI's `__reconnected` handler (`tui/src/App.tsx:83`).
+   *
+   * No-op when nothing is selected: there is no stream to rejoin, and the
+   * initial connect is handled by app.js's one-shot open handler.
+   */
+  #resubscribe() {
+    if (!this.#currentConvId) return;
+    this.#ws.send({ type: MESSAGE_TYPES.SELECT_CONV, conv_id: this.#currentConvId });
   }
 
   /**

@@ -324,6 +324,23 @@ Conversation management is REST-only. WebSocket handles only real-time operation
 - Turn cancellation
 - Tool confirmation responses
 
+#### Subscriptions are per-socket, and re-established on reconnect
+
+The server fans per-conversation events out to the sockets that sent
+`select_conv` for that conversation. A reconnect produces a *new* socket, which
+is subscribed to nothing — so `ConversationStore` re-sends `select_conv` for the
+current conversation on every `open` (#704). Without it, everything on the
+per-conversation stream (`canvas_update`, sticky updates, tool status, streamed
+output) is silently dropped until a full page reload.
+
+The resubscribe deliberately does **not** go through `selectConversation()`,
+which clears the message store and re-issues `load_history` — that would blank
+the transcript and refetch 50 messages on every transient blip. The TUI does the
+same thing from its `__reconnected` handler (`tui/src/App.tsx`).
+
+Note that the standalone canvas page (`/canvas/{conv_id}`) uses its own raw
+socket with no reconnect logic at all, so it is not covered by this.
+
 ## REST API
 
 ### Auth
