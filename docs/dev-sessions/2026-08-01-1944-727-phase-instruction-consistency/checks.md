@@ -1,7 +1,9 @@
 # Frozen acceptance checks
 
 **Source:** https://github.com/lmorchard/decafclaw/issues/727
-**Frozen at:** `eb32b8a` (2026-08-01)
+**Frozen at:** `eb32b8a` (2026-08-01) — **re-frozen at `a985978` (2026-08-02) after amendment A1.**
+Tamper diffs run from the re-freeze sha; `eb32b8a` remains the original baseline and is still an
+ancestor of the branch, so both are re-runnable by a reviewer.
 **Check files — read-only from Phase 1 onward:**
 - `tests/test_project_tools.py`
 
@@ -29,6 +31,9 @@ prompts/plan_no_steps.md           phase=plan_review  not-dispatchable=['project
 ```
 
 Collected 1 test, 1 failed. Correct reason: the behaviour is genuinely absent, not a setup error.
+
+**Post-amendment (A1):** the amended check reproduces the same 6 failures at the freeze tree, so
+the recorded AT FREEZE evidence above still stands as written.
 
 ## C2
 
@@ -70,7 +75,7 @@ diff.
 
 (Append-only.)
 
-### PROPOSED — NOT APPROVED, NOT APPLIED. Blocks the run.
+### A1 — APPROVED BY LES 2026-08-02 · APPLIED
 
 **Criteria:** C1 and C2 (both source their site table from `TestPhaseInstructionConsistency._sites`).
 
@@ -107,9 +112,33 @@ unchanged; sites 1 and 4 unchanged.
 
 Same verdict at freeze, differs against the implementation → **amendment**, not clarification.
 
-**Required before applying:** Les's confirmation, and a tier downgrade of this run to
-`needs-review`. Neither has happened, so the check stands unmodified and the run is parked. See
-`notes.md` for the alternative (Option A) that needs no amendment.
+**Approval:** Les chose Option B (the phase-aware hint) and approved this amendment on
+2026-08-02. The approval lifted the read-only rule for `tests/test_project_tools.py` and for this
+change only; every other frozen artifact stayed read-only.
+
+**Applied:** `_sites()` now returns one `(label, text, phase)` triple per reading phase, producing
+switch's and advance's text with the project actually in that phase (asserted, so the fixture
+cannot silently miss). C1 and C2 lost their inner phase loop and otherwise read the same. Sites 1
+and 4 are unchanged in substance.
+
+**Teeth re-verified after amending** — the replacement must not be weaker than what it replaced.
+Ran the amended class against the freeze-tree source (`git checkout eb32b8a -- src/decafclaw/skills/project/`,
+restored from `HEAD` after):
+
+| | at freeze `eb32b8a` | against implementation |
+|---|---|---|
+| C1 amended | **FAIL — 6 pairs** (the full original set, incl. sites 1 and 4) | PASS |
+| C2 amended | **FAIL — 6 pairs** (same) | PASS |
+
+So the amended oracle discriminates *identically* to the original at the freeze tree — 6 for 6 —
+and additionally grades the pairing that actually occurs at runtime. It is strictly no weaker.
+
+**Re-frozen at:** `a985978` (2026-08-02). Tamper diffs for `tests/test_project_tools.py` run from
+this sha, not from `eb32b8a`.
+
+**Tier consequence:** this run is downgraded to `needs-review`, per `frozen-checks.md`. An amended
+oracle was not authored independently before implementation, so it no longer supports an
+autonomous merge — regardless of how green the checks are.
 
 ---
 

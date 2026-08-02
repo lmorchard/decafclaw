@@ -111,7 +111,16 @@ Pass today; must keep passing.
   state machine to dodge the `DONE` case would satisfy the criteria for the wrong reason.
 - GUARD (invariant): full suite green. **UNRUN (needs a serial run)** — not verified here.
 
-## Tier: `auto-ok`
+## Tier: needs-review
+
+**Downgraded — C1/C2 check amended.** Filed as `auto-ok`; downgraded during execution on
+2026-08-02 when amendment A1 (see `checks.md`) was approved and applied. An amended oracle was not
+authored independently before implementation, so per `frozen-checks.md` it no longer supports an
+autonomous merge, however green the checks are. The original derivation is preserved below, and
+neither of its two triggers fired — the downgrade comes from the amendment alone, not from a
+reassessment of the work's risk.
+
+### Original derivation at intake (`auto-ok`)
 
 Neither trigger fires.
 
