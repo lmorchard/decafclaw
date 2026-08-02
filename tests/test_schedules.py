@@ -810,6 +810,10 @@ class TestRunScheduleTask:
                 description="Mastodon ingest",
                 location=Path("/fake/skill/dir"),
                 body="MASTODON-SKILL-BODY-MARKER\nFetch and summarize posts.",
+                # A contrib skill, matching this task's source="extra". Explicit
+                # because only capability tiers have their body injected into
+                # <loaded_skills> (#740), and `trust_tier` defaults to untrusted.
+                trust_tier="extra",
             ),
         ]
 
@@ -924,6 +928,11 @@ class TestRunScheduleTask:
                 description="Mastodon ingest",
                 location=real_skill_dir,
                 body="Run $SKILL_DIR/fetch.sh and ingest posts.",
+                # A contrib skill reached via extra_skill_paths — the tier this
+                # fixture's `/real/contrib/skills/...` location models. Explicit
+                # because only capability tiers may anchor $SKILL_DIR (#739) and
+                # `trust_tier` defaults to the untrusted tier.
+                trust_tier="extra",
             ),
         ]
 
@@ -987,6 +996,9 @@ class TestRunScheduleTask:
                 description="Tabstack",
                 location=secondary_dir,
                 body="Tabstack body.",
+                # Explicit capability tier: only those may anchor $SKILL_DIR
+                # (#739), and `trust_tier` defaults to the untrusted tier.
+                trust_tier="extra",
             ),
         ]
 

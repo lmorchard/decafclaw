@@ -25,6 +25,30 @@ The trust tier determines whether the activation confirmation flow runs. Workspa
 
 Trusted-tier skills declaring `always-loaded: true` or `auto-approve: true` in frontmatter have those flags honored. Workspace-tier skills declaring either flag get it stripped at discovery with a warning logged.
 
+### What workspace tier cannot do
+
+The tier is not only about the activation prompt. `bundled` / `admin` / `extra` are the **capability tiers**; `workspace` is excluded from all of the following. The single predicate is `skills.grants_capability(info)`, and every capability-granting consumer of `discovered_skills` routes through it:
+
+| Capability | Withheld at workspace tier because |
+|---|---|
+| Activation without confirmation | The agent may have authored the skill (#649) |
+| Activation on an unattended turn | Nobody can answer the prompt, so it is denied outright rather than left hanging (#649) |
+| `always-loaded` / `auto-approve` | A skill must not elevate itself; stripped at discovery |
+| Activation via a schedule's `required-skills` | Activation execs `tools.py` (#731) |
+| Body injection into a scheduled turn's `<loaded_skills>` | That block is instructions in force on a turn that installs real pre-approvals (#740) |
+| Anchoring `$SKILL_DIR` for a schedule | A trusted schedule's `shell_patterns` would pre-approve an agent-written script (#739) |
+| Pre-approving tools / shell patterns as a `!command` | The agent could pre-approve its own shell commands (#737) |
+| Activation as a `!command`'s `requires_skills` dependency | Typing `!name` approves that skill, not a dependency list the agent controls (#737) |
+| Having `tools.py` imported before activation | Importing execs module-level code, front-running the confirmation (#744) |
+
+A workspace skill still **restricts**: an `allowed-tools` list narrows what a command can reach at every tier. Only *granting* is tier-dependent. That split — restrict always, grant only at a capability tier — matches how schedule frontmatter behaves (see [schedules.md](schedules.md#permissions-are-tier-dependent)).
+
+**Consequence worth knowing:** because `tools.py` is not imported until activation, an unactivated workspace skill's tool *names* are absent from the deferred tool catalog, and the "unknown tool → owning skill" hint cannot name it. That path already tells the agent to call `activate_skill`, which is the right next step.
+
+Two tier sets exist and they are deliberately different partitions. `skills.SKILL_CAPABILITY_TIERS` (above) includes `extra`; `schedules._PREAPPROVAL_TIERS` does not, because it describes a *schedule's* source rather than a *skill's* placement, and a contrib `SCHEDULE.md` must be copied to the admin dir before it can fire anyway. `extra` is where contrib skills live, so excluding it there is free and excluding it here would break every contrib command. Don't collapse them.
+
+`tests/test_discovered_skills_consumers.py` enumerates every read of `discovered_skills` and fails until each has a recorded tier decision, so a new consumer can't quietly skip this.
+
 ## Skill format
 
 Each skill is a directory containing at minimum a `SKILL.md` file:

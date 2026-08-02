@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import logging
 
-from ...skills import discover_skills
+from ...skills import discover_skills, grants_capability
 from ...tools import TOOL_DEFINITIONS as CORE_TOOL_DEFINITIONS
 from ...tools.skill_tools import _load_native_tools
 
@@ -34,11 +34,16 @@ def build_full_tool_loadout(config, *, include_mcp: bool = False) -> list[dict]:
 
     Skills that fail to load are warned and skipped — one bad skill
     shouldn't take down the whole eval.
+
+    Capability-tier skills only. This path isn't agent-reachable — it runs
+    under ``make eval-tools`` — but ``_load_native_tools`` execs a skill's
+    module-level code, and a developer's config points at a real workspace
+    that may hold agent-authored skills (#744).
     """
     defs: list[dict] = list(CORE_TOOL_DEFINITIONS)
 
     for skill in discover_skills(config):
-        if not skill.has_native_tools:
+        if not skill.has_native_tools or not grants_capability(skill):
             continue
         try:
             _, tool_defs, _ = _load_native_tools(skill)
