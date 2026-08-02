@@ -1,0 +1,176 @@
+# Frozen acceptance checks
+
+**Source:** https://github.com/lmorchard/decafclaw/issues/727
+**Frozen at:** `eb32b8a` (2026-08-01) — **re-frozen at `a985978` (2026-08-02) after amendment A1.**
+Tamper diffs run from the re-freeze sha; `eb32b8a` remains the original baseline and is still an
+ancestor of the branch, so both are re-runnable by a reviewer.
+**Check files — read-only from Phase 1 onward:**
+- `tests/test_project_tools.py`
+
+Note: this file is *both* the check file and guard G1's target. The frozen check is the new
+`TestPhaseInstructionConsistency` class added in the freeze commit; G1 covers the 36 pre-existing
+tests in the same file. The tamper diff runs from the freeze commit forward, so it must be empty —
+the freeze commit already contains the added class.
+
+## C1
+
+CRITERION: The project skill SHALL NOT emit instruction text naming a `project_*` tool that is not
+dispatchable in the phase which reads that text.
+
+CHECK: `uv run pytest tests/test_project_tools.py::TestPhaseInstructionConsistency::test_no_instruction_names_undispatchable_tool`
+
+AT FREEZE: fails — 6 mismatched (site, phase) pairs, exactly the set the issue enumerates:
+
+```
+_next_execution_step (empty plan)  phase=executing    not-dispatchable=['project_update_plan']
+tool_project_switch                phase=spec_review  not-dispatchable=['project_next_task']
+tool_project_switch                phase=plan_review  not-dispatchable=['project_next_task']
+tool_project_switch                phase=done         not-dispatchable=['project_next_task']
+tool_project_advance               phase=done         not-dispatchable=['project_next_task']
+prompts/plan_no_steps.md           phase=plan_review  not-dispatchable=['project_next_task']
+```
+
+Collected 1 test, 1 failed. Correct reason: the behaviour is genuinely absent, not a setup error.
+
+**Post-amendment (A1):** the amended check reproduces the same 6 failures at the freeze tree, so
+the recorded AT FREEZE evidence above still stands as written.
+
+## C2
+
+CRITERION: Each of the four sites SHALL still name at least one `project_*` tool that **is**
+dispatchable in every phase that reads it.
+
+CHECK: `uv run pytest tests/test_project_tools.py::TestPhaseInstructionConsistency::test_every_instruction_names_a_dispatchable_tool`
+
+AT FREEZE: fails — the same 6 (site, phase) pairs have an *empty* intersection between the tokens
+found and `_PHASE_TOOLS[phase]` (each site currently names exactly one tool, and that tool is the
+non-dispatchable one). Collected 1 test, 1 failed. Correct reason.
+
+## Guards
+
+(Pass today; must keep passing. Not criteria — they can't fail at freeze.)
+
+- G1: `uv run pytest tests/test_project_tools.py -q` — invariant: no test lost, newly skipped, or
+  newly failing. **Passed at freeze: 36 passed** (pre-freeze baseline, before the frozen class was
+  added). The issue recorded `34 passed` at triage on 2026-07-29; the file has gained two tests
+  since, which is drift in the file, not a violation of the invariant.
+- G2 (**enforces the spec's design decision**): the deliberate exclusions in `_PHASE_TOOLS` are
+  preserved — `SPEC_REVIEW`, `PLAN_REVIEW` and `DONE` still exclude `project_next_task`, and
+  `EXECUTING` still excludes `project_update_plan`. Blocks the degenerate fix of widening the gates.
+  Passed at freeze (all four exclusions hold — that is why the six mismatches exist).
+- G3: phase gating remains real — no `ProjectState` exposes the entire `TOOLS` registry. Blocks the
+  other degenerate fix, making `_tools_for_phase` return everything. Passed at freeze.
+- G4: `TRANSITIONS` (`skills/project/state.py`) is unchanged —
+  `EXECUTING → {DONE, PLANNING, BRAINSTORMING}`. Altering the state machine to dodge the `DONE`
+  case would satisfy the criteria for the wrong reason. Passed at freeze.
+- G5 (invariant): full suite green. **Passed at freeze: 3675 passed, 2 skipped** — the issue left
+  this UNRUN; it was run at session setup on the worktree baseline and again at the freeze.
+
+G2, G3 and G4 are executable as pytest nodes in the same frozen class
+(`test_guard_phase_tools_exclusions_preserved`, `test_guard_phase_gating_remains_real`,
+`test_guard_transitions_unchanged`) so the verifier can run each by name rather than eyeballing a
+diff.
+
+## Amendments
+
+(Append-only.)
+
+### A1 — APPROVED BY LES 2026-08-02 · APPLIED
+
+**Criteria:** C1 and C2 (both source their site table from `TestPhaseInstructionConsistency._sites`).
+
+**What the check asserts today:** `_sites()` produces `tool_project_switch`'s text **once** — from a
+freshly created, therefore `BRAINSTORMING`, project — and grades that single sample against all six
+`ProjectState` values. Likewise `tool_project_advance`, produced once with
+`target_status="planning"` and graded against all of `TRANSITIONS[EXECUTING]`.
+
+**What the criterion says:** "…naming a `project_*` tool that is not dispatchable in **the phase
+which reads that text**."
+
+**Why the check fails to test the criterion:** the two differ the moment the message becomes
+phase-dependent. The check grades the `BRAINSTORMING` text against the `DONE` tool set — a pairing
+that never occurs at runtime. Measured: an implementation whose every phase emits a hint
+dispatchable in that phase (0 failures under a faithful per-phase grading) is still reported as 4
+failures by the frozen check. A check that fails an implementation satisfying its own criterion is
+the amendment trigger. Consequence: the check permits only `project_status` at the switch site
+(the intersection of all six phase tool sets) and so mandates a phase-*independent* hint.
+
+**Origin:** the check-author's brief asserted "the text is invariant over the switched-to status,
+so you can produce it once" — a true statement about the *pre-fix* code that got encoded into the
+oracle. The brief described the code being replaced instead of the criterion.
+
+**Proposed replacement:** `_sites()` produces switch's and advance's text **per reading phase**
+(set the project's status, then invoke) and grades each against its own phase. C1 and C2 otherwise
+unchanged; sites 1 and 4 unchanged.
+
+**Amendment test, run against both trees** (freeze tree via `git stash push -- src/decafclaw/skills/project/`):
+
+| tree | old wording | new wording |
+|---|---|---|
+| freeze `eb32b8a` | FAIL — 4 pairs | FAIL — identical 4 pairs |
+| current implementation | FAIL — 4 pairs | PASS — 0 |
+
+Same verdict at freeze, differs against the implementation → **amendment**, not clarification.
+
+**Approval:** Les chose Option B (the phase-aware hint) and approved this amendment on
+2026-08-02. The approval lifted the read-only rule for `tests/test_project_tools.py` and for this
+change only; every other frozen artifact stayed read-only.
+
+**Applied:** `_sites()` now returns one `(label, text, phase)` triple per reading phase, producing
+switch's and advance's text with the project actually in that phase (asserted, so the fixture
+cannot silently miss). C1 and C2 lost their inner phase loop and otherwise read the same. Sites 1
+and 4 are unchanged in substance.
+
+**Teeth re-verified after amending** — the replacement must not be weaker than what it replaced.
+Ran the amended class against the freeze-tree source (`git checkout eb32b8a -- src/decafclaw/skills/project/`,
+restored from `HEAD` after):
+
+| | at freeze `eb32b8a` | against implementation |
+|---|---|---|
+| C1 amended | **FAIL — 6 pairs** (the full original set, incl. sites 1 and 4) | PASS |
+| C2 amended | **FAIL — 6 pairs** (same) | PASS |
+
+So the amended oracle discriminates *identically* to the original at the freeze tree — 6 for 6 —
+and additionally grades the pairing that actually occurs at runtime. It is strictly no weaker.
+
+**Re-frozen at:** `a985978` (2026-08-02). Tamper diffs for `tests/test_project_tools.py` run from
+this sha, not from `eb32b8a`.
+
+**Tier consequence:** this run is downgraded to `needs-review`, per `frozen-checks.md`. An amended
+oracle was not authored independently before implementation, so it no longer supports an
+autonomous merge — regardless of how green the checks are.
+
+---
+
+Otherwise **none**. One **clarification** was logged — it changes no criterion's verdict at either tree, so
+per `frozen-checks.md` it costs no tier downgrade:
+
+- **C1 prose said "all seven `ProjectState` values"; `ProjectState` has six members**
+  (`BRAINSTORMING`, `SPEC_REVIEW`, `PLANNING`, `PLAN_REVIEW`, `EXECUTING`, `DONE`). The runnable
+  reading is "every `ProjectState` value", which is what the check does. The "seven" reading is not
+  runnable at all — there is no seventh member to iterate — so no verdict can differ at the freeze
+  tree or the implementation tree. Verified: iterating all six values reproduces exactly the 6
+  mismatches the issue's own table predicts, so the criterion's intent and its arithmetic disagree
+  only in the count, not in the result. (`_PHASE_TOOLS` does have seven keys — the six states plus
+  `None` for "no current project" — which is the likely origin of the miscount. `None` is correctly
+  excluded from `project_switch`'s reader set: a switch always leaves a current project selected,
+  so the next turn is never the `None` phase.)
+
+## Tamper verdict
+
+**`clean`** — recorded at `pr.md` step 5, taken against the tree that ships.
+
+- `git diff a985978 -- tests/test_project_tools.py` → **empty.** No frozen check changed since the
+  re-freeze.
+- `git diff eb32b8a -- tests/test_project_tools.py` → non-empty, and every hunk is amendment A1
+  and nothing else. Independently confirmed by the verifier subagent (fresh context, `checks.md`
+  and the repo only): no test deleted or renamed, no assertion weakened, no `skip`/`xfail`
+  introduced, G2–G4 untouched. A1's added `fixture error:` assertions make the check stricter.
+- `Check files` is non-empty, so this is a real `clean`, not `clean-by-substitute`.
+- Both `eb32b8a` and `a985978` are **ancestors of the pushed head** (verified with
+  `git merge-base --is-ancestor`), so a reviewer can re-run either diff rather than trusting this
+  record. The branch was pushed unsquashed for exactly that reason.
+
+**Teeth, verified independently after the amendment:** the amended criteria fail 6-for-6 against
+the pre-fix source (`git checkout eb32b8a -- src/decafclaw/skills/project/`), matching the original
+AT FREEZE set exactly. The replacement oracle is no weaker than the one it replaced.
