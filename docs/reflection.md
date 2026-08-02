@@ -53,6 +53,8 @@ To use a cheaper model for the judge (recommended):
 decafclaw config set reflection.model gemini-2.5-flash
 ```
 
+> **Caveat:** this only takes effect if the name is a [`model_configs`](config.md#model_configs) key, *or* if `default_model` is unset — otherwise `default_model` wins and the setting is silently discarded. See [Judge model](#judge-model) for the full resolution order, and [#752](https://github.com/lmorchard/decafclaw/issues/752) for the fix. To pin the judge to a specific model regardless, use [`verifier_model`](#verifier_model--the-shared-verifier-convention).
+
 ## Configuration
 
 All settings live under the `reflection` group in `config.json`. See [Configuration Reference](config.md#reflection) for the full table.
