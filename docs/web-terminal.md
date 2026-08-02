@@ -139,12 +139,12 @@ Three details are load-bearing and easy to regress:
 - **`closeTabById` removes the tab locally before POSTing.** The server
   confirms a close by broadcasting `canvas_update` over `/ws/chat` — but this
   path runs *because* the server restarted, which is exactly when that socket
-  is least able to deliver. It does reconnect, yet `conversation-store` only
-  re-runs `listConversations()` on open and never re-sends `SELECT_CONV`, so
-  the fresh socket is subscribed to no conversation stream and the broadcast
-  reaches nobody. Waiting on that push left the dead tab on screen until a
-  full page reload. Anything reacting to a disconnect must not depend on that
-  connection to finish the job.
+  is least able to deliver. `conversation-store` does re-subscribe the fresh
+  socket on reconnect (#704), so the broadcast is no longer delivered to
+  nobody — but that happens on the reconnect's own backoff schedule, well
+  after this close has already been POSTed and confirmed. Waiting on the push
+  left the dead tab on screen until a full page reload. Anything reacting to a
+  disconnect must not depend on that connection to finish the job.
 
 - **`_disposeSurface()`, not just `_teardownSocket()`.** The xterm surface is
   a manually-appended light-DOM `div` with `height: 100%`, and `onopen`
