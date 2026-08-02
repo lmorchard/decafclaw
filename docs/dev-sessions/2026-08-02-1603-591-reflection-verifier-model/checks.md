@@ -198,8 +198,61 @@ fails.
   explicit end-state count `3720 passed, 2 skipped`.
   → *greenable without the work by:* n/a — cannot be green today.
 
+## Independent verifier report
+
+Dispatched with a fresh context, given `checks.md` and the repo only — not the plan, not the notes,
+not the spec. Run against the implemented tree.
+
+| id | observed | exit | verdict |
+|---|---|---|---|
+| C1 | `1 item` collected, `1 passed in 1.20s` | 0 | **pass** |
+| C2 | `1 item` collected, `1 passed in 1.22s` | 0 | **pass** |
+| C3 | `1 item` collected, `1 passed in 1.19s` | 0 | **pass** |
+| G1 | `44 passed in 1.37s`, none skipped | 0 | **pass** — invariant met exactly |
+| G2 | `73 passed in 1.43s`, 0 skipped | 0 | **FAIL against the stated invariant** (`71 passed`) |
+| G3 | `11 passed in 1.99s`, none skipped | 0 | **pass** — invariant met exactly |
+| G4 | `3724 items`, `3722 passed, 2 skipped in 13.20s` | 0 | **FAIL against the stated invariant** (`3720 passed, 2 skipped`) |
+
+**Tamper verdict: clean.** `git merge-base --is-ancestor e99c860 HEAD` → `0`, so the freeze commit is
+a real ancestor and the diff is meaningful. `git diff e99c860 -- tests/test_reflection.py` → **empty**.
+`git diff e99c860 --stat` shows 8 files, none of them a check file; the only change to `checks.md`
+itself is the one-line `Frozen at` sha, a sanctioned write.
+
+**Project gate:** `make check` exit 0 — message-types drift clean, `ruff: All checks passed!`,
+`pyright: 0 errors, 0 warnings`, `tsc --noEmit` clean.
+
+**Verifier's discriminating-power assessment of this diff** (asked because a green check is not by
+itself evidence): C1 **could not** be green without the routing work — the diff contains the real
+membership-checked branch, and a field-only no-op still fails C1. C2 and C3 **could** be green
+without it; both are explained by the dataclass field alone. This matches the freeze-time
+adjudication exactly. C1 carries the gate.
+
+### The two guard failures — NOT amended, surfaced for a human
+
+Both are the same defect, and it is in the **manifest's wording**, not in the implementation: G2 and
+G4 were frozen with *exact pass counts* as their invariants (`71 passed`, `3720 passed`). The
+implementation then added two legitimate tests to `tests/test_config.py`
+(`test_reflection_verifier_model_env_override`, `test_reflection_verifier_model_defaults_empty`),
+which close the env-var coverage gap the check-reviewer logged at freeze. Both counts moved +2. The
+verifier confirms **no test was lost and none newly skipped** — the deviation is purely additive.
+
+The substantive invariant the issue actually wrote was *"no test lost, newly skipped, or newly
+failing."* Hardening that into an exact count was done at freeze, in this manifest, by the
+implementer's side of the run — and it is now too tight to survive adding a test.
+
+**This has NOT been fixed, deliberately.** Restating the invariant would change the guard's verdict
+against the current tree (fail → pass) while leaving it unchanged at the freeze tree, which lands in
+the *amendment* cell of `frozen-checks.md`'s four-cell table, not the clarification cell. The
+amendment path requires a human, and an amendment downgrades the run's tier. So the guards stand as
+frozen, both are reported as **failing**, and the gate reads `human-merge-required` on that basis.
+
+The proposed amendment, for a human to accept or reject, is in the PR body. Deleting the two tests
+to make the numbers match was considered and rejected: removing real coverage to satisfy a
+bookkeeping artifact is the exact cheat guards exist to catch.
+
 ## Amendments
 
 (Append-only. Empty unless an amendment was made.)
 
-None.
+None. One amendment is **proposed and unapproved** — see the section above. Nothing in this manifest
+has been altered since the freeze except the `Frozen at` sha and these appended verdicts.
