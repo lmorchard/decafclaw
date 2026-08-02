@@ -188,7 +188,8 @@ honored, not scope creep; it ships zero code and touches zero file in the repo.
 **Files:** none.
 
 **Verification — automated:**
-- [ ] A GitHub issue exists describing: at `reflection.py:292-296`, a `reflection.model` that is set
+- [x] **Filed as https://github.com/lmorchard/decafclaw/issues/752.** A GitHub issue exists
+      describing: at `reflection.py:292-296`, a `reflection.model` that is set
       but is not a `model_configs` key is silently discarded whenever `default_model` is set, so the
       documented escape hatch at `docs/reflection.md:53`
       (`decafclaw config set reflection.model gemini-2.5-flash`) is dead on any modern config. Note
