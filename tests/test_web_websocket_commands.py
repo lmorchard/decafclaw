@@ -122,15 +122,50 @@ def test_mattermost_restricts_commands_to_the_bang_prefix():
 
     TEXT-BASED assertion, paired with the behavioural pair above: the call
     site sits deep inside the message handler and driving it would need the
-    whole Mattermost client mocked. A rename or reflow can flip this
-    independently of behaviour — read it as "the literal is still pinned",
-    not as behavioural coverage.
+    whole Mattermost client mocked. So this reads the source — but it parses
+    it rather than substring-matching it.
+
+    The earlier version asserted `'prefixes=["!"]' in source`, which encoded a
+    relative invariant as a brittle absolute: it false-failed on a reflow, a
+    line-wrap, or `prefixes=['!']`, and it could only ever catch "that exact
+    text is gone". Parsing the AST catches strictly more:
+
+      - the `dispatch_command` call disappearing entirely
+      - the call losing its `prefixes` keyword (falling back to the ["!", "/"]
+        default, which is the actual regression — Mattermost would start
+        answering `/command`)
+      - `prefixes` set to any value other than exactly ["!"]
+
+    and it is immune to formatting, so it cannot cry wolf. What it still does
+    not do is prove the runtime behaviour; that is why it is paired with the two
+    behavioural `dispatch_command` tests above.
     """
+    import ast
+
     from decafclaw import mattermost
 
-    source = inspect.getsource(mattermost)
-    assert 'prefixes=["!"]' in source, (
-        "mattermost.py no longer pins dispatch_command to the ! prefix; a "
-        "Mattermost `/command` would collide with Mattermost's own slash "
-        "commands"
+    tree = ast.parse(inspect.getsource(mattermost))
+    prefix_args = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
+        if name != "dispatch_command":
+            continue
+        kwargs = {kw.arg: kw.value for kw in node.keywords}
+        assert "prefixes" in kwargs, (
+            "mattermost.py calls dispatch_command without `prefixes`, so it "
+            "inherits the ['!', '/'] default — Mattermost would answer "
+            "`/command` and collide with Mattermost's own slash commands"
+        )
+        prefix_args.append(ast.literal_eval(kwargs["prefixes"]))
+
+    assert prefix_args, (
+        "no dispatch_command call found in mattermost.py — either the command "
+        "path was removed or this guard is looking in the wrong module"
+    )
+    assert all(p == ["!"] for p in prefix_args), (
+        f"mattermost.py passes prefixes={prefix_args!r}; Mattermost must stay "
+        "`!`-only so `/command` remains Mattermost's own namespace"
     )

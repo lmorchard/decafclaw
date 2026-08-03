@@ -100,7 +100,17 @@ export class ChatInput extends LitElement {
     return { textarea: ta, caret, lineStart, prefix: match[1], query: match[2] };
   }
 
-  /** Recompute the menu's open/closed state after the text changed. */
+  /**
+   * Recompute the menu's open/closed state from the live caret.
+   *
+   * Runs on `input` and also on `keyup` / `click`, so a caret moved without
+   * typing (arrow keys, a mouse click) closes a menu that no longer belongs to
+   * where the caret is. Resets the highlight ONLY when the token actually
+   * changed: keyup fires after every ArrowDown/ArrowUp keydown, so resetting
+   * unconditionally would snap the highlight back to 0 on each press and break
+   * arrow navigation in a real browser — invisibly, since a synthetic `press()`
+   * in a test dispatches no keyup.
+   */
   #syncMenu() {
     const ctx = this.#triggerContext();
     if (!ctx) {
@@ -110,8 +120,10 @@ export class ChatInput extends LitElement {
       return;
     }
     if (this.#dismissed) return;
+    const changed = this._trigger?.prefix !== ctx.prefix
+      || this._trigger?.query !== ctx.query;
     this._trigger = { prefix: ctx.prefix, query: ctx.query };
-    this._highlight = 0;
+    if (changed) this._highlight = 0;
   }
 
   /** Commands matching the open trigger, best first. @returns {any[]} */
@@ -149,7 +161,15 @@ export class ChatInput extends LitElement {
 
   /** @param {KeyboardEvent} e */
   #handleKeydown(e) {
-    const matches = this.#matchingCommands();
+    // Gate on the LIVE caret, not on `_trigger` alone. `_trigger` is only
+    // recomputed on `input`, so a caret moved by ArrowLeft/ArrowRight or a
+    // mouse click leaves it stale: with `hello /mc` and the caret clicked back
+    // to after `hello`, the cache still says a `/mc` token is open, so Tab
+    // would be swallowed here and then do nothing (`#commitCommand`
+    // recomputes the context and early-returns) — you could not tab out of the
+    // composer. Asking `#triggerContext()` makes the interception decision use
+    // the same source of truth the commit does.
+    const matches = this.#triggerContext() ? this.#matchingCommands() : [];
     if (matches.length) {
       const highlight = Math.min(this._highlight, matches.length - 1);
       if (e.key === 'ArrowDown') {
@@ -361,6 +381,8 @@ export class ChatInput extends LitElement {
           ?disabled=${this.disabled}
           @keydown=${this.#handleKeydown}
           @input=${this.#handleInput}
+          @keyup=${this.#syncMenu}
+          @click=${this.#syncMenu}
           @paste=${this.#handlePaste}
         ></textarea>
         ${this.busy ? html`
