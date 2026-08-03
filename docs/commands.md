@@ -29,7 +29,9 @@ Then type `!migrate-todos` in Mattermost or `/migrate-todos` in the web UI.
 | Web UI | `/` | `/weather Portland` |
 | Interactive | `!` | `!weather Portland` |
 
-`!help` / `/help` lists all available commands.
+`!help` / `/help` lists all available commands. The web UI also autocompletes
+them: typing `/` or `!` at the start of a line opens a suggestion menu — see
+[Web UI](web-ui.md#chat).
 
 ## Arguments
 
@@ -49,7 +51,7 @@ If no placeholder is in the body, arguments are appended as `ARGUMENTS: <value>`
 | `user-invocable` | bool | true | Must be true |
 | `allowed-tools` | string | "" | Comma-separated tool names pre-approved without confirmation |
 | `context` | string | "inline" | `"fork"` for isolated subagent, `"inline"` for current conversation |
-| `argument-hint` | string | "" | Placeholder hint (future: UI autocomplete) |
+| `argument-hint` | string | "" | Placeholder hint, shown in `!help` and in the web UI's command autocomplete |
 
 ## Execution Modes
 

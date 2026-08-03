@@ -38,6 +38,20 @@ Real-time streaming chat over WebSocket. Messages stream token-by-token as the L
 - Cancel in-progress turns
 - Confirmation prompts for shell commands and skill activation
 
+**Command autocomplete.** Typing `/` or `!` at the start of a line in the
+composer opens a suggestion menu listing every user-invokable skill command
+plus every MCP prompt (`mcp__<server>__<prompt>`), each with its
+`argument-hint` and description. Matching is a fuzzy ordered subsequence, so
+`/dsum` finds `mcp__demo__summarize`. Arrow keys move the highlight, Tab
+commits it, Escape dismisses, Enter still sends.
+
+The list arrives over the chat WebSocket: the client sends `list_commands` on
+conversation-select and on every reconnect (so a newly connected MCP server
+shows up), and the server answers `command_list`. It deliberately does *not*
+ride on socket `open` — a reconnect with no conversation selected must put
+nothing on the wire (#704). The consequence is that the menu is empty until a
+conversation exists, which for a fresh session means the first message.
+
 **Input focus.** The composer takes focus on a conversation switch, and again
 when the agent finishes a turn — but only if the user hasn't moved focus
 somewhere else in the meantime (canvas terminal, wiki editor, a widget). It
@@ -253,7 +267,7 @@ Lit web components in `src/decafclaw/web/static/`:
 | Component | File | Purpose |
 |-----------|------|---------|
 | `chat-view` | `components/chat-view.js` | Main chat area with message list |
-| `chat-input` | `components/chat-input.js` | Message input with file upload |
+| `chat-input` | `components/chat-input.js` | Message input with file upload and command autocomplete |
 | `chat-message` | `components/chat-message.js` | Individual message rendering |
 | `conversation-sidebar` | `components/conversation-sidebar.js` | Conversation list, folders, vault browser, model picker |
 | `wiki-editor` | `components/wiki-editor.js` | WYSIWYG markdown page editor (see [host contract](#the-wiki-editor-host-contract)) |
