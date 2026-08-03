@@ -12,12 +12,22 @@
  * `MODELS_AVAILABLE` pair in `conversation-store.js`, which is the store's
  * established idiom for "server pushes a list, components read a getter":
  *
- *   - on socket `open`, the store sends `{type: 'list_commands'}`
+ *   - `selectConversation()` sends `{type: 'list_commands'}`
+ *   - a reconnect re-sends it, but only when a conversation is selected
  *   - a `command_list` frame populates `store.commands` and emits `change`
  *   - `store.commands` is `[]` before any frame arrives
  *
- * `conversation-store.test.js` is a pre-existing guard for a different
- * criterion (#704 reconnect resubscribe) and is not touched here.
+ * The request rides on conversation-select rather than on socket `open`
+ * (decided by Les, 2026-08-02). Requesting on `open` would have collided with
+ * the #704 guard `sends nothing on the socket when no conversation is
+ * selected` (`conversation-store.test.js:238`), and narrowing that guard to
+ * fit this feature was rejected — it was written for a bug fixed the same day.
+ * The accepted cost: the menu is empty for the first message of a fresh
+ * session, which is reachable because `sendMessage` creates a conversation
+ * when none exists (`conversation-store.js:470`).
+ *
+ * So `conversation-store.test.js` is untouched, and the last case below
+ * actively defends its invariant from this side rather than merely avoiding it.
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -109,11 +119,10 @@ describe('command list transport wiring', () => {
     expect(/** @type {any} */ (store).commands).toEqual([]);
   });
 
-  it('requests the command list when the socket opens', async () => {
+  it('requests the command list when a conversation is selected', async () => {
     const store = makeStore(ws);
-    expect(store.currentConvId).toBeNull();
 
-    ws.fireOpen();
+    store.selectConversation('c1');
     await flush();
 
     const types = ws.sent.map((m) => /** @type {any} */ (m).type);
@@ -122,18 +131,39 @@ describe('command list transport wiring', () => {
 
   it('re-requests on every reconnect, not just the first', async () => {
     const store = makeStore(ws);
+    store.selectConversation('c1');
+    await flush();
+    ws.sent = [];
 
     ws.fireOpen();
     await flush();
+    let types = ws.sent.map((m) => /** @type {any} */ (m).type);
+    expect(types, `reconnect #1 sent ${JSON.stringify(types)}`).toContain(REQUEST_TYPE);
     ws.sent = [];
 
     // A one-shot `if (this.#askedForCommands) return;` leaves a reconnected
     // client with a list that can never pick up a newly connected MCP server.
     ws.fireOpen();
     await flush();
+    types = ws.sent.map((m) => /** @type {any} */ (m).type);
+    expect(types, `reconnect #2 sent ${JSON.stringify(types)}`).toContain(REQUEST_TYPE);
+  });
+
+  // The Option B invariant, asserted from this side so the two files agree
+  // rather than merely coexist. #704's guard
+  // (`conversation-store.test.js:238`) says a reconnect with nothing selected
+  // puts nothing on the wire; requesting the command list on `open` would have
+  // broken it. This fails loudly if someone later "fixes" the empty-menu-on-
+  // first-message cost by moving the request back to the open handler.
+  it('stays silent on a reconnect when no conversation is selected', async () => {
+    const store = makeStore(ws);
+    expect(store.currentConvId).toBeNull();
+
+    ws.fireOpen();
+    await flush();
 
     const types = ws.sent.map((m) => /** @type {any} */ (m).type);
-    expect(types, `reconnect #2 sent ${JSON.stringify(types)}`).toContain(REQUEST_TYPE);
+    expect(types, `sent ${JSON.stringify(types)}`).not.toContain(REQUEST_TYPE);
   });
 
   it('exposes the commands from a command_list frame and notifies subscribers', async () => {

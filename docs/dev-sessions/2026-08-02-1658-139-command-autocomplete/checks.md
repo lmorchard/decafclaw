@@ -2,40 +2,30 @@
 
 **Source:** https://github.com/lmorchard/decafclaw/issues/139
 
-> **THE FREEZE WAS NOT TAKEN.** This manifest is complete and its checks are authored, run, and
-> adjudicated — but no freeze commit exists, deliberately. C3 as written commits the run to one side
-> of an open design decision (see **Blocking decision** below), and freezing it would make the other
-> side cost an amendment plus a tier downgrade. The review window is still open on purpose. Resolve
-> the decision, adjust C3 if the answer says so, then take the freeze.
-
-**Frozen at:** NOT FROZEN — see above.
-**Check files — read-only from Phase 1 onward (once frozen):**
+**Frozen at:** (recorded in the follow-up commit)
+**Check files — read-only from Phase 1 onward:**
 - `src/decafclaw/web/static/components/chat-input.test.js`
 - `src/decafclaw/web/static/lib/command-list.test.js`
 - `tests/test_web_command_list.py`
 
-## Blocking decision — when does the client request the command list?
+## Settled design decision — the request rides on conversation-select
 
-The spec settles that the list travels over the existing WebSocket as a new message type. It does not
-settle *when* the client asks for it, and the three available answers are not interchangeable.
+The spec settles the transport (a new WebSocket message type) but not *when* the client asks. Three
+answers were available and are not interchangeable. **Decided by Les, 2026-08-02: Option B.**
 
-C3 as authored asserts the request goes out on socket `open`. That collides head-on with an existing
-regression guard from **#704** (`lib/conversation-store.test.js:238-248`, merged as `2fab896`, the most
-recent commit on `origin/main`): *"sends nothing on the socket when no conversation is selected"* —
-`ws.fireOpen()` with nothing selected, then `expect(ws.sent).toEqual([])`. Both cannot be green.
+| Option | Cost | Verdict |
+|---|---|---|
+| **A. Request on socket `open`;** narrow the #704 guard to conversation-scoped frames. | Edits another issue's regression test to fit this feature. Its *stated* intent is resubscription, which narrowing preserves — but its literal assertion covers all traffic. | **Rejected** — #704 was fixed the same day; weakening its guard to fit a new feature is not that trade. |
+| **B. Request on conversation-select.** | The menu is empty for the first message of a fresh session. Reachable: `sendMessage` creates a conversation when none exists (`conversation-store.js:470`). | **Chosen.** Cost explicitly accepted. |
+| **C. Request lazily** on the first trigger keypress. | A round-trip on the first `/`, so the menu can render a beat late. Moves the trigger out of the store's established push-a-list idiom. | Not chosen. |
 
-The collision is **prospective, not current**: today nothing sends on open, so C3 fails and the #704
-guard passes, and they coexist in the tree. They become mutually exclusive only when C3 is made green.
-That is exactly why this has to be decided *before* the freeze rather than discovered during execute.
+Settled **before the freeze commit**, so revising C3 from "on `open`" to "on select" was a pre-freeze
+revision, not an amendment. **No tier change — this run remains `auto-ok`.**
 
-| Option | Cost |
-|---|---|
-| **A. Request on `open`; narrow the #704 guard** to conversation-scoped frames (e.g. `ws.sent.filter(m => m.conv_id)`). | Edits another issue's regression test to accommodate this feature. The guard's *stated* intent is resubscription (its comment says so) and narrowing preserves that intent exactly — but its literal assertion covers all traffic, and relaxing it is a real loss of coverage. |
-| **B. Request on conversation-select** instead. Touches no existing test. | Leaves the menu empty at the one moment it is most useful. Verified: `sendMessage` creates a conversation when none exists (`conversation-store.js:470`), so a `/command` as the very first message of a fresh session is a real path — and under B the list has not arrived yet. |
-| **C. Request lazily**, the first time a trigger character is typed. Touches no existing test, and the list is present whenever the user actually needs it. | Adds a round-trip on the first `/` keypress, so the menu can render a beat late or briefly empty. Also moves the trigger out of the store's established push-a-list idiom. |
-
-Nothing here is a coin flip between equivalents, and option A weakens a guard that exists because of a
-bug fixed five commits ago — so this is not a call to make unattended.
+`lib/conversation-store.test.js:238` is untouched. C3's last case (`stays silent on a reconnect when no
+conversation is selected`) asserts the same invariant from this side, so the two files agree rather than
+merely coexist — and it fails loudly if anyone later moves the request back to the open handler to buy
+back the empty-first-message cost.
 
 ## C1
 
@@ -109,13 +99,21 @@ WebSocket"): the client SHALL actually request the list over the socket, and the
 
 CHECK: `cd src/decafclaw/web/static && npx vitest run lib/command-list.test.js`
 
-AT FREEZE: fails — 7 tests, `7 failed / 0 passed`. Six are behavioural over `ConversationStore` using
+AT FREEZE: fails — 8 tests, `7 failed | 1 passed`. Six are behavioural over `ConversationStore` using
 the existing `FakeWS` pattern (`declares both wire types in the manifest`; `starts with an empty command
-list`; `requests the command list when the socket opens`; `re-requests on every reconnect, not just the
-first`; `exposes the commands from a command_list frame and notifies subscribers`; `keeps the {name,
-description, argument_hint} entry shape intact`). Observed failures include `expected undefined to be
-'client_to_server'`, `sent []: expected [] to include 'list_commands'`, and `TypeError: Cannot read
-properties of undefined (reading 'find')` — the store surface is genuinely absent.
+list`; `requests the command list when a conversation is selected`; `re-requests on every reconnect, not
+just the first`; `exposes the commands from a command_list frame and notifies subscribers`; `keeps the
+{name, description, argument_hint} entry shape intact`). Observed failures:
+`expected undefined to be 'client_to_server'`; `expected undefined to deeply equal []`;
+`sent ["select_conv","load_history"]: expected [...] to include 'list_commands'`;
+`reconnect #1 sent ["select_conv"]: expected [...] to include 'list_commands'`; `TypeError: Cannot read
+properties of undefined (reading 'find')`. The two `sent [...]` messages are the useful ones — they show
+the real store path running and emitting its existing frames, so the failure is the absent request, not
+a broken harness.
+
+The one passing case is `stays silent on a reconnect when no conversation is selected`, which passes
+**vacuously today** (nothing is sent at all). It is an anti-regression guard for the Option B decision,
+not red-to-green work, and it acquires teeth the moment the request exists.
 
 The seventh, `assigns store.commands onto the chat-input element`, is a **TEXT-BASED assertion over
 `app.js` source**, paired with the behavioural six above. `app.js` is a top-level DOM script with no
@@ -126,44 +124,43 @@ app.js assigns store.commands to chatInput.commands — the server reply never r
 `http:` URL and `fileURLToPath` throws. It carries its own harness guard so a broken import blames
 itself rather than `app.js`.)
 
-**C3 is the check the blocking decision above is about.** `requests the command list when the socket
-opens` is the assertion that collides with #704's guard.
+**C3 is the check the settled decision above is about.** Its request assertion was revised pre-freeze
+from "on socket `open`" to "when a conversation is selected".
 
 ## Guards
 
 (Pass today; must keep passing. Not criteria — they can't fail at freeze.)
 
-- G1: `cd src/decafclaw/web/static && npx vitest run` — the JS suite. Invariant: no test lost, newly
-  skipped, or newly failing.
-  **Pre-existing baseline (before the check files were added): `Test Files 10 passed (10) / Tests 87
-  passed (87) / 0 skipped`.** The issue's `6 files / 42 tests` is from triage on 2026-07-29;
-  `origin/main` has advanced since.
-  **With the two new JS check files present the tree reads `Test Files 2 failed | 10 passed (12) /
-  Tests 15 failed | 94 passed (109)`** — and the arithmetic reconciles exactly, which is the point of
-  recording it: the new files add 22 tests (15 in `chat-input.test.js`, 7 in `command-list.test.js`),
-  of which 15 fail and 7 pass, so `109 − 22 = 87` pre-existing and `87 + 7 = 94` passing. The
-  pre-existing ten files are untouched.
-  **Post-implementation target: 12 files, 109 passed, 0 failed, 0 skipped.**
+- G1: `cd src/decafclaw/web/static && npx vitest run` — the JS suite.
+  **Invariant: no pre-existing test is lost, newly skipped, or newly failing.** Tests this work adds are
+  not a violation of it.
+  *Observations, for orientation only — never the pass condition:* the ten pre-existing files measured
+  `87 passed / 0 skipped` before the check files were added; with them present the tree read
+  `2 failed | 10 passed (12) files`, `15 failed | 94 passed (109)`, which reconciles exactly
+  (`109 − 22 new = 87` pre-existing; `87 + 7 passing-new = 94`).
+  (The issue's `6 files / 42 tests` is from triage on 2026-07-29; `origin/main` has advanced since.)
   Residual the command cannot close: `vitest run` exits 0 when a file is deleted or a test is
-  `.skip`ped, so the *count* is the guard — compare it, don't just observe green.
+  `.skip`ped, so grade the invariant by comparing the pre-existing files' results, not by observing
+  green.
 - G2: existing composer behaviour is unchanged when the menu is closed — `Enter` sends,
   `Shift+Enter` newlines, `Escape` stops while busy. Covered by assertions inside the frozen
   `chat-input.test.js` (menu-closed cases), so it is graded by C1's command.
   **Passed at freeze: see C1's AT FREEZE — the menu-closed cases pass while the autocomplete cases fail.**
 - G3: `uv run pytest tests/test_web_websocket_commands.py tests/test_commands.py` — command dispatch
-  through the socket keeps working, including that the web path still accepts both `!` and `/` and
-  Mattermost stays `!`-only. **Passed at freeze: `34 passed in 1.24s`** (was `30 passed` before the
-  strengthening added four tests that actually exercise the prefix split — see Adjudication).
+  through the socket keeps working. **Invariant: the web path still accepts both `!` and `/`,
+  Mattermost stays `!`-only, and no test here is lost, newly skipped, or newly failing.**
+  *Observation:* `34 passed in 1.24s` at freeze — `30` before the strengthening added four tests that
+  actually exercise the prefix split (see Adjudication).
 - G4: `make check-message-types` — a new WebSocket message type means a `web/message_types.json` entry
   plus regenerated `message_types.py`, `lib/message-types.js`, `docs/websocket-messages.md` and
   `tui/src/types.generated.ts`, all in the same commit. Do not hand-edit the generated files.
   **Passed at freeze: `git diff --exit-code` over the four generated files returned clean.**
-- G5: full Python suite green — `make test`.
-  **Pre-existing baseline (before the check file was added): `3717 passed, 2 skipped in 23.31s`.** The
-  issue marked this UNRUN; it has now been run.
-  `make test` collects `tests/test_web_command_list.py`, so in the check-bearing tree it **measures
-  `6 failed, 3721 passed, 2 skipped in 14.79s`** — the four G3 additions pass on top of the 3717, and
-  the six new C2 nodes fail. **Post-implementation target: 3727 passed, 2 skipped, 0 failed.**
+- G5: full Python suite — `make test`.
+  **Invariant: no pre-existing test is lost, newly skipped, or newly failing, and the suite exits 0.**
+  Tests this work adds are not a violation of it.
+  *Observations, for orientation only — never the pass condition:* `3717 passed, 2 skipped` before the
+  check file was added (the issue marked this UNRUN; it has now been run); `6 failed, 3721 passed,
+  2 skipped` with it, the four G3 additions passing on top of the 3717 and the six new C2 nodes failing.
   Teeth worth naming: G5 is the guard that carries `test_message_types.py`,
   `test_ws_message_type_handlers.py` and `test_discovered_skills_consumers.py` — so a new
   `config.discovered_skills` read in `websocket.py` with no recorded trust-tier decision fails here.
