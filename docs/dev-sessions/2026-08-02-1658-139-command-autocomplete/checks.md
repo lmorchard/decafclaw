@@ -37,9 +37,13 @@ pressed the highlighted entry SHALL change, AND WHEN `Tab` is pressed the textar
 
 CHECK: `cd src/decafclaw/web/static && npx vitest run components/chat-input.test.js`
 
-AT FREEZE: fails — `Test Files 1 failed (1) / Tests 6 failed | 5 passed (11)`. Collected 11 cases, so the
-check had teeth (not a vacuous zero-collection pass). The six failures are the behaviour genuinely being
-absent, not an import or path error:
+AT FREEZE: fails. Collected 15 cases, so the check had teeth (not a vacuous zero-collection pass).
+The run quoted below (`Tests 6 failed | 5 passed (11)`) was captured *before* the four check-reviewer
+strengthenings landed; the frozen file has 15 cases and fails 8 — see the Clarification under
+Amendments. The six failures quoted are the behaviour genuinely being absent, not an import or path
+error, and the four strengthenings added two more failures of the same kind
+(`commits the moved highlight on Tab, not the first match`,
+`opens on a trigger starting a later line, not just the whole value`):
 - `offers the fuzzy matches for "/mc"` — `AssertionError: expected null not to be null` (no `.command-menu`)
 - `matches by subsequence, not by prefix` — `expected [] to deeply equal [ 'mcp__demo__summarize' ]`
 - `opens on "!" at the start of the line` — `expected null not to be null`
@@ -136,8 +140,8 @@ from "on socket `open`" to "when a conversation is selected".
   not a violation of it.
   *Observations, for orientation only — never the pass condition:* the ten pre-existing files measured
   `87 passed / 0 skipped` before the check files were added; with them present the tree read
-  `2 failed | 10 passed (12) files`, `15 failed | 94 passed (109)`, which reconciles exactly
-  (`109 − 22 new = 87` pre-existing; `87 + 7 passing-new = 94`).
+  `2 failed | 10 passed (12) files`, `15 failed | 95 passed (110)`, which reconciles exactly
+  (`110 − 23 new = 87` pre-existing).
   (The issue's `6 files / 42 tests` is from triage on 2026-07-29; `origin/main` has advanced since.)
   Residual the command cannot close: `vitest run` exits 0 when a file is deleted or a test is
   `.skip`ped, so grade the invariant by comparing the pre-existing files' results, not by observing
@@ -236,7 +240,21 @@ tier.
 
 (Append-only. Empty unless an amendment was made.)
 
-(none)
+**None.** No CRITERION line, CHECK command, or guard command changed after `a0a95e2`.
+
+### Clarification (not an amendment; no tier change)
+
+The implementer reported that C1's and G1's recorded counts were stale: C1's AT FREEZE said
+"Collected 11 cases" when the frozen file has **15**, and G1 said "22 new / 109 total" when the real
+figures are **23 new / 110 total**. The gap is exactly the four C1 strengthenings the Adjudication
+section describes adding (moved-highlight Tab, out-of-order negative, `hello\n/mc`, Tab-not-swallowed)
+— the counts were captured before those landed and never refreshed.
+
+This is a **clarification** by the mechanical test in `frozen-checks.md`: it changes no CRITERION line,
+no CHECK command, and no guard command, and re-running the old and new wording against both the freeze
+commit and the current implementation changes no verdict at either tree — the numbers are recorded
+observations, and G1's pass condition is the count-free invariant, not the number. Corrected in place
+above; logged here so the edit isn't mistaken for a silent rewrite of the freeze record.
 
 ## Tamper verdict
 
