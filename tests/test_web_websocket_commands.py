@@ -15,6 +15,7 @@ have killed every `/command` in the browser with the suite still green.
 
 from __future__ import annotations
 
+import ast
 import inspect
 from unittest.mock import MagicMock
 
@@ -140,11 +141,10 @@ def test_mattermost_restricts_commands_to_the_bang_prefix():
     not do is prove the runtime behaviour; that is why it is paired with the two
     behavioural `dispatch_command` tests above.
     """
-    import ast
-
     from decafclaw import mattermost
 
     tree = ast.parse(inspect.getsource(mattermost))
+    calls = 0
     prefix_args = []
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
@@ -153,17 +153,35 @@ def test_mattermost_restricts_commands_to_the_bang_prefix():
         name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
         if name != "dispatch_command":
             continue
+        calls += 1
+        # `prefixes` is the third positional parameter, so accept either form —
+        # a positional call is behaviourally identical and must not false-fail.
         kwargs = {kw.arg: kw.value for kw in node.keywords}
-        assert "prefixes" in kwargs, (
+        node_value = kwargs.get("prefixes")
+        if node_value is None and len(node.args) >= 3:
+            node_value = node.args[2]
+        assert node_value is not None, (
             "mattermost.py calls dispatch_command without `prefixes`, so it "
             "inherits the ['!', '/'] default — Mattermost would answer "
             "`/command` and collide with Mattermost's own slash commands"
         )
-        prefix_args.append(ast.literal_eval(kwargs["prefixes"]))
+        try:
+            prefix_args.append(ast.literal_eval(node_value))
+        except ValueError:
+            # A name or a call instead of a literal (`prefixes=BANG_ONLY`).
+            # Can't be read statically, so say that rather than surfacing a
+            # bare ValueError traceback the reader has to decode.
+            raise AssertionError(
+                "mattermost.py passes a non-literal `prefixes` "
+                f"({ast.dump(node_value)[:60]}…), which this guard cannot "
+                "evaluate statically. Inline the literal, or replace this "
+                "guard with a behavioural test of the Mattermost path."
+            ) from None
 
-    assert prefix_args, (
+    assert calls, (
         "no dispatch_command call found in mattermost.py — either the command "
-        "path was removed or this guard is looking in the wrong module"
+        "path was removed, it was renamed, or this guard is looking in the "
+        "wrong module"
     )
     assert all(p == ["!"] for p in prefix_args), (
         f"mattermost.py passes prefixes={prefix_args!r}; Mattermost must stay "
