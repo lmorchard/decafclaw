@@ -2,7 +2,7 @@
 
 **Source:** https://github.com/lmorchard/decafclaw/issues/139
 
-**Frozen at:** (recorded in the follow-up commit)
+**Frozen at:** `a0a95e2` (2026-08-02) — the tamper-diff baseline.
 **Check files — read-only from Phase 1 onward:**
 - `src/decafclaw/web/static/components/chat-input.test.js`
 - `src/decafclaw/web/static/lib/command-list.test.js`
