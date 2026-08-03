@@ -3,6 +3,59 @@ chat-input {
   display: block;
   border-top: 1px solid var(--pico-muted-border-color);
   padding: 0.75rem 1rem;
+  /* Anchors .command-menu, which floats above the composer. */
+  position: relative;
+}
+
+/* Command autocomplete menu (floats above the composer) */
+chat-input .command-menu {
+  position: absolute;
+  bottom: 100%;
+  left: 1rem;
+  right: 1rem;
+  z-index: 10;
+  max-height: 14rem;
+  overflow-y: auto;
+  background: var(--pico-card-background-color);
+  border: 1px solid var(--pico-muted-border-color);
+  border-radius: 6px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+}
+
+chat-input .command-menu-item {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  padding: 0.35rem 0.75rem;
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+
+chat-input .command-menu-item.highlighted,
+chat-input .command-menu-item:hover {
+  background: var(--pico-primary-background);
+  color: var(--pico-primary-inverse);
+}
+
+chat-input .command-menu-name {
+  font-family: var(--pico-font-family-monospace);
+  white-space: nowrap;
+}
+
+chat-input .command-menu-hint {
+  font-family: var(--pico-font-family-monospace);
+  font-size: 0.8rem;
+  opacity: 0.7;
+  white-space: nowrap;
+}
+
+chat-input .command-menu-desc {
+  margin-left: auto;
+  font-size: 0.8rem;
+  opacity: 0.7;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 chat-input .input-row {
