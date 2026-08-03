@@ -81,6 +81,29 @@ def substitute_body(body: str, arguments: str = "", skill_dir: str = "") -> str:
 
 
 
+def list_invokable_commands(discovered_skills: list[SkillInfo]) -> list[dict[str, object]]:
+    """Enumerate everything `!name` / `/name` can invoke, for UI autocomplete.
+
+    Same two sources `format_help` renders — user-invokable skills plus MCP
+    prompts namespaced `mcp__<server>__<prompt>` — but as structured entries
+    instead of markdown. Display-only: invoking still goes through
+    `dispatch_command`, which resolves the name itself.
+    """
+    entries: list[dict[str, object]] = [
+        {
+            "name": cmd.name,
+            "description": cmd.description,
+            "argument_hint": cmd.argument_hint,
+        }
+        for cmd in list_commands(discovered_skills)
+    ]
+    entries.extend(
+        {"name": cmd_name, "description": desc, "argument_hint": args_hint}
+        for cmd_name, desc, args_hint in _get_mcp_prompt_commands()
+    )
+    return entries
+
+
 def format_help(discovered_skills: list[SkillInfo], prefix: str = "!") -> str:
     """Format the help text listing all available commands."""
     commands = list_commands(discovered_skills)

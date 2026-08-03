@@ -115,6 +115,17 @@ REVIEWED_CONSUMERS: dict[tuple[str, str], str] = {
         "NO GRANT: prints skill names in the startup banner.",
     ("commands.py", "format_help"):
         "NO GRANT: renders names, descriptions and argument hints for !help.",
+    ("commands.py", "list_invokable_commands"):
+        "NO GRANT: renders names, descriptions and argument hints for the web "
+        "UI's autocomplete menu — the same catalog-equivalent data format_help "
+        "prints. Picking an entry only types text into the composer; invoking "
+        "it still goes through dispatch_command, and every grant is decided "
+        "downstream in execute_command.",
+    ("web/websocket.py", "_handle_list_commands"):
+        "DELEGATES to commands.list_invokable_commands (NO GRANT: name, "
+        "description and argument hint only). Answering this frame runs no "
+        "skill code and activates nothing; the reply is display data for the "
+        "composer menu.",
     ("skills/__init__.py", "list_commands"):
         "NO GRANT: filters on user_invocable for the help listing. Whether an "
         "invoked command GRANTS anything is decided in execute_command.",

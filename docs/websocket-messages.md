@@ -49,6 +49,14 @@ Acknowledgement that a slash-style user command was received and dispatched.
 - `command` — string
 - `skill` — string?
 
+### `command_list`
+
+The set of user-invokable commands (skill commands plus MCP prompts) the client can offer for autocomplete.
+
+**Fields:**
+
+- `commands` — array of object
+
 ### `compaction_done`
 
 Conversation history compaction completed; client should reload history.
@@ -295,6 +303,12 @@ User's decision on a pending confirm_request.
 - `always` — boolean
 - `add_pattern` — boolean
 - `data` — object?
+
+### `list_commands`
+
+Ask the server for the current user-invokable command list (drives the composer's autocomplete menu).
+
+(No payload fields.)
 
 ### `load_history`
 

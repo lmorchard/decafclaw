@@ -17,6 +17,7 @@ class WSMessageType(StrEnum):
     CANVAS_UPDATE = "canvas_update"
     CHUNK = "chunk"
     COMMAND_ACK = "command_ack"
+    COMMAND_LIST = "command_list"
     COMPACTION_DONE = "compaction_done"
     CONFIRM_REQUEST = "confirm_request"
     CONFIRMATION_RESPONSE = "confirmation_response"
@@ -40,6 +41,7 @@ class WSMessageType(StrEnum):
     VAULT_CHANGED = "vault_changed"
     CANCEL_TURN = "cancel_turn"
     CONFIRM_RESPONSE = "confirm_response"
+    LIST_COMMANDS = "list_commands"
     LOAD_HISTORY = "load_history"
     SELECT_CONV = "select_conv"
     SEND = "send"
@@ -55,6 +57,7 @@ S2C_MESSAGE_TYPES: frozenset[WSMessageType] = frozenset({
     WSMessageType.CANVAS_UPDATE,
     WSMessageType.CHUNK,
     WSMessageType.COMMAND_ACK,
+    WSMessageType.COMMAND_LIST,
     WSMessageType.COMPACTION_DONE,
     WSMessageType.CONFIRM_REQUEST,
     WSMessageType.CONFIRMATION_RESPONSE,
@@ -81,6 +84,7 @@ S2C_MESSAGE_TYPES: frozenset[WSMessageType] = frozenset({
 C2S_MESSAGE_TYPES: frozenset[WSMessageType] = frozenset({
     WSMessageType.CANCEL_TURN,
     WSMessageType.CONFIRM_RESPONSE,
+    WSMessageType.LIST_COMMANDS,
     WSMessageType.LOAD_HISTORY,
     WSMessageType.SELECT_CONV,
     WSMessageType.SEND,
@@ -117,6 +121,10 @@ class SrvCommandAck(TypedDict):
     conv_id: str
     command: str
     skill: NotRequired[str]
+
+class SrvCommandList(TypedDict):
+    type: Literal[WSMessageType.COMMAND_LIST]
+    commands: list[dict[str, object]]
 
 class SrvCompactionDone(TypedDict):
     type: Literal[WSMessageType.COMPACTION_DONE]
@@ -271,6 +279,9 @@ class CliConfirmResponse(TypedDict):
     add_pattern: bool
     data: NotRequired[dict[str, object]]
 
+class CliListCommands(TypedDict):
+    type: Literal[WSMessageType.LIST_COMMANDS]
+
 class CliLoadHistory(TypedDict):
     type: Literal[WSMessageType.LOAD_HISTORY]
     conv_id: str
@@ -306,9 +317,9 @@ class CliWidgetResponse(TypedDict):
 
 # -- Discriminated unions --
 
-ServerMessage = SrvBackgroundEvent | SrvCanvasUpdate | SrvChunk | SrvCommandAck | SrvCompactionDone | SrvConfirmRequest | SrvConfirmationResponse | SrvConvHistory | SrvConvSelected | SrvError | SrvMessageComplete | SrvModelChanged | SrvModelsAvailable | SrvNotificationCreated | SrvNotificationRead | SrvReflectionResult | SrvStickyClear | SrvStickySet | SrvToolEnd | SrvToolStart | SrvToolStatus | SrvTurnComplete | SrvTurnStart | SrvUserMessage | SrvVaultChanged
+ServerMessage = SrvBackgroundEvent | SrvCanvasUpdate | SrvChunk | SrvCommandAck | SrvCommandList | SrvCompactionDone | SrvConfirmRequest | SrvConfirmationResponse | SrvConvHistory | SrvConvSelected | SrvError | SrvMessageComplete | SrvModelChanged | SrvModelsAvailable | SrvNotificationCreated | SrvNotificationRead | SrvReflectionResult | SrvStickyClear | SrvStickySet | SrvToolEnd | SrvToolStart | SrvToolStatus | SrvTurnComplete | SrvTurnStart | SrvUserMessage | SrvVaultChanged
 
-ClientMessage = CliCancelTurn | CliConfirmResponse | CliLoadHistory | CliSelectConv | CliSend | CliSetEffort | CliSetModel | CliWidgetResponse
+ClientMessage = CliCancelTurn | CliConfirmResponse | CliListCommands | CliLoadHistory | CliSelectConv | CliSend | CliSetEffort | CliSetModel | CliWidgetResponse
 
 
 # -- Callable alias for ws_send and friends --

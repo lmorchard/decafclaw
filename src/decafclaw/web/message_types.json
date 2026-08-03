@@ -22,6 +22,11 @@
       "description": "Acknowledgement that a slash-style user command was received and dispatched.",
       "fields": {"conv_id": "string", "command": "string", "skill": "string?"}
     },
+    "command_list": {
+      "direction": "server_to_client",
+      "description": "The set of user-invokable commands (skill commands plus MCP prompts) the client can offer for autocomplete.",
+      "fields": {"commands": "array of object"}
+    },
     "compaction_done": {
       "direction": "server_to_client",
       "description": "Conversation history compaction completed; client should reload history.",
@@ -137,6 +142,11 @@
       "direction": "client_to_server",
       "description": "User's decision on a pending confirm_request.",
       "fields": {"conv_id": "string", "confirmation_id": "string", "approved": "boolean", "always": "boolean", "add_pattern": "boolean", "data": "object?"}
+    },
+    "list_commands": {
+      "direction": "client_to_server",
+      "description": "Ask the server for the current user-invokable command list (drives the composer's autocomplete menu).",
+      "fields": {}
     },
     "load_history": {
       "direction": "client_to_server",

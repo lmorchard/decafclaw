@@ -29,6 +29,11 @@ export interface SrvCommandAck {
   skill?: string;
 }
 
+export interface SrvCommandList {
+  type: "command_list";
+  commands: Array<Record<string, unknown>>;
+}
+
 export interface SrvCompactionDone {
   type: "compaction_done";
   conv_id: string;
@@ -205,6 +210,10 @@ export interface CliConfirmResponse {
   data?: Record<string, unknown>;
 }
 
+export interface CliListCommands {
+  type: "list_commands";
+}
+
 export interface CliLoadHistory {
   type: "load_history";
   conv_id: string;
@@ -248,6 +257,7 @@ export type ServerMessage =
   | SrvCanvasUpdate
   | SrvChunk
   | SrvCommandAck
+  | SrvCommandList
   | SrvCompactionDone
   | SrvConfirmRequest
   | SrvConfirmationResponse
@@ -273,6 +283,7 @@ export type ServerMessage =
 export type ClientMessage =
   | CliCancelTurn
   | CliConfirmResponse
+  | CliListCommands
   | CliLoadHistory
   | CliSelectConv
   | CliSend

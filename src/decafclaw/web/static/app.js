@@ -77,6 +77,7 @@ store.addEventListener('change', () => {
     chatInput.disabled = store.isReadOnly;
     chatInput.convId = store.currentConvId || '';
     chatInput.placeholder = store.isReadOnly ? 'Read-only conversation' : 'Type a message...';
+    chatInput.commands = store.commands;
     // `change` fires on every WebSocket message, so the focus decision has to
     // name the transitions it cares about — see lib/chat-focus.js.
     const focusOpts = {
