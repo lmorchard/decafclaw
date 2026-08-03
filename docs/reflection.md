@@ -53,6 +53,8 @@ To use a cheaper model for the judge (recommended):
 decafclaw config set reflection.model gemini-2.5-flash
 ```
 
+> **Caveat:** this only takes effect if the name is a [`model_configs`](config.md#model_configs) key, *or* if `default_model` is unset — otherwise `default_model` wins and the setting is silently discarded. See [Judge model](#judge-model) for the full resolution order, and [#752](https://github.com/lmorchard/decafclaw/issues/752) for the fix. To pin the judge to a specific model regardless, use [`verifier_model`](#verifier_model--the-shared-verifier-convention).
+
 ## Configuration
 
 All settings live under the `reflection` group in `config.json`. See [Configuration Reference](config.md#reflection) for the full table.
@@ -71,6 +73,27 @@ All settings live under the `reflection` group in `config.json`. See [Configurat
 ### Judge model
 
 The judge can use a separate model from the main LLM. Empty `url`/`model`/`api_key` fall back to the `llm` group values via `config.reflection.resolved(config)`. This lets you run an expensive model for the agent and a cheap/fast one as the judge.
+
+#### `verifier_model` — the shared verifier convention
+
+`reflection.verifier_model` names a key in [`model_configs`](config.md#model_configs), and it is the setting to reach for when what you want is *a judge that isn't the author*. Cost is a side benefit; the point is independence. Left at its default (`""`), nothing changes.
+
+```bash
+decafclaw config set reflection.verifier_model claude-haiku
+```
+
+Resolution order, highest first:
+
+| Setting | Wins when |
+|---|---|
+| `reflection.verifier_model` | set **and** present in `model_configs` |
+| `reflection.model` | set **and** present in `model_configs` |
+| `default_model` | set — this is why an unset judge grades its own homework |
+| `reflection.resolved(config)` | legacy `url`/`model`/`api_key` fallback |
+
+A `verifier_model` naming a key that isn't in `model_configs` is ignored, and resolution continues down the table. It is not passed through to the provider layer, which would only log a warning and quietly use the default provider — indistinguishable from the setting having worked.
+
+**The convention:** `verifier_model` is shared across *every* reflection judge, not just the base one. Specialized judges — source-grounding ([#529](https://github.com/lmorchard/decafclaw/issues/529)), pre-write edit-safety ([#530](https://github.com/lmorchard/decafclaw/issues/530)), and adversarial reflection ([#589](https://github.com/lmorchard/decafclaw/issues/589)) — inherit it, so setting it once routes all of them off the author's model. A judge may declare a more specific override of its own; absent one, it inherits. Anyone adding a judge should route through this rather than re-inventing model selection.
 
 ## Visibility modes
 
