@@ -110,6 +110,8 @@ export class ConversationStore extends EventTarget {
   #availableModels = [];
   /** @type {string} default model from server config */
   #defaultModel = '';
+  /** @type {{name: string, description: string, argument_hint: string}[]} user-invokable commands from server */
+  #commands = [];
   /** @type {boolean} whether the current conversation is read-only */
   #readOnly = false;
   /** @type {string|null} message queued while creating a conversation */
@@ -173,6 +175,8 @@ export class ConversationStore extends EventTarget {
   get availableModels() { return this.#availableModels; }
   /** @returns {string} */
   get defaultModel() { return this.#defaultModel; }
+  /** @returns {{name: string, description: string, argument_hint: string}[]} */
+  get commands() { return this.#commands; }
   /** @returns {object[]} */
   get systemConversations() { return this.#systemConversations; }
   /** @returns {FolderEntry[]} */
@@ -438,6 +442,10 @@ export class ConversationStore extends EventTarget {
     this.#readOnly = false;
     this.#ws.send({ type: MESSAGE_TYPES.SELECT_CONV, conv_id: convId });
     this.#ws.send({ type: MESSAGE_TYPES.LOAD_HISTORY, conv_id: convId, limit: 50 });
+    // Not on socket `open`: #704's guard says a reconnect with nothing
+    // selected puts nothing on the wire, and this list is not worth weakening
+    // it for. The accepted cost is an empty menu until a conversation exists.
+    this.#ws.send({ type: MESSAGE_TYPES.LIST_COMMANDS });
     this.#emitChange();
   }
 
@@ -455,6 +463,9 @@ export class ConversationStore extends EventTarget {
   #resubscribe() {
     if (!this.#currentConvId) return;
     this.#ws.send({ type: MESSAGE_TYPES.SELECT_CONV, conv_id: this.#currentConvId });
+    // Re-ask every time, not once: an MCP server that connected while we were
+    // disconnected contributes prompts the cached list has never seen.
+    this.#ws.send({ type: MESSAGE_TYPES.LIST_COMMANDS });
   }
 
   /**
@@ -634,6 +645,10 @@ export class ConversationStore extends EventTarget {
       case MESSAGE_TYPES.MODELS_AVAILABLE:
         if (msg.available_models) this.#availableModels = msg.available_models;
         if (msg.default_model) this.#defaultModel = msg.default_model;
+        break;
+
+      case MESSAGE_TYPES.COMMAND_LIST:
+        if (msg.commands) this.#commands = msg.commands;
         break;
 
       case MESSAGE_TYPES.ERROR:
