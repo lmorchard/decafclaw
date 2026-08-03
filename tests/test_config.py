@@ -115,6 +115,23 @@ class TestDefaults:
         assert c.vault_guide.enabled is False
         assert c.vault_guide.path == "protocols/GUIDE.md"
 
+    def test_reflection_verifier_model_env_override(self, tmp_path, monkeypatch):
+        """REFLECTION_VERIFIER_MODEL reaches the field via load_sub_config (#591).
+
+        The env var and `config set reflection.verifier_model` are both derived
+        from the dataclass field by generic machinery, so they need no
+        registration — but "derived for free" is a claim, and nothing else under
+        tests/ asserts any REFLECTION_* env var.
+        """
+        monkeypatch.setenv("REFLECTION_VERIFIER_MODEL", "judge")
+        monkeypatch.setenv("DATA_HOME", str(tmp_path))
+        c = load_config()
+        assert c.reflection.verifier_model == "judge"
+
+    def test_reflection_verifier_model_defaults_empty(self):
+        """Unset by default, so the existing fallback chain is untouched (#591)."""
+        assert Config().reflection.verifier_model == ""
+
 
 class TestJsonFileLoading:
     def test_loads_from_json(self, tmp_path, monkeypatch):

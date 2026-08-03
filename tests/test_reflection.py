@@ -6,7 +6,13 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from decafclaw.config import Config
-from decafclaw.config_types import AgentConfig, LlmConfig, ReflectionConfig
+from decafclaw.config_types import (
+    AgentConfig,
+    LlmConfig,
+    ModelConfig,
+    ProviderConfig,
+    ReflectionConfig,
+)
 from decafclaw.reflection import (
     _BUNDLED_PROMPT,
     ReflectionResult,
@@ -532,6 +538,126 @@ class TestEvaluateResponse:
             await evaluate_response(config, "hello", "Hi!", "")
         prompt = mock_call.call_args[0][1][0]["content"]
         assert "Tools used in prior turns:" not in prompt
+
+    # -- verifier_model routing (#591) ------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_verifier_model_routes_judge_call(self, tmp_path):
+        """WHERE reflection.verifier_model names a key in model_configs, the
+        judge call SHALL route to it — not default_model, not the legacy
+        url/model/api_key override."""
+        config = Config(
+            agent=AgentConfig(data_home=str(tmp_path), id="test"),
+            llm=LlmConfig(url="http://test/v1/chat/completions",
+                          model="legacy-model", api_key="test-key"),
+            providers={"p": ProviderConfig(type="openai-compat",
+                                           url="http://test/v1",
+                                           api_key="test-key")},
+            model_configs={
+                "author": ModelConfig(provider="p", model="author-model"),
+                "judge": ModelConfig(provider="p", model="judge-model"),
+            },
+            default_model="author",
+            reflection=ReflectionConfig(enabled=True, model="",
+                                        verifier_model="judge"),
+        )
+        mock_response = {"content": '{"pass": true, "critique": ""}'}
+        with patch("decafclaw.reflection.call_llm", new_callable=AsyncMock,
+                   return_value=mock_response) as mock_call:
+            await evaluate_response(config, "hello", "Hi!", "")
+        # Equality (not membership) so a stray llm_url/llm_model/llm_api_key
+        # override alongside model_name still fails.
+        assert mock_call.call_args.kwargs == {"model_name": "judge"}
+
+    @pytest.mark.asyncio
+    async def test_verifier_model_unset_preserves_fallback_chain(self, tmp_path):
+        """WHEN reflection.verifier_model is empty, resolution SHALL be
+        unchanged: reflection.model (if in model_configs) -> default_model ->
+        legacy reflection.resolved(config)."""
+        providers = {"p": ProviderConfig(type="openai-compat",
+                                         url="http://test/v1",
+                                         api_key="test-key")}
+        model_configs = {
+            "author": ModelConfig(provider="p", model="author-model"),
+            "judge": ModelConfig(provider="p", model="judge-model"),
+        }
+        mock_response = {"content": '{"pass": true, "critique": ""}'}
+
+        # (a) reflection.model names a key in model_configs -> wins
+        config_a = Config(
+            agent=AgentConfig(data_home=str(tmp_path), id="test"),
+            llm=LlmConfig(url="http://test/v1/chat/completions",
+                          model="legacy-model", api_key="test-key"),
+            providers=providers,
+            model_configs=model_configs,
+            default_model="author",
+            reflection=ReflectionConfig(enabled=True, model="judge",
+                                        verifier_model=""),
+        )
+        with patch("decafclaw.reflection.call_llm", new_callable=AsyncMock,
+                   return_value=mock_response) as mock_call:
+            await evaluate_response(config_a, "hello", "Hi!", "")
+        assert mock_call.call_args.kwargs == {"model_name": "judge"}
+
+        # (b) reflection.model empty -> default_model
+        config_b = Config(
+            agent=AgentConfig(data_home=str(tmp_path), id="test"),
+            llm=LlmConfig(url="http://test/v1/chat/completions",
+                          model="legacy-model", api_key="test-key"),
+            providers=providers,
+            model_configs=model_configs,
+            default_model="author",
+            reflection=ReflectionConfig(enabled=True, model="",
+                                        verifier_model=""),
+        )
+        with patch("decafclaw.reflection.call_llm", new_callable=AsyncMock,
+                   return_value=mock_response) as mock_call:
+            await evaluate_response(config_b, "hello", "Hi!", "")
+        assert mock_call.call_args.kwargs == {"model_name": "author"}
+
+        # (c) no model_configs, no default_model -> legacy resolved() override
+        config_c = Config(
+            agent=AgentConfig(data_home=str(tmp_path), id="test"),
+            llm=LlmConfig(url="http://test/v1/chat/completions",
+                          model="legacy-model", api_key="test-key"),
+            model_configs={},
+            default_model="",
+            reflection=ReflectionConfig(enabled=True,
+                                        model="cheap-judge-model",
+                                        verifier_model=""),
+        )
+        with patch("decafclaw.reflection.call_llm", new_callable=AsyncMock,
+                   return_value=mock_response) as mock_call:
+            await evaluate_response(config_c, "hello", "Hi!", "")
+        kwargs_c = mock_call.call_args.kwargs
+        assert kwargs_c["llm_model"] == "cheap-judge-model"
+        assert "model_name" not in kwargs_c
+
+    @pytest.mark.asyncio
+    async def test_unknown_verifier_model_falls_back(self, tmp_path):
+        """IF reflection.verifier_model is not a key in model_configs, THEN
+        the judge SHALL fall back to today's chain and SHALL NOT pass the
+        unknown name as model_name."""
+        config = Config(
+            agent=AgentConfig(data_home=str(tmp_path), id="test"),
+            llm=LlmConfig(url="http://test/v1/chat/completions",
+                          model="legacy-model", api_key="test-key"),
+            providers={"p": ProviderConfig(type="openai-compat",
+                                           url="http://test/v1",
+                                           api_key="test-key")},
+            model_configs={
+                "author": ModelConfig(provider="p", model="author-model"),
+            },
+            default_model="author",
+            reflection=ReflectionConfig(enabled=True, model="",
+                                        verifier_model="no-such-model"),
+        )
+        mock_response = {"content": '{"pass": true, "critique": ""}'}
+        with patch("decafclaw.reflection.call_llm", new_callable=AsyncMock,
+                   return_value=mock_response) as mock_call:
+            await evaluate_response(config, "hello", "Hi!", "")
+        # Concrete fallback destination: default_model, via the normal chain.
+        assert mock_call.call_args.kwargs == {"model_name": "author"}
 
 
 class TestReflectionPromptStructure:
