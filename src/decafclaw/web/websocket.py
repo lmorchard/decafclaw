@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING
 
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
+from decafclaw.commands import list_invokable_commands
 from decafclaw.conversation_manager import TurnKind
 from decafclaw.skills.vault._events import VAULT_CHANGED_EVENT_TYPE
 from decafclaw.web.message_types import (
@@ -563,6 +564,21 @@ async def _handle_set_model(ws_send: WSSendCallable, index, username, msg, state
     })
 
 
+async def _handle_list_commands(ws_send: WSSendCallable, index, username, msg, state) -> None:
+    """Reply with every user-invokable command, for the composer's autocomplete.
+
+    Not conversation-scoped — the list is the same for every conversation, so
+    there is no conv_id to validate. MCP prompts are read live: the helper's
+    `_get_mcp_prompt_commands` resolves `get_registry` at call time, so a
+    server that connected after startup shows up on the next request.
+    """
+    config = state["config"]
+    await ws_send({
+        "type": WSMessageType.COMMAND_LIST,
+        "commands": list_invokable_commands(config.discovered_skills),
+    })
+
+
 async def _handle_widget_response(ws_send: WSSendCallable, index, username, msg, state) -> None:
     """Route a widget-input submission through the confirmation infra.
 
@@ -889,6 +905,7 @@ _HANDLERS = {
     WSMessageType.SET_MODEL: _handle_set_model,
     WSMessageType.CONFIRM_RESPONSE: _handle_confirm_response,
     WSMessageType.WIDGET_RESPONSE: _handle_widget_response,
+    WSMessageType.LIST_COMMANDS: _handle_list_commands,
 }
 
 
