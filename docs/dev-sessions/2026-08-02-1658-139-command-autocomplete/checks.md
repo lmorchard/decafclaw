@@ -1,0 +1,248 @@
+# Frozen acceptance checks
+
+**Source:** https://github.com/lmorchard/decafclaw/issues/139
+
+> **THE FREEZE WAS NOT TAKEN.** This manifest is complete and its checks are authored, run, and
+> adjudicated — but no freeze commit exists, deliberately. C3 as written commits the run to one side
+> of an open design decision (see **Blocking decision** below), and freezing it would make the other
+> side cost an amendment plus a tier downgrade. The review window is still open on purpose. Resolve
+> the decision, adjust C3 if the answer says so, then take the freeze.
+
+**Frozen at:** NOT FROZEN — see above.
+**Check files — read-only from Phase 1 onward (once frozen):**
+- `src/decafclaw/web/static/components/chat-input.test.js`
+- `src/decafclaw/web/static/lib/command-list.test.js`
+- `tests/test_web_command_list.py`
+
+## Blocking decision — when does the client request the command list?
+
+The spec settles that the list travels over the existing WebSocket as a new message type. It does not
+settle *when* the client asks for it, and the three available answers are not interchangeable.
+
+C3 as authored asserts the request goes out on socket `open`. That collides head-on with an existing
+regression guard from **#704** (`lib/conversation-store.test.js:238-248`, merged as `2fab896`, the most
+recent commit on `origin/main`): *"sends nothing on the socket when no conversation is selected"* —
+`ws.fireOpen()` with nothing selected, then `expect(ws.sent).toEqual([])`. Both cannot be green.
+
+The collision is **prospective, not current**: today nothing sends on open, so C3 fails and the #704
+guard passes, and they coexist in the tree. They become mutually exclusive only when C3 is made green.
+That is exactly why this has to be decided *before* the freeze rather than discovered during execute.
+
+| Option | Cost |
+|---|---|
+| **A. Request on `open`; narrow the #704 guard** to conversation-scoped frames (e.g. `ws.sent.filter(m => m.conv_id)`). | Edits another issue's regression test to accommodate this feature. The guard's *stated* intent is resubscription (its comment says so) and narrowing preserves that intent exactly — but its literal assertion covers all traffic, and relaxing it is a real loss of coverage. |
+| **B. Request on conversation-select** instead. Touches no existing test. | Leaves the menu empty at the one moment it is most useful. Verified: `sendMessage` creates a conversation when none exists (`conversation-store.js:470`), so a `/command` as the very first message of a fresh session is a real path — and under B the list has not arrived yet. |
+| **C. Request lazily**, the first time a trigger character is typed. Touches no existing test, and the list is present whenever the user actually needs it. | Adds a round-trip on the first `/` keypress, so the menu can render a beat late or briefly empty. Also moves the trigger out of the store's established push-a-list idiom. |
+
+Nothing here is a coin flip between equivalents, and option A weakens a guard that exists because of a
+bug fixed five commits ago — so this is not a call to make unattended.
+
+## C1
+
+CRITERION: GIVEN a mounted `chat-input` whose command source lists `help` and `mcp__demo__summarize`,
+WHEN the user types `/mc` at the start of the line, THEN the component SHALL render a suggestion list
+containing `mcp__demo__summarize` (fuzzy subsequence match), AND WHEN `ArrowDown`/`ArrowUp` are
+pressed the highlighted entry SHALL change, AND WHEN `Tab` is pressed the textarea value SHALL become
+`/mcp__demo__summarize ` and the menu SHALL close.
+
+CHECK: `cd src/decafclaw/web/static && npx vitest run components/chat-input.test.js`
+
+AT FREEZE: fails — `Test Files 1 failed (1) / Tests 6 failed | 5 passed (11)`. Collected 11 cases, so the
+check had teeth (not a vacuous zero-collection pass). The six failures are the behaviour genuinely being
+absent, not an import or path error:
+- `offers the fuzzy matches for "/mc"` — `AssertionError: expected null not to be null` (no `.command-menu`)
+- `matches by subsequence, not by prefix` — `expected [] to deeply equal [ 'mcp__demo__summarize' ]`
+- `opens on "!" at the start of the line` — `expected null not to be null`
+- `highlights the first suggestion and moves it with ArrowDown/ArrowUp` — `expected [] to deeply equal [ 'help', 'mcp__demo__summarize' ]`
+- `commits the highlighted suggestion on Tab` — `expected '/mc' to be '/mcp__demo__summarize '`
+- `dismisses the menu on Escape` — `expected null not to be null`
+
+The five passing cases are the frozen guard content, deliberately green at freeze: the three G2
+menu-closed regressions (Enter sends `{text, attachments}`, Shift+Enter does not send, Escape while busy
+dispatches `stop`) plus two that pass vacuously today and gain teeth once the menu exists (`stays closed
+when the trigger is not at the start of the line`, `keeps Enter as send while the menu is open`).
+
+## C2
+
+CRITERION: WHEN a web client requests the invokable-command list over the WebSocket, the server SHALL
+respond with a structured list that includes each skill command and **every MCP prompt as
+`mcp__<server>__<prompt>`**, each carrying its description and argument hint.
+
+CHECK: a pytest node over the new handler, **with `get_registry` monkeypatched to a fake registry
+exposing one prompt with one required and one optional argument**, asserting the response contains the
+skill command and an entry `mcp__demo__summarize` whose hint is `<text> [language]`.
+
+RESOLVED COMMAND (the concrete realization of the CHECK above; the prose is the oracle, this is how it
+is run): `uv run pytest tests/test_web_command_list.py`
+
+AT FREEZE: fails — `3 failed in 1.49s`, exit 1 (not exit 5; three nodes were collected, so the check is
+not vacuous). All three fail at `handler = websocket._HANDLERS[REQUEST_TYPE]` with
+`KeyError: 'list_commands'` — the module imports cleanly and the fake-registry fixture builds fine, so
+the failure is the absent handler, not collection breakage.
+
+## Contract defined by the frozen checks
+
+(The checks were authored before any implementation, so they define the observable contract. Recorded
+here because the implementation must build to it — this is a description of the frozen tests, not a
+separate oracle.)
+
+- Component property: `chat-input.commands`, an Array of `{name, description, argument_hint}`.
+- Selectors: container `.command-menu` (rendered only while open — absence means closed); rows
+  `.command-menu-item` with `data-command="<name>"`; highlight is class `highlighted` on the row,
+  exactly one while open, index 0 on open.
+- Wire types: client→server `list_commands`; server→client `command_list` with
+  `{"type": "command_list", "commands": [{"name", "description", "argument_hint"}]}`.
+- Handler: `_handle_list_commands(ws_send, index, username, msg, state)` in
+  `src/decafclaw/web/websocket.py`, registered in `_HANDLERS` under `WSMessageType.LIST_COMMANDS`.
+- `get_registry` must be resolved at call time (the call-time import `commands.py` already uses), not
+  bound into `websocket.py` at import — a module-level binding would dodge the monkeypatch.
+
+## C3
+
+(Added at the freeze review, closing an escalation the check-reviewer raised against C2 — see
+Adjudication. Not a criterion from the issue; it is the coverage without which C1 and C2 are both
+satisfiable by a feature that is dead in the browser.)
+
+CRITERION (derived from C2's "WHEN a web client requests the invokable-command list over the
+WebSocket"): the client SHALL actually request the list over the socket, and the reply SHALL reach the
+`chat-input` component's command source.
+
+CHECK: `cd src/decafclaw/web/static && npx vitest run lib/command-list.test.js`
+
+AT FREEZE: fails — 7 tests, `7 failed / 0 passed`. Six are behavioural over `ConversationStore` using
+the existing `FakeWS` pattern (`declares both wire types in the manifest`; `starts with an empty command
+list`; `requests the command list when the socket opens`; `re-requests on every reconnect, not just the
+first`; `exposes the commands from a command_list frame and notifies subscribers`; `keeps the {name,
+description, argument_hint} entry shape intact`). Observed failures include `expected undefined to be
+'client_to_server'`, `sent []: expected [] to include 'list_commands'`, and `TypeError: Cannot read
+properties of undefined (reading 'find')` — the store surface is genuinely absent.
+
+The seventh, `assigns store.commands onto the chat-input element`, is a **TEXT-BASED assertion over
+`app.js` source**, paired with the behavioural six above. `app.js` is a top-level DOM script with no
+unit-mountable seam, so this is the only available coverage for the final hop — and a rename or reflow
+can flip it independently of behaviour. Do not read it as behavioural coverage. Observed: `no line in
+app.js assigns store.commands to chatInput.commands — the server reply never reaches the component`.
+(It reads the source via a Vite `?raw` import rather than `fs`: under jsdom `import.meta.url` is an
+`http:` URL and `fileURLToPath` throws. It carries its own harness guard so a broken import blames
+itself rather than `app.js`.)
+
+**C3 is the check the blocking decision above is about.** `requests the command list when the socket
+opens` is the assertion that collides with #704's guard.
+
+## Guards
+
+(Pass today; must keep passing. Not criteria — they can't fail at freeze.)
+
+- G1: `cd src/decafclaw/web/static && npx vitest run` — the JS suite. Invariant: no test lost, newly
+  skipped, or newly failing.
+  **Pre-existing baseline (before the check files were added): `Test Files 10 passed (10) / Tests 87
+  passed (87) / 0 skipped`.** The issue's `6 files / 42 tests` is from triage on 2026-07-29;
+  `origin/main` has advanced since.
+  **With the two new JS check files present the tree reads `Test Files 2 failed | 10 passed (12) /
+  Tests 15 failed | 94 passed (109)`** — and the arithmetic reconciles exactly, which is the point of
+  recording it: the new files add 22 tests (15 in `chat-input.test.js`, 7 in `command-list.test.js`),
+  of which 15 fail and 7 pass, so `109 − 22 = 87` pre-existing and `87 + 7 = 94` passing. The
+  pre-existing ten files are untouched.
+  **Post-implementation target: 12 files, 109 passed, 0 failed, 0 skipped.**
+  Residual the command cannot close: `vitest run` exits 0 when a file is deleted or a test is
+  `.skip`ped, so the *count* is the guard — compare it, don't just observe green.
+- G2: existing composer behaviour is unchanged when the menu is closed — `Enter` sends,
+  `Shift+Enter` newlines, `Escape` stops while busy. Covered by assertions inside the frozen
+  `chat-input.test.js` (menu-closed cases), so it is graded by C1's command.
+  **Passed at freeze: see C1's AT FREEZE — the menu-closed cases pass while the autocomplete cases fail.**
+- G3: `uv run pytest tests/test_web_websocket_commands.py tests/test_commands.py` — command dispatch
+  through the socket keeps working, including that the web path still accepts both `!` and `/` and
+  Mattermost stays `!`-only. **Passed at freeze: `34 passed in 1.24s`** (was `30 passed` before the
+  strengthening added four tests that actually exercise the prefix split — see Adjudication).
+- G4: `make check-message-types` — a new WebSocket message type means a `web/message_types.json` entry
+  plus regenerated `message_types.py`, `lib/message-types.js`, `docs/websocket-messages.md` and
+  `tui/src/types.generated.ts`, all in the same commit. Do not hand-edit the generated files.
+  **Passed at freeze: `git diff --exit-code` over the four generated files returned clean.**
+- G5: full Python suite green — `make test`.
+  **Pre-existing baseline (before the check file was added): `3717 passed, 2 skipped in 23.31s`.** The
+  issue marked this UNRUN; it has now been run.
+  `make test` collects `tests/test_web_command_list.py`, so in the check-bearing tree it **measures
+  `6 failed, 3721 passed, 2 skipped in 14.79s`** — the four G3 additions pass on top of the 3717, and
+  the six new C2 nodes fail. **Post-implementation target: 3727 passed, 2 skipped, 0 failed.**
+  Teeth worth naming: G5 is the guard that carries `test_message_types.py`,
+  `test_ws_message_type_handlers.py` and `test_discovered_skills_consumers.py` — so a new
+  `config.discovered_skills` read in `websocket.py` with no recorded trust-tier decision fails here.
+
+## Adjudication
+
+Graded before the freeze commit by an independent read-only check-reviewer (no Edit/Write), given
+`checks.md` and the repo but not the plan and not the criteria's rationale. Its remit was one question
+per item: *what could make this check green that is not the work its criterion names?* Every
+strengthening below was applied before the freeze, so none of them is an amendment and none costs the
+tier.
+
+- **C1: strengthened** — four gameable holes, each with a named cheap fake:
+  1. Tab was only ever exercised on a one-match query (`/mc`), so `commit(matches[0])` — never reading
+     the highlight — greened it and drained the Arrow test too. Added: from `/` (two matches),
+     `ArrowDown` then `Tab` must yield `/mcp__demo__summarize `, which the always-first fake fails.
+  2. "Subsequence not prefix" ruled out prefix and substring but not *order*:
+     `[...q].every(ch => name.includes(ch))` passed every case. Added a negative case whose characters
+     are all present but out of order.
+  3. "Start of the line" was only tested as start of the *value*; `value.startsWith('/')` greened it and
+     newlines were never exercised. Added a `hello\n/mc` case, which is what the criterion literally says.
+  4. Nothing asserted Tab is *not* swallowed with the menu closed, so an unconditional
+     `preventDefault()` greened C1 while permanently breaking tab-out of the composer. Added a
+     menu-closed `defaultPrevented === false` assertion.
+- **C2: strengthened** — three holes:
+  1. No `user_invocable` filter was forced (the fixture had one invocable skill and lookups ignore
+     extras), so returning every discovered skill greened it. Added a non-invocable skill that must be
+     absent from the reply.
+  2. Every asserted value was a literal in the test, so a hardcoded two-element reply passed. Added a
+     second prompt from a *different* server, forcing the `mcp__<server>__<prompt>` name to be computed.
+  3. The response type was a bare string bound to nothing — `make check-message-types` cannot catch a
+     server→client type that never entered the manifest, because regeneration produces no diff when the
+     manifest never changed. Added `WSMessageType.LIST_COMMANDS`/`COMMAND_LIST` equality assertions.
+- **C3: added (escalation from C2)** — the reviewer found that C1 and C2 could both be fully green with
+  a feature that is *dead in the browser*: nothing asserted the client ever sends `list_commands`, nor
+  that a `command_list` reply reaches `chat-input.commands`. Not fixable inside either file, so a third
+  frozen check was authored over `ConversationStore` (behavioural, using the existing `FakeWS` pattern)
+  plus one explicitly-labelled text assertion over `app.js`'s binding, which has no unit-mountable seam.
+- **G1: strengthened** — the recorded baseline `10 files / 87 tests` was captured *before* the frozen
+  files were added and so is unreproducible in the freeze tree; restated below against the pre-existing
+  ten files, with the post-implementation target named separately. Note the residual the command cannot
+  close: `vitest run` exits 0 when a test file is deleted or a test is `.skip`ped, so the count *is* the
+  guard and must be compared, not just observed green.
+- **G2: accepted** — the reviewer tried three fakes and none worked. `toEqual` on the whole `send` detail
+  rejects partial or extra-keyed payloads; the Shift+Enter case asserts both no-send *and* that the text
+  survives, so an early return that clears the box fails; the Escape case mounts `busy: true`, the exact
+  state the new Escape branch contends for, and asserts the `stop` event actually fired. All three
+  assert resulting state rather than names, and they live inside the frozen file, so they cannot be
+  deleted while C1's command stays green.
+- **G3: strengthened** — the guard claimed to cover the `!`/`/` transport split and could not: its one
+  web test monkeypatches `dispatch_command` away entirely and never sends `/`, and `test_commands.py`
+  only exercises `parse_command_trigger` with the prefix passed in explicitly. Narrowing the web call
+  site to `prefixes=["!"]` would have killed every `/command` in the browser at `30 passed`. Added two
+  behavioural tests (default prefix set accepts both; a narrowed set rejects `/help`), a captured-kwarg
+  assertion on the web call site, and one explicitly-labelled text assertion pinning
+  `prefixes=["!"]` in `mattermost.py` (its call site is buried in the message handler with no cheap
+  seam). **Probed:** applying the reviewer's exact regression to `websocket.py` turned the guard red
+  (`Right contains one more item: '/'`); the probe was reverted with a targeted edit, and
+  `git diff --stat` confirms `websocket.py` is unmodified.
+- **G4: strengthened** — half of what G4 names is enforced by G5's `test_message_types.py` (the
+  client→server half), and the server→client half was enforced nowhere: a reply frame built as a plain
+  dict with a literal `"command_list"` type greens C2, greens `make check-message-types`, and greens G5,
+  while the manifest, `lib/message-types.js`, `docs/websocket-messages.md` and
+  `tui/src/types.generated.ts` never learn the type exists. Closed by C2's new `WSMessageType`
+  assertions.
+- **G5: strengthened** — same defect as G1: `make test` collects `tests/test_web_command_list.py`, so
+  `3717 passed, 2 skipped` predates the frozen file and is unreproducible in the freeze tree. Restated
+  below. Recorded in G5's favour: it is the guard that actually carries `test_message_types.py`,
+  `test_ws_message_type_handlers.py` and `test_discovered_skills_consumers.py` — so a new
+  `config.discovered_skills` read in `websocket.py` without a recorded trust-tier decision fails here.
+
+## Amendments
+
+(Append-only. Empty unless an amendment was made.)
+
+(none)
+
+## Tamper verdict
+
+(Recorded at the end of execute and again in pr.)
+
+(pending)
