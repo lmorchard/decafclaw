@@ -2,7 +2,10 @@
 
 **Source:** https://github.com/lmorchard/decafclaw/issues/139
 
-**Frozen at:** `a0a95e2` (2026-08-02) — the tamper-diff baseline.
+**Frozen at:** `04fd61e` — the tamper-diff baseline, re-anchored after rebasing onto `origin/main`
+(`f55510f`). The pre-rebase sha was `a0a95e2`; rebasing rewrote it, and the baseline must stay an
+ancestor of the pushed head or the tamper diff degrades into a self-report. Verified empty against
+**both** shas, so the re-anchoring moved the commit id and not the frozen content.
 **Check files — read-only from Phase 1 onward:**
 - `src/decafclaw/web/static/components/chat-input.test.js`
 - `src/decafclaw/web/static/lib/command-list.test.js`
