@@ -1,7 +1,9 @@
 # Frozen acceptance checks
 
 **Source:** https://github.com/lmorchard/decafclaw/issues/752
-**Frozen at:** (recorded in the follow-up commit — a commit cannot contain its own hash)
+**Frozen at:** `d34c9df` (2026-08-03) — recorded in the follow-up commit, since a commit cannot
+contain its own hash. Re-anchor if the branch is rebased; the freeze commit must stay an ancestor
+of the pushed head so the tamper diff is re-runnable by a reviewer.
 **Check files — read-only from Phase 1 onward:**
 - `tests/test_reflection.py`
 
