@@ -242,10 +242,11 @@ class ReflectionConfig:
     model: str = ""     # empty = resolve from llm
     # A model_configs key. When set AND present in config.model_configs, every
     # reflection judge routes through it, so the author does not grade its own
-    # homework (#591). Otherwise resolution continues down the existing chain:
-    # `model` if it too is a model_configs key -> default_model -> the legacy
-    # resolved() url/model/api_key. Note a `model` that is NOT a model_configs
-    # key loses to default_model rather than reaching the legacy rung (#752).
+    # homework (#591). Otherwise resolution continues down the chain: `model`
+    # if it too is a model_configs key -> `model` as a legacy raw name via
+    # resolved() -> default_model -> the legacy resolved() llm-group fallback.
+    # Any explicitly set `model` outranks default_model, whether or not it
+    # names a model_configs key (#752).
     verifier_model: str = ""
     api_key: str = field(default="", metadata={"secret": True})
     max_retries: int = 2
