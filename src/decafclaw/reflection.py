@@ -288,8 +288,21 @@ async def evaluate_response(
 
         messages = [{"role": "user", "content": prompt}]
 
-        # Route through named model config:
-        #   verifier_model > explicit > default_model > legacy
+        # Judge-model resolution, highest first:
+        #   1. verifier_model, when it is a model_configs key   -> named config
+        #   2. reflection.model, when it is a model_configs key -> named config
+        #   3. reflection.model as a legacy raw name            -> resolved()
+        #   4. default_model                                    -> named config
+        #   5. nothing set                                      -> resolved()
+        # Only rungs 1, 2 and 4 route through a named model config. Any
+        # explicitly set reflection.model outranks default_model, whether or
+        # not it names one (#752): before that fix, rung 3 was unreachable on
+        # every config with a default_model set.
+        # Note rung 3 is NOT a branch of its own — it shares the terminal else
+        # with rung 5, so it sits lexically *below* rung 4. What ranks it above
+        # rung 4 is the `and not rc_model` guard on the default_model branch.
+        # Drop that guard and #752 comes back; branch order alone will not
+        # preserve this.
         # The `in config.model_configs` half of the verifier branch is
         # load-bearing, not defensive: an unknown name handed to the provider
         # layer only logs a warning and falls through to the default provider,
@@ -300,9 +313,14 @@ async def evaluate_response(
             response = await call_llm(config, messages, model_name=verifier)
         elif rc_model and rc_model in config.model_configs:
             response = await call_llm(config, messages, model_name=rc_model)
-        elif config.default_model:
+        elif config.default_model and not rc_model:
             response = await call_llm(config, messages, model_name=config.default_model)
         else:
+            # Reached two ways: reflection.model is set but is not a
+            # model_configs key — a legacy raw model name, which outranks
+            # default_model, because moving the judge off the author's model is
+            # the whole point of setting it (#752) — or nothing above resolved
+            # and resolved() supplies the llm-group fallback.
             rc = config.reflection.resolved(config)
             response = await call_llm(
                 config, messages,

@@ -53,7 +53,7 @@ To use a cheaper model for the judge (recommended):
 decafclaw config set reflection.model gemini-2.5-flash
 ```
 
-> **Caveat:** this only takes effect if the name is a [`model_configs`](config.md#model_configs) key, *or* if `default_model` is unset — otherwise `default_model` wins and the setting is silently discarded. See [Judge model](#judge-model) for the full resolution order, and [#752](https://github.com/lmorchard/decafclaw/issues/752) for the fix. To pin the judge to a specific model regardless, use [`verifier_model`](#verifier_model--the-shared-verifier-convention).
+The name may be a [`model_configs`](config.md#model_configs) key or a raw model name; either way it outranks `default_model`. A raw name routes through the legacy `url`/`model`/`api_key` fallback, so set [`reflection.url`](config.md#reflection) and `reflection.api_key` too if the judge lives somewhere other than the `llm` group. See [Judge model](#judge-model) for the full resolution order. To route the judge through a named model config specifically, use [`verifier_model`](#verifier_model--the-shared-verifier-convention), which outranks this.
 
 ## Configuration
 
@@ -84,12 +84,15 @@ decafclaw config set reflection.verifier_model claude-haiku
 
 Resolution order, highest first:
 
-| Setting | Wins when |
-|---|---|
-| `reflection.verifier_model` | set **and** present in `model_configs` |
-| `reflection.model` | set **and** present in `model_configs` |
-| `default_model` | set — this is why an unset judge grades its own homework |
-| `reflection.resolved(config)` | legacy `url`/`model`/`api_key` fallback |
+| Setting | Wins when | Routed as |
+|---|---|---|
+| `reflection.verifier_model` | set **and** present in `model_configs` | named model config |
+| `reflection.model` | set **and** present in `model_configs` | named model config |
+| `reflection.model` | set and **not** in `model_configs` — a legacy raw model name | `reflection.resolved(config)` |
+| `default_model` | set **and** `reflection.model` is unset — this is why an unset judge grades its own homework | named model config |
+| `reflection.resolved(config)` | nothing above matched | legacy `url`/`model`/`api_key` fallback |
+
+The third row is the one that changed in [#752](https://github.com/lmorchard/decafclaw/issues/752). It used to sit *below* `default_model`, which made it unreachable on any config with a `default_model` set — so `decafclaw config set reflection.model gemini-2.5-flash` did nothing observable and the judge kept billing at the author's model. Any explicitly set `reflection.model` now outranks `default_model`.
 
 A `verifier_model` naming a key that isn't in `model_configs` is ignored, and resolution continues down the table. It is not passed through to the provider layer, which would only log a warning and quietly use the default provider — indistinguishable from the setting having worked.
 

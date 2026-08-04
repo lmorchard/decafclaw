@@ -659,6 +659,105 @@ class TestEvaluateResponse:
         # Concrete fallback destination: default_model, via the normal chain.
         assert mock_call.call_args.kwargs == {"model_name": "author"}
 
+    # -- reflection.model precedence over default_model (#752) ------------
+
+    @pytest.mark.asyncio
+    async def test_nonconfig_reflection_model_beats_default_model(self, tmp_path):
+        """GIVEN reflection.model names a model absent from model_configs AND
+        default_model is set, the judge call SHALL route to reflection.model
+        via the legacy resolved() url/model/api_key rung — NOT default_model."""
+        config = Config(
+            agent=AgentConfig(data_home=str(tmp_path), id="test"),
+            llm=LlmConfig(url="http://test/v1/chat/completions",
+                          model="legacy-model", api_key="test-key"),
+            providers={"p": ProviderConfig(type="openai-compat",
+                                           url="http://test/v1",
+                                           api_key="test-key")},
+            model_configs={
+                "author": ModelConfig(provider="p", model="author-model"),
+            },
+            default_model="author",
+            reflection=ReflectionConfig(enabled=True,
+                                        model="cheap-judge-model",
+                                        verifier_model=""),
+        )
+        mock_response = {"content": '{"pass": true, "critique": ""}'}
+        with patch("decafclaw.reflection.call_llm", new_callable=AsyncMock,
+                   return_value=mock_response) as mock_call:
+            await evaluate_response(config, "hello", "Hi!", "")
+        # call_args is the LAST call, so pin the count too: judging once on
+        # default_model and again on the reflection model would still bill the
+        # author's model, which is the harm #752 describes.
+        assert mock_call.call_count == 1
+        # Equality (not membership) so a stray model_name alongside the legacy
+        # override — or a route to default_model — still fails.
+        assert mock_call.call_args.kwargs == {
+            "llm_url": "http://test/v1/chat/completions",
+            "llm_model": "cheap-judge-model",
+            "llm_api_key": "test-key",
+        }
+
+        # Same criterion, but with reflection.url / reflection.api_key set to
+        # values distinct from config.llm. Above, resolved() backfills both
+        # from config.llm, so an implementation that skips resolved() and
+        # reads config.llm directly emits byte-identical kwargs. Here it does
+        # not: routing must carry the judge's own endpoint and key.
+        config_distinct = Config(
+            agent=AgentConfig(data_home=str(tmp_path), id="test"),
+            llm=LlmConfig(url="http://test/v1/chat/completions",
+                          model="legacy-model", api_key="test-key"),
+            providers={"p": ProviderConfig(type="openai-compat",
+                                           url="http://test/v1",
+                                           api_key="test-key")},
+            model_configs={
+                "author": ModelConfig(provider="p", model="author-model"),
+            },
+            default_model="author",
+            reflection=ReflectionConfig(enabled=True,
+                                        url="http://judge/v1/chat/completions",
+                                        model="cheap-judge-model",
+                                        api_key="judge-key",
+                                        verifier_model=""),
+        )
+        with patch("decafclaw.reflection.call_llm", new_callable=AsyncMock,
+                   return_value=mock_response) as mock_call:
+            await evaluate_response(config_distinct, "hello", "Hi!", "")
+        assert mock_call.call_count == 1
+        assert mock_call.call_args.kwargs == {
+            "llm_url": "http://judge/v1/chat/completions",
+            "llm_model": "cheap-judge-model",
+            "llm_api_key": "judge-key",
+        }
+
+    @pytest.mark.asyncio
+    async def test_verifier_model_outranks_nonconfig_reflection_model(self, tmp_path):
+        """Regression guard for #591's precedence: WHERE verifier_model names a
+        key in model_configs AND reflection.model is set but absent from
+        model_configs, verifier_model SHALL still win. Fixing #752 must not
+        hoist the reflection.model branch above the verifier_model branch."""
+        config = Config(
+            agent=AgentConfig(data_home=str(tmp_path), id="test"),
+            llm=LlmConfig(url="http://test/v1/chat/completions",
+                          model="legacy-model", api_key="test-key"),
+            providers={"p": ProviderConfig(type="openai-compat",
+                                           url="http://test/v1",
+                                           api_key="test-key")},
+            model_configs={
+                "author": ModelConfig(provider="p", model="author-model"),
+                "judge": ModelConfig(provider="p", model="judge-model"),
+            },
+            default_model="author",
+            reflection=ReflectionConfig(enabled=True,
+                                        model="cheap-judge-model",
+                                        verifier_model="judge"),
+        )
+        mock_response = {"content": '{"pass": true, "critique": ""}'}
+        with patch("decafclaw.reflection.call_llm", new_callable=AsyncMock,
+                   return_value=mock_response) as mock_call:
+            await evaluate_response(config, "hello", "Hi!", "")
+        assert mock_call.call_count == 1
+        assert mock_call.call_args.kwargs == {"model_name": "judge"}
+
 
 class TestReflectionPromptStructure:
     """Assert the bundled REFLECTION.md wraps each dynamic input in its tag."""
