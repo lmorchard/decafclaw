@@ -131,6 +131,27 @@ check and per guard, including the ones it cleared.
   ceiling, closing the silent-deletion and silent-deselection vectors (rationale above). The
   skipped-count invariant as originally written was cleared as well chosen.
 
+## Tamper verdict
+
+**clean**, recorded 2026-08-03 before push, and re-runnable by anyone: the freeze commit
+`d34c9df` is an ancestor of the pushed head, and the branch was not squashed.
+
+```
+git diff d34c9df -- tests/test_reflection.py
+```
+
+Empty (0 bytes). The frozen check file was not touched after the freeze. `git diff d34c9df --stat`
+shows four other files — `checks.md` (the sanctioned `Frozen at` sha append plus this section),
+`plan.md` (new session artifact), and the two source files plus `docs/reflection.md` that Phase 1
+named. No collateral edits. `origin/main` did not advance during the run, so no rebase occurred
+and the freeze sha needed no re-anchoring.
+
+Independently verified by a fresh context given only `checks.md` and the repo — not the plan, not
+the implementation notes. Its per-check results: C1 pass (1 collected), G1 pass (2), G2 pass (1),
+G3 pass (1) + empty diff, G5 3734 passed / 2 skipped / 0 failed (3736 collected). Every run
+exited 0, none exited 5.
+
 ## Amendments
 
-(Append-only. Empty unless an amendment was made.)
+(Append-only.) **None.** No frozen check was edited, relaxed, or replaced at any point, so the
+run's `auto-ok` tier stands undowngraded.
