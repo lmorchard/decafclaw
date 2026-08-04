@@ -288,8 +288,17 @@ async def evaluate_response(
 
         messages = [{"role": "user", "content": prompt}]
 
-        # Route through named model config:
-        #   verifier_model > explicit > default_model > legacy
+        # Judge-model resolution, highest first:
+        #   1. verifier_model, when it is a model_configs key   -> named config
+        #   2. reflection.model, when it is a model_configs key -> named config
+        #   3. reflection.model as a legacy raw name            -> resolved()
+        #   4. default_model                                    -> named config
+        #   5. nothing set                                      -> resolved()
+        # Only rungs 1, 2 and 4 route through a named model config. Any
+        # explicitly set reflection.model outranks default_model, whether or
+        # not it names one (#752) — rung 3 used to sit below rung 4, which made
+        # it unreachable on every config with a default_model set. Keep rung 3
+        # above rung 4 if this chain is ever reordered.
         # The `in config.model_configs` half of the verifier branch is
         # load-bearing, not defensive: an unknown name handed to the provider
         # layer only logs a warning and falls through to the default provider,
