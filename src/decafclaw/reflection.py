@@ -296,9 +296,13 @@ async def evaluate_response(
         #   5. nothing set                                      -> resolved()
         # Only rungs 1, 2 and 4 route through a named model config. Any
         # explicitly set reflection.model outranks default_model, whether or
-        # not it names one (#752) — rung 3 used to sit below rung 4, which made
-        # it unreachable on every config with a default_model set. Keep rung 3
-        # above rung 4 if this chain is ever reordered.
+        # not it names one (#752): before that fix, rung 3 was unreachable on
+        # every config with a default_model set.
+        # Note rung 3 is NOT a branch of its own — it shares the terminal else
+        # with rung 5, so it sits lexically *below* rung 4. What ranks it above
+        # rung 4 is the `and not rc_model` guard on the default_model branch.
+        # Drop that guard and #752 comes back; branch order alone will not
+        # preserve this.
         # The `in config.model_configs` half of the verifier branch is
         # load-bearing, not defensive: an unknown name handed to the provider
         # layer only logs a warning and falls through to the default provider,
