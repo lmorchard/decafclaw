@@ -1783,7 +1783,7 @@ def test_save_restore_round_trip(manager, config):
     save_ctx = Context(config=config, event_bus=manager.event_bus)
     save_ctx.tools.extra = {"sentinel_tool": lambda c: None}
     save_ctx.tools.extra_definitions = [{"name": "sentinel_tool"}]
-    save_ctx.skills.activated = {"sentinel_skill"}
+    save_ctx.skills.activated = {"sentinel_skill": ""}
     save_ctx.skip_vault_retrieval = True
     manager.set_flag("rt-conv", "active_model", "sentinel-model")
 
@@ -1795,7 +1795,7 @@ def test_save_restore_round_trip(manager, config):
 
     assert restore_ctx.tools.extra == {"sentinel_tool": save_ctx.tools.extra["sentinel_tool"]}
     assert restore_ctx.tools.extra_definitions == [{"name": "sentinel_tool"}]
-    assert restore_ctx.skills.activated == {"sentinel_skill"}
+    assert restore_ctx.skills.activated == {"sentinel_skill": ""}
     assert restore_ctx.skip_vault_retrieval is True
     assert restore_ctx.active_model == "sentinel-model"
 
