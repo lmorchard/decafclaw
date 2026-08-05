@@ -70,6 +70,7 @@ The vault supports hierarchical folders. Use them to keep related pages together
 - **Suggested conventions:** `projects/`, `people/`, `resources/`, or topic-specific areas. These aren't rigid — let the content guide the structure.
 - **Use folder paths in vault tools:** `vault_write(page="agent/pages/projects/decafclaw/roadmap", ...)`.
 - **Use `vault_list` with folder filter** to explore a specific area: `vault_list(folder="agent/pages/projects")`.
+- **`vault_list` is the enumeration tool, not `vault_search`.** A `vault_search` call that narrows on nothing — no `query`, and no `tags`, folder or date filter either — is refused rather than run, because it would return every page in the vault instead of searching it. Any one narrowing argument is enough to make it a search.
 - **Link with folder paths (vault-root-relative):** `[[agent/pages/projects/decafclaw/roadmap]]` for explicit links, or `[[roadmap]]` for stem-based resolution (picks the closest match).
 
 ## Navigating the Knowledge Graph

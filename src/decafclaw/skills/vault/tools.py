@@ -700,6 +700,10 @@ async def tool_vault_search(ctx: "Context", query: str = "", source_type: str = 
     Empty/omitted ``tags`` leaves behavior unchanged (no filtering) — a
     non-empty `tags` list is required to enter either tag-filter mode, since
     `pages_with_tags(config, [])` would otherwise vacuously match everything.
+    The one exception is a call that narrows on *nothing*: a blank ``query``
+    with no ``tags``/``folder``/``source_type``/``days`` is refused outright and
+    told to use `vault_list`, rather than returning the whole vault framed as
+    search results (#673).
     """
     req_tags = {normalize_tag(t) for t in tags} if tags else set()
     log.info(f"[tool:vault_search] query={query!r} source_type={source_type} "
@@ -716,7 +720,38 @@ async def tool_vault_search(ctx: "Context", query: str = "", source_type: str = 
         if safe is None:
             return ToolResult(text=f"[error: invalid folder path '{folder}']")
 
-    if not query and req_tags:
+    # Nothing narrows the call: refuse rather than enumerate the vault (#673).
+    # This has to sit ahead of the tags-only branch below, so an unconstrained
+    # call never reaches any filter path. Deliberately carries no `data` —
+    # `execute_single_tool` appends `json.dumps(result.data)` to the
+    # model-visible tool message, so attaching the page list there would defeat
+    # the point even with the text replaced.
+    # `query.strip()`, not `query`: a query of " " is a substring of nearly
+    # every markdown file, so a truthiness test here would let `query=" "`
+    # return the whole vault — the exact defect this guard exists to stop, one
+    # character away from the refused call.
+    #
+    # The message deliberately does NOT offer `source_type` as a way to satisfy
+    # the guard, even though the condition accepts it: `_substring_search` takes
+    # no `source_type` parameter, so on the default substring strategy that axis
+    # narrows nothing and would hand the model a one-token route back to a full
+    # dump. Accepting it keeps the criterion's boundary; not recommending it
+    # keeps the advice honest. See the `source_type` follow-up issue.
+    if (not query.strip() and not req_tags and not folder
+            and not source_type and days <= 0):
+        return ToolResult(
+            text=("[error: vault_search needs at least one of `query`, `tags`, "
+                  "`folder` or `days`. A call with none of them is not a "
+                  "search — it would return every page in the vault. Use "
+                  "`vault_list` to enumerate pages, or retry with a query.]"),
+            display_short_text="no search criteria",
+        )
+
+    # `.strip()` here for the same reason as the guard above: a whitespace-only
+    # query is no query, so `query=" "` + tags belongs in the pure tag filter
+    # rather than falling through to a substring scan of the whole vault that
+    # is then tag-filtered to the same answer, more expensively.
+    if not query.strip() and req_tags:
         return _tag_filter_search(ctx.config, req_tags, any_tag,
                                   source_type=source_type, folder=folder,
                                   days=days)
@@ -1822,9 +1857,10 @@ TOOL_DEFINITIONS = [
                             "together with `tags` to run a pure tag filter "
                             "that skips search entirely. Do NOT omit it with "
                             "no other filter — an empty query with no `tags`/"
-                            "`folder`/`source_type`/`days` lists every page in "
-                            "the vault rather than searching. Use `vault_list` "
-                            "when you want to enumerate pages."
+                            "`folder`/`source_type`/`days` is refused, because "
+                            "it would return every page in the vault rather "
+                            "than searching. Use `vault_list` when you want to "
+                            "enumerate pages."
                         ),
                     },
                     "source_type": {

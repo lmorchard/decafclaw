@@ -267,6 +267,21 @@
     (source_type=user). vault_list would dump the whole journal folder with no
     date filter; vault_search needs a query string.
 
+# -- vault_list vs vault_search -----------------------------------------------
+
+- name: vault-list-vs-search-enumerate-everything
+  scenario: "What pages do I have in my vault?"
+  expected: vault_list
+  near_miss: [vault_search]
+  notes: |
+    Pure enumeration with no topic at all — vault_list. The near miss is the
+    interesting one: vault_search used to answer this by accident, because an
+    empty query with no filters returned every page under a "Found N result(s)"
+    heading. #673 made that call refuse and name vault_list instead, and the
+    `query` description says so. This case guards that steer — if it gets
+    softened, the model drifts back to vault_search and now earns an error
+    rather than a lucky dump.
+
 # -- vault_tags vs vault_search -----------------------------------------------
 
 - name: vault-tags-vs-search-what-tags
