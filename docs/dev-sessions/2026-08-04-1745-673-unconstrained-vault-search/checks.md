@@ -1,7 +1,7 @@
 # Frozen acceptance checks
 
 **Source:** https://github.com/lmorchard/decafclaw/issues/673
-**Frozen at:** (pending — recorded in the follow-up commit)
+**Frozen at:** `48aab5e` (2026-08-04)
 **Check files — read-only from Phase 1 onward:**
 - `tests/test_vault_search_tags_only.py`
 - `tests/test_vault_tools.py`
