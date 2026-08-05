@@ -10,8 +10,8 @@ from claude_code_sdk import (
     ToolUseBlock,
 )
 
-from decafclaw.skills.claude_code.output import SessionLogger
-from decafclaw.skills.claude_code.tools import (
+from contrib.skills.claude_code.output import SessionLogger
+from contrib.skills.claude_code.tools import (
     _build_short_text,
     _summarize_tool_result,
     _summarize_tool_use,

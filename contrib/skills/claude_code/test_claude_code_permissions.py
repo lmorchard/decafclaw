@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 
-from decafclaw.skills.claude_code.permissions import (
+from contrib.skills.claude_code.permissions import (
     AUTO_APPROVE_TOOLS,
     load_allowlist,
     make_permission_handler,
