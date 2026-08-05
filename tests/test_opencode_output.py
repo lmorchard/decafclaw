@@ -1,7 +1,9 @@
 """Tests for OpenCode session output logger."""
 
 import json
+
 from contrib.skills.opencode.tools import SessionLogger, _build_short_text
+
 
 def test_log_creates_file(tmp_path):
     logger = SessionLogger(tmp_path, "test-session")
@@ -10,26 +12,19 @@ def test_log_creates_file(tmp_path):
     assert logger.path.exists()
     assert logger.num_turns == 1
 
+
 def test_tracks_files_changed(tmp_path):
     logger = SessionLogger(tmp_path, "test-session")
     event1 = {
-        "type": "tool_use", 
-        "part": {
-            "tool": "edit", 
-            "state": {"input": {"filePath": "foo.py", "oldString": "a", "newString": "b"}}
-        }
+        "type": "tool_use",
+        "part": {"tool": "edit", "state": {"input": {"filePath": "foo.py", "oldString": "a", "newString": "b"}}},
     }
-    event2 = {
-        "type": "tool_use", 
-        "part": {
-            "tool": "bash", 
-            "state": {"input": {"command": "ls"}}
-        }
-    }
+    event2 = {"type": "tool_use", "part": {"tool": "bash", "state": {"input": {"command": "ls"}}}}
     logger.log_event(event1)
     logger.log_event(event2)
     assert logger.files_changed == ["foo.py"]
     assert logger.tools_used == ["edit", "bash"]
+
 
 def test_build_data_shape(tmp_path):
     logger = SessionLogger(tmp_path, "test-session")
@@ -65,6 +60,7 @@ def test_build_data_shape(tmp_path):
 
     json_str = json.dumps(data)
     assert json.loads(json_str) == data
+
 
 def test_short_text_success_with_cost_and_files(tmp_path):
     logger = SessionLogger(tmp_path, "test")
