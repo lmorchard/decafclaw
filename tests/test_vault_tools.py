@@ -1093,18 +1093,35 @@ class TestVaultSearchTags:
         """Omitted/empty `tags` must NOT enter the pure-filter path — that
         path calls `pages_with_tags(config, [])`, which vacuously matches
         every file (empty AND). Guard against that footgun regressing.
+
+        This used to also assert `"Foo" in result_*.text`, i.e. that an
+        unconstrained search returned every page. Those two lines were
+        dropped in #673, which makes exactly that call refuse and point at
+        `vault_list` instead — they pinned the behavior being removed and
+        were incidental to what this test is for. The `assert_not_called()`
+        below is the real content: it guards the empty-AND footgun
+        independently of what the unconstrained call chooses to return.
+
+        The third call is constrained (`days=1`) but tagless, and it is NOT
+        redundant — do not delete it. #673 makes the first two calls refuse
+        before reaching the `if not query and req_tags:` branch this test
+        exists to guard, so post-#673 they satisfy `assert_not_called()` by
+        never getting there. Only a call that survives the refusal still
+        exercises the `and req_tags` conjunct; without it, mutating that
+        branch to `if not query:` — reintroducing the exact empty-AND footgun
+        named above — would leave this test green. `Foo.md` is written
+        immediately, so a 1-day window contains it.
         """
         (vault_dir / "Foo.md").write_text("hello")
 
         with patch(
             "decafclaw.skills.vault.tools.pages_with_tags"
         ) as mock_pages_with_tags:
-            result_omitted = await tool_vault_search(ctx, "")
-            result_empty_list = await tool_vault_search(ctx, "", tags=[])
+            await tool_vault_search(ctx, "")
+            await tool_vault_search(ctx, "", tags=[])
+            await tool_vault_search(ctx, "", tags=[], days=1)
 
         mock_pages_with_tags.assert_not_called()
-        assert "Foo" in result_omitted.text
-        assert "Foo" in result_empty_list.text
 
     @pytest.mark.asyncio
     async def test_source_type_and_tags_compose_in_pure_filter(
