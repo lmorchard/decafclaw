@@ -19,9 +19,9 @@ from claude_code_sdk import (
     query,
 )
 
+from contrib.skills.claude_code.output import SessionLogger
+from contrib.skills.claude_code.sessions import SessionManager
 from decafclaw.media import ToolResult
-from decafclaw.skills.claude_code.output import SessionLogger
-from decafclaw.skills.claude_code.sessions import SessionManager
 
 if TYPE_CHECKING:
     from decafclaw.context import Context
@@ -282,7 +282,7 @@ async def tool_claude_code_start(ctx: "Context", cwd: str, description: str = ""
     # Optional setup command
     setup_result = None
     if setup_command:
-        from decafclaw.skills.claude_code.permissions import load_allowlist, matches_allowlist
+        from contrib.skills.claude_code.permissions import load_allowlist, matches_allowlist
         from decafclaw.tools.confirmation import request_confirmation
 
         patterns = load_allowlist(_config) if _config else []
@@ -304,7 +304,7 @@ async def tool_claude_code_start(ctx: "Context", cwd: str, description: str = ""
                 session.approved = True
                 run_setup = True
                 if confirm.get("always"):
-                    from decafclaw.skills.claude_code.permissions import save_allowlist_entry
+                    from contrib.skills.claude_code.permissions import save_allowlist_entry
                     save_allowlist_entry(_config, "claude_code_setup")
 
         if run_setup:
@@ -490,7 +490,7 @@ async def tool_claude_code_send(ctx: "Context", session_id: str, prompt: str,
     # Upfront confirmation — one approval per send, not per tool.
     # The SDK's can_use_tool callback has reliability issues with repeated
     # calls, so we confirm before sending to the SDK instead.
-    from decafclaw.skills.claude_code.permissions import load_allowlist, matches_allowlist
+    from contrib.skills.claude_code.permissions import load_allowlist, matches_allowlist
     from decafclaw.tools.confirmation import request_confirmation
 
     # Skip confirmation if "claude_code_send" is in the allowlist
@@ -515,7 +515,7 @@ async def tool_claude_code_send(ctx: "Context", session_id: str, prompt: str,
                 data=_send_error_data("cancelled"),
             )
         if confirm.get("always"):
-            from decafclaw.skills.claude_code.permissions import save_allowlist_entry
+            from contrib.skills.claude_code.permissions import save_allowlist_entry
             save_allowlist_entry(_config, "claude_code_send")
         session.approved = True
 
@@ -686,7 +686,7 @@ async def tool_claude_code_exec(ctx: "Context", session_id: str, command: str,
 
     # Confirmation — inherit from session if already approved
     if not session.approved:
-        from decafclaw.skills.claude_code.permissions import load_allowlist, matches_allowlist
+        from contrib.skills.claude_code.permissions import load_allowlist, matches_allowlist
         from decafclaw.tools.confirmation import request_confirmation
 
         patterns = load_allowlist(_config) if _config else []
@@ -709,7 +709,7 @@ async def tool_claude_code_exec(ctx: "Context", session_id: str, command: str,
                           "stderr": "", "duration_ms": 0, "command": command},
                 )
             if confirm.get("always"):
-                from decafclaw.skills.claude_code.permissions import save_allowlist_entry
+                from contrib.skills.claude_code.permissions import save_allowlist_entry
                 save_allowlist_entry(_config, "claude_code_exec")
             session.approved = True
 

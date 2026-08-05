@@ -1,6 +1,6 @@
 """Tests for Claude Code budget warning threshold logic."""
 
-from decafclaw.skills.claude_code.tools import _check_budget_warnings
+from contrib.skills.claude_code.tools import _check_budget_warnings
 
 
 def test_fires_at_thresholds():
