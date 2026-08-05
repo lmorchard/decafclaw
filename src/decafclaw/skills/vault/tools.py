@@ -716,6 +716,21 @@ async def tool_vault_search(ctx: "Context", query: str = "", source_type: str = 
         if safe is None:
             return ToolResult(text=f"[error: invalid folder path '{folder}']")
 
+    # Nothing narrows the call: refuse rather than enumerate the vault (#673).
+    # This has to sit ahead of the tags-only branch below, so an unconstrained
+    # call never reaches any filter path. Deliberately carries no `data` —
+    # `execute_single_tool` appends `json.dumps(result.data)` to the
+    # model-visible tool message, so attaching the page list there would defeat
+    # the point even with the text replaced.
+    if not query and not req_tags and not folder and not source_type and days <= 0:
+        return ToolResult(
+            text=("[error: vault_search needs at least one of `query`, `tags`, "
+                  "`folder`, `source_type` or `days`. A call with none of them "
+                  "is not a search — it would return every page in the vault. "
+                  "Use `vault_list` to enumerate pages, or retry with a query.]"),
+            display_short_text="no search criteria",
+        )
+
     if not query and req_tags:
         return _tag_filter_search(ctx.config, req_tags, any_tag,
                                   source_type=source_type, folder=folder,
@@ -1822,9 +1837,10 @@ TOOL_DEFINITIONS = [
                             "together with `tags` to run a pure tag filter "
                             "that skips search entirely. Do NOT omit it with "
                             "no other filter — an empty query with no `tags`/"
-                            "`folder`/`source_type`/`days` lists every page in "
-                            "the vault rather than searching. Use `vault_list` "
-                            "when you want to enumerate pages."
+                            "`folder`/`source_type`/`days` is refused, because "
+                            "it would return every page in the vault rather "
+                            "than searching. Use `vault_list` when you want to "
+                            "enumerate pages."
                         ),
                     },
                     "source_type": {
