@@ -1,7 +1,7 @@
 """Tests for Claude Code context injection — prompt assembly and session instructions."""
 
-from decafclaw.skills.claude_code.sessions import Session, SessionManager
-from decafclaw.skills.claude_code.tools import _assemble_prompt
+from contrib.skills.claude_code.sessions import Session, SessionManager
+from contrib.skills.claude_code.tools import _assemble_prompt
 
 
 def test_assemble_prompt_both():

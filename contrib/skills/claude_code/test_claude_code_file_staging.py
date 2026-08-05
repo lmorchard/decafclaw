@@ -6,8 +6,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-import decafclaw.skills.claude_code.tools as cc_tools
-from decafclaw.skills.claude_code.sessions import SessionManager
+import contrib.skills.claude_code.tools as cc_tools
+from contrib.skills.claude_code.sessions import SessionManager
 
 
 @pytest.fixture
