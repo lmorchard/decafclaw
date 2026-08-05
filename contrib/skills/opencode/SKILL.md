@@ -4,6 +4,8 @@ description: "Delegate any programming or code-related tasks to OpenCode as a sp
 requires:
   env:
     - ANTHROPIC_API_KEY
+user-invocable: true
+argument-hint: "[prompt]"
 ---
 
 # OpenCode (Subagent)
@@ -227,3 +229,8 @@ During `opencode_send`, the skill publishes `tool_status` events with richer det
 - **Error snippets**: Tool failures include the tool name and first 100 chars of error text — `"Edit failed — SyntaxError: unexpected indent"`. Published as they happen, before the send completes.
 - **Running cost**: Session cost updated on each SDK result — `"Session cost: $0.45 of $2.00 budget"`. Note: this is cumulative session cost, not per-send.
 - **Budget warnings**: Published when session cost crosses 50%, 75%, and 90% of the session budget. Each threshold fires at most once per send.
+
+## User Task
+
+The user has explicitly asked you to delegate the following task to OpenCode:
+$ARGUMENTS
