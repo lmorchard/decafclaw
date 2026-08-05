@@ -57,7 +57,7 @@ Creates a new OpenCode session for a specific working directory. Probes the envi
 **Parameters:**
 - `cwd` (required) — path to the project/repository
 - `description` (optional) — what this session is for
-- `model` (optional) — override the Claude model
+- `model` (optional) — override the OpenCode model
 - `budget_usd` (optional) — per-session cost limit
 - `setup_command` (optional) — shell command to run for environment setup (e.g., `uv sync`, `npm install`). Requires user confirmation.
 - `instructions` (optional) — persistent instructions prepended to every `opencode_send` in this session. Use for project conventions, coding style, constraints. Set once at start.
