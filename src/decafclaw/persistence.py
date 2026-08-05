@@ -13,22 +13,27 @@ def _skills_path(config, conv_id: str) -> Path:
     return sidecar_path(config, conv_id, "skills.json")
 
 
-def write_skills_state(config, conv_id: str, skills: set[str]) -> None:
-    """Persist activated skill names for a conversation to a sidecar file."""
+def write_skills_state(config, conv_id: str, skills: dict[str, str]) -> None:
+    """Persist activated skill names and hashes for a conversation to a sidecar file."""
     path = _skills_path(config, conv_id)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(sorted(skills)) + "\n")
+    path.write_text(json.dumps(skills, indent=2) + "\n")
 
 
-def read_skills_state(config, conv_id: str) -> set[str]:
-    """Read persisted activated skill names, or empty set if none."""
+def read_skills_state(config, conv_id: str) -> dict[str, str]:
+    """Read persisted activated skill states, or empty dict if none."""
     path = _skills_path(config, conv_id)
     if not path.exists():
-        return set()
+        return {}
     try:
-        return set(json.loads(path.read_text()))
+        data = json.loads(path.read_text())
+        if isinstance(data, dict):
+            return data
+        elif isinstance(data, list):
+            return {name: "" for name in data}
+        return {}
     except (json.JSONDecodeError, OSError):
-        return set()
+        return {}
 
 
 def _skill_data_path(config, conv_id: str) -> Path:

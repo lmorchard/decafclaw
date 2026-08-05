@@ -246,7 +246,7 @@ async def run_child_turn(parent_ctx: "Context", task, model: str = "",
         child_ctx.skills.data = parent_ctx.skills.data
 
         # Clear skill state so children can't activate new skills
-        child_ctx.skills.activated = set()
+        child_ctx.skills.activated = dict()
         # Propagate command pre-approved tools and scoped shell patterns to child
         child_ctx.tools.preapproved = parent_ctx.tools.preapproved
         child_ctx.tools.preapproved_shell_patterns = parent_ctx.tools.preapproved_shell_patterns
