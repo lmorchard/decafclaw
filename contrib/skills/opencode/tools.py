@@ -1,17 +1,17 @@
 """OpenCode skill — delegate coding tasks to OpenCode CLI as a subagent."""
 
 import asyncio
+import json
 import logging
 import shutil
 import time
-import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from decafclaw.media import ToolResult
 from contrib.skills.opencode.output import SessionLogger
 from contrib.skills.opencode.sessions import SessionManager
+from decafclaw.media import ToolResult
 
 if TYPE_CHECKING:
     from decafclaw.context import Context
@@ -375,7 +375,7 @@ def _summarize_tool_use(name: str, inp: dict) -> str:
         if len(first_line) > 80:
             first_line = first_line[:77] + "..."
         return f"{name} — {first_line}" if first_line else name
-    
+
     if not inp:
         return name
     pairs = []
@@ -444,7 +444,7 @@ async def tool_opencode_send(ctx: "Context", session_id: str, prompt: str,
 
     log_dir = _config.workspace_path / "opencode-logs" if _config else Path("opencode-logs")
     log_dir.mkdir(parents=True, exist_ok=True)
-    
+
     logger = SessionLogger(log_dir, session.session_id)
 
     baseline_ref = None
@@ -466,7 +466,7 @@ async def tool_opencode_send(ctx: "Context", session_id: str, prompt: str,
     warnings_fired: set[float] = set()
 
     await ctx.publish("tool_status", tool="opencode_send", message=f"Sending to OpenCode ({session.cwd})...")
-    
+
     proc = await asyncio.create_subprocess_exec(
         *cmd_args,
         stdout=asyncio.subprocess.PIPE,
@@ -476,7 +476,7 @@ async def tool_opencode_send(ctx: "Context", session_id: str, prompt: str,
     async def read_stdout():
         nonlocal tool_call_count
         while True:
-            line = await proc.stdout.readline()
+            line = await proc.stdout.readline() if proc.stdout else b""
             if not line:
                 break
             try:
@@ -489,7 +489,7 @@ async def tool_opencode_send(ctx: "Context", session_id: str, prompt: str,
                 if evt_type == "step_start":
                     if part.get("sessionID") and not session.sdk_session_id:
                         session.sdk_session_id = part.get("sessionID")
-                
+
                 elif evt_type == "tool_use":
                     tool_call_count += 1
                     tool_name = part.get("tool", "unknown")
@@ -513,7 +513,7 @@ async def tool_opencode_send(ctx: "Context", session_id: str, prompt: str,
                             "tool_status", tool="opencode_send",
                             message=f"\u2192 {tool_name} — done"
                         )
-                
+
                 elif evt_type == "step_finish":
                     cost = part.get("cost")
                     if cost is not None:
@@ -537,7 +537,7 @@ async def tool_opencode_send(ctx: "Context", session_id: str, prompt: str,
 
     async def read_stderr():
         while True:
-            line = await proc.stderr.readline()
+            line = await proc.stderr.readline() if proc.stderr else b""
             if not line:
                 break
             log.warning(f"OpenCode stderr: {line.decode().strip()}")
@@ -612,7 +612,7 @@ async def tool_opencode_exec(ctx: "Context", session_id: str, command: str,
 
     timeout = max(1, min(timeout, 120))
     start = time.monotonic()
-    
+
     try:
         proc = await asyncio.create_subprocess_shell(
             command, cwd=session.cwd,
