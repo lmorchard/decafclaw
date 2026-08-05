@@ -854,7 +854,7 @@ async def test_activate_already_active(ctx, tmp_path):
     """Re-activating returns 'already active'."""
     skill = _make_skill_info(tmp_path)
     ctx.config.discovered_skills = [skill]
-    ctx.skills.activated = {skill.name}
+    ctx.skills.activated = {skill.name: _compute_skill_hash(skill)}
     _save_permission(ctx.config, skill.name, {"status": "always", "hash": _compute_skill_hash(skill)})
 
     result = await tool_activate_skill(ctx, name=skill.name)

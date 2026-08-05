@@ -244,7 +244,10 @@ def _load_permissions(config) -> dict:
     if not path.exists():
         return {}
     try:
-        return json.loads(path.read_text())
+        data = json.loads(path.read_text())
+        if not isinstance(data, dict):
+            return {}
+        return data
     except (json.JSONDecodeError, OSError) as e:
         log.warning(f"Could not read skill permissions: {e}")
         return {}
@@ -579,6 +582,11 @@ async def restore_skills(ctx: "Context") -> None:
 
         try:
             tools, tool_defs, module = _load_native_tools(skill_info)
+            # Skip if these tools are already loaded (e.g. from persisted skill state
+            # but skill_tool_names was lost across restarts)
+            if all(t in existing_tools for t in tools):
+                log.debug(f"Skill '{name}' tools already loaded, skipping restore")
+                continue
             await _call_init(module, ctx.config, name)
             _register_skill_tools(ctx, name, tools, tool_defs)
 
