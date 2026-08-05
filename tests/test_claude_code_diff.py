@@ -4,7 +4,7 @@ import subprocess
 
 import pytest
 
-from decafclaw.skills.claude_code.tools import _capture_git_diff, _get_git_head
+from contrib.skills.claude_code.tools import _capture_git_diff, _get_git_head
 
 
 def _git(cwd, *args):

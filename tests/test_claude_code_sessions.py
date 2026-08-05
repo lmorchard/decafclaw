@@ -4,7 +4,7 @@ import time
 
 import pytest
 
-from decafclaw.skills.claude_code.sessions import Session, SessionManager
+from contrib.skills.claude_code.sessions import Session, SessionManager
 
 
 @pytest.fixture
