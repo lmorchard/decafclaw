@@ -747,7 +747,11 @@ async def tool_vault_search(ctx: "Context", query: str = "", source_type: str = 
             display_short_text="no search criteria",
         )
 
-    if not query and req_tags:
+    # `.strip()` here for the same reason as the guard above: a whitespace-only
+    # query is no query, so `query=" "` + tags belongs in the pure tag filter
+    # rather than falling through to a substring scan of the whole vault that
+    # is then tag-filtered to the same answer, more expensively.
+    if not query.strip() and req_tags:
         return _tag_filter_search(ctx.config, req_tags, any_tag,
                                   source_type=source_type, folder=folder,
                                   days=days)
