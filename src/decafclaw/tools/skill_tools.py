@@ -2,6 +2,7 @@
 
 import ast
 import asyncio
+import hashlib
 import importlib.util
 import inspect
 import json
@@ -21,6 +22,8 @@ from .confirmation import request_confirmation
 
 if TYPE_CHECKING:
     from decafclaw.context import Context
+
+    from ..skills import SkillInfo
 
 log = logging.getLogger(__name__)
 
@@ -216,6 +219,20 @@ def _phantom_tool_calls(source: str, tool_names: set[str]) -> list[str]:
     return list(dict.fromkeys(problems))
 
 
+def _compute_skill_hash(skill_info: "SkillInfo") -> str:
+    """Hash the tools.py content. Empty string if no native tools."""
+    if not skill_info.has_native_tools:
+        return ""
+    tools_path = skill_info.location / "tools.py"
+    if not tools_path.exists():
+        return ""
+    try:
+        content = tools_path.read_bytes()
+        return hashlib.sha256(content).hexdigest()
+    except OSError:
+        return ""
+
+
 def _permissions_path(config) -> Path:
     """Path to the skill permissions file (outside workspace, read-only to agent)."""
     return config.agent_path / "skill_permissions.json"
@@ -227,13 +244,16 @@ def _load_permissions(config) -> dict:
     if not path.exists():
         return {}
     try:
-        return json.loads(path.read_text())
+        data = json.loads(path.read_text())
+        if not isinstance(data, dict):
+            return {}
+        return data
     except (json.JSONDecodeError, OSError) as e:
         log.warning(f"Could not read skill permissions: {e}")
         return {}
 
 
-def _save_permission(config, skill_name: str, value: str) -> None:
+def _save_permission(config, skill_name: str, value: dict | str) -> None:
     """Save a skill permission. Called by the host-side confirmation handler."""
     path = _permissions_path(config)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -541,13 +561,29 @@ async def restore_skills(ctx: "Context") -> None:
     discovered = ctx.config.discovered_skills
     skill_map = {s.name: s for s in discovered}
     existing_tools = set(ctx.tools.extra.keys())
-    for name in skill_names:
+    for name in list(skill_names):
         skill_info = skill_map.get(name)
         if not skill_info or not skill_info.has_native_tools:
             continue
+
+        current_hash = _compute_skill_hash(skill_info)
+        if skill_info.trust_tier == "workspace":
+            recorded_hash = ctx.skills.activated.get(name)
+            if recorded_hash != current_hash:
+                log.warning(f"Skill '{name}' code changed since activation. Skipping restore.")
+                del ctx.skills.activated[name]
+                continue
+
+        # Skip if these tools are already loaded (e.g. from persisted skill state)
+        stale = ctx.tools.skill_tool_names.get(name)
+        if stale and all(t in existing_tools for t in stale):
+            log.debug(f"Skill '{name}' tools already loaded, skipping restore")
+            continue
+
         try:
             tools, tool_defs, module = _load_native_tools(skill_info)
-            # Skip if these tools are already loaded (e.g. from persisted skill state)
+            # Skip if these tools are already loaded (e.g. from persisted skill state
+            # but skill_tool_names was lost across restarts)
             if all(t in existing_tools for t in tools):
                 log.debug(f"Skill '{name}' tools already loaded, skipping restore")
                 continue
@@ -635,10 +671,17 @@ async def tool_activate_skill(ctx: "Context", name: str) -> str | ToolResult:
     # cannot give it, so it gets a denial rather than an unanswerable prompt.
     is_trusted_tier = skill_info.trust_tier != "workspace"
     perms = _load_permissions(ctx.config)
-    if perms.get(name) == "deny":
+    perm_val = perms.get(name)
+    perm_status = perm_val.get("status") if isinstance(perm_val, dict) else perm_val
+    perm_hash = perm_val.get("hash") if isinstance(perm_val, dict) else ""
+
+    if perm_status == "deny":
         return ToolResult(text=f"[error: activation of skill '{name}' was denied by user]")
+
+    current_hash = _compute_skill_hash(skill_info)
+
     if (not is_trusted_tier
-            and perms.get(name) != "always"
+            and not (perm_status == "always" and perm_hash == current_hash)
             and not skill_info.auto_approve):
         # Need confirmation (workspace tier only at this point)
         if ctx.is_unattended:
@@ -648,14 +691,14 @@ async def tool_activate_skill(ctx: "Context", name: str) -> str | ToolResult:
             log.warning(
                 f"[tool:activate_skill] denied on unattended turn "
                 f"(task_mode={ctx.task_mode!r}): workspace-tier skill "
-                f"'{name}' has no standing grant")
+                f"'{name}' has no standing grant or its code was modified")
             return ToolResult(
                 text=f"[error: activation of skill '{name}' was denied by user]")
         approved, always = await _request_skill_confirmation(ctx, name)
         if not approved:
             return ToolResult(text=f"[error: activation of skill '{name}' was denied by user]")
         if always:
-            _save_permission(ctx.config, name, "always")
+            _save_permission(ctx.config, name, {"status": "always", "hash": current_hash})
 
     # Activate the skill (shared logic)
     result = await activate_skill_internal(ctx, skill_info)
@@ -882,7 +925,7 @@ async def activate_skill_internal(ctx: "Context", skill_info, reloading: bool = 
     else:
         log.info(f"Activated shell-based skill '{name}'")
 
-    ctx.skills.activated.add(name)
+    ctx.skills.activated[name] = _compute_skill_hash(skill_info)
     return "\n".join(result_parts)
 
 

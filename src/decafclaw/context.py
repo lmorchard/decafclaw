@@ -75,7 +75,7 @@ class ToolState:
 @dataclass
 class SkillState:
     """Skill activation state for the current conversation."""
-    activated: set[str] = field(default_factory=set)
+    activated: dict[str, str] = field(default_factory=dict)
     data: dict[str, Any] = field(default_factory=dict)
     # Skill names surfaced for this turn by pre-emptive keyword matching
     # against the current user message + prior assistant response. Skills

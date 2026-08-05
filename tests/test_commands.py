@@ -194,7 +194,7 @@ class TestExecuteCommand:
             name="test-cmd", description="Test", location=Path("."),
             body="Do stuff", context="inline",
         )
-        ctx.skills.activated.add("test-cmd")
+        ctx.skills.activated["test-cmd"] = ""
         # Should not error even though activation logic isn't called
         mode, result = await execute_command(ctx, skill, "")
         assert mode == "inline"
@@ -234,7 +234,7 @@ class TestExecuteCommand:
             name="tabstack", description="Tabstack", location=Path("."),
         )
         ctx.config.discovered_skills = [dep_skill]
-        ctx.skills.activated.add("tabstack")
+        ctx.skills.activated["tabstack"] = ""
 
         skill = SkillInfo(
             name="test-cmd", description="Test", location=Path("."),

@@ -156,7 +156,9 @@ _PERSISTED_BINDINGS: dict[str, tuple[Callable[[Any], Any], Callable[[Any, Any], 
     ),
     "activated_skills": (
         lambda ctx: ctx.skills.activated,
-        lambda ctx, v: setattr(ctx.skills, "activated", v),
+        lambda ctx, v: setattr(
+            ctx.skills, "activated", v if isinstance(v, dict) else {name: "" for name in v}
+        ),
     ),
     "skip_vault_retrieval": (
         lambda ctx: ctx.skip_vault_retrieval,

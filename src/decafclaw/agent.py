@@ -442,9 +442,10 @@ async def _setup_turn_state(ctx: "Context", config, history) -> dict[str, str]:
     conv_id = ctx.conv_id or ctx.channel_id
     if conv_id:
         persisted = read_skills_state(config, conv_id)
-        existing = set(ctx.skills.activated)
-        if persisted - existing:
-            ctx.skills.activated = existing | persisted
+        existing = ctx.skills.activated
+        merged = {**persisted, **existing}
+        if merged != existing:
+            ctx.skills.activated = merged
         # Restore skill_data (e.g. vault base path) from sidecar
         persisted_data = read_skill_data(config, conv_id)
         existing_data = ctx.skills.data

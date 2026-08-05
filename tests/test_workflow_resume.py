@@ -179,7 +179,7 @@ async def test_run_workflow_turn_activates_always_loaded_before_orchestrator(
 
     async def fake_activate(ctx_arg, info):
         ctx_arg.tools.extra["fake_tool"] = lambda *_: None
-        ctx_arg.skills.activated.add(info.name)
+        ctx_arg.skills.activated[info.name] = ""
 
     monkeypatch.setattr(
         "decafclaw.tools.skill_tools.activate_skill_internal", fake_activate,
@@ -234,7 +234,7 @@ async def test_run_workflow_turn_activates_requires_skills(
 
     async def fake_activate(ctx_arg, info):
         ctx_arg.tools.extra["fake_tool"] = lambda *_: None
-        ctx_arg.skills.activated.add(info.name)
+        ctx_arg.skills.activated[info.name] = ""
 
     monkeypatch.setattr(
         "decafclaw.tools.skill_tools.activate_skill_internal", fake_activate,

@@ -20,6 +20,8 @@ from decafclaw.skills import (
     validate_skill_md,
 )
 from decafclaw.tools.skill_tools import (
+    _compute_skill_hash,
+    _find_skill,
     _load_permissions,
     _rejection_display_path,
     _save_permission,
@@ -808,18 +810,18 @@ def test_load_permissions_missing_file(config):
 
 def test_save_and_load_permission(config):
     """Saves a permission and loads it back."""
-    _save_permission(config, "tabstack", "always")
+    _save_permission(config, "tabstack", {"status": "always", "hash": ""})
     perms = _load_permissions(config)
-    assert perms["tabstack"] == "always"
+    assert perms["tabstack"] == {"status": "always", "hash": ""}
 
 
 def test_save_permission_preserves_existing(config):
     """Saving a new permission preserves existing ones."""
-    _save_permission(config, "alpha", "always")
-    _save_permission(config, "beta", "always")
+    _save_permission(config, "alpha", {"status": "always", "hash": ""})
+    _save_permission(config, "beta", {"status": "always", "hash": ""})
     perms = _load_permissions(config)
-    assert perms["alpha"] == "always"
-    assert perms["beta"] == "always"
+    assert perms["alpha"] == {"status": "always", "hash": ""}
+    assert perms["beta"] == {"status": "always", "hash": ""}
 
 
 # -- activation tests --
@@ -852,8 +854,8 @@ async def test_activate_already_active(ctx, tmp_path):
     """Re-activating returns 'already active'."""
     skill = _make_skill_info(tmp_path)
     ctx.config.discovered_skills = [skill]
-    ctx.skills.activated = {skill.name}
-    _save_permission(ctx.config, skill.name, "always")
+    ctx.skills.activated = {skill.name: _compute_skill_hash(skill)}
+    _save_permission(ctx.config, skill.name, {"status": "always", "hash": _compute_skill_hash(skill)})
 
     result = await tool_activate_skill(ctx, name=skill.name)
     assert "already active" in _text(result)
@@ -864,7 +866,7 @@ async def test_activate_with_always_permission(ctx, tmp_path):
     """Skill with 'always' permission activates without confirmation."""
     skill = _make_skill_info(tmp_path)
     ctx.config.discovered_skills = [skill]
-    _save_permission(ctx.config, skill.name, "always")
+    _save_permission(ctx.config, skill.name, {"status": "always", "hash": _compute_skill_hash(skill)})
 
     result = await tool_activate_skill(ctx, name=skill.name)
     assert "Instructions here." in _text(result)
@@ -985,7 +987,7 @@ async def test_activate_substitutes_skill_dir_in_body(ctx, tmp_path):
         body="Run: $SKILL_DIR/fetch.sh",
     )
     ctx.config.discovered_skills = [skill]
-    _save_permission(ctx.config, skill.name, "always")
+    _save_permission(ctx.config, skill.name, {"status": "always", "hash": _compute_skill_hash(skill)})
 
     result = await tool_activate_skill(ctx, name=skill.name)
     text = _text(result)
@@ -1031,7 +1033,7 @@ async def test_activate_native_skill(ctx, tmp_path):
         has_native_tools=True,
     )
     ctx.config.discovered_skills = [skill]
-    _save_permission(ctx.config, "native-skill", "always")
+    _save_permission(ctx.config, "native-skill", {"status": "always", "hash": _compute_skill_hash(skill)})
 
     result = await tool_activate_skill(ctx, name="native-skill")
     assert "Native instructions." in _text(result)
@@ -1071,7 +1073,7 @@ async def test_reactivate_reloads_edited_tools(ctx, tmp_path):
         ),
     )
     ctx.config.discovered_skills = [skill]
-    _save_permission(ctx.config, "editable", "always")
+    _save_permission(ctx.config, "editable", {"status": "always", "hash": _compute_skill_hash(skill)})
 
     await tool_activate_skill(ctx, name="editable")
     assert "v1" in ctx.tools.extra
@@ -1108,7 +1110,7 @@ async def test_reactivate_reloads_changed_tool_body(ctx, tmp_path):
         ),
     )
     ctx.config.discovered_skills = [skill]
-    _save_permission(ctx.config, "samename", "always")
+    _save_permission(ctx.config, "samename", {"status": "always", "hash": _compute_skill_hash(skill)})
 
     await tool_activate_skill(ctx, name="samename")
     assert ctx.tools.extra["go"](ctx) == "before"
@@ -1136,7 +1138,7 @@ async def test_reactivate_updates_dynamic_provider(ctx, tmp_path):
         ),
     )
     ctx.config.discovered_skills = [skill]
-    _save_permission(ctx.config, "dyn", "always")
+    _save_permission(ctx.config, "dyn", {"status": "always", "hash": _compute_skill_hash(skill)})
 
     await tool_activate_skill(ctx, name="dyn")
     first = ctx.tools.dynamic_providers["dyn"]
@@ -1165,7 +1167,7 @@ async def test_reactivate_broken_edit_keeps_working_tools(ctx, tmp_path):
         ),
     )
     ctx.config.discovered_skills = [skill]
-    _save_permission(ctx.config, "breakable", "always")
+    _save_permission(ctx.config, "breakable", {"status": "always", "hash": _compute_skill_hash(skill)})
 
     await tool_activate_skill(ctx, name="breakable")
     (skill_dir / "tools.py").write_text("def broken(\n")  # SyntaxError
@@ -1192,7 +1194,7 @@ async def test_reactivate_same_size_edit_is_not_served_from_bytecode(ctx, tmp_pa
 
     skill = _native_skill(skill_dir, name="samesize", tools_py=before)
     ctx.config.discovered_skills = [skill]
-    _save_permission(ctx.config, "samesize", "always")
+    _save_permission(ctx.config, "samesize", {"status": "always", "hash": _compute_skill_hash(skill)})
 
     await tool_activate_skill(ctx, name="samesize")
     assert ctx.tools.extra["t"](ctx) == "aaa"
@@ -1212,7 +1214,7 @@ async def test_activation_writes_no_pycache_into_the_skill_dir(ctx, tmp_path):
         tools_py="TOOLS = {'c': lambda ctx: 'x'}\nTOOL_DEFINITIONS = []\n",
     )
     ctx.config.discovered_skills = [skill]
-    _save_permission(ctx.config, "clean", "always")
+    _save_permission(ctx.config, "clean", {"status": "always", "hash": _compute_skill_hash(skill)})
 
     await tool_activate_skill(ctx, name="clean")
     assert not (skill_dir / "__pycache__").exists()
@@ -1241,7 +1243,7 @@ async def test_reactivate_text_only_skill_is_idempotent(ctx, tmp_path):
         body="Just prose.", has_native_tools=False,
     )
     ctx.config.discovered_skills = [skill]
-    _save_permission(ctx.config, "texty", "always")
+    _save_permission(ctx.config, "texty", {"status": "always", "hash": _compute_skill_hash(skill)})
 
     await tool_activate_skill(ctx, name="texty")
     result = await tool_activate_skill(ctx, name="texty")
@@ -1338,7 +1340,7 @@ async def test_activate_always_loaded_runs_each_skill_once(ctx, tmp_path, monkey
 
     async def fake_activate(ctx_arg, info):
         calls.append(info.name)
-        ctx_arg.skills.activated.add(info.name)
+        ctx_arg.skills.activated[info.name] = ""
 
     monkeypatch.setattr(
         "decafclaw.tools.skill_tools.activate_skill_internal", fake_activate,
@@ -1347,7 +1349,7 @@ async def test_activate_always_loaded_runs_each_skill_once(ctx, tmp_path, monkey
     await activate_always_loaded(ctx)
 
     assert calls == ["alpha", "beta"]
-    assert ctx.skills.activated == {"alpha", "beta"}
+    assert set(ctx.skills.activated.keys()) == {"alpha", "beta"}
 
 
 @pytest.mark.asyncio
@@ -1367,7 +1369,7 @@ async def test_activate_always_loaded_skips_workspace_tier(
 
     async def fake_activate(ctx_arg, info):
         calls.append(info.name)
-        ctx_arg.skills.activated.add(info.name)
+        ctx_arg.skills.activated[info.name] = ""
 
     monkeypatch.setattr(
         "decafclaw.tools.skill_tools.activate_skill_internal", fake_activate,
@@ -1417,7 +1419,7 @@ async def test_activate_always_loaded_fails_soft(
     async def fake_activate(ctx_arg, info):
         if info.name == "boomer":
             raise RuntimeError("boom")
-        ctx_arg.skills.activated.add(info.name)
+        ctx_arg.skills.activated[info.name] = ""
 
     monkeypatch.setattr(
         "decafclaw.tools.skill_tools.activate_skill_internal", fake_activate,
@@ -1449,7 +1451,7 @@ async def test_activate_skills_for_workflow_succeeds(ctx, tmp_path, monkeypatch)
 
     async def fake_activate(ctx_arg, info):
         calls.append(info)
-        ctx_arg.skills.activated.add(info.name)
+        ctx_arg.skills.activated[info.name] = ""
 
     monkeypatch.setattr(
         "decafclaw.tools.skill_tools.activate_skill_internal", fake_activate,
@@ -1457,7 +1459,7 @@ async def test_activate_skills_for_workflow_succeeds(ctx, tmp_path, monkeypatch)
 
     await activate_skills_for_workflow(ctx, ["alpha", "beta"])
 
-    assert ctx.skills.activated == {"alpha", "beta"}
+    assert set(ctx.skills.activated.keys()) == {"alpha", "beta"}
     assert len(calls) == 2
     assert calls[0] is skill_a
     assert calls[1] is skill_b
@@ -1481,7 +1483,7 @@ async def test_activate_skills_for_workflow_unknown_skill_raises(
         await activate_skills_for_workflow(ctx, ["bogus-skill"])
 
     assert "bogus-skill" in str(exc_info.value)
-    assert ctx.skills.activated == set()
+    assert ctx.skills.activated == {}
 
 
 @pytest.mark.asyncio
@@ -1582,7 +1584,7 @@ async def test_activate_skills_for_workflow_permits_workspace_tier(
 
     async def fake_activate(ctx_arg, info):
         calls.append(info.name)
-        ctx_arg.skills.activated.add(info.name)
+        ctx_arg.skills.activated[info.name] = ""
 
     monkeypatch.setattr(
         "decafclaw.tools.skill_tools.activate_skill_internal", fake_activate,
@@ -1972,7 +1974,7 @@ async def test_activate_skill_rediscovers_when_missing_from_catalog(ctx):
                     body="Latecomer body.")
     # Pre-approve: this test is about the catalog miss, not the workspace-tier
     # confirmation gate that would otherwise block activation.
-    _save_permission(ctx.config, "latecomer", "always")
+    _save_permission(ctx.config, "latecomer", {"status": "always", "hash": ""})
     # Simulate the stale snapshot: the skill exists on disk but the catalog
     # this call sees predates it.
     ctx.config.discovered_skills = []
@@ -2016,8 +2018,8 @@ async def test_activation_warns_when_skill_tool_shadows_core_tool(ctx):
             "'function': {'name': 'debug_context'}}]\n"
         ),
     )
-    _save_permission(ctx.config, "shadower", "always")
     ctx.config.discovered_skills = discover_skills(ctx.config)
+    _save_permission(ctx.config, "shadower", {"status": "always", "hash": _compute_skill_hash(_find_skill(ctx.config.discovered_skills, "shadower"))})
 
     result = _text(await tool_activate_skill(ctx, name="shadower"))
 
@@ -2047,8 +2049,8 @@ async def test_shadow_warnings_are_ordered_deterministically(ctx):
             "]\n"
         ),
     )
-    _save_permission(ctx.config, "multishadow", "always")
     ctx.config.discovered_skills = discover_skills(ctx.config)
+    _save_permission(ctx.config, "multishadow", {"status": "always", "hash": _compute_skill_hash(_find_skill(ctx.config.discovered_skills, "multishadow"))})
 
     result = _text(await tool_activate_skill(ctx, name="multishadow"))
 
@@ -2282,7 +2284,7 @@ async def test_reactivate_does_not_duplicate_mismatched_definition_names(ctx, tm
     )
     skill = _native_skill(skill_dir, name="mismatch", tools_py=src)
     ctx.config.discovered_skills = [skill]
-    _save_permission(ctx.config, "mismatch", "always")
+    _save_permission(ctx.config, "mismatch", {"status": "always", "hash": _compute_skill_hash(skill)})
 
     await tool_activate_skill(ctx, name="mismatch")
     await tool_activate_skill(ctx, name="mismatch")  # reload, same source
@@ -2330,7 +2332,7 @@ async def test_activation_blocked_for_workspace_skill_with_phantom_call(ctx, tmp
     skill = _tiered_skill(tmp_path / "ph", "ph", PHANTOM_TOOLS_PY, "workspace")
     ctx.config.discovered_skills = [skill]
     ctx.config.skill_tool_owners = {"shell_background_start": "background"}
-    _save_permission(ctx.config, "ph", "always")
+    _save_permission(ctx.config, "ph", {"status": "always", "hash": _compute_skill_hash(skill)})
 
     result = await tool_activate_skill(ctx, name="ph")
     text = _text(result)
@@ -2348,7 +2350,7 @@ async def test_activation_blocked_for_default_api(ctx, tmp_path):
     )
     skill = _tiered_skill(tmp_path / "da", "da", src, "workspace")
     ctx.config.discovered_skills = [skill]
-    _save_permission(ctx.config, "da", "always")
+    _save_permission(ctx.config, "da", {"status": "always", "hash": _compute_skill_hash(skill)})
 
     result = await tool_activate_skill(ctx, name="da")
     assert "default_api" in _text(result)
@@ -2383,7 +2385,7 @@ async def test_activation_unaffected_for_clean_workspace_skill(ctx, tmp_path):
     skill = _tiered_skill(tmp_path / "clean2", "clean2", src, "workspace")
     ctx.config.discovered_skills = [skill]
     ctx.config.skill_tool_owners = {"shell_background_start": "background"}
-    _save_permission(ctx.config, "clean2", "always")
+    _save_permission(ctx.config, "clean2", {"status": "always", "hash": _compute_skill_hash(skill)})
 
     result = await tool_activate_skill(ctx, name="clean2")
     assert "go" in ctx.tools.extra
@@ -2402,7 +2404,7 @@ async def test_reload_into_a_phantom_call_keeps_working_tools(ctx, tmp_path):
     skill = _tiered_skill(skill_dir, "regress", good, "workspace")
     ctx.config.discovered_skills = [skill]
     ctx.config.skill_tool_owners = {"shell_background_start": "background"}
-    _save_permission(ctx.config, "regress", "always")
+    _save_permission(ctx.config, "regress", {"status": "always", "hash": _compute_skill_hash(skill)})
 
     await tool_activate_skill(ctx, name="regress")
     assert "go" in ctx.tools.extra
@@ -2550,8 +2552,8 @@ async def test_reload_of_a_shadowing_skill_restores_the_shadowed_tool(ctx, tmp_p
     shadower_dir = tmp_path / "shad"
     shadower = _two_tool_skill(shadower_dir, "shad", "shared_tool", "from-shadower")
     ctx.config.discovered_skills = [provider, shadower]
-    for n in ("prov", "shad"):
-        _save_permission(ctx.config, n, "always")
+    for skill in (provider, shadower):
+        _save_permission(ctx.config, skill.name, {"status": "always", "hash": _compute_skill_hash(skill)})
 
     await tool_activate_skill(ctx, name="prov")
     await tool_activate_skill(ctx, name="shad")
@@ -2585,7 +2587,7 @@ async def test_reload_after_restore_still_retracts(ctx, tmp_path):
     skill_dir = tmp_path / "restored"
     skill = _two_tool_skill(skill_dir, "restored", "old_name", "v1")
     ctx.config.discovered_skills = [skill]
-    ctx.skills.activated.add("restored")
+    ctx.skills.activated["restored"] = _compute_skill_hash(skill)
     await restore_skills(ctx)
     assert "old_name" in ctx.tools.extra
 
@@ -2594,7 +2596,7 @@ async def test_reload_after_restore_still_retracts(ctx, tmp_path):
         "TOOLS = {'new_name': fn}\n"
         "TOOL_DEFINITIONS = [{'type': 'function', 'function': {'name': 'new_name'}}]\n"
     )
-    _save_permission(ctx.config, "restored", "always")
+    _save_permission(ctx.config, "restored", {"status": "always", "hash": _compute_skill_hash(skill)})
     await tool_activate_skill(ctx, name="restored")
 
     assert "new_name" in ctx.tools.extra

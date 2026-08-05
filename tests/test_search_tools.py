@@ -257,6 +257,6 @@ class TestSkillResults:
     ):
         """A skill already in ctx.skills.activated isn't surfaced — its
         tools are already in the active set, so re-activating is noise."""
-        search_ctx_with_skill.skills.activated.add("writing-clearly")
+        search_ctx_with_skill.skills.activated["writing-clearly"] = ""
         result = tool_search(search_ctx_with_skill, "writing-clearly")
         assert "No matches" in result.text
