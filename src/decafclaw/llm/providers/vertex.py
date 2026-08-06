@@ -289,6 +289,8 @@ class _VertexStreamState:
                 for k in ("thought_signature", "thoughtSignature", "thought"):
                     if k in part and k not in fc:
                         fc[k] = part[k]
+                if "thoughtSignature" in fc and "thought_signature" not in fc:
+                    fc["thought_signature"] = fc.pop("thoughtSignature")
                 chunk_tool_calls.append(fc)
 
         if chunk_text:
@@ -479,10 +481,13 @@ def _build_request_body(
                 fc = {"name": name, "args": args}
                 for k, v in tc.items():
                     if k not in ("id", "type", "function"):
-                        fc[k] = v
+                        # camelCase for vertex API if needed or preserve
+                        key_name = "thoughtSignature" if k == "thought_signature" else k
+                        fc[key_name] = v
                 for k, v in func.items():
                     if k not in ("name", "arguments"):
-                        fc[k] = v
+                        key_name = "thoughtSignature" if k == "thought_signature" else k
+                        fc[key_name] = v
                 parts.append({"functionCall": fc})
             if parts:
                 contents.append({"role": "model", "parts": parts})
@@ -562,6 +567,9 @@ def _parse_response(data: dict) -> dict:
             for k in ("thought_signature", "thoughtSignature", "thought"):
                 if k in part and k not in fc:
                     fc[k] = part[k]
+            # Normalize key to snake_case internally
+            if "thoughtSignature" in fc and "thought_signature" not in fc:
+                fc["thought_signature"] = fc.pop("thoughtSignature")
             tc = {
                 "id": f"call_{uuid.uuid4().hex[:12]}",
                 "type": "function",
