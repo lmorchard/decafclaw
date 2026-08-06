@@ -1,6 +1,7 @@
 # Frozen acceptance checks
 
 **Source:** https://github.com/lmorchard/decafclaw/issues/755
+**Frozen at:** d5df31a
 **Check files — read-only from Phase 1 onward:**
 - `src/decafclaw/web/static/components/chat-input.test.js`
 
