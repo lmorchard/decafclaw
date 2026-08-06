@@ -69,6 +69,8 @@ export GOOGLE_APPLICATION_CREDENTIALS=/etc/decafclaw/vertex-sa.json
 
 **Regions:** Gemini models are available in `us-central1`, `us-east4`, `europe-west1`, and others. Check [Vertex AI regions](https://cloud.google.com/vertex-ai/generative-ai/docs/learn/locations) for availability.
 
+Set `"region": "global"` to use the multi-region global endpoint. Newer Gemini models are often global-only and 404 on every regional endpoint, so `global` is the safer default unless you have a data-residency requirement. Note that `global` is a *location*, not a host prefix — the provider dispatches it to `aiplatform.googleapis.com` rather than `global-aiplatform.googleapis.com` (which does not exist).
+
 ### OpenAI
 
 Direct access to OpenAI's API.

@@ -60,8 +60,14 @@ class VertexProvider:
         return self._credentials.token
 
     def _base_url(self, model: str) -> str:
+        # "global" is a location, not a regional host prefix — there is no
+        # global-aiplatform.googleapis.com. Google serves it from the bare host.
+        host = (
+            "aiplatform.googleapis.com" if self.region == "global"
+            else f"{self.region}-aiplatform.googleapis.com"
+        )
         return (
-            f"https://{self.region}-aiplatform.googleapis.com/v1/"
+            f"https://{host}/v1/"
             f"projects/{self.project}/locations/{self.region}/"
             f"publishers/google/models/{model}"
         )
