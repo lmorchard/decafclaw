@@ -286,11 +286,14 @@ class _VertexStreamState:
                 chunk_text += part["text"]
             elif "functionCall" in part:
                 fc = dict(part["functionCall"])
-                for k in ("thought_signature", "thoughtSignature", "thought"):
-                    if k in part and k not in fc:
-                        fc[k] = part[k]
-                if "thoughtSignature" in fc and "thought_signature" not in fc:
-                    fc["thought_signature"] = fc.pop("thoughtSignature")
+                sig = (
+                    part.get("thoughtSignature")
+                    or part.get("thought_signature")
+                    or fc.get("thoughtSignature")
+                    or fc.get("thought_signature")
+                )
+                if sig:
+                    fc["thought_signature"] = sig
                 chunk_tool_calls.append(fc)
 
         if chunk_text:
@@ -322,9 +325,9 @@ class _VertexStreamState:
                         "arguments": json.dumps(fc.get("args", {})),
                     },
                 }
-                for k, v in fc.items():
-                    if k not in ("name", "args"):
-                        tc[k] = v
+                sig = fc.get("thought_signature") or fc.get("thoughtSignature")
+                if sig:
+                    tc["thought_signature"] = sig
                 tool_calls.append(tc)
 
         await self._emit("done", {"usage": self.usage})
@@ -478,17 +481,16 @@ def _build_request_body(
                     args = json.loads(func.get("arguments", "{}"))
                 except json.JSONDecodeError:
                     args = {}
-                fc = {"name": name, "args": args}
-                for k, v in tc.items():
-                    if k not in ("id", "type", "function"):
-                        # camelCase for vertex API if needed or preserve
-                        key_name = "thoughtSignature" if k == "thought_signature" else k
-                        fc[key_name] = v
-                for k, v in func.items():
-                    if k not in ("name", "arguments"):
-                        key_name = "thoughtSignature" if k == "thought_signature" else k
-                        fc[key_name] = v
-                parts.append({"functionCall": fc})
+                part = {"functionCall": {"name": name, "args": args}}
+                sig = (
+                    tc.get("thought_signature")
+                    or tc.get("thoughtSignature")
+                    or func.get("thought_signature")
+                    or func.get("thoughtSignature")
+                )
+                if sig:
+                    part["thoughtSignature"] = sig
+                parts.append(part)
             if parts:
                 contents.append({"role": "model", "parts": parts})
 
@@ -563,13 +565,13 @@ def _parse_response(data: dict) -> dict:
         if "text" in part:
             text_parts.append(part["text"])
         elif "functionCall" in part:
-            fc = dict(part["functionCall"])
-            for k in ("thought_signature", "thoughtSignature", "thought"):
-                if k in part and k not in fc:
-                    fc[k] = part[k]
-            # Normalize key to snake_case internally
-            if "thoughtSignature" in fc and "thought_signature" not in fc:
-                fc["thought_signature"] = fc.pop("thoughtSignature")
+            fc = part["functionCall"]
+            sig = (
+                part.get("thoughtSignature")
+                or part.get("thought_signature")
+                or fc.get("thoughtSignature")
+                or fc.get("thought_signature")
+            )
             tc = {
                 "id": f"call_{uuid.uuid4().hex[:12]}",
                 "type": "function",
@@ -578,9 +580,8 @@ def _parse_response(data: dict) -> dict:
                     "arguments": json.dumps(fc.get("args", {})),
                 },
             }
-            for k, v in fc.items():
-                if k not in ("name", "args"):
-                    tc[k] = v
+            if sig:
+                tc["thought_signature"] = sig
             tool_calls.append(tc)
 
     return {
