@@ -49,6 +49,15 @@ export class ChatInput extends LitElement {
 
   createRenderRoot() { return this; }
 
+  updated(changedProperties) {
+    super.updated(changedProperties);
+    const triggerOpened = changedProperties.has('_trigger') && !changedProperties.get('_trigger') && Boolean(this._trigger);
+    if (changedProperties.has('_highlight') || triggerOpened) {
+      const highlighted = this.querySelector('.command-menu-item.highlighted');
+      highlighted?.scrollIntoView?.({ block: 'nearest' });
+    }
+  }
+
   /** Escape keeps the menu shut for the token it dismissed. */
   #dismissed = false;
 
