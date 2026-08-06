@@ -198,7 +198,9 @@ async def test_canvas_close_tab_passes_registry(config, md_doc_registry, monkeyp
     """C2: tool_canvas_close_tab SHALL pass registry kwarg to canvas.close_tab."""
     from decafclaw import canvas as canvas_mod
 
+    sentinel = object()
     ctx = _make_ctx(config, MagicMock(emit=AsyncMock()))
+    ctx.terminal_registry = sentinel
 
     # Create a tab to close
     await canvas_tools.tool_canvas_new_tab(
@@ -219,8 +221,8 @@ async def test_canvas_close_tab_passes_registry(config, md_doc_registry, monkeyp
     # Call the tool
     await canvas_tools.tool_canvas_close_tab(ctx, "canvas_1")
 
-    # Assert registry was in kwargs and not None
+    # Assert registry was passed and matches sentinel
     assert "registry" in captured_kwargs, \
         "tool_canvas_close_tab must pass 'registry' to canvas.close_tab"
-    assert captured_kwargs["registry"] is not None, \
-        "passed registry must not be None"
+    assert captured_kwargs["registry"] is sentinel, \
+        "passed registry must match ctx.terminal_registry"

@@ -199,17 +199,17 @@ async def clear_canvas(config,
         return CanvasOpResult(ok=True, text="canvas already empty")
 
     # Kill terminal PTYs before clearing (fail-open per D3)
-    if registry:
+    if registry is not None:
         for tab in state["tabs"]:
             if tab.get("widget_type") == "terminal":
                 session = registry.get(conv_id, tab["id"])
                 if session:
                     try:
                         await registry.kill(session)
-                        log.debug(f"Killed terminal PTY for tab {tab['id']}")
+                        log.debug("Killed terminal PTY for tab %s", tab["id"])
                     except Exception as exc:
                         # D3: fail-open — log but don't block canvas clear
-                        log.warning(f"Failed to kill terminal PTY for {tab['id']}: {exc}")
+                        log.warning("Failed to kill terminal PTY for %s: %s", tab["id"], exc, exc_info=True)
 
     next_id = state.get("next_tab_id", 1)
     state = empty_canvas_state()
@@ -240,10 +240,11 @@ async def new_tab(config,
                   data: dict,
                   label: str | None = None,
                   emit: EmitFn | None = None,
-                  enforce_agent_createable: bool = True) -> CanvasOpResult:
+                  enforce_agent_creatable: bool = True,
+                  enforce_agent_createable: bool | None = None) -> CanvasOpResult:
     """Append a new tab and make it active. Returns the new tab_id.
 
-    `enforce_agent_createable` gates the `agent_createable` widget-descriptor
+    `enforce_agent_creatable` gates the `agent_creatable` widget-descriptor
     check and defaults to on. Trusted, human-only callers (the `/terminal`
     command handler, the authenticated "Open in Canvas" HTTP endpoint) pass
     `False` — only the agent-facing `canvas_new_tab` tool leaves it enforced.
@@ -253,12 +254,15 @@ async def new_tab(config,
         return CanvasOpResult(ok=False, error=err)
     registry = get_widget_registry()
     if registry is not None:
-        if enforce_agent_createable:
+        enforce = enforce_agent_creatable
+        if enforce is True and enforce_agent_createable is not None:
+            enforce = enforce_agent_createable
+        if enforce:
             descriptor = registry.get(widget_type)
-            if descriptor and not getattr(descriptor, 'agent_createable', True):
+            if descriptor and not getattr(descriptor, 'agent_creatable', getattr(descriptor, 'agent_createable', True)):
                 return CanvasOpResult(
                     ok=False,
-                    error=f"widget type '{widget_type}' is not agent_createable"
+                    error=f"widget type '{widget_type}' is not agent_creatable"
                 )
         data = registry.normalize(widget_type, data)
     state = read_canvas_state(config, conv_id)
