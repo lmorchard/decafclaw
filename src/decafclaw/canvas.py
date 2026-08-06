@@ -183,16 +183,34 @@ async def _emit_canvas_update(emit: EmitFn | None,
 
 async def clear_canvas(config,
                        conv_id: str,
-                       emit: EmitFn | None = None) -> CanvasOpResult:
+                       emit: EmitFn | None = None,
+                       registry=None) -> CanvasOpResult:
     """Remove all canvas tabs; hides the panel.
 
     ``next_tab_id`` is preserved across clears so a closed tab id is never
     rebound — protects standalone tab-locked URLs (`/canvas/{conv}/canvas_2`)
     from silently switching to a different widget after a clear+new_tab cycle.
+
+    If ``registry`` is provided, kills terminal PTYs for any terminal tabs
+    before clearing (fail-open per D3).
     """
     state = read_canvas_state(config, conv_id)
     if not state.get("tabs"):
         return CanvasOpResult(ok=True, text="canvas already empty")
+
+    # Kill terminal PTYs before clearing (fail-open per D3)
+    if registry and state.get("tabs"):
+        for tab in state["tabs"]:
+            if tab.get("widget_type") == "terminal":
+                session = registry.get(conv_id, tab["id"])
+                if session:
+                    try:
+                        await registry.kill(session)
+                        log.debug(f"Killed terminal PTY for tab {tab['id']}")
+                    except Exception as exc:
+                        # D3: fail-open — log but don't block canvas clear
+                        log.warning(f"Failed to kill terminal PTY for {tab['id']}: {exc}")
+
     next_id = state.get("next_tab_id", 1)
     state = empty_canvas_state()
     state["next_tab_id"] = next_id
