@@ -2341,6 +2341,11 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> Starlette:
     app.state.app_ctx = app_ctx
     from .terminals import TerminalRegistry
     app.state.terminal_registry = TerminalRegistry(config)
+
+    # Wire terminal registry to manager if available
+    if manager and hasattr(manager, 'terminal_registry'):
+        manager.terminal_registry = app.state.terminal_registry
+
     return app
 
 
