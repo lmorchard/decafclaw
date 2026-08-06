@@ -158,3 +158,61 @@ def test_no_agent_side_imports():
             if import_line_re.search(text):
                 offenders.append(str(py))
     assert not offenders, f"terminals.py imported by agent-side code: {offenders}"
+
+
+# ---------------------------------------------------------------------------
+# C4 — the object reachable from agent-side code cannot touch a PTY
+# ---------------------------------------------------------------------------
+
+def test_agent_terminal_handle_exposes_no_pty_access():
+    """C4: Agent-facing terminal handle SHALL expose ONLY get/kill, NOT pty access."""
+    # The criterion specifies that the SYSTEM (not a specific import path) SHALL
+    # expose to agent tools an object with get/kill but no PTY-access methods.
+    # This test verifies that whatever handle is made available to tools (e.g.,
+    # via canvas_tools when it needs to kill sessions on close_tab/clear) satisfies
+    # the contract.
+    #
+    # The implementation may choose to:
+    # - Provide a restricted façade class (AgentTerminalHandle)
+    # - Pass the registry but document/enforce that tools only use get/kill
+    # - Create a protocol/interface that tools import
+    #
+    # This test will look for the expected interface where tools would find it.
+
+    # Try to import what should be the agent-facing handle.
+    # The exact import path will be determined during implementation, but the
+    # test expects SOME importable object that tools can use.
+    try:
+        # Attempt 1: Look for an explicit AgentTerminalHandle class
+        from decafclaw.terminals import AgentTerminalHandle
+        handle = AgentTerminalHandle()
+    except (ImportError, AttributeError):
+        # Attempt 2: Maybe there's a factory function
+        try:
+            from decafclaw.terminals import get_agent_terminal_handle
+            handle = get_agent_terminal_handle()
+        except (ImportError, AttributeError):
+            # Implementation doesn't exist yet - fail with clear guidance
+            pytest.fail(
+                "C4 criterion not met: No agent-facing terminal handle found. "
+                "Expected one of:\n"
+                "  - from decafclaw.terminals import AgentTerminalHandle\n"
+                "  - from decafclaw.terminals import get_agent_terminal_handle\n"
+                "This test verifies the handle exposes ONLY get/kill, NOT PTY methods."
+            )
+
+    # Verify the handle HAS the required safe methods
+    assert hasattr(handle, "get") and callable(handle.get), \
+        "Agent terminal handle must provide callable 'get' method"
+    assert hasattr(handle, "kill") and callable(handle.kill), \
+        "Agent terminal handle must provide callable 'kill' method"
+
+    # Verify the handle does NOT expose forbidden PTY-access methods
+    forbidden = ["spawn", "attach", "detach", "write_input", "set_viewport", "shutdown_all"]
+    exposed = []
+    for method_name in forbidden:
+        if hasattr(handle, method_name):
+            exposed.append(method_name)
+
+    assert not exposed, \
+        f"Agent terminal handle must NOT expose PTY-access methods, but found: {exposed}"

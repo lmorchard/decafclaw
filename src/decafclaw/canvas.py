@@ -183,16 +183,34 @@ async def _emit_canvas_update(emit: EmitFn | None,
 
 async def clear_canvas(config,
                        conv_id: str,
-                       emit: EmitFn | None = None) -> CanvasOpResult:
+                       emit: EmitFn | None = None,
+                       registry=None) -> CanvasOpResult:
     """Remove all canvas tabs; hides the panel.
 
     ``next_tab_id`` is preserved across clears so a closed tab id is never
     rebound — protects standalone tab-locked URLs (`/canvas/{conv}/canvas_2`)
     from silently switching to a different widget after a clear+new_tab cycle.
+
+    If ``registry`` is provided, kills terminal PTYs for any terminal tabs
+    before clearing (fail-open per D3).
     """
     state = read_canvas_state(config, conv_id)
     if not state.get("tabs"):
         return CanvasOpResult(ok=True, text="canvas already empty")
+
+    # Kill terminal PTYs before clearing (fail-open per D3)
+    if registry is not None:
+        for tab in state["tabs"]:
+            if tab.get("widget_type") == "terminal":
+                session = registry.get(conv_id, tab["id"])
+                if session:
+                    try:
+                        await registry.kill(session)
+                        log.debug("Killed terminal PTY for tab %s", tab["id"])
+                    except Exception as exc:
+                        # D3: fail-open — log but don't block canvas clear
+                        log.warning("Failed to kill terminal PTY for %s: %s", tab["id"], exc, exc_info=True)
+
     next_id = state.get("next_tab_id", 1)
     state = empty_canvas_state()
     state["next_tab_id"] = next_id
@@ -221,13 +239,31 @@ async def new_tab(config,
                   widget_type: str,
                   data: dict,
                   label: str | None = None,
-                  emit: EmitFn | None = None) -> CanvasOpResult:
-    """Append a new tab and make it active. Returns the new tab_id."""
+                  emit: EmitFn | None = None,
+                  enforce_agent_creatable: bool = True,
+                  enforce_agent_createable: bool | None = None) -> CanvasOpResult:
+    """Append a new tab and make it active. Returns the new tab_id.
+
+    `enforce_agent_creatable` gates the `agent_creatable` widget-descriptor
+    check and defaults to on. Trusted, human-only callers (the `/terminal`
+    command handler, the authenticated "Open in Canvas" HTTP endpoint) pass
+    `False` — only the agent-facing `canvas_new_tab` tool leaves it enforced.
+    """
     err = _validate_widget_for_canvas(widget_type, data)
     if err:
         return CanvasOpResult(ok=False, error=err)
     registry = get_widget_registry()
     if registry is not None:
+        enforce = enforce_agent_creatable
+        if enforce is True and enforce_agent_createable is not None:
+            enforce = enforce_agent_createable
+        if enforce:
+            descriptor = registry.get(widget_type)
+            if descriptor and not getattr(descriptor, 'agent_creatable', getattr(descriptor, 'agent_createable', True)):
+                return CanvasOpResult(
+                    ok=False,
+                    error=f"widget type '{widget_type}' is not agent_creatable"
+                )
         data = registry.normalize(widget_type, data)
     state = read_canvas_state(config, conv_id)
     next_n = state.get("next_tab_id", 1)
