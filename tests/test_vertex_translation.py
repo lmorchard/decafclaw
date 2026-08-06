@@ -522,3 +522,49 @@ def test_user_message_with_multiple_images():
     assert parts[0] == {"text": "Compare these:"}
     assert parts[1]["inlineData"]["data"] == "AAAA"
     assert parts[2]["inlineData"]["data"] == "BBBB"
+
+
+def test_parse_response_preserves_thought_signature():
+    data = {
+        "candidates": [{
+            "content": {
+                "role": "model",
+                "parts": [{
+                    "functionCall": {
+                        "name": "vault_search",
+                        "args": {"query": "test"},
+                        "thought_signature": "sig_abc123",
+                    },
+                }],
+            },
+        }],
+    }
+    result = _parse_response(data)
+    tc = result["tool_calls"][0]
+    assert tc["thought_signature"] == "sig_abc123"
+
+
+def test_build_request_body_preserves_thought_signature():
+    messages = [
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [{
+                "id": "call_1",
+                "type": "function",
+                "function": {
+                    "name": "vault_search",
+                    "arguments": '{"query": "test"}',
+                },
+                "thought_signature": "sig_abc123",
+            }],
+        },
+    ]
+    body = _build_request_body(messages)
+    model_msg = body["contents"][0]
+    assert model_msg["role"] == "model"
+    fc = model_msg["parts"][0]["functionCall"]
+    assert fc["name"] == "vault_search"
+    assert fc["args"] == {"query": "test"}
+    assert fc["thought_signature"] == "sig_abc123"
+
