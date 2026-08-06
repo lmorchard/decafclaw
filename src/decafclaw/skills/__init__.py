@@ -562,7 +562,39 @@ def discover_skills(config, rejections: list | None = None) -> list[SkillInfo]:
                     info.always_loaded = True
 
             # Check requires.env
-            missing_env = [v for v in info.requires_env if not os.environ.get(v)]
+            missing_env = []
+            skill_config_cls = None
+            if info.has_native_tools and grants_capability(info):
+                try:
+                    from ..tools.skill_tools import _load_native_tools
+                    _, _, module = _load_native_tools(info)
+                    skill_config_cls = getattr(module, "SkillConfig", None)
+                except Exception as exc:
+                    log.debug(f"Failed to load SkillConfig for '{info.name}': {exc}")
+
+            for v in info.requires_env:
+                if os.environ.get(v):
+                    continue
+
+                satisfied_by_config = False
+                if skill_config_cls is not None:
+                    try:
+                        from dataclasses import fields as dc_fields
+                        raw = config.skills.get(info.name, {})
+                        prefix = f"SKILLS_{info.name.upper().replace('-', '_')}"
+                        for f in dc_fields(skill_config_cls):
+                            env_alias = f.metadata.get("env_alias")
+                            sys_env_name = f"{prefix}_{f.name.upper()}"
+                            if env_alias == v or sys_env_name == v:
+                                if f.name in raw and raw[f.name] not in (None, ""):
+                                    satisfied_by_config = True
+                                    break
+                    except Exception as exc:
+                        log.debug(f"Failed to check SkillConfig for '{info.name}': {exc}")
+
+                if not satisfied_by_config:
+                    missing_env.append(v)
+
             if missing_env:
                 log.debug(f"Skipping skill '{info.name}': missing env vars {missing_env}")
                 continue
