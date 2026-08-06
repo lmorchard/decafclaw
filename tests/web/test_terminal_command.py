@@ -111,13 +111,14 @@ def terminal_send_env(config, monkeypatch, tmp_path):
 
         orig_new_tab = canvas_mod.new_tab
 
-        async def spy_new_tab(config, conv_id, widget_type, data, label=None, emit=None):
+        async def spy_new_tab(config, conv_id, widget_type, data, label=None, emit=None,
+                              **kwargs):
             env.new_tab_calls.append({
                 "conv_id": conv_id, "widget_type": widget_type,
                 "data": data, "label": label,
             })
             return await orig_new_tab(config, conv_id, widget_type, data,
-                                      label=label, emit=emit)
+                                      label=label, emit=emit, **kwargs)
 
         monkeypatch.setattr(canvas_mod, "new_tab", spy_new_tab)
 
@@ -239,7 +240,8 @@ async def test_terminal_command_new_tab_failure_rejects_no_spawn(terminal_send_e
     without ever calling `spawn` (Minor review note: confirm this branch)."""
     env = terminal_send_env()
 
-    async def failing_new_tab(config, conv_id, widget_type, data, label=None, emit=None):
+    async def failing_new_tab(config, conv_id, widget_type, data, label=None, emit=None,
+                              **kwargs):
         return canvas_mod.CanvasOpResult(ok=False, error="boom")
 
     monkeypatch.setattr(canvas_mod, "new_tab", failing_new_tab)

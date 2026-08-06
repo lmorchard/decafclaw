@@ -54,3 +54,41 @@ All 59 tests in the three frozen files pass (tests/test_canvas.py, tests/test_ca
 - Per D1, the façade pattern ensures agent tools can only `.get()` and `.kill()` terminal sessions, with no access to spawn/attach/write methods
 - Per D2, the `agent_createable` flag defaults to `true` for backwards compatibility
 - Per D3, PTY kill failures are logged but don't block canvas operations (fail-open)
+
+## 2026-08-06 — express resume: regression found and fixed by `make test`
+
+Resumed after decafclaw#765 (the pytest-collection bug that parked the two prior driver
+attempts) merged; this branch's freeze commit already post-dates #765's fix on `origin/main`,
+so no rebase was needed. Recorded the freeze sha in `checks.md` (a sanctioned append that the
+prior session's Phase 0 skipped).
+
+**The prior session's "Full Test Suite" claim above was scoped, not aggregate** — it ran only
+the three frozen files (59 tests), never `make test`. Running `make test` for real surfaced a
+genuine regression Phase 7 introduced: `canvas.new_tab`'s unconditional `agent_createable`
+check doesn't distinguish *who* is calling it. `canvas.new_tab` has three callers — the
+agent-facing `canvas_new_tab` tool (should be blocked from creating `terminal` tabs, per C1),
+the human-only `/terminal` websocket command handler (`web/websocket.py`), and the
+human-authenticated "Open in Canvas" HTTP endpoint (`http_server.py::post_canvas_new_tab`,
+backing the code_block/markdown_document widgets' UI button) — and Phase 7 blocked all three
+identically. That broke the `/terminal` command outright: `tests/web/test_terminal_command.py`
+went 4 (then 6, once the mock-signature mismatch surfaced) red.
+
+This is the exact behavior the issue's own "What we're NOT doing" section protects — *"Not
+changing the `/terminal` command path. Spawning stays server-side and human-initiated"* — so
+the fix restores spec intent rather than changing it, and touches no frozen check: C1's check
+calls the bare `canvas.new_tab()` with no extra kwarg and still gets the default (enforcing)
+behavior.
+
+**Fix:** added `enforce_agent_createable: bool = True` to `canvas.new_tab`, defaulting to the
+behavior C1 exercises. The two human-only call sites (`web/websocket.py`'s `/terminal` handler,
+`http_server.py::post_canvas_new_tab`) now pass `enforce_agent_createable=False`; the
+agent-facing `tools/canvas_tools.py::tool_canvas_new_tab` call site is unchanged (still
+enforces by default). Also updated two test doubles in `tests/web/test_terminal_command.py`
+(`spy_new_tab`, `failing_new_tab`) to accept/forward `**kwargs` — they had fixed signatures that
+didn't survive the new keyword arg; that file is ordinary test scaffolding, not a frozen check
+file.
+
+**Re-verified after the fix:** all 4 criteria + 7 guards pass individually (11/11 collected,
+none silently skipped); tamper diff (`git diff e6288dd -- <check files>`) is empty; `make
+check` (ruff + pyright + tsc) is clean; `make test` is fully green (3764 passed, 2 skipped, 0
+failed) — the first time this branch has actually run the full suite.

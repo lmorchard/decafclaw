@@ -1933,6 +1933,7 @@ async def post_canvas_new_tab(request: Request, username: str) -> JSONResponse:
     emit = manager.emit if manager else None
     result = await canvas_mod.new_tab(
         config, conv_id, widget_type, data, label=label, emit=emit,
+        enforce_agent_createable=False,
     )
     if not result.ok:
         return JSONResponse({"error": result.error}, status_code=400)
