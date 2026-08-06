@@ -566,5 +566,6 @@ def test_build_request_body_preserves_thought_signature():
     fc = model_msg["parts"][0]["functionCall"]
     assert fc["name"] == "vault_search"
     assert fc["args"] == {"query": "test"}
-    assert fc["thought_signature"] == "sig_abc123"
+    assert fc["thoughtSignature"] == "sig_abc123"
+
 
