@@ -187,3 +187,40 @@ async def test_canvas_new_tab_url_uses_explicit_form(config, md_doc_registry, ma
         ctx, "markdown_document", {"content": "x"},
     )
     assert f"/canvas/conv1/{result.data['tab_id']}" in result.text
+
+
+# ---------------------------------------------------------------------------
+# C2 — closing a terminal tab through the agent tool kills its PTY
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_canvas_close_tab_passes_registry(config, md_doc_registry, monkeypatch):
+    """C2: tool_canvas_close_tab SHALL pass registry kwarg to canvas.close_tab."""
+    from decafclaw import canvas as canvas_mod
+
+    ctx = _make_ctx(config, MagicMock(emit=AsyncMock()))
+
+    # Create a tab to close
+    await canvas_tools.tool_canvas_new_tab(
+        ctx, "markdown_document", {"content": "x"},
+    )
+
+    # Spy on canvas.close_tab to capture kwargs
+    captured_kwargs = {}
+
+    original_close_tab = canvas_mod.close_tab
+
+    async def spy_close_tab(*args, **kwargs):
+        captured_kwargs.update(kwargs)
+        return await original_close_tab(*args, **kwargs)
+
+    monkeypatch.setattr(canvas_mod, "close_tab", spy_close_tab)
+
+    # Call the tool
+    await canvas_tools.tool_canvas_close_tab(ctx, "canvas_1")
+
+    # Assert registry was in kwargs and not None
+    assert "registry" in captured_kwargs, \
+        "tool_canvas_close_tab must pass 'registry' to canvas.close_tab"
+    assert captured_kwargs["registry"] is not None, \
+        "passed registry must not be None"
