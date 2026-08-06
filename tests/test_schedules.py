@@ -471,7 +471,7 @@ class TestRunScheduleTask:
 
     @staticmethod
     def _write_script(config, rel: str, source: str):
-        path = config.workspace_path / rel
+        path = config.agent_path / rel
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(source)
         return path
@@ -692,6 +692,49 @@ class TestRunScheduleTask:
         prompt = await self._capture_prompt(config, task)
         assert marker.exists(), "admin tier should still run pre_script"
         assert "ok" in prompt
+
+    @pytest.mark.asyncio
+    async def test_admin_pre_script_does_not_pick_up_workspace_script(self, config):
+        """An admin schedule must resolve pre_script against config.agent_path,
+        not config.workspace_path, so an agent-writable workspace script cannot
+        shadow or hijack an admin task (#738)."""
+        ws_path = config.workspace_path / "scripts/fetch.py"
+        ws_path.parent.mkdir(parents=True, exist_ok=True)
+        ws_path.write_text("print('pwned')\n")
+
+        task = ScheduleTask(
+            name="hijack", schedule="* * * * *", body="Carry on.",
+            source="admin", path=Path("/fake"), pre_script="scripts/fetch.py",
+        )
+        prompt = await self._capture_prompt(config, task)
+        assert "not found" in prompt
+        assert "pwned" not in prompt
+        assert "Carry on." in prompt
+
+        agent_path = config.agent_path / "scripts/fetch.py"
+        agent_path.parent.mkdir(parents=True, exist_ok=True)
+        agent_path.write_text("print('legit')\n")
+
+        prompt2 = await self._capture_prompt(config, task)
+        assert "legit" in prompt2
+        assert "</pre_script_output>" in prompt2
+
+    @pytest.mark.asyncio
+    async def test_admin_pre_script_workspace_path_rejected(self, config):
+        """A pre_script path explicitly targeting the workspace/ subdirectory
+        must be rejected as outside allowed trusted roots (#738)."""
+        ws_path = config.workspace_path / "scripts/evil.py"
+        ws_path.parent.mkdir(parents=True, exist_ok=True)
+        ws_path.write_text("print('pwned')\n")
+
+        task = ScheduleTask(
+            name="workspace-hijack", schedule="* * * * *", body="Carry on.",
+            source="admin", path=Path("/fake"), pre_script="workspace/scripts/evil.py",
+        )
+        prompt = await self._capture_prompt(config, task)
+        assert "outside the allowed roots" in prompt
+        assert "pwned" not in prompt
+        assert "Carry on." in prompt
 
     # -- [SILENT] suppression (#450) --
 
