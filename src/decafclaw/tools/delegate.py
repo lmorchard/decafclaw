@@ -254,6 +254,7 @@ async def run_child_turn(parent_ctx: "Context", task, model: str = "",
         # No streaming or reflection for child agents
         child_ctx.on_stream_chunk = None
         child_ctx.is_child = True
+        child_ctx.parent_is_unattended = parent_ctx.is_unattended
         child_ctx.skip_reflection = True
         # Default-deny vault retrieval (#396); the parent opts in via
         # `allow_vault_retrieval=True` on `delegate_task`.

@@ -116,6 +116,7 @@ class Context:
         self.event_context_id: str = ""  # publish events under this ID instead of context_id
         self._current_iteration: int = 1
         self.is_child: bool = False
+        self.parent_is_unattended: bool = False
         self.skip_reflection: bool = False
         self.skip_vault_retrieval: bool = False
         self.skip_archive: bool = False
@@ -141,7 +142,7 @@ class Context:
     @property
     def is_unattended(self) -> bool:
         """True when a confirmation prompt on this turn cannot reach a human."""
-        return self.task_mode in self.UNATTENDED_TASK_MODES
+        return self.task_mode in self.UNATTENDED_TASK_MODES or self.parent_is_unattended
 
     @classmethod
     def for_task(
