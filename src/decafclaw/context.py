@@ -129,6 +129,7 @@ class Context:
         self.task_mode: str = ""
         self.request_confirmation: Any = None  # set by ConversationManager
         self.manager: Any = None  # set by ConversationManager
+        self.terminal_registry: Any = None  # AgentTerminalHandle, set by ConversationManager
 
     # Turn kinds where no human can answer a confirmation prompt: it is emitted
     # only to subscribers of an ephemeral conv_id, so it blocks for the full 60s
