@@ -379,6 +379,14 @@ def test_discover_includes_when_requires_met(tmp_path, config, monkeypatch):
     assert any(s.name == "has-var" for s in skills)
 
 
+def test_discover_requires_satisfied_by_config(config, monkeypatch):
+    """A config-satisfied requires.env no longer hides the skill (C1)."""
+    monkeypatch.delenv("TABSTACK_API_KEY", raising=False)
+    config.skills["tabstack"] = {"api_key": "test-secret-value"}
+    skills = discover_skills(config)
+    assert "tabstack" in [s.name for s in skills]
+
+
 def test_discover_strips_auto_approve_from_workspace_skill(config, caplog):
     """auto-approve on a workspace skill is ignored with a warning."""
     skills_dir = config.workspace_path / "skills"
