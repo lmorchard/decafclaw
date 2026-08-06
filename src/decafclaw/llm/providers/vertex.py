@@ -285,7 +285,11 @@ class _VertexStreamState:
             if "text" in part:
                 chunk_text += part["text"]
             elif "functionCall" in part:
-                chunk_tool_calls.append(part["functionCall"])
+                fc = dict(part["functionCall"])
+                for k in ("thought_signature", "thoughtSignature", "thought"):
+                    if k in part and k not in fc:
+                        fc[k] = part[k]
+                chunk_tool_calls.append(fc)
 
         if chunk_text:
             self.all_text_parts.append(chunk_text)
@@ -306,8 +310,9 @@ class _VertexStreamState:
         content = "".join(self.all_text_parts) or None
         tool_calls = None
         if self.all_tool_calls:
-            tool_calls = [
-                {
+            tool_calls = []
+            for fc in self.all_tool_calls:
+                tc = {
                     "id": f"call_{uuid.uuid4().hex[:12]}",
                     "type": "function",
                     "function": {
@@ -315,8 +320,10 @@ class _VertexStreamState:
                         "arguments": json.dumps(fc.get("args", {})),
                     },
                 }
-                for fc in self.all_tool_calls
-            ]
+                for k, v in fc.items():
+                    if k not in ("name", "args"):
+                        tc[k] = v
+                tool_calls.append(tc)
 
         await self._emit("done", {"usage": self.usage})
 
@@ -469,7 +476,14 @@ def _build_request_body(
                     args = json.loads(func.get("arguments", "{}"))
                 except json.JSONDecodeError:
                     args = {}
-                parts.append({"functionCall": {"name": name, "args": args}})
+                fc = {"name": name, "args": args}
+                for k, v in tc.items():
+                    if k not in ("id", "type", "function"):
+                        fc[k] = v
+                for k, v in func.items():
+                    if k not in ("name", "arguments"):
+                        fc[k] = v
+                parts.append({"functionCall": fc})
             if parts:
                 contents.append({"role": "model", "parts": parts})
 
@@ -544,15 +558,22 @@ def _parse_response(data: dict) -> dict:
         if "text" in part:
             text_parts.append(part["text"])
         elif "functionCall" in part:
-            fc = part["functionCall"]
-            tool_calls.append({
+            fc = dict(part["functionCall"])
+            for k in ("thought_signature", "thoughtSignature", "thought"):
+                if k in part and k not in fc:
+                    fc[k] = part[k]
+            tc = {
                 "id": f"call_{uuid.uuid4().hex[:12]}",
                 "type": "function",
                 "function": {
                     "name": fc.get("name", ""),
                     "arguments": json.dumps(fc.get("args", {})),
                 },
-            })
+            }
+            for k, v in fc.items():
+                if k not in ("name", "args"):
+                    tc[k] = v
+            tool_calls.append(tc)
 
     return {
         "content": "".join(text_parts) or None,
