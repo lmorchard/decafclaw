@@ -246,6 +246,13 @@ async def new_tab(config,
         return CanvasOpResult(ok=False, error=err)
     registry = get_widget_registry()
     if registry is not None:
+        # Check agent_createable flag
+        descriptor = registry.get(widget_type)
+        if descriptor and not getattr(descriptor, 'agent_createable', True):
+            return CanvasOpResult(
+                ok=False,
+                error=f"widget type '{widget_type}' is not agent_createable"
+            )
         data = registry.normalize(widget_type, data)
     state = read_canvas_state(config, conv_id)
     next_n = state.get("next_tab_id", 1)
