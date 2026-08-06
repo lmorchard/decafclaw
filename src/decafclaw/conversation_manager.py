@@ -351,10 +351,12 @@ class ConversationManager:
     """
 
     def __init__(self, config, event_bus,
-                 confirmation_registry: ConfirmationRegistry | None = None):
+                 confirmation_registry: ConfirmationRegistry | None = None,
+                 terminal_registry=None):
         self.config = config
         self.event_bus = event_bus
         self.confirmation_registry = confirmation_registry or ConfirmationRegistry()
+        self.terminal_registry = terminal_registry
 
         # Workflow user-input resumes via the confirmation recovery path.
         from .workflow.resume import WorkflowUserInputHandler
@@ -1472,6 +1474,13 @@ class ConversationManager:
             return await self.request_confirmation(conv_id, request)
         ctx.request_confirmation = ctx_request_confirmation
         ctx.manager = self
+
+        # Create the agent-facing terminal handle
+        if self.terminal_registry:
+            from decafclaw.terminals import AgentTerminalHandle
+            ctx.terminal_registry = AgentTerminalHandle(self.terminal_registry)
+        else:
+            ctx.terminal_registry = None
 
         # Load history — use caller-supplied history if provided, otherwise
         # load from archive for USER/WAKE, default to [] for other task kinds.
