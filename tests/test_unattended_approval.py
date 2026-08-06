@@ -265,3 +265,56 @@ async def test_interactive_still_prompts(ctx):
     assert result.get("approved"), (
         f"interactive turn did not honor the user's approval: {result!r}"
     )
+
+
+@pytest.mark.asyncio
+async def test_child_agent_of_unattended_turn_denies_without_prompting(ctx):
+    """A child agent spawned from an unattended parent turn inherits unattended
+    status and denies unapproved commands without prompting."""
+    for task_mode, user_id in UNATTENDED_TURNS:
+        _unattended(ctx, task_mode, user_id)
+        # Simulate child context construction as delegate.py does
+        child_ctx = ctx.fork(
+            task_mode="child_agent",
+            is_child=True,
+            parent_is_unattended=ctx.is_unattended,
+            request_confirmation=ctx.request_confirmation,
+        )
+        assert child_ctx.is_unattended, "child of unattended parent must be unattended"
+        spy = ctx.request_confirmation
+
+        result = await check_shell_approval(child_ctx, UNSAFE_COMMAND)
+        assert len(spy.calls) == 0, (
+            f"child of unattended turn (task_mode={task_mode!r}) issued "
+            f"{len(spy.calls)} confirmation prompt(s)"
+        )
+        assert not result.get("approved"), (
+            f"child of unattended turn did not deny {UNSAFE_COMMAND!r}: {result!r}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_child_agent_of_interactive_turn_still_prompts(ctx):
+    """A child agent spawned from an interactive parent turn is not unattended
+    and still prompts for confirmation on unapproved commands."""
+    ctx.task_mode = ""
+    ctx.user_id = "testuser"
+    spy = ConfirmSpy(approved=True)
+    ctx.request_confirmation = spy
+
+    child_ctx = ctx.fork(
+        task_mode="child_agent",
+        is_child=True,
+        parent_is_unattended=ctx.is_unattended,
+        request_confirmation=ctx.request_confirmation,
+    )
+    assert not child_ctx.is_unattended, "child of interactive parent must not be unattended"
+
+    result = await check_shell_approval(child_ctx, UNSAFE_COMMAND)
+    assert len(spy.calls) == 1, (
+        f"child of interactive turn issued {len(spy.calls)} confirmation prompt(s); expected 1"
+    )
+    assert result.get("approved"), (
+        f"child of interactive turn did not honor approval: {result!r}"
+    )
+
