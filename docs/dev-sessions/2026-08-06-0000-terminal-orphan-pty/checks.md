@@ -1,7 +1,7 @@
 # Frozen acceptance checks
 
 **Source:** https://github.com/lmorchard/decafclaw/issues/625
-**Frozen at:** (to be recorded after freeze commit)
+**Frozen at:** e6288dd (2026-08-06)
 **Check files — read-only from Phase 1 onward:**
 - `tests/test_canvas.py`
 - `tests/test_canvas_tools.py`
