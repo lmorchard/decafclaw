@@ -51,7 +51,8 @@ export class ChatInput extends LitElement {
 
   updated(changedProperties) {
     super.updated(changedProperties);
-    if (changedProperties.has('_highlight') || changedProperties.has('_trigger')) {
+    const triggerOpened = changedProperties.has('_trigger') && !changedProperties.get('_trigger') && Boolean(this._trigger);
+    if (changedProperties.has('_highlight') || triggerOpened) {
       const highlighted = this.querySelector('.command-menu-item.highlighted');
       highlighted?.scrollIntoView?.({ block: 'nearest' });
     }
