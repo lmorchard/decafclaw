@@ -228,3 +228,30 @@ class TerminalRegistry:
                 await self.kill(session, grace=0.2)
                 self._sessions.pop(key, None)
                 self._json_sinks.pop(id(session), None)
+
+
+class AgentTerminalHandle:
+    """Restricted terminal registry interface for agent tools.
+
+    Exposes only get() and kill() methods. The agent cannot spawn,
+    attach to, write to, or read from terminals.
+    """
+
+    def __init__(self, registry: TerminalRegistry | None = None):
+        self._registry = registry
+
+    def get(self, conv_id: str, tab_id: str):
+        """Get a terminal session by conversation and tab ID."""
+        if self._registry is None:
+            return None
+        return self._registry.get(conv_id, tab_id)
+
+    async def kill(self, session, grace: float = 1.0):
+        """Kill a terminal session.
+
+        Args:
+            session: TerminalSession to kill
+            grace: Grace period in seconds before SIGKILL
+        """
+        if self._registry is not None:
+            await self._registry.kill(session, grace=grace)
