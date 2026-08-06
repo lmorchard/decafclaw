@@ -448,19 +448,32 @@ SILENT_SENTINEL = "[SILENT]"
 _PRE_SCRIPT_MAX_CHARS = 8000
 
 
-def _resolve_pre_script_path(config, pre_script: str) -> Path | None:
-    """Resolve `pre_script` against workspace/ then data/{agent_id}/.
+def _resolve_pre_script_path(config, task: ScheduleTask) -> Path | None:
+    """Resolve `pre_script` against trusted roots (data/{agent_id}/ excluding workspace) for trusted schedules.
 
-    Returns None when the path escapes both roots. Containment is checked with
-    `is_relative_to` after resolution, not by string prefix, so `..` segments
-    and symlinks can't walk out — same approach as
-    `tools/workspace_tools.py:_resolve_safe`.
+    An admin/bundled schedule is resolved only against `config.agent_path`
+    (data/{agent_id}/), explicitly excluding the agent-writable workspace (`config.workspace_path`)
+    to prevent an agent from hijacking admin scripts (#738).
+    Returns a Path if found and valid, or None if within the trusted root but the file does not exist.
+    Raises ValueError if the path escapes the trusted root or falls within the workspace.
     """
-    for root in (config.workspace_path, config.agent_path):
-        root = root.resolve()
-        candidate = (root / pre_script).resolve()
-        if candidate.is_relative_to(root):
+    if not task.pre_script:
+        return None
+
+    agent_root = config.agent_path.resolve()
+    workspace_root = config.workspace_path.resolve()
+
+    try:
+        candidate = (agent_root / task.pre_script).resolve()
+        if not candidate.is_relative_to(agent_root) or candidate.is_relative_to(workspace_root):
+            raise ValueError(f"pre_script {task.pre_script!r} is outside the allowed roots")
+        if candidate.is_file():
             return candidate
+    except (ValueError, OSError) as e:
+        if isinstance(e, ValueError) and "allowed roots" in str(e):
+            raise
+        raise ValueError(f"pre_script {task.pre_script!r} is outside the allowed roots") from e
+
     return None
 
 
@@ -529,15 +542,17 @@ async def _run_pre_script(config, task: ScheduleTask) -> str:
         # disclosure convention below.
         log.warning("pre_script ignored at %s tier: %s", task.source, task.name)
         return "[pre_script error: ignored — not permitted at this tier]"
-    script = _resolve_pre_script_path(config, task.pre_script)
-    if script is None:
+    try:
+        script = _resolve_pre_script_path(config, task)
+    except ValueError:
         log.warning("Scheduled task %r: pre_script %r escapes the allowed roots",
                     task.name, task.pre_script)
         return f"[pre_script error: {task.pre_script!r} is outside the allowed roots]"
-    if not script.is_file():
+    if script is None:
         return f"[pre_script error: {task.pre_script!r} not found]"
 
     timeout = config.pre_script.timeout_sec
+    config.workspace_path.mkdir(parents=True, exist_ok=True)
     proc = None
     try:
         proc = await asyncio.create_subprocess_exec(
