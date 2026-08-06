@@ -533,8 +533,8 @@ def test_parse_response_preserves_thought_signature():
                     "functionCall": {
                         "name": "vault_search",
                         "args": {"query": "test"},
-                        "thought_signature": "sig_abc123",
                     },
+                    "thoughtSignature": "sig_abc123",
                 }],
             },
         }],
@@ -563,9 +563,10 @@ def test_build_request_body_preserves_thought_signature():
     body = _build_request_body(messages)
     model_msg = body["contents"][0]
     assert model_msg["role"] == "model"
-    fc = model_msg["parts"][0]["functionCall"]
-    assert fc["name"] == "vault_search"
-    assert fc["args"] == {"query": "test"}
-    assert fc["thoughtSignature"] == "sig_abc123"
+    part = model_msg["parts"][0]
+    assert part["functionCall"] == {"name": "vault_search", "args": {"query": "test"}}
+    assert part["thoughtSignature"] == "sig_abc123"
+    assert "thoughtSignature" not in part["functionCall"]
+    assert "thought_signature" not in part["functionCall"]
 
 
