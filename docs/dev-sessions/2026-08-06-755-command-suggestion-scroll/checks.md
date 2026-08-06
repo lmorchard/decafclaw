@@ -24,3 +24,8 @@ AT FREEZE: fails — `AssertionError: expected "vi.fn()" to be called 1 times, b
 - C1: accepted — verifies `scrollIntoView` call on the highlighted menu item with `{ block: "nearest" }`.
 - C2: accepted — verifies wrap case targets row index N-1.
 - G1: accepted — pre-existing 22 tests pass at freeze.
+
+## Clarifications
+
+- C1/C2: Replaced `expect(Element.prototype.scrollIntoView).lastCalledOn(targetRow)` (invalid Vitest/Chai matcher) with `expect(vi.mocked(Element.prototype.scrollIntoView).mock.contexts[0]).toBe(targetRow)`. Tested against both freeze commit `d5df31a` (fails: 0 calls) and current implementation (passes: 1 call on targetRow). Verdict unchanged on both trees (clarification, no tier change).
+
