@@ -19,3 +19,9 @@ global.localStorage = {
     return Object.keys(storage).length;
   },
 };
+
+// jsdom does not implement scrollIntoView on Element.prototype.
+if (typeof Element !== 'undefined' && !Element.prototype.scrollIntoView) {
+  Element.prototype.scrollIntoView = () => {};
+}
+
