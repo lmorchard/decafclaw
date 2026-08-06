@@ -352,7 +352,7 @@ class ConversationManager:
 
     def __init__(self, config, event_bus,
                  confirmation_registry: ConfirmationRegistry | None = None,
-                 terminal_registry=None):
+                 terminal_registry: Any | None = None):
         self.config = config
         self.event_bus = event_bus
         self.confirmation_registry = confirmation_registry or ConfirmationRegistry()
