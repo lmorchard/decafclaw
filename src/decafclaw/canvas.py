@@ -199,7 +199,7 @@ async def clear_canvas(config,
         return CanvasOpResult(ok=True, text="canvas already empty")
 
     # Kill terminal PTYs before clearing (fail-open per D3)
-    if registry and state.get("tabs"):
+    if registry:
         for tab in state["tabs"]:
             if tab.get("widget_type") == "terminal":
                 session = registry.get(conv_id, tab["id"])

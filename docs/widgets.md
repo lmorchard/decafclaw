@@ -101,6 +101,7 @@ capability is tracked separately in #358.
   "description": "Short summary of what the widget shows.",
   "modes": ["inline"],
   "accepts_input": false,
+  "agent_createable": true,
   "data_schema": {
     "type": "object",
     "required": ["value"],
@@ -113,6 +114,16 @@ capability is tracked separately in #358.
 
 `data_schema` is a JSON Schema fragment. The registry validates each
 tool's `WidgetRequest.data` against it before sending to the frontend.
+
+`agent_createable` (default `true`) gates whether the agent-facing
+`canvas_new_tab` tool may create this widget type — `canvas.new_tab()`
+rejects the call when it's `false` unless the caller opts out with
+`enforce_agent_createable=False` (trusted, human-only entry points: the
+`/terminal` command handler, the "Open in Canvas" HTTP endpoint). The
+terminal widget is the only one that sets it `false` today — see
+[docs/web-terminal.md](web-terminal.md#security-model) — because it has no
+server-side effect when created through the agent path (no PTY spawns) and
+would otherwise leave a dead `[session ended]` tab.
 
 ### `widget.js`
 
