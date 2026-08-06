@@ -32,6 +32,8 @@ _META_SCHEMA = {
             "minItems": 1,
         },
         "accepts_input": {"type": "boolean"},
+        "agent_creatable": {"type": "boolean"},
+        "agent_createable": {"type": "boolean"},
         "data_schema": {"type": "object"},
     },
 }
@@ -48,6 +50,7 @@ class WidgetDescriptor:
     accepts_input: bool
     data_schema: dict
     js_path: Path
+    agent_creatable: bool = True      # whether agent tools can create this widget
     tier_root: Path = field(default_factory=Path)  # filesystem root of the tier this widget was found under
     mtime: float = 0.0
     _validator: Any = field(default=None, repr=False, compare=False)
@@ -164,12 +167,15 @@ def _scan_tier(root: Path, tier: str) -> dict[str, WidgetDescriptor]:
             log.warning("duplicate widget name %r within tier %s — "
                         "ignoring %s", name, tier, subdir)
             continue
+        val = raw.get("agent_creatable", raw.get("agent_createable", True))
+        agent_creatable_val = val if isinstance(val, bool) else True
         desc = WidgetDescriptor(
             name=name,
             tier=tier,
             description=raw["description"],
             modes=list(raw["modes"]),
             accepts_input=bool(raw.get("accepts_input", False)),
+            agent_creatable=agent_creatable_val,
             data_schema=raw["data_schema"],
             js_path=js_path,
             tier_root=tier_root_resolved,

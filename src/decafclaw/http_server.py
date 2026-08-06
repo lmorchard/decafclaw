@@ -1933,6 +1933,7 @@ async def post_canvas_new_tab(request: Request, username: str) -> JSONResponse:
     emit = manager.emit if manager else None
     result = await canvas_mod.new_tab(
         config, conv_id, widget_type, data, label=label, emit=emit,
+        enforce_agent_createable=False,
     )
     if not result.ok:
         return JSONResponse({"error": result.error}, status_code=400)
@@ -2341,6 +2342,11 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> Starlette:
     app.state.app_ctx = app_ctx
     from .terminals import TerminalRegistry
     app.state.terminal_registry = TerminalRegistry(config)
+
+    # Wire terminal registry to manager if available
+    if manager is not None:
+        manager.terminal_registry = app.state.terminal_registry
+
     return app
 
 

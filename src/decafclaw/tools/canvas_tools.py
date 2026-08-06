@@ -61,7 +61,9 @@ async def tool_canvas_close_tab(ctx: "Context", tab_id: str) -> ToolResult:
     """Close a single tab by id. If it was active, the panel switches or hides."""
     log.info("[tool:canvas_close_tab] tab=%s", tab_id)
     result = await canvas_mod.close_tab(
-        ctx.config, ctx.conv_id, tab_id, emit=emit_for_ctx(ctx),
+        ctx.config, ctx.conv_id, tab_id,
+        emit=emit_for_ctx(ctx),
+        registry=ctx.terminal_registry,
     )
     if not result.ok:
         return ToolResult(text=f"[error: {result.error}]")
@@ -76,7 +78,9 @@ async def tool_canvas_clear(ctx: "Context") -> ToolResult:
         return ToolResult(text="canvas already empty")
     # Reuse canvas_mod.clear_canvas (existing) — emits kind="clear".
     result = await canvas_mod.clear_canvas(
-        ctx.config, ctx.conv_id, emit=emit_for_ctx(ctx),
+        ctx.config, ctx.conv_id,
+        emit=emit_for_ctx(ctx),
+        registry=ctx.terminal_registry,
     )
     if not result.ok:
         return ToolResult(text=f"[error: {result.error}]")
