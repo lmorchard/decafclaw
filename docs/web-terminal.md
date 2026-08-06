@@ -174,15 +174,32 @@ Three details are load-bearing and easy to regress:
   `[workspace_path, $HOME]`.
 - **Per-conversation session cap** (`terminal.max_sessions_per_conv`) bounds
   how many PTYs one conversation can accumulate.
-- **The agent has zero access, structurally, not just by convention.**
-  `terminals.py` is never imported by anything under `tools/` or `skills/` —
-  there are no terminal tools, no terminal skill, and no way for an agent
-  turn to reach the registry. This is enforced by
-  `tests/test_terminals.py::test_no_agent_side_imports`, which greps every
-  file under `tools/` and `skills/` for an import of `terminals` and fails
-  the build if one appears. The always-loaded canvas tools
-  (`canvas_close_tab`, etc.) can still *close* a terminal tab — see
-  [Known limitations](#known-limitations) for what that does and doesn't do.
+- **The agent has zero read/write/attach access, structurally, not just by
+  convention.** `terminals.py` is never imported by anything under `tools/`
+  or `skills/` — there are no terminal tools, no terminal skill, and no way
+  for an agent turn to reach the `TerminalRegistry` directly. This is
+  enforced by `tests/test_terminals.py::test_no_agent_side_imports`, which
+  greps every file under `tools/` and `skills/` for an import of `terminals`
+  and fails the build if one appears.
+- **The agent *can* kill a PTY, but only through a narrowed façade.**
+  `AgentTerminalHandle` (in `terminals.py`) exposes just `.get()` and
+  `.kill()` — no `spawn`/`attach`/`write_input`/`set_viewport`/
+  `shutdown_all()`. `ConversationManager` sets it on `ctx.terminal_registry`
+  (mirroring `ctx.request_confirmation`), and the always-loaded canvas tools
+  pass it through to `canvas.close_tab()` / `canvas.clear_canvas()` so
+  closing or clearing a terminal tab kills its shell instead of orphaning
+  it — see [Lifecycle and kills](#lifecycle-and-kills).
+  `tests/test_terminals.py::test_agent_terminal_handle_exposes_no_pty_access`
+  asserts the façade's shape conjunctively (has `get`/`kill`, lacks every
+  PTY-access method) so a future addition to `TerminalRegistry` can't leak
+  through unnoticed.
+- **The agent cannot create a terminal tab.** The terminal `widget.json` sets
+  `"agent_createable": false`; `canvas.new_tab()` checks that flag for
+  agent-facing callers (the `canvas_new_tab` tool) and rejects the call, so
+  `widget_type="terminal"` never produces a PTY-less "dead" tab from agent
+  code. The `/terminal` command handler and the "Open in Canvas" HTTP
+  endpoint are trusted human-only callers and pass
+  `enforce_agent_createable=False` to opt out of that check.
 
 ## Lifecycle and kills
 
@@ -197,7 +214,12 @@ grace period via `killpg`) in exactly three places:
    archive and can't resurrect an in-memory PTY on reload, both of which
    contradict this feature's "no archive writes" and "process survives
    reload" goals. `canvas.close_tab()` detects `widget_type == "terminal"`
-   and kills the underlying session when a `TerminalRegistry` is passed in.
+   and kills the underlying session when a registry is passed in — the
+   client-side close path passes the real `TerminalRegistry`; the
+   agent-facing `canvas_close_tab` tool passes the narrower
+   `AgentTerminalHandle` façade (see [Security model](#security-model)).
+   `canvas.clear_canvas()` does the same for every terminal tab when
+   clearing the whole canvas.
 2. **Server shutdown.** `shutdown_http_server()` calls
    `registry.shutdown_all()` before uvicorn stops, killing every live
    session — they're child processes of the server, not the OS session, and
@@ -252,13 +274,6 @@ fresh) regardless.
   in a background (non-focused) view while another view is also live can
   interleave keystrokes into the shell's current input line. Treat
   multi-attach as "watch together," not "type from two keyboards at once."
-- **`canvas_close_tab` (agent tool) does not kill a PTY.** The agent cannot
-  create terminals, but if a human asks the agent to close a canvas tab and
-  it happens to be a terminal, the LLM-facing `canvas_close_tab` tool calls
-  `canvas.close_tab()` without a `TerminalRegistry`, so the tab disappears
-  from the canvas but the underlying shell process is orphaned until the
-  next server shutdown or conversation delete. Only the client-side
-  close-tab path (with its confirm dialog) actually kills the process today.
 - **No disk-persisted scrollback across server restart** (see above) — an
   accepted non-goal, not a bug, but worth remembering if you're relying on
   scrollback for anything durable. The tab self-closes rather than lingering.
