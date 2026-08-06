@@ -32,6 +32,8 @@ _META_SCHEMA = {
             "minItems": 1,
         },
         "accepts_input": {"type": "boolean"},
+        "agent_creatable": {"type": "boolean"},
+        "agent_createable": {"type": "boolean"},
         "data_schema": {"type": "object"},
     },
 }
@@ -165,13 +167,15 @@ def _scan_tier(root: Path, tier: str) -> dict[str, WidgetDescriptor]:
             log.warning("duplicate widget name %r within tier %s — "
                         "ignoring %s", name, tier, subdir)
             continue
+        val = raw.get("agent_creatable", raw.get("agent_createable", True))
+        agent_creatable_val = val if isinstance(val, bool) else True
         desc = WidgetDescriptor(
             name=name,
             tier=tier,
             description=raw["description"],
             modes=list(raw["modes"]),
             accepts_input=bool(raw.get("accepts_input", False)),
-            agent_creatable=bool(raw.get("agent_creatable", raw.get("agent_createable", True))),
+            agent_creatable=agent_creatable_val,
             data_schema=raw["data_schema"],
             js_path=js_path,
             tier_root=tier_root_resolved,
