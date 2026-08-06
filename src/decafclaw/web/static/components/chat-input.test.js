@@ -252,7 +252,7 @@ describe('chat-input command autocomplete', () => {
     expect(targetRow).not.toBeNull();
     expect(Element.prototype.scrollIntoView).toHaveBeenCalledTimes(1);
     expect(Element.prototype.scrollIntoView).toHaveBeenLastCalledWith({ block: 'nearest' });
-    expect(Element.prototype.scrollIntoView).lastCalledOn(targetRow);
+    expect(vi.mocked(Element.prototype.scrollIntoView).mock.contexts[0]).toBe(targetRow);
   });
 
   it('scrolls to the last item when highlight wraps on ArrowUp from index 0 (C2)', async () => {
@@ -272,7 +272,7 @@ describe('chat-input command autocomplete', () => {
     expect(targetRow).not.toBeNull();
     expect(Element.prototype.scrollIntoView).toHaveBeenCalledTimes(1);
     expect(Element.prototype.scrollIntoView).toHaveBeenLastCalledWith({ block: 'nearest' });
-    expect(Element.prototype.scrollIntoView).lastCalledOn(targetRow);
+    expect(vi.mocked(Element.prototype.scrollIntoView).mock.contexts[0]).toBe(targetRow);
   });
 });
 
