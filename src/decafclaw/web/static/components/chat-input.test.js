@@ -235,6 +235,45 @@ describe('chat-input command autocomplete', () => {
     expect(onSend).toHaveBeenCalledTimes(1);
     expect(onSend.mock.calls[0][0].detail.text).toBe('/mc');
   });
+
+  it('scrolls the highlighted item into view with block: "nearest" when highlight moves (C1)', async () => {
+    Element.prototype.scrollIntoView = vi.fn();
+    const el = await mount();
+
+    await type(el, '/');
+    expect(suggested(el)).toEqual(['help', 'mcp__demo__summarize']);
+
+    vi.clearAllMocks();
+
+    await press(el, 'ArrowDown');
+    expect(highlightedIndex(el)).toBe(1);
+
+    const targetRow = el.querySelector(`${ROW}[data-command="mcp__demo__summarize"]`);
+    expect(targetRow).not.toBeNull();
+    expect(Element.prototype.scrollIntoView).toHaveBeenCalledTimes(1);
+    expect(Element.prototype.scrollIntoView).toHaveBeenLastCalledWith({ block: 'nearest' });
+    expect(Element.prototype.scrollIntoView).lastCalledOn(targetRow);
+  });
+
+  it('scrolls to the last item when highlight wraps on ArrowUp from index 0 (C2)', async () => {
+    Element.prototype.scrollIntoView = vi.fn();
+    const el = await mount();
+
+    await type(el, '/');
+    expect(suggested(el)).toEqual(['help', 'mcp__demo__summarize']);
+    expect(highlightedIndex(el)).toBe(0);
+
+    vi.clearAllMocks();
+
+    await press(el, 'ArrowUp');
+    expect(highlightedIndex(el)).toBe(1);
+
+    const targetRow = el.querySelector(`${ROW}[data-command="mcp__demo__summarize"]`);
+    expect(targetRow).not.toBeNull();
+    expect(Element.prototype.scrollIntoView).toHaveBeenCalledTimes(1);
+    expect(Element.prototype.scrollIntoView).toHaveBeenLastCalledWith({ block: 'nearest' });
+    expect(Element.prototype.scrollIntoView).lastCalledOn(targetRow);
+  });
 });
 
 describe('chat-input existing send/stop behaviour (menu closed)', () => {
