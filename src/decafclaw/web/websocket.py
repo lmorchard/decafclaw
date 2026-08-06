@@ -502,6 +502,7 @@ async def _handle_terminal_command(ws_send: WSSendCallable, conv_id, text, usern
         config, conv_id, "terminal",
         {"session_id": session_id, "cwd": str(resolved), "shell": shell},
         emit=emit,
+        enforce_agent_createable=False,
     )
     if not result.ok:
         await _msg(f"Could not open terminal tab: {result.error}")

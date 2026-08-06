@@ -239,20 +239,27 @@ async def new_tab(config,
                   widget_type: str,
                   data: dict,
                   label: str | None = None,
-                  emit: EmitFn | None = None) -> CanvasOpResult:
-    """Append a new tab and make it active. Returns the new tab_id."""
+                  emit: EmitFn | None = None,
+                  enforce_agent_createable: bool = True) -> CanvasOpResult:
+    """Append a new tab and make it active. Returns the new tab_id.
+
+    `enforce_agent_createable` gates the `agent_createable` widget-descriptor
+    check and defaults to on. Trusted, human-only callers (the `/terminal`
+    command handler, the authenticated "Open in Canvas" HTTP endpoint) pass
+    `False` — only the agent-facing `canvas_new_tab` tool leaves it enforced.
+    """
     err = _validate_widget_for_canvas(widget_type, data)
     if err:
         return CanvasOpResult(ok=False, error=err)
     registry = get_widget_registry()
     if registry is not None:
-        # Check agent_createable flag
-        descriptor = registry.get(widget_type)
-        if descriptor and not getattr(descriptor, 'agent_createable', True):
-            return CanvasOpResult(
-                ok=False,
-                error=f"widget type '{widget_type}' is not agent_createable"
-            )
+        if enforce_agent_createable:
+            descriptor = registry.get(widget_type)
+            if descriptor and not getattr(descriptor, 'agent_createable', True):
+                return CanvasOpResult(
+                    ok=False,
+                    error=f"widget type '{widget_type}' is not agent_createable"
+                )
         data = registry.normalize(widget_type, data)
     state = read_canvas_state(config, conv_id)
     next_n = state.get("next_tab_id", 1)
