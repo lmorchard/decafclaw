@@ -31,7 +31,7 @@ jobs:
         # Parallelism is configured in pyproject.toml (addopts = "-n auto
         # --dist=worksteal"). `-v` is omitted because worker output
         # interleaves and the dots-style progress is more readable.
-        run: uv run pytest tests/
+        run: uv run pytest tests/ contrib/skills/
 
   js-test:
     runs-on: ubuntu-latest
