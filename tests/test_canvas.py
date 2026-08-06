@@ -536,3 +536,78 @@ async def test_get_tab_by_id(config, md_doc_registry, emit_recorder):
     assert tab is not None
     assert tab["label"] == "L"
     assert canvas.get_tab(config, "c", "canvas_99") is None
+
+
+# ---------------------------------------------------------------------------
+# C1 — the agent cannot create a widget marked un-createable
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_new_tab_rejects_agent_uncreateable_widget(config, emit_recorder, tmp_path):
+    """C1: new_tab SHALL reject agent_createable: false widgets."""
+    from decafclaw import widgets as widgets_mod
+
+    # Load the real bundled widget registry — terminal widget must be present
+    # The test config is a SimpleNamespace, so we need to add agent_path for load_widget_registry
+    config.agent_path = tmp_path / "agent"
+    config.agent_path.mkdir()
+    registry = widgets_mod.load_widget_registry(config)
+
+    # Verify terminal widget exists and is registered
+    terminal_desc = registry.get("terminal")
+    assert terminal_desc is not None, "terminal widget missing from bundled registry"
+
+    # Patch the global registry getter to return our loaded registry
+    def get_reg():
+        return registry
+
+    import unittest.mock
+    with unittest.mock.patch.object(canvas, "get_widget_registry", get_reg):
+        # Attempt to create a terminal tab
+        result = await canvas.new_tab(
+            config, "c", "terminal",
+            {"session_id": "s1", "cwd": "/tmp", "shell": "/bin/sh"},
+            emit=emit_recorder,
+        )
+
+        # Must reject with ok=False
+        assert not result.ok, "new_tab should reject agent_createable: false widgets"
+
+        # Error message must mention the rejection reason (agent_createable)
+        assert "agent_createable" in result.error or "agent" in result.error.lower(), \
+            f"rejection reason unclear: {result.error}"
+
+        # No tab should have been created
+        state = canvas.read_canvas_state(config, "c")
+        assert state["tabs"] == [], "no tab should exist after rejection"
+
+
+# ---------------------------------------------------------------------------
+# C3 — clearing the canvas kills terminal PTYs
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_clear_canvas_kills_terminal_ptys(config, emit_recorder):
+    """C3: clear_canvas SHALL accept a registry and kill terminal sessions."""
+    # Create a canvas state with a terminal tab
+    state = {
+        "schema_version": 1,
+        "active_tab": "canvas_1",
+        "next_tab_id": 2,
+        "tabs": [
+            {"id": "canvas_1", "label": "Term", "widget_type": "terminal",
+             "data": {"session_id": "s1", "cwd": "/tmp", "shell": "/bin/sh"}},
+        ],
+    }
+    canvas.write_canvas_state(config, "c", state)
+
+    # Mock a terminal session for that tab
+    session = object()
+    reg = _FakeTerminalRegistry({("c", "canvas_1"): session})
+
+    # Clear with the registry
+    result = await canvas.clear_canvas(config, "c", emit=emit_recorder, registry=reg)
+
+    assert result.ok
+    # Registry.kill should have been called for the terminal session
+    assert reg.killed == [session], "clear_canvas should kill terminal PTY sessions"
