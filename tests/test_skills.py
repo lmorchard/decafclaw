@@ -2609,3 +2609,80 @@ async def test_reload_after_restore_still_retracts(ctx, tmp_path):
 
     assert "new_name" in ctx.tools.extra
     assert "old_name" not in ctx.tools.extra, "restore path left an un-retractable tool"
+
+
+def test_skill_loader_dataclass_with_future_annotations(tmp_path):
+    """A skill whose tools.py uses `from __future__ import annotations` and a
+    @dataclass loads successfully without raising AttributeError."""
+    from decafclaw.skills import build_skill_info, build_skill_tool_owners, validate_skill_md
+
+    skill_dir = tmp_path / "dc_skill"
+    skill_dir.mkdir()
+    (skill_dir / "SKILL.md").write_text("---\nname: dc_skill\ndescription: Dataclass skill.\n---\nBody.")
+    (skill_dir / "tools.py").write_text(
+        "from __future__ import annotations\n"
+        "from dataclasses import dataclass\n"
+        "\n"
+        "@dataclass\n"
+        "class MyData:\n"
+        "    val: str\n"
+        "\n"
+        "def sample_tool(ctx, item: MyData):\n"
+        "    return item.val\n"
+        "\n"
+        "TOOLS = {'sample_tool': sample_tool}\n"
+        "TOOL_DEFINITIONS = [{'type': 'function', 'function': {'name': 'sample_tool'}}]\n"
+    )
+    res = validate_skill_md(skill_dir / "SKILL.md")
+    info = build_skill_info(res)
+    info.trust_tier = "bundled"
+    owners = build_skill_tool_owners([info])
+    assert "sample_tool" in owners
+
+
+def test_skill_loader_sys_modules_replacement(tmp_path):
+    import sys
+
+    from decafclaw.skills import build_skill_info, validate_skill_md
+    from decafclaw.tools.skill_tools import _import_tools_module
+
+    skill_dir = tmp_path / "reload_skill"
+    skill_dir.mkdir()
+    (skill_dir / "SKILL.md").write_text("---\nname: reload_skill\ndescription: Reload skill.\n---\nBody.")
+    tools_path = skill_dir / "tools.py"
+    tools_path.write_text("TOOLS = {}\nTOOL_DEFINITIONS = []\n")
+
+    res = validate_skill_md(skill_dir / "SKILL.md")
+    info = build_skill_info(res)
+    mod_name = f"decafclaw_skill_{info.name}"
+    m1 = _import_tools_module(mod_name, tools_path)
+    m2 = _import_tools_module(mod_name, tools_path)
+    assert m1 is not m2
+    assert sys.modules.get(mod_name) is m2
+
+
+def test_skill_loader_failed_reload_preserves_previous_module(tmp_path):
+    import sys
+
+    from decafclaw.tools.skill_tools import _import_tools_module
+
+    skill_dir = tmp_path / "fail_reload_skill"
+    skill_dir.mkdir()
+    tools_path = skill_dir / "tools.py"
+    tools_path.write_text("VALID_VAR = 'original'\n")
+
+    mod_name = "decafclaw_skill_fail_reload"
+    m1 = _import_tools_module(mod_name, tools_path)
+    assert sys.modules.get(mod_name) is m1
+    assert m1.VALID_VAR == "original"
+
+    # Now write broken code (syntax error) for reload
+    tools_path.write_text("def broken(\n")
+    with pytest.raises(SyntaxError):
+        _import_tools_module(mod_name, tools_path)
+
+    # The previous valid module should be preserved in sys.modules
+    assert sys.modules.get(mod_name) is m1
+    assert sys.modules.get(mod_name).VALID_VAR == "original"
+
+
