@@ -332,6 +332,7 @@ describe('chat-input existing send/stop behaviour (menu closed)', () => {
 
 describe('chat-input mention autocomplete', () => {
   it('triggers autocomplete on "@" anywhere and fetches suggestions', async () => {
+    vi.useFakeTimers();
     // Mock global fetch
     const mockResults = {
       results: [
@@ -350,6 +351,9 @@ describe('chat-input mention autocomplete', () => {
     const el = await mount();
     await type(el, 'Check @');
 
+    // Fast-forward timers to trigger debounced fetch
+    vi.advanceTimersByTime(150);
+
     expect(fetchSpy).toHaveBeenCalledWith('/api/autocomplete?q=');
     
     // Set the state manually to simulate async resolution since updateComplete won't wait for fetch inside click/input
@@ -362,6 +366,8 @@ describe('chat-input mention autocomplete', () => {
     expect(rows[0].getAttribute('data-mention-id')).toBe('src/agent.py');
     expect(rows[1].getAttribute('data-mention-id')).toBe('TestPage');
     expect(rows[2].getAttribute('data-mention-id')).toBe('demo/notes');
+
+    vi.useRealTimers();
   });
 
   it('inserts correct syntax when selecting a file mention', async () => {
