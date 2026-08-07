@@ -107,7 +107,7 @@ async def test_persisted_wildcard_rejects_chained_command(ctx):
         new_callable=AsyncMock,
         return_value={"approved": False},
     ) as mock_confirm:
-        result = await tool_shell(ctx, "python scripts/foo.py --arg val; rm -rf ~")
+        result = await tool_shell(ctx, "python scripts/foo.py --arg val; echo chained")
         mock_confirm.assert_awaited_once()
         assert "denied" in result.text
 
