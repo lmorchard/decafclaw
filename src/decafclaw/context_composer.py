@@ -7,6 +7,7 @@ Tracks per-turn diagnostics (what was included, token estimates, actuals).
 
 from __future__ import annotations
 
+import asyncio
 import enum
 import html
 import json
@@ -326,10 +327,10 @@ class ContextComposer:
         via the messages_to_archive list.
         """
         config = ctx.config
-        if getattr(config.agent, "auto_refresh_skills", True):
+        if config.agent.auto_refresh_skills:
             from .tools.skill_tools import rediscover_skills
             old_prompt = config.system_prompt
-            rediscover_skills(config)
+            await asyncio.to_thread(rediscover_skills, config)
             if config.system_prompt != old_prompt:
                 log.debug("Auto-refreshed skills: catalog text changed")
             else:
