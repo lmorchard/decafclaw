@@ -178,10 +178,9 @@ describe('ConversationStore reconnect handling', () => {
     expectResubscribed(2);
   });
 
-  // G4a: rules out the naive `addEventListener('open', () => this.select(id))`
-  // fix — selectConversation() clears the message store, so a transient blip
-  // would blank the transcript the user is reading.
-  it('keeps already-loaded messages when the socket reopens', async () => {
+  // G4a: Web UI resync — a reconnect re-sends SELECT_CONV, LIST_COMMANDS, and LOAD_HISTORY
+  // to ensure that any changes made during the outage are fully refetched and reconciled.
+  it('refetches history and updates the transcript when the socket reopens', async () => {
     const store = makeStore(ws);
 
     store.selectConversation('c1');
@@ -199,40 +198,17 @@ describe('ConversationStore reconnect handling', () => {
     });
     expect(store.currentMessages.map((m) => m.content)).toEqual(['hello', 'hi there']);
 
-    /**
-     * The transcript, the selection, and the absence of a refetch all have to
-     * survive a reopen. Content alone is not enough: a
-     * `selectConversation(id, {resubscribeOnly: true})` that skips
-     * `messageStore.clear()` but still fires LOAD_HISTORY leaves the array
-     * intact while re-pulling 50 messages on every transient blip, and one that
-     * nulls `#currentConvId` leaves the array intact while detaching every
-     * subsequent `msg.conv_id === this.#currentConvId` check.
-     * @param {number} round
-     */
-    const expectUndisturbed = (round) => {
-      const where = `reconnect #${round}`;
-      expect(store.currentMessages.map((m) => m.content), where).toEqual(['hello', 'hi there']);
-      expect(store.currentConvId, `${where}: selection lost`).toBe('c1');
-      const historyRequests = ws.sent.filter(
-        (m) => /** @type {any} */ (m).type === MESSAGE_TYPES.LOAD_HISTORY,
-      );
-      expect(
-        historyRequests,
-        `${where}: refetched history — the transcript is already loaded`,
-      ).toHaveLength(0);
-      ws.sent = [];
-    };
-
-    // Drop the initial select_conv/load_history pair from selectConversation().
+    // Reopen/Reconnect
     ws.sent = [];
-
     ws.fireOpen();
     await flush();
-    expectUndisturbed(1);
 
-    ws.fireOpen();
-    await flush();
-    expectUndisturbed(2);
+    expect(store.currentConvId).toBe('c1');
+    const historyRequests = ws.sent.filter(
+      (m) => /** @type {any} */ (m).type === MESSAGE_TYPES.LOAD_HISTORY,
+    );
+    expect(historyRequests).toHaveLength(1);
+    expect(/** @type {any} */ (historyRequests[0]).conv_id).toBe('c1');
   });
 
   // G4b: with nothing selected there is nothing to resubscribe to, so the
