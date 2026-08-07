@@ -11,6 +11,8 @@ Fail-open: a publish failure must never break the calling tool or handler.
 import logging
 from pathlib import Path
 
+from decafclaw.workspace_index import invalidate_workspace_file_cache
+
 log = logging.getLogger(__name__)
 
 VAULT_CHANGED_EVENT_TYPE = "vault_changed"
@@ -61,6 +63,8 @@ async def publish_vault_changed(
             log.debug("vault_changed path normalize failed for %r: %s", path, exc)
             rel = ""
     try:
+        if config is not None:
+            invalidate_workspace_file_cache(config)
         await event_bus.publish({
             "type": VAULT_CHANGED_EVENT_TYPE,
             "kind": kind,

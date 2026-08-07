@@ -979,6 +979,7 @@ async def workspace_read_json(request: Request, username: str) -> JSONResponse:
 
 
 async def _workspace_rename(
+    config,
     workspace: Path,
     old_file: Path,
     old_rel: str,
@@ -1010,6 +1011,8 @@ async def _workspace_rename(
     old_file.rename(new_file)
     workspace_resolved = workspace.resolve()
     _prune_empty_parents(old_file.parent, workspace)
+    from .workspace_index import invalidate_workspace_file_cache
+    invalidate_workspace_file_cache(config)
     stat = new_file.stat()
     rel = new_file.relative_to(workspace_resolved)
     return JSONResponse({
@@ -1034,7 +1037,7 @@ async def workspace_write(request: Request, username: str) -> JSONResponse:
 
     rename_to = request.query_params.get("rename_to")
     if rename_to is not None:
-        return await _workspace_rename(workspace, resolved, file_path, rename_to)
+        return await _workspace_rename(config, workspace, resolved, file_path, rename_to)
 
     if is_secret(file_path):
         return JSONResponse({"error": "secret path"}, status_code=403)
@@ -1068,6 +1071,8 @@ async def workspace_write(request: Request, username: str) -> JSONResponse:
 
     resolved.parent.mkdir(parents=True, exist_ok=True)
     resolved.write_text(content, encoding="utf-8")
+    from .workspace_index import invalidate_workspace_file_cache
+    invalidate_workspace_file_cache(config)
     return JSONResponse({"ok": True, "modified": resolved.stat().st_mtime})
 
 
@@ -1099,6 +1104,8 @@ async def workspace_delete(request: Request, username: str) -> JSONResponse:
         return JSONResponse({"error": "not found"}, status_code=404)
 
     _prune_empty_parents(resolved.parent, workspace)
+    from .workspace_index import invalidate_workspace_file_cache
+    invalidate_workspace_file_cache(config)
     return JSONResponse({"ok": True})
 
 
@@ -1141,6 +1148,8 @@ async def workspace_create(request: Request, username: str) -> JSONResponse:
     if kind == "folder":
         try:
             resolved.mkdir(parents=True, exist_ok=False)
+            from .workspace_index import invalidate_workspace_file_cache
+            invalidate_workspace_file_cache(config)
         except FileExistsError:
             return JSONResponse({"error": "folder already exists"}, status_code=409)
         return JSONResponse({"ok": True, "path": rel_path})
@@ -1153,6 +1162,8 @@ async def workspace_create(request: Request, username: str) -> JSONResponse:
         return JSONResponse({"error": "content must be a string"}, status_code=400)
     resolved.parent.mkdir(parents=True, exist_ok=True)
     resolved.write_text(content, encoding="utf-8")
+    from .workspace_index import invalidate_workspace_file_cache
+    invalidate_workspace_file_cache(config)
     return JSONResponse({
         "ok": True,
         "path": rel_path,
@@ -1244,70 +1255,29 @@ async def autocomplete(request: Request, username: str) -> JSONResponse:
         except Exception as e:
             log.warning("Autocomplete MCP search failed: %s", e)
 
-    # 3. Search Workspace Files
+    # 3. Search Workspace Files (via cached index)
     workspace_root = config.workspace_path
     if workspace_root.is_dir():
         try:
-            def _find_workspace_files():
-                matches = []
-                workspace_resolved = workspace_root.resolve()
-                vault_resolved = None
-                try:
-                    vault_resolved = config.vault_root.resolve()
-                except Exception:
-                    pass
+            from .workspace_index import get_workspace_files
 
-                for dirpath, dirnames, filenames in os.walk(workspace_root):
-                    if len(matches) >= 20:
-                        break
-                    # Prune hidden or ignored dirs, and the vault directory if it is inside the workspace
-                    # Restrict _WORKSPACE_RECENT_PRUNE_DIRS pruning only to the top-level workspace root
-                    is_root = False
-                    try:
-                        is_root = Path(dirpath).resolve() == workspace_resolved
-                    except Exception:
-                        pass
+            # Get files from cache (instant, triggers background refresh if stale)
+            all_files = await get_workspace_files(config)
 
-                    dirnames[:] = [
-                        d for d in dirnames
-                        if not d.startswith(".")
-                        and d != "node_modules"
-                        and (not is_root or d not in _WORKSPACE_RECENT_PRUNE_DIRS)
-                        and (not vault_resolved or (Path(dirpath) / d).resolve() != vault_resolved)
-                    ]
-                    # Also skip this dir if it is inside the vault
-                    try:
-                        dirpath_path = Path(dirpath).resolve()
-                        if vault_resolved and (dirpath_path == vault_resolved or dirpath_path.is_relative_to(vault_resolved)):
-                            continue
-                    except Exception:
-                        pass
+            # Filter and format matches
+            matches = []
+            for rel_str in all_files:
+                if len(matches) >= 20:
+                    break
+                if not query or query.lower() in rel_str.lower():
+                    matches.append({
+                        "type": "file",
+                        "id": rel_str,
+                        "label": rel_str,
+                        "description": "Workspace File",
+                    })
 
-                    for fname in filenames:
-                        if len(matches) >= 20:
-                            break
-                        if fname.startswith("."):
-                            continue
-                        fpath = Path(dirpath) / fname
-                        try:
-                            resolved = fpath.resolve()
-                            rel = resolved.relative_to(workspace_resolved)
-                            rel_str = rel.as_posix()
-                        except (OSError, ValueError):
-                            continue
-
-                        if not query or query.lower() in rel_str.lower():
-                            matches.append({
-                                "type": "file",
-                                "id": rel_str,
-                                "label": rel_str,
-                                "description": "Workspace File",
-                            })
-                matches.sort(key=lambda x: x["label"].lower())
-                return matches[:20]
-
-            workspace_matches = await asyncio.to_thread(_find_workspace_files)
-            results.extend(workspace_matches)
+            results.extend(matches)
         except Exception as e:
             log.warning("Autocomplete workspace search failed: %s", e)
 
@@ -2507,6 +2477,8 @@ async def run_http_server(config, event_bus, app_ctx=None, manager=None) -> None
         log_level="info",
     )
     _http_server = uvicorn.Server(server_config)
+    from .workspace_index import start_workspace_index_loop
+    start_workspace_index_loop(config)
     log.info(f"HTTP server starting on {config.http.host}:{config.http.port}")
     await _http_server.serve()
 
