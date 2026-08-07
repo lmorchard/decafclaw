@@ -70,4 +70,4 @@ class Provider(Protocol):
         **kwargs: Any,
     ) -> dict[str, Any] | None:
         """Get model metadata (e.g. token limits), or None if unsupported."""
-        ...
+        return None

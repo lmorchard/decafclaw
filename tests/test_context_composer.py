@@ -158,15 +158,18 @@ class TestGetContextWindowSize:
                 return {"inputTokenLimit": 2097152}
 
         from decafclaw.config_types import ModelConfig
-        from decafclaw.llm.registry import register_provider
-        register_provider("mock", MockProvider())
-        config.model_configs["test-model"] = ModelConfig(provider="mock", model="gemini-test", context_window_size=0)
-        config.default_model = "test-model"
+        from decafclaw.llm.registry import clear_providers, register_provider
+        try:
+            register_provider("mock", MockProvider())
+            config.model_configs["test-model"] = ModelConfig(provider="mock", model="gemini-test", context_window_size=0)
+            config.default_model = "test-model"
 
-        from decafclaw.llm import ensure_model_context_window
-        size = await ensure_model_context_window(config, "test-model")
-        assert size == 2097152
-        assert config.model_configs["test-model"].context_window_size == 2097152
+            from decafclaw.llm import ensure_model_context_window
+            size = await ensure_model_context_window(config, "test-model")
+            assert size == 2097152
+            assert config.model_configs["test-model"].context_window_size == 2097152
+        finally:
+            clear_providers()
 
 
 # -- Memory context ------------------------------------------------------------
