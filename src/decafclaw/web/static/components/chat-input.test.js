@@ -329,3 +329,80 @@ describe('chat-input existing send/stop behaviour (menu closed)', () => {
     expect(onStop).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('chat-input mention autocomplete', () => {
+  it('triggers autocomplete on "@" anywhere and fetches suggestions', async () => {
+    // Mock global fetch
+    const mockResults = {
+      results: [
+        { type: 'file', id: 'src/agent.py', label: 'src/agent.py', description: 'Workspace File' },
+        { type: 'vault', id: 'TestPage', label: 'TestPage', description: 'Vault Page' },
+        { type: 'mcp', id: 'demo/notes', label: 'mcp/demo/notes', description: 'MCP Resource' }
+      ]
+    };
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(() =>
+      Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve(mockResults)
+      })
+    );
+
+    const el = await mount();
+    await type(el, 'Check @');
+
+    expect(fetchSpy).toHaveBeenCalledWith('/api/autocomplete?q=');
+    
+    // Set the state manually to simulate async resolution since updateComplete won't wait for fetch inside click/input
+    el._mentionMatches = mockResults.results;
+    await el.updateComplete;
+
+    expect(el.querySelector(MENU)).not.toBeNull();
+    const rows = el.querySelectorAll(ROW);
+    expect(rows).toHaveLength(3);
+    expect(rows[0].getAttribute('data-mention-id')).toBe('src/agent.py');
+    expect(rows[1].getAttribute('data-mention-id')).toBe('TestPage');
+    expect(rows[2].getAttribute('data-mention-id')).toBe('demo/notes');
+  });
+
+  it('inserts correct syntax when selecting a file mention', async () => {
+    const el = await mount();
+    await type(el, 'Check @');
+    el._mentionMatches = [
+      { type: 'file', id: 'src/agent.py', label: 'src/agent.py', description: 'Workspace File' }
+    ];
+    await el.updateComplete;
+
+    await press(el, 'Tab');
+
+    expect(textareaOf(el).value).toBe('Check @src/agent.py ');
+    expect(el.querySelector(MENU)).toBeNull();
+  });
+
+  it('inserts bracketed syntax when selecting a vault page mention', async () => {
+    const el = await mount();
+    await type(el, 'See @');
+    el._mentionMatches = [
+      { type: 'vault', id: 'TestPage', label: 'TestPage', description: 'Vault Page' }
+    ];
+    await el.updateComplete;
+
+    await press(el, 'Tab');
+
+    expect(textareaOf(el).value).toBe('See @[[TestPage]] ');
+    expect(el.querySelector(MENU)).toBeNull();
+  });
+
+  it('inserts prefixed syntax when selecting an MCP resource mention', async () => {
+    const el = await mount();
+    await type(el, 'Inspect @');
+    el._mentionMatches = [
+      { type: 'mcp', id: 'demo/notes', label: 'mcp/demo/notes', description: 'MCP Resource' }
+    ];
+    await el.updateComplete;
+
+    await press(el, 'Tab');
+
+    expect(textareaOf(el).value).toBe('Inspect @mcp/demo/notes ');
+    expect(el.querySelector(MENU)).toBeNull();
+  });
+});

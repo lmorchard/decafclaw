@@ -4,6 +4,9 @@ import { uploadFile } from '../lib/upload-client.js';
 /** A `/` or `!` command token filling the current line up to the caret. */
 const TRIGGER_RE = /^([/!])(\S*)$/;
 
+/** An `@` mention token ending at the caret. */
+const MENTION_TRIGGER_RE = /(?<!\w)@([a-zA-Z0-9_./+-]*)$/;
+
 /**
  * Score `name` as an ordered-subsequence match for `query`.
  *
@@ -45,6 +48,7 @@ export class ChatInput extends LitElement {
     _dragOver: { type: Boolean, state: true },
     _trigger: { type: Object, state: true },
     _highlight: { type: Number, state: true },
+    _mentionMatches: { type: Array, state: true },
   };
 
   createRenderRoot() { return this; }
@@ -71,9 +75,11 @@ export class ChatInput extends LitElement {
     this.commands = [];
     this._pendingAttachments = [];
     this._dragOver = false;
-    /** @type {{prefix: string, query: string}|null} */
+    /** @type {{prefix: string, query: string, start: number}|null} */
     this._trigger = null;
     this._highlight = 0;
+    this._mentionMatches = [];
+    this._lastFetchedQuery = '';
   }
 
   /** Focus the textarea. */
@@ -86,17 +92,16 @@ export class ChatInput extends LitElement {
     this.#handleFiles(files);
   }
 
-  // -- Command autocomplete -----------------------------------------------------
+  // -- Command / Mention autocomplete -----------------------------------------------------
 
   /**
-   * The command token the caret sits in, read from the live textarea.
+   * The command or mention token the caret sits in, read from the live textarea.
    *
-   * Scoped to the current *line*, not the whole value: `hello\n/mc` is a
-   * trigger, `see /mc` is not. Recomputed on demand rather than cached so a
-   * commit always rewrites what is actually in the box.
+   * Scoped to the current *line* for commands, but anywhere on the line for mentions.
+   * Recomputed on demand rather than cached so a commit always rewrites what is actually in the box.
    *
    * @returns {{textarea: HTMLTextAreaElement, caret: number, lineStart: number,
-   *            prefix: string, query: string}|null}
+   *            prefix: string, query: string, start: number}|null}
    */
   #triggerContext() {
     const ta = /** @type {HTMLTextAreaElement|null} */ (this.querySelector('textarea'));
@@ -104,9 +109,41 @@ export class ChatInput extends LitElement {
     const caret = ta.selectionStart ?? ta.value.length;
     const before = ta.value.slice(0, caret);
     const lineStart = before.lastIndexOf('\n') + 1;
-    const match = TRIGGER_RE.exec(before.slice(lineStart));
-    if (!match) return null;
-    return { textarea: ta, caret, lineStart, prefix: match[1], query: match[2] };
+
+    // 1. Command Autocomplete
+    const cmdMatch = TRIGGER_RE.exec(before.slice(lineStart));
+    if (cmdMatch) {
+      return { textarea: ta, caret, lineStart, prefix: cmdMatch[1], query: cmdMatch[2], start: lineStart };
+    }
+
+    // 2. Mention Autocomplete
+    const mentionMatch = MENTION_TRIGGER_RE.exec(before);
+    if (mentionMatch) {
+      const query = mentionMatch[1];
+      const start = caret - query.length - 1; // start index of '@'
+      return { textarea: ta, caret, lineStart, prefix: '@', query, start };
+    }
+
+    return null;
+  }
+
+  async #fetchMentions(query) {
+    this._lastFetchedQuery = query;
+    try {
+      const res = await fetch(`/api/autocomplete?q=${encodeURIComponent(query)}`);
+      if (this._lastFetchedQuery !== query) return;
+      if (res.ok) {
+        const data = await res.json();
+        this._mentionMatches = data.results || [];
+      } else {
+        this._mentionMatches = [];
+      }
+    } catch (err) {
+      console.warn('Autocomplete fetch failed:', err);
+      if (this._lastFetchedQuery === query) {
+        this._mentionMatches = [];
+      }
+    }
   }
 
   /**
@@ -115,10 +152,7 @@ export class ChatInput extends LitElement {
    * Runs on `input` and also on `keyup` / `click`, so a caret moved without
    * typing (arrow keys, a mouse click) closes a menu that no longer belongs to
    * where the caret is. Resets the highlight ONLY when the token actually
-   * changed: keyup fires after every ArrowDown/ArrowUp keydown, so resetting
-   * unconditionally would snap the highlight back to 0 on each press and break
-   * arrow navigation in a real browser — invisibly, since a synthetic `press()`
-   * in a test dispatches no keyup.
+   * changed.
    */
   #syncMenu() {
     const ctx = this.#triggerContext();
@@ -126,13 +160,21 @@ export class ChatInput extends LitElement {
       // Left the token entirely — a later `/` gets a fresh menu.
       this.#dismissed = false;
       this._trigger = null;
+      this._mentionMatches = [];
       return;
     }
     if (this.#dismissed) return;
     const changed = this._trigger?.prefix !== ctx.prefix
       || this._trigger?.query !== ctx.query;
-    this._trigger = { prefix: ctx.prefix, query: ctx.query };
-    if (changed) this._highlight = 0;
+    this._trigger = { prefix: ctx.prefix, query: ctx.query, start: ctx.start };
+    if (changed) {
+      this._highlight = 0;
+      if (ctx.prefix === '@') {
+        this.#fetchMentions(ctx.query);
+      } else {
+        this._mentionMatches = [];
+      }
+    }
   }
 
   /** Commands matching the open trigger, best first. @returns {any[]} */
@@ -149,36 +191,46 @@ export class ChatInput extends LitElement {
     return scored.map((s) => s.cmd);
   }
 
-  /** Replace the trigger token with the chosen command. @param {any} cmd */
-  #commitCommand(cmd) {
+  /** Replace the trigger token with the chosen command or mention. @param {any} item */
+  #commitAutocomplete(item) {
     const ctx = this.#triggerContext();
-    if (!ctx || !cmd) return;
+    if (!ctx || !item) return;
     const { textarea } = ctx;
-    const insert = `${ctx.prefix}${cmd.name} `;
-    textarea.value = textarea.value.slice(0, ctx.lineStart)
+    let insert = '';
+    if (ctx.prefix === '@') {
+      if (item.type === 'vault') {
+        insert = `@[[${item.id}]] `;
+      } else if (item.type === 'mcp') {
+        insert = `@mcp/${item.id} `;
+      } else {
+        insert = `@${item.id} `;
+      }
+    } else {
+      insert = `${ctx.prefix}${item.name} `;
+    }
+    textarea.value = textarea.value.slice(0, ctx.start)
       + insert + textarea.value.slice(ctx.caret);
-    const caret = ctx.lineStart + insert.length;
+    const caret = ctx.start + insert.length;
     textarea.selectionStart = textarea.selectionEnd = caret;
     this.#closeMenu();
     textarea.focus();
+    // Dispatch input event to let textarea adjust size
+    textarea.dispatchEvent(new Event('input', { bubbles: true }));
   }
 
   #closeMenu() {
     this.#dismissed = false;
     this._trigger = null;
+    this._mentionMatches = [];
   }
 
   /** @param {KeyboardEvent} e */
   #handleKeydown(e) {
-    // Gate on the LIVE caret, not on `_trigger` alone. `_trigger` is only
-    // recomputed on `input`, so a caret moved by ArrowLeft/ArrowRight or a
-    // mouse click leaves it stale: with `hello /mc` and the caret clicked back
-    // to after `hello`, the cache still says a `/mc` token is open, so Tab
-    // would be swallowed here and then do nothing (`#commitCommand`
-    // recomputes the context and early-returns) — you could not tab out of the
-    // composer. Asking `#triggerContext()` makes the interception decision use
-    // the same source of truth the commit does.
-    const matches = this.#triggerContext() ? this.#matchingCommands() : [];
+    const ctx = this.#triggerContext();
+    const isMention = ctx?.prefix === '@';
+    const matches = ctx
+      ? (isMention ? (this._mentionMatches || []) : this.#matchingCommands())
+      : [];
     if (matches.length) {
       const highlight = Math.min(this._highlight, matches.length - 1);
       if (e.key === 'ArrowDown') {
@@ -193,13 +245,14 @@ export class ChatInput extends LitElement {
       }
       if (e.key === 'Tab') {
         e.preventDefault();
-        this.#commitCommand(matches[highlight]);
+        this.#commitAutocomplete(matches[highlight]);
         return;
       }
       if (e.key === 'Escape') {
         e.preventDefault();
         this.#dismissed = true;
         this._trigger = null;
+        this._mentionMatches = [];
         return;
       }
       // Enter deliberately falls through: it sends, it never commits.
@@ -335,29 +388,52 @@ export class ChatInput extends LitElement {
 
   render() {
     const hasAttachments = this._pendingAttachments.length > 0;
-    const matches = this.#matchingCommands();
+    const isMention = this._trigger?.prefix === '@';
+    const matches = isMention ? (this._mentionMatches || []) : this.#matchingCommands();
     const highlight = Math.min(this._highlight, matches.length - 1);
     return html`
       ${matches.length ? html`
         <div class="command-menu" role="listbox">
-          ${matches.map((cmd, i) => html`
-            <div class="command-menu-item ${i === highlight ? 'highlighted' : ''}"
-              role="option"
-              aria-selected=${i === highlight}
-              data-command=${cmd.name}
-              @mousedown=${(/** @type {MouseEvent} */ e) => {
-                e.preventDefault();  // keep focus in the textarea
-                this.#commitCommand(cmd);
-              }}>
-              <span class="command-menu-name">${cmd.name}</span>
-              ${cmd.argument_hint
-                ? html`<span class="command-menu-hint">${cmd.argument_hint}</span>`
-                : nothing}
-              ${cmd.description
-                ? html`<span class="command-menu-desc">${cmd.description}</span>`
-                : nothing}
-            </div>
-          `)}
+          ${matches.map((item, i) => {
+            const isHighlighted = i === highlight;
+            if (isMention) {
+              return html`
+                <div class="command-menu-item ${isHighlighted ? 'highlighted' : ''}"
+                  role="option"
+                  aria-selected=${isHighlighted}
+                  data-mention-id=${item.id}
+                  @mousedown=${(/** @type {MouseEvent} */ e) => {
+                    e.preventDefault();  // keep focus in the textarea
+                    this.#commitAutocomplete(item);
+                  }}>
+                  <span class="command-menu-name">${item.label}</span>
+                  <span class="command-menu-hint">${item.type}</span>
+                  ${item.description
+                    ? html`<span class="command-menu-desc">${item.description}</span>`
+                    : nothing}
+                </div>
+              `;
+            } else {
+              return html`
+                <div class="command-menu-item ${isHighlighted ? 'highlighted' : ''}"
+                  role="option"
+                  aria-selected=${isHighlighted}
+                  data-command=${item.name}
+                  @mousedown=${(/** @type {MouseEvent} */ e) => {
+                    e.preventDefault();  // keep focus in the textarea
+                    this.#commitAutocomplete(item);
+                  }}>
+                  <span class="command-menu-name">${item.name}</span>
+                  ${item.argument_hint
+                    ? html`<span class="command-menu-hint">${item.argument_hint}</span>`
+                    : nothing}
+                  ${item.description
+                    ? html`<span class="command-menu-desc">${item.description}</span>`
+                    : nothing}
+                </div>
+              `;
+            }
+          })}
         </div>
       ` : nothing}
       ${hasAttachments ? html`
