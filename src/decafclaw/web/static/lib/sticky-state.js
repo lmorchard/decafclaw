@@ -105,3 +105,11 @@ export function toggleCollapsed() {
   _saveCollapsed(_state.active, s.collapsed);
   _publish();
 }
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('ws-connected', () => {
+    if (_state.active) {
+      setActiveConv(_state.active);
+    }
+  });
+}
