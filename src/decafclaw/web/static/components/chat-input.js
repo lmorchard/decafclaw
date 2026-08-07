@@ -62,6 +62,14 @@ export class ChatInput extends LitElement {
     }
   }
 
+  disconnectedCallback() {
+    super.disconnectedCallback();
+    if (this._fetchTimeout) {
+      clearTimeout(this._fetchTimeout);
+      this._fetchTimeout = null;
+    }
+  }
+
   /** Escape keeps the menu shut for the token it dismissed. */
   #dismissed = false;
 
@@ -179,6 +187,8 @@ export class ChatInput extends LitElement {
         this._fetchTimeout = null;
       }
       if (ctx.prefix === '@') {
+        this._lastFetchedQuery = ctx.query;
+        this._mentionMatches = [];
         this._fetchTimeout = setTimeout(() => {
           this.#fetchMentions(ctx.query);
         }, 150);
