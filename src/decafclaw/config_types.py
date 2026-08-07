@@ -232,6 +232,7 @@ class AgentConfig:
     tool_timeout_sec: int = 180
     turn_on_new_message: str = "queue"  # "queue" or "cancel"
     show_context_status: bool = True
+    auto_refresh_skills: bool = True
     preemptive_search: PreemptiveSearchConfig = field(default_factory=PreemptiveSearchConfig)
 
 
