@@ -31,8 +31,8 @@ from .memory_context import (
     format_memory_context,
     format_memory_headlines,
     get_already_injected_pages,
-    parse_wiki_references,
     parse_bare_mentions,
+    parse_wiki_references,
     read_wiki_page,
     retrieve_memory_context,
 )
@@ -913,8 +913,8 @@ class ContextComposer:
         if mode in skip_modes:
             return [], None
 
-        from .web.workspace_paths import resolve_safe, detect_kind
-        from .mcp_client import get_registry, _convert_resource_response
+        from .mcp_client import _convert_resource_response, get_registry
+        from .web.workspace_paths import detect_kind, resolve_safe
 
         mentions = parse_bare_mentions(user_message)
         if not mentions:
@@ -985,8 +985,9 @@ class ContextComposer:
                     if not target_res:
                         text = f"[MCP resource '{resource_name}' not found on server '{server_name}']"
                     else:
-                        from pydantic import AnyUrl
                         import asyncio
+
+                        from pydantic import AnyUrl
                         try:
                             timeout_s = state.config.timeout / 1000
                             result = await asyncio.wait_for(
