@@ -51,6 +51,22 @@ async def client(app, http_config):
         yield c
 
 
+@pytest.fixture(autouse=True)
+def reset_workspace_index_state():
+    """Reset workspace index global state before each test."""
+    import decafclaw.workspace_index as wi
+    wi._workspace_index = None
+    wi._index_timestamp = 0.0
+    wi._refresh_task = None
+    yield
+    # Cleanup after test
+    wi._workspace_index = None
+    wi._index_timestamp = 0.0
+    if wi._refresh_task and not wi._refresh_task.done():
+        wi._refresh_task.cancel()
+    wi._refresh_task = None
+
+
 # -- Autocomplete --------------------------------------------------------------
 
 
@@ -159,3 +175,104 @@ async def test_autocomplete_mcp_resources(client, monkeypatch):
     assert results[0]["id"] == "demo_server/summary"
     assert results[0]["label"] == "mcp/demo_server/summary"
     assert results[0]["description"] == "Resource Summary"
+
+
+# -- Workspace Index Tests -----------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_autocomplete_uses_file_backed_cache(http_config):
+    """CRITERION: /api/autocomplete serves results from in-memory cache without os.walk.
+
+    Verifies that get_workspace_files() returns instantly from cache and does NOT
+    execute synchronous os.walk on the HTTP request thread after initial prime.
+    """
+    from unittest.mock import patch
+    from decafclaw.workspace_index import get_workspace_files
+
+    # Create test files
+    ws = http_config.workspace_path
+    (ws / "test1.md").write_text("test")
+    (ws / "test2.txt").write_text("test")
+
+    # Track os.walk calls - patch in the workspace_index module where it's used
+    original_walk = os.walk
+    walk_called = False
+
+    def tracked_walk(*args, **kwargs):
+        nonlocal walk_called
+        walk_called = True
+        return original_walk(*args, **kwargs)
+
+    # First call: prime the cache (this WILL call os.walk to build index)
+    with patch("decafclaw.workspace_index.os.walk", tracked_walk):
+        walk_called = False
+        files_first = await get_workspace_files(http_config)
+        assert walk_called, "Initial cache build should walk filesystem"
+        assert len(files_first) == 2
+        assert "test1.md" in files_first
+        assert "test2.txt" in files_first
+
+    # Wait for background persistence
+    import asyncio
+    await asyncio.sleep(0.1)
+
+    # Second call: must use cache (os.walk should NOT be called)
+    with patch("decafclaw.workspace_index.os.walk", tracked_walk):
+        walk_called = False
+        files_second = await get_workspace_files(http_config)
+        assert not walk_called, "Subsequent query must use cache, not os.walk"
+        assert files_second == files_first
+
+
+@pytest.mark.asyncio
+async def test_autocomplete_background_refresh(http_config):
+    """CRITERION: Cache updates in background via asyncio.create_task without blocking.
+
+    Verifies that when cache TTL expires or is invalidated, the system updates
+    the index in a background task and persists to workspace_index.json atomically.
+    """
+    import asyncio
+    import json
+    from decafclaw.workspace_index import get_workspace_files, invalidate_workspace_file_cache
+
+    # Create initial files
+    ws = http_config.workspace_path
+    (ws / "initial.md").write_text("test")
+
+    # Prime the cache
+    files_initial = await get_workspace_files(http_config)
+    assert len(files_initial) == 1
+    assert "initial.md" in files_initial
+
+    # Wait for background persistence
+    await asyncio.sleep(0.2)
+    index_path = http_config.agent_path / "workspace_index.json"
+    assert index_path.exists(), "Index should be persisted to disk"
+    with open(index_path) as f:
+        disk_data = json.load(f)
+        assert "initial.md" in disk_data["files"]
+
+    # Add new file and invalidate cache
+    (ws / "new_file.txt").write_text("test")
+    invalidate_workspace_file_cache()
+
+    # Query again - should return old cache immediately but trigger background refresh
+    files_stale = await get_workspace_files(http_config)
+    assert "new_file.txt" not in files_stale, "Should return stale cache immediately"
+
+    # Wait for background refresh to complete
+    await asyncio.sleep(0.5)
+
+    # Next query should see the new file
+    files_refreshed = await get_workspace_files(http_config)
+    assert "new_file.txt" in files_refreshed, "Background refresh should have updated cache"
+
+    # Verify atomic disk persistence (tmpfile + os.replace)
+    with open(index_path) as f:
+        final_disk_data = json.load(f)
+        assert "new_file.txt" in final_disk_data["files"]
+
+    # Verify no .tmp file left behind (atomic write cleanup)
+    tmp_path = index_path.with_suffix(".tmp")
+    assert not tmp_path.exists(), "Temporary file should be cleaned up after atomic write"

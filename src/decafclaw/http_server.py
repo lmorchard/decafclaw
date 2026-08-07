@@ -1244,70 +1244,29 @@ async def autocomplete(request: Request, username: str) -> JSONResponse:
         except Exception as e:
             log.warning("Autocomplete MCP search failed: %s", e)
 
-    # 3. Search Workspace Files
+    # 3. Search Workspace Files (via cached index)
     workspace_root = config.workspace_path
     if workspace_root.is_dir():
         try:
-            def _find_workspace_files():
-                matches = []
-                workspace_resolved = workspace_root.resolve()
-                vault_resolved = None
-                try:
-                    vault_resolved = config.vault_root.resolve()
-                except Exception:
-                    pass
+            from .workspace_index import get_workspace_files
 
-                for dirpath, dirnames, filenames in os.walk(workspace_root):
-                    if len(matches) >= 20:
-                        break
-                    # Prune hidden or ignored dirs, and the vault directory if it is inside the workspace
-                    # Restrict _WORKSPACE_RECENT_PRUNE_DIRS pruning only to the top-level workspace root
-                    is_root = False
-                    try:
-                        is_root = Path(dirpath).resolve() == workspace_resolved
-                    except Exception:
-                        pass
+            # Get files from cache (instant, triggers background refresh if stale)
+            all_files = await get_workspace_files(config)
 
-                    dirnames[:] = [
-                        d for d in dirnames
-                        if not d.startswith(".")
-                        and d != "node_modules"
-                        and (not is_root or d not in _WORKSPACE_RECENT_PRUNE_DIRS)
-                        and (not vault_resolved or (Path(dirpath) / d).resolve() != vault_resolved)
-                    ]
-                    # Also skip this dir if it is inside the vault
-                    try:
-                        dirpath_path = Path(dirpath).resolve()
-                        if vault_resolved and (dirpath_path == vault_resolved or dirpath_path.is_relative_to(vault_resolved)):
-                            continue
-                    except Exception:
-                        pass
+            # Filter and format matches
+            matches = []
+            for rel_str in all_files:
+                if len(matches) >= 20:
+                    break
+                if not query or query.lower() in rel_str.lower():
+                    matches.append({
+                        "type": "file",
+                        "id": rel_str,
+                        "label": rel_str,
+                        "description": "Workspace File",
+                    })
 
-                    for fname in filenames:
-                        if len(matches) >= 20:
-                            break
-                        if fname.startswith("."):
-                            continue
-                        fpath = Path(dirpath) / fname
-                        try:
-                            resolved = fpath.resolve()
-                            rel = resolved.relative_to(workspace_resolved)
-                            rel_str = rel.as_posix()
-                        except (OSError, ValueError):
-                            continue
-
-                        if not query or query.lower() in rel_str.lower():
-                            matches.append({
-                                "type": "file",
-                                "id": rel_str,
-                                "label": rel_str,
-                                "description": "Workspace File",
-                            })
-                matches.sort(key=lambda x: x["label"].lower())
-                return matches[:20]
-
-            workspace_matches = await asyncio.to_thread(_find_workspace_files)
-            results.extend(workspace_matches)
+            results.extend(matches)
         except Exception as e:
             log.warning("Autocomplete workspace search failed: %s", e)
 
