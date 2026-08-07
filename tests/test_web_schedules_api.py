@@ -199,6 +199,14 @@ class TestSchedulesAPI:
         assert r.status_code == 400
 
     @pytest.mark.asyncio
+    async def test_put_400_on_unrecognized_patch_keys(self, client):
+        """PUT /api/schedules/{name} rejects unrecognized patch keys."""
+        r = await client.put("/api/schedules/dream", json={"allowed_tool": ["vault_read"]})
+        assert r.status_code == 400
+        assert "unrecognized patch key" in r.json()["error"].lower()
+        assert "allowed_tool" in r.json()["error"]
+
+    @pytest.mark.asyncio
     async def test_put_accepts_content_as_alias_for_body(self, client):
         r = await client.put(
             "/api/schedules/dream",

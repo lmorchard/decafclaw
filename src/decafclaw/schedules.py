@@ -102,6 +102,12 @@ _KNOWN_FRONTMATTER_KEYS = frozenset({
     "allowed-tools", "pre_script", "required-skills", "email-recipients",
 })
 
+# Valid patch keys accepted by `write_overlay`. Any other key raises ValueError.
+VALID_PATCH_KEYS = frozenset({
+    "enabled", "schedule", "body", "channel", "allowed_tools",
+    "required_skills", "shell_patterns", "email_recipients", "model", "pre_script",
+})
+
 
 def parse_schedule_file(path: Path) -> ScheduleTask | None:
     """Parse a schedule markdown file. Returns None if invalid."""
@@ -312,6 +318,12 @@ def write_overlay(config, name: str, patch: dict) -> ScheduleTask:
 
     # Treat null (None) values as "leave unchanged" rather than overwriting.
     patch = {k: v for k, v in patch.items() if v is not None}
+
+    # Reject unrecognized patch keys.
+    unknown = set(patch) - VALID_PATCH_KEYS
+    if unknown:
+        keys_str = ", ".join(sorted(unknown))
+        raise ValueError(f"unrecognized patch key(s): {keys_str}")
 
     # Validate cron expression before touching disk.
     if "schedule" in patch:
