@@ -7,6 +7,7 @@
  */
 
 import { MESSAGE_TYPES } from './lib/message-types.js';
+import { WebSocketClient } from './lib/websocket-client.js';
 
 const PATH_RE = /^\/canvas\/([^/?#]+)(?:\/([^/?#]+))?/;
 const m = location.pathname.match(PATH_RE);
@@ -91,14 +92,13 @@ async function loadInitial() {
 
 function openWebSocket() {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const ws = new WebSocket(`${proto}//${location.host}/ws/chat`);
+  const ws = new WebSocketClient(`${proto}//${location.host}/ws/chat`);
   ws.addEventListener('open', () => {
-    ws.send(JSON.stringify({ type: MESSAGE_TYPES.SELECT_CONV, conv_id: convId }));
+    ws.send({ type: MESSAGE_TYPES.SELECT_CONV, conv_id: convId });
   });
   ws.addEventListener('message', (ev) => {
-    let msg;
-    try { msg = JSON.parse(ev.data); } catch { return; }
-    if (msg.type !== MESSAGE_TYPES.CANVAS_UPDATE) return;
+    const msg = /** @type {CustomEvent} */ (ev).detail;
+    if (!msg || msg.type !== MESSAGE_TYPES.CANVAS_UPDATE) return;
     if (msg.conv_id && msg.conv_id !== convId) return;
 
     const kind = msg.kind || 'update';
@@ -153,6 +153,7 @@ function openWebSocket() {
   ws.addEventListener('close', () => {
     console.info('canvas WS closed');
   });
+  ws.connect();
 }
 
 await loadInitial();
