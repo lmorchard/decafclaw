@@ -23,11 +23,11 @@
   tests: workflow_discipline
   setup:
     config_overrides: {reflection.enabled: false}
-  input: "Off the top of your head, what's the capital of France?"
+  input: "What's the capital of France?"
   expect:
     response_contains: "Paris"
-    expect_no_tool: [checklist_create, activate_skill]
-    max_tool_calls: 2
+    expect_no_tool: [checklist_create, activate_skill, vault_search, notes_read, conversation_search]
+    max_tool_calls: 0
     max_tool_errors: 0
 
 - name: "small two-step ask stays inline, no project escalation"
