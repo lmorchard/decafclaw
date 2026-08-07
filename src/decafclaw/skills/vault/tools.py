@@ -730,18 +730,11 @@ async def tool_vault_search(ctx: "Context", query: str = "", source_type: str = 
     # every markdown file, so a truthiness test here would let `query=" "`
     # return the whole vault — the exact defect this guard exists to stop, one
     # character away from the refused call.
-    #
-    # The message deliberately does NOT offer `source_type` as a way to satisfy
-    # the guard, even though the condition accepts it: `_substring_search` takes
-    # no `source_type` parameter, so on the default substring strategy that axis
-    # narrows nothing and would hand the model a one-token route back to a full
-    # dump. Accepting it keeps the criterion's boundary; not recommending it
-    # keeps the advice honest. See the `source_type` follow-up issue.
     if (not query.strip() and not req_tags and not folder
             and not source_type and days <= 0):
         return ToolResult(
             text=("[error: vault_search needs at least one of `query`, `tags`, "
-                  "`folder` or `days`. A call with none of them is not a "
+                  "`folder`, `source_type` or `days`. A call with none of them is not a "
                   "search — it would return every page in the vault. Use "
                   "`vault_list` to enumerate pages, or retry with a query.]"),
             display_short_text="no search criteria",
@@ -828,7 +821,8 @@ async def tool_vault_search(ctx: "Context", query: str = "", source_type: str = 
 
     # Substring search across vault
     return _substring_search(ctx.config, query, days=days, folder=folder,
-                             req_tags=req_tags, any_tag=any_tag)
+                             req_tags=req_tags, any_tag=any_tag,
+                             source_type=source_type)
 
 
 def _semantic_result_matches_tags(config, result: dict, req_tags: set[str],
@@ -911,7 +905,8 @@ def _tag_filter_search(config, req_tags: set[str], any_tag: bool,
 
 def _substring_search(config, query: str, days: int = 0, folder: str = "",
                       req_tags: set[str] | None = None,
-                      any_tag: bool = False) -> str | ToolResult:
+                      any_tag: bool = False,
+                      source_type: str = "") -> str | ToolResult:
     """Substring search across vault markdown files."""
     vault = _vault_root(config)
     search_root = vault / folder if folder else vault
@@ -931,6 +926,8 @@ def _substring_search(config, query: str, days: int = 0, folder: str = "",
     lines: list[str] = []
     rows: list[dict] = []
     for path in sorted(search_root.rglob("*.md")):
+        if source_type and _source_type_for_path(config, path) != source_type:
+            continue
         if cutoff:
             mtime = datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)
             if mtime < cutoff:
