@@ -31,6 +31,7 @@ from .memory_context import (
     format_memory_context,
     format_memory_headlines,
     get_already_injected_pages,
+    parse_bare_mentions,
     parse_wiki_references,
     read_wiki_page,
     retrieve_memory_context,
@@ -61,6 +62,8 @@ log = logging.getLogger(__name__)
 ROLE_REMAP: dict[str, str] = {
     "vault_retrieval": "user",
     "vault_references": "user",
+    "workspace_references": "user",
+    "mcp_references": "user",
     "conversation_notes": "user",
     "recent_journal": "user",
     "cancel_marker": "user",
@@ -369,6 +372,17 @@ class ContextComposer:
         if wiki_entry:
             sources.append(wiki_entry)
 
+        # -- Mentions context (injected before user message in history) --
+        # Explicit @file and @mcp references
+        mention_msgs, mention_entry = await self._compose_mentions_references(
+            ctx, config, user_message, history, mode,
+        )
+        for mm in mention_msgs:
+            to_archive.append(mm)
+            await ctx.publish("mention_references", text=mm["content"], ref=mm.get("workspace_file") or mm.get("mcp_resource"))
+        if mention_entry:
+            sources.append(mention_entry)
+
         # -- Per-conversation scratchpad notes (#299) --
         # Auto-inject the recent notes block so the agent doesn't pay a
         # tool call per turn to read them.
@@ -507,7 +521,7 @@ class ContextComposer:
         # recent journal → memory → user message. The combined list is
         # what the LLM sees.
         combined = [
-            *history, *wiki_msgs, *notes_msgs, *recent_journal_msgs,
+            *history, *wiki_msgs, *mention_msgs, *notes_msgs, *recent_journal_msgs,
             *memory_msgs, user_msg,
         ]
         llm_history = []
@@ -882,6 +896,131 @@ class ContextComposer:
         tokens = sum(estimate_tokens(m["content"]) for m in messages)
         entry = SourceEntry(
             source="wiki",
+            tokens_estimated=tokens,
+            items_included=len(messages),
+            items_truncated=skipped,
+        )
+        return messages, entry
+
+    async def _compose_mentions_references(
+        self, ctx, config, user_message: str, history: list, mode: ComposerMode,
+    ) -> tuple[list[dict], SourceEntry | None]:
+        """Build context messages for referenced workspace files and MCP resources.
+
+        Returns (messages_to_inject, source_entry).
+        """
+        skip_modes = {ComposerMode.HEARTBEAT, ComposerMode.SCHEDULED, ComposerMode.CHILD_AGENT}
+        if mode in skip_modes:
+            return [], None
+
+        from .mcp_client import _convert_resource_response, get_registry
+        from .web.workspace_paths import detect_kind, is_secret, resolve_safe
+
+        mentions = parse_bare_mentions(user_message)
+        if not mentions:
+            return [], None
+
+        # Gather already injected files and mcp resources from history to deduplicate
+        already_injected_files = set()
+        already_injected_mcp = set()
+        for msg in history:
+            if msg.get("role") == "workspace_references":
+                f = msg.get("workspace_file")
+                if f:
+                    already_injected_files.add(f)
+            elif msg.get("role") == "mcp_references":
+                r = msg.get("mcp_resource")
+                if r:
+                    already_injected_mcp.add(r)
+
+        messages = []
+        skipped = 0
+
+        for ref in mentions:
+            if ref["type"] == "file":
+                rel_path = ref["path"]
+                if rel_path in already_injected_files:
+                    skipped += 1
+                    continue
+
+                resolved = resolve_safe(config.workspace_path, rel_path)
+                if not resolved or not resolved.is_file() or detect_kind(resolved) != "text":
+                    text = f"[Workspace file '{rel_path}' not found or not readable as text]"
+                elif is_secret(rel_path):
+                    text = f"[Workspace file '{rel_path}' is a secret and cannot be inlined]"
+                else:
+                    try:
+                        # Only read up to 8193 characters to optimize memory/speed for huge files
+                        with resolved.open("r", encoding="utf-8") as f:
+                            content = f.read(8193)
+                        # Truncate to 8KB (~8192 chars) if larger
+                        if len(content) > 8192:
+                            content = content[:8192] + f"\n\n[Truncated: only first 8KB of {rel_path} inlined]"
+                        text = f"[Referenced workspace file: {rel_path}]\n\n{content}"
+                    except Exception as e:
+                        text = f"[Error reading workspace file '{rel_path}': {e}]"
+
+                messages.append({
+                    "role": "workspace_references",
+                    "content": text,
+                    "workspace_file": rel_path,
+                })
+
+            elif ref["type"] == "mcp":
+                server_name = ref["server"]
+                resource_name = ref["resource"]
+                raw_ref = ref["raw"]
+                if raw_ref in already_injected_mcp:
+                    skipped += 1
+                    continue
+
+                registry = get_registry()
+                state = registry.servers.get(server_name) if registry else None
+                if not state or state.status != "connected" or not state.session:
+                    text = f"[MCP server '{server_name}' is not connected to retrieve '{resource_name}']"
+                else:
+                    # Find matching resource by name, uri, or ending
+                    target_res = None
+                    for r in state.resources:
+                        if getattr(r, "name", "") == resource_name or str(getattr(r, "uri", "")) == resource_name or str(getattr(r, "uri", "")).endswith("/" + resource_name):
+                            target_res = r
+                            break
+
+                    if not target_res:
+                        text = f"[MCP resource '{resource_name}' not found on server '{server_name}']"
+                    else:
+                        import asyncio
+
+                        from pydantic import AnyUrl
+                        try:
+                            timeout_s = state.config.timeout / 1000
+                            result = await asyncio.wait_for(
+                                state.session.read_resource(AnyUrl(str(target_res.uri))),
+                                timeout=timeout_s,
+                            )
+                            tool_res = _convert_resource_response(result)
+                            content = tool_res.text
+                            # Truncate to 8KB if larger
+                            if len(content) > 8192:
+                                content = content[:8192] + f"\n\n[Truncated: only first 8KB of {raw_ref} inlined]"
+                            text = f"[Referenced MCP resource: {raw_ref}]\n\n{content}"
+                        except asyncio.TimeoutError:
+                            text = f"[Error: reading MCP resource '{resource_name}' timed out after {timeout_s}s]"
+                        except Exception as e:
+                            text = f"[Error reading MCP resource '{resource_name}': {e}]"
+
+                messages.append({
+                    "role": "mcp_references",
+                    "content": text,
+                    "mcp_resource": raw_ref,
+                })
+
+        if not messages and skipped == 0:
+            return [], None
+
+        tokens = sum(estimate_tokens(m["content"]) for m in messages)
+        entry = SourceEntry(
+            source="mentions",
             tokens_estimated=tokens,
             items_included=len(messages),
             items_truncated=skipped,

@@ -1181,6 +1181,129 @@ async def workspace_recent(request: Request, username: str) -> JSONResponse:
     return JSONResponse({"files": files})
 
 
+@_authenticated
+async def autocomplete(request: Request, username: str) -> JSONResponse:
+    """Return autocomplete suggestions for files, MCP resources, and vault pages."""
+    query = request.query_params.get("q", "").strip()
+    if query.startswith("@"):
+        query = query[1:]
+
+    results = []
+
+    # 1. Search Vault Pages
+    config = request.app.state.config
+    vault_root = config.vault_root
+    if vault_root.is_dir():
+        try:
+            def _find_vault_pages():
+                matches = []
+                for p in vault_root.rglob("*.md"):
+                    if any(part.startswith(".") for part in p.parts):
+                        continue
+                    try:
+                        rel = p.relative_to(vault_root)
+                        page_name = str(rel.with_suffix(""))
+                        if not query or query.lower() in page_name.lower():
+                            matches.append({
+                                "type": "vault",
+                                "id": page_name,
+                                "label": page_name,
+                                "description": "Vault Page",
+                            })
+                    except (OSError, ValueError):
+                        continue
+                matches.sort(key=lambda x: x["label"].lower())
+                return matches[:20]
+
+            vault_matches = await asyncio.to_thread(_find_vault_pages)
+            results.extend(vault_matches)
+        except Exception as e:
+            log.warning("Autocomplete vault page search failed: %s", e)
+
+    # 2. Search MCP Resources
+    from .mcp_client import get_registry
+    registry = get_registry()
+    if registry:
+        try:
+            mcp_resources = registry.get_resources()
+            mcp_matches = []
+            for server_name, res in mcp_resources:
+                uri = str(getattr(res, "uri", ""))
+                name = str(getattr(res, "name", uri))
+                desc = str(getattr(res, "description", ""))
+                mcp_id = f"{server_name}/{name}"
+                if not query or any(query.lower() in val.lower() for val in [server_name, name, uri]):
+                    mcp_matches.append({
+                        "type": "mcp",
+                        "id": mcp_id,
+                        "label": f"mcp/{server_name}/{name}",
+                        "description": desc or f"MCP Resource: {uri}",
+                    })
+            mcp_matches.sort(key=lambda x: x["label"].lower())
+            results.extend(mcp_matches[:20])
+        except Exception as e:
+            log.warning("Autocomplete MCP search failed: %s", e)
+
+    # 3. Search Workspace Files
+    workspace_root = config.workspace_path
+    if workspace_root.is_dir():
+        try:
+            def _find_workspace_files():
+                matches = []
+                workspace_resolved = workspace_root.resolve()
+                vault_resolved = None
+                try:
+                    vault_resolved = config.vault_root.resolve()
+                except Exception:
+                    pass
+
+                for dirpath, dirnames, filenames in os.walk(workspace_root):
+                    if len(matches) >= 20:
+                        break
+                    # Prune hidden or ignored dirs, and the vault directory if it is inside the workspace
+                    dirnames[:] = [
+                        d for d in dirnames
+                        if not d.startswith(".") and d != "node_modules" and (not vault_resolved or (Path(dirpath) / d).resolve() != vault_resolved)
+                    ]
+                    # Also skip this dir if it is inside the vault
+                    try:
+                        dirpath_path = Path(dirpath).resolve()
+                        if vault_resolved and (dirpath_path == vault_resolved or dirpath_path.is_relative_to(vault_resolved)):
+                            continue
+                    except Exception:
+                        pass
+
+                    for fname in filenames:
+                        if len(matches) >= 20:
+                            break
+                        if fname.startswith("."):
+                            continue
+                        fpath = Path(dirpath) / fname
+                        try:
+                            resolved = fpath.resolve()
+                            rel = resolved.relative_to(workspace_resolved)
+                            rel_str = rel.as_posix()
+                        except (OSError, ValueError):
+                            continue
+
+                        if not query or query.lower() in rel_str.lower():
+                            matches.append({
+                                "type": "file",
+                                "id": rel_str,
+                                "label": rel_str,
+                                "description": "Workspace File",
+                            })
+                matches.sort(key=lambda x: x["label"].lower())
+                return matches[:20]
+
+            workspace_matches = await asyncio.to_thread(_find_workspace_files)
+            results.extend(workspace_matches)
+        except Exception as e:
+            log.warning("Autocomplete workspace search failed: %s", e)
+
+    return JSONResponse({"results": results[:50]})
+
+
 # -- Vault routes -------------------------------------------------------------
 
 
@@ -2290,6 +2413,7 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> Starlette:
         Route("/api/workspace", workspace_list, methods=["GET"]),
         Route("/api/workspace", workspace_create, methods=["POST"]),
         Route("/api/workspace/recent", workspace_recent, methods=["GET"]),
+        Route("/api/autocomplete", autocomplete, methods=["GET"]),
         Route("/api/workspace-file/{path:path}", workspace_read_json, methods=["GET"]),
         Route("/api/workspace/{path:path}", serve_workspace_file, methods=["GET"]),
         Route("/api/workspace/{path:path}", workspace_write, methods=["PUT"]),
