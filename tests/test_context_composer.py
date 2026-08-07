@@ -147,6 +147,30 @@ class TestGetContextWindowSize:
         composer = ContextComposer()
         assert composer._get_context_window_size(config) == 100000
 
+    @pytest.mark.asyncio
+    async def test_auto_detects_context_window_size(self, config):
+        class MockProvider:
+            async def complete(self, *args, **kwargs):
+                return {}
+            async def embed(self, *args, **kwargs):
+                return []
+            async def get_model_info(self, model: str, **kwargs):
+                return {"inputTokenLimit": 2097152}
+
+        from decafclaw.config_types import ModelConfig
+        from decafclaw.llm.registry import clear_providers, register_provider
+        try:
+            register_provider("mock", MockProvider())
+            config.model_configs["test-model"] = ModelConfig(provider="mock", model="gemini-test", context_window_size=0)
+            config.default_model = "test-model"
+
+            from decafclaw.llm import ensure_model_context_window
+            size = await ensure_model_context_window(config, "test-model")
+            assert size == 2097152
+            assert config.model_configs["test-model"].context_window_size == 2097152
+        finally:
+            clear_providers()
+
 
 class TestAutoRefreshSkills:
     @pytest.mark.asyncio

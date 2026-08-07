@@ -7,6 +7,7 @@ that implements the OpenAI chat completions API.
 import asyncio
 import json
 import logging
+from typing import Any
 
 import httpx
 
@@ -36,6 +37,16 @@ class OpenAICompatProvider:
     def __init__(self, url: str, api_key: str = ""):
         self.url = url
         self.api_key = api_key
+
+    async def get_model_info(
+        self,
+        model: str,
+        *,
+        timeout: int = 30,
+        **kwargs: Any,
+    ) -> dict[str, Any] | None:
+        """Get model metadata (e.g. token limits), or None if unsupported."""
+        return None
 
     def _headers(self) -> dict[str, str]:
         return {
