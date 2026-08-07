@@ -326,6 +326,14 @@ class ContextComposer:
         via the messages_to_archive list.
         """
         config = ctx.config
+        if getattr(config.agent, "auto_refresh_skills", True):
+            from .tools.skill_tools import rediscover_skills
+            old_prompt = config.system_prompt
+            rediscover_skills(config)
+            if config.system_prompt != old_prompt:
+                log.debug("Auto-refreshed skills: catalog text changed")
+            else:
+                log.debug("Auto-refreshed skills: catalog text unchanged")
         sources: list[SourceEntry] = []
         to_archive: list[dict] = []
 
