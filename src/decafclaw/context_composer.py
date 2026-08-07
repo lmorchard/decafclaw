@@ -7,6 +7,7 @@ Tracks per-turn diagnostics (what was included, token estimates, actuals).
 
 from __future__ import annotations
 
+import asyncio
 import enum
 import html
 import json
@@ -328,6 +329,14 @@ class ContextComposer:
         config = ctx.config
         from .llm import ensure_model_context_window
         await ensure_model_context_window(config, getattr(ctx, "active_model", ""))
+        if config.agent.auto_refresh_skills:
+            from .tools.skill_tools import rediscover_skills
+            old_prompt = config.system_prompt
+            await asyncio.to_thread(rediscover_skills, config)
+            if config.system_prompt != old_prompt:
+                log.debug("Auto-refreshed skills: catalog text changed")
+            else:
+                log.debug("Auto-refreshed skills: catalog text unchanged")
         sources: list[SourceEntry] = []
         to_archive: list[dict] = []
 
