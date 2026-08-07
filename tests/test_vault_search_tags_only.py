@@ -211,19 +211,31 @@ async def test_empty_query_with_days_is_not_refused(ctx, tagged_pages):
 
 @pytest.mark.asyncio
 async def test_empty_query_with_source_type_is_not_refused(ctx, tagged_pages):
-    """`source_type` alone must not trip the refusal.
-
-    Deliberately narrow: this asserts only that the call is NOT refused, and
-    says nothing about whether `source_type` actually filters. It currently
-    does not on the substring path — `_substring_search` takes no
-    `source_type` parameter and the call site (tools.py) never passes one, so
-    this returns the whole vault today. That is a pre-existing bug and out of
-    scope for #673; widening this assertion would smuggle a second fix into a
-    boundary guard. The weak assertion is the point, not an oversight.
-    """
+    """`source_type` alone must not trip the refusal."""
     result = await tool_vault_search(ctx, "", source_type="page")
     text = result if isinstance(result, str) else result.text
     assert "[error:" not in text
+
+
+@pytest.mark.asyncio
+async def test_source_type_filters_on_substring_strategy(ctx, config):
+    """vault_search with source_type='page' excludes journal entries on substring search."""
+    pages_dir = config.vault_agent_pages_dir
+    journal_dir = config.vault_agent_journal_dir
+    pages_dir.mkdir(parents=True, exist_ok=True)
+    journal_dir.mkdir(parents=True, exist_ok=True)
+
+    (pages_dir / "page-file.md").write_text("Hello unique_substring_abc")
+    (journal_dir / "journal-file.md").write_text("Hello unique_substring_abc")
+
+    # Force substring strategy
+    config.embedding.search_strategy = "substring"
+
+    result = await tool_vault_search(ctx, "unique_substring_abc", source_type="page")
+    text = result.text if hasattr(result, "text") else str(result)
+    assert "page-file" in text
+    assert "journal-file" not in text
+
 
 
 # -- schema must not contradict the signature --
