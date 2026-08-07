@@ -14,7 +14,7 @@ import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from decafclaw.skills.background.tools import format_status_text
 from decafclaw.skills.vault.tools import (
@@ -326,6 +326,8 @@ class ContextComposer:
         via the messages_to_archive list.
         """
         config = ctx.config
+        from .llm import ensure_model_context_window
+        await ensure_model_context_window(config, getattr(ctx, "active_model", ""))
         sources: list[SourceEntry] = []
         to_archive: list[dict] = []
 
@@ -467,7 +469,7 @@ class ContextComposer:
         response_reserve = 4096
 
         # Dynamic budget for scored candidates
-        window_size = self._get_context_window_size(config)
+        window_size = self._get_context_window_size(config, ctx)
         remaining_budget = max(0, window_size - fixed_tokens - response_reserve)
 
         # Fall back to fixed max_tokens if remaining budget is unreasonable
@@ -553,7 +555,7 @@ class ContextComposer:
 
         # -- Context status note (for agent self-regulation) --
         if config.agent.show_context_status:
-            effective_window = self._get_context_window_size(config)
+            effective_window = self._get_context_window_size(config, ctx)
             status_line = self._build_context_status(
                 total_tokens, effective_window, history_msg_count,
             )
@@ -1304,14 +1306,21 @@ class ContextComposer:
         )
         return active, deferred, deferred_text, entry
 
-    def _get_context_window_size(self, config) -> int:
+    def _get_context_window_size(self, config, ctx: Any = None) -> int:
         """Return the effective context window size.
 
-        Prefers the explicit context_window_size if set, otherwise falls back
+        Prefers the explicit context_window_size if set on active model config,
+        or config.llm.context_window_size, otherwise falls back
         to compaction_max_tokens as a conservative proxy.
 
         Used by compose() for dynamic budget allocation.
         """
+        model_name = getattr(ctx, "active_model", "") or getattr(config, "default_model", "")
+        if model_name and model_name in config.model_configs:
+            mc = config.model_configs[model_name]
+            if mc.context_window_size and mc.context_window_size > 0:
+                return mc.context_window_size
+
         window = config.llm.context_window_size
         if window and window > 0:
             return window
