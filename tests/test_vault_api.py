@@ -1170,3 +1170,24 @@ async def test_vault_write_bad_body_type_names_the_field_sent(
     )
     assert resp.status_code == 400
     assert resp.json()["error"] == "body must be a string"
+
+
+def test_resolve_frontmatter_helper():
+    from decafclaw.http_server import _resolve_frontmatter
+    new_raw, err = _resolve_frontmatter("title: Test", {"title": "Test"}, None, None, None)
+    assert new_raw == "title: Test"
+    assert err is None
+
+    new_raw, err = _resolve_frontmatter("title: Test", {"title": "Test"}, None, "title: New\n", None)
+    assert new_raw == "title: New"
+    assert err is None
+
+    new_raw, err = _resolve_frontmatter("title: Test", {"title": "Test"}, None, "title: Test\n---\n", None)
+    assert new_raw is None
+    assert err["status_code"] == 400
+
+    new_raw, err = _resolve_frontmatter("title: Test\nimportance: 0.5", {"title": "Test", "importance": 0.5}, None, None, {"importance": 0.8})
+    assert new_raw is not None
+    assert "importance: 0.8" in new_raw
+    assert err is None
+
