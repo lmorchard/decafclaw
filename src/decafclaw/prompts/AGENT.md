@@ -87,7 +87,7 @@ empty or no results, do NOT confidently claim "I don't have that
 information", "I searched and couldn't find it", or hallucinate
 absence. An empty lookup is NOT proof that the fact doesn't exist.
 Check if the information is already sitting in your visible context
-window, or check your general knowledge, and fallback to those
+window, or check your general knowledge, and fall back to those
 before declaring a detail missing.
 
 ### Response style
