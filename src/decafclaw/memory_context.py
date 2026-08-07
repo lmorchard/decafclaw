@@ -309,6 +309,43 @@ def _excerpt_for_headline(text: str, max_chars: int) -> str:
 _WIKI_MENTION_RE = re.compile(r'@\[\[([^\]]+)\]\]')
 
 
+# Matches @ followed by word/path-like characters. Does NOT match @[[Page]].
+_MENTION_RE = re.compile(r'(?<!\w)@([a-zA-Z0-9_./+-]+)')
+
+
+def parse_bare_mentions(user_message: str) -> list[dict]:
+    """Parse bare mentions starting with @, distinguishing between files and MCP.
+
+    Ignores vault mentions like @[[PageName]].
+    """
+    results = []
+    seen = set()
+    for match in _MENTION_RE.finditer(user_message):
+        val = match.group(1).strip()
+        if val.startswith("[[") or val.endswith("]]"):
+            continue
+        if val in seen:
+            continue
+        seen.add(val)
+
+        if val.startswith("mcp/"):
+            parts = val.split("/", 2)
+            if len(parts) >= 3:
+                results.append({
+                    "type": "mcp",
+                    "server": parts[1],
+                    "resource": parts[2],
+                    "raw": val,
+                })
+        else:
+            results.append({
+                "type": "file",
+                "path": val,
+                "raw": val,
+            })
+    return results
+
+
 def parse_wiki_references(
     user_message: str, wiki_page: str | None = None,
 ) -> list[dict]:
