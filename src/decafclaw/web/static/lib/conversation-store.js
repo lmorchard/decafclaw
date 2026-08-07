@@ -466,6 +466,10 @@ export class ConversationStore extends EventTarget {
     // Re-ask every time, not once: an MCP server that connected while we were
     // disconnected contributes prompts the cached list has never seen.
     this.#ws.send({ type: MESSAGE_TYPES.LIST_COMMANDS });
+    // Full refetch of history for the active conversation
+    this.#messageStore.clear();
+    this.#toolStatusStore.clear();
+    this.#ws.send({ type: MESSAGE_TYPES.LOAD_HISTORY, conv_id: this.#currentConvId, limit: 50 });
   }
 
   /**
