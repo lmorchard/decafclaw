@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import uuid
+from typing import Any
 
 import httpx
 
@@ -234,6 +235,25 @@ class VertexProvider:
             except Exception as e:
                 log.error("Vertex embedding failed: %s", e)
                 return None
+        return None
+
+    async def get_model_info(
+        self,
+        model: str,
+        *,
+        timeout: int = 30,
+        **kwargs: Any,
+    ) -> dict[str, Any] | None:
+        url = self._base_url(model)
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(
+                    url, headers=await self._headers(), timeout=timeout,
+                )
+            if resp.status_code == 200:
+                return resp.json()
+        except Exception as e:
+            log.debug("Failed to get model info for %s from Vertex: %s", model, e)
         return None
 
 

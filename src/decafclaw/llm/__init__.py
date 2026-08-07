@@ -135,3 +135,37 @@ def _resolve(
         provider = OpenAICompatProvider(url=config.llm.url, api_key=config.llm.api_key)
 
     return provider, model, timeout
+
+
+async def ensure_model_context_window(config: Any, model_name: str | None = None) -> int:
+    """Get context window size for a model, querying provider API if not configured (0)."""
+    model_name = model_name or getattr(config, "default_model", "")
+    if model_name and model_name in config.model_configs:
+        mc = config.model_configs[model_name]
+        if mc.context_window_size and mc.context_window_size > 0:
+            return mc.context_window_size
+
+        try:
+            provider = get_provider(mc.provider)
+            info = await provider.get_model_info(mc.model)
+            if info:
+                limit = (
+                    info.get("inputTokenLimit")
+                    or info.get("input_token_limit")
+                    or info.get("contextWindow")
+                    or info.get("context_window_size")
+                )
+                if limit:
+                    mc.context_window_size = int(limit)
+                    log.info("Auto-detected context window size for model %r (%r): %d",
+                             model_name, mc.model, mc.context_window_size)
+                    return mc.context_window_size
+        except Exception as e:
+            log.debug("Failed to auto-detect context window size for %r: %s", model_name, e)
+
+        if mc.context_window_size and mc.context_window_size > 0:
+            return mc.context_window_size
+
+    if config.llm.context_window_size and config.llm.context_window_size > 0:
+        return config.llm.context_window_size
+    return config.compaction.max_tokens

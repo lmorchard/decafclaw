@@ -61,3 +61,13 @@ class Provider(Protocol):
     ) -> list[float] | None:
         """Embed text and return the vector, or None on failure."""
         ...
+
+    async def get_model_info(
+        self,
+        model: str,
+        *,
+        timeout: int = 30,
+        **kwargs: Any,
+    ) -> dict[str, Any] | None:
+        """Get model metadata (e.g. token limits), or None if unsupported."""
+        ...
