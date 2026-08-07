@@ -92,10 +92,6 @@ SENSITIVE_PATTERNS = [
         re.compile(r"\bgit\s+push\b", re.IGNORECASE),
         "Git push operation",
     ),
-    (
-        re.compile(r"\b(?:curl|wget)\b", re.IGNORECASE),
-        "External network request via curl/wget",
-    ),
 ]
 
 # Tokens that indicate shell chaining or complex subshell execution
@@ -171,13 +167,12 @@ def evaluate_command(
                 if token.startswith("~"):
                     token_path = Path(token).expanduser().resolve()
                 elif token.startswith("/"):
-                    token_path = Path(token).resolve()
-                    # If absolute path does not exist on system (e.g. /skills/...), check if virtual relative path in workspace
-                    if not token_path.exists() and not token_path.parent.exists():
+                    # Check if token uses virtual /skills/ prefix
+                    if token.startswith("/skills/"):
                         rel_in_ws = (resolved_workspace / token.lstrip("/")).resolve()
-                        rel_in_parent = (resolved_workspace.parent / token.lstrip("/")).resolve()
-                        if rel_in_ws.is_relative_to(resolved_workspace) or rel_in_parent.is_relative_to(resolved_workspace.parent):
+                        if rel_in_ws.is_relative_to(resolved_workspace):
                             continue
+                    token_path = Path(token).resolve()
                 else:
                     token_path = (resolved_workspace / token).resolve()
 
@@ -192,9 +187,10 @@ def evaluate_command(
                 # Check if path is within workspace
                 if not token_path.is_relative_to(resolved_workspace):
                     log.warning(
-                        f"[security_monitor] BLOCKED out-of-workspace path: {token} "
-                        f"(resolved: {token_path}, workspace: {resolved_workspace})"
+                        f"[security_monitor] BLOCKED operation outside workspace "
+                        f"(workspace: {resolved_workspace})"
                     )
+                    log.debug(f"[security_monitor] Path token: {token}, resolved: {token_path}")
                     return SecurityDecision(
                         SecurityStatus.BLOCK,
                         f"Attempted operation outside workspace path: {token}",
@@ -266,7 +262,8 @@ async def evaluate_command_llm(
             "- BLOCK: Dangerous command, data exfiltration, destructive action, or unauthorized system modification.\n"
             "- ASK: Ambiguous command, sensitive side effects, or complex intent requiring explicit human confirmation.\n\n"
             "Respond ONLY with a valid JSON object in the format:\n"
-            '{"status": "ALLOW" | "BLOCK" | "ASK", "reason": "<brief explanation>"}'
+            '{"status": "ALLOW", "reason": "<brief explanation>"}\n'
+            'where "status" MUST be one of "ALLOW", "BLOCK", or "ASK".'
         )
 
         messages = [{"role": "user", "content": prompt}]

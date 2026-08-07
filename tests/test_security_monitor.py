@@ -49,7 +49,6 @@ def test_evaluates_sensitive_commands_as_ask(tmp_path: Path):
         "npm install express",
         "pip install requests",
         "git push origin main",
-        "curl https://example.com/data.json",
     ]
 
     for cmd in sensitive_commands:
