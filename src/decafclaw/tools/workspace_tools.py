@@ -912,7 +912,7 @@ WORKSPACE_TOOL_DEFINITIONS = [
         "priority": "normal",
         "function": {
             "name": "workspace_delete",
-            "description": "Delete a file from the workspace. Cannot delete directories.",
+            "description": "Delete a file from the workspace. Cannot delete directories. NEVER guess a filename if a target is described ambiguously (e.g. 'the Q1 report' with multiple matching files) — use workspace_list to check existing files or ask the user for clarification first.",
             "parameters": {
                 "type": "object",
                 "properties": {
