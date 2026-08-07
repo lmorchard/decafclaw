@@ -209,6 +209,24 @@ describe('ConversationStore reconnect handling', () => {
     );
     expect(historyRequests).toHaveLength(1);
     expect(/** @type {any} */ (historyRequests[0]).conv_id).toBe('c1');
+
+    // Messages should be cleared to prevent stale rendering
+    expect(store.currentMessages).toHaveLength(0);
+
+    // New history arrives (representing what was produced during the outage)
+    ws.fireMessage({
+      type: MESSAGE_TYPES.CONV_HISTORY,
+      conv_id: 'c1',
+      has_more: false,
+      messages: [
+        { role: 'user', content: 'hello', timestamp: '2026-01-01T00:00:00Z' },
+        { role: 'assistant', content: 'hi there', timestamp: '2026-01-01T00:00:01Z' },
+        { role: 'assistant', content: 'new message', timestamp: '2026-01-01T00:00:02Z' },
+      ],
+    });
+
+    // The transcript should contain all messages including the new one
+    expect(store.currentMessages.map((m) => m.content)).toEqual(['hello', 'hi there', 'new message']);
   });
 
   // G4b: with nothing selected there is nothing to resubscribe to, so the
