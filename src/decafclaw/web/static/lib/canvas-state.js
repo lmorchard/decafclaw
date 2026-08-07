@@ -233,3 +233,11 @@ export async function closeTabFromUi(tabId) {
   if (!window.confirm(msg)) return;
   await closeTabById(convId, tabId);
 }
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('ws-connected', () => {
+    if (_state.active) {
+      setActiveConv(_state.active);
+    }
+  });
+}
