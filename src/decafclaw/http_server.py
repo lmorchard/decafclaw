@@ -1261,11 +1261,18 @@ async def autocomplete(request: Request, username: str) -> JSONResponse:
                     if len(matches) >= 20:
                         break
                     # Prune hidden or ignored dirs, and the vault directory if it is inside the workspace
+                    # Restrict _WORKSPACE_RECENT_PRUNE_DIRS pruning only to the top-level workspace root
+                    is_root = False
+                    try:
+                        is_root = Path(dirpath).resolve() == workspace_resolved
+                    except Exception:
+                        pass
+
                     dirnames[:] = [
                         d for d in dirnames
                         if not d.startswith(".")
                         and d != "node_modules"
-                        and d not in _WORKSPACE_RECENT_PRUNE_DIRS
+                        and (not is_root or d not in _WORKSPACE_RECENT_PRUNE_DIRS)
                         and (not vault_resolved or (Path(dirpath) / d).resolve() != vault_resolved)
                     ]
                     # Also skip this dir if it is inside the vault
