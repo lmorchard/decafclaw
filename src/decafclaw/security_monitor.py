@@ -99,7 +99,7 @@ CHAIN_TOKENS = (";", "&", "|", "`", "$(", "\n")
 
 # Ambiguous command constructs that warrant Tier 2 LLM classification
 AMBIGUOUS_PATTERNS = [
-    re.compile(r"\|"),  # Piping
+    re.compile(r"\|\s*(?:sh|bash|zsh|csh|ksh|python|python3|perl|ruby|eval)\b", re.IGNORECASE),  # Piped execution into interpreter/subshell
     re.compile(r"\b(?:eval|base64|sh\s+-c|bash\s+-c|python\s+-c|perl\s+-e)\b", re.IGNORECASE),  # Encoded/eval execution
     re.compile(r"#"),  # Inline comments in shell command
     re.compile(r"`|\$\("),  # Subshell substitution
@@ -157,24 +157,31 @@ def evaluate_command(
         tokens = command.split()
 
     for idx, token in enumerate(tokens):
-        # Ignore options/flags
-        if token.startswith("-") and not token.startswith("-/") and not token.startswith("-~"):
+        # Strip redirection operators attached to path, e.g. >/tmp/out, 2>>/tmp/err, </etc/passwd
+        cleaned = re.sub(r"^(?:[0-9]*>>?|[0-9]*<)", "", token)
+
+        # Handle inline option values like --file=/tmp/out
+        if cleaned.startswith("-") and "=" in cleaned:
+            _, _, cleaned = cleaned.partition("=")
+
+        # Ignore options/flags that do not carry path values
+        if cleaned.startswith("-") and not cleaned.startswith("-/") and not cleaned.startswith("-~"):
             continue
 
-        # Check if token represents a path
-        if token.startswith("/") or token.startswith("~") or ".." in token:
+        # Check if cleaned token represents a path
+        if cleaned.startswith("/") or cleaned.startswith("~") or ".." in cleaned:
             try:
-                if token.startswith("~"):
-                    token_path = Path(token).expanduser().resolve()
-                elif token.startswith("/"):
+                if cleaned.startswith("~"):
+                    token_path = Path(cleaned).expanduser().resolve()
+                elif cleaned.startswith("/"):
                     # Check if token uses virtual /skills/ prefix
-                    if token.startswith("/skills/"):
-                        rel_in_ws = (resolved_workspace / token.lstrip("/")).resolve()
+                    if cleaned.startswith("/skills/"):
+                        rel_in_ws = (resolved_workspace / cleaned.lstrip("/")).resolve()
                         if rel_in_ws.is_relative_to(resolved_workspace):
                             continue
-                    token_path = Path(token).resolve()
+                    token_path = Path(cleaned).resolve()
                 else:
-                    token_path = (resolved_workspace / token).resolve()
+                    token_path = (resolved_workspace / cleaned).resolve()
 
                 # Allowed devices
                 if token_path in ALLOWED_DEVICES:
@@ -190,7 +197,7 @@ def evaluate_command(
                         f"[security_monitor] BLOCKED operation outside workspace "
                         f"(workspace: {resolved_workspace})"
                     )
-                    log.debug(f"[security_monitor] Path token: {token}, resolved: {token_path}")
+                    log.debug(f"[security_monitor] Path token: {token} (cleaned: {cleaned}), resolved: {token_path}")
                     return SecurityDecision(
                         SecurityStatus.BLOCK,
                         f"Attempted operation outside workspace path: {token}",
