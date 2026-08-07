@@ -38,3 +38,17 @@ def ctx(config):
     context.channel_id = "test-channel"
     context.user_id = "testuser"
     return context
+
+
+@pytest.fixture(autouse=True)
+def mock_embed_text(monkeypatch, config):
+    """Globally mock embed_text to prevent real network calls and return a dummy vector."""
+    from unittest.mock import AsyncMock
+    dimensions = getattr(getattr(config, "embedding", None), "dimensions", 768)
+    dummy_vec = [0.0] * dimensions
+    mock_embed = AsyncMock(return_value=dummy_vec)
+    monkeypatch.setattr("decafclaw.embeddings.embed_text", mock_embed)
+    monkeypatch.setattr("decafclaw.llm.embed_text", mock_embed)
+    monkeypatch.setattr("decafclaw.memory_context.embed_text", mock_embed)
+    return mock_embed
+
