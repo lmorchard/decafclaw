@@ -5,7 +5,7 @@ import { uploadFile } from '../lib/upload-client.js';
 const TRIGGER_RE = /^([/!])(\S*)$/;
 
 /** An `@` mention token ending at the caret. */
-const MENTION_TRIGGER_RE = /(?:^|\s)@([a-zA-Z0-9_./+-]*)$/;
+const MENTION_TRIGGER_RE = /(?<!\w)@([a-zA-Z0-9_./+-]*)$/;
 
 /**
  * Score `name` as an ordered-subsequence match for `query`.
@@ -79,6 +79,7 @@ export class ChatInput extends LitElement {
     this._trigger = null;
     this._highlight = 0;
     this._mentionMatches = [];
+    this._lastFetchedQuery = '';
   }
 
   /** Focus the textarea. */
@@ -127,14 +128,21 @@ export class ChatInput extends LitElement {
   }
 
   async #fetchMentions(query) {
+    this._lastFetchedQuery = query;
     try {
       const res = await fetch(`/api/autocomplete?q=${encodeURIComponent(query)}`);
+      if (this._lastFetchedQuery !== query) return;
       if (res.ok) {
         const data = await res.json();
         this._mentionMatches = data.results || [];
+      } else {
+        this._mentionMatches = [];
       }
     } catch (err) {
       console.warn('Autocomplete fetch failed:', err);
+      if (this._lastFetchedQuery === query) {
+        this._mentionMatches = [];
+      }
     }
   }
 
@@ -218,8 +226,9 @@ export class ChatInput extends LitElement {
 
   /** @param {KeyboardEvent} e */
   #handleKeydown(e) {
-    const isMention = this._trigger?.prefix === '@';
-    const matches = this.#triggerContext()
+    const ctx = this.#triggerContext();
+    const isMention = ctx?.prefix === '@';
+    const matches = ctx
       ? (isMention ? (this._mentionMatches || []) : this.#matchingCommands())
       : [];
     if (matches.length) {
