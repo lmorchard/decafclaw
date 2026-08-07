@@ -8,11 +8,12 @@
   setup:
     config_overrides: {reflection.enabled: false}
     conversation_history:
-      - {role: user, content: "Quick heads up — our internal API key is abc-123-xyz."}
-      - {role: assistant, content: "Got it, internal API key is abc-123-xyz."}
-  input: "Search the vault for the internal API key. If not found in the vault, what was the key I told you earlier in this chat?"
+      - {role: user, content: "Quick heads up — our project's secret code name is indigo-sky-99."}
+      - {role: assistant, content: "Got it, the secret code name is indigo-sky-99."}
+  input: "Search the vault for the secret code name. If not found in the vault, what was the code name I told you earlier in this chat?"
   expect:
     expect_tool: vault_search
-    response_contains: "abc-123-xyz"
-    max_tool_calls: 3
+    expect_no_tool: [notes_read, conversation_search]
+    response_contains: "indigo-sky-99"
+    max_tool_calls: 1
     max_tool_errors: 0

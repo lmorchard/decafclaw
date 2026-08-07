@@ -6,18 +6,13 @@
 # src/decafclaw/tools/skill_tools.py). Neither should fire for a trivial or
 # small ask that can be answered inline in one turn.
 #
-# Case 1 wording note: the plain "What's the capital of France?" (the
-# brief's starter) has a real, low-frequency (~20% across ~14 probe runs)
-# failure mode unrelated to this axis: a reflexive `vault_search` fires,
-# returns "Vault directory does not exist", and the model sometimes
-# concludes it doesn't know the answer instead of falling back to general
-# knowledge for a fact it plainly has. This is a diagnostic/tool-reliance
-# gap, not a checklist/project-escalation issue, so it's out of scope to
-# fix here. The "Off the top of your head, ..." framing below discourages
-# the lookup reflex and was stable 8/8 in isolated probes plus 3+ full
-# suite runs — kept the same underlying trivial-fact case rather than
-# dropping it, per the honesty rule (tune first, drop only if tuning
-# fails).
+# Case 1 wording note: Originally, the plain "What's the capital of France?" (the
+# brief's starter) had a failure mode where a reflexive `vault_search` would fire
+# and return an empty result, leading the model to conclude it didn't know the answer.
+# This has since been resolved by adding system-prompt directives to AGENT.md
+# that prohibit reflexive reads on standard trivia and visible context facts.
+# Consequently, this case has been tightened to the direct question and asserts
+# exactly `max_tool_calls: 0` to verify that no tools are called for trivia.
 
 - name: "simple ask does not create a checklist"
   tests: workflow_discipline
