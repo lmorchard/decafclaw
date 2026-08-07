@@ -59,6 +59,10 @@ async def run_all(app_ctx):
         await manager.startup_scan()
         await manager.startup_scan_workflows()
 
+        # Start workspace index background refresh loop (server startup refresh)
+        from .workspace_index import start_workspace_index_loop
+        start_workspace_index_loop(config)
+
         # Start HTTP server (button callbacks + web gateway)
         if config.http.enabled:
             from .http_server import run_http_server

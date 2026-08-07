@@ -979,6 +979,7 @@ async def workspace_read_json(request: Request, username: str) -> JSONResponse:
 
 
 async def _workspace_rename(
+    config,
     workspace: Path,
     old_file: Path,
     old_rel: str,
@@ -1010,6 +1011,8 @@ async def _workspace_rename(
     old_file.rename(new_file)
     workspace_resolved = workspace.resolve()
     _prune_empty_parents(old_file.parent, workspace)
+    from .workspace_index import invalidate_workspace_file_cache
+    invalidate_workspace_file_cache(config)
     stat = new_file.stat()
     rel = new_file.relative_to(workspace_resolved)
     return JSONResponse({
@@ -1034,7 +1037,7 @@ async def workspace_write(request: Request, username: str) -> JSONResponse:
 
     rename_to = request.query_params.get("rename_to")
     if rename_to is not None:
-        return await _workspace_rename(workspace, resolved, file_path, rename_to)
+        return await _workspace_rename(config, workspace, resolved, file_path, rename_to)
 
     if is_secret(file_path):
         return JSONResponse({"error": "secret path"}, status_code=403)
@@ -1068,6 +1071,8 @@ async def workspace_write(request: Request, username: str) -> JSONResponse:
 
     resolved.parent.mkdir(parents=True, exist_ok=True)
     resolved.write_text(content, encoding="utf-8")
+    from .workspace_index import invalidate_workspace_file_cache
+    invalidate_workspace_file_cache(config)
     return JSONResponse({"ok": True, "modified": resolved.stat().st_mtime})
 
 
@@ -1099,6 +1104,8 @@ async def workspace_delete(request: Request, username: str) -> JSONResponse:
         return JSONResponse({"error": "not found"}, status_code=404)
 
     _prune_empty_parents(resolved.parent, workspace)
+    from .workspace_index import invalidate_workspace_file_cache
+    invalidate_workspace_file_cache(config)
     return JSONResponse({"ok": True})
 
 
@@ -1141,6 +1148,8 @@ async def workspace_create(request: Request, username: str) -> JSONResponse:
     if kind == "folder":
         try:
             resolved.mkdir(parents=True, exist_ok=False)
+            from .workspace_index import invalidate_workspace_file_cache
+            invalidate_workspace_file_cache(config)
         except FileExistsError:
             return JSONResponse({"error": "folder already exists"}, status_code=409)
         return JSONResponse({"ok": True, "path": rel_path})
@@ -1153,6 +1162,8 @@ async def workspace_create(request: Request, username: str) -> JSONResponse:
         return JSONResponse({"error": "content must be a string"}, status_code=400)
     resolved.parent.mkdir(parents=True, exist_ok=True)
     resolved.write_text(content, encoding="utf-8")
+    from .workspace_index import invalidate_workspace_file_cache
+    invalidate_workspace_file_cache(config)
     return JSONResponse({
         "ok": True,
         "path": rel_path,
@@ -2466,6 +2477,8 @@ async def run_http_server(config, event_bus, app_ctx=None, manager=None) -> None
         log_level="info",
     )
     _http_server = uvicorn.Server(server_config)
+    from .workspace_index import start_workspace_index_loop
+    start_workspace_index_loop(config)
     log.info(f"HTTP server starting on {config.http.host}:{config.http.port}")
     await _http_server.serve()
 

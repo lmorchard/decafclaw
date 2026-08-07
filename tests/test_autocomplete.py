@@ -57,7 +57,15 @@ def reset_workspace_index_state():
     import decafclaw.workspace_index as wi
     wi._workspace_index = None
     wi._index_timestamp = 0.0
+    if wi._refresh_task and not wi._refresh_task.done():
+        wi._refresh_task.cancel()
     wi._refresh_task = None
+    if wi._periodic_task and not wi._periodic_task.done():
+        wi._periodic_task.cancel()
+    wi._periodic_task = None
+    wi._needs_another_refresh = False
+    wi._last_config = None
+    wi._main_loop = None
     yield
     # Cleanup after test
     wi._workspace_index = None
@@ -65,6 +73,12 @@ def reset_workspace_index_state():
     if wi._refresh_task and not wi._refresh_task.done():
         wi._refresh_task.cancel()
     wi._refresh_task = None
+    if wi._periodic_task and not wi._periodic_task.done():
+        wi._periodic_task.cancel()
+    wi._periodic_task = None
+    wi._needs_another_refresh = False
+    wi._last_config = None
+    wi._main_loop = None
 
 
 # -- Autocomplete --------------------------------------------------------------
@@ -257,11 +271,7 @@ async def test_autocomplete_background_refresh(http_config):
 
     # Add new file and invalidate cache
     (ws / "new_file.txt").write_text("test")
-    invalidate_workspace_file_cache()
-
-    # Query again - should return old cache immediately but trigger background refresh
-    files_stale = await get_workspace_files(http_config)
-    assert "new_file.txt" not in files_stale, "Should return stale cache immediately"
+    invalidate_workspace_file_cache(http_config)
 
     # Wait for background refresh to complete
     await asyncio.sleep(0.5)
@@ -278,3 +288,61 @@ async def test_autocomplete_background_refresh(http_config):
     # Verify no .tmp file left behind (atomic write cleanup)
     tmp_path = index_path.with_suffix(".tmp")
     assert not tmp_path.exists(), "Temporary file should be cleaned up after atomic write"
+
+
+@pytest.mark.asyncio
+async def test_workspace_index_ttl_is_30_minutes():
+    """TTL for workspace index cache should be 30 minutes (1800 seconds)."""
+    import decafclaw.workspace_index as wi
+    assert wi._INDEX_TTL_SECONDS == 1800.0
+
+
+@pytest.mark.asyncio
+async def test_workspace_index_startup_refresh_loop(http_config):
+    """start_workspace_index_loop triggers an immediate refresh on startup."""
+    import asyncio
+
+    import decafclaw.workspace_index as wi
+
+    ws = http_config.workspace_path
+    (ws / "startup_file.txt").write_text("hello")
+
+    task = wi.start_workspace_index_loop(http_config)
+    assert task is not None
+    await asyncio.sleep(0.3)
+
+    files = await wi.get_workspace_files(http_config)
+    assert "startup_file.txt" in files
+
+
+@pytest.mark.asyncio
+async def test_workspace_index_invalidation_on_file_write_and_delete(client, http_config):
+    """Creating or deleting workspace files triggers cache invalidation and background refresh."""
+    import asyncio
+
+    import decafclaw.workspace_index as wi
+
+    # Initial prime
+    ws = http_config.workspace_path
+    (ws / "initial.txt").write_text("init")
+    await wi.get_workspace_files(http_config)
+
+    # Create file via API
+    resp = await client.put("/api/workspace/created_via_api.txt", json={"content": "hello"})
+    assert resp.status_code == 200
+    assert wi._index_timestamp == 0.0
+
+    # Wait for background refresh
+    await asyncio.sleep(0.3)
+    files = await wi.get_workspace_files(http_config)
+    assert "created_via_api.txt" in files
+
+    # Delete file via API
+    resp_del = await client.delete("/api/workspace/created_via_api.txt")
+    assert resp_del.status_code == 200
+    assert wi._index_timestamp == 0.0
+
+    # Wait for background refresh
+    await asyncio.sleep(0.3)
+    files_after_del = await wi.get_workspace_files(http_config)
+    assert "created_via_api.txt" not in files_after_del

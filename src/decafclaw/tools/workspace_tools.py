@@ -10,6 +10,7 @@ from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
 
 from ..media import ToolResult, WidgetRequest
+from ..workspace_index import invalidate_workspace_file_cache
 
 if TYPE_CHECKING:
     from decafclaw.context import Context
@@ -216,6 +217,7 @@ def tool_workspace_write(ctx: "Context", path: str, content: str) -> str | ToolR
     try:
         resolved.parent.mkdir(parents=True, exist_ok=True)
         resolved.write_text(content)
+        invalidate_workspace_file_cache(ctx.config)
         return f"Wrote {len(content)} characters to {path}{_redundant_prefix_note(path)}"
     except PermissionError as e:
         return _file_error(e, path)
@@ -301,6 +303,7 @@ def tool_workspace_move(ctx: "Context", path: str, destination: str) -> str | To
     try:
         resolved_dst.parent.mkdir(parents=True, exist_ok=True)
         resolved_src.rename(resolved_dst)
+        invalidate_workspace_file_cache(ctx.config)
         return f"Moved {path} -> {destination}"
     except PermissionError as e:
         return _file_error(e, path)
@@ -318,6 +321,7 @@ def tool_workspace_delete(ctx: "Context", path: str) -> str | ToolResult:
         return ToolResult(text=f"[error: '{path}' is a directory. Use shell to remove directories.]")
     try:
         resolved.unlink()
+        invalidate_workspace_file_cache(ctx.config)
         return f"Deleted {path}"
     except PermissionError as e:
         return _file_error(e, path)
@@ -437,6 +441,7 @@ def tool_workspace_append(ctx: "Context", path: str, content: str) -> str | Tool
             resolved.write_text(existing + content)
         else:
             resolved.write_text(content)
+        invalidate_workspace_file_cache(ctx.config)
         return f"Appended {len(content)} characters to {path}"
     except PermissionError as e:
         return _file_error(e, path)
