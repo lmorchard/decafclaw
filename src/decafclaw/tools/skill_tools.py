@@ -8,6 +8,7 @@ import inspect
 import json
 import logging
 import re
+import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -114,8 +115,18 @@ def _import_tools_module(module_name: str, tools_path: Path):
     if spec is None:
         raise ImportError(f"Could not load module spec for {tools_path}")
     module = importlib.util.module_from_spec(spec)
-    code = compile(tools_path.read_text(), str(tools_path), "exec")
-    exec(code, module.__dict__)  # noqa: S102 — skill tools are trusted code by placement
+    had_module = module_name in sys.modules
+    prev_module = sys.modules.get(module_name)
+    sys.modules[module_name] = module
+    try:
+        code = compile(tools_path.read_text(), str(tools_path), "exec")
+        exec(code, module.__dict__)  # noqa: S102 — skill tools are trusted code by placement
+    except Exception:
+        if had_module and prev_module is not None:
+            sys.modules[module_name] = prev_module
+        else:
+            sys.modules.pop(module_name, None)
+        raise
     return module
 
 
