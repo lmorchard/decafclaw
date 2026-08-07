@@ -2,8 +2,9 @@
 
 import os
 from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
-from unittest.mock import MagicMock, AsyncMock
 from httpx import ASGITransport, AsyncClient
 
 from decafclaw.events import EventBus
@@ -22,7 +23,7 @@ def http_config(config, monkeypatch, tmp_path):
     config.agent.data_home = "data"
     config.vault.vault_path = "workspace/vault/"
     config.vault.agent_folder = "agent/"
-    
+
     config.agent_path.mkdir(parents=True, exist_ok=True)
     config.workspace_path.mkdir(parents=True, exist_ok=True)
     config.vault_root.mkdir(parents=True, exist_ok=True)
@@ -76,7 +77,7 @@ async def test_autocomplete_vault_pages(client, http_config):
     vault = http_config.vault_root
     (vault / "TestPage.md").write_text("# Test Page")
     (vault / "OtherPage.md").write_text("# Other Page")
-    
+
     # Matching query
     resp = await client.get("/api/autocomplete?q=test")
     assert resp.status_code == 200
@@ -131,7 +132,7 @@ async def test_autocomplete_mcp_resources(client, monkeypatch):
     """MCP resource searches should match server and resource names."""
     # Mock MCP Registry
     mock_registry = MagicMock()
-    
+
     # Mock resource object
     class MockResource:
         def __init__(self, name, uri, description=""):
@@ -141,7 +142,7 @@ async def test_autocomplete_mcp_resources(client, monkeypatch):
 
     mock_res1 = MockResource("summary", "demo://summary", "Resource Summary")
     mock_res2 = MockResource("notes", "demo://notes", "Resource Notes")
-    
+
     mock_registry.get_resources.return_value = [
         ("demo_server", mock_res1),
         ("demo_server", mock_res2),

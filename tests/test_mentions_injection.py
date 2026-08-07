@@ -1,10 +1,11 @@
 """Tests for bare mentions parsing, context injection, and truncation."""
 
-import pytest
-from unittest.mock import MagicMock, AsyncMock
 from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock
 
-from decafclaw.context_composer import ContextComposer, ComposerMode
+import pytest
+
+from decafclaw.context_composer import ComposerMode, ContextComposer
 from decafclaw.memory_context import parse_bare_mentions
 
 
@@ -12,13 +13,13 @@ def test_parse_bare_mentions():
     """Verify that bare @ mentions are parsed correctly, ignoring @[[PageName]]."""
     text = "Please check @src/agent.py and @mcp/demo/resource, but NOT @[[TestPage]]."
     mentions = parse_bare_mentions(text)
-    
+
     assert len(mentions) == 2
-    
+
     # First match
     assert mentions[0]["type"] == "file"
     assert mentions[0]["path"] == "src/agent.py"
-    
+
     # Second match
     assert mentions[1]["type"] == "mcp"
     assert mentions[1]["server"] == "demo"
@@ -68,13 +69,13 @@ async def test_compose_mentions_references_file(ctx, config, tmp_path):
 async def test_compose_mentions_references_mcp(ctx, config, monkeypatch):
     """Verify active MCP resources mentioned with @ are resolved and injected."""
     composer = ContextComposer()
-    
+
     # Mock MCP Registry
     mock_registry = MagicMock()
     mock_state = MagicMock()
     mock_state.status = "connected"
     mock_state.config.timeout = 5000
-    
+
     class MockResource:
         def __init__(self, name, uri):
             self.name = name
@@ -82,14 +83,14 @@ async def test_compose_mentions_references_mcp(ctx, config, monkeypatch):
 
     mock_res = MockResource("notes", "demo://notes")
     mock_state.resources = [mock_res]
-    
+
     # Mock session and read_resource
     mock_session = AsyncMock()
-    
+
     class MockResult:
         def __init__(self, contents):
             self.contents = contents
-            
+
     class MockContent:
         def __init__(self, text):
             self.text = text
@@ -100,7 +101,7 @@ async def test_compose_mentions_references_mcp(ctx, config, monkeypatch):
     mock_result = MockResult([MockContent("MCP Notes Content")])
     mock_session.read_resource.return_value = mock_result
     mock_state.session = mock_session
-    
+
     mock_registry.servers = {"demo_server": mock_state}
     monkeypatch.setattr("decafclaw.mcp_client.get_registry", lambda: mock_registry)
 
@@ -137,7 +138,7 @@ async def test_compose_mentions_references_dedup(ctx, config, tmp_path):
     messages, entry = await composer._compose_mentions_references(
         ctx, config, "Read @small.txt please", history, ComposerMode.INTERACTIVE
     )
-    
+
     # Should be skipped
     assert len(messages) == 0
     assert entry is not None
