@@ -219,6 +219,8 @@ async def get_workspace_files(config: "Config") -> list[str]:
                 await _refresh_task
 
     # Return current cache (either from disk, or from just-completed initial scan)
+    if _workspace_index is None:
+        return []
     return _workspace_index["files"]
 
 
