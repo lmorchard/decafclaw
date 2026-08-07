@@ -346,3 +346,20 @@ async def test_workspace_index_invalidation_on_file_write_and_delete(client, htt
     await asyncio.sleep(0.3)
     files_after_del = await wi.get_workspace_files(http_config)
     assert "created_via_api.txt" not in files_after_del
+
+
+@pytest.mark.asyncio
+async def test_workspace_index_invalidation_on_vault_changed(bus, http_config):
+    """Vault changes publish vault_changed and invalidate workspace index cache."""
+    import asyncio
+
+    import decafclaw.workspace_index as wi
+    from decafclaw.skills.vault._events import KIND_CREATE, publish_vault_changed
+
+    # Initial prime
+    await wi.get_workspace_files(http_config)
+    assert wi._index_timestamp > 0.0
+
+    # Publish vault_changed event
+    await publish_vault_changed(bus, http_config, kind=KIND_CREATE, path="NewPage.md")
+    assert wi._index_timestamp == 0.0

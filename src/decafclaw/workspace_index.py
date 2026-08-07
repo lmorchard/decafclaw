@@ -307,3 +307,15 @@ def invalidate_workspace_file_cache(config: "Config | None" = None) -> None:
     if cfg is not None:
         trigger_workspace_index_refresh(cfg)
 
+
+def make_workspace_index_subscriber(config: "Config"):
+    """EventBus subscriber: invalidates workspace index cache on `vault_changed` events."""
+    async def handle(event: dict) -> None:
+        try:
+            if event.get("type") == "vault_changed":
+                invalidate_workspace_file_cache(config)
+        except Exception as exc:  # fail-open
+            log.debug("workspace_index subscriber error: %s", exc)
+
+    return handle
+

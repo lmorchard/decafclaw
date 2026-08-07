@@ -105,6 +105,9 @@ async def run_all(app_ctx):
         from .backlinks import make_backlinks_subscriber
         app_ctx.event_bus.subscribe(make_backlinks_subscriber(config))
 
+        from .workspace_index import make_workspace_index_subscriber
+        app_ctx.event_bus.subscribe(make_workspace_index_subscriber(config))
+
         # Wire telemetry subscribers (measurement only, fail-open). Each
         # records to an append-only JSONL sidecar under workspace/.
         if config.telemetry.tool_usage_enabled:
