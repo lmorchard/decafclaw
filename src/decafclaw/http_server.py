@@ -205,8 +205,11 @@ def _resolve_frontmatter(
 ) -> tuple[str | None, dict | None]:
     """Resolve new raw frontmatter block from `frontmatter_raw` or `frontmatter` patch.
 
-    Returns `(new_raw, error_response_dict)` where `error_response_dict` is None on success,
-    or `{"error": "...", "status_code": 400}` on validation failure.
+    - `frontmatter_raw` is stored verbatim (stripping outer newlines) to preserve
+      user comments, custom formatting, and key order. It is checked to ensure
+      it does not contain a column-0 `---` line (which would break vault file
+      parser framing) and that it parses as a valid YAML mapping.
+    - `frontmatter` patch merges updates into existing metadata and dumps back to YAML.
     """
     new_raw = existing_raw
     if fm_raw is not None:
@@ -214,11 +217,15 @@ def _resolve_frontmatter(
         if not stripped:
             new_raw = None
         else:
+            # Reject column-0 '---' lines because they conflict with the file-level
+            # vault frontmatter delimiter block.
             if re.search(r"(?m)^---$", fm_raw):
                 return None, {"error": "frontmatter_raw must not contain a '---' line", "status_code": 400}
-            _, fm_validation_error = parse_frontmatter_block(stripped)
+            meta_parsed, fm_validation_error = parse_frontmatter_block(stripped)
             if fm_validation_error is not None:
                 return None, {"error": fm_validation_error, "status_code": 400}
+            if not isinstance(meta_parsed, dict):
+                return None, {"error": "frontmatter must be a YAML mapping", "status_code": 400}
             new_raw = fm_raw.strip("\n")
     elif fm_patch is not None:
         if fm_error is not None:
