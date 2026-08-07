@@ -8,6 +8,8 @@ import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from decafclaw.security_monitor import SecurityStatus, evaluate_command_llm
+
 from ..media import ToolResult
 from .confirmation import request_confirmation
 
@@ -143,8 +145,6 @@ async def check_shell_approval(ctx: "Context", command: str, tool_name: str = "s
 
     Returns {"approved": True} if auto-approved, or the user's confirmation result.
     """
-    from decafclaw.security_monitor import SecurityStatus, evaluate_command_llm
-
     decision = await evaluate_command_llm(
         command,
         ctx=ctx,

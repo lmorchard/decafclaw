@@ -36,6 +36,11 @@ def test_evaluates_out_of_workspace_operations_as_block(tmp_path: Path):
         "ls /var/log",
         "cp file.txt /tmp/stolen.txt",
         "mv file.txt ../outside.txt",
+        "echo secret > /tmp/stolen.txt",
+        "echo secret >/tmp/stolen.txt",
+        "cat </etc/passwd",
+        "echo err 2>>/tmp/err.log",
+        "python script.py --output=/tmp/stolen.txt",
     ]
 
     for cmd in out_of_workspace_commands:
