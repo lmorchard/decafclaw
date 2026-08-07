@@ -1258,6 +1258,8 @@ async def autocomplete(request: Request, username: str) -> JSONResponse:
                     pass
 
                 for dirpath, dirnames, filenames in os.walk(workspace_root):
+                    if len(matches) >= 20:
+                        break
                     # Prune hidden or ignored dirs, and the vault directory if it is inside the workspace
                     dirnames[:] = [
                         d for d in dirnames
@@ -1272,6 +1274,8 @@ async def autocomplete(request: Request, username: str) -> JSONResponse:
                         pass
 
                     for fname in filenames:
+                        if len(matches) >= 20:
+                            break
                         if fname.startswith("."):
                             continue
                         fpath = Path(dirpath) / fname

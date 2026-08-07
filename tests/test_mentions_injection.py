@@ -44,6 +44,10 @@ async def test_compose_mentions_references_file(ctx, config, tmp_path):
     large_content = "A" * 9000
     large_file.write_text(large_content, encoding="utf-8")
 
+    # 3. Create a secret file
+    secret_file = config.workspace_path / "secret.key"
+    secret_file.write_text("my-secret-key", encoding="utf-8")
+
     # Verify small file injection
     messages, entry = await composer._compose_mentions_references(
         ctx, config, "Read @small.txt please", [], ComposerMode.INTERACTIVE
@@ -63,6 +67,13 @@ async def test_compose_mentions_references_file(ctx, config, tmp_path):
     assert messages_large[0]["role"] == "workspace_references"
     assert len(messages_large[0]["content"]) < 9000
     assert "[Truncated: only first 8KB of large.txt inlined]" in messages_large[0]["content"]
+
+    # Verify secret file exclusion
+    messages_secret, entry_secret = await composer._compose_mentions_references(
+        ctx, config, "Read @secret.key please", [], ComposerMode.INTERACTIVE
+    )
+    assert len(messages_secret) == 1
+    assert "is a secret and cannot be inlined" in messages_secret[0]["content"]
 
 
 @pytest.mark.asyncio

@@ -914,7 +914,7 @@ class ContextComposer:
             return [], None
 
         from .mcp_client import _convert_resource_response, get_registry
-        from .web.workspace_paths import detect_kind, resolve_safe
+        from .web.workspace_paths import detect_kind, is_secret, resolve_safe
 
         mentions = parse_bare_mentions(user_message)
         if not mentions:
@@ -946,9 +946,13 @@ class ContextComposer:
                 resolved = resolve_safe(config.workspace_path, rel_path)
                 if not resolved or not resolved.is_file() or detect_kind(resolved) != "text":
                     text = f"[Workspace file '{rel_path}' not found or not readable as text]"
+                elif is_secret(rel_path):
+                    text = f"[Workspace file '{rel_path}' is a secret and cannot be inlined]"
                 else:
                     try:
-                        content = resolved.read_text(encoding="utf-8")
+                        # Only read up to 8193 characters to optimize memory/speed for huge files
+                        with resolved.open("r", encoding="utf-8") as f:
+                            content = f.read(8193)
                         # Truncate to 8KB (~8192 chars) if larger
                         if len(content) > 8192:
                             content = content[:8192] + f"\n\n[Truncated: only first 8KB of {rel_path} inlined]"
@@ -998,7 +1002,7 @@ class ContextComposer:
                             content = tool_res.text
                             # Truncate to 8KB if larger
                             if len(content) > 8192:
-                                content = content[:8192] + f"\n\n[Truncated: only first 8KB of mcp/{raw_ref} inlined]"
+                                content = content[:8192] + f"\n\n[Truncated: only first 8KB of {raw_ref} inlined]"
                             text = f"[Referenced MCP resource: {raw_ref}]\n\n{content}"
                         except asyncio.TimeoutError:
                             text = f"[Error: reading MCP resource '{resource_name}' timed out after {timeout_s}s]"
