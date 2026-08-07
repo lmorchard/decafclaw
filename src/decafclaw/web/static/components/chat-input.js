@@ -62,6 +62,14 @@ export class ChatInput extends LitElement {
     }
   }
 
+  disconnectedCallback() {
+    super.disconnectedCallback();
+    if (this._fetchTimeout) {
+      clearTimeout(this._fetchTimeout);
+      this._fetchTimeout = null;
+    }
+  }
+
   /** Escape keeps the menu shut for the token it dismissed. */
   #dismissed = false;
 
@@ -80,6 +88,7 @@ export class ChatInput extends LitElement {
     this._highlight = 0;
     this._mentionMatches = [];
     this._lastFetchedQuery = '';
+    this._fetchTimeout = null;
   }
 
   /** Focus the textarea. */
@@ -161,6 +170,10 @@ export class ChatInput extends LitElement {
       this.#dismissed = false;
       this._trigger = null;
       this._mentionMatches = [];
+      if (this._fetchTimeout) {
+        clearTimeout(this._fetchTimeout);
+        this._fetchTimeout = null;
+      }
       return;
     }
     if (this.#dismissed) return;
@@ -169,8 +182,16 @@ export class ChatInput extends LitElement {
     this._trigger = { prefix: ctx.prefix, query: ctx.query, start: ctx.start };
     if (changed) {
       this._highlight = 0;
+      if (this._fetchTimeout) {
+        clearTimeout(this._fetchTimeout);
+        this._fetchTimeout = null;
+      }
       if (ctx.prefix === '@') {
-        this.#fetchMentions(ctx.query);
+        this._lastFetchedQuery = ctx.query;
+        this._mentionMatches = [];
+        this._fetchTimeout = setTimeout(() => {
+          this.#fetchMentions(ctx.query);
+        }, 150);
       } else {
         this._mentionMatches = [];
       }
@@ -222,6 +243,10 @@ export class ChatInput extends LitElement {
     this.#dismissed = false;
     this._trigger = null;
     this._mentionMatches = [];
+    if (this._fetchTimeout) {
+      clearTimeout(this._fetchTimeout);
+      this._fetchTimeout = null;
+    }
   }
 
   /** @param {KeyboardEvent} e */
