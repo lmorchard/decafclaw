@@ -148,6 +148,40 @@ class TestGetContextWindowSize:
         assert composer._get_context_window_size(config) == 100000
 
 
+class TestAutoRefreshSkills:
+    @pytest.mark.asyncio
+    async def test_compose_auto_refreshes_skill_catalog(self, ctx, config):
+        ws_skills = config.workspace_path / "skills"
+        ws_skills.mkdir(parents=True, exist_ok=True)
+
+        composer = ContextComposer()
+        await composer.compose(ctx, "hello", [], mode=ComposerMode.INTERACTIVE)
+        assert "late-skill" not in config.system_prompt
+
+        skill_dir = ws_skills / "late-skill"
+        skill_dir.mkdir(parents=True, exist_ok=True)
+        (skill_dir / "SKILL.md").write_text("---\nname: late-skill\ndescription: A late skill.\n---\nLate body.")
+
+        await composer.compose(ctx, "hello", [], mode=ComposerMode.INTERACTIVE)
+        assert "late-skill" in config.system_prompt
+
+    @pytest.mark.asyncio
+    async def test_compose_skips_refresh_when_disabled(self, ctx, config):
+        config.agent.auto_refresh_skills = False
+        ws_skills = config.workspace_path / "skills"
+        ws_skills.mkdir(parents=True, exist_ok=True)
+
+        composer = ContextComposer()
+        await composer.compose(ctx, "hello", [], mode=ComposerMode.INTERACTIVE)
+
+        skill_dir = ws_skills / "disabled-skill"
+        skill_dir.mkdir(parents=True, exist_ok=True)
+        (skill_dir / "SKILL.md").write_text("---\nname: disabled-skill\ndescription: Disabled skill.\n---\nBody.")
+
+        await composer.compose(ctx, "hello", [], mode=ComposerMode.INTERACTIVE)
+        assert "disabled-skill" not in config.system_prompt
+
+
 # -- Memory context ------------------------------------------------------------
 
 
