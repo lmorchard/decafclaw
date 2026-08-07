@@ -143,6 +143,20 @@ async def check_shell_approval(ctx: "Context", command: str, tool_name: str = "s
 
     Returns {"approved": True} if auto-approved, or the user's confirmation result.
     """
+    from decafclaw.security_monitor import SecurityStatus, evaluate_command
+
+    decision = evaluate_command(
+        command,
+        workspace_path=ctx.config.workspace_path,
+        is_autonomous=ctx.is_unattended,
+    )
+    if decision.status == SecurityStatus.BLOCK:
+        log.warning(f"[{tool_name}] blocked by security monitor: {command} (reason: {decision.reason})")
+        return {
+            "approved": False,
+            "reason": f"Blocked by security monitor: {decision.reason}",
+        }
+
     if "shell" in ctx.tools.preapproved or tool_name in ctx.tools.preapproved:
         log.info(f"[{tool_name}] pre-approved by command: {command}")
         return {"approved": True}
