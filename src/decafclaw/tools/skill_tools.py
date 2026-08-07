@@ -1019,13 +1019,16 @@ def rediscover_skills(config) -> list:
     a disconnected copy.
     """
     from ..prompts import load_system_prompt
-    from ..skills import build_skill_tool_owners
+    from ..skills import build_skill_tool_owners, discover_skills
     from ..tool_definitions import invalidate_skill_cache  # deferred: circular dep
 
     rejections: list = []
-    config.system_prompt, config.discovered_skills = load_system_prompt(
-        config, rejections=rejections
-    )
+    if not config.system_prompt or "<skill_catalog>" in config.system_prompt:
+        config.system_prompt, config.discovered_skills = load_system_prompt(
+            config, rejections=rejections
+        )
+    else:
+        config.discovered_skills = discover_skills(config, rejections=rejections)
     config.skill_tool_owners = build_skill_tool_owners(config.discovered_skills)
     invalidate_skill_cache(config)
     return rejections
