@@ -188,6 +188,7 @@ async def test_autocomplete_uses_file_backed_cache(http_config):
     execute synchronous os.walk on the HTTP request thread after initial prime.
     """
     from unittest.mock import patch
+
     from decafclaw.workspace_index import get_workspace_files
 
     # Create test files
@@ -234,6 +235,7 @@ async def test_autocomplete_background_refresh(http_config):
     """
     import asyncio
     import json
+
     from decafclaw.workspace_index import get_workspace_files, invalidate_workspace_file_cache
 
     # Create initial files
