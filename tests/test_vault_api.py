@@ -1174,20 +1174,43 @@ async def test_vault_write_bad_body_type_names_the_field_sent(
 
 def test_resolve_frontmatter_helper():
     from decafclaw.http_server import _resolve_frontmatter
+    # 1. No changes (neither fm_raw nor fm_patch provided)
     new_raw, err = _resolve_frontmatter("title: Test", {"title": "Test"}, None, None, None)
     assert new_raw == "title: Test"
     assert err is None
 
-    new_raw, err = _resolve_frontmatter("title: Test", {"title": "Test"}, None, "title: New\n", None)
-    assert new_raw == "title: New"
+    # 2. Raw frontmatter replacement (verbatim storage)
+    new_raw, err = _resolve_frontmatter("title: Test", {"title": "Test"}, None, "title: New\n# comment\n", None)
+    assert new_raw == "title: New\n# comment"
     assert err is None
 
+    # 3. Raw frontmatter containing column-0 '---' error
     new_raw, err = _resolve_frontmatter("title: Test", {"title": "Test"}, None, "title: Test\n---\n", None)
     assert new_raw is None
     assert err["status_code"] == 400
+    assert "---" in err["error"]
 
+    # 4. Raw frontmatter with non-mapping YAML error
+    new_raw, err = _resolve_frontmatter("title: Test", {"title": "Test"}, None, "- item1\n- item2", None)
+    assert new_raw is None
+    assert err["status_code"] == 400
+    assert "mapping" in err["error"]
+
+    # 5. Patch update with existing metadata
     new_raw, err = _resolve_frontmatter("title: Test\nimportance: 0.5", {"title": "Test", "importance": 0.5}, None, None, {"importance": 0.8})
     assert new_raw is not None
     assert "importance: 0.8" in new_raw
     assert err is None
+
+    # 6. Patch explicit-null deletion
+    new_raw, err = _resolve_frontmatter("title: Test\nimportance: 0.5", {"title": "Test", "importance": 0.5}, None, None, {"importance": None})
+    assert new_raw is not None
+    assert "importance" not in new_raw
+    assert err is None
+
+    # 7. Patch with malformed existing frontmatter error (fm_error present)
+    new_raw, err = _resolve_frontmatter(None, {}, "invalid yaml syntax", None, {"title": "New"})
+    assert new_raw is None
+    assert err["status_code"] == 400
+    assert "malformed" in err["error"]
 
