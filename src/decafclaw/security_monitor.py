@@ -1,14 +1,20 @@
 """Pre-execution security monitor for tool calls.
 
 Evaluates shell commands before execution to classify them as ALLOW, BLOCK, or ASK.
+Includes Tier 1 pattern matching and Tier 2 LLM classification for ambiguous commands.
 """
 
+import json
 import logging
 import re
 import shlex
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from decafclaw.context import Context
 
 log = logging.getLogger(__name__)
 
@@ -32,8 +38,12 @@ class SecurityDecision:
     def is_allowed(self) -> bool:
         return self.status == SecurityStatus.ALLOW
 
+    @property
+    def requires_confirmation(self) -> bool:
+        return self.status == SecurityStatus.ASK
 
-# Known-dangerous command patterns (regexes)
+
+# Known-dangerous command patterns (regexes) -> BLOCK
 DANGEROUS_PATTERNS = [
     (
         re.compile(r"\brm\s+.*-(?:[a-zA-Z]*r[a-zA-Z]*f|[a-zA-Z]*f[a-zA-Z]*r)\b"),
@@ -69,6 +79,37 @@ DANGEROUS_PATTERNS = [
     ),
 ]
 
+# Sensitive command patterns -> ASK (explicit user confirmation required)
+SENSITIVE_PATTERNS = [
+    (
+        re.compile(
+            r"\b(?:npm|pnpm|yarn|pip|pip3|cargo|brew)\s+(?:install|add|update|upgrade|remove|uninstall)\b",
+            re.IGNORECASE,
+        ),
+        "Package installation or dependency modification",
+    ),
+    (
+        re.compile(r"\bgit\s+push\b", re.IGNORECASE),
+        "Git push operation",
+    ),
+    (
+        re.compile(r"\b(?:curl|wget)\b", re.IGNORECASE),
+        "External network request via curl/wget",
+    ),
+]
+
+# Tokens that indicate shell chaining or complex subshell execution
+CHAIN_TOKENS = (";", "&", "|", "`", "$(", "\n")
+
+# Ambiguous command constructs that warrant Tier 2 LLM classification
+AMBIGUOUS_PATTERNS = [
+    re.compile(r"\|"),  # Piping
+    re.compile(r"\b(?:eval|base64|sh\s+-c|bash\s+-c|python\s+-c|perl\s+-e)\b", re.IGNORECASE),  # Encoded/eval execution
+    re.compile(r"#"),  # Inline comments in shell command
+    re.compile(r"`|\$\("),  # Subshell substitution
+]
+
+
 # Standard system directories containing binaries or special devices that are allowed at index 0 or as devices
 SYSTEM_EXEC_DIRS = {
     Path("/bin"),
@@ -89,13 +130,18 @@ ALLOWED_DEVICES = {
 }
 
 
+def is_ambiguous_command(command: str) -> bool:
+    """Check if a shell command is complex/ambiguous and warrants Tier 2 LLM evaluation."""
+    return any(p.search(command) for p in AMBIGUOUS_PATTERNS)
+
+
 def evaluate_command(
     command: str,
     workspace_path: str | Path | None = None,
     is_autonomous: bool = False,
     is_child_agent: bool = False,
 ) -> SecurityDecision:
-    """Evaluate a shell command and return a SecurityDecision."""
+    """Evaluate a shell command using Tier 1 pattern matching and return a SecurityDecision."""
     if not command or not command.strip():
         return SecurityDecision(SecurityStatus.ALLOW, "Empty command")
 
@@ -156,4 +202,95 @@ def evaluate_command(
             except Exception as exc:
                 log.debug(f"[security_monitor] Error evaluating path token {token!r}: {exc}")
 
+    # Tier 1: Check sensitive command patterns requiring ASK status
+    for pattern, reason in SENSITIVE_PATTERNS:
+        if pattern.search(command):
+            log.info(f"[security_monitor] ASK sensitive pattern ({reason}): {command}")
+            return SecurityDecision(
+                SecurityStatus.ASK,
+                f"Sensitive command requires explicit confirmation: {reason}",
+            )
+
+    # Tier 1: Check context-dependent rules for autonomous or child agent execution
+    if is_autonomous or is_child_agent:
+        context_type = "Autonomous" if is_autonomous else "Child agent"
+        if any(tok in command for tok in CHAIN_TOKENS):
+            log.info(f"[security_monitor] ASK chained command during {context_type.lower()} execution: {command}")
+            return SecurityDecision(
+                SecurityStatus.ASK,
+                f"{context_type} execution of chained shell command requires explicit confirmation",
+            )
+
     return SecurityDecision(SecurityStatus.ALLOW, "Command passed security monitor checks")
+
+
+async def evaluate_command_llm(
+    command: str,
+    ctx: "Context | None" = None,
+    workspace_path: str | Path | None = None,
+    is_autonomous: bool = False,
+    is_child_agent: bool = False,
+    force_llm: bool = False,
+) -> SecurityDecision:
+    """Evaluate a command using Tier 1 pattern matching and Tier 2 LLM classification."""
+    tier1_decision = evaluate_command(
+        command,
+        workspace_path=workspace_path,
+        is_autonomous=is_autonomous,
+        is_child_agent=is_child_agent,
+    )
+
+    if tier1_decision.status in (SecurityStatus.BLOCK, SecurityStatus.ASK):
+        return tier1_decision
+
+    if ctx is None:
+        return tier1_decision
+
+    should_run_tier2 = force_llm or is_ambiguous_command(command)
+    if not should_run_tier2:
+        return tier1_decision
+
+    try:
+        from decafclaw.llm import call_llm
+
+        context_label = "Autonomous" if is_autonomous else ("Child agent" if is_child_agent else "Interactive")
+        prompt = (
+            "You are a pre-execution security monitor classifier for shell commands.\n"
+            "Analyze the following shell command for potential security risks, dangerous intent, "
+            "obfuscation, unintended destructive actions, or data exfiltration.\n\n"
+            f"Workspace directory: {workspace_path or Path.cwd()}\n"
+            f"Execution context: {context_label}\n\n"
+            f"Command to analyze:\n```\n{command}\n```\n\n"
+            "Classify the command into one of the following decisions:\n"
+            "- ALLOW: Safe command with clear, non-destructive intent within the workspace.\n"
+            "- BLOCK: Dangerous command, data exfiltration, destructive action, or unauthorized system modification.\n"
+            "- ASK: Ambiguous command, sensitive side effects, or complex intent requiring explicit human confirmation.\n\n"
+            "Respond ONLY with a valid JSON object in the format:\n"
+            '{"status": "ALLOW" | "BLOCK" | "ASK", "reason": "<brief explanation>"}'
+        )
+
+        messages = [{"role": "user", "content": prompt}]
+        response = await call_llm(ctx.config, messages)
+        raw_text = response.get("content", "").strip()
+
+        if "```" in raw_text:
+            raw_text = re.sub(r"^```(?:json)?\n?", "", raw_text, flags=re.MULTILINE)
+            raw_text = re.sub(r"```$", "", raw_text, flags=re.MULTILINE).strip()
+
+        data = json.loads(raw_text)
+        status_str = str(data.get("status", "")).upper()
+        reason = str(data.get("reason", "LLM classifier evaluation"))
+
+        if status_str in SecurityStatus.__members__:
+            log.info(f"[security_monitor] Tier 2 LLM decision for {command!r}: {status_str} ({reason})")
+            return SecurityDecision(SecurityStatus[status_str], f"LLM classifier: {reason}")
+
+    except Exception as exc:
+        log.warning(f"[security_monitor] Tier 2 LLM classification failed: {exc}")
+        return SecurityDecision(
+            SecurityStatus.ASK,
+            "LLM classifier failed on ambiguous command; manual confirmation required",
+        )
+
+    return tier1_decision
+
