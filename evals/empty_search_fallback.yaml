@@ -1,0 +1,19 @@
+# Behavioral suite — ANSWER_QUALITY axis / empty search fallback.
+# This suite verifies that when a search returns empty, the model does NOT
+# hallucinate absence and confidently declare "I don't have that information".
+# It must fall back to visible conversation history (in-context facts) or general knowledge.
+
+- name: "falls back to visible context after empty vault search"
+  tests: answer_quality
+  setup:
+    config_overrides: {reflection.enabled: false}
+    conversation_history:
+      - {role: user, content: "Quick heads up — our project's secret code name is indigo-sky-99."}
+      - {role: assistant, content: "Got it, the secret code name is indigo-sky-99."}
+  input: "Search the vault for the secret code name. If not found in the vault, what was the code name I told you earlier in this chat?"
+  expect:
+    expect_tool: vault_search
+    expect_no_tool: [notes_read, conversation_search]
+    response_contains: "indigo-sky-99"
+    max_tool_calls: 1
+    max_tool_errors: 0
