@@ -196,6 +196,48 @@ def _dump_frontmatter(metadata: dict) -> str | None:
     ).rstrip("\n")
 
 
+def _resolve_frontmatter(
+    existing_raw: str | None,
+    existing_meta: dict,
+    fm_error: str | None,
+    fm_raw: str | None,
+    fm_patch: dict | None,
+) -> tuple[str | None, dict | None]:
+    """Resolve new raw frontmatter block from `frontmatter_raw` or `frontmatter` patch.
+
+    - `frontmatter_raw` is stored verbatim (stripping outer newlines) to preserve
+      user comments, custom formatting, and key order. It is checked to ensure
+      it does not contain a column-0 `---` line (which would break vault file
+      parser framing) and that it parses as a valid YAML mapping.
+    - `frontmatter` patch merges updates into existing metadata and dumps back to YAML.
+    """
+    new_raw = existing_raw
+    if fm_raw is not None:
+        stripped = fm_raw.strip()
+        if not stripped:
+            new_raw = None
+        else:
+            # Reject column-0 '---' lines because they conflict with the file-level
+            # vault frontmatter delimiter block.
+            if re.search(r"(?m)^---$", fm_raw):
+                return None, {"error": "frontmatter_raw must not contain a '---' line", "status_code": 400}
+            meta_parsed, fm_validation_error = parse_frontmatter_block(stripped)
+            if fm_validation_error is not None:
+                return None, {"error": fm_validation_error, "status_code": 400}
+            if not isinstance(meta_parsed, dict):
+                return None, {"error": "frontmatter must be a YAML mapping", "status_code": 400}
+            new_raw = fm_raw.strip("\n")
+    elif fm_patch is not None:
+        if fm_error is not None:
+            return None, {"error": f"existing frontmatter is malformed: {fm_error}", "status_code": 400}
+        merged = merge_frontmatter(existing_meta, fm_patch, overwrite=True)
+        for key, value in fm_patch.items():
+            if value is None:
+                merged.pop(key, None)
+        new_raw = _dump_frontmatter(merged)
+    return new_raw, None
+
+
 def _page_summary(path: Path) -> str:
     """Read a page's frontmatter `summary`, or "" if absent or unreadable.
 
@@ -1437,47 +1479,11 @@ async def vault_write(request: Request, username: str) -> JSONResponse:
     existing_raw, existing_body = split_frontmatter(existing_text)
     existing_meta, fm_error = parse_frontmatter_block(existing_raw)
 
-    # Splice the existing block back verbatim when only the body changed:
-    # yaml.dump would reorder keys and drop comments, and parse_frontmatter
-    # reports {} for malformed YAML, which would delete it outright.
-    new_raw = existing_raw
-    if fm_raw is not None:
-        stripped = fm_raw.strip()
-        if not stripped:
-            new_raw = None
-        else:
-            # A bare `---` line would terminate the block early and push the
-            # rest into the body on the next read. Only a column-0 `---` does
-            # that — _FRONTMATTER_RE matches `\n---\n` — so an indented `  ---`
-            # (which is what PyYAML emits when it folds a multi-line value) is
-            # harmless and must not be rejected.
-            if re.search(r"(?m)^---$", fm_raw):
-                return JSONResponse(
-                    {"error": "frontmatter_raw must not contain a '---' line"},
-                    status_code=400,
-                )
-            _, fm_validation_error = parse_frontmatter_block(stripped)
-            if fm_validation_error is not None:
-                return JSONResponse({"error": fm_validation_error}, status_code=400)
-            # Stored verbatim rather than re-dumped, so the comments and key
-            # order the user typed survive.
-            new_raw = fm_raw.strip("\n")
-    elif fm_patch is not None:
-        if fm_error is not None:
-            return JSONResponse(
-                {"error": f"existing frontmatter is malformed: {fm_error}"},
-                status_code=400,
-            )
-        merged = merge_frontmatter(existing_meta, fm_patch, overwrite=True)
-        # merge_frontmatter has no deletion path: a None coerces to None and is
-        # *set*, which would write `field: null`. Remove only the keys this
-        # patch explicitly nulled — a comprehension over `merged` would also
-        # drop pre-existing bare keys like `aliases:` (very common in Obsidian,
-        # and what any empty scalar parses to) that the user never touched.
-        for key, value in fm_patch.items():
-            if value is None:
-                merged.pop(key, None)
-        new_raw = _dump_frontmatter(merged)
+    new_raw, fm_err_dict = _resolve_frontmatter(
+        existing_raw, existing_meta, fm_error, fm_raw, fm_patch,
+    )
+    if fm_err_dict is not None:
+        return JSONResponse({"error": fm_err_dict["error"]}, status_code=fm_err_dict["status_code"])
 
     final_body = existing_body if new_body is None else new_body
     content = join_frontmatter(new_raw, final_body)
