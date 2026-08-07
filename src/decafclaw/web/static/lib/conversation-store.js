@@ -467,6 +467,7 @@ export class ConversationStore extends EventTarget {
     // disconnected contributes prompts the cached list has never seen.
     this.#ws.send({ type: MESSAGE_TYPES.LIST_COMMANDS });
     // Full refetch of history for the active conversation
+    this.#busy = false;
     this.#messageStore.clear();
     this.#toolStatusStore.clear();
     this.#ws.send({ type: MESSAGE_TYPES.LOAD_HISTORY, conv_id: this.#currentConvId, limit: 50 });
