@@ -153,7 +153,7 @@ class TestAutoRefreshSkills:
     async def test_compose_auto_refreshes_skill_catalog(self, ctx, config):
         ws_skills = config.workspace_path / "skills"
         ws_skills.mkdir(parents=True, exist_ok=True)
-        
+
         composer = ContextComposer()
         await composer.compose(ctx, "hello", [], mode=ComposerMode.INTERACTIVE)
         assert "late-skill" not in config.system_prompt
@@ -170,7 +170,7 @@ class TestAutoRefreshSkills:
         config.agent.auto_refresh_skills = False
         ws_skills = config.workspace_path / "skills"
         ws_skills.mkdir(parents=True, exist_ok=True)
-        
+
         composer = ContextComposer()
         await composer.compose(ctx, "hello", [], mode=ComposerMode.INTERACTIVE)
 

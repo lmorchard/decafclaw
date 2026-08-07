@@ -1023,7 +1023,7 @@ def rediscover_skills(config) -> list:
     from ..tool_definitions import invalidate_skill_cache  # deferred: circular dep
 
     rejections: list = []
-    if not config.system_prompt or "<soul>" in config.system_prompt or "<agent_role>" in config.system_prompt:
+    if not config.system_prompt or "<skill_catalog>" in config.system_prompt:
         config.system_prompt, config.discovered_skills = load_system_prompt(
             config, rejections=rejections
         )
