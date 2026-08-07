@@ -143,10 +143,11 @@ async def check_shell_approval(ctx: "Context", command: str, tool_name: str = "s
 
     Returns {"approved": True} if auto-approved, or the user's confirmation result.
     """
-    from decafclaw.security_monitor import SecurityStatus, evaluate_command
+    from decafclaw.security_monitor import SecurityStatus, evaluate_command_llm
 
-    decision = evaluate_command(
+    decision = await evaluate_command_llm(
         command,
+        ctx=ctx,
         workspace_path=ctx.config.workspace_path,
         is_autonomous=ctx.is_unattended,
     )
@@ -156,6 +157,24 @@ async def check_shell_approval(ctx: "Context", command: str, tool_name: str = "s
             "approved": False,
             "reason": f"Blocked by security monitor: {decision.reason}",
         }
+
+    if decision.status == SecurityStatus.ASK:
+        log.info(f"[{tool_name}] security monitor requires explicit confirmation: {command} (reason: {decision.reason})")
+        if ctx.is_unattended:
+            log.warning(f"[{tool_name}] denied on unattended turn (security monitor ASK decision): {command}")
+            return {
+                "approved": False,
+                "reason": f"Security monitor requires explicit confirmation: {decision.reason}",
+            }
+        suggested_pattern = _suggest_pattern(command)
+        result = await request_confirmation(
+            ctx, tool_name=tool_name, command=command,
+            message=message or f"Shell command (security review requested): `{command}`",
+            suggested_pattern=suggested_pattern,
+        )
+        if result.get("add_pattern"):
+            _save_allow_pattern(ctx.config, suggested_pattern)
+        return result
 
     if "shell" in ctx.tools.preapproved or tool_name in ctx.tools.preapproved:
         log.info(f"[{tool_name}] pre-approved by command: {command}")
