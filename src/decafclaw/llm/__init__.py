@@ -137,6 +137,9 @@ def _resolve(
     return provider, model, timeout
 
 
+_failed_model_info: set[tuple[str, str]] = set()
+
+
 async def ensure_model_context_window(config: Any, model_name: str | None = None) -> int:
     """Get context window size for a model, querying provider API if not configured (0)."""
     model_name = model_name or getattr(config, "default_model", "")
@@ -145,23 +148,28 @@ async def ensure_model_context_window(config: Any, model_name: str | None = None
         if mc.context_window_size and mc.context_window_size > 0:
             return mc.context_window_size
 
-        try:
-            provider = get_provider(mc.provider)
-            info = await provider.get_model_info(mc.model)
-            if info:
-                limit = (
-                    info.get("inputTokenLimit")
-                    or info.get("input_token_limit")
-                    or info.get("contextWindow")
-                    or info.get("context_window_size")
-                )
-                if limit:
-                    mc.context_window_size = int(limit)
-                    log.info("Auto-detected context window size for model %r (%r): %d",
-                             model_name, mc.model, mc.context_window_size)
-                    return mc.context_window_size
-        except Exception as e:
-            log.debug("Failed to auto-detect context window size for %r: %s", model_name, e)
+        cache_key = (mc.provider, mc.model)
+        if cache_key not in _failed_model_info:
+            try:
+                provider = get_provider(mc.provider)
+                if hasattr(provider, "get_model_info"):
+                    info = await provider.get_model_info(mc.model)
+                    if info:
+                        limit = (
+                            info.get("inputTokenLimit")
+                            or info.get("input_token_limit")
+                            or info.get("contextWindow")
+                            or info.get("context_window_size")
+                        )
+                        if limit:
+                            mc.context_window_size = int(limit)
+                            log.info("Auto-detected context window size for model %r (%r): %d",
+                                     model_name, mc.model, mc.context_window_size)
+                            return mc.context_window_size
+                _failed_model_info.add(cache_key)
+            except Exception as e:
+                log.debug("Failed to auto-detect context window size for %r: %s", model_name, e)
+                _failed_model_info.add(cache_key)
 
         if mc.context_window_size and mc.context_window_size > 0:
             return mc.context_window_size
