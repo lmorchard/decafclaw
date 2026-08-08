@@ -216,8 +216,9 @@ async def tool_shell(ctx: "Context", command: str) -> ToolResult:
 
     result = await check_shell_approval(ctx, command, tool_name="shell")
     if not result.get("approved"):
-        log.info(f"[tool:shell] command denied: {command}")
-        return ToolResult(text="[error: shell command was denied by user]")
+        reason = result.get("reason") or "denied by user"
+        log.info(f"[tool:shell] command denied: {command} (reason: {reason})")
+        return ToolResult(text=f"[error: command denied: {reason}]")
 
     return _execute_command(ctx, command)
 

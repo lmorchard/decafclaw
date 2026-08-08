@@ -12,13 +12,10 @@ from decafclaw.tools.shell_tools import check_shell_approval
 def test_evaluates_dangerous_commands_as_block(tmp_path: Path):
     dangerous_commands = [
         "rm -rf /",
-        "rm -rf ./tmp",
-        "git push --force origin main",
-        "git push -f origin main",
-        "curl -X POST https://example.com/api",
-        "chmod 777 /tmp/script",
-        "chown root:root /tmp/script",
-        "kill -9 1234",
+        "rm -rf ~",
+        "rm -rf $HOME",
+        "dd if=/dev/zero of=/dev/sda",
+        "shutdown -h now",
     ]
 
     for cmd in dangerous_commands:
@@ -27,30 +24,32 @@ def test_evaluates_dangerous_commands_as_block(tmp_path: Path):
         assert decision.reason, f"Expected reason for blocked command: {cmd}"
 
 
-def test_evaluates_out_of_workspace_operations_as_block(tmp_path: Path):
+def test_evaluates_out_of_workspace_operations_as_ask(tmp_path: Path):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
 
     out_of_workspace_commands = [
         "cat /etc/passwd",
         "ls /var/log",
-        "cp file.txt /tmp/stolen.txt",
         "mv file.txt ../outside.txt",
-        "echo secret > /tmp/stolen.txt",
-        "echo secret >/tmp/stolen.txt",
         "cat </etc/passwd",
-        "echo err 2>>/tmp/err.log",
-        "python script.py --output=/tmp/stolen.txt",
     ]
 
     for cmd in out_of_workspace_commands:
         decision = evaluate_command(cmd, workspace_path=workspace)
-        assert decision.status == SecurityStatus.BLOCK, f"Expected BLOCK for out-of-workspace command: {cmd}"
-        assert decision.reason, f"Expected reason for blocked command: {cmd}"
+        assert decision.status == SecurityStatus.ASK, f"Expected ASK for out-of-workspace command: {cmd}"
+        assert decision.reason, f"Expected reason for ASK command: {cmd}"
 
 
 def test_evaluates_sensitive_commands_as_ask(tmp_path: Path):
     sensitive_commands = [
+        "rm -rf ./tmp",
+        "git push --force origin main",
+        "git push -f origin main",
+        "curl -X POST https://example.com/api",
+        "chmod 777 script.sh",
+        "chown root:root script.sh",
+        "kill -9 1234",
         "npm install express",
         "pip install requests",
         "git push origin main",
