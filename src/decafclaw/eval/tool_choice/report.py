@@ -52,11 +52,11 @@ def format_summary(results: list[CaseResult]) -> str:
 def compute_pair_overlap(results: list[CaseResult]) -> list[PairOverlap]:
     """Aggregate per-(expected, near_miss) overlap.
 
-    Each case contributes one row per ``near_miss`` tool. ``swapped``
-    increments when ``picked == near_miss``. ``total`` is the count of
-    cases that referenced this pair (i.e. had ``expected=A`` and
-    ``near_miss`` containing ``B``). Sorted by overlap pct descending,
-    ties broken by ``expected`` then ``near_miss`` for stable output.
+    Each case contributes one count per ``near_miss`` tool per rep.
+    ``swapped`` increments when ``picked == near_miss``. ``total`` is the
+    count of reps (across all cases) that referenced this pair (i.e. had
+    ``expected=A`` and ``near_miss`` containing ``B``). Sorted by overlap pct
+    descending, ties broken by ``expected`` then ``near_miss`` for stable output.
     """
     counters: dict[tuple[str, str], dict[str, int]] = defaultdict(
         lambda: {"swapped": 0, "total": 0}

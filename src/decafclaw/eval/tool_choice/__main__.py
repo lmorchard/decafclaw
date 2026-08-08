@@ -142,6 +142,10 @@ def main(argv: list[str] | None = None) -> int:
         print(f"No cases found at {args.path}")
         return 1
 
+    if args.reps < 1:
+        print(f"Error: --reps must be >= 1, got {args.reps}")
+        return 1
+
     if args.filter:
         cases = [c for c in cases if args.filter in c.name]
         if not cases:
