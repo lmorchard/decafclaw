@@ -77,7 +77,7 @@ async def run_case(
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": case.scenario},
     ]
-    
+
     async def _do_rep(i: int):
         if sem:
             await sem.acquire()
@@ -94,15 +94,15 @@ async def run_case(
                 sem.release()
 
     results = await asyncio.gather(*(_do_rep(i) for i in range(reps)))
-    
+
     pass_count = 0
     rep_picks = []
-    
+
     for picked, all_picks in results:
         rep_picks.append(picked)
         if picked == case.expected:
             pass_count += 1
-            
+
     first_picked, first_all_picks = results[0] if results else (NO_TOOL, [])
 
     return CaseResult(
