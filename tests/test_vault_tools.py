@@ -1157,6 +1157,32 @@ class TestVaultSearchTags:
         assert "RecentRust" in result.text
         assert "StaleRust" not in result.text
 
+    @pytest.mark.asyncio
+    async def test_fail_open_excludes_candidate_when_extract_tags_raises(
+        self, ctx, agent_pages, monkeypatch
+    ):
+        from decafclaw.tags import extract_tags
+
+        (agent_pages / "AsyncPage.md").write_text(
+            "# AsyncPage\n\nWidget notes about async work. #async")
+        (agent_pages / "BadPage.md").write_text(
+            "# BadPage\n\nWidget notes. #async")
+
+        real_extract_tags = extract_tags
+
+        def fake_extract_tags(content, source_type):
+            if "BadPage" in content:
+                raise ValueError("boom")
+            return real_extract_tags(content, source_type)
+
+        monkeypatch.setattr(
+            "decafclaw.skills.vault.tools.extract_tags", fake_extract_tags)
+
+        result = await tool_vault_search(ctx, "widget", tags=["async"])
+
+        assert "AsyncPage" in result.text
+        assert "BadPage" not in result.text
+
 
 class TestVaultSearchTagsSemantic:
     """Tag filtering on the SEMANTIC branch of vault_search (#318 phase 4
