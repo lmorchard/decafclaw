@@ -301,7 +301,7 @@ async def test_run_case_error_excludes_from_stats(config, monkeypatch):
 
     case = Case(name="t", scenario="hi", expected=NO_TOOL, near_miss=["some_tool"])
     result = await run_case(case, model="m", config=config, tool_loadout=[], reps=3)
-    
+
     assert result.reps == 3
     assert result.pass_count == 1
     assert result.passed is False
