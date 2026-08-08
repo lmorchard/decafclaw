@@ -14,6 +14,11 @@ def test_evaluates_dangerous_commands_as_block(tmp_path: Path):
         "rm -rf /",
         "rm -rf ~",
         "rm -rf $HOME",
+        "rm -rf ~/",
+        "rm -rf $HOME/",
+        "rm -rf '$HOME'",
+        "rm -rf \"$HOME/\"",
+        "rm -rf \"/\"",
         "dd if=/dev/zero of=/dev/sda",
         "shutdown -h now",
     ]
