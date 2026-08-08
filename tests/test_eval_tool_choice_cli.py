@@ -115,3 +115,34 @@ def test_cli_matrix_flag_prints_confusion_matrix(tmp_path, monkeypatch, capsys):
 
     out = capsys.readouterr().out
     assert "Confusion matrix" in out
+
+
+def test_cli_filter_runs_only_matching_case(tmp_path, monkeypatch, capsys):
+    """CRITERION 3: Only matching cases SHALL be run."""
+    yaml = (
+        "- name: alpha\n  scenario: x\n  expected: t\n  near_miss: [u]\n"
+        "- name: beta\n  scenario: x\n  expected: t\n  near_miss: [u]\n"
+    )
+    case_file = tmp_path / "cases.yaml"
+    case_file.write_text(yaml)
+    _patch_runtime(monkeypatch, picked_tool="t")
+
+    rc = main([str(case_file), "--filter", "alph"])
+    assert rc == 0
+
+    out = capsys.readouterr().out
+    assert "alpha" in out
+    assert "beta" not in out
+    assert "1/1 passed" in out
+
+
+def test_cli_filter_matching_nothing_exits_nonzero(tmp_path, monkeypatch, capsys):
+    """CRITERION 3: A filter matching nothing SHALL exit non-zero with a message naming the filter."""
+    case_file = _write_case(tmp_path, "case-a", "vault_search", ["conversation_search"])
+    _patch_runtime(monkeypatch, picked_tool="vault_search")
+
+    rc = main([str(case_file), "--filter", "nope"])
+    
+    assert rc != 0
+    out = capsys.readouterr().out
+    assert "Filter 'nope' matched no cases." in out

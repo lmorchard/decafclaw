@@ -134,6 +134,62 @@ async def test_run_case_passes_when_expected_picked(config, patched_call_llm):
 
 
 @pytest.mark.asyncio
+async def test_run_case_with_reps_invokes_multiple_times(config, patched_call_llm):
+    """CRITERION 1: `--reps N` invokes call_llm N times and carries per-case pass count."""
+    case = Case(
+        name="t", scenario="find decisions", expected="vault_search",
+        near_miss=["conversation_search"],
+    )
+    patched_call_llm.response = _make_response(["vault_search"])
+
+    result = await run_case(
+        case, model="m", config=config, tool_loadout=[{"function": {"name": "vault_search"}}],
+        reps=3
+    )
+    
+    assert len(patched_call_llm.calls) == 3
+    assert result.reps == 3
+    assert result.pass_count == 3
+    assert result.passed is True
+
+
+@pytest.mark.asyncio
+async def test_run_case_scripted_fraction_rate(config, monkeypatch):
+    """CRITERION 2: LLM scripted to return expected 3 of 5 times → reported rate 3/5."""
+    case = Case(
+        name="t", scenario="find decisions", expected="vault_search",
+        near_miss=["conversation_search"],
+    )
+
+    call_count = 0
+
+    async def scripted_call_llm(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        # pass on 1st, 2nd, 4th calls. (3 out of 5)
+        if call_count in [1, 2, 4]:
+            return _make_response(["vault_search"])
+        else:
+            return _make_response(["conversation_search"])
+
+    monkeypatch.setattr("decafclaw.eval.tool_choice.runner.call_llm", scripted_call_llm)
+
+    result = await run_case(
+        case, model="m", config=config, tool_loadout=[], reps=5
+    )
+
+    assert result.reps == 5
+    assert result.pass_count == 3
+    assert result.passed is False
+    
+    # Also verify that format_case_lines produces the required "3/5" substring
+    from decafclaw.eval.tool_choice.report import format_case_lines
+    lines = format_case_lines([result])
+    assert "FAIL  t (3/5)" in lines[0]
+    assert "picked conversation_search, vault_search" in lines[0]
+
+
+@pytest.mark.asyncio
 async def test_run_case_fails_with_picked_neighbor(config, patched_call_llm):
     case = Case(
         name="t", scenario="...", expected="vault_search",
