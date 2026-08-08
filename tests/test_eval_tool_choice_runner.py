@@ -146,7 +146,7 @@ async def test_run_case_with_reps_invokes_multiple_times(config, patched_call_ll
         case, model="m", config=config, tool_loadout=[{"function": {"name": "vault_search"}}],
         reps=3
     )
-    
+
     assert len(patched_call_llm.calls) == 3
     assert result.reps == 3
     assert result.pass_count == 3
@@ -181,7 +181,7 @@ async def test_run_case_scripted_fraction_rate(config, monkeypatch):
     assert result.reps == 5
     assert result.pass_count == 3
     assert result.passed is False
-    
+
     # Also verify that format_case_lines produces the required "3/5" substring
     from decafclaw.eval.tool_choice.report import format_case_lines
     lines = format_case_lines([result])
