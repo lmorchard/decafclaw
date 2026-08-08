@@ -62,6 +62,14 @@ def _build_parser() -> argparse.ArgumentParser:
         "--concurrency", type=int, default=4,
         help="Max concurrent cases per model (default: 4)",
     )
+    p.add_argument(
+        "--reps", type=int, default=1,
+        help="Number of times to run each case (default: 1)",
+    )
+    p.add_argument(
+        "--filter", type=str,
+        help="Only run cases whose name contains this substring",
+    )
     return p
 
 
@@ -94,6 +102,7 @@ async def _run_for_model(
         config=config,
         tool_loadout=tool_loadout,
         concurrency=args.concurrency,
+        reps=args.reps,
     )
 
     for line in format_case_lines(results):
@@ -132,6 +141,12 @@ def main(argv: list[str] | None = None) -> int:
     if not cases:
         print(f"No cases found at {args.path}")
         return 1
+
+    if args.filter:
+        cases = [c for c in cases if args.filter in c.name]
+        if not cases:
+            print(f"Filter '{args.filter}' matched no cases.")
+            return 1
 
     models = _resolve_models(args, config)
     sweep = len(models) > 1
