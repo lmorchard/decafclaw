@@ -142,17 +142,14 @@ async def test_autocomplete_vault_pages_hidden_parent_dir(client, http_config, t
 
 @pytest.mark.asyncio
 async def test_autocomplete_vault_pages_symlinks(client, http_config, tmp_path):
-    """Symlinked vault root and symlinked subdirectories should be searched properly."""
+    """Symlinked vault root should be searched properly."""
     real_vault = tmp_path / "real_vault"
     real_vault.mkdir(parents=True, exist_ok=True)
     (real_vault / "RootPage.md").write_text("# Root Page")
 
-    external_dir = tmp_path / "external_obsidian"
-    external_dir.mkdir(parents=True, exist_ok=True)
-    (external_dir / "PersonalPage.md").write_text("# Personal Page")
-
-    # Symlink subdirectory inside vault
-    os.symlink(external_dir, real_vault / "personal")
+    notes_dir = real_vault / "notes"
+    notes_dir.mkdir(parents=True, exist_ok=True)
+    (notes_dir / "PersonalPage.md").write_text("# Personal Page")
 
     # Symlink vault root itself
     symlink_vault = tmp_path / "symlink_vault"
@@ -164,7 +161,28 @@ async def test_autocomplete_vault_pages_symlinks(client, http_config, tmp_path):
     assert resp.status_code == 200
     results = resp.json()["results"]
     assert len(results) == 1
-    assert results[0]["id"] == "personal/PersonalPage"
+    assert results[0]["id"] == "notes/PersonalPage"
+
+
+@pytest.mark.asyncio
+async def test_autocomplete_vault_pages_blocks_external_symlinks(client, http_config, tmp_path):
+    """Symlinks pointing outside the vault root must be skipped for security."""
+    real_vault = tmp_path / "real_vault"
+    real_vault.mkdir(parents=True, exist_ok=True)
+
+    outside_dir = tmp_path / "outside_dir"
+    outside_dir.mkdir(parents=True, exist_ok=True)
+    (outside_dir / "LeakedPage.md").write_text("# Secret Outside File")
+
+    # Symlink pointing outside the vault root
+    os.symlink(outside_dir, real_vault / "escaped")
+
+    http_config.vault.vault_path = str(real_vault)
+
+    resp = await client.get("/api/autocomplete?q=Leaked")
+    assert resp.status_code == 200
+    results = resp.json()["results"]
+    assert len(results) == 0
 
 
 @pytest.mark.asyncio
