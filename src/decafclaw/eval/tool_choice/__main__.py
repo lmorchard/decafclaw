@@ -36,6 +36,10 @@ def _build_parser() -> argparse.ArgumentParser:
         description="Tool-choice disambiguation eval — measures which tool the "
                     "model picks given engineered ambiguity scenarios.",
     )
+    p.add_argument(
+        "--production-loadout", action="store_true",
+        help="Run in production mode: use classify_tools to split loadout, offer tool_search, and add deferred block",
+    )
     p.add_argument("path", help="YAML file or directory of YAMLs")
     grp = p.add_mutually_exclusive_group()
     grp.add_argument(
@@ -101,6 +105,7 @@ async def _run_for_model(
         model=model,
         config=config,
         tool_loadout=tool_loadout,
+        production_mode=args.production_loadout,
         concurrency=args.concurrency,
         reps=args.reps,
     )
