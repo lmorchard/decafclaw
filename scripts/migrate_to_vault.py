@@ -103,7 +103,7 @@ def main():
     print(f"\n--- Migrating memories: {mem_src} → {agent_journal} ---")
     mem_count = migrate_directory(mem_src, agent_journal, "memories", args.dry_run)
 
-    print(f"\n--- Summary ---")
+    print("\n--- Summary ---")
     print(f"Wiki pages: {wiki_count} file(s) {'would be ' if args.dry_run else ''}moved")
     print(f"Memories: {mem_count} file(s) {'would be ' if args.dry_run else ''}moved")
 
