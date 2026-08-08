@@ -8,6 +8,7 @@ import json
 import logging
 import re
 import shlex
+import tempfile
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -43,8 +44,32 @@ class SecurityDecision:
         return self.status == SecurityStatus.ASK
 
 
-# Known-dangerous command patterns (regexes) -> BLOCK
+# Known-dangerous command patterns (regexes) -> BLOCK (catastrophic actions that must never execute)
 DANGEROUS_PATTERNS = [
+    (
+        re.compile(r"\brm\s+.*-(?:[a-zA-Z]*r[a-zA-Z]*f|[a-zA-Z]*f[a-zA-Z]*r)\s+(?:/|~|\$HOME|/\*|~\*)(?:\s|$)"),
+        "Dangerous recursive force deletion on root or home directory",
+    ),
+    (
+        re.compile(r"\brm\s+.*-(?:[a-zA-Z]*r|--recursive)\s+(?:/|~|\$HOME|/\*|~\*)(?:\s|$)"),
+        "Dangerous recursive deletion on root or home directory",
+    ),
+    (
+        re.compile(r"\b(?:mkfs|dd\s+.*of=/dev/(?:sd[a-z0-9_]*|hd[a-z0-9_]*|vd[a-z0-9_]*|nvme[a-z0-9_]*|disk[a-z0-9_]*))\b"),
+        "Raw disk block device overwrite or formatting",
+    ),
+    (
+        re.compile(r":\(\)\{\s*:\|:&\s*\};:"),
+        "Fork bomb resource exhaustion attack",
+    ),
+    (
+        re.compile(r"\b(?:shutdown|reboot|poweroff)\b"),
+        "System shutdown or reboot command",
+    ),
+]
+
+# Sensitive command patterns -> ASK (explicit user confirmation required)
+SENSITIVE_PATTERNS = [
     (
         re.compile(r"\brm\s+.*-(?:[a-zA-Z]*r[a-zA-Z]*f|[a-zA-Z]*f[a-zA-Z]*r)\b"),
         "Dangerous recursive force deletion (rm -rf)",
@@ -58,8 +83,8 @@ DANGEROUS_PATTERNS = [
         "Dangerous forced git push (git push --force)",
     ),
     (
-        re.compile(r"\bcurl\s+.*(?:-X\s*POST|--request\s+POST|-XPOST)\b", re.IGNORECASE),
-        "External HTTP POST request via curl",
+        re.compile(r"\bcurl\s+.*(?:-X\s*(?:POST|PUT|DELETE|PATCH)|--request\s+(?:POST|PUT|DELETE|PATCH)|-XPOST|-XPUT|-XDELETE|-XPATCH)\b", re.IGNORECASE),
+        "External HTTP POST/PUT/DELETE request via curl",
     ),
     (
         re.compile(r"\bwget\s+.*--post-(?:data|file)\b", re.IGNORECASE),
@@ -77,10 +102,6 @@ DANGEROUS_PATTERNS = [
         re.compile(r"\b(?:kill|pkill|killall)\b"),
         "Process termination command (kill)",
     ),
-]
-
-# Sensitive command patterns -> ASK (explicit user confirmation required)
-SENSITIVE_PATTERNS = [
     (
         re.compile(
             r"\b(?:npm|pnpm|yarn|pip|pip3|cargo|brew)\s+(?:install|add|update|upgrade|remove|uninstall)\b",
@@ -111,11 +132,29 @@ SYSTEM_EXEC_DIRS = {
     Path("/bin"),
     Path("/usr/bin"),
     Path("/usr/local/bin"),
-    Path("/opt/homebrew/bin"),
+    Path("/opt/homebrew"),
     Path("/usr/libexec"),
     Path("/sbin"),
     Path("/usr/sbin"),
     Path("/System"),
+    Path.home() / ".cargo",
+    Path.home() / ".local",
+    Path.home() / ".nvm",
+    Path.home() / ".pyenv",
+    Path.home() / ".rbenv",
+    Path.home() / ".asdf",
+    Path.home() / ".sdkman",
+    Path.home() / ".cache",
+}
+
+ALLOWED_TEMP_DIRS = {
+    Path("/tmp"),
+    Path("/var/tmp"),
+    Path("/private/tmp"),
+    Path("/private/var/tmp"),
+    Path("/var/folders"),
+    Path("/private/var/folders"),
+    Path(tempfile.gettempdir()).resolve(),
 }
 
 ALLOWED_DEVICES = {
@@ -123,6 +162,9 @@ ALLOWED_DEVICES = {
     Path("/dev/stdout"),
     Path("/dev/stderr"),
     Path("/dev/zero"),
+    Path("/dev/tty"),
+    Path("/dev/urandom"),
+    Path("/dev/random"),
 }
 
 
@@ -187,19 +229,31 @@ def evaluate_command(
                 if token_path in ALLOWED_DEVICES:
                     continue
 
-                # If token is the executable command (idx 0), allow system binaries
-                if idx == 0 and any(token_path.is_relative_to(sys_dir) for sys_dir in SYSTEM_EXEC_DIRS):
+                # If token is the executable command (idx 0), allow system and user binaries
+                if idx == 0 and (
+                    any(token_path.is_relative_to(sys_dir) for sys_dir in SYSTEM_EXEC_DIRS)
+                    or token_path.name in ("python", "python3", "pytest", "node", "npm", "uv")
+                    or "venv" in token_path.parts
+                ):
                     continue
 
                 # Check if path is within workspace
                 if not token_path.is_relative_to(resolved_workspace):
-                    log.warning(
-                        f"[security_monitor] BLOCKED operation outside workspace "
-                        f"(workspace: {resolved_workspace})"
+                    # Check if token_path escapes workspace hierarchy into parent/sibling
+                    ws_parents = [p for p in resolved_workspace.parents if p != Path("/")]
+                    is_workspace_escape = token_path in ws_parents or any(token_path.is_relative_to(p) for p in ws_parents)
+
+                    # Allowed temporary directories (unless escaping workspace hierarchy)
+                    if not is_workspace_escape and any(token_path.is_relative_to(t_dir) for t_dir in ALLOWED_TEMP_DIRS):
+                        continue
+
+                    log.info(
+                        f"[security_monitor] ASK operation outside workspace "
+                        f"(workspace: {resolved_workspace}, path: {token_path})"
                     )
                     log.debug(f"[security_monitor] Path token: {token} (cleaned: {cleaned}), resolved: {token_path}")
                     return SecurityDecision(
-                        SecurityStatus.BLOCK,
+                        SecurityStatus.ASK,
                         f"Attempted operation outside workspace path: {token}",
                     )
             except Exception as exc:
