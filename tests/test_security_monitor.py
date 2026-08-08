@@ -38,6 +38,8 @@ def test_evaluates_out_of_workspace_operations_as_ask(tmp_path: Path):
         "ls /var/log",
         "mv file.txt ../outside.txt",
         "cat </etc/passwd",
+        "/var/log/python script.py",
+        "/opt/custom/venv/bin/python script.py",
     ]
 
     for cmd in out_of_workspace_commands:
