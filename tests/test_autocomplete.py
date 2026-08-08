@@ -125,6 +125,67 @@ async def test_autocomplete_vault_pages(client, http_config):
 
 
 @pytest.mark.asyncio
+async def test_autocomplete_vault_pages_hidden_parent_dir(client, http_config, tmp_path):
+    """Vault inside a hidden directory path (e.g. ~/.config) should still return pages."""
+    hidden_parent = tmp_path / ".config" / "vault"
+    hidden_parent.mkdir(parents=True, exist_ok=True)
+    (hidden_parent / "SecretPage.md").write_text("# Secret")
+
+    http_config.vault.vault_path = str(hidden_parent)
+
+    resp = await client.get("/api/autocomplete?q=Secret")
+    assert resp.status_code == 200
+    results = resp.json()["results"]
+    assert len(results) == 1
+    assert results[0]["id"] == "SecretPage"
+
+
+@pytest.mark.asyncio
+async def test_autocomplete_vault_pages_symlinks(client, http_config, tmp_path):
+    """Symlinked vault root should be searched properly."""
+    real_vault = tmp_path / "real_vault"
+    real_vault.mkdir(parents=True, exist_ok=True)
+    (real_vault / "RootPage.md").write_text("# Root Page")
+
+    notes_dir = real_vault / "notes"
+    notes_dir.mkdir(parents=True, exist_ok=True)
+    (notes_dir / "PersonalPage.md").write_text("# Personal Page")
+
+    # Symlink vault root itself
+    symlink_vault = tmp_path / "symlink_vault"
+    os.symlink(real_vault, symlink_vault)
+
+    http_config.vault.vault_path = str(symlink_vault)
+
+    resp = await client.get("/api/autocomplete?q=Personal")
+    assert resp.status_code == 200
+    results = resp.json()["results"]
+    assert len(results) == 1
+    assert results[0]["id"] == "notes/PersonalPage"
+
+
+@pytest.mark.asyncio
+async def test_autocomplete_vault_pages_blocks_external_symlinks(client, http_config, tmp_path):
+    """Symlinks pointing outside the vault root must be skipped for security."""
+    real_vault = tmp_path / "real_vault"
+    real_vault.mkdir(parents=True, exist_ok=True)
+
+    outside_dir = tmp_path / "outside_dir"
+    outside_dir.mkdir(parents=True, exist_ok=True)
+    (outside_dir / "LeakedPage.md").write_text("# Secret Outside File")
+
+    # Symlink pointing outside the vault root
+    os.symlink(outside_dir, real_vault / "escaped")
+
+    http_config.vault.vault_path = str(real_vault)
+
+    resp = await client.get("/api/autocomplete?q=Leaked")
+    assert resp.status_code == 200
+    results = resp.json()["results"]
+    assert len(results) == 0
+
+
+@pytest.mark.asyncio
 async def test_autocomplete_workspace_files(client, http_config):
     """Workspace file searches should find matching text files, ignoring hidden/node_modules."""
     ws = http_config.workspace_path
