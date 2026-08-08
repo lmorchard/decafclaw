@@ -238,12 +238,8 @@ def evaluate_command(
                 if token_path in ALLOWED_DEVICES:
                     continue
 
-                # If token is the executable command (idx 0), allow system and user binaries
-                if idx == 0 and (
-                    any(token_path.is_relative_to(sys_dir) for sys_dir in SYSTEM_EXEC_DIRS)
-                    or token_path.name in ("python", "python3", "pytest", "node", "npm", "uv")
-                    or "venv" in token_path.parts
-                ):
+                # If token is the executable command (idx 0), allow trusted system and user binary dirs
+                if idx == 0 and any(token_path.is_relative_to(sys_dir) for sys_dir in SYSTEM_EXEC_DIRS):
                     continue
 
                 # Allowed temporary directories (unless token uses relative '..' traversal)
