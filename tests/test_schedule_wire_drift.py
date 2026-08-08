@@ -282,6 +282,13 @@ def test_exemption_sets_name_only_real_fields(config):
     assert set(WIRE_RENAMES) <= names, f"stale: {set(WIRE_RENAMES) - names}"
 
 
+def test_valid_patch_keys_matches_dataclass_fields():
+    """VALID_PATCH_KEYS must match patchable fields derived from ScheduleTask."""
+    from decafclaw.schedules import VALID_PATCH_KEYS
+    expected = {f.name for f in fields(ScheduleTask) if f.name not in NOT_PATCHABLE}
+    assert VALID_PATCH_KEYS == expected
+
+
 def test_frontmatter_raw_is_the_file_not_a_reserialization(config):
     """The raw view exists to show keys the parser drops."""
     path = config.workspace_path / "schedules" / "raw-probe.md"
