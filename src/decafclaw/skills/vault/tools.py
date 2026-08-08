@@ -949,8 +949,12 @@ def _substring_search(config, query: str, days: int = 0, folder: str = "",
         name = path.stem
         if query_lower in name.lower() or query_lower in text.lower():
             if req_tags:
-                file_tags = extract_tags(
-                    text, _source_type_for_path(config, path))
+                try:
+                    file_tags = extract_tags(
+                        text, _source_type_for_path(config, path))
+                except Exception as exc:
+                    log.debug(f"vault_search: failed reading/tagging {path} for tag filter: {exc}")
+                    continue
                 matches = (bool(file_tags & req_tags) if any_tag
                           else req_tags <= file_tags)
                 if not matches:
