@@ -355,7 +355,10 @@ async def test_run_case_production_mode(config, monkeypatch):
         expected="test_tool"
     )
 
-    await run_case(case, model="m", config=config, tool_loadout=[], production_mode=True)
+    from decafclaw.eval.tool_choice.loadout import build_full_tool_loadout
+    full_loadout = build_full_tool_loadout(config)
+
+    await run_case(case, model="m", config=config, tool_loadout=full_loadout, production_mode=True)
 
     assert "tools" in captured_kwargs
     assert "messages" in captured_kwargs
