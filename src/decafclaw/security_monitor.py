@@ -47,11 +47,17 @@ class SecurityDecision:
 # Known-dangerous command patterns (regexes) -> BLOCK (catastrophic actions that must never execute)
 DANGEROUS_PATTERNS = [
     (
-        re.compile(r"\brm\s+.*-(?:[a-zA-Z]*r[a-zA-Z]*f|[a-zA-Z]*f[a-zA-Z]*r)\s+(?:/|~|\$HOME|/\*|~\*)(?:\s|$)"),
+        re.compile(
+            r"""\brm\s+.*-(?:[a-zA-Z]*r[a-zA-Z]*f|[a-zA-Z]*f[a-zA-Z]*r)\s+["']?(?:/|~|\$HOME|\${HOME})(?:/|\/\*)?["']?(?:\s|$)""",
+            re.IGNORECASE,
+        ),
         "Dangerous recursive force deletion on root or home directory",
     ),
     (
-        re.compile(r"\brm\s+.*-(?:[a-zA-Z]*r|--recursive)\s+(?:/|~|\$HOME|/\*|~\*)(?:\s|$)"),
+        re.compile(
+            r"""\brm\s+.*-(?:[a-zA-Z]*r|--recursive)\s+["']?(?:/|~|\$HOME|\${HOME})(?:/|\/\*)?["']?(?:\s|$)""",
+            re.IGNORECASE,
+        ),
         "Dangerous recursive deletion on root or home directory",
     ),
     (
