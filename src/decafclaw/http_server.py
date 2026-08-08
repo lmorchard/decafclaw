@@ -1206,23 +1206,50 @@ async def autocomplete(request: Request, username: str) -> JSONResponse:
     vault_root = config.vault_root
     if vault_root.is_dir():
         try:
+            vault_resolved = vault_root.resolve()
+
             def _find_vault_pages():
                 matches = []
-                for p in vault_root.rglob("*.md"):
-                    if any(part.startswith(".") for part in p.parts):
-                        continue
+                visited_dirs = set()
+
+                for dirpath, dirnames, filenames in os.walk(vault_root, followlinks=True):
                     try:
-                        rel = p.relative_to(vault_root)
-                        page_name = str(rel.with_suffix(""))
-                        if not query or query.lower() in page_name.lower():
-                            matches.append({
-                                "type": "vault",
-                                "id": page_name,
-                                "label": page_name,
-                                "description": "Vault Page",
-                            })
-                    except (OSError, ValueError):
+                        resolved_dir = Path(dirpath).resolve()
+                        if resolved_dir in visited_dirs:
+                            dirnames[:] = []
+                            continue
+                        visited_dirs.add(resolved_dir)
+                    except Exception as exc:
+                        log.debug("Autocomplete vault search skipped unresolvable dir %s: %s", dirpath, exc)
+                        dirnames[:] = []
                         continue
+
+                    dirnames[:] = [d for d in dirnames if not d.startswith(".")]
+
+                    for fname in filenames:
+                        if fname.startswith(".") or not fname.endswith(".md"):
+                            continue
+                        fpath = Path(dirpath) / fname
+                        try:
+                            f_resolved = fpath.resolve()
+                            if not f_resolved.is_file():
+                                continue
+                            if not f_resolved.is_relative_to(vault_resolved):
+                                continue
+                            rel = f_resolved.relative_to(vault_resolved)
+                            if any(part.startswith(".") for part in rel.parts):
+                                continue
+                            page_name = rel.with_suffix("").as_posix()
+                            if not query or query.lower() in page_name.lower():
+                                matches.append({
+                                    "type": "vault",
+                                    "id": page_name,
+                                    "label": page_name,
+                                    "description": "Vault Page",
+                                })
+                        except (OSError, ValueError):
+                            continue
+
                 matches.sort(key=lambda x: x["label"].lower())
                 return matches[:20]
 
