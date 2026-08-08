@@ -902,9 +902,10 @@ class TurnRunner:
                 await self.ctx.publish("loop_breaker", action="redirect",
                                        reason=off.reason, signal=off.signal)
             elif verdict is LoopVerdict.STOP:
+                off = self.loop_breaker.offense()
                 await self.ctx.publish("loop_breaker", action="stop",
-                                       reason=self.loop_breaker.offense().reason,
-                                       signal=self.loop_breaker.offense().signal)
+                                       reason=off.reason,
+                                       signal=off.signal)
                 return _Final(result=await self._finalize_loop_break())
 
         return _Continue()
