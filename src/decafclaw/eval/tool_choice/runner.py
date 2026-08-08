@@ -65,6 +65,7 @@ async def run_case(
     tool_loadout: list[dict],
     reps: int = 1,
     sem: asyncio.Semaphore | None = None,
+    production_mode: bool = False,
 ) -> CaseResult:
     """Run one case and return its CaseResult.
 
@@ -77,6 +78,23 @@ async def run_case(
         raise ValueError(f"reps must be >= 1, got {reps}")
 
     system_prompt, _ = load_system_prompt(config)
+    
+    if production_mode:
+        from .loadout import build_production_loadout
+        from ...tools.tool_registry import build_deferred_list_text
+        
+        active, deferred = build_production_loadout(config)
+        tool_loadout = active
+        
+        active_names = {t.get("function", {}).get("name") for t in active}
+        if "tool_search" not in active_names:
+            from ...tools.search_tools import SEARCH_TOOL_DEFINITIONS
+            tool_loadout.extend(SEARCH_TOOL_DEFINITIONS)
+            
+        deferred_text = build_deferred_list_text(deferred)
+        if deferred_text:
+            system_prompt += f"\n\n{deferred_text}"
+
     messages = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": case.scenario},
@@ -133,11 +151,12 @@ async def run_cases(
     tool_loadout: list[dict],
     concurrency: int = 4,
     reps: int = 1,
+    production_mode: bool = False,
 ) -> list[CaseResult]:
     """Run a list of cases against a single model with bounded concurrency."""
     sem = asyncio.Semaphore(max(1, concurrency))
 
     return await asyncio.gather(*(
-        run_case(c, model=model, config=config, tool_loadout=tool_loadout, reps=reps, sem=sem)
+        run_case(c, model=model, config=config, tool_loadout=tool_loadout, reps=reps, sem=sem, production_mode=production_mode)
         for c in cases
     ))
