@@ -146,10 +146,12 @@ async def test_turn_runner_nudges_then_stops_on_repeated_tool_errors(ctx):
     nudge_events = [e for e in published_events
                      if e.get("type") == "loop_breaker" and e.get("action") == "nudge"]
     assert len(nudge_events) == 1
+    assert nudge_events[0].get("signal") == "repeat"
 
     stop_events = [e for e in published_events
                    if e.get("type") == "loop_breaker" and e.get("action") == "stop"]
     assert len(stop_events) == 1
+    assert stop_events[0].get("signal") == "repeat"
 
     # Tripped at repeat_threshold=3, and the LLM was called once per
     # iteration up to and including the stop iteration (NUDGE at the 3rd

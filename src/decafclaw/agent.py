@@ -861,7 +861,7 @@ class TurnRunner:
                 }
                 self.messages.append(nudge)
                 await self.ctx.publish("loop_breaker", action="nudge",
-                                       reason=off.reason)
+                                       reason=off.reason, signal=off.signal)
             elif verdict is LoopVerdict.REDIRECT:
                 # Second trip: the nudge was ignored and the agent re-offended.
                 # Same ephemerality and attribution rules as the nudge above —
@@ -900,10 +900,11 @@ class TurnRunner:
                 }
                 self.messages.append(redirect)
                 await self.ctx.publish("loop_breaker", action="redirect",
-                                       reason=off.reason)
+                                       reason=off.reason, signal=off.signal)
             elif verdict is LoopVerdict.STOP:
                 await self.ctx.publish("loop_breaker", action="stop",
-                                       reason=self.loop_breaker.offense().reason)
+                                       reason=self.loop_breaker.offense().reason,
+                                       signal=self.loop_breaker.offense().signal)
                 return _Final(result=await self._finalize_loop_break())
 
         return _Continue()

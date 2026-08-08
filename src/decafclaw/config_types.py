@@ -519,6 +519,8 @@ class TelemetryConfig:
     reflection_metrics_path: str = "reflection/metrics.jsonl"
     retrieval_enabled: bool = True
     retrieval_path: str = "telemetry/retrieval.jsonl"
+    loop_breaker_enabled: bool = True
+    loop_breaker_path: str = "telemetry/loop_breaker.jsonl"
 
 
 def is_secret(dc_class: type, field_name: str) -> bool:
