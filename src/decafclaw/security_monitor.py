@@ -83,8 +83,8 @@ SENSITIVE_PATTERNS = [
         "Dangerous forced git push (git push --force)",
     ),
     (
-        re.compile(r"\bcurl\s+.*(?:-X\s*(?:POST|PUT|DELETE|PATCH)|--request\s+(?:POST|PUT|DELETE|PATCH)|-XPOST|-XPUT|-XDELETE|-XPATCH)\b", re.IGNORECASE),
-        "External HTTP POST/PUT/DELETE request via curl",
+        re.compile(r"\bcurl\s+.*(?:-X\s*(?:POST|PUT|DELETE|PATCH)|--request\s+(?:POST|PUT|DELETE|PATCH)|-XPOST|-XPUT|-XDELETE|-XPATCH|-d\b|--data|--data-raw|--data-binary|--data-urlencode|-F\b|--form)\b", re.IGNORECASE),
+        "External HTTP request with body/data via curl",
     ),
     (
         re.compile(r"\bwget\s+.*--post-(?:data|file)\b", re.IGNORECASE),
@@ -237,16 +237,12 @@ def evaluate_command(
                 ):
                     continue
 
+                # Allowed temporary directories (unless token uses relative '..' traversal)
+                if any(token_path.is_relative_to(t_dir) for t_dir in ALLOWED_TEMP_DIRS) and not cleaned.startswith(".."):
+                    continue
+
                 # Check if path is within workspace
                 if not token_path.is_relative_to(resolved_workspace):
-                    # Check if token_path escapes workspace hierarchy into parent/sibling
-                    ws_parents = [p for p in resolved_workspace.parents if p != Path("/")]
-                    is_workspace_escape = token_path in ws_parents or any(token_path.is_relative_to(p) for p in ws_parents)
-
-                    # Allowed temporary directories (unless escaping workspace hierarchy)
-                    if not is_workspace_escape and any(token_path.is_relative_to(t_dir) for t_dir in ALLOWED_TEMP_DIRS):
-                        continue
-
                     log.info(
                         f"[security_monitor] ASK operation outside workspace "
                         f"(workspace: {resolved_workspace}, path: {token_path})"
