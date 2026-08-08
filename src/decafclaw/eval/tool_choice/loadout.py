@@ -68,9 +68,10 @@ def build_full_tool_loadout(config, *, include_mcp: bool = False) -> list[dict]:
 
     return defs
 
+
 def build_production_loadout(config, *, include_mcp: bool = False) -> tuple[list[dict], list[dict]]:
     """Return the tool definitions partitioned into active and deferred lists.
-    
+
     This classification uses the production path (`classify_tools`) to split the
     full loadout exactly as the agent would at runtime.
     """

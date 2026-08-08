@@ -80,10 +80,9 @@ async def run_case(
     system_prompt, _ = load_system_prompt(config)
 
     if production_mode:
-        from ...tools.tool_registry import build_deferred_list_text
-        from .loadout import build_production_loadout
+        from ...tools.tool_registry import build_deferred_list_text, classify_tools
 
-        active, deferred = build_production_loadout(config)
+        active, deferred = classify_tools(tool_loadout, config)
         tool_loadout = active
 
         active_names = {t.get("function", {}).get("name") for t in active}
