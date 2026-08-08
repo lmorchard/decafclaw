@@ -27,12 +27,14 @@ def format_case_lines(results: list[CaseResult]) -> list[str]:
     """One line per case: ``PASS  name`` or ``FAIL  name  picked X; expected Y``."""
     lines: list[str] = []
     for r in results:
+        rate_str = f" ({r.pass_count}/{r.reps})" if r.reps > 1 else ""
         if r.passed:
-            lines.append(f"PASS  {r.case.name}")
+            lines.append(f"PASS  {r.case.name}{rate_str}")
         else:
+            picks_str = r.picked if r.reps == 1 else ", ".join(sorted(set(r.rep_picks)))
             lines.append(
-                f"FAIL  {r.case.name}    "
-                f"picked {r.picked}; expected {r.case.expected}"
+                f"FAIL  {r.case.name}{rate_str}    "
+                f"picked {picks_str}; expected {r.case.expected}"
             )
     return lines
 
@@ -50,21 +52,23 @@ def format_summary(results: list[CaseResult]) -> str:
 def compute_pair_overlap(results: list[CaseResult]) -> list[PairOverlap]:
     """Aggregate per-(expected, near_miss) overlap.
 
-    Each case contributes one row per ``near_miss`` tool. ``swapped``
-    increments when ``picked == near_miss``. ``total`` is the count of
-    cases that referenced this pair (i.e. had ``expected=A`` and
-    ``near_miss`` containing ``B``). Sorted by overlap pct descending,
-    ties broken by ``expected`` then ``near_miss`` for stable output.
+    Each case contributes one count per ``near_miss`` tool per rep.
+    ``swapped`` increments when ``picked == near_miss``. ``total`` is the
+    count of reps (across all cases) that referenced this pair (i.e. had
+    ``expected=A`` and ``near_miss`` containing ``B``). Sorted by overlap pct
+    descending, ties broken by ``expected`` then ``near_miss`` for stable output.
     """
     counters: dict[tuple[str, str], dict[str, int]] = defaultdict(
         lambda: {"swapped": 0, "total": 0}
     )
     for r in results:
-        for nm in r.case.near_miss:
-            key = (r.case.expected, nm)
-            counters[key]["total"] += 1
-            if r.picked == nm:
-                counters[key]["swapped"] += 1
+        picks_to_count = r.rep_picks if r.rep_picks else [r.picked]
+        for pick in picks_to_count:
+            for nm in r.case.near_miss:
+                key = (r.case.expected, nm)
+                counters[key]["total"] += 1
+                if pick == nm:
+                    counters[key]["swapped"] += 1
 
     rows = []
     for (expected, nm), c in counters.items():
@@ -103,7 +107,9 @@ def compute_confusion_matrix(
     """Return ``expected → picked → count`` across all results."""
     matrix: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
     for r in results:
-        matrix[r.case.expected][r.picked] += 1
+        picks_to_count = r.rep_picks if r.rep_picks else [r.picked]
+        for pick in picks_to_count:
+            matrix[r.case.expected][pick] += 1
     # Convert defaultdicts to plain dicts for stable test comparisons.
     return {k: dict(v) for k, v in matrix.items()}
 

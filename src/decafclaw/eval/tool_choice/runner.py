@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 
 from ...llm import call_llm
@@ -32,6 +33,9 @@ class CaseResult:
     picked: str            # first tool name, or NO_TOOL
     all_picks: list[str] = field(default_factory=list)
     passed: bool = False
+    pass_count: int = 0
+    reps: int = 1
+    rep_picks: list[str] = field(default_factory=list)
 
 
 def _extract_picks(tool_calls: list | None) -> tuple[str, list[str]]:
@@ -59,6 +63,8 @@ async def run_case(
     model: str,
     config,
     tool_loadout: list[dict],
+    reps: int = 1,
+    sem: asyncio.Semaphore | None = None,
 ) -> CaseResult:
     """Run one case and return its CaseResult.
 
@@ -67,26 +73,55 @@ async def run_case(
     name from ``tool_calls``. No execution of tools, no follow-up
     turns.
     """
+    if reps < 1:
+        raise ValueError(f"reps must be >= 1, got {reps}")
+
     system_prompt, _ = load_system_prompt(config)
     messages = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": case.scenario},
     ]
-    try:
-        response = await call_llm(
-            config, messages, tools=tool_loadout, model_name=model,
-        )
-    except Exception as exc:
-        log.error("case %s on model %s: LLM call failed: %s", case.name, model, exc)
-        return CaseResult(case=case, model=model, picked=NO_TOOL, all_picks=[], passed=False)
 
-    picked, all_picks = _extract_picks(response.get("tool_calls"))
+    async def _do_rep(i: int):
+        async with (sem if sem else nullcontext()):
+            try:
+                response = await call_llm(
+                    config, messages, tools=tool_loadout, model_name=model,
+                )
+                return _extract_picks(response.get("tool_calls"))
+            except Exception as exc:
+                log.error("case %s on model %s (rep %d): LLM call failed: %s", case.name, model, i + 1, exc)
+                return None, []
+
+    results = await asyncio.gather(*(_do_rep(i) for i in range(reps)))
+
+    pass_count = 0
+    rep_picks = []
+
+    for picked, all_picks in results:
+        if picked is not None:
+            rep_picks.append(picked)
+            if picked == case.expected:
+                pass_count += 1
+
+    # if all failed, fallback to NO_TOOL for first_picked
+    first_picked = NO_TOOL
+    first_all_picks = []
+    for picked, all_picks in results:
+        if picked is not None:
+            first_picked = picked
+            first_all_picks = all_picks
+            break
+
     return CaseResult(
         case=case,
         model=model,
-        picked=picked,
-        all_picks=all_picks,
-        passed=(picked == case.expected),
+        picked=first_picked,
+        all_picks=first_all_picks,
+        passed=(pass_count == reps),
+        pass_count=pass_count,
+        reps=reps,
+        rep_picks=rep_picks,
     )
 
 
@@ -97,12 +132,12 @@ async def run_cases(
     config,
     tool_loadout: list[dict],
     concurrency: int = 4,
+    reps: int = 1,
 ) -> list[CaseResult]:
     """Run a list of cases against a single model with bounded concurrency."""
     sem = asyncio.Semaphore(max(1, concurrency))
 
-    async def _bounded(case: Case) -> CaseResult:
-        async with sem:
-            return await run_case(case, model=model, config=config, tool_loadout=tool_loadout)
-
-    return await asyncio.gather(*(_bounded(c) for c in cases))
+    return await asyncio.gather(*(
+        run_case(c, model=model, config=config, tool_loadout=tool_loadout, reps=reps, sem=sem)
+        for c in cases
+    ))
