@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 
 from ...llm import call_llm
@@ -72,6 +73,9 @@ async def run_case(
     name from ``tool_calls``. No execution of tools, no follow-up
     turns.
     """
+    if reps < 1:
+        raise ValueError(f"reps must be >= 1, got {reps}")
+
     system_prompt, _ = load_system_prompt(config)
     messages = [
         {"role": "system", "content": system_prompt},
@@ -79,19 +83,15 @@ async def run_case(
     ]
 
     async def _do_rep(i: int):
-        if sem:
-            await sem.acquire()
-        try:
-            response = await call_llm(
-                config, messages, tools=tool_loadout, model_name=model,
-            )
-            return _extract_picks(response.get("tool_calls"))
-        except Exception as exc:
-            log.error("case %s on model %s (rep %d): LLM call failed: %s", case.name, model, i + 1, exc)
-            return NO_TOOL, []
-        finally:
-            if sem:
-                sem.release()
+        async with (sem if sem else nullcontext()):
+            try:
+                response = await call_llm(
+                    config, messages, tools=tool_loadout, model_name=model,
+                )
+                return _extract_picks(response.get("tool_calls"))
+            except Exception as exc:
+                log.error("case %s on model %s (rep %d): LLM call failed: %s", case.name, model, i + 1, exc)
+                return None, []
 
     results = await asyncio.gather(*(_do_rep(i) for i in range(reps)))
 
@@ -99,11 +99,19 @@ async def run_case(
     rep_picks = []
 
     for picked, all_picks in results:
-        rep_picks.append(picked)
-        if picked == case.expected:
-            pass_count += 1
+        if picked is not None:
+            rep_picks.append(picked)
+            if picked == case.expected:
+                pass_count += 1
 
-    first_picked, first_all_picks = results[0] if results else (NO_TOOL, [])
+    # if all failed, fallback to NO_TOOL for first_picked
+    first_picked = NO_TOOL
+    first_all_picks = []
+    for picked, all_picks in results:
+        if picked is not None:
+            first_picked = picked
+            first_all_picks = all_picks
+            break
 
     return CaseResult(
         case=case,

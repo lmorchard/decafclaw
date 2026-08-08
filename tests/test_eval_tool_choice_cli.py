@@ -146,3 +146,15 @@ def test_cli_filter_matching_nothing_exits_nonzero(tmp_path, monkeypatch, capsys
     assert rc != 0
     out = capsys.readouterr().out
     assert "Filter 'nope' matched no cases." in out
+
+
+def test_cli_invalid_reps_exits_nonzero(tmp_path, monkeypatch, capsys):
+    """Test that --reps 0 fails fast."""
+    case_file = _write_case(tmp_path, "case-a", "vault_search", ["conversation_search"])
+    _patch_runtime(monkeypatch, picked_tool="vault_search")
+
+    rc = main([str(case_file), "--reps", "0"])
+
+    assert rc != 0
+    out = capsys.readouterr().out
+    assert "--reps must be >= 1" in out

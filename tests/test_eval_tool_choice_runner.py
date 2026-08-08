@@ -282,8 +282,35 @@ async def test_run_cases_concurrency(config, patched_call_llm):
 
 
 @pytest.mark.asyncio
+async def test_run_case_error_excludes_from_stats(config, monkeypatch):
+    """An error rep should not count towards pass_count, nor be included in rep_picks,
+    even if the expected result was NO_TOOL."""
+    call_count = 0
+
+    async def scripted_call_llm(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return _make_response(None) # pass
+        elif call_count == 2:
+            raise RuntimeError("network exploded") # error
+        else:
+            return _make_response(["some_tool"]) # fail
+
+    monkeypatch.setattr("decafclaw.eval.tool_choice.runner.call_llm", scripted_call_llm)
+
+    case = Case(name="t", scenario="hi", expected=NO_TOOL, near_miss=["some_tool"])
+    result = await run_case(case, model="m", config=config, tool_loadout=[], reps=3)
+    
+    assert result.reps == 3
+    assert result.pass_count == 1
+    assert result.passed is False
+    assert result.rep_picks == [NO_TOOL, "some_tool"]
+
+
+@pytest.mark.asyncio
 async def test_run_case_swallows_llm_error(config, monkeypatch):
-    """A provider error returns a CaseResult with NO_TOOL + passed=False
+    """A provider error returns a CaseResult with NO_TOOL as fallback + passed=False
     instead of bubbling. The eval shouldn't abort halfway through a
     batch because one case errored."""
     async def boom(config, messages, tools=None, model_name=None):
