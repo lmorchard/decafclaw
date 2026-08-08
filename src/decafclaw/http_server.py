@@ -1208,21 +1208,41 @@ async def autocomplete(request: Request, username: str) -> JSONResponse:
         try:
             def _find_vault_pages():
                 matches = []
-                for p in vault_root.rglob("*.md"):
-                    if any(part.startswith(".") for part in p.parts):
-                        continue
+                visited_dirs = set()
+
+                for dirpath, dirnames, filenames in os.walk(vault_root, followlinks=True):
                     try:
-                        rel = p.relative_to(vault_root)
-                        page_name = str(rel.with_suffix(""))
-                        if not query or query.lower() in page_name.lower():
-                            matches.append({
-                                "type": "vault",
-                                "id": page_name,
-                                "label": page_name,
-                                "description": "Vault Page",
-                            })
-                    except (OSError, ValueError):
-                        continue
+                        resolved_dir = Path(dirpath).resolve()
+                        if resolved_dir in visited_dirs:
+                            dirnames[:] = []
+                            continue
+                        visited_dirs.add(resolved_dir)
+                    except Exception:
+                        pass
+
+                    dirnames[:] = [d for d in dirnames if not d.startswith(".")]
+
+                    for fname in filenames:
+                        if fname.startswith(".") or not fname.endswith(".md"):
+                            continue
+                        fpath = Path(dirpath) / fname
+                        try:
+                            if not fpath.is_file():
+                                continue
+                            rel = fpath.relative_to(vault_root)
+                            if any(part.startswith(".") for part in rel.parts):
+                                continue
+                            page_name = rel.with_suffix("").as_posix()
+                            if not query or query.lower() in page_name.lower():
+                                matches.append({
+                                    "type": "vault",
+                                    "id": page_name,
+                                    "label": page_name,
+                                    "description": "Vault Page",
+                                })
+                        except (OSError, ValueError):
+                            continue
+
                 matches.sort(key=lambda x: x["label"].lower())
                 return matches[:20]
 
