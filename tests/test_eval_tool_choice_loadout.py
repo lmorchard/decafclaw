@@ -88,24 +88,24 @@ class TestBuildFullToolLoadout:
         names = _names(defs)
         assert "web_fetch" in names
 
-def test_production_loadout_classification(config: Config):
+def test_production_loadout_classification (config):
     """C1: production mode loadout matches active/deferred classification"""
     from decafclaw.eval.tool_choice.loadout import build_full_tool_loadout, build_production_loadout
     from decafclaw.tools.tool_registry import classify_tools
-    
+
     full_loadout = build_full_tool_loadout(config)
     active, deferred = classify_tools(full_loadout, config)
-    
+
     prod_active, prod_deferred = build_production_loadout(config)
-    
+
     def names(tools):
         return {t["function"]["name"] for t in tools}
-        
+
     assert names(prod_active) == names(active)
     assert names(prod_deferred) == names(deferred)
     assert names(prod_active) | names(prod_deferred) == names(full_loadout)
 
-def test_default_mode_full_loadout(config: Config):
+def test_default_mode_full_loadout (config):
     """G2: Default mode remains full loadout"""
     from decafclaw.eval.tool_choice.loadout import build_full_tool_loadout
     # The default loadout should not be split
