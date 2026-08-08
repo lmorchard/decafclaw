@@ -120,6 +120,11 @@ async def run_all(app_ctx):
             app_ctx.event_bus.subscribe(make_reflection_metrics_subscriber(config))
             log.info("Telemetry: reflection-metrics subscriber active (%s)",
                      config.telemetry.reflection_metrics_path)
+        if config.telemetry.loop_breaker_enabled:
+            from .loop_breaker_telemetry import make_loop_breaker_subscriber
+            app_ctx.event_bus.subscribe(make_loop_breaker_subscriber(config))
+            log.info("Telemetry: loop-breaker subscriber active (%s)",
+                     config.telemetry.loop_breaker_path)
         if config.telemetry.retrieval_enabled:
             from .retrieval_telemetry import make_retrieval_telemetry_subscriber
             app_ctx.event_bus.subscribe(make_retrieval_telemetry_subscriber(config))
