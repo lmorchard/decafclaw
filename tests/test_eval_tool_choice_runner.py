@@ -331,9 +331,9 @@ _ = Path
 @pytest.mark.asyncio
 async def test_run_case_production_mode(config, monkeypatch):
     """C2: production mode includes tool_search and deferred_tools block"""
-    from decafclaw.eval.tool_choice.runner import run_case
     from decafclaw.eval.tool_choice.case import Case
-    
+    from decafclaw.eval.tool_choice.runner import run_case
+
     # We need to stub call_llm to capture the tools and messages
     captured_kwargs = {}
     async def mock_call_llm(*args, **kwargs):
@@ -346,25 +346,25 @@ async def test_run_case_production_mode(config, monkeypatch):
             "content": "",
             "tool_calls": [{"id": "1", "type": "function", "function": {"name": "test_tool", "arguments": "{}"}}]
         }
-    
+
     monkeypatch.setattr("decafclaw.eval.tool_choice.runner.call_llm", mock_call_llm)
-    
+
     case = Case(
         name="test_prod_mode",
         scenario="Find me a tool",
         expected="test_tool"
     )
-    
+
     await run_case(case, model="m", config=config, tool_loadout=[], production_mode=True)
-    
+
     assert "tools" in captured_kwargs
     assert "messages" in captured_kwargs
-    
+
     def names(tools):
         return {t["function"]["name"] for t in tools}
-        
+
     assert "tool_search" in names(captured_kwargs["tools"])
-    
+
     # Ensure deferred tools block is in the system message
     messages = captured_kwargs["messages"]
     system_msg = next(m["content"] for m in messages if m["role"] == "system")
