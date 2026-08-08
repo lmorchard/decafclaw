@@ -469,8 +469,9 @@ async def tool_shell_background_start(ctx: "Context", command: str,
         message=f"Background process: `{command}`",
     )
     if not result.get("approved"):
+        reason = result.get("reason") or "background process was denied by user"
         return ToolResult(
-            text="[error: background process was denied by user]",
+            text=f"[error: {reason}]",
             data={"status": "error"},
         )
 
