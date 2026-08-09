@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import inspect
 import json
 import logging
 import re as _re
@@ -694,7 +695,10 @@ class TurnRunner:
 
         for hook in self.ctx.get_interceptors(TurnLifecycle.BEFORE_LLM_CALL):
             try:
-                hook(self.ctx, self.messages, all_tools)
+                res = hook(self.ctx, self.messages, all_tools)
+                if inspect.iscoroutine(res):
+                    res.close()
+                    log.warning("BEFORE_LLM_CALL interceptor %s returned a coroutine. Async hooks are not supported.", hook)
             except Exception as exc:
                 log.exception("BEFORE_LLM_CALL interceptor failed: %s", exc)
 
