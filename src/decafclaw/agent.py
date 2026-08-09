@@ -28,6 +28,7 @@ if TYPE_CHECKING:
 from .archive import append_message
 from .compaction import compact_history
 from .config_types import LoopBreakerConfig
+from .context import TurnLifecycle
 from .context_cleanup import clear_old_tool_results
 from .context_composer import ComposerMode, ContextComposer
 from .iteration_budget import IterationBudget
@@ -690,6 +691,12 @@ class TurnRunner:
         elif self.deferred_msg is not None and self.deferred_msg in self.messages:
             self.messages.remove(self.deferred_msg)
             self.deferred_msg = None
+
+        for hook in self.ctx.get_interceptors(TurnLifecycle.BEFORE_LLM_CALL):
+            try:
+                hook(self.ctx, self.messages, all_tools)
+            except Exception as exc:
+                log.exception("BEFORE_LLM_CALL interceptor failed: %s", exc)
 
         response = await _call_llm_with_events(
             self.ctx, self.config, self.messages, all_tools,
