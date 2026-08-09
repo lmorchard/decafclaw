@@ -104,6 +104,7 @@ class Offense:
     tool_name: str = ""
     args_text: str = ""
     error_text: str = ""
+    signal: str = ""
 
 
 @dataclasses.dataclass
@@ -256,6 +257,7 @@ class LoopBreaker:
                 tool_name=offender.tool_name,
                 args_text=offender.args_text,
                 error_text=offender.error_text,
+                signal="repeat",
             )
         elif self._fresh_error_surge():
             self._errors_at_last_trip = self._total_errors
@@ -264,6 +266,7 @@ class LoopBreaker:
                 reason=(f"{errs} of the last {len(self._recent_errors)} "
                         "tool results were errors"),
                 error_text=self._last_error_text,
+                signal="error_surge",
             )
         else:
             return LoopVerdict.NONE
