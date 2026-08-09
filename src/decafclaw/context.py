@@ -148,7 +148,7 @@ class Context:
 
     def get_interceptors(self, phase: TurnLifecycle) -> list[Callable]:
         """Get all registered hooks for a lifecycle phase in registration order."""
-        return self._interceptors.get(phase, [])
+        return list(self._interceptors.get(phase, []))
 
     # Turn kinds where no human can answer a confirmation prompt: it is emitted
     # only to subscribers of an ephemeral conv_id, so it blocks for the full 60s
@@ -224,9 +224,9 @@ class Context:
             config=config,
             event_bus=self.event_bus,
         )
+        child._interceptors = {k: list(v) for k, v in self._interceptors.items()}
         for key, value in overrides.items():
             setattr(child, key, value)
-        child._interceptors = {k: list(v) for k, v in self._interceptors.items()}
         return child
 
     def fork_for_tool_call(self, tool_call_id: str) -> "Context":
