@@ -5,10 +5,17 @@ from __future__ import annotations
 import asyncio
 import copy
 from dataclasses import dataclass, field, replace
-from typing import Any
+from enum import Enum, auto
+from typing import Any, Callable
 from uuid import uuid4
 
 from .context_composer import ComposerState
+
+
+class TurnLifecycle(Enum):
+    """Lifecycle phases for synchronous context interception."""
+    BEFORE_LLM_CALL = auto()
+
 
 
 @dataclass
@@ -131,6 +138,17 @@ class Context:
         self.request_confirmation: Any = None  # set by ConversationManager
         self.manager: Any = None  # set by ConversationManager
         self.terminal_registry: Any = None  # AgentTerminalHandle, set by ConversationManager
+        self._interceptors: dict[TurnLifecycle, list[Callable]] = {}
+
+    def add_interceptor(self, phase: TurnLifecycle, hook: Callable) -> None:
+        """Register a synchronous hook for a lifecycle phase."""
+        if phase not in self._interceptors:
+            self._interceptors[phase] = []
+        self._interceptors[phase].append(hook)
+
+    def get_interceptors(self, phase: TurnLifecycle) -> list[Callable]:
+        """Get all registered hooks for a lifecycle phase in registration order."""
+        return self._interceptors.get(phase, [])
 
     # Turn kinds where no human can answer a confirmation prompt: it is emitted
     # only to subscribers of an ephemeral conv_id, so it blocks for the full 60s
@@ -208,6 +226,7 @@ class Context:
         )
         for key, value in overrides.items():
             setattr(child, key, value)
+        child._interceptors = {k: list(v) for k, v in self._interceptors.items()}
         return child
 
     def fork_for_tool_call(self, tool_call_id: str) -> "Context":
