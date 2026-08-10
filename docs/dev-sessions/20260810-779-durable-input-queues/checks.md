@@ -1,7 +1,7 @@
 # Frozen acceptance checks
 
 **Source:** https://github.com/lmorchard/decafclaw/issues/779
-**Frozen at:** (to be filled)
+**Frozen at:** 6c6536bf (2026-08-10)
 **Check files — read-only from Phase 1 onward:**
 - `tests/test_conversation_manager.py`
 
