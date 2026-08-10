@@ -35,8 +35,7 @@ log = logging.getLogger(__name__)
 # message is archived under the cancel_marker role and remapped to "user"
 # for the LLM via context_composer.ROLE_REMAP.
 CANCEL_MARKER_TEXT = (
-    "[User cancelled this turn. Do not retry the cancelled request "
-    "unless they explicitly ask for it again.]"
+    "[User cancelled this turn. Do not retry the cancelled request unless they explicitly ask for it again.]"
 )
 
 
@@ -53,8 +52,11 @@ TURN_ABORTED_MARKER_TEXT = (
 
 
 def _write_cancel_archive(
-    config, conv_id: str, partial: str,
-    *, partial_already_archived: bool = False,
+    config,
+    conv_id: str,
+    partial: str,
+    *,
+    partial_already_archived: bool = False,
 ) -> None:
     """Append optional partial assistant content followed by the
     canonical cancel marker to the conversation archive. Chronological
@@ -64,14 +66,22 @@ def _write_cancel_archive(
     failures is handled in `_write_cancel_marker_once`.
     """
     if partial and not partial_already_archived:
-        append_message(config, conv_id, {
-            "role": "assistant",
-            "content": partial,
-        })
-    append_message(config, conv_id, {
-        "role": "cancel_marker",
-        "content": CANCEL_MARKER_TEXT,
-    })
+        append_message(
+            config,
+            conv_id,
+            {
+                "role": "assistant",
+                "content": partial,
+            },
+        )
+    append_message(
+        config,
+        conv_id,
+        {
+            "role": "cancel_marker",
+            "content": CANCEL_MARKER_TEXT,
+        },
+    )
 
 
 class TurnKind(Enum):
@@ -132,6 +142,7 @@ class PersistedTurnState:
     enforces this) and an explicit decision about which category it
     belongs to.
     """
+
     extra_tools: dict = field(default_factory=dict)
     extra_tool_definitions: list = field(default_factory=list)
     activated_skills: set = field(default_factory=set)
@@ -156,9 +167,7 @@ _PERSISTED_BINDINGS: dict[str, tuple[Callable[[Any], Any], Callable[[Any, Any], 
     ),
     "activated_skills": (
         lambda ctx: ctx.skills.activated,
-        lambda ctx, v: setattr(
-            ctx.skills, "activated", v if isinstance(v, dict) else {name: "" for name in v}
-        ),
+        lambda ctx, v: setattr(ctx.skills, "activated", v if isinstance(v, dict) else {name: "" for name in v}),
     ),
     "skip_vault_retrieval": (
         lambda ctx: ctx.skip_vault_retrieval,
@@ -174,20 +183,20 @@ _PERSISTED_BINDINGS: dict[str, tuple[Callable[[Any], Any], Callable[[Any, Any], 
 # Subset of PersistedTurnState fields whose value flows
 # ctx → state on save. Other fields are externally-driven (e.g. by
 # `set_flag` from a transport handler) and never overwritten by save.
-_CTX_DRIVEN_FIELDS: frozenset[str] = frozenset({
-    "extra_tools",
-    "extra_tool_definitions",
-    "activated_skills",
-    "skip_vault_retrieval",
-})
+_CTX_DRIVEN_FIELDS: frozenset[str] = frozenset(
+    {
+        "extra_tools",
+        "extra_tool_definitions",
+        "activated_skills",
+        "skip_vault_retrieval",
+    }
+)
 
 
 # All declared PersistedTurnState field names — precomputed once at
 # module load so hot paths like ``set_flag`` don't reflect on every
 # call. Stays in sync with the dataclass automatically.
-_PERSISTED_FIELD_NAMES: frozenset[str] = frozenset(
-    f.name for f in dc_fields(PersistedTurnState)
-)
+_PERSISTED_FIELD_NAMES: frozenset[str] = frozenset(f.name for f in dc_fields(PersistedTurnState))
 
 
 @dataclass
@@ -203,6 +212,7 @@ class _QueuedConfirmation:
     concurrent caller could null the field out between wake and lock
     re-acquisition (Copilot review on #485 PR). Issue #485.
     """
+
     request: ConfirmationRequest
     promoted_event: asyncio.Event = field(default_factory=asyncio.Event)
     active_event: asyncio.Event | None = None
@@ -230,6 +240,7 @@ def _confirmation_request_payload(request: ConfirmationRequest) -> dict:
 @dataclass
 class ConversationState:
     """Per-conversation state managed by the ConversationManager."""
+
     conv_id: str = ""
     history: list = field(default_factory=list)
     busy: bool = False
@@ -350,9 +361,13 @@ class ConversationManager:
     public API methods.
     """
 
-    def __init__(self, config, event_bus,
-                 confirmation_registry: ConfirmationRegistry | None = None,
-                 terminal_registry: Any | None = None):
+    def __init__(
+        self,
+        config,
+        event_bus,
+        confirmation_registry: ConfirmationRegistry | None = None,
+        terminal_registry: Any | None = None,
+    ):
         self.config = config
         self.event_bus = event_bus
         self.confirmation_registry = confirmation_registry or ConfirmationRegistry()
@@ -360,9 +375,8 @@ class ConversationManager:
 
         # Workflow user-input resumes via the confirmation recovery path.
         from .workflow.resume import WorkflowUserInputHandler
-        self.confirmation_registry.register(
-            ConfirmationAction.WORKFLOW_USER_INPUT,
-            WorkflowUserInputHandler(self))
+
+        self.confirmation_registry.register(ConfirmationAction.WORKFLOW_USER_INPUT, WorkflowUserInputHandler(self))
 
         self._conversations: dict[str, ConversationState] = {}
 
@@ -400,8 +414,11 @@ class ConversationManager:
             state.paused_until = now + self._cb_pause_sec
             log.warning(
                 "Circuit breaker tripped for %s: %d turns in %ds, pausing %ds",
-                state.conv_id[:8], len(state.turn_times),
-                self._cb_window_sec, self._cb_pause_sec)
+                state.conv_id[:8],
+                len(state.turn_times),
+                self._cb_window_sec,
+                self._cb_pause_sec,
+            )
             return True
         return False
 
@@ -451,9 +468,9 @@ class ConversationManager:
                 state.wake_times = [t for t in state.wake_times if t > cutoff]
                 if len(state.wake_times) >= self._wake_max_per_window:
                     log.warning(
-                        "Wake rate limit exceeded for conv %s "
-                        "(%d wakes in last %ds) — dropping wake",
-                        conv_id[:8], len(state.wake_times),
+                        "Wake rate limit exceeded for conv %s (%d wakes in last %ds) — dropping wake",
+                        conv_id[:8],
+                        len(state.wake_times),
                         self._wake_window_sec,
                     )
                     future.set_result(None)
@@ -463,29 +480,37 @@ class ConversationManager:
             # USER-kind only: circuit breaker check + user_message event emission.
             if kind is TurnKind.USER:
                 if self._circuit_breaker_tripped(state):
-                    log.warning("Dropping message for paused conversation %s",
-                                conv_id[:8])
+                    log.warning("Dropping message for paused conversation %s", conv_id[:8])
                     future.set_result(None)
                     return future
-                await self.emit(conv_id, {
-                    "type": "user_message",
-                    "text": archive_text or prompt,
-                    "user_id": user_id,
-                })
+                await self.emit(
+                    conv_id,
+                    {
+                        "type": "user_message",
+                        "text": archive_text or prompt,
+                        "user_id": user_id,
+                    },
+                )
+
+            import uuid
 
             from .inbox import _append_inbox
-            import uuid
+
             turn_id = uuid.uuid4().hex
-            _append_inbox(self.config, conv_id, {
-                "turn_id": turn_id,
-                "kind": kind.value if hasattr(kind, "value") else kind,
-                "text": prompt,
-                "user_id": user_id,
-                "archive_text": archive_text,
-                "wiki_page": wiki_page,
-                "task_mode": task_mode,
-                "metadata": metadata,
-            })
+            _append_inbox(
+                self.config,
+                conv_id,
+                {
+                    "turn_id": turn_id,
+                    "kind": kind.value if hasattr(kind, "value") else kind,
+                    "text": prompt,
+                    "user_id": user_id,
+                    "archive_text": archive_text,
+                    "wiki_page": wiki_page,
+                    "task_mode": task_mode,
+                    "metadata": metadata,
+                },
+            )
             state.inmemory_turn_data[turn_id] = {
                 "context_setup": context_setup,
                 "command_ctx": command_ctx,
@@ -497,12 +522,13 @@ class ConversationManager:
             if state.busy:
                 # Cancel-on-new-message: cancel the current turn if configured
                 # (USER kind only, same as previous send_message behavior)
-                if (kind is TurnKind.USER
-                        and self.config.agent.turn_on_new_message == "cancel"
-                        and state.cancel_event
-                        and not state.cancel_event.is_set()):
-                    log.info("Conv %s busy, cancelling for new message",
-                             conv_id[:8])
+                if (
+                    kind is TurnKind.USER
+                    and self.config.agent.turn_on_new_message == "cancel"
+                    and state.cancel_event
+                    and not state.cancel_event.is_set()
+                ):
+                    log.info("Conv %s busy, cancelling for new message", conv_id[:8])
                     state.cancel_event.set()
                     if state.agent_task and not state.agent_task.done():
                         state.agent_task.cancel()
@@ -513,6 +539,7 @@ class ConversationManager:
             # Not busy. Start turn immediately.
             # But wait, we appended it to inbox.jsonl. We need to pop it!
             from .inbox import _read_inbox, _write_inbox
+
             messages = _read_inbox(self.config, state.conv_id)
             if messages:
                 # Assuming the last message appended is ours, or we just pop it by turn_id
@@ -524,7 +551,7 @@ class ConversationManager:
                 if q:
                     _write_inbox(self.config, state.conv_id, messages)
 
-            inmem = state.inmemory_turn_data.pop(turn_id, {})
+            state.inmemory_turn_data.pop(turn_id, {})
             await self._start_turn(
                 state,
                 prompt,
@@ -607,17 +634,20 @@ class ConversationManager:
             if state.pending_confirmation.confirmation_id != confirmation_id:
                 log.warning(
                     "Confirmation ID mismatch for conv %s: expected %s, got %s",
-                    conv_id, state.pending_confirmation.confirmation_id,
-                    confirmation_id)
+                    conv_id,
+                    state.pending_confirmation.confirmation_id,
+                    confirmation_id,
+                )
                 return
             # A previously-responded confirmation that hasn't been cleared
             # yet (e.g. running-loop case where request_confirmation hasn't
             # observed the event) — skip rather than double-dispatch.
             if state.confirmation_response is not None:
                 log.warning(
-                    "Confirmation %s already has a response, ignoring "
-                    "duplicate respond_to_confirmation for conv %s",
-                    confirmation_id, conv_id)
+                    "Confirmation %s already has a response, ignoring duplicate respond_to_confirmation for conv %s",
+                    confirmation_id,
+                    conv_id,
+                )
                 return
 
             response = ConfirmationResponse(
@@ -637,14 +667,15 @@ class ConversationManager:
             # sync filesystem I/O, so holding the per-conv lock across
             # it just briefly blocks other lock acquirers on this conv.
             from .archive import append_message
+
             try:
-                append_message(self.config, conv_id,
-                               response.to_archive_message())
+                append_message(self.config, conv_id, response.to_archive_message())
             except Exception:
                 log.exception(
                     "respond_to_confirmation archive write failed for "
                     "conv %s; pending state untouched, caller may retry",
-                    conv_id[:8])
+                    conv_id[:8],
+                )
                 raise
             # Capture the pending request AND atomically clear all
             # pending state under the lock. Clearing here (rather
@@ -690,9 +721,9 @@ class ConversationManager:
             await self.emit(conv_id, emit_payload)
         except Exception:
             log.exception(
-                "respond_to_confirmation emit failed for conv %s "
-                "(archive write already succeeded); continuing",
-                conv_id[:8])
+                "respond_to_confirmation emit failed for conv %s (archive write already succeeded); continuing",
+                conv_id[:8],
+            )
 
         if waiter_event is not None:
             # Running loop: wake it. request_confirmation will read
@@ -711,17 +742,14 @@ class ConversationManager:
             # next retry / startup recovery can proceed.
             async with state.lock:
                 state.confirmation_response = None
-            log.info("No running loop for conv %s, dispatching recovery",
-                     conv_id)
+            log.info("No running loop for conv %s, dispatching recovery", conv_id)
             try:
-                result = await self._dispatch_recovery(
-                    conv_id, claimed_request, response)
+                result = await self._dispatch_recovery(conv_id, claimed_request, response)
                 log.info("Recovery result for conv %s: %s", conv_id[:8], result)
             except Exception:
                 log.exception(
-                    "Recovery dispatch failed for conv %s; restoring "
-                    "pending state so retry can proceed",
-                    conv_id[:8])
+                    "Recovery dispatch failed for conv %s; restoring pending state so retry can proceed", conv_id[:8]
+                )
                 async with state.lock:
                     # Restore only if nothing else has taken the slot.
                     if state.pending_confirmation is None:
@@ -768,10 +796,12 @@ class ConversationManager:
             if state.confirmation_response is not None:
                 # A responder already claimed the slot — let their
                 # response stand. Cancellation arrived too late.
-                log.info("cancel_pending_confirmation arrived after "
-                         "responder claimed slot for conv %s; "
-                         "deferring to responder",
-                         conv_id[:8])
+                log.info(
+                    "cancel_pending_confirmation arrived after "
+                    "responder claimed slot for conv %s; "
+                    "deferring to responder",
+                    conv_id[:8],
+                )
                 return False
             request = state.pending_confirmation
             response = ConfirmationResponse(
@@ -792,14 +822,13 @@ class ConversationManager:
             # would leave no durable record (Copilot review on #484).
             # append_message is sync filesystem I/O.
             from .archive import append_message
+
             try:
-                append_message(self.config, conv_id,
-                               response.to_archive_message())
+                append_message(self.config, conv_id, response.to_archive_message())
             except Exception:
                 log.exception(
-                    "cancel_pending_confirmation archive write failed "
-                    "for conv %s; pending state untouched",
-                    conv_id[:8])
+                    "cancel_pending_confirmation archive write failed for conv %s; pending state untouched", conv_id[:8]
+                )
                 raise
             # Archive succeeded. Behavior splits on whether a live
             # waiter is present:
@@ -856,7 +885,9 @@ class ConversationManager:
             state.cancel_observed_by_agent = True
 
     def _write_cancel_marker_once(
-        self, conv_id: str, state: ConversationState,
+        self,
+        conv_id: str,
+        state: ConversationState,
     ) -> None:
         """Persist the canonical cancel marker (and any streamed partial)
         for this turn, exactly once across both the iteration-start
@@ -873,33 +904,46 @@ class ConversationManager:
         # didn't already archive itself.
         if partial and not state.partial_assistant_archived:
             try:
-                append_message(self.config, conv_id, {
-                    "role": "assistant",
-                    "content": partial,
-                })
+                append_message(
+                    self.config,
+                    conv_id,
+                    {
+                        "role": "assistant",
+                        "content": partial,
+                    },
+                )
                 state.partial_assistant_archived = True
             except Exception as exc:
                 log.warning(
                     "Failed to archive cancel partial for %s: %s",
-                    conv_id, exc,
+                    conv_id,
+                    exc,
                 )
         # Step 2: persist the canonical marker. This is the load-bearing
         # signal; if it fails we leave the latch unset so a later cancel
         # call can retry the marker (the partial-archived flag protects
         # against duplicating the partial).
         try:
-            append_message(self.config, conv_id, {
-                "role": "cancel_marker",
-                "content": CANCEL_MARKER_TEXT,
-            })
+            append_message(
+                self.config,
+                conv_id,
+                {
+                    "role": "cancel_marker",
+                    "content": CANCEL_MARKER_TEXT,
+                },
+            )
             state.cancel_marker_written = True
         except Exception as exc:
             log.warning(
-                "Failed to write cancel marker for %s: %s", conv_id, exc,
+                "Failed to write cancel marker for %s: %s",
+                conv_id,
+                exc,
             )
 
     def _write_turn_aborted_marker_once(
-        self, conv_id: str, state: ConversationState,
+        self,
+        conv_id: str,
+        state: ConversationState,
     ) -> None:
         """Persist the canonical turn-aborted marker (and any streamed
         partial) for this turn, exactly once (issue #517).
@@ -921,29 +965,39 @@ class ConversationManager:
         # didn't already archive itself.
         if partial and not state.partial_assistant_archived:
             try:
-                append_message(self.config, conv_id, {
-                    "role": "assistant",
-                    "content": partial,
-                })
+                append_message(
+                    self.config,
+                    conv_id,
+                    {
+                        "role": "assistant",
+                        "content": partial,
+                    },
+                )
                 state.partial_assistant_archived = True
             except Exception as exc:
                 log.warning(
                     "Failed to archive turn-aborted partial for %s: %s",
-                    conv_id, exc,
+                    conv_id,
+                    exc,
                 )
         # Step 2: persist the canonical marker. If it fails we leave the
         # latch unset so a later call can retry the marker (the
         # partial-archived flag protects against duplicating the body).
         try:
-            append_message(self.config, conv_id, {
-                "role": "turn_aborted",
-                "content": TURN_ABORTED_MARKER_TEXT,
-            })
+            append_message(
+                self.config,
+                conv_id,
+                {
+                    "role": "turn_aborted",
+                    "content": TURN_ABORTED_MARKER_TEXT,
+                },
+            )
             state.turn_aborted_marker_written = True
         except Exception as exc:
             log.warning(
                 "Failed to write turn-aborted marker for %s: %s",
-                conv_id, exc,
+                conv_id,
+                exc,
             )
 
     async def cancel_turn(self, conv_id: str) -> None:
@@ -972,17 +1026,13 @@ class ConversationManager:
         Called during graceful shutdown so running turns can finish
         rather than being abandoned.
         """
-        tasks = [
-            s.agent_task for s in self._conversations.values()
-            if s.agent_task and not s.agent_task.done()
-        ]
+        tasks = [s.agent_task for s in self._conversations.values() if s.agent_task and not s.agent_task.done()]
         if not tasks:
             return
         log.info("Waiting for %d in-flight agent turn(s)...", len(tasks))
         done, pending = await asyncio.wait(tasks, timeout=timeout)
         if pending:
-            log.warning("Shutdown timeout: cancelling %d agent turn(s)",
-                        len(pending))
+            log.warning("Shutdown timeout: cancelling %d agent turn(s)", len(pending))
             for task in pending:
                 task.cancel()
             await asyncio.gather(*pending, return_exceptions=True)
@@ -1048,8 +1098,7 @@ class ConversationManager:
                 else:
                     callback(event)
             except Exception:
-                log.exception("Subscriber %s raised for conv %s",
-                              sub_id, conv_id)
+                log.exception("Subscriber %s raised for conv %s", sub_id, conv_id)
 
         await asyncio.gather(
             *(_call(sid, cb) for sid, cb in list(state.subscribers.items())),
@@ -1066,6 +1115,7 @@ class ConversationManager:
             return state.history
 
         from .archive import restore_history
+
         history = restore_history(self.config, conv_id) or []
 
         # Cache in state
@@ -1074,7 +1124,9 @@ class ConversationManager:
         return history
 
     def _promote_next_confirmation_unlocked(
-        self, state: "ConversationState", conv_id: str,
+        self,
+        state: "ConversationState",
+        conv_id: str,
     ) -> ConfirmationRequest | None:
         """Move the next queued confirmation (if any) into the active slot.
 
@@ -1115,12 +1167,13 @@ class ConversationManager:
         # the lock is released across the waiter's await.
         queued.active_event = state.confirmation_event
         queued.promoted_event.set()
-        log.info("Promoted queued confirmation for conv %s: %s",
-                 conv_id[:8], queued.request.action_type.value)
+        log.info("Promoted queued confirmation for conv %s: %s", conv_id[:8], queued.request.action_type.value)
         return queued.request
 
     def _clear_active_and_promote_unlocked(
-        self, state: "ConversationState", conv_id: str,
+        self,
+        state: "ConversationState",
+        conv_id: str,
     ) -> None:
         """Null out the active-confirmation triple and promote the next
         queued entry (if any).
@@ -1171,6 +1224,7 @@ class ConversationManager:
         # enqueue time so crash recovery sees every requested
         # confirmation, not only the currently-active one.
         from .archive import append_message
+
         append_message(self.config, conv_id, request.to_archive_message())
 
         # Install as the active confirmation, or queue behind it.
@@ -1186,16 +1240,16 @@ class ConversationManager:
                 state.confirmation_queue.append(queued)
                 event = None  # filled in after promotion
                 log.info(
-                    "Conv %s has active confirmation; queued new request "
-                    "(%d in queue)",
-                    conv_id[:8], len(state.confirmation_queue))
+                    "Conv %s has active confirmation; queued new request (%d in queue)",
+                    conv_id[:8],
+                    len(state.confirmation_queue),
+                )
 
         if queued is None:
             # Active path: emit the confirmation_request event for the
             # transports to render UI (outside the lock — emit awaits
             # subscribers).
-            await self.emit(
-                conv_id, _confirmation_request_payload(request))
+            await self.emit(conv_id, _confirmation_request_payload(request))
         else:
             # Queued path: wait (no timeout) for promotion. The promote
             # helper will assign state.confirmation_event for our turn
@@ -1218,8 +1272,7 @@ class ConversationManager:
                     if queued in state.confirmation_queue:
                         state.confirmation_queue.remove(queued)
                     elif state.pending_confirmation is request:
-                        self._clear_active_and_promote_unlocked(
-                            state, conv_id)
+                        self._clear_active_and_promote_unlocked(state, conv_id)
                 raise
             # The promote helper assigned our active event to
             # ``queued.active_event`` BEFORE signalling
@@ -1228,8 +1281,7 @@ class ConversationManager:
             # re-read had a narrow race window where a concurrent
             # caller could null the field (Copilot review on this PR).
             event = queued.active_event
-            await self.emit(
-                conv_id, _confirmation_request_payload(request))
+            await self.emit(conv_id, _confirmation_request_payload(request))
 
         # By either path (active or queued-then-promoted) ``event`` is
         # bound to the live ``state.confirmation_event`` for this
@@ -1267,22 +1319,21 @@ class ConversationManager:
             if claimed is not None:
                 response = claimed
             elif timed_out:
-                log.info("Confirmation timed out for conv %s: %s",
-                         conv_id[:8], request.message)
+                log.info("Confirmation timed out for conv %s: %s", conv_id[:8], request.message)
                 response = ConfirmationResponse(
                     confirmation_id=request.confirmation_id,
                     approved=False,
                 )
                 try:
                     append_message(
-                        self.config, conv_id,
+                        self.config,
+                        conv_id,
                         response.to_archive_message(),
                     )
                 except Exception:
                     log.exception(
-                        "Timeout archive write failed for conv %s; "
-                        "leaving pending state intact for retry",
-                        conv_id[:8])
+                        "Timeout archive write failed for conv %s; leaving pending state intact for retry", conv_id[:8]
+                    )
                     raise
                 needs_timeout_emit = True
             else:
@@ -1293,9 +1344,9 @@ class ConversationManager:
                     confirmation_id=request.confirmation_id,
                     approved=False,
                 )
-                log.info("Confirmation for conv %s was cancelled out "
-                         "from under the waiter; returning denial",
-                         conv_id[:8])
+                log.info(
+                    "Confirmation for conv %s was cancelled out from under the waiter; returning denial", conv_id[:8]
+                )
             # All three branches converge on the same post-resolution
             # cleanup: null out the active-confirmation triple and
             # promote the next queued entry. The shared helper keeps
@@ -1303,11 +1354,14 @@ class ConversationManager:
             self._clear_active_and_promote_unlocked(state, conv_id)
 
         if needs_timeout_emit:
-            await self.emit(conv_id, {
-                "type": "confirmation_response",
-                "confirmation_id": request.confirmation_id,
-                "approved": False,
-            })
+            await self.emit(
+                conv_id,
+                {
+                    "type": "confirmation_response",
+                    "confirmation_id": request.confirmation_id,
+                    "approved": False,
+                },
+            )
         # Note: when ``_promote_next_confirmation_unlocked`` promoted
         # an entry, the promoted request's own queued waiter (in
         # another ``request_confirmation`` call) is now awake and will
@@ -1331,6 +1385,7 @@ class ConversationManager:
         recovery dispatch path (registered handler), not a waiter wake.
         """
         from .archive import append_message
+
         state = self._get_or_create(conv_id)
         async with state.lock:
             if state.pending_confirmation is not None:
@@ -1344,7 +1399,8 @@ class ConversationManager:
                 raise RuntimeError(
                     f"post_confirmation: conversation {conv_id[:8]} already has "
                     f"a pending confirmation; workflow-turn serialization "
-                    f"invariant violated")
+                    f"invariant violated"
+                )
             # Archive under the lock so the durable record is installed
             # atomically with the in-memory state — never one without the
             # other. Without this, the busy-raise branch above would leave
@@ -1415,7 +1471,8 @@ class ConversationManager:
             # (skip_reflection=True, skip_vault_retrieval=True by default).
             effective_task_mode = task_mode if task_mode is not None else KIND_TASK_MODE[kind]
             ctx = Context.for_task(
-                self.config, self.event_bus,
+                self.config,
+                self.event_bus,
                 user_id=user_id,
                 conv_id=conv_id,
                 channel_id=conv_id,
@@ -1448,6 +1505,7 @@ class ConversationManager:
         # Apply command context if provided
         if command_ctx:
             from .commands import apply_command_ctx
+
             apply_command_ctx(ctx, command_ctx)
             ctx.tools.extra_definitions = command_ctx.tools.extra_definitions
 
@@ -1471,34 +1529,46 @@ class ConversationManager:
         # suppress the final message, and streaming would have already
         # delivered the prefix before the suppression gate fires.
         from .config import resolve_streaming
+
         if kind is not TurnKind.WAKE and resolve_streaming(self.config, ctx.active_model):
+
             async def on_stream_chunk(chunk_type, data):
                 if chunk_type == "text":
                     if isinstance(data, str):
                         state.partial_assistant_chunks.append(data)
-                    await self.emit(conv_id, {
-                        "type": "chunk", "text": data,
-                    })
+                    await self.emit(
+                        conv_id,
+                        {
+                            "type": "chunk",
+                            "text": data,
+                        },
+                    )
                 elif chunk_type == "done":
                     await self.emit(conv_id, {"type": "stream_done"})
                 elif chunk_type == "tool_call_start":
                     name = data.get("name", "") if isinstance(data, dict) else ""
-                    await self.emit(conv_id, {
-                        "type": "tool_call_start", "name": name,
-                    })
+                    await self.emit(
+                        conv_id,
+                        {
+                            "type": "tool_call_start",
+                            "name": name,
+                        },
+                    )
+
             ctx.on_stream_chunk = on_stream_chunk
 
         # Set up manager-based confirmation on the context so tools
         # route through the manager instead of the event bus
-        async def ctx_request_confirmation(request: ConfirmationRequest
-                                           ) -> ConfirmationResponse:
+        async def ctx_request_confirmation(request: ConfirmationRequest) -> ConfirmationResponse:
             return await self.request_confirmation(conv_id, request)
+
         ctx.request_confirmation = ctx_request_confirmation
         ctx.manager = self
 
         # Create the agent-facing terminal handle
         if self.terminal_registry:
             from decafclaw.terminals import AgentTerminalHandle
+
             ctx.terminal_registry = AgentTerminalHandle(self.terminal_registry)
         else:
             ctx.terminal_registry = None
@@ -1540,15 +1610,18 @@ class ConversationManager:
             try:
                 if kind is TurnKind.WORKFLOW:
                     from .workflow.resume import run_workflow_turn
+
                     md = metadata or {}
                     result = await run_workflow_turn(
-                        ctx, self,
-                        workflow_name=md.get("workflow_name", ""),
-                        resume=md.get("resume", False))
+                        ctx, self, workflow_name=md.get("workflow_name", ""), resume=md.get("resume", False)
+                    )
                 else:
                     from .agent import run_agent_turn
+
                     result = await run_agent_turn(
-                        ctx, text, history,
+                        ctx,
+                        text,
+                        history,
                         archive_text=archive_text,
                         attachments=attachments,
                     )
@@ -1569,54 +1642,59 @@ class ConversationManager:
                 # also fires below. Issue #491.
                 if state.cancel_observed_by_agent:
                     self._write_cancel_marker_once(conv_id, state)
-                suppress = (kind is TurnKind.WAKE
-                            and is_background_wake_ok(response_text))
-                await self.emit(conv_id, {
-                    "type": "message_complete",
-                    "role": "assistant",
-                    "text": response_text,
-                    "media": response_media,
-                    "final": True,
-                    "suppress_user_message": suppress,
-                    "usage": {
-                        "prompt_tokens": ctx.tokens.last_prompt,
-                        "completion_tokens": ctx.tokens.total_completion,
-                        "total_tokens": (ctx.tokens.total_prompt
-                                         + ctx.tokens.total_completion),
+                suppress = kind is TurnKind.WAKE and is_background_wake_ok(response_text)
+                await self.emit(
+                    conv_id,
+                    {
+                        "type": "message_complete",
+                        "role": "assistant",
+                        "text": response_text,
+                        "media": response_media,
+                        "final": True,
+                        "suppress_user_message": suppress,
+                        "usage": {
+                            "prompt_tokens": ctx.tokens.last_prompt,
+                            "completion_tokens": ctx.tokens.total_completion,
+                            "total_tokens": (ctx.tokens.total_prompt + ctx.tokens.total_completion),
+                        },
+                        "context_limit": self.config.compaction.max_tokens,
                     },
-                    "context_limit": self.config.compaction.max_tokens,
-                })
+                )
             except asyncio.CancelledError:
                 log.info("Agent turn cancelled for conv %s", conv_id[:8])
                 response_text_holder.append("[cancelled]")
                 # Persist a strong cancel signal so the next turn's LLM
                 # doesn't re-fulfill the cancelled request (issue #491).
                 self._write_cancel_marker_once(conv_id, state)
-                await self.emit(conv_id, {
-                    "type": "message_complete",
-                    "role": "assistant",
-                    "text": "[cancelled]",
-                    "final": True,
-                    "suppress_user_message": False,
-                })
+                await self.emit(
+                    conv_id,
+                    {
+                        "type": "message_complete",
+                        "role": "assistant",
+                        "text": "[cancelled]",
+                        "final": True,
+                        "suppress_user_message": False,
+                    },
+                )
             except Exception as e:
-                log.error("Agent turn failed for conv %s: %s",
-                          conv_id[:8], e, exc_info=True)
+                log.error("Agent turn failed for conv %s: %s", conv_id[:8], e, exc_info=True)
                 response_text_holder.append(f"[error: {e}]")
                 # Persist a turn-closure marker so the next turn's LLM
                 # doesn't see an open prior request and re-fulfill it
                 # (issue #517, parallel to #491's cancel marker).
                 self._write_turn_aborted_marker_once(conv_id, state)
-                await self.emit(conv_id, {
-                    "type": "error",
-                    "message": f"Agent turn failed: {e}",
-                })
+                await self.emit(
+                    conv_id,
+                    {
+                        "type": "error",
+                        "message": f"Agent turn failed: {e}",
+                    },
+                )
             finally:
                 self.event_bus.unsubscribe(bus_sub_id)
                 # Wait for any in-flight event forwards
                 if forward_tasks:
-                    await asyncio.gather(*forward_tasks,
-                                         return_exceptions=True)
+                    await asyncio.gather(*forward_tasks, return_exceptions=True)
                 # Persist per-conversation state for kinds that own user convs.
                 if kind in STATE_PERSIST_KINDS:
                     self._save_conversation_state(state, ctx)
@@ -1642,8 +1720,7 @@ class ConversationManager:
 
                 # Resolve the caller's future (if any) before draining pending
                 if future is not None and not future.done():
-                    result_text = (response_text_holder[0]
-                                   if response_text_holder else None)
+                    result_text = response_text_holder[0] if response_text_holder else None
                     future.set_result(result_text)
 
                 # Drain queued messages. _drain_pending re-acquires the
@@ -1719,7 +1796,7 @@ class ConversationManager:
         finally-block drain.
         """
         from .inbox import _read_inbox, _write_inbox
-        
+
         async with state.lock:
             if state.busy:
                 log.debug("_drain_pending: conv %s already busy with a concurrent turn, deferring", state.conv_id[:8])
@@ -1751,7 +1828,7 @@ class ConversationManager:
                 all_attachments = []
                 tail_futs = []
                 head_fut = None
-                
+
                 for i, q in enumerate(run):
                     tid = q.get("turn_id")
                     inmem = state.inmemory_turn_data.pop(tid, {})
@@ -1768,6 +1845,7 @@ class ConversationManager:
                 log.info("Draining %d queued USER message(s) for conv %s", len(run), state.conv_id[:8])
 
                 if head_fut is not None and tail_futs:
+
                     def _fanout(fut: asyncio.Future, _tails: list = tail_futs) -> None:
                         result = None
                         if fut.done() and not fut.cancelled():
@@ -1777,16 +1855,18 @@ class ConversationManager:
                         for f in _tails:
                             if not f.done():
                                 f.set_result(result)
+
                     head_fut.add_done_callback(_fanout)
                 elif tail_futs:
                     for f in tail_futs:
                         if not f.done():
                             f.set_result(None)
-                            
+
                 last_inmem = state.inmemory_turn_data.get(last.get("turn_id"), {})
 
                 await self._start_turn(
-                    state, combined,
+                    state,
+                    combined,
                     kind=TurnKind.USER,
                     user_id=last.get("user_id", ""),
                     context_setup=last_inmem.get("context_setup"),
@@ -1799,13 +1879,14 @@ class ConversationManager:
             else:
                 q = messages.pop(0)
                 _write_inbox(self.config, state.conv_id, messages)
-                
+
                 tid = q.get("turn_id")
                 inmem = state.inmemory_turn_data.pop(tid, {})
 
                 log.info("Draining queued %s turn for conv %s", q["kind"], state.conv_id[:8])
                 await self._start_turn(
-                    state, q["text"],
+                    state,
+                    q["text"],
                     kind=get_kind(q["kind"]),
                     user_id=q.get("user_id", ""),
                     context_setup=inmem.get("context_setup"),
@@ -1839,32 +1920,30 @@ class ConversationManager:
 
         for conv_id, archive_file in iter_conversation_archives(self.config):
             try:
-                pending = self._scan_archive_for_pending(
-                    archive_file, stale_cutoff, conv_id)
+                pending = self._scan_archive_for_pending(archive_file, stale_cutoff, conv_id)
                 if pending:
                     state = self._get_or_create(conv_id)
                     state.pending_confirmation = pending
-                    log.info("Recovered pending confirmation for conv %s: %s",
-                             conv_id[:8], pending.action_type.value)
+                    log.info("Recovered pending confirmation for conv %s: %s", conv_id[:8], pending.action_type.value)
                     recovered += 1
             except Exception as e:
                 log.warning("Error scanning archive %s: %s", conv_id, e)
 
         if recovered:
-            log.info("Startup scan: recovered %d pending confirmation(s)",
-                     recovered)
-                     
+            log.info("Startup scan: recovered %d pending confirmation(s)", recovered)
+
         # Phase 3: Resume pending inbox turns
         from .inbox import _read_inbox
+
         for conv_id, archive_file in iter_conversation_archives(self.config):
             msgs = _read_inbox(self.config, conv_id)
             if msgs:
                 state = self._get_or_create(conv_id)
                 log.info("Startup scan: resuming %d pending turns for conv %s", len(msgs), conv_id[:8])
-                # We can't await _drain_pending directly in a synchronous context, 
+                # We can't await _drain_pending directly in a synchronous context,
                 # but startup_scan is async!
                 await self._drain_pending(state)
-        
+
         return recovered
 
     async def startup_scan_workflows(self) -> int:
@@ -1895,8 +1974,7 @@ class ConversationManager:
             try:
                 journal = load_journal(self.config, conv_id)
             except Exception as exc:
-                log.warning(
-                    "Failed to load workflow journal for %s: %s", conv_id, exc)
+                log.warning("Failed to load workflow journal for %s: %s", conv_id, exc)
                 continue
             if journal is None:
                 continue
@@ -1906,9 +1984,11 @@ class ConversationManager:
 
             if journal.attempts >= cap:
                 log.warning(
-                    "Workflow %r in %s exceeded resume attempts (%d), "
-                    "marked as error.",
-                    journal.workflow_name, conv_id, cap)
+                    "Workflow %r in %s exceeded resume attempts (%d), marked as error.",
+                    journal.workflow_name,
+                    conv_id,
+                    cap,
+                )
                 journal.status = "error"
                 save_journal(self.config, conv_id, journal)
                 continue
@@ -1917,8 +1997,8 @@ class ConversationManager:
             save_journal(self.config, conv_id, journal)
 
             log.info(
-                "Resuming workflow %r in %s (attempt %d/%d)",
-                journal.workflow_name, conv_id, journal.attempts, cap)
+                "Resuming workflow %r in %s (attempt %d/%d)", journal.workflow_name, conv_id, journal.attempts, cap
+            )
 
             try:
                 await self.enqueue_turn(
@@ -1934,9 +2014,7 @@ class ConversationManager:
                 # Fail-open per conversation: attempts already incremented on
                 # disk, so the crash-safety guarantee still holds. Skip to the
                 # next conversation rather than block startup.
-                log.warning(
-                    "Failed to enqueue workflow resume for %s: %s",
-                    conv_id, exc)
+                log.warning("Failed to enqueue workflow resume for %s: %s", conv_id, exc)
                 continue
             resumed += 1
 
@@ -1944,9 +2022,7 @@ class ConversationManager:
             log.info("Startup scan: resumed %d workflow(s)", resumed)
         return resumed
 
-    def _scan_archive_for_pending(self, archive_path, stale_cutoff: str,
-                                  conv_id: str
-                                  ) -> ConfirmationRequest | None:
+    def _scan_archive_for_pending(self, archive_path, stale_cutoff: str, conv_id: str) -> ConfirmationRequest | None:
         """Read the tail of an archive file looking for an unresolved confirmation."""
         import json
 
@@ -2001,14 +2077,12 @@ class ConversationManager:
         # Check staleness
         ts = last_request.get("timestamp", "")
         if ts and ts < stale_cutoff:
-            log.debug("Skipping stale confirmation in %s (from %s)",
-                      conv_id, ts)
+            log.debug("Skipping stale confirmation in %s (from %s)", conv_id, ts)
             return None
 
         return ConfirmationRequest.from_archive_message(last_request)
 
-    async def recover_confirmation(self, conv_id: str,
-                                   response: ConfirmationResponse) -> dict:
+    async def recover_confirmation(self, conv_id: str, response: ConfirmationResponse) -> dict:
         """Handle a confirmation response for a conversation with no running loop.
 
         Atomically pops ``state.pending_confirmation`` under
@@ -2034,9 +2108,9 @@ class ConversationManager:
             return await self._dispatch_recovery(conv_id, request, response)
         except Exception:
             log.exception(
-                "recover_confirmation dispatch failed for conv %s; "
-                "restoring pending state so retry can proceed",
-                conv_id[:8])
+                "recover_confirmation dispatch failed for conv %s; restoring pending state so retry can proceed",
+                conv_id[:8],
+            )
             async with state.lock:
                 if state.pending_confirmation is None:
                     state.pending_confirmation = request
@@ -2057,9 +2131,9 @@ class ConversationManager:
         """
         if not self.confirmation_registry._handlers:
             log.warning(
-                "No confirmation handlers registered — cannot recover "
-                "confirmation for conv %s (action: %s)",
-                conv_id[:8], request.action_type.value,
+                "No confirmation handlers registered — cannot recover confirmation for conv %s (action: %s)",
+                conv_id[:8],
+                request.action_type.value,
             )
             return {"error": "No confirmation handlers registered"}
 
@@ -2068,7 +2142,9 @@ class ConversationManager:
         # context that handlers can duck-type against.
         recovery_ctx = _RecoveryContext(config=self.config, conv_id=conv_id)
         return await self.confirmation_registry.dispatch(
-            recovery_ctx, request, response,
+            recovery_ctx,
+            request,
+            response,
         )
 
 
@@ -2076,5 +2152,6 @@ class ConversationManager:
 class _RecoveryContext:
     """Minimal ctx-shaped object passed to confirmation handlers during
     recovery, when there's no live agent loop to provide a real ctx."""
+
     config: Any
     conv_id: str

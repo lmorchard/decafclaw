@@ -1,10 +1,12 @@
+import asyncio
 import json
 import os
 import uuid
-import asyncio
-from pathlib import Path
 from dataclasses import dataclass, field
+from pathlib import Path
+
 from decafclaw.conversation_paths import sidecar_path
+
 
 def _read_inbox(config, conv_id: str) -> list[dict]:
     path = sidecar_path(config, conv_id, "inbox.jsonl")
@@ -16,6 +18,7 @@ def _read_inbox(config, conv_id: str) -> list[dict]:
             if line.strip():
                 lines.append(json.loads(line))
     return lines
+
 
 def _write_inbox(config, conv_id: str, messages: list[dict]) -> None:
     path = sidecar_path(config, conv_id, "inbox.jsonl")
@@ -29,6 +32,7 @@ def _write_inbox(config, conv_id: str, messages: list[dict]) -> None:
         for msg in messages:
             f.write(json.dumps(msg, separators=(",", ":")) + "\n")
     os.replace(tmp, path)
+
 
 def _append_inbox(config, conv_id: str, message: dict) -> None:
     path = sidecar_path(config, conv_id, "inbox.jsonl")
