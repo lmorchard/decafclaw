@@ -18,7 +18,7 @@ def test_conversation_state_defaults():
     conv = ConversationState()
     assert conv.turn_times == []
     assert conv.paused_until == 0
-    
+
     assert conv.busy is False
 
 

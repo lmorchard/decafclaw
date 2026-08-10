@@ -1,7 +1,3 @@
-
-def _get_inbox_len(config, conv_id):
-    from decafclaw.inbox import _read_inbox
-    return len(_read_inbox(config, conv_id))
 """Tests for the conversation manager."""
 
 import asyncio
@@ -30,6 +26,12 @@ from decafclaw.conversation_manager import (
 from decafclaw.events import EventBus
 
 
+def _get_inbox_len(config, conv_id):
+    from decafclaw.inbox import _read_inbox
+
+    return len(_read_inbox(config, conv_id))
+
+
 @pytest.fixture
 def manager(config):
     bus = EventBus()
@@ -37,6 +39,7 @@ def manager(config):
 
 
 # -- State management ---------------------------------------------------------
+
 
 def test_get_or_create(manager):
     state = manager._get_or_create("conv-1")
@@ -49,6 +52,7 @@ def test_get_state_returns_none_for_unknown(manager):
 
 
 # -- Subscription --------------------------------------------------------------
+
 
 def test_subscribe_and_unsubscribe(manager):
     cb = MagicMock()
@@ -95,6 +99,7 @@ async def test_emit_subscriber_error_doesnt_break_others(manager):
 
 # -- History -------------------------------------------------------------------
 
+
 def test_load_history_empty(manager):
     history = manager.load_history("new-conv")
     assert history == []
@@ -107,6 +112,7 @@ def test_load_history_cached(manager):
 
 
 # -- Confirmation request/response --------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_request_confirmation_approved(manager):
@@ -123,8 +129,7 @@ async def test_request_confirmation_approved(manager):
     # Approve after a short delay
     async def approve():
         await asyncio.sleep(0.05)
-        await manager.respond_to_confirmation(
-            conv_id, request.confirmation_id, approved=True)
+        await manager.respond_to_confirmation(conv_id, request.confirmation_id, approved=True)
 
     asyncio.create_task(approve())
     response = await manager.request_confirmation(conv_id, request)
@@ -150,8 +155,7 @@ async def test_request_confirmation_denied(manager):
 
     async def deny():
         await asyncio.sleep(0.05)
-        await manager.respond_to_confirmation(
-            conv_id, request.confirmation_id, approved=False)
+        await manager.respond_to_confirmation(conv_id, request.confirmation_id, approved=False)
 
     asyncio.create_task(deny())
     response = await manager.request_confirmation(conv_id, request)
@@ -216,8 +220,7 @@ async def test_confirmation_persisted_to_archive(manager):
 
     async def approve():
         await asyncio.sleep(0.05)
-        await manager.respond_to_confirmation(
-            conv_id, request.confirmation_id, approved=True)
+        await manager.respond_to_confirmation(conv_id, request.confirmation_id, approved=True)
 
     asyncio.create_task(approve())
     await manager.request_confirmation(conv_id, request)
@@ -282,8 +285,8 @@ async def test_respond_with_data_field_roundtrips(manager):
     async def respond():
         await asyncio.sleep(0.05)
         await manager.respond_to_confirmation(
-            conv_id, request.confirmation_id, approved=True,
-            data={"selected": "production"})
+            conv_id, request.confirmation_id, approved=True, data={"selected": "production"}
+        )
 
     asyncio.create_task(respond())
     response = await manager.request_confirmation(conv_id, request)
@@ -316,9 +319,7 @@ async def test_request_confirmation_no_timeout(manager):
         # Sleep longer than any reasonable default timeout would be,
         # to prove that None-timeout doesn't raise TimeoutError.
         await asyncio.sleep(0.1)
-        await manager.respond_to_confirmation(
-            conv_id, request.confirmation_id, approved=True,
-            data={"selected": "x"})
+        await manager.respond_to_confirmation(conv_id, request.confirmation_id, approved=True, data={"selected": "x"})
 
     asyncio.create_task(respond_after_delay())
     response = await manager.request_confirmation(conv_id, request)
@@ -337,14 +338,14 @@ async def test_respond_wrong_id_ignored(manager):
     )
     state.confirmation_event = asyncio.Event()
 
-    await manager.respond_to_confirmation(
-        conv_id, "wrong-id", approved=True)
+    await manager.respond_to_confirmation(conv_id, "wrong-id", approved=True)
 
     # Event should NOT be set
     assert not state.confirmation_event.is_set()
 
 
 # -- Message queueing ---------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_message_queued_when_busy(manager):
@@ -354,10 +355,14 @@ async def test_message_queued_when_busy(manager):
     await manager.send_message("conv-1", "queued msg", user_id="user")
 
     assert len(__import__("decafclaw.inbox", fromlist=["_read_inbox"])._read_inbox(manager.config, state.conv_id)) == 1
-    assert __import__("decafclaw.inbox", fromlist=["_read_inbox"])._read_inbox(manager.config, state.conv_id)[0]["text"] == "queued msg"
+    assert (
+        __import__("decafclaw.inbox", fromlist=["_read_inbox"])._read_inbox(manager.config, state.conv_id)[0]["text"]
+        == "queued msg"
+    )
 
 
 # -- Cancel turn ---------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_cancel_turn_sets_event(manager):
@@ -409,7 +414,10 @@ def test_write_cancel_archive_skips_partial_when_already_archived(config):
     must not double-write it — only the cancel marker is appended."""
     conv_id = "conv-cancel-3"
     _write_cancel_archive(
-        config, conv_id, "partial text", partial_already_archived=True,
+        config,
+        conv_id,
+        "partial text",
+        partial_already_archived=True,
     )
 
     messages = read_archive(config, conv_id)
@@ -419,7 +427,9 @@ def test_write_cancel_archive_skips_partial_when_already_archived(config):
 
 @pytest.mark.asyncio
 async def test_cancel_during_turn_archives_marker_and_partial(
-    manager, config, monkeypatch,
+    manager,
+    config,
+    monkeypatch,
 ):
     """End-to-end: a turn that streams partial text and then raises
     CancelledError should leave the archive with the streamed partial
@@ -427,13 +437,19 @@ async def test_cancel_during_turn_archives_marker_and_partial(
     The real run_agent_turn archives the user prompt as part of context
     composition; this fake replaces that with a manual write."""
     from decafclaw.archive import append_message
+
     conv_id = "c1-cancel-integration"
 
     async def fake_run_agent_turn(ctx, user_message, history, **kwargs):
         # Emulate the real agent's user-archive step.
-        append_message(ctx.config, ctx.conv_id, {
-            "role": "user", "content": user_message,
-        })
+        append_message(
+            ctx.config,
+            ctx.conv_id,
+            {
+                "role": "user",
+                "content": user_message,
+            },
+        )
         # Simulate streaming a few text chunks before cancellation.
         assert ctx.on_stream_chunk is not None
         await ctx.on_stream_chunk("text", "Once upon a time, ")
@@ -441,7 +457,8 @@ async def test_cancel_during_turn_archives_marker_and_partial(
         raise asyncio.CancelledError()
 
     monkeypatch.setattr(
-        "decafclaw.agent.run_agent_turn", fake_run_agent_turn,
+        "decafclaw.agent.run_agent_turn",
+        fake_run_agent_turn,
     )
 
     future = await manager.enqueue_turn(
@@ -463,21 +480,30 @@ async def test_cancel_during_turn_archives_marker_and_partial(
 
 @pytest.mark.asyncio
 async def test_cancel_without_partial_archives_marker_only(
-    manager, config, monkeypatch,
+    manager,
+    config,
+    monkeypatch,
 ):
     """When no text streamed before cancel, the archive holds only the
     marker for the cancelled turn (no empty assistant row)."""
     from decafclaw.archive import append_message
+
     conv_id = "c1-cancel-no-partial"
 
     async def fake_run_agent_turn(ctx, user_message, history, **kwargs):
-        append_message(ctx.config, ctx.conv_id, {
-            "role": "user", "content": user_message,
-        })
+        append_message(
+            ctx.config,
+            ctx.conv_id,
+            {
+                "role": "user",
+                "content": user_message,
+            },
+        )
         raise asyncio.CancelledError()
 
     monkeypatch.setattr(
-        "decafclaw.agent.run_agent_turn", fake_run_agent_turn,
+        "decafclaw.agent.run_agent_turn",
+        fake_run_agent_turn,
     )
 
     future = await manager.enqueue_turn(
@@ -496,7 +522,9 @@ async def test_cancel_without_partial_archives_marker_only(
 
 @pytest.mark.asyncio
 async def test_cancel_observed_cleanly_still_writes_marker(
-    manager, config, monkeypatch,
+    manager,
+    config,
+    monkeypatch,
 ):
     """When the agent loop observes the cancel signal at iteration start
     and returns a ToolResult cleanly (no CancelledError), the manager's
@@ -505,12 +533,18 @@ async def test_cancel_observed_cleanly_still_writes_marker(
     hasn't fired yet but cancel_event has been set."""
     from decafclaw.archive import append_message
     from decafclaw.media import ToolResult
+
     conv_id = "c1-cancel-clean-return"
 
     async def fake_run_agent_turn(ctx, user_message, history, **kwargs):
-        append_message(ctx.config, ctx.conv_id, {
-            "role": "user", "content": user_message,
-        })
+        append_message(
+            ctx.config,
+            ctx.conv_id,
+            {
+                "role": "user",
+                "content": user_message,
+            },
+        )
         # Set cancel_event AND mark the manager that the agent observed
         # it — emulates _check_cancelled firing at iteration start and
         # returning ToolResult via _Final.
@@ -519,7 +553,8 @@ async def test_cancel_observed_cleanly_still_writes_marker(
         return ToolResult(text="[Agent turn cancelled by user]")
 
     monkeypatch.setattr(
-        "decafclaw.agent.run_agent_turn", fake_run_agent_turn,
+        "decafclaw.agent.run_agent_turn",
+        fake_run_agent_turn,
     )
 
     future = await manager.enqueue_turn(
@@ -532,17 +567,16 @@ async def test_cancel_observed_cleanly_still_writes_marker(
 
     messages = read_archive(config, conv_id)
     roles = [m["role"] for m in messages]
-    assert "cancel_marker" in roles, (
-        f"expected cancel marker in archive after clean cancel return; "
-        f"got roles={roles}"
-    )
+    assert "cancel_marker" in roles, f"expected cancel marker in archive after clean cancel return; got roles={roles}"
     cancel_idx = roles.index("cancel_marker")
     assert messages[cancel_idx]["content"] == CANCEL_MARKER_TEXT
 
 
 @pytest.mark.asyncio
 async def test_late_cancel_after_completion_no_marker(
-    manager, config, monkeypatch,
+    manager,
+    config,
+    monkeypatch,
 ):
     """When cancel_event is set AFTER the agent loop already returned
     a real response (a late cancel that didn't actually interrupt
@@ -552,12 +586,18 @@ async def test_late_cancel_after_completion_no_marker(
     Issue #491 Copilot review."""
     from decafclaw.archive import append_message
     from decafclaw.media import ToolResult
+
     conv_id = "c1-cancel-too-late"
 
     async def fake_run_agent_turn(ctx, user_message, history, **kwargs):
-        append_message(ctx.config, ctx.conv_id, {
-            "role": "user", "content": user_message,
-        })
+        append_message(
+            ctx.config,
+            ctx.conv_id,
+            {
+                "role": "user",
+                "content": user_message,
+            },
+        )
         # The agent completes a real response. Cancel fires AFTER the
         # agent returned (e.g., the user clicked cancel just after the
         # final chunk landed). The agent never observed it.
@@ -565,7 +605,8 @@ async def test_late_cancel_after_completion_no_marker(
         return ToolResult(text="here is the real answer")
 
     monkeypatch.setattr(
-        "decafclaw.agent.run_agent_turn", fake_run_agent_turn,
+        "decafclaw.agent.run_agent_turn",
+        fake_run_agent_turn,
     )
 
     future = await manager.enqueue_turn(
@@ -578,39 +619,50 @@ async def test_late_cancel_after_completion_no_marker(
 
     messages = read_archive(config, conv_id)
     roles = [m["role"] for m in messages]
-    assert "cancel_marker" not in roles, (
-        f"late cancel after real completion must not write a marker; "
-        f"got roles={roles}"
-    )
+    assert "cancel_marker" not in roles, f"late cancel after real completion must not write a marker; got roles={roles}"
 
 
 @pytest.mark.asyncio
 async def test_cancel_skips_partial_when_already_archived(
-    manager, config, monkeypatch,
+    manager,
+    config,
+    monkeypatch,
 ):
     """When the agent loop already archived the assistant content before
     cancel propagated, the marker is appended but no duplicate partial
     row is written."""
     from decafclaw.archive import append_message
+
     conv_id = "c1-cancel-dedupe"
 
     async def fake_run_agent_turn(ctx, user_message, history, **kwargs):
         # Simulate streaming + the agent loop archiving the partial.
-        append_message(ctx.config, ctx.conv_id, {
-            "role": "user", "content": user_message,
-        })
+        append_message(
+            ctx.config,
+            ctx.conv_id,
+            {
+                "role": "user",
+                "content": user_message,
+            },
+        )
         assert ctx.on_stream_chunk is not None
         await ctx.on_stream_chunk("text", "Hello ")
         await ctx.on_stream_chunk("text", "world")
         # The real agent does this via _archive() in agent.py — emulate.
-        append_message(ctx.config, ctx.conv_id, {
-            "role": "assistant", "content": "Hello world",
-        })
+        append_message(
+            ctx.config,
+            ctx.conv_id,
+            {
+                "role": "assistant",
+                "content": "Hello world",
+            },
+        )
         ctx.manager.note_partial_assistant_archived(ctx.conv_id)
         raise asyncio.CancelledError()
 
     monkeypatch.setattr(
-        "decafclaw.agent.run_agent_turn", fake_run_agent_turn,
+        "decafclaw.agent.run_agent_turn",
+        fake_run_agent_turn,
     )
 
     future = await manager.enqueue_turn(
@@ -624,7 +676,9 @@ async def test_cancel_skips_partial_when_already_archived(
     messages = read_archive(config, conv_id)
     # user, assistant (from agent), cancel_marker — no duplicate assistant
     assert [m["role"] for m in messages] == [
-        "user", "assistant", "cancel_marker",
+        "user",
+        "assistant",
+        "cancel_marker",
     ]
     assert messages[1]["content"] == "Hello world"
 
@@ -664,22 +718,31 @@ def test_write_turn_aborted_marker_once_latches(manager, config):
 
 @pytest.mark.asyncio
 async def test_exception_during_turn_archives_marker(
-    manager, config, monkeypatch,
+    manager,
+    config,
+    monkeypatch,
 ):
     """End-to-end: a turn that archives the user prompt then raises a
     non-CancelledError exception must leave a turn_aborted marker in
     the archive (issue #517)."""
     from decafclaw.archive import append_message
+
     conv_id = "c1-aborted-no-partial"
 
     async def fake_run_agent_turn(ctx, user_message, history, **kwargs):
-        append_message(ctx.config, ctx.conv_id, {
-            "role": "user", "content": user_message,
-        })
+        append_message(
+            ctx.config,
+            ctx.conv_id,
+            {
+                "role": "user",
+                "content": user_message,
+            },
+        )
         raise RuntimeError("boom")
 
     monkeypatch.setattr(
-        "decafclaw.agent.run_agent_turn", fake_run_agent_turn,
+        "decafclaw.agent.run_agent_turn",
+        fake_run_agent_turn,
     )
 
     future = await manager.enqueue_turn(
@@ -699,25 +762,34 @@ async def test_exception_during_turn_archives_marker(
 
 @pytest.mark.asyncio
 async def test_exception_during_turn_archives_partial_then_marker(
-    manager, config, monkeypatch,
+    manager,
+    config,
+    monkeypatch,
 ):
     """When a partial assistant stream was captured before the
     exception, the archive order is user → assistant(partial) →
     turn_aborted, preserving any delivered text."""
     from decafclaw.archive import append_message
+
     conv_id = "c1-aborted-with-partial"
 
     async def fake_run_agent_turn(ctx, user_message, history, **kwargs):
-        append_message(ctx.config, ctx.conv_id, {
-            "role": "user", "content": user_message,
-        })
+        append_message(
+            ctx.config,
+            ctx.conv_id,
+            {
+                "role": "user",
+                "content": user_message,
+            },
+        )
         assert ctx.on_stream_chunk is not None
         await ctx.on_stream_chunk("text", "Sure, here goes: ")
         await ctx.on_stream_chunk("text", "the answer is...")
         raise RuntimeError("LLM provider crashed mid-stream")
 
     monkeypatch.setattr(
-        "decafclaw.agent.run_agent_turn", fake_run_agent_turn,
+        "decafclaw.agent.run_agent_turn",
+        fake_run_agent_turn,
     )
 
     future = await manager.enqueue_turn(
@@ -737,29 +809,43 @@ async def test_exception_during_turn_archives_partial_then_marker(
 
 @pytest.mark.asyncio
 async def test_exception_partial_already_archived_no_duplicate(
-    manager, config, monkeypatch,
+    manager,
+    config,
+    monkeypatch,
 ):
     """When the agent loop already archived the assistant content
     before raising, the marker is appended but no duplicate partial
     row is written."""
     from decafclaw.archive import append_message
+
     conv_id = "c1-aborted-dedupe"
 
     async def fake_run_agent_turn(ctx, user_message, history, **kwargs):
-        append_message(ctx.config, ctx.conv_id, {
-            "role": "user", "content": user_message,
-        })
+        append_message(
+            ctx.config,
+            ctx.conv_id,
+            {
+                "role": "user",
+                "content": user_message,
+            },
+        )
         assert ctx.on_stream_chunk is not None
         await ctx.on_stream_chunk("text", "Hello ")
         await ctx.on_stream_chunk("text", "world")
-        append_message(ctx.config, ctx.conv_id, {
-            "role": "assistant", "content": "Hello world",
-        })
+        append_message(
+            ctx.config,
+            ctx.conv_id,
+            {
+                "role": "assistant",
+                "content": "Hello world",
+            },
+        )
         ctx.manager.note_partial_assistant_archived(ctx.conv_id)
         raise RuntimeError("boom after partial archive")
 
     monkeypatch.setattr(
-        "decafclaw.agent.run_agent_turn", fake_run_agent_turn,
+        "decafclaw.agent.run_agent_turn",
+        fake_run_agent_turn,
     )
 
     future = await manager.enqueue_turn(
@@ -772,14 +858,18 @@ async def test_exception_partial_already_archived_no_duplicate(
 
     messages = read_archive(config, conv_id)
     assert [m["role"] for m in messages] == [
-        "user", "assistant", "turn_aborted",
+        "user",
+        "assistant",
+        "turn_aborted",
     ]
     assert messages[1]["content"] == "Hello world"
 
 
 @pytest.mark.asyncio
 async def test_turn_aborted_latch_resets_between_failing_turns(
-    manager, config, monkeypatch,
+    manager,
+    config,
+    monkeypatch,
 ):
     """Two consecutive failing turns in the same conversation must
     each leave a turn_aborted marker in the archive — the
@@ -787,30 +877,41 @@ async def test_turn_aborted_latch_resets_between_failing_turns(
     the second turn. Guards against a regression where the reset is
     accidentally removed from _start_turn (Copilot review on #549)."""
     from decafclaw.archive import append_message
+
     conv_id = "c1-aborted-two-turns"
 
     call_count = {"n": 0}
 
     async def fake_run_agent_turn(ctx, user_message, history, **kwargs):
         call_count["n"] += 1
-        append_message(ctx.config, ctx.conv_id, {
-            "role": "user", "content": user_message,
-        })
+        append_message(
+            ctx.config,
+            ctx.conv_id,
+            {
+                "role": "user",
+                "content": user_message,
+            },
+        )
         raise RuntimeError(f"boom turn {call_count['n']}")
 
     monkeypatch.setattr(
-        "decafclaw.agent.run_agent_turn", fake_run_agent_turn,
+        "decafclaw.agent.run_agent_turn",
+        fake_run_agent_turn,
     )
 
     first = await manager.enqueue_turn(
-        conv_id=conv_id, kind=TurnKind.USER,
-        prompt="first", user_id="u",
+        conv_id=conv_id,
+        kind=TurnKind.USER,
+        prompt="first",
+        user_id="u",
     )
     await asyncio.wait_for(first, timeout=2.0)
 
     second = await manager.enqueue_turn(
-        conv_id=conv_id, kind=TurnKind.USER,
-        prompt="second", user_id="u",
+        conv_id=conv_id,
+        kind=TurnKind.USER,
+        prompt="second",
+        user_id="u",
     )
     await asyncio.wait_for(second, timeout=2.0)
 
@@ -820,14 +921,17 @@ async def test_turn_aborted_latch_resets_between_failing_turns(
     # removed from _start_turn, the second marker would be suppressed
     # by the latch carried over from the first turn.
     assert roles == [
-        "user", "turn_aborted",
-        "user", "turn_aborted",
+        "user",
+        "turn_aborted",
+        "user",
+        "turn_aborted",
     ], f"expected a marker after each failing turn; got roles={roles}"
     assert messages[1]["content"] == TURN_ABORTED_MARKER_TEXT
     assert messages[3]["content"] == TURN_ABORTED_MARKER_TEXT
 
 
 # -- Send message with mocked agent turn ---------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_send_message_queues_multiple_when_busy(manager):
@@ -840,7 +944,10 @@ async def test_send_message_queues_multiple_when_busy(manager):
     await manager.send_message("conv-1", "msg 3", user_id="user")
 
     assert len(__import__("decafclaw.inbox", fromlist=["_read_inbox"])._read_inbox(manager.config, state.conv_id)) == 3
-    assert [m["text"] for m in __import__("decafclaw.inbox", fromlist=["_read_inbox"])._read_inbox(manager.config, state.conv_id)] == ["msg 1", "msg 2", "msg 3"]
+    assert [
+        m["text"]
+        for m in __import__("decafclaw.inbox", fromlist=["_read_inbox"])._read_inbox(manager.config, state.conv_id)
+    ] == ["msg 1", "msg 2", "msg 3"]
 
 
 @pytest.mark.asyncio
@@ -857,8 +964,7 @@ async def test_always_field_in_confirmation_response(manager):
 
     async def approve_always():
         await asyncio.sleep(0.05)
-        await manager.respond_to_confirmation(
-            conv_id, request.confirmation_id, approved=True, always=True)
+        await manager.respond_to_confirmation(conv_id, request.confirmation_id, approved=True, always=True)
 
     asyncio.create_task(approve_always())
     response = await manager.request_confirmation(conv_id, request)
@@ -868,6 +974,7 @@ async def test_always_field_in_confirmation_response(manager):
 
 
 # -- Startup recovery ----------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_startup_scan_finds_pending_confirmation(manager):
@@ -941,6 +1048,7 @@ async def test_startup_scan_empty_archive(manager):
 
 # -- Workflow startup recovery -------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_startup_scan_workflows_resumes_running(manager):
     """A workflow in status='running' should be re-enqueued with attempts bumped."""
@@ -950,8 +1058,7 @@ async def test_startup_scan_workflows_resumes_running(manager):
     conv_id = "conv-wf-running"
     # iter_conversation_archives only yields dirs that contain archive.jsonl.
     append_message(manager.config, conv_id, {"role": "user", "content": "hi"})
-    save_journal(manager.config, conv_id,
-                 Journal(workflow_name="interview", status="running"))
+    save_journal(manager.config, conv_id, Journal(workflow_name="interview", status="running"))
 
     with patch.object(manager, "enqueue_turn", new_callable=AsyncMock) as mock_eq:
         resumed = await manager.startup_scan_workflows()
@@ -980,8 +1087,7 @@ async def test_startup_scan_workflows_skips_non_running(manager):
         ("conv-wf-suspended", "suspended"),
     ):
         append_message(manager.config, conv_id, {"role": "user", "content": "hi"})
-        save_journal(manager.config, conv_id,
-                     Journal(workflow_name="wf-" + status, status=status))
+        save_journal(manager.config, conv_id, Journal(workflow_name="wf-" + status, status=status))
 
     with patch.object(manager, "enqueue_turn", new_callable=AsyncMock) as mock_eq:
         resumed = await manager.startup_scan_workflows()
@@ -1000,8 +1106,7 @@ async def test_startup_scan_workflows_hits_attempt_cap(manager):
     append_message(manager.config, conv_id, {"role": "user", "content": "hi"})
     # Default cap is 3; attempts=3 means "already tried thrice" → next resume
     # would exceed the cap.
-    save_journal(manager.config, conv_id,
-                 Journal(workflow_name="stuck", status="running", attempts=3))
+    save_journal(manager.config, conv_id, Journal(workflow_name="stuck", status="running", attempts=3))
 
     with patch.object(manager, "enqueue_turn", new_callable=AsyncMock) as mock_eq:
         resumed = await manager.startup_scan_workflows()
@@ -1016,8 +1121,7 @@ async def test_startup_scan_workflows_hits_attempt_cap(manager):
 
 
 @pytest.mark.asyncio
-async def test_startup_scan_workflows_increments_before_enqueue(
-        manager, caplog):
+async def test_startup_scan_workflows_increments_before_enqueue(manager, caplog):
     """If enqueue_turn raises, attempts must already be on disk and the scan
     must fail-open to the next conversation.
 
@@ -1033,8 +1137,7 @@ async def test_startup_scan_workflows_increments_before_enqueue(
 
     conv_id = "conv-wf-crash"
     append_message(manager.config, conv_id, {"role": "user", "content": "hi"})
-    save_journal(manager.config, conv_id,
-                 Journal(workflow_name="explodes", status="running"))
+    save_journal(manager.config, conv_id, Journal(workflow_name="explodes", status="running"))
 
     async def _boom(*_args, **_kwargs):
         raise RuntimeError("enqueue failed")
@@ -1047,8 +1150,7 @@ async def test_startup_scan_workflows_increments_before_enqueue(
     reloaded = load_journal(manager.config, conv_id)
     assert reloaded is not None
     assert reloaded.attempts == 1
-    assert any("Failed to enqueue workflow resume" in rec.message
-               for rec in caplog.records)
+    assert any("Failed to enqueue workflow resume" in rec.message for rec in caplog.records)
 
 
 @pytest.mark.asyncio
@@ -1095,8 +1197,7 @@ async def test_startup_scan_workflows_corrupt_journal(manager, caplog):
 
     assert resumed == 0
     mock_eq.assert_not_called()
-    assert any("workflow" in rec.message.lower() and conv_id in rec.message
-               for rec in caplog.records)
+    assert any("workflow" in rec.message.lower() and conv_id in rec.message for rec in caplog.records)
 
 
 @pytest.mark.asyncio
@@ -1111,8 +1212,7 @@ async def test_startup_scan_workflows_multiple_conversations(manager):
         ("conv-c", "flow-c", "running"),
     ):
         append_message(manager.config, conv_id, {"role": "user", "content": "hi"})
-        save_journal(manager.config, conv_id,
-                     Journal(workflow_name=name, status=status))
+        save_journal(manager.config, conv_id, Journal(workflow_name=name, status=status))
 
     with patch.object(manager, "enqueue_turn", new_callable=AsyncMock) as mock_eq:
         resumed = await manager.startup_scan_workflows()
@@ -1120,10 +1220,7 @@ async def test_startup_scan_workflows_multiple_conversations(manager):
     assert resumed == 2
     assert mock_eq.await_count == 2
 
-    seen = {
-        call.kwargs["metadata"]["workflow_name"]
-        for call in mock_eq.await_args_list
-    }
+    seen = {call.kwargs["metadata"]["workflow_name"] for call in mock_eq.await_args_list}
     assert seen == {"flow-a", "flow-c"}
     for call in mock_eq.await_args_list:
         assert call.kwargs["kind"] is TurnKind.WORKFLOW
@@ -1131,9 +1228,7 @@ async def test_startup_scan_workflows_multiple_conversations(manager):
 
 
 @pytest.mark.asyncio
-async def test_drain_pending_resolves_all_queued_futures(
-    manager, config, monkeypatch
-):
+async def test_drain_pending_resolves_all_queued_futures(manager, config, monkeypatch):
     """Multiple USER messages queued while busy — all callers' futures must
     resolve when the batch drains. Non-last futures fan out from the head
     future and receive the same result."""
@@ -1142,6 +1237,7 @@ async def test_drain_pending_resolves_all_queued_futures(
     async def fake_run_agent_turn(ctx, user_message, history, **kwargs):
         called.append(user_message)
         from decafclaw.media import ToolResult
+
         return ToolResult(text="combined-result")
 
     monkeypatch.setattr("decafclaw.agent.run_agent_turn", fake_run_agent_turn)
@@ -1165,14 +1261,13 @@ async def test_drain_pending_resolves_all_queued_futures(
 
 
 @pytest.mark.asyncio
-async def test_enqueue_turn_user_kind_runs_same_as_send_message(
-    manager, config, monkeypatch
-):
+async def test_enqueue_turn_user_kind_runs_same_as_send_message(manager, config, monkeypatch):
     called = []
 
     async def fake_run_agent_turn(ctx, user_message, history, **kwargs):
         called.append({"text": user_message, "conv_id": ctx.conv_id})
         from decafclaw.media import ToolResult
+
         return ToolResult(text="ok")
 
     monkeypatch.setattr("decafclaw.agent.run_agent_turn", fake_run_agent_turn)
@@ -1203,8 +1298,7 @@ async def test_respond_to_recovered_confirmation(manager):
     await manager.startup_scan()
 
     # Respond — should dispatch recovery (no running loop)
-    await manager.respond_to_confirmation(
-        conv_id, request.confirmation_id, approved=True)
+    await manager.respond_to_confirmation(conv_id, request.confirmation_id, approved=True)
 
     # Pending confirmation should be cleared
     state = manager.get_state(conv_id)
@@ -1215,9 +1309,7 @@ async def test_respond_to_recovered_confirmation(manager):
 
 
 @pytest.mark.asyncio
-async def test_enqueue_turn_heartbeat_kind_uses_for_task(
-    manager, config, monkeypatch
-):
+async def test_enqueue_turn_heartbeat_kind_uses_for_task(manager, config, monkeypatch):
     seen_ctx = {}
 
     async def fake_run_agent_turn(ctx, user_message, history, **kwargs):
@@ -1225,6 +1317,7 @@ async def test_enqueue_turn_heartbeat_kind_uses_for_task(
         seen_ctx["skip_reflection"] = ctx.skip_reflection
         seen_ctx["skip_vault_retrieval"] = ctx.skip_vault_retrieval
         from decafclaw.media import ToolResult
+
         return ToolResult(text="ok")
 
     monkeypatch.setattr("decafclaw.agent.run_agent_turn", fake_run_agent_turn)
@@ -1243,40 +1336,43 @@ async def test_enqueue_turn_heartbeat_kind_uses_for_task(
 
 
 @pytest.mark.asyncio
-async def test_enqueue_turn_user_kind_has_empty_task_mode(
-    manager, config, monkeypatch
-):
+async def test_enqueue_turn_user_kind_has_empty_task_mode(manager, config, monkeypatch):
     seen_ctx = {}
 
     async def fake_run_agent_turn(ctx, user_message, history, **kwargs):
         seen_ctx["task_mode"] = ctx.task_mode
         from decafclaw.media import ToolResult
+
         return ToolResult(text="ok")
 
     monkeypatch.setattr("decafclaw.agent.run_agent_turn", fake_run_agent_turn)
 
     future = await manager.enqueue_turn(
-        conv_id="c1", kind=TurnKind.USER, prompt="hello",
+        conv_id="c1",
+        kind=TurnKind.USER,
+        prompt="hello",
     )
     await future
     assert seen_ctx["task_mode"] == ""
 
 
 @pytest.mark.asyncio
-async def test_enqueue_turn_wake_kind_defaults_to_background_wake_mode(
-    manager, config, monkeypatch
-):
+async def test_enqueue_turn_wake_kind_defaults_to_background_wake_mode(manager, config, monkeypatch):
     seen_ctx = {}
 
     async def fake_run_agent_turn(ctx, user_message, history, **kwargs):
         seen_ctx["task_mode"] = ctx.task_mode
         from decafclaw.media import ToolResult
+
         return ToolResult(text="ok")
 
     monkeypatch.setattr("decafclaw.agent.run_agent_turn", fake_run_agent_turn)
 
     future = await manager.enqueue_turn(
-        conv_id="c1", kind=TurnKind.WAKE, prompt="wake nudge", history=[],
+        conv_id="c1",
+        kind=TurnKind.WAKE,
+        prompt="wake nudge",
+        history=[],
         # no explicit task_mode
     )
     await future
@@ -1284,9 +1380,7 @@ async def test_enqueue_turn_wake_kind_defaults_to_background_wake_mode(
 
 
 @pytest.mark.asyncio
-async def test_enqueue_turn_wake_kind_restores_skill_state(
-    manager, config, monkeypatch
-):
+async def test_enqueue_turn_wake_kind_restores_skill_state(manager, config, monkeypatch):
     """WAKE fires on a persistent conv, so activated skills / preserved
     flags / active_model must carry forward onto the ctx."""
     seen_ctx = {}
@@ -1297,6 +1391,7 @@ async def test_enqueue_turn_wake_kind_restores_skill_state(
         seen_ctx["skip_vault_retrieval"] = ctx.skip_vault_retrieval
         seen_ctx["active_model"] = ctx.active_model
         from decafclaw.media import ToolResult
+
         return ToolResult(text="ok")
 
     monkeypatch.setattr("decafclaw.agent.run_agent_turn", fake_run_agent_turn)
@@ -1323,14 +1418,13 @@ async def test_enqueue_turn_wake_kind_restores_skill_state(
 
 
 @pytest.mark.asyncio
-async def test_drain_pending_fires_mixed_kinds_one_at_a_time(
-    manager, config, monkeypatch
-):
+async def test_drain_pending_fires_mixed_kinds_one_at_a_time(manager, config, monkeypatch):
     fires = []
 
     async def fake_run_agent_turn(ctx, user_message, history, **kwargs):
         fires.append({"text": user_message, "task_mode": ctx.task_mode})
         from decafclaw.media import ToolResult
+
         return ToolResult(text="ok")
 
     monkeypatch.setattr("decafclaw.agent.run_agent_turn", fake_run_agent_turn)
@@ -1341,8 +1435,7 @@ async def test_drain_pending_fires_mixed_kinds_one_at_a_time(
 
     u1 = await manager.enqueue_turn("c1", kind=TurnKind.USER, prompt="hello1")
     u2 = await manager.enqueue_turn("c1", kind=TurnKind.USER, prompt="hello2")
-    wake = await manager.enqueue_turn("c1", kind=TurnKind.WAKE, prompt="wake",
-                                       history=[])
+    wake = await manager.enqueue_turn("c1", kind=TurnKind.WAKE, prompt="wake", history=[])
 
     assert len(__import__("decafclaw.inbox", fromlist=["_read_inbox"])._read_inbox(manager.config, state.conv_id)) == 3
 
@@ -1363,10 +1456,12 @@ async def test_drain_pending_fires_mixed_kinds_one_at_a_time(
 
 # -- Wake rate limiter ---------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_wake_rate_limiter_drops_after_max(manager, config, monkeypatch):
     """N+1th wake within the window is dropped; earlier wakes still run."""
     from decafclaw.config_types import BackgroundConfig
+
     config.background = BackgroundConfig(wake_max_per_window=2, wake_window_sec=60)
     # Refresh rate-limiter params on the manager from updated config.
     manager._wake_max_per_window = config.background.wake_max_per_window
@@ -1377,6 +1472,7 @@ async def test_wake_rate_limiter_drops_after_max(manager, config, monkeypatch):
     async def fake_run_agent_turn(ctx, user_message, history, **kwargs):
         fires.append(user_message)
         from decafclaw.media import ToolResult
+
         return ToolResult(text="ok")
 
     monkeypatch.setattr("decafclaw.agent.run_agent_turn", fake_run_agent_turn)
@@ -1385,8 +1481,7 @@ async def test_wake_rate_limiter_drops_after_max(manager, config, monkeypatch):
     # the rate limiter).
     futures = []
     for i in range(4):
-        fut = await manager.enqueue_turn(
-            "c1", kind=TurnKind.WAKE, prompt=f"wake-{i}", history=[])
+        fut = await manager.enqueue_turn("c1", kind=TurnKind.WAKE, prompt=f"wake-{i}", history=[])
         futures.append(fut)
 
     # Dropped futures resolve to None immediately.
@@ -1407,6 +1502,7 @@ async def test_wake_rate_limiter_drops_after_max(manager, config, monkeypatch):
 async def test_wake_rate_limiter_window_ages_out(manager, config, monkeypatch):
     """After wake_window_sec elapses, the limiter accepts new wakes again."""
     from decafclaw.config_types import BackgroundConfig
+
     config.background = BackgroundConfig(wake_max_per_window=1, wake_window_sec=60)
     manager._wake_max_per_window = config.background.wake_max_per_window
     manager._wake_window_sec = config.background.wake_window_sec
@@ -1416,14 +1512,14 @@ async def test_wake_rate_limiter_window_ages_out(manager, config, monkeypatch):
     async def fake_run_agent_turn(ctx, user_message, history, **kwargs):
         fires.append(user_message)
         from decafclaw.media import ToolResult
+
         return ToolResult(text="ok")
 
     monkeypatch.setattr("decafclaw.agent.run_agent_turn", fake_run_agent_turn)
 
     # Pin time so the window moves deterministically.
     now = [1000.0]
-    monkeypatch.setattr("decafclaw.conversation_manager.time.monotonic",
-                        lambda: now[0])
+    monkeypatch.setattr("decafclaw.conversation_manager.time.monotonic", lambda: now[0])
 
     # Fire 1: accepted.
     f1 = await manager.enqueue_turn("c1", kind=TurnKind.WAKE, prompt="w1", history=[])
@@ -1449,20 +1545,19 @@ async def test_wake_rate_limiter_window_ages_out(manager, config, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_wake_turn_emits_suppress_user_message_when_ok(
-    manager, config, monkeypatch
-):
+async def test_wake_turn_emits_suppress_user_message_when_ok(manager, config, monkeypatch):
     """WAKE turn ending with BACKGROUND_WAKE_OK triggers suppress_user_message=True."""
     events = []
     manager.subscribe("c1", lambda e: events.append(e))
 
     async def fake_run_agent_turn(ctx, user_message, history, **kwargs):
         from decafclaw.media import ToolResult
+
         return ToolResult(text="BACKGROUND_WAKE_OK — nothing to report.")
+
     monkeypatch.setattr("decafclaw.agent.run_agent_turn", fake_run_agent_turn)
 
-    fut = await manager.enqueue_turn(
-        conv_id="c1", kind=TurnKind.WAKE, prompt="wake", history=[])
+    fut = await manager.enqueue_turn(conv_id="c1", kind=TurnKind.WAKE, prompt="wake", history=[])
     await asyncio.wait_for(fut, timeout=2.0)
 
     completes = [e for e in events if e.get("type") == "message_complete"]
@@ -1471,20 +1566,19 @@ async def test_wake_turn_emits_suppress_user_message_when_ok(
 
 
 @pytest.mark.asyncio
-async def test_wake_turn_no_suppress_when_agent_responds_normally(
-    manager, config, monkeypatch
-):
+async def test_wake_turn_no_suppress_when_agent_responds_normally(manager, config, monkeypatch):
     """WAKE turn with a regular response should NOT suppress."""
     events = []
     manager.subscribe("c1", lambda e: events.append(e))
 
     async def fake_run_agent_turn(ctx, user_message, history, **kwargs):
         from decafclaw.media import ToolResult
+
         return ToolResult(text="Here's what happened with the job.")
+
     monkeypatch.setattr("decafclaw.agent.run_agent_turn", fake_run_agent_turn)
 
-    fut = await manager.enqueue_turn(
-        conv_id="c1", kind=TurnKind.WAKE, prompt="wake", history=[])
+    fut = await manager.enqueue_turn(conv_id="c1", kind=TurnKind.WAKE, prompt="wake", history=[])
     await asyncio.wait_for(fut, timeout=2.0)
 
     completes = [e for e in events if e.get("type") == "message_complete"]
@@ -1493,9 +1587,7 @@ async def test_wake_turn_no_suppress_when_agent_responds_normally(
 
 
 @pytest.mark.asyncio
-async def test_user_turn_never_suppresses_even_with_sentinel(
-    manager, config, monkeypatch
-):
+async def test_user_turn_never_suppresses_even_with_sentinel(manager, config, monkeypatch):
     """USER turns NEVER get suppress_user_message=True, even if the agent
     happens to emit the sentinel."""
     events = []
@@ -1503,11 +1595,12 @@ async def test_user_turn_never_suppresses_even_with_sentinel(
 
     async def fake_run_agent_turn(ctx, user_message, history, **kwargs):
         from decafclaw.media import ToolResult
+
         return ToolResult(text="BACKGROUND_WAKE_OK (agent wrote sentinel incorrectly)")
+
     monkeypatch.setattr("decafclaw.agent.run_agent_turn", fake_run_agent_turn)
 
-    fut = await manager.enqueue_turn(
-        conv_id="c1", kind=TurnKind.USER, prompt="hello")
+    fut = await manager.enqueue_turn(conv_id="c1", kind=TurnKind.USER, prompt="hello")
     await asyncio.wait_for(fut, timeout=2.0)
 
     completes = [e for e in events if e.get("type") == "message_complete"]
@@ -1531,11 +1624,12 @@ async def test_transport_subscriber_skips_on_suppress(manager, config, monkeypat
 
     async def fake_run_agent_turn(ctx, user_message, history, **kwargs):
         from decafclaw.media import ToolResult
+
         return ToolResult(text="BACKGROUND_WAKE_OK")
+
     monkeypatch.setattr("decafclaw.agent.run_agent_turn", fake_run_agent_turn)
 
-    fut = await manager.enqueue_turn(
-        conv_id="c1", kind=TurnKind.WAKE, prompt="wake", history=[])
+    fut = await manager.enqueue_turn(conv_id="c1", kind=TurnKind.WAKE, prompt="wake", history=[])
     await asyncio.wait_for(fut, timeout=2.0)
 
     assert posted_messages == []  # suppressed — transport didn't post.
@@ -1544,6 +1638,7 @@ async def test_transport_subscriber_skips_on_suppress(manager, config, monkeypat
 # ---------------------------------------------------------------------------
 # Item 3: WAKE turns disable the streaming callback
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_wake_turn_disables_streaming_callback(manager, config, monkeypatch):
@@ -1554,14 +1649,14 @@ async def test_wake_turn_disables_streaming_callback(manager, config, monkeypatc
     async def fake_run_agent_turn(ctx, user_message, history, **kwargs):
         seen_stream_callback.append(ctx.on_stream_chunk)
         from decafclaw.media import ToolResult
+
         return ToolResult(text="ok")
 
     # Force streaming config on (so the USER case would set the callback).
     monkeypatch.setattr("decafclaw.config.resolve_streaming", lambda c, m: True)
     monkeypatch.setattr("decafclaw.agent.run_agent_turn", fake_run_agent_turn)
 
-    fut = await manager.enqueue_turn(
-        conv_id="c1", kind=TurnKind.WAKE, prompt="wake", history=[])
+    fut = await manager.enqueue_turn(conv_id="c1", kind=TurnKind.WAKE, prompt="wake", history=[])
     await asyncio.wait_for(fut, timeout=2.0)
 
     assert seen_stream_callback[0] is None  # WAKE: no streaming
@@ -1575,22 +1670,20 @@ async def test_user_turn_keeps_streaming_callback(manager, config, monkeypatch):
     async def fake_run_agent_turn(ctx, user_message, history, **kwargs):
         seen_stream_callback.append(ctx.on_stream_chunk)
         from decafclaw.media import ToolResult
+
         return ToolResult(text="ok")
 
     monkeypatch.setattr("decafclaw.config.resolve_streaming", lambda c, m: True)
     monkeypatch.setattr("decafclaw.agent.run_agent_turn", fake_run_agent_turn)
 
-    fut = await manager.enqueue_turn(
-        conv_id="c1", kind=TurnKind.USER, prompt="hi")
+    fut = await manager.enqueue_turn(conv_id="c1", kind=TurnKind.USER, prompt="hi")
     await asyncio.wait_for(fut, timeout=2.0)
 
     assert seen_stream_callback[0] is not None  # USER: streaming active
 
 
 @pytest.mark.asyncio
-async def test_drain_pending_fanout_handles_head_exception(
-    manager, config, monkeypatch
-):
+async def test_drain_pending_fanout_handles_head_exception(manager, config, monkeypatch):
     """_fanout must not raise if the head future completed with set_result (even
     if the agent returned an error string).  This also guards against future
     refactors where the head could receive set_exception — tail futures must
@@ -1647,25 +1740,33 @@ async def test_wake_inherits_last_user_turn_context(manager, config, monkeypatch
         ctx.channel_name = "custom-channel"
 
     async def fake_run_agent_turn(ctx, user_message, history, **kwargs):
-        seen.append({
-            "user_id": ctx.user_id,
-            "channel_name": getattr(ctx, "channel_name", None),
-            "task_mode": ctx.task_mode,
-        })
+        seen.append(
+            {
+                "user_id": ctx.user_id,
+                "channel_name": getattr(ctx, "channel_name", None),
+                "task_mode": ctx.task_mode,
+            }
+        )
         return ToolResult(text="ok")
 
     monkeypatch.setattr("decafclaw.agent.run_agent_turn", fake_run_agent_turn)
 
     # 1. USER turn — sets user_id + context_setup
     f1 = await manager.enqueue_turn(
-        "c1", kind=TurnKind.USER, prompt="hi",
-        user_id="alice", context_setup=my_setup,
+        "c1",
+        kind=TurnKind.USER,
+        prompt="hi",
+        user_id="alice",
+        context_setup=my_setup,
     )
     await asyncio.wait_for(f1, timeout=2.0)
 
     # 2. WAKE turn — no explicit user_id/context_setup — inherits
     f2 = await manager.enqueue_turn(
-        "c1", kind=TurnKind.WAKE, prompt="wake", history=[],
+        "c1",
+        kind=TurnKind.WAKE,
+        prompt="wake",
+        history=[],
     )
     await asyncio.wait_for(f2, timeout=2.0)
 
@@ -1680,26 +1781,29 @@ async def test_wake_inherits_last_user_turn_context(manager, config, monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_wake_without_prior_user_turn_uses_empty_context(
-    manager, config, monkeypatch
-):
+async def test_wake_without_prior_user_turn_uses_empty_context(manager, config, monkeypatch):
     """WAKE on a conv with no prior USER turn gets empty user_id / no setup."""
     from decafclaw.media import ToolResult
 
     seen = []
 
     async def fake_run_agent_turn(ctx, user_message, history, **kwargs):
-        seen.append({
-            "user_id": ctx.user_id,
-            "channel_name": getattr(ctx, "channel_name", None),
-        })
+        seen.append(
+            {
+                "user_id": ctx.user_id,
+                "channel_name": getattr(ctx, "channel_name", None),
+            }
+        )
         return ToolResult(text="ok")
 
     monkeypatch.setattr("decafclaw.agent.run_agent_turn", fake_run_agent_turn)
 
     # No prior USER turn — fire WAKE directly (like a heartbeat-originated wake)
     f = await manager.enqueue_turn(
-        "heartbeat-T-0", kind=TurnKind.WAKE, prompt="wake", history=[],
+        "heartbeat-T-0",
+        kind=TurnKind.WAKE,
+        prompt="wake",
+        history=[],
     )
     await asyncio.wait_for(f, timeout=2.0)
 
@@ -1708,9 +1812,7 @@ async def test_wake_without_prior_user_turn_uses_empty_context(
 
 
 @pytest.mark.asyncio
-async def test_wake_explicit_context_overrides_inherited(
-    manager, config, monkeypatch
-):
+async def test_wake_explicit_context_overrides_inherited(manager, config, monkeypatch):
     """If caller passes explicit user_id/context_setup to WAKE, those win
     over the inherited values."""
     from decafclaw.media import ToolResult
@@ -1724,23 +1826,32 @@ async def test_wake_explicit_context_overrides_inherited(
         ctx.channel_name = "wake-channel"
 
     async def fake_run_agent_turn(ctx, user_message, history, **kwargs):
-        seen.append({
-            "user_id": ctx.user_id,
-            "channel_name": getattr(ctx, "channel_name", None),
-        })
+        seen.append(
+            {
+                "user_id": ctx.user_id,
+                "channel_name": getattr(ctx, "channel_name", None),
+            }
+        )
         return ToolResult(text="ok")
 
     monkeypatch.setattr("decafclaw.agent.run_agent_turn", fake_run_agent_turn)
 
     f1 = await manager.enqueue_turn(
-        "c1", kind=TurnKind.USER, prompt="hi",
-        user_id="alice", context_setup=user_setup,
+        "c1",
+        kind=TurnKind.USER,
+        prompt="hi",
+        user_id="alice",
+        context_setup=user_setup,
     )
     await asyncio.wait_for(f1, timeout=2.0)
 
     f2 = await manager.enqueue_turn(
-        "c1", kind=TurnKind.WAKE, prompt="wake", history=[],
-        user_id="explicit-wake-user", context_setup=wake_setup,
+        "c1",
+        kind=TurnKind.WAKE,
+        prompt="wake",
+        history=[],
+        user_id="explicit-wake-user",
+        context_setup=wake_setup,
     )
     await asyncio.wait_for(f2, timeout=2.0)
 
@@ -1750,10 +1861,12 @@ async def test_wake_explicit_context_overrides_inherited(
 
 # -- PersistedTurnState — single source of truth (#378) -----------------------
 
+
 def test_persisted_field_bindings_exhaustive():
     """Every PersistedTurnState field must have a binding entry — adding
     a field without a binding would silently drop it from save/restore."""
     from dataclasses import fields as dc_fields
+
     declared = {f.name for f in dc_fields(PersistedTurnState)}
     bound = set(_PERSISTED_BINDINGS.keys())
     assert declared == bound, (
@@ -1766,10 +1879,10 @@ def test_ctx_driven_fields_subset_of_persisted():
     """_CTX_DRIVEN_FIELDS must reference only declared persisted fields —
     catches typos that would otherwise silently misclassify a field."""
     from dataclasses import fields as dc_fields
+
     declared = {f.name for f in dc_fields(PersistedTurnState)}
     assert _CTX_DRIVEN_FIELDS <= declared, (
-        f"_CTX_DRIVEN_FIELDS contains unknown field(s): "
-        f"{_CTX_DRIVEN_FIELDS - declared}"
+        f"_CTX_DRIVEN_FIELDS contains unknown field(s): {_CTX_DRIVEN_FIELDS - declared}"
     )
 
 
@@ -1849,10 +1962,9 @@ def test_save_truthy_only_preserves_sticky_semantics(manager, config):
 
 # -- Concurrency: per-conv lock (issue #440) ----------------------------------
 
+
 @pytest.mark.asyncio
-async def test_concurrent_user_enqueue_serializes_via_lock(
-    manager, config, monkeypatch
-):
+async def test_concurrent_user_enqueue_serializes_via_lock(manager, config, monkeypatch):
     """Two simultaneous enqueue_turn(USER) calls for the same conv must
     serialize: exactly one runs, the other queues. Guard test for
     issue #440.
@@ -1888,6 +2000,7 @@ async def test_concurrent_user_enqueue_serializes_via_lock(
         started.set()
         await release.wait()
         from decafclaw.media import ToolResult
+
         return ToolResult(text="ok")
 
     monkeypatch.setattr("decafclaw.agent.run_agent_turn", fake_run_agent_turn)
@@ -1896,6 +2009,7 @@ async def test_concurrent_user_enqueue_serializes_via_lock(
     # user_message emission inside enqueue_turn).
     async def _noop(_event):
         pass
+
     manager.subscribe("c1", _noop)
 
     # Fire both enqueues concurrently. If a future change adds a
@@ -1916,11 +2030,11 @@ async def test_concurrent_user_enqueue_serializes_via_lock(
     assert state is not None
 
     # Exactly one turn started; the other is queued.
-    assert call_count == 1, (
-        f"expected exactly one turn started, got {call_count}"
-    )
-    assert len(__import__("decafclaw.inbox", fromlist=["_read_inbox"])._read_inbox(manager.config, state.conv_id)) == 1, (
-        f"expected one pending message, got {len(__import__("decafclaw.inbox", fromlist=["_read_inbox"])._read_inbox(manager.config, state.conv_id))}"
+    assert call_count == 1, f"expected exactly one turn started, got {call_count}"
+    assert (
+        len(__import__("decafclaw.inbox", fromlist=["_read_inbox"])._read_inbox(manager.config, state.conv_id)) == 1
+    ), (
+        f"expected one pending message, got {len(__import__('decafclaw.inbox', fromlist=['_read_inbox'])._read_inbox(manager.config, state.conv_id))}"
     )
 
     # Drain: release the parked turn so the queued one also runs.
@@ -1930,9 +2044,7 @@ async def test_concurrent_user_enqueue_serializes_via_lock(
 
 
 @pytest.mark.asyncio
-async def test_concurrent_confirmation_responses_dont_double_dispatch(
-    manager, monkeypatch
-):
+async def test_concurrent_confirmation_responses_dont_double_dispatch(manager, monkeypatch):
     """Two simultaneous respond_to_confirmation calls for the same
     confirmation_id must not both dispatch recovery. Regression for
     issue #440 — the state.pending_confirmation / state.confirmation_event
@@ -1967,20 +2079,14 @@ async def test_concurrent_confirmation_responses_dont_double_dispatch(
         async def on_deny(self, ctx, req, resp):
             return {}
 
-    manager.confirmation_registry.register(
-        ConfirmationAction.RUN_SHELL_COMMAND, FakeHandler()
-    )
+    manager.confirmation_registry.register(ConfirmationAction.RUN_SHELL_COMMAND, FakeHandler())
 
     await asyncio.gather(
-        manager.respond_to_confirmation(
-            conv_id, request.confirmation_id, approved=True),
-        manager.respond_to_confirmation(
-            conv_id, request.confirmation_id, approved=True),
+        manager.respond_to_confirmation(conv_id, request.confirmation_id, approved=True),
+        manager.respond_to_confirmation(conv_id, request.confirmation_id, approved=True),
     )
 
-    assert handler_calls == 1, (
-        f"expected exactly one handler dispatch, got {handler_calls}"
-    )
+    assert handler_calls == 1, f"expected exactly one handler dispatch, got {handler_calls}"
     state = manager.get_state(conv_id)
     assert state is not None
     assert state.pending_confirmation is None
@@ -2015,19 +2121,14 @@ async def test_cancel_pending_confirmation_after_response_claimed_is_noop(
     state.confirmation_response = response
 
     cleared = await manager.cancel_pending_confirmation(conv_id)
-    assert cleared is False, (
-        "cancel_pending_confirmation should defer to the claimed "
-        "response and return False"
-    )
+    assert cleared is False, "cancel_pending_confirmation should defer to the claimed response and return False"
     # Slot must still be claimed for request_confirmation to find.
     assert state.confirmation_response is response
     assert state.pending_confirmation is request
 
 
 @pytest.mark.asyncio
-async def test_request_confirmation_timeout_loses_race_to_late_responder(
-    manager, monkeypatch
-):
+async def test_request_confirmation_timeout_loses_race_to_late_responder(manager, monkeypatch):
     """A responder that wins the race against `request_confirmation`'s
     timeout — claiming `state.confirmation_response` between
     `wait_for` raising TimeoutError and the timeout-path archive
@@ -2057,8 +2158,7 @@ async def test_request_confirmation_timeout_loses_race_to_late_responder(
         # Wait until request_confirmation is in `wait_for` (set up by
         # the patched wait_for below), then claim the slot.
         await responder_ran.wait()
-        await manager.respond_to_confirmation(
-            conv_id, request.confirmation_id, approved=True)
+        await manager.respond_to_confirmation(conv_id, request.confirmation_id, approved=True)
 
     async def fake_wait_for(fut, timeout):
         # Close the underlying coroutine without awaiting it — we're
@@ -2100,21 +2200,17 @@ async def test_request_confirmation_timeout_loses_race_to_late_responder(
     # responder's approval) — never both a timeout denial and an
     # approval.
     from decafclaw.archive import restore_history
+
     history = restore_history(manager.config, conv_id) or []
-    responses = [
-        m for m in history if m.get("role") == "confirmation_response"
-    ]
+    responses = [m for m in history if m.get("role") == "confirmation_response"]
     assert len(responses) == 1, (
-        f"expected exactly one confirmation_response in archive, "
-        f"got {len(responses)}: {responses}"
+        f"expected exactly one confirmation_response in archive, got {len(responses)}: {responses}"
     )
     assert responses[0]["approved"] is True
 
 
 @pytest.mark.asyncio
-async def test_respond_to_confirmation_rolls_back_claim_on_archive_failure(
-    manager, monkeypatch
-):
+async def test_respond_to_confirmation_rolls_back_claim_on_archive_failure(manager, monkeypatch):
     """If `append_message` raises while `respond_to_confirmation`
     is dispatching, the response-slot claim must NEVER be written
     so a retry isn't treated as a duplicate and a running waiter
@@ -2147,8 +2243,7 @@ async def test_respond_to_confirmation_rolls_back_claim_on_archive_failure(
     monkeypatch.setattr("decafclaw.archive.append_message", boom)
 
     with pytest.raises(RuntimeError, match="archive write failed"):
-        await manager.respond_to_confirmation(
-            conv_id, request.confirmation_id, approved=True)
+        await manager.respond_to_confirmation(conv_id, request.confirmation_id, approved=True)
 
     # Claim must be rolled back so retry works.
     assert state.confirmation_response is None, (
@@ -2165,9 +2260,7 @@ async def test_respond_to_confirmation_rolls_back_claim_on_archive_failure(
 
 
 @pytest.mark.asyncio
-async def test_cancel_pending_confirmation_rolls_back_on_archive_failure(
-    manager, monkeypatch
-):
+async def test_cancel_pending_confirmation_rolls_back_on_archive_failure(manager, monkeypatch):
     """If `append_message` fails during
     `cancel_pending_confirmation`, the in-memory pending state must
     not be cleared — otherwise the manager would be left with no
@@ -2188,6 +2281,7 @@ async def test_cancel_pending_confirmation_rolls_back_on_archive_failure(
 
     def boom(*args, **kwargs):
         raise RuntimeError("archive write failed")
+
     monkeypatch.setattr("decafclaw.archive.append_message", boom)
 
     with pytest.raises(RuntimeError, match="archive write failed"):
@@ -2229,12 +2323,11 @@ async def test_recover_confirmation_restores_on_dispatch_failure(manager):
         async def on_deny(self, ctx, req, resp):
             return {}
 
-    manager.confirmation_registry.register(
-        ConfirmationAction.RUN_SHELL_COMMAND, BoomHandler()
-    )
+    manager.confirmation_registry.register(ConfirmationAction.RUN_SHELL_COMMAND, BoomHandler())
 
     response = ConfirmationResponse(
-        confirmation_id=request.confirmation_id, approved=True,
+        confirmation_id=request.confirmation_id,
+        approved=True,
     )
     with pytest.raises(RuntimeError, match="handler exploded"):
         await manager.recover_confirmation(conv_id, response)
@@ -2242,8 +2335,7 @@ async def test_recover_confirmation_restores_on_dispatch_failure(manager):
     # Pending confirmation must be restored so the next retry can
     # try dispatch again.
     assert state.pending_confirmation is not None
-    assert (state.pending_confirmation.confirmation_id
-            == request.confirmation_id)
+    assert state.pending_confirmation.confirmation_id == request.confirmation_id
 
 
 @pytest.mark.asyncio
@@ -2265,16 +2357,20 @@ async def test_drain_pending_defers_when_concurrent_enqueue_won_dispatch(
     state.busy = True
     fake_task = asyncio.create_task(asyncio.sleep(0))
     state.agent_task = fake_task
-    __import__("decafclaw.inbox", fromlist=["_append_inbox"])._append_inbox(manager.config, "conv-drain-defer", {
-        "turn_id": "mock_id",
-        "kind": "USER",
-        "text": "queued",
-        "user_id": "u",
-        "archive_text": "",
-        "wiki_page": None,
-        "task_mode": None,
-        "metadata": None,
-    })
+    __import__("decafclaw.inbox", fromlist=["_append_inbox"])._append_inbox(
+        manager.config,
+        "conv-drain-defer",
+        {
+            "turn_id": "mock_id",
+            "kind": "USER",
+            "text": "queued",
+            "user_id": "u",
+            "archive_text": "",
+            "wiki_page": None,
+            "task_mode": None,
+            "metadata": None,
+        },
+    )
     state.inmemory_turn_data["mock_id"] = {
         "context_setup": None,
         "command_ctx": None,
@@ -2297,9 +2393,7 @@ async def test_drain_pending_defers_when_concurrent_enqueue_won_dispatch(
 
 
 @pytest.mark.asyncio
-async def test_request_confirmation_timeout_archive_failure_preserves_state(
-    manager, monkeypatch
-):
+async def test_request_confirmation_timeout_archive_failure_preserves_state(manager, monkeypatch):
     """If the timeout-path archive write fails inside
     `request_confirmation`, the in-memory pending state must NOT be
     cleared — otherwise the request would be lost in memory while
@@ -2329,6 +2423,7 @@ async def test_request_confirmation_timeout_archive_failure_preserves_state(
     # request archive write succeeds; only the timeout response
     # write fails.
     from decafclaw import archive as archive_mod
+
     real_archive_append = archive_mod.append_message
 
     def boom_on_response(config, conv, msg):
@@ -2349,9 +2444,7 @@ async def test_request_confirmation_timeout_archive_failure_preserves_state(
 
 
 @pytest.mark.asyncio
-async def test_recovered_confirmation_dispatch_uses_captured_request(
-    manager, monkeypatch
-):
+async def test_recovered_confirmation_dispatch_uses_captured_request(manager, monkeypatch):
     """In the recovered-confirmation path, ``respond_to_confirmation``
     captures ``state.pending_confirmation`` under the lock so the
     recovery dispatch uses the ORIGINAL recovered request — not
@@ -2374,8 +2467,7 @@ async def test_recovered_confirmation_dispatch_uses_captured_request(
         action_data={"command": "ls"},
         message="Allow?",
     )
-    append_message(manager.config, conv_id,
-                   original_request.to_archive_message())
+    append_message(manager.config, conv_id, original_request.to_archive_message())
     await manager.startup_scan()
     state = manager.get_state(conv_id)
     assert state is not None
@@ -2390,9 +2482,8 @@ async def test_recovered_confirmation_dispatch_uses_captured_request(
         async def on_deny(self, ctx, req, resp):
             return {}
 
-    manager.confirmation_registry.register(
-        ConfirmationAction.RUN_SHELL_COMMAND, CapturingHandler()
-    )
+    manager.confirmation_registry.register(ConfirmationAction.RUN_SHELL_COMMAND, CapturingHandler())
+
     # Also register a sentinel handler under a DIFFERENT action so
     # that if the racer's request is dispatched instead we'd see it.
     class SentinelHandler:
@@ -2403,9 +2494,7 @@ async def test_recovered_confirmation_dispatch_uses_captured_request(
         async def on_deny(self, ctx, req, resp):
             return {}
 
-    manager.confirmation_registry.register(
-        ConfirmationAction.ACTIVATE_SKILL, SentinelHandler()
-    )
+    manager.confirmation_registry.register(ConfirmationAction.ACTIVATE_SKILL, SentinelHandler())
 
     # Force the race: subscribe a callback that mutates
     # state.pending_confirmation when our confirmation_response emits.
@@ -2432,29 +2521,21 @@ async def test_recovered_confirmation_dispatch_uses_captured_request(
 
     manager.subscribe(conv_id, overwrite_on_response_emit)
 
-    await manager.respond_to_confirmation(
-        conv_id, original_request.confirmation_id, approved=True)
+    await manager.respond_to_confirmation(conv_id, original_request.confirmation_id, approved=True)
 
     # The handler must have been called for the ORIGINAL request, not
     # for the racer. Exactly one dispatch, with original action_type.
-    assert len(dispatched_requests) == 1, (
-        f"expected exactly one handler dispatch, got "
-        f"{len(dispatched_requests)}"
-    )
-    assert (dispatched_requests[0].action_type
-            == ConfirmationAction.RUN_SHELL_COMMAND), (
+    assert len(dispatched_requests) == 1, f"expected exactly one handler dispatch, got {len(dispatched_requests)}"
+    assert dispatched_requests[0].action_type == ConfirmationAction.RUN_SHELL_COMMAND, (
         f"recovery dispatched the wrong request — should have used the "
         f"captured original, not re-read state.pending_confirmation. "
         f"Got: {dispatched_requests[0].action_type}"
     )
-    assert (dispatched_requests[0].confirmation_id
-            == original_request.confirmation_id)
+    assert dispatched_requests[0].confirmation_id == original_request.confirmation_id
 
 
 @pytest.mark.asyncio
-async def test_recovery_dispatch_proceeds_when_new_request_lands_mid_flight(
-    manager, monkeypatch
-):
+async def test_recovery_dispatch_proceeds_when_new_request_lands_mid_flight(manager, monkeypatch):
     """A real concurrent `request_confirmation` (not just an isolated
     overwrite of ``state.pending_confirmation``) can land between the
     initial claim block and the recovery dispatch. The dispatch must
@@ -2470,8 +2551,7 @@ async def test_recovery_dispatch_proceeds_when_new_request_lands_mid_flight(
         action_data={"command": "ls"},
         message="Allow?",
     )
-    append_message(manager.config, conv_id,
-                   original_request.to_archive_message())
+    append_message(manager.config, conv_id, original_request.to_archive_message())
     await manager.startup_scan()
     state = manager.get_state(conv_id)
     assert state is not None
@@ -2486,9 +2566,7 @@ async def test_recovery_dispatch_proceeds_when_new_request_lands_mid_flight(
         async def on_deny(self, ctx, req, resp):
             return {}
 
-    manager.confirmation_registry.register(
-        ConfirmationAction.RUN_SHELL_COMMAND, CapturingHandler()
-    )
+    manager.confirmation_registry.register(ConfirmationAction.RUN_SHELL_COMMAND, CapturingHandler())
 
     # Mid-flight, a NEW request_confirmation kicks off — writes its
     # own pending_confirmation + confirmation_event + response=None.
@@ -2509,8 +2587,7 @@ async def test_recovery_dispatch_proceeds_when_new_request_lands_mid_flight(
 
     manager.subscribe(conv_id, land_new_request)
 
-    await manager.respond_to_confirmation(
-        conv_id, original_request.confirmation_id, approved=True)
+    await manager.respond_to_confirmation(conv_id, original_request.confirmation_id, approved=True)
 
     # Recovery MUST have dispatched the original request, not given
     # up on it just because state.confirmation_response was overwritten
@@ -2520,8 +2597,7 @@ async def test_recovery_dispatch_proceeds_when_new_request_lands_mid_flight(
         f"even with a new request_confirmation in flight; got "
         f"{len(dispatched)} dispatches"
     )
-    assert (dispatched[0].confirmation_id
-            == original_request.confirmation_id)
+    assert dispatched[0].confirmation_id == original_request.confirmation_id
     # The new request should still be pending — recovery didn't
     # touch it.
     assert state.pending_confirmation is new_request
@@ -2559,6 +2635,7 @@ async def test_cancel_pending_confirmation_wakes_live_waiter(manager):
     async def watch_for_request(event):
         if event.get("type") == "confirmation_request":
             waiter_started.set()
+
     manager.subscribe(conv_id, watch_for_request)
 
     asyncio.create_task(cancel_after_waiter_parks())
@@ -2573,6 +2650,7 @@ async def test_cancel_pending_confirmation_wakes_live_waiter(manager):
 
 
 # -- Confirmation queue (issue #485) ------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_concurrent_request_confirmation_serializes(manager):
@@ -2614,8 +2692,7 @@ async def test_concurrent_request_confirmation_serializes(manager):
     assert state.confirmation_queue[0].request is req_b
 
     # Respond to A first.
-    await manager.respond_to_confirmation(
-        conv_id, req_a.confirmation_id, approved=True)
+    await manager.respond_to_confirmation(conv_id, req_a.confirmation_id, approved=True)
     resp_a = await asyncio.wait_for(task_a, timeout=2.0)
     assert resp_a.approved is True
     assert resp_a.confirmation_id == req_a.confirmation_id
@@ -2626,8 +2703,7 @@ async def test_concurrent_request_confirmation_serializes(manager):
     assert not task_b.done(), "B should be active but still awaiting response"
 
     # Respond to B.
-    await manager.respond_to_confirmation(
-        conv_id, req_b.confirmation_id, approved=True)
+    await manager.respond_to_confirmation(conv_id, req_b.confirmation_id, approved=True)
     resp_b = await asyncio.wait_for(task_b, timeout=2.0)
     assert resp_b.approved is True
     assert resp_b.confirmation_id == req_b.confirmation_id
@@ -2676,20 +2752,16 @@ async def test_promoted_confirmation_emits_request_event(manager):
     assert len(req_events) == 1
     assert req_events[0]["confirmation_id"] == req_a.confirmation_id
 
-    await manager.respond_to_confirmation(
-        conv_id, req_a.confirmation_id, approved=True)
+    await manager.respond_to_confirmation(conv_id, req_a.confirmation_id, approved=True)
     await asyncio.wait_for(task_a, timeout=2.0)
     # Yield so the post-respond emit for B's promotion happens.
     await asyncio.sleep(0)
 
     req_events = [e for e in events if e["type"] == "confirmation_request"]
-    assert len(req_events) == 2, (
-        f"expected two confirmation_request emits, got {len(req_events)}"
-    )
+    assert len(req_events) == 2, f"expected two confirmation_request emits, got {len(req_events)}"
     assert req_events[1]["confirmation_id"] == req_b.confirmation_id
 
-    await manager.respond_to_confirmation(
-        conv_id, req_b.confirmation_id, approved=True)
+    await manager.respond_to_confirmation(conv_id, req_b.confirmation_id, approved=True)
     await asyncio.wait_for(task_b, timeout=2.0)
 
 
@@ -2732,8 +2804,7 @@ async def test_cancelled_queued_waiter_removed_from_queue(manager):
     assert state.confirmation_queue == []
 
     # A still resolves normally and no ghost-promotion happens.
-    await manager.respond_to_confirmation(
-        conv_id, req_a.confirmation_id, approved=True)
+    await manager.respond_to_confirmation(conv_id, req_a.confirmation_id, approved=True)
     resp_a = await asyncio.wait_for(task_a, timeout=2.0)
     assert resp_a.approved is True
     assert state.pending_confirmation is None
@@ -2793,8 +2864,7 @@ async def test_cancelled_after_promote_drains_to_next(manager):
     # post-wait promote vs B's wakeup is implementation-defined, but
     # the post-condition we test (C is promoted, queue drains) must
     # hold either way.
-    await manager.respond_to_confirmation(
-        conv_id, req_a.confirmation_id, approved=True)
+    await manager.respond_to_confirmation(conv_id, req_a.confirmation_id, approved=True)
     task_b.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task_b
@@ -2808,8 +2878,7 @@ async def test_cancelled_after_promote_drains_to_next(manager):
     assert state.confirmation_queue == []
 
     # C is resolvable.
-    await manager.respond_to_confirmation(
-        conv_id, req_c.confirmation_id, approved=True)
+    await manager.respond_to_confirmation(conv_id, req_c.confirmation_id, approved=True)
     resp_c = await asyncio.wait_for(task_c, timeout=2.0)
     assert resp_c.approved is True
 
@@ -2855,13 +2924,11 @@ async def test_queued_confirmation_timeout_starts_at_promote(manager):
     # time out while queued.
     await asyncio.sleep(0.25)
     assert not task_b.done(), (
-        "B should still be queued and not timed out — "
-        "timeout countdown should only start post-promote"
+        "B should still be queued and not timed out — timeout countdown should only start post-promote"
     )
 
     # Resolve A. B promotes; its 0.1s timeout starts now.
-    await manager.respond_to_confirmation(
-        conv_id, req_a.confirmation_id, approved=True)
+    await manager.respond_to_confirmation(conv_id, req_a.confirmation_id, approved=True)
     await asyncio.wait_for(task_a, timeout=2.0)
     promoted_at = time.monotonic()
 
@@ -2878,8 +2945,7 @@ async def test_queued_confirmation_timeout_starts_at_promote(manager):
     # post-promote elapsed should be approximately 0.1s; allow a wide
     # margin for CI jitter.
     assert 0.05 < post_promote_elapsed < 0.5, (
-        f"B timeout should fire ~0.1s after promote, got "
-        f"{post_promote_elapsed:.3f}s"
+        f"B timeout should fire ~0.1s after promote, got {post_promote_elapsed:.3f}s"
     )
     # post-submit elapsed must clearly exceed the 0.1s timeout — proves
     # the waiter wasn't ticking while queued.
@@ -2944,15 +3010,13 @@ async def test_cancel_pending_promotes_next_queued(manager):
     # B's promoted). cancel_pending_confirmation itself does not emit a
     # confirmation_response (pre-existing behavior — cancel is a
     # cleanup side-channel), so we only assert on the request stream.
-    request_events = [
-        e for e in events if e["type"] == "confirmation_request"
-    ]
+    request_events = [e for e in events if e["type"] == "confirmation_request"]
     assert [e["confirmation_id"] for e in request_events] == [
-        req_a.confirmation_id, req_b.confirmation_id,
+        req_a.confirmation_id,
+        req_b.confirmation_id,
     ], "expected A's request then B's promoted request"
 
-    await manager.respond_to_confirmation(
-        conv_id, req_b.confirmation_id, approved=True)
+    await manager.respond_to_confirmation(conv_id, req_b.confirmation_id, approved=True)
     resp_b = await asyncio.wait_for(task_b, timeout=2.0)
     assert resp_b.approved is True
 
@@ -3003,54 +3067,60 @@ async def test_cancel_pending_with_empty_queue_unchanged(manager):
     request_emits = [e for e in events if e["type"] == "confirmation_request"]
     assert len(request_emits) == 1
 
+
 # -- Inbox / JSONL Queue (issue #779) ------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_enqueue_turn_writes_to_jsonl(manager, config):
     """WHEN enqueue_turn is called, THEN the system SHALL write the incoming turn to a durable JSONL session inbox file."""
     import json
+
     from decafclaw.conversation_paths import sidecar_path
-    
+
     conv_id = "conv-inbox-write"
     state = manager._get_or_create(conv_id)
     state.busy = True
-    
+
     # Actually wait, enqueue_turn returns a Future. We await it to finish the write.
-    f = await manager.enqueue_turn(conv_id, kind="USER", prompt="hello inbox")
-    
+    await manager.enqueue_turn(conv_id, kind="USER", prompt="hello inbox")
+
     inbox_path = sidecar_path(config, conv_id, "inbox.jsonl")
     assert inbox_path.exists(), "Inbox JSONL file should exist"
-    
+
     with open(inbox_path, "r") as file:
         lines = file.readlines()
-        
+
     assert len(lines) >= 1
     data = json.loads(lines[-1])
     assert data["text"] == "hello inbox"
     assert data["kind"] == "USER"
 
+
 @pytest.mark.asyncio
 async def test_inbox_drained_by_worker(manager, config, monkeypatch):
     """GIVEN an active conversation, THEN the system SHALL run a detached background worker task that continuously polls and drains its JSONL inbox serially."""
     import asyncio
-    
+
     conv_id = "conv-inbox-drain"
-    
+
     run_called = asyncio.Event()
-    
+
     async def mock_run_agent_turn(ctx, user_message, history, **kwargs):
         run_called.set()
         from decafclaw.media import ToolResult
+
         return ToolResult(text="ok")
-        
+
     monkeypatch.setattr("decafclaw.agent.run_agent_turn", mock_run_agent_turn)
-    
-    f = await manager.enqueue_turn(conv_id, kind="USER", prompt="process me")
-    
+
+    await manager.enqueue_turn(conv_id, kind="USER", prompt="process me")
+
     # Wait for the turn to be processed
     await asyncio.wait_for(run_called.wait(), timeout=2.0)
-    
+
     from decafclaw.conversation_paths import sidecar_path
+
     inbox_path = sidecar_path(config, conv_id, "inbox.jsonl")
     if inbox_path.exists():
         with open(inbox_path, "r") as file:
@@ -3059,38 +3129,40 @@ async def test_inbox_drained_by_worker(manager, config, monkeypatch):
     else:
         assert True, "Inbox file deleted because it is empty"
 
+
 @pytest.mark.asyncio
 async def test_pending_inputs_survive_restart(manager, config, monkeypatch):
     """GIVEN a server restart, WHEN the system initializes, THEN it SHALL process any pending turns found in the JSONL session inbox exactly once."""
-    import json
     import asyncio
-    from decafclaw.conversation_paths import sidecar_path
+    import json
+
     from decafclaw.conversation_manager import ConversationManager
-    
+    from decafclaw.conversation_paths import sidecar_path
+
     conv_id = "conv-inbox-restart"
-    
+
     inbox_path = sidecar_path(config, conv_id, "inbox.jsonl")
     inbox_path.parent.mkdir(parents=True, exist_ok=True)
     with open(inbox_path, "w") as file:
         file.write(json.dumps({"turn_id": "restart-id", "kind": "USER", "text": "survived restart"}) + "\n")
-    with open(inbox_path.parent / "archive.jsonl", "w") as f2:
+    with open(inbox_path.parent / "archive.jsonl", "w"):
         pass
-        
+
     run_called = asyncio.Event()
     processed_prompts = []
-    
+
     async def mock_run_agent_turn(ctx, user_message, history, **kwargs):
         processed_prompts.append(user_message)
         run_called.set()
         from decafclaw.media import ToolResult
+
         return ToolResult(text="ok")
-        
+
     monkeypatch.setattr("decafclaw.agent.run_agent_turn", mock_run_agent_turn)
-    
+
     new_manager = ConversationManager(config, manager.event_bus)
     await new_manager.startup_scan()
-    
-    await asyncio.wait_for(run_called.wait(), timeout=2.0)
-    
-    assert "survived restart" in processed_prompts
 
+    await asyncio.wait_for(run_called.wait(), timeout=2.0)
+
+    assert "survived restart" in processed_prompts
