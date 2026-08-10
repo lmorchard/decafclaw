@@ -2995,3 +2995,89 @@ async def test_cancel_pending_with_empty_queue_unchanged(manager):
     # spurious promote-emit on the empty queue.
     request_emits = [e for e in events if e["type"] == "confirmation_request"]
     assert len(request_emits) == 1
+
+# -- Inbox / JSONL Queue (issue #779) ------------------------------------------
+
+@pytest.mark.asyncio
+async def test_enqueue_turn_writes_to_jsonl(manager, config):
+    """WHEN enqueue_turn is called, THEN the system SHALL write the incoming turn to a durable JSONL session inbox file."""
+    import json
+    from decafclaw.conversation_paths import sidecar_path
+    
+    conv_id = "conv-inbox-write"
+    
+    # Actually wait, enqueue_turn returns a Future. We await it to finish the write.
+    f = await manager.enqueue_turn(conv_id, kind="USER", prompt="hello inbox")
+    
+    inbox_path = sidecar_path(config, conv_id, "inbox.jsonl")
+    assert inbox_path.exists(), "Inbox JSONL file should exist"
+    
+    with open(inbox_path, "r") as file:
+        lines = file.readlines()
+        
+    assert len(lines) >= 1
+    data = json.loads(lines[-1])
+    assert data["prompt"] == "hello inbox"
+    assert data["kind"] == "USER"
+
+@pytest.mark.asyncio
+async def test_inbox_drained_by_worker(manager, config, monkeypatch):
+    """GIVEN an active conversation, THEN the system SHALL run a detached background worker task that continuously polls and drains its JSONL inbox serially."""
+    import asyncio
+    
+    conv_id = "conv-inbox-drain"
+    
+    run_called = asyncio.Event()
+    
+    async def mock_run_agent_turn(ctx, user_message, history, **kwargs):
+        run_called.set()
+        from decafclaw.media import ToolResult
+        return ToolResult(text="ok")
+        
+    monkeypatch.setattr("decafclaw.agent.run_agent_turn", mock_run_agent_turn)
+    
+    f = await manager.enqueue_turn(conv_id, kind="USER", prompt="process me")
+    
+    # Wait for the turn to be processed
+    await asyncio.wait_for(run_called.wait(), timeout=2.0)
+    
+    from decafclaw.conversation_paths import sidecar_path
+    inbox_path = sidecar_path(config, conv_id, "inbox.jsonl")
+    assert inbox_path.exists(), "Inbox should exist and be drained"
+    with open(inbox_path, "r") as file:
+        lines = file.readlines()
+    assert len(lines) == 0, "Inbox should be drained and empty"
+
+@pytest.mark.asyncio
+async def test_pending_inputs_survive_restart(manager, config, monkeypatch):
+    """GIVEN a server restart, WHEN the system initializes, THEN it SHALL process any pending turns found in the JSONL session inbox exactly once."""
+    import json
+    import asyncio
+    from decafclaw.conversation_paths import sidecar_path
+    from decafclaw.conversation_manager import ConversationManager
+    
+    conv_id = "conv-inbox-restart"
+    
+    inbox_path = sidecar_path(config, conv_id, "inbox.jsonl")
+    inbox_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(inbox_path, "w") as file:
+        file.write(json.dumps({"kind": "USER", "prompt": "survived restart"}) + "\n")
+        
+    run_called = asyncio.Event()
+    processed_prompts = []
+    
+    async def mock_run_agent_turn(ctx, user_message, history, **kwargs):
+        processed_prompts.append(user_message["text"])
+        run_called.set()
+        from decafclaw.media import ToolResult
+        return ToolResult(text="ok")
+        
+    monkeypatch.setattr("decafclaw.agent.run_agent_turn", mock_run_agent_turn)
+    
+    new_manager = ConversationManager(config, manager.event_bus)
+    await new_manager.startup_scan()
+    
+    await asyncio.wait_for(run_called.wait(), timeout=2.0)
+    
+    assert "survived restart" in processed_prompts
+
