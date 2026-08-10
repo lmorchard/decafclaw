@@ -233,7 +233,7 @@ class ConversationState:
     conv_id: str = ""
     history: list = field(default_factory=list)
     busy: bool = False
-    pending_messages: list = field(default_factory=list)
+    inmemory_turn_data: dict = field(default_factory=dict)
     agent_task: asyncio.Task | None = None
     cancel_event: asyncio.Event | None = None
 
@@ -473,6 +473,27 @@ class ConversationManager:
                     "user_id": user_id,
                 })
 
+            from .inbox import _append_inbox
+            import uuid
+            turn_id = uuid.uuid4().hex
+            _append_inbox(self.config, conv_id, {
+                "turn_id": turn_id,
+                "kind": kind.value if hasattr(kind, "value") else kind,
+                "text": prompt,
+                "user_id": user_id,
+                "archive_text": archive_text,
+                "wiki_page": wiki_page,
+                "task_mode": task_mode,
+                "metadata": metadata,
+            })
+            state.inmemory_turn_data[turn_id] = {
+                "context_setup": context_setup,
+                "command_ctx": command_ctx,
+                "attachments": attachments,
+                "history": history,
+                "future": future,
+            }
+
             if state.busy:
                 # Cancel-on-new-message: cancel the current turn if configured
                 # (USER kind only, same as previous send_message behavior)
@@ -486,24 +507,24 @@ class ConversationManager:
                     if state.agent_task and not state.agent_task.done():
                         state.agent_task.cancel()
 
-                state.pending_messages.append({
-                    "kind": kind,
-                    "text": prompt,
-                    "user_id": user_id,
-                    "context_setup": context_setup,
-                    "archive_text": archive_text,
-                    "attachments": attachments,
-                    "command_ctx": command_ctx,
-                    "wiki_page": wiki_page,
-                    "task_mode": task_mode,
-                    "history": history,
-                    "metadata": metadata,
-                    "future": future,
-                })
-                log.info("Conv %s busy, queued message (%d pending)",
-                         conv_id[:8], len(state.pending_messages))
+                log.info("Conv %s busy, queued message", conv_id[:8])
                 return future
 
+            # Not busy. Start turn immediately.
+            # But wait, we appended it to inbox.jsonl. We need to pop it!
+            from .inbox import _read_inbox, _write_inbox
+            messages = _read_inbox(self.config, state.conv_id)
+            if messages:
+                # Assuming the last message appended is ours, or we just pop it by turn_id
+                q = None
+                for i, m in enumerate(messages):
+                    if m.get("turn_id") == turn_id:
+                        q = messages.pop(i)
+                        break
+                if q:
+                    _write_inbox(self.config, state.conv_id, messages)
+
+            inmem = state.inmemory_turn_data.pop(turn_id, {})
             await self._start_turn(
                 state,
                 prompt,
@@ -1697,63 +1718,57 @@ class ConversationManager:
         turn will be picked up by the new in-flight turn's own
         finally-block drain.
         """
-        if not state.pending_messages:
-            return
-
+        from .inbox import _read_inbox, _write_inbox
+        
         async with state.lock:
-            if not state.pending_messages:
-                # Another path drained the queue while we were waiting
-                # on the lock.
-                return
             if state.busy:
-                # A concurrent enqueue won the dispatch race after our
-                # finally-block reset busy=False and before we got here.
-                # Defer: the winner's finally-block will drain whatever
-                # is still queued when its turn completes.
-                log.debug(
-                    "_drain_pending: conv %s already busy with a "
-                    "concurrent turn, deferring drain",
-                    state.conv_id[:8])
+                log.debug("_drain_pending: conv %s already busy with a concurrent turn, deferring", state.conv_id[:8])
                 return
 
-            first = state.pending_messages[0]
+            messages = _read_inbox(self.config, state.conv_id)
+            if not messages:
+                return
 
-            if first["kind"] is TurnKind.USER:
-                # Pop all contiguous USER entries from the front.
-                run: list[dict] = []
-                while (state.pending_messages
-                       and state.pending_messages[0]["kind"] is TurnKind.USER):
-                    run.append(state.pending_messages.pop(0))
+            def get_kind(k_str):
+                for tk in TurnKind:
+                    if tk.value == k_str:
+                        return tk
+                return TurnKind.USER
+
+            first = messages[0]
+
+            if get_kind(first["kind"]) is TurnKind.USER:
+                run = []
+                while messages and get_kind(messages[0]["kind"]) is TurnKind.USER:
+                    run.append(messages.pop(0))
+
+                _write_inbox(self.config, state.conv_id, messages)
 
                 texts = [q["text"] for q in run]
                 combined = "\n".join(texts)
                 last = run[-1]
 
-                all_attachments: list[dict] = []
-                for q in run:
-                    if q.get("attachments"):
-                        all_attachments.extend(q["attachments"])
+                all_attachments = []
+                tail_futs = []
+                head_fut = None
+                
+                for i, q in enumerate(run):
+                    tid = q.get("turn_id")
+                    inmem = state.inmemory_turn_data.pop(tid, {})
+                    att = inmem.get("attachments")
+                    if att:
+                        all_attachments.extend(att)
+                    fut = inmem.get("future")
+                    if i == len(run) - 1:
+                        head_fut = fut
+                    else:
+                        if fut is not None:
+                            tail_futs.append(fut)
 
-                log.info("Draining %d queued USER message(s) for conv %s",
-                         len(run), state.conv_id[:8])
+                log.info("Draining %d queued USER message(s) for conv %s", len(run), state.conv_id[:8])
 
-                # Fan-out: when the head future resolves, resolve all tail
-                # futures with the same result so every waiting caller gets
-                # notified.
-                head_fut = last.get("future")
-                tail_futs = [q.get("future") for q in run[:-1]]
-                tail_futs = [f for f in tail_futs if f is not None]
                 if head_fut is not None and tail_futs:
-                    def _fanout(fut: asyncio.Future,
-                                _tails: list = tail_futs) -> None:
-                        # Determine the value to propagate to tail futures.
-                        # Propagate None on cancellation or exception (tails
-                        # never observe the error — they were coalesced into
-                        # the head turn and the head's error path already
-                        # returned "[error: ...]" text via set_result).
-                        # Propagate the result on normal completion. Calling
-                        # fut.result() on an exception future would raise and
-                        # leave tails unresolved, so guard explicitly.
+                    def _fanout(fut: asyncio.Future, _tails: list = tail_futs) -> None:
                         result = None
                         if fut.done() and not fut.cancelled():
                             exc = fut.exception()
@@ -1764,42 +1779,44 @@ class ConversationManager:
                                 f.set_result(result)
                     head_fut.add_done_callback(_fanout)
                 elif tail_futs:
-                    # No head future (edge case) — resolve tails to None so
-                    # callers don't hang.
                     for f in tail_futs:
                         if not f.done():
                             f.set_result(None)
+                            
+                last_inmem = state.inmemory_turn_data.get(last.get("turn_id"), {})
 
                 await self._start_turn(
                     state, combined,
                     kind=TurnKind.USER,
                     user_id=last.get("user_id", ""),
-                    context_setup=last.get("context_setup"),
+                    context_setup=last_inmem.get("context_setup"),
                     archive_text=last.get("archive_text", ""),
                     attachments=all_attachments or None,
-                    command_ctx=last.get("command_ctx"),
+                    command_ctx=last_inmem.get("command_ctx"),
                     wiki_page=last.get("wiki_page"),
                     future=head_fut,
                 )
             else:
-                # Non-USER kinds fire one at a time, preserving all their own
-                # kwargs.
-                q = state.pending_messages.pop(0)
-                log.info("Draining queued %s turn for conv %s",
-                         q["kind"].value, state.conv_id[:8])
+                q = messages.pop(0)
+                _write_inbox(self.config, state.conv_id, messages)
+                
+                tid = q.get("turn_id")
+                inmem = state.inmemory_turn_data.pop(tid, {})
+
+                log.info("Draining queued %s turn for conv %s", q["kind"], state.conv_id[:8])
                 await self._start_turn(
                     state, q["text"],
-                    kind=q["kind"],
+                    kind=get_kind(q["kind"]),
                     user_id=q.get("user_id", ""),
-                    context_setup=q.get("context_setup"),
+                    context_setup=inmem.get("context_setup"),
                     archive_text=q.get("archive_text", ""),
-                    attachments=q.get("attachments"),
-                    command_ctx=q.get("command_ctx"),
+                    attachments=inmem.get("attachments"),
+                    command_ctx=inmem.get("command_ctx"),
                     wiki_page=q.get("wiki_page"),
                     task_mode=q.get("task_mode"),
-                    history=q.get("history"),
+                    history=inmem.get("history"),
                     metadata=q.get("metadata"),
-                    future=q.get("future"),
+                    future=inmem.get("future"),
                 )
 
     # -- Startup recovery ------------------------------------------------------
@@ -1836,6 +1853,18 @@ class ConversationManager:
         if recovered:
             log.info("Startup scan: recovered %d pending confirmation(s)",
                      recovered)
+                     
+        # Phase 3: Resume pending inbox turns
+        from .inbox import _read_inbox
+        for conv_id, archive_file in iter_conversation_archives(self.config):
+            msgs = _read_inbox(self.config, conv_id)
+            if msgs:
+                state = self._get_or_create(conv_id)
+                log.info("Startup scan: resuming %d pending turns for conv %s", len(msgs), conv_id[:8])
+                # We can't await _drain_pending directly in a synchronous context, 
+                # but startup_scan is async!
+                await self._drain_pending(state)
+        
         return recovered
 
     async def startup_scan_workflows(self) -> int:
