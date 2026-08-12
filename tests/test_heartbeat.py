@@ -4,6 +4,7 @@ import asyncio
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from decafclaw.media import ToolResult
 
 from decafclaw.heartbeat import (
     build_section_prompt,
@@ -132,12 +133,12 @@ def test_load_sections_empty_file(config):
 
 
 def test_is_heartbeat_ok_present():
-    assert is_heartbeat_ok("HEARTBEAT_OK") is True
+    assert is_heartbeat_ok(ToolResult(text="HEARTBEAT_OK")) is True
 
 
 def test_is_heartbeat_ok_case_insensitive():
-    assert is_heartbeat_ok("heartbeat_ok") is True
-    assert is_heartbeat_ok("Heartbeat_OK — nothing to report") is True
+    assert is_heartbeat_ok(ToolResult(text="heartbeat_ok")) is True
+    assert is_heartbeat_ok(ToolResult(text="Heartbeat_OK — nothing to report")) is True
 
 
 def test_is_heartbeat_ok_ignores_mid_response_mention():
@@ -147,18 +148,18 @@ def test_is_heartbeat_ok_ignores_mid_response_mention():
     note ahead of accumulated preambles — a preamble mentioning HEARTBEAT_OK
     landed in the 300-char window and suppressed the alert.
     """
-    assert is_heartbeat_ok("Everything is fine. heartbeat_ok") is False
-    assert is_heartbeat_ok("I could say HEARTBEAT_OK but things changed") is False
+    assert is_heartbeat_ok(ToolResult(text="Everything is fine. heartbeat_ok")) is False
+    assert is_heartbeat_ok(ToolResult(text="I could say HEARTBEAT_OK but things changed")) is False
 
 
 def test_is_heartbeat_ok_allows_leading_whitespace():
-    assert is_heartbeat_ok("  \n HEARTBEAT_OK") is True
+    assert is_heartbeat_ok(ToolResult(text="  \n HEARTBEAT_OK")) is True
 
 
 def test_is_heartbeat_ok_requires_a_word_boundary():
     """HEARTBEAT_OKAY is not HEARTBEAT_OK — the property _BACKGROUND_WAKE_OK_RE
     already had, now shared rather than duplicated."""
-    assert is_heartbeat_ok("HEARTBEAT_OKAY then more") is False
+    assert is_heartbeat_ok(ToolResult(text="HEARTBEAT_OKAY then more")) is False
 
 
 # -- shared sentinel matcher --
@@ -187,11 +188,11 @@ def test_sentinel_helper_word_boundary_only_for_word_endings():
 
 def test_is_heartbeat_ok_beyond_300_chars():
     padding = "x" * 300
-    assert is_heartbeat_ok(padding + "HEARTBEAT_OK") is False
+    assert is_heartbeat_ok(ToolResult(text=padding + "HEARTBEAT_OK")) is False
 
 
 def test_is_heartbeat_ok_not_present():
-    assert is_heartbeat_ok("Something happened that needs attention.") is False
+    assert is_heartbeat_ok(ToolResult(text="Something happened that needs attention.")) is False
 
 
 def test_is_heartbeat_ok_false_on_abnormal_termination():
@@ -238,7 +239,7 @@ def test_is_heartbeat_ok_false_on_abnormal_termination():
         assert response_starts_with_sentinel(text, "HEARTBEAT_OK") is True, (
             f"{label}: fixture no longer exercises the override"
         )
-        assert is_heartbeat_ok(text) is False, (
+        assert is_heartbeat_ok(ToolResult(text=text, termination_reason=label)) is False, (
             f"{label}: abnormal termination reported as OK"
         )
 
@@ -254,7 +255,7 @@ def test_is_heartbeat_ok_abnormal_marker_matched_beyond_scan_window():
         "\n\n[Agent reached max tool iterations (30) without a final response]"
     )
     assert text.index("[Agent reached max tool iterations") > 300
-    assert is_heartbeat_ok(text) is False
+    assert is_heartbeat_ok(ToolResult(text=text, termination_reason="max_iterations")) is False
 
 
 # -- BACKGROUND_WAKE_OK detection tests --
@@ -263,32 +264,32 @@ def test_is_heartbeat_ok_abnormal_marker_matched_beyond_scan_window():
 def test_is_background_wake_ok_detects_sentinel():
     from decafclaw.heartbeat import is_background_wake_ok
     # Sentinel at start — TRUE
-    assert is_background_wake_ok("BACKGROUND_WAKE_OK")
-    assert is_background_wake_ok("background_wake_ok — nothing to report")
-    assert is_background_wake_ok("Background_Wake_OK")  # case-insensitive
-    assert not is_background_wake_ok("Something else")
-    assert not is_background_wake_ok("")
-    assert not is_background_wake_ok(None)
+    assert is_background_wake_ok(ToolResult(text="BACKGROUND_WAKE_OK"))
+    assert is_background_wake_ok(ToolResult(text="background_wake_ok — nothing to report"))
+    assert is_background_wake_ok(ToolResult(text="Background_Wake_OK"))  # case-insensitive
+    assert not is_background_wake_ok(ToolResult(text="Something else"))
+    assert not is_background_wake_ok(ToolResult(text=""))
+    assert not is_background_wake_ok(None if None is None else None)
     # Only check first 300 chars.
-    assert not is_background_wake_ok("x" * 300 + "BACKGROUND_WAKE_OK")
+    assert not is_background_wake_ok(ToolResult(text="x" * 300 + "BACKGROUND_WAKE_OK"))
 
 
 def test_is_background_wake_ok_requires_prefix():
     from decafclaw.heartbeat import is_background_wake_ok
     # Prefix with leading whitespace — TRUE
-    assert is_background_wake_ok("BACKGROUND_WAKE_OK")
-    assert is_background_wake_ok("  BACKGROUND_WAKE_OK — noted")
-    assert is_background_wake_ok("\n  background_wake_ok trailing text")
+    assert is_background_wake_ok(ToolResult(text="BACKGROUND_WAKE_OK"))
+    assert is_background_wake_ok(ToolResult(text="  BACKGROUND_WAKE_OK — noted"))
+    assert is_background_wake_ok(ToolResult(text="\n  background_wake_ok trailing text"))
     # Case-insensitive
-    assert is_background_wake_ok("Background_Wake_OK noted")
+    assert is_background_wake_ok(ToolResult(text="Background_Wake_OK noted"))
     # Mid-text mention — FALSE (this is the stricter behavior)
-    assert not is_background_wake_ok("I could say BACKGROUND_WAKE_OK but I won't")
-    assert not is_background_wake_ok("The agent replied with BACKGROUND_WAKE_OK at the end")
+    assert not is_background_wake_ok(ToolResult(text="I could say BACKGROUND_WAKE_OK but I won't"))
+    assert not is_background_wake_ok(ToolResult(text="The agent replied with BACKGROUND_WAKE_OK at the end"))
     # Empty/None — FALSE
-    assert not is_background_wake_ok("")
-    assert not is_background_wake_ok(None)
+    assert not is_background_wake_ok(ToolResult(text=""))
+    assert not is_background_wake_ok(None if None is None else None)
     # Word boundary: "BACKGROUND_WAKE_OKAY" must be FALSE
-    assert not is_background_wake_ok("BACKGROUND_WAKE_OKAY")
+    assert not is_background_wake_ok(ToolResult(text="BACKGROUND_WAKE_OKAY"))
 
 
 # -- prompt building tests --

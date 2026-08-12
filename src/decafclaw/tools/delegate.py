@@ -282,13 +282,13 @@ async def run_child_turn(parent_ctx: "Context", task, model: str = "",
             context_setup=setup,
             user_id=parent_ctx.user_id,
         )
-        result_text = await asyncio.wait_for(future, timeout=timeout)
+        result = await asyncio.wait_for(future, timeout=timeout)
     except asyncio.TimeoutError:
         return (f"[error: subtask timed out after {timeout}s]", None)
     except Exception as e:
         return (f"[error: subtask failed: {e}]", None)
 
-    raw_text = result_text or ""
+    raw_text = result.text if result and hasattr(result, "text") else str(result) if result else ""
     if return_schema is None:
         return (raw_text, None)
     parsed, prose = _parse_structured_output(raw_text)

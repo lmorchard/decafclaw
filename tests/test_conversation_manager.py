@@ -1719,7 +1719,7 @@ async def test_drain_pending_fanout_handles_head_exception(manager, config, monk
     # The _fanout callback propagates that same result to the tail futures so
     # every waiting caller is unblocked.  The primary invariant is that none
     # of them hang — the exact value (error string or None) is secondary.
-    assert f3.result() is not None and "error" in f3.result()
+        assert f3.result() is not None and "error" in f3.result().text
     # Tail futures receive the same result value via _fanout.
     assert f1.result() == f3.result()
     assert f2.result() == f3.result()
