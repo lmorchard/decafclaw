@@ -1683,7 +1683,7 @@ class TestContextSidecar:
         ctx.config.system_prompt = "Original prompt"
         composer = ContextComposer()
         ctx.composer = composer.state
-        
+
         # We also need to patch vault retrieval and tools defs for compose() since they are external
         with (
             patch("decafclaw.context_composer.collect_all_tool_defs", return_value=[]),
@@ -1697,7 +1697,7 @@ class TestContextSidecar:
                 mode=ComposerMode.INTERACTIVE,
             )
             assert "[System Update:" not in str(composed1.messages)
-            
+
             # Turn 2 - system prompt changes
             ctx.config.system_prompt = "New prompt with dynamic skills"
             composed2 = await composer.compose(
@@ -1709,14 +1709,14 @@ class TestContextSidecar:
                 ],
                 mode=ComposerMode.INTERACTIVE,
             )
-            
+
             # Assert [System Update: ...] message was injected before the new user message
             messages = composed2.messages
             # Find the system update message
             system_update_msgs = [m for m in messages if "[System Update:" in m.get("content", "")]
             assert len(system_update_msgs) == 1
             assert system_update_msgs[0]["role"] == "user"
-            
+
             # Ensure it's placed before the final user message
             user_msg = next(m for m in reversed(messages) if m.get("content") == "Are skills active?")
             assert messages.index(system_update_msgs[0]) < messages.index(user_msg)
@@ -1727,9 +1727,9 @@ class TestContextSidecar:
         ctx.config.system_prompt = "Initial baseline"
         composer = ContextComposer()
         ctx.composer = composer.state
-        
+
         assert composer.state.baseline_system_context is None
-        
+
         with (
             patch("decafclaw.context_composer.collect_all_tool_defs", return_value=[]),
             patch("decafclaw.context_composer.retrieve_memory_context", new_callable=AsyncMock, return_value=[]),
@@ -1742,7 +1742,7 @@ class TestContextSidecar:
             )
             assert composer.state.baseline_system_context == "Initial baseline"
             assert len([m for m in composed1.messages if "[System Update:" in m.get("content", "")]) == 0
-            
+
             # Turn 2 (no change) - baseline remains the same, no message injected
             composed2 = await composer.compose(
                 ctx,
@@ -1751,7 +1751,7 @@ class TestContextSidecar:
             )
             assert composer.state.baseline_system_context == "Initial baseline"
             assert len([m for m in composed2.messages if "[System Update:" in m.get("content", "")]) == 0
-            
+
             # Turn 3 (prompt changes) - message injected, baseline updated
             ctx.config.system_prompt = "Changed baseline"
             composed3 = await composer.compose(
