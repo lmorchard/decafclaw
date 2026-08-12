@@ -165,6 +165,8 @@ class ComposerState:
     # appears at most once. In-memory only — resets on restart (at worst
     # one window re-surfaces).
     last_recent_journal_ts: datetime | None = None
+    # Track the baseline system context to detect mid-conversation changes (#776)
+    baseline_system_context: str | None = None
     # Cumulative tool-result clearing stats for this conversation
     # (#298). Reset on compaction since the surviving summary
     # represents a fresh in-memory view.
@@ -361,6 +363,18 @@ class ContextComposer:
         system_text, system_entry = self._compose_system_prompt(config)
         sources.append(system_entry)
 
+        # -- Detect mid-conversation system updates (#776) --
+        system_update_msg: dict | None = None
+        if self.state.baseline_system_context is None:
+            self.state.baseline_system_context = config.system_prompt
+        elif self.state.baseline_system_context != config.system_prompt:
+            self.state.baseline_system_context = config.system_prompt
+            system_update_msg = {
+                "role": "user",
+                "content": "[System Update: The system context or available tools have changed.]"
+            }
+            to_archive.append(system_update_msg)
+
         # -- Wiki context (injected before user message in history) --
         # Explicit @[[Page]] references are fixed costs — always included.
         wiki_msgs, wiki_entry = self._compose_vault_references(
@@ -518,12 +532,15 @@ class ContextComposer:
         # -- Build LLM messages (filter + remap roles) --
         # Combine archived history with this turn's injections in the same
         # order they'll be archived: prior history → wiki → notes →
-        # recent journal → memory → user message. The combined list is
+        # recent journal → memory → system update → user message. The combined list is
         # what the LLM sees.
         combined = [
             *history, *wiki_msgs, *mention_msgs, *notes_msgs, *recent_journal_msgs,
-            *memory_msgs, user_msg,
+            *memory_msgs,
         ]
+        if system_update_msg:
+            combined.append(system_update_msg)
+        combined.append(user_msg)
         llm_history = []
         for m in combined:
             role = m.get("role")
