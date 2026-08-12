@@ -63,8 +63,8 @@ class TestQueueMode:
         await _handle_send(ws_send, index, "testuser",
                            {"conv_id": conv_id, "text": "queued msg"}, ws_state)
 
-        assert len(state.pending_messages) == 1
-        assert state.pending_messages[0]["text"] == "queued msg"
+        assert len(__import__("decafclaw.inbox", fromlist=["_read_inbox"])._read_inbox(manager.config, conv_id)) == 1
+        assert __import__("decafclaw.inbox", fromlist=["_read_inbox"])._read_inbox(manager.config, conv_id)[0]["text"] == "queued msg"
 
     @pytest.mark.asyncio
     async def test_does_not_cancel_in_queue_mode(self, ws_state, conv_id, index, manager):
@@ -112,12 +112,14 @@ class TestQueueDrain:
         state = manager._get_or_create(conv_id)
 
         # Simulate a completed turn with queued messages
-        state.pending_messages = [
-            {"kind": TurnKind.USER, "text": "queued msg", "user_id": "testuser",
-             "context_setup": None, "archive_text": "",
-             "attachments": None, "command_ctx": None, "wiki_page": None,
-             "task_mode": None, "history": None, "metadata": None, "future": None},
-        ]
+        __import__("decafclaw.inbox", fromlist=["_append_inbox"])._append_inbox(manager.config, conv_id, {
+            "turn_id": "mock_id", "kind": "USER", "text": "queued msg", "user_id": "testuser",
+            "archive_text": "", "wiki_page": None, "task_mode": None, "metadata": None
+        })
+        state.inmemory_turn_data["mock_id"] = {
+            "context_setup": None, "command_ctx": None, "attachments": None,
+            "history": None, "future": None
+        }
 
         # Drain should process the queued message
         # (will try to start a turn, which will fail without full agent setup,
@@ -127,4 +129,4 @@ class TestQueueDrain:
         except Exception:
             pass  # Expected — no real agent to run
 
-        assert len(state.pending_messages) == 0
+        assert len(__import__("decafclaw.inbox", fromlist=["_read_inbox"])._read_inbox(manager.config, conv_id)) == 0

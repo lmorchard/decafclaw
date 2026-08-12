@@ -18,7 +18,7 @@ def test_conversation_state_defaults():
     conv = ConversationState()
     assert conv.turn_times == []
     assert conv.paused_until == 0
-    assert conv.pending_messages == []
+
     assert conv.busy is False
 
 
@@ -26,9 +26,10 @@ def test_conversation_state_independent_instances():
     """Verify mutable defaults aren't shared between instances."""
     a = ConversationState()
     b = ConversationState()
-    a.pending_messages.append("pending")
+    a.inmemory_turn_data["test"] = "pending"
+    assert len(b.inmemory_turn_data) == 0
     a.turn_times.append(1.0)
-    assert b.pending_messages == []
+    assert len(b.inmemory_turn_data) == 0
     assert b.turn_times == []
 
 
@@ -112,5 +113,5 @@ async def test_send_message_blocked_by_circuit_breaker(manager):
     await manager.send_message("conv-1", "should be dropped", user_id="user")
 
     # No pending messages or busy state — message was dropped
-    assert len(state.pending_messages) == 0
+    assert len(__import__("decafclaw.inbox", fromlist=["_read_inbox"])._read_inbox(manager.config, "conv-1")) == 0
     assert not state.busy
