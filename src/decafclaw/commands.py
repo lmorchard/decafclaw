@@ -416,10 +416,12 @@ async def execute_command(ctx: "Context", skill: SkillInfo, arguments: str) -> t
     # unaffected and still applies at every tier. Nothing is assigned at an
     # untrusted tier rather than assigning empty, so the ctx defaults stand
     # and no grant is implied to have been computed.
+    skill_dir = str(skill.location.resolve())
+
     if grants_capability(skill):
         ctx.tools.preapproved = set(skill.allowed_tools)
         ctx.tools.preapproved_shell_patterns = [
-            p.replace("$SKILL_DIR", str(skill.location))
+            p.replace("$SKILL_DIR", skill_dir)
             for p in skill.shell_patterns
         ]
     elif skill.allowed_tools or skill.shell_patterns:
@@ -469,7 +471,7 @@ async def execute_command(ctx: "Context", skill: SkillInfo, arguments: str) -> t
 
     # Substitute arguments and skill directory into the body
     body = substitute_body(skill.body, arguments,
-                           skill_dir=str(skill.location.resolve()))
+                           skill_dir=skill_dir)
 
     if skill.context == "fork":
         from .tools.delegate import run_child_turn
