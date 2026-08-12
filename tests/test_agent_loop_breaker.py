@@ -462,7 +462,7 @@ async def test_loop_break_note_comes_first_for_unwatched_turns(ctx):
     )
 
     from decafclaw.heartbeat import is_heartbeat_ok
-    assert not is_heartbeat_ok(result.text), (
+    assert not is_heartbeat_ok(result), (
         "note-first should push this (long) loop-breaker note's own text "
         "to the front, keeping the sentinel out of the 300-char window"
     )

@@ -1200,7 +1200,7 @@ class TurnRunner:
             f"\n\n[Agent reached max tool iterations "
             f"({self.config.agent.max_tool_iterations}) without a final response]"
         )
-        return await self._finalize_with_note(limit_note)
+        return await self._finalize_with_note(limit_note, termination_reason="max_iterations")
 
     async def _finalize_loop_break(self) -> "ToolResult":
         """Loop-breaker hard-stop: end the turn with what was tried, what
@@ -1217,9 +1217,9 @@ class TurnRunner:
             "that call) or a different approach — tell me which and I'll "
             "pick it up."
         )
-        return await self._finalize_with_note("".join(parts))
+        return await self._finalize_with_note("".join(parts), termination_reason="loop_breaker")
 
-    async def _finalize_with_note(self, note: str) -> "ToolResult":
+    async def _finalize_with_note(self, note: str, termination_reason: str | None = None) -> "ToolResult":
         """End an abnormally-terminated turn (iteration limit / loop-breaker)
         by archiving only `note`, but choosing what to *deliver* based on
         whether anyone is watching this turn live.
@@ -1297,7 +1297,7 @@ class TurnRunner:
         await _maybe_compact(
             self.ctx, self.config, self.history, self.prompt_tokens,
         )
-        return ToolResult(text=delivered)
+        return ToolResult(text=delivered, termination_reason=termination_reason)
 
     def _extract_workspace_media(self, content: str) -> "ToolResult":
         """Extract workspace:// refs only for channels that need it.
