@@ -239,32 +239,44 @@ async def test_blanket_shell_still_works(ctx):
 # -- $SKILL_DIR expansion tests --
 
 
-def test_skill_dir_expansion_in_commands():
-    """$SKILL_DIR in patterns is expanded when setting up context."""
+@pytest.mark.asyncio
+async def test_command_skill_dir_and_body_stay_in_sync(ctx, tmp_path):
+    """$SKILL_DIR expansion in pre-approved patterns matches prompt body.
+
+    The value substituted into the prompt body must be the same one the
+    shell pattern expanded to. If they drift, the agent is pointed at
+    a directory whose scripts are not pre-approved.
+    """
     from decafclaw.commands import execute_command
+
+    # Create a symlink to test resolution
+    real_dir = tmp_path / "real_skills" / "ingest"
+    real_dir.mkdir(parents=True)
+    link_dir = tmp_path / "linked_skills" / "ingest"
+    link_dir.parent.mkdir(parents=True)
+    link_dir.symlink_to(real_dir)
 
     skill = SkillInfo(
         name="ingest",
         description="Ingest",
-        location=Path("/opt/skills/ingest"),
-        body="Do the thing.",
+        location=link_dir,  # unresolved location
+        body="Run scripts in $SKILL_DIR.",
+        allowed_tools=["shell"],
         shell_patterns=["$SKILL_DIR/fetch.sh"],
+        trust_tier="admin",  # required for grants_capability to be true
     )
 
-    from decafclaw.context import Context
-    from decafclaw.events import EventBus
+    # Actually call execute_command to see what it does to ctx and what it returns
+    mode, body = await execute_command(ctx, skill, "")
 
-    ctx = Context(config=None, event_bus=EventBus())
-    ctx.tools.preapproved = set()
+    assert mode == "inline"
 
-    # Simulate what execute_command does
-    ctx.tools.preapproved = set(skill.allowed_tools)
-    skill_dir = str(skill.location)
-    ctx.tools.preapproved_shell_patterns = [
-        p.replace("$SKILL_DIR", skill_dir) for p in skill.shell_patterns
-    ]
+    # Pre-approved pattern should use the resolved path
+    expected_resolved = str(real_dir.resolve())
+    assert ctx.tools.preapproved_shell_patterns == [f"{expected_resolved}/fetch.sh"]
 
-    assert ctx.tools.preapproved_shell_patterns == ["/opt/skills/ingest/fetch.sh"]
+    # Body should use the exact same resolved path
+    assert f"Run scripts in {expected_resolved}." in body
 
 
 # -- shell metacharacter rejection tests --
