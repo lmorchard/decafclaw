@@ -23,6 +23,7 @@ from .confirmations import (
 )
 from .conversation_paths import iter_conversation_archives
 from .heartbeat import is_background_wake_ok
+from .media import ToolResult
 from .workflow.journal import load_journal, save_journal
 from .workflow.paths import workflow_path
 
@@ -1604,7 +1605,7 @@ class ConversationManager:
         bus_sub_id = self.event_bus.subscribe(on_global_event)
 
         # Create the turn task
-        response_text_holder: list[str] = []
+        result_holder: list[Any] = []
 
         async def run():
             try:
@@ -1627,7 +1628,7 @@ class ConversationManager:
                     )
 
                 response_text = result.text if hasattr(result, "text") else str(result)
-                response_text_holder.append(response_text)
+                result_holder.append(result)
                 response_media = result.media if hasattr(result, "media") else []
                 # If cancel was observed cleanly inside the agent loop
                 # (e.g. the iteration-start check returned _Final, or
@@ -1642,7 +1643,7 @@ class ConversationManager:
                 # also fires below. Issue #491.
                 if state.cancel_observed_by_agent:
                     self._write_cancel_marker_once(conv_id, state)
-                suppress = kind is TurnKind.WAKE and is_background_wake_ok(response_text)
+                suppress = kind is TurnKind.WAKE and is_background_wake_ok(result)
                 await self.emit(
                     conv_id,
                     {
@@ -1662,7 +1663,7 @@ class ConversationManager:
                 )
             except asyncio.CancelledError:
                 log.info("Agent turn cancelled for conv %s", conv_id[:8])
-                response_text_holder.append("[cancelled]")
+                result_holder.append(ToolResult(text="[cancelled]", termination_reason="cancelled"))
                 # Persist a strong cancel signal so the next turn's LLM
                 # doesn't re-fulfill the cancelled request (issue #491).
                 self._write_cancel_marker_once(conv_id, state)
@@ -1678,7 +1679,7 @@ class ConversationManager:
                 )
             except Exception as e:
                 log.error("Agent turn failed for conv %s: %s", conv_id[:8], e, exc_info=True)
-                response_text_holder.append(f"[error: {e}]")
+                result_holder.append(ToolResult(text=f"[error: {e}]", termination_reason="error"))
                 # Persist a turn-closure marker so the next turn's LLM
                 # doesn't see an open prior request and re-fulfill it
                 # (issue #517, parallel to #491's cancel marker).
@@ -1720,8 +1721,8 @@ class ConversationManager:
 
                 # Resolve the caller's future (if any) before draining pending
                 if future is not None and not future.done():
-                    result_text = response_text_holder[0] if response_text_holder else None
-                    future.set_result(result_text)
+                    result_to_set = result_holder[0] if result_holder else None
+                    future.set_result(result_to_set)
 
                 # Drain queued messages. _drain_pending re-acquires the
                 # lock around its pop-and-dispatch sequence, so a

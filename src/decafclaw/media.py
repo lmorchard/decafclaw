@@ -81,6 +81,7 @@ class ToolResult:
     # inside _resolve_widget.
     end_turn: bool | EndTurnConfirm | WidgetInputPause = False
     widget: WidgetRequest | None = None
+    termination_reason: str | None = None
 
     @classmethod
     def from_text(cls, text: str) -> "ToolResult":
