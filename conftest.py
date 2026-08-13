@@ -32,8 +32,6 @@ def config(tmp_data):
 @pytest.fixture
 def ctx(config):
     """Provides a Context with config and event bus."""
-    from decafclaw.events import EventBus
-    from decafclaw.context import Context
     from decafclaw.skills import discover_skills
     bus = EventBus()
     context = Context(config=config, event_bus=bus)
