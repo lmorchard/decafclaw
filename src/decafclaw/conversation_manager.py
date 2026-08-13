@@ -535,6 +535,17 @@ class ConversationManager:
                     if state.agent_task and not state.agent_task.done():
                         state.agent_task.cancel()
 
+                # Steering message: flag the current agent loop to exit after the current tool call
+                if (
+                    kind is TurnKind.USER
+                    and metadata
+                    and metadata.get("steering")
+                    and state.steer_event
+                    and not state.steer_event.is_set()
+                ):
+                    log.info("Conv %s busy, setting steering event", conv_id[:8])
+                    state.steer_event.set()
+
                 log.info("Conv %s busy, queued message", conv_id[:8])
                 return future
 
