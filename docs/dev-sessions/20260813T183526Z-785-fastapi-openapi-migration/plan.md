@@ -19,10 +19,10 @@
 - Add `openapi-typescript` or `openapi-typescript-codegen` to `package.json`.
 - Add a script in `scripts/gen_api_client.py` or bash to dump OpenAPI JSON from FastAPI and run the generator.
 - Add `gen-api-client` target to `Makefile`.
-- [ ] Run `make gen-api-client` and assert `.ts` file created.
+- [x] Run `make gen-api-client` and assert `.ts` file created.
 
 ## Phase 3: Update Frontend & Ensure Type Safety
 - **Advances:** C2
 - Refactor frontend `src/decafclaw/web/static/` to use the generated API client.
 - Ensure all endpoints are fully typed.
-- [ ] Apply a test patch changing a response field in a backend endpoint, run `make gen-api-client`, and assert that `make check-js` fails.
+- [x] Apply a test patch changing a response field in a backend endpoint, run `make gen-api-client`, and assert that `make check-js` fails.
