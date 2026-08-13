@@ -15,8 +15,12 @@ class FrictionTheme:
     occurrences: int
 
 
-async def analyze_friction(ctx) -> list[FrictionTheme]:
-    config = ctx.config
+async def analyze_friction(config_or_ctx) -> list[FrictionTheme]:
+    from decafclaw.context import Context
+    from decafclaw.events import EventBus
+
+    config = getattr(config_or_ctx, "config", config_or_ctx)
+    ctx = config_or_ctx if hasattr(config_or_ctx, "config") else Context(config=config, event_bus=EventBus())
 
     # 1. Collect recent user messages across all archives
     messages = []
