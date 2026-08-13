@@ -118,6 +118,7 @@ class Context:
         self.history: list | None = None
         self.messages: list | None = None
         self.cancelled: asyncio.Event | None = None
+        self.steer_event: asyncio.Event | None = None
         self.media_handler: Any = None
         self.on_stream_chunk: Any = None
         self.event_context_id: str = ""  # publish events under this ID instead of context_id
