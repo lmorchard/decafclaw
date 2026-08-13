@@ -111,8 +111,6 @@ REVIEWED_CONSUMERS: dict[tuple[str, str], str] = {
         "NO GRANT: reads name + description to build search results. A "
         "workspace skill can be surfaced, but activating it still goes "
         "through tool_activate_skill's confirmation.",
-    ("interactive_terminal.py", "_print_banner"):
-        "NO GRANT: prints skill names in the startup banner.",
     ("commands.py", "format_help"):
         "NO GRANT: renders names, descriptions and argument hints for !help.",
     ("commands.py", "list_invokable_commands"):
