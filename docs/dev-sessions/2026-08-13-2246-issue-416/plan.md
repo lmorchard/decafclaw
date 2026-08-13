@@ -9,9 +9,9 @@
 - Create a stub `src/decafclaw/web/static/widgets/json_view/widget.js`.
 - **Advances:** C1, C2, C3
 - **Verification:**
-  - [ ] `uv run pytest tests/test_widgets.py::test_json_view_expand_depth`
-  - [ ] `uv run pytest tests/test_widgets.py::test_json_view_path_filter`
-  - [ ] `uv run pytest tests/test_widgets.py::test_json_view_schema_validation`
+  - [x] `uv run pytest tests/test_widgets.py::test_json_view_expand_depth`
+  - [x] `uv run pytest tests/test_widgets.py::test_json_view_path_filter`
+  - [x] `uv run pytest tests/test_widgets.py::test_json_view_schema_validation`
 
 ## Phase 2: Frontend Lit Component
 - Implement the UI logic in `src/decafclaw/web/static/widgets/json_view/widget.js`.
@@ -22,5 +22,5 @@
 - Support `inline` vs `canvas` display mode with collapse/expand and "Open in Canvas" actions, similar to `code_block`.
 - **Advances:** C1, C2
 - **Verification:**
-  - [ ] `uv run pytest tests/test_widgets.py::test_json_view_expand_depth`
-  - [ ] `uv run pytest tests/test_widgets.py::test_json_view_path_filter`
+  - [x] `uv run pytest tests/test_widgets.py::test_json_view_expand_depth`
+  - [x] `uv run pytest tests/test_widgets.py::test_json_view_path_filter`
