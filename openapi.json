@@ -1,0 +1,1041 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "FastAPI",
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/health": {
+      "get": {
+        "summary": "Health",
+        "description": "Liveness probe \u2014 returns the static health snapshot.",
+        "operationId": "health_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/actions/confirm": {
+      "post": {
+        "summary": "Handle Confirm",
+        "description": "Handle Mattermost interactive button callbacks for tool confirmation.",
+        "operationId": "handle_confirm_actions_confirm_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/actions/cancel": {
+      "post": {
+        "summary": "Handle Cancel",
+        "description": "Handle Mattermost interactive button callback for stop/cancel.",
+        "operationId": "handle_cancel_actions_cancel_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/login": {
+      "post": {
+        "summary": "Auth Login",
+        "description": "Validate a one-time login token, then set the session cookie.",
+        "operationId": "auth_login_api_auth_login_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/logout": {
+      "post": {
+        "summary": "Auth Logout",
+        "description": "Clear the session cookie.",
+        "operationId": "auth_logout_api_auth_logout_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/me": {
+      "get": {
+        "summary": "Auth Me",
+        "description": "Return the current authenticated user.",
+        "operationId": "auth_me_api_auth_me_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/conversations": {
+      "get": {
+        "summary": "Wrapper",
+        "operationId": "wrapper_api_conversations_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Wrapper",
+        "operationId": "wrapper_api_conversations_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/conversations/archived": {
+      "get": {
+        "summary": "Wrapper",
+        "operationId": "wrapper_api_conversations_archived_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/conversations/system": {
+      "get": {
+        "summary": "Wrapper",
+        "operationId": "wrapper_api_conversations_system_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/conversations/{id}": {
+      "get": {
+        "summary": "Wrapper",
+        "operationId": "wrapper_api_conversations__id__get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Wrapper",
+        "operationId": "wrapper_api_conversations__id__delete",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "summary": "Wrapper",
+        "operationId": "wrapper_api_conversations__id__patch",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/conversations/{id}/history": {
+      "get": {
+        "summary": "Wrapper",
+        "operationId": "wrapper_api_conversations__id__history_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/conversations/{id}/context": {
+      "get": {
+        "summary": "Wrapper",
+        "operationId": "wrapper_api_conversations__id__context_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/conversations/{id}/export": {
+      "get": {
+        "summary": "Wrapper",
+        "operationId": "wrapper_api_conversations__id__export_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/conversations/folders": {
+      "post": {
+        "summary": "Wrapper",
+        "operationId": "wrapper_api_conversations_folders_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/conversations/folders/{path}": {
+      "put": {
+        "summary": "Wrapper",
+        "operationId": "wrapper_api_conversations_folders__path__put",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Wrapper",
+        "operationId": "wrapper_api_conversations_folders__path__delete",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/conversations/{id}/archive": {
+      "post": {
+        "summary": "Wrapper",
+        "operationId": "wrapper_api_conversations__id__archive_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/conversations/{id}/unarchive": {
+      "post": {
+        "summary": "Wrapper",
+        "operationId": "wrapper_api_conversations__id__unarchive_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/notifications": {
+      "get": {
+        "summary": "Wrapper",
+        "operationId": "wrapper_api_notifications_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/notifications/unread-count": {
+      "get": {
+        "summary": "Wrapper",
+        "operationId": "wrapper_api_notifications_unread_count_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/notifications/read-all": {
+      "post": {
+        "summary": "Wrapper",
+        "operationId": "wrapper_api_notifications_read_all_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/notifications/{id}/read": {
+      "post": {
+        "summary": "Wrapper",
+        "operationId": "wrapper_api_notifications__id__read_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/upload/{conv_id}": {
+      "post": {
+        "summary": "Wrapper",
+        "operationId": "wrapper_api_upload__conv_id__post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/workspace": {
+      "get": {
+        "summary": "Wrapper",
+        "operationId": "wrapper_api_workspace_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Wrapper",
+        "operationId": "wrapper_api_workspace_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/workspace/recent": {
+      "get": {
+        "summary": "Wrapper",
+        "operationId": "wrapper_api_workspace_recent_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/autocomplete": {
+      "get": {
+        "summary": "Wrapper",
+        "operationId": "wrapper_api_autocomplete_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/workspace-file/{path}": {
+      "get": {
+        "summary": "Wrapper",
+        "operationId": "wrapper_api_workspace_file__path__get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/workspace/{path}": {
+      "get": {
+        "summary": "Wrapper",
+        "operationId": "wrapper_api_workspace__path__get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "summary": "Wrapper",
+        "operationId": "wrapper_api_workspace__path__put",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Wrapper",
+        "operationId": "wrapper_api_workspace__path__delete",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/config/files": {
+      "get": {
+        "summary": "Wrapper",
+        "operationId": "wrapper_api_config_files_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/config/files/{path}": {
+      "get": {
+        "summary": "Wrapper",
+        "operationId": "wrapper_api_config_files__path__get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "summary": "Wrapper",
+        "operationId": "wrapper_api_config_files__path__put",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/models": {
+      "get": {
+        "summary": "Wrapper",
+        "operationId": "wrapper_api_models_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/schedules": {
+      "get": {
+        "summary": "Wrapper",
+        "operationId": "wrapper_api_schedules_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/schedules/{name}/run": {
+      "post": {
+        "summary": "Wrapper",
+        "operationId": "wrapper_api_schedules__name__run_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/schedules/{name}/overlay": {
+      "delete": {
+        "summary": "Wrapper",
+        "operationId": "wrapper_api_schedules__name__overlay_delete",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/schedules/{name}": {
+      "get": {
+        "summary": "Wrapper",
+        "operationId": "wrapper_api_schedules__name__get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "summary": "Wrapper",
+        "operationId": "wrapper_api_schedules__name__put",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/vault": {
+      "get": {
+        "summary": "Wrapper",
+        "operationId": "wrapper_api_vault_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Wrapper",
+        "operationId": "wrapper_api_vault_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/vault/folders": {
+      "post": {
+        "summary": "Wrapper",
+        "operationId": "wrapper_api_vault_folders_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/vault/recent": {
+      "get": {
+        "summary": "Wrapper",
+        "operationId": "wrapper_api_vault_recent_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/vault/tags": {
+      "get": {
+        "summary": "Wrapper",
+        "operationId": "wrapper_api_vault_tags_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/vault/{page}": {
+      "get": {
+        "summary": "Wrapper",
+        "operationId": "wrapper_api_vault__page__get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "summary": "Wrapper",
+        "operationId": "wrapper_api_vault__page__put",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Wrapper",
+        "operationId": "wrapper_api_vault__page__delete",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/vault/{page}": {
+      "get": {
+        "summary": "Wrapper",
+        "operationId": "wrapper_vault__page__get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/wiki": {
+      "get": {
+        "summary": "Wrapper",
+        "operationId": "wrapper_api_wiki_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/wiki/{page}": {
+      "get": {
+        "summary": "Wrapper",
+        "operationId": "wrapper_api_wiki__page__get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/widgets": {
+      "get": {
+        "summary": "Wrapper",
+        "operationId": "wrapper_api_widgets_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/widgets/{tier}/{name}/widget.js": {
+      "get": {
+        "summary": "Wrapper",
+        "operationId": "wrapper_widgets__tier___name__widget_js_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/canvas/{conv_id}": {
+      "get": {
+        "summary": "Wrapper",
+        "operationId": "wrapper_api_canvas__conv_id__get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sticky/{conv_id}": {
+      "get": {
+        "summary": "Wrapper",
+        "operationId": "wrapper_api_sticky__conv_id__get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/canvas/{conv_id}/new_tab": {
+      "post": {
+        "summary": "Wrapper",
+        "operationId": "wrapper_api_canvas__conv_id__new_tab_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/canvas/{conv_id}/active_tab": {
+      "post": {
+        "summary": "Wrapper",
+        "operationId": "wrapper_api_canvas__conv_id__active_tab_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/canvas/{conv_id}/close_tab": {
+      "post": {
+        "summary": "Wrapper",
+        "operationId": "wrapper_api_canvas__conv_id__close_tab_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/canvas/{conv_id}": {
+      "get": {
+        "summary": "Wrapper",
+        "operationId": "wrapper_canvas__conv_id__get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/canvas/{conv_id}/{tab_id}": {
+      "get": {
+        "summary": "Wrapper",
+        "operationId": "wrapper_canvas__conv_id___tab_id__get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/": {
+      "get": {
+        "summary": "Serve Index",
+        "operationId": "serve_index__get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "UserResponse": {
+        "properties": {
+          "username": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Username"
+          }
+        },
+        "type": "object",
+        "required": [
+          "username"
+        ],
+        "title": "UserResponse"
+      }
+    }
+  }
+}
