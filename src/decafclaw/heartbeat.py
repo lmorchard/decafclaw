@@ -6,15 +6,15 @@ import logging
 import re
 import time
 from datetime import datetime
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .media import ToolResult
 
 log = logging.getLogger(__name__)
 
 # Interval parsing: 30m, 1h, 1h30m, or plain seconds
 _INTERVAL_RE = re.compile(r"^(?:(\d+)h)?(?:(\d+)m)?$")
-
-# How far into a response a sentinel may appear. Sentinels are start-anchored
-# (see response_starts_with_sentinel); the cap bounds work on long responses.
-_SENTINEL_SCAN_CHARS = 300
 
 
 def parse_interval(value: str) -> int | None:
@@ -113,16 +113,6 @@ def _split_sections(text: str) -> list[dict]:
     return sections
 
 
-# Substrings that mark a turn as abnormally terminated, emitted verbatim by
-# agent.py's _finalize_max_iterations / _finalize_loop_break. A turn that ended
-# this way is never "nothing to report", whatever its text happens to contain —
-# see is_heartbeat_ok.
-_ABNORMAL_TERMINATION_MARKERS = (
-    "[Agent reached max tool iterations",
-    "[loop-breaker] Stopped",
-)
-
-
 def response_starts_with_sentinel(response: str | None, sentinel: str) -> bool:
     """True when `response` begins with `sentinel`, ignoring leading whitespace.
 
@@ -150,7 +140,7 @@ def response_starts_with_sentinel(response: str | None, sentinel: str) -> bool:
         # An empty sentinel compiles to `^\\s*`, which matches every response —
         # a config-driven empty value would silently suppress everything.
         return False
-    return _sentinel_re(sentinel).match(response[:_SENTINEL_SCAN_CHARS]) is not None
+    return _sentinel_re(sentinel).match(response) is not None
 
 
 @functools.lru_cache(maxsize=None)
@@ -161,42 +151,30 @@ def _sentinel_re(sentinel: str) -> re.Pattern[str]:
     return re.compile(rf"^\s*{re.escape(sentinel)}{boundary}", re.IGNORECASE)
 
 
-def is_heartbeat_ok(response: str | None) -> bool:
+def is_heartbeat_ok(result: "ToolResult | None") -> bool:
     """Check if a response indicates nothing to report.
 
     True when the response *starts* with HEARTBEAT_OK (leading whitespace
-    allowed, case-insensitive, first `_SENTINEL_SCAN_CHARS` characters) — but
-    always False for an abnormally terminated turn.
-
-    The abnormal-termination override (#710) is a separate predicate from where
-    the sentinel sits, and start-anchoring does not subsume it. Heartbeat and
-    scheduled turns have no live transport subscriber, so agent.py's
-    `_finalize_with_note` delivers the turn's accumulated mid-turn preambles
-    alongside the termination note — and polling.py tells the agent to say
-    HEARTBEAT_OK when there is nothing to report, which makes a sentinel-bearing
-    preamble a plausible utterance. Should such a preamble ever reach the front
-    of the response, the start-anchored match would fire and suppress the very
-    alert the abnormal termination should have raised. The real predicate is
-    "did this turn end normally".
-
-    Markers are matched against the whole response, not the scan window: #707
-    puts the note first, but scoping the marker check to the window would
-    quietly re-couple this to that ordering. Matching is case-sensitive — these
-    are literal strings the code emits, not user prose. #712 tracks replacing
-    the substring match with a structured termination signal.
+    allowed, case-insensitive) — but always False for an abnormally terminated turn.
     """
-    if response and any(m in response for m in _ABNORMAL_TERMINATION_MARKERS):
+    if result is None:
         return False
-    return response_starts_with_sentinel(response, "HEARTBEAT_OK")
+    if result.termination_reason is not None:
+        return False
+    return response_starts_with_sentinel(result.text, "HEARTBEAT_OK")
 
 
-def is_background_wake_ok(response: str | None) -> bool:
+def is_background_wake_ok(result: "ToolResult | None") -> bool:
     """True when a wake turn's result is not worth surfacing to the user.
 
     The agent emits BACKGROUND_WAKE_OK to say so. Same start-anchored rule as
     every other sentinel — see `response_starts_with_sentinel`.
     """
-    return response_starts_with_sentinel(response, "BACKGROUND_WAKE_OK")
+    if result is None:
+        return False
+    if result.termination_reason is not None:
+        return False
+    return response_starts_with_sentinel(result.text, "BACKGROUND_WAKE_OK")
 
 
 def build_section_prompt(section: dict) -> str:
@@ -239,8 +217,9 @@ async def run_section_turn(
             user_id=f"heartbeat-{section.get('source', 'workspace')}",
             metadata={"source": section.get("source", "workspace")},
         )
-        result_text = (await future) or "(no response)"
-        ok = is_heartbeat_ok(result_text)
+        result = await future
+        ok = is_heartbeat_ok(result)
+        result_text = result.text if result else "(no response)"
         log.info(f"Heartbeat section '{title}': {'OK' if ok else 'ALERT'}")
         return {
             "title": title,

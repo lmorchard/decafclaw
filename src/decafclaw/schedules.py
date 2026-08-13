@@ -832,10 +832,11 @@ async def run_schedule_task(config, event_bus, manager, task: ScheduleTask,
             context_setup=setup_schedule_ctx,
             metadata={"task_name": task.name, "channel": channel},
         )
-        result_text = (await future) or "(no response)"
+        result = await future
         from .heartbeat import is_heartbeat_ok, response_starts_with_sentinel
-        ok = is_heartbeat_ok(result_text)
-        if response_starts_with_sentinel(result_text, SILENT_SENTINEL):
+        ok = is_heartbeat_ok(result)
+        result_text = result.text if result else "(no response)"
+        if response_starts_with_sentinel(result_text, SILENT_SENTINEL) and result and result.termination_reason is None:
             # Suppressed cycles must stay distinguishable from crashed ones in
             # the log — the notification that didn't happen is otherwise the
             # only trace, and an absence isn't diagnosable.
