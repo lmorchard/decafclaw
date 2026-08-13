@@ -1,14 +1,17 @@
 import json
-import yaml
 import os
 import subprocess
-from decafclaw.http_server import create_app
+
+import yaml
+
 from decafclaw.config import Config
+from decafclaw.http_server import create_app
+
 
 def dump_openapi():
     app = create_app(Config(), None, None, None)
     openapi_schema = app.openapi()
-    
+
     with open("openapi.json", "w") as f:
         json.dump(openapi_schema, f, indent=2)
 

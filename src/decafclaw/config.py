@@ -178,6 +178,7 @@ class Config:
     providers: dict[str, ProviderConfig] = field(default_factory=dict)
     model_configs: dict[str, ModelConfig] = field(default_factory=dict)
     default_model: str = ""
+    auxiliary_model: str = ""
     extra_skill_paths: list[str] = field(default_factory=list)
     # Skill names to treat as always-loaded regardless of frontmatter.
     # Lets a user opt a trusted-tier skill (bundled / admin / extra)
@@ -514,6 +515,7 @@ def load_config() -> Config:
     providers = _load_providers(file_data.get("providers", {}))
     model_configs = _load_model_configs(file_data.get("model_configs", {}))
     default_model = file_data.get("default_model", "")
+    auxiliary_model = file_data.get("auxiliary_model", "")
 
     env_extra = os.getenv("EXTRA_SKILL_PATHS", "")
     if env_extra:
@@ -576,6 +578,7 @@ def load_config() -> Config:
         providers=providers,
         model_configs=model_configs,
         default_model=default_model,
+        auxiliary_model=auxiliary_model,
         extra_skill_paths=extra_skill_paths,
         skills_always_loaded=skills_always_loaded,
         vault_retrieval=vault_retrieval,
