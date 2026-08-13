@@ -1,4 +1,5 @@
 import json
+import yaml
 import os
 import subprocess
 from decafclaw.http_server import create_app
@@ -10,6 +11,9 @@ def dump_openapi():
     
     with open("openapi.json", "w") as f:
         json.dump(openapi_schema, f, indent=2)
+
+    with open("openapi.yaml", "w") as f:
+        yaml.dump(openapi_schema, f, sort_keys=False)
 
     # Run npx openapi-typescript-codegen
     # Assume it is installed in node_modules
