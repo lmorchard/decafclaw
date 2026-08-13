@@ -47,15 +47,16 @@ async def test_steering_interrupts_after_tool_call(manager):
     tool_started = asyncio.Event()
     tool_resume = asyncio.Event()
     
-    async def slow_execute_tool(ctx, name, args):
+    async def slow_execute_tool_calls(ctx, tc, hist, msgs):
         tool_started.set()
         await tool_resume.wait()
-        return ToolResult(text="slow memory")
+        hist.append({"role": "tool", "content": "slow memory", "tool_call_id": "tc1"})
+        return None, False
         
     with patch("decafclaw.agent.call_llm", new_callable=AsyncMock) as mock_llm:
-        mock_llm.side_effect = [tool_call_response, final_response, final_response, final_response]
+        mock_llm.side_effect = [tool_call_response, final_response, final_response]
         
-        with patch("decafclaw.tool_execution.execute_tool", side_effect=slow_execute_tool):
+        with patch("decafclaw.agent.execute_tool_calls", side_effect=slow_execute_tool_calls):
             first_future = await manager.enqueue_turn(
                 conv_id="c1",
                 kind=TurnKind.USER,
@@ -63,10 +64,8 @@ async def test_steering_interrupts_after_tool_call(manager):
                 user_id="u",
             )
             
-            # Wait until the tool starts executing
             await asyncio.wait_for(tool_started.wait(), 5.0)
             
-            # Now send the steering message
             steer_future = await manager.enqueue_turn(
                 conv_id="c1",
                 kind=TurnKind.USER,
@@ -75,13 +74,19 @@ async def test_steering_interrupts_after_tool_call(manager):
                 metadata={"steering": True}
             )
             
-            # Resume the tool
             tool_resume.set()
-            
-            # Wait for first turn to finish
             await asyncio.wait_for(first_future, 5.0)
             
-            assert mock_llm.call_count == 1, "LLM was called after tool completed despite steering message!"
+            # The agent loop should have been interrupted, so LLM was only called 1 time
+            assert mock_llm.call_count == 1
+            
+            # The steering message triggers a new turn which calls LLM (final_response)
+            await asyncio.wait_for(steer_future, 5.0)
+            assert mock_llm.call_count == 2
+            
+            state = manager.get_state("c1")
+            assert state.history[3]["role"] == "user"
+            assert state.history[3]["content"] == "ACTUALLY stop and do something else"
 
 @pytest.mark.asyncio
 async def test_follow_up_message_queued(manager):
@@ -101,15 +106,16 @@ async def test_follow_up_message_queued(manager):
     tool_started = asyncio.Event()
     tool_resume = asyncio.Event()
     
-    async def slow_execute_tool(ctx, name, args):
+    async def slow_execute_tool_calls(ctx, tc, hist, msgs):
         tool_started.set()
         await tool_resume.wait()
-        return ToolResult(text="slow memory")
+        hist.append({"role": "tool", "content": "slow memory", "tool_call_id": "tc1"})
+        return None, False
         
     with patch("decafclaw.agent.call_llm", new_callable=AsyncMock) as mock_llm:
-        mock_llm.side_effect = [tool_call_response, final_response, steer_response, steer_response]
+        mock_llm.side_effect = [tool_call_response, final_response, steer_response]
         
-        with patch("decafclaw.tool_execution.execute_tool", side_effect=slow_execute_tool):
+        with patch("decafclaw.agent.execute_tool_calls", side_effect=slow_execute_tool_calls):
             first_future = await manager.enqueue_turn(
                 conv_id="c2",
                 kind=TurnKind.USER,
@@ -130,7 +136,6 @@ async def test_follow_up_message_queued(manager):
             await asyncio.wait_for(first_future, 5.0)
             await asyncio.wait_for(follow_up_future, 5.0)
             
-            # Follow-up should queue, so 1st turn takes 2 calls, 2nd turn takes 1 call.
             assert mock_llm.call_count == 3
             
             state = manager.get_state("c2")

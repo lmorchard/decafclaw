@@ -301,17 +301,8 @@ class MattermostClient:
         mm_state = self._get_mm_state(mm_conversations, conv_id)
         cooldown_sec = self.cooldown_ms / 1000.0
 
-        # Check if busy via the manager (circuit breaker is in the manager) — queue locally and re-debounce.
-        # Cancel-on-new-message is handled by manager.send_message().
+        # Busy queueing, cancel-on-new-message, and steering are handled by manager.send_message().
         mgr_state = manager.get_state(conv_id)
-        if mgr_state and mgr_state.busy:
-            log.info(f"Conversation {conv_id[:8]} busy, queuing {len(msgs)} message(s)")
-            mm_state.pending_msgs = msgs + mm_state.pending_msgs
-            mm_state.debounce_timer = asyncio.create_task(
-                self._debounce_fire(conv_id, channel_id, mm_conversations,
-                                    app_ctx, manager)
-            )
-            return
 
         # Cooldown: wait if we responded too recently
         now = time.monotonic()
