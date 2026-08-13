@@ -330,6 +330,94 @@ describe('chat-input existing send/stop behaviour (menu closed)', () => {
   });
 });
 
+describe('chat-input message history navigation', () => {
+  it('navigates backward through history on ArrowUp and forward on ArrowDown', async () => {
+    const el = await mount();
+    
+    // Send two messages
+    await type(el, 'first message');
+    await press(el, 'Enter');
+    await type(el, 'second message');
+    await press(el, 'Enter');
+
+    // Type a draft
+    await type(el, 'current draft');
+    expect(textareaOf(el).value).toBe('current draft');
+
+    // ArrowUp goes to second message
+    await press(el, 'ArrowUp');
+    expect(textareaOf(el).value).toBe('second message');
+
+    // ArrowUp goes to first message
+    await press(el, 'ArrowUp');
+    expect(textareaOf(el).value).toBe('first message');
+
+    // ArrowUp stops at first message (no wrap)
+    await press(el, 'ArrowUp');
+    expect(textareaOf(el).value).toBe('first message');
+
+    // ArrowDown goes back to second message
+    await press(el, 'ArrowDown');
+    expect(textareaOf(el).value).toBe('second message');
+
+    // ArrowDown goes back to draft
+    await press(el, 'ArrowDown');
+    expect(textareaOf(el).value).toBe('current draft');
+
+    // ArrowDown stops at draft
+    await press(el, 'ArrowDown');
+    expect(textareaOf(el).value).toBe('current draft');
+  });
+
+  it('only navigates when cursor is on the first/last line respectively', async () => {
+    const el = await mount();
+    await type(el, 'history message');
+    await press(el, 'Enter');
+
+    // Type a multi-line draft
+    await type(el, 'line 1\nline 2');
+    const ta = textareaOf(el);
+    
+    // Move cursor to end of line 2
+    ta.selectionStart = ta.selectionEnd = ta.value.length;
+    await press(el, 'ArrowUp');
+    // Shouldn't navigate because not on first line
+    expect(ta.value).toBe('line 1\nline 2');
+
+    // Move cursor to line 1
+    ta.selectionStart = ta.selectionEnd = 0;
+    await press(el, 'ArrowUp');
+    // Now it navigates
+    expect(ta.value).toBe('history message');
+
+    // Since 'history message' is single line, it's also the last line.
+    // Move cursor to start of it.
+    ta.selectionStart = ta.selectionEnd = 0;
+    await press(el, 'ArrowDown');
+    // Navigates forward because single line is also last line
+    expect(ta.value).toBe('line 1\nline 2');
+  });
+
+  it('resets history navigation when sending a new message', async () => {
+    const el = await mount();
+    
+    await type(el, 'first message');
+    await press(el, 'Enter');
+
+    await type(el, 'draft');
+    await press(el, 'ArrowUp');
+    expect(textareaOf(el).value).toBe('first message');
+
+    // Send the history message again
+    await press(el, 'Enter');
+    expect(textareaOf(el).value).toBe('');
+
+    // Send should reset draft and history index. ArrowUp should now show 'first message' again
+    await press(el, 'ArrowUp');
+    expect(textareaOf(el).value).toBe('first message');
+  });
+});
+
 describe('chat-input mention autocomplete', () => {
   it('triggers autocomplete on "@" anywhere and fetches suggestions', async () => {
     vi.useFakeTimers();
