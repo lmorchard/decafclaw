@@ -85,12 +85,9 @@ Compaction is configured via the `compaction` section in `config.json` or enviro
 |----------------|----------|---------|-------------|
 | `max_tokens` | `COMPACTION_MAX_TOKENS` | `100000` | Trigger compaction when prompt exceeds this |
 | `preserve_turns` | `COMPACTION_PRESERVE_TURNS` | `5` | Keep this many recent turns intact |
-| `url` | `COMPACTION_LLM_URL` | Falls back to `LLM_URL` | LLM endpoint for compaction |
-| `model` | `COMPACTION_LLM_MODEL` | Falls back to `LLM_MODEL` | Model for compaction |
-| `api_key` | `COMPACTION_LLM_API_KEY` | Falls back to `LLM_API_KEY` | API key for compaction |
 | `llm_max_tokens` | `COMPACTION_LLM_MAX_TOKENS` | `0` (use `max_tokens`) | Compaction LLM's context budget |
 
-Empty `url`, `model`, and `api_key` fields fall back to the main LLM config. Env vars take precedence over config.json.
+Compaction uses the `auxiliary_model` configured in `config.json`, falling back to the active conversation model or `default_model` if unset. (The legacy `url`/`model`/`api_key` fields in the compaction config group are deprecated).
 
 ### Custom compaction prompt
 
