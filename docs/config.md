@@ -25,6 +25,7 @@ Only include settings you want to override — absent keys use defaults.
     "gpt-4o": { "provider": "openai", "model": "gpt-4o" }
   },
   "default_model": "gemini-flash",
+  "auxiliary_model": "gemini-flash-8b",
   "mattermost": {
     "url": "https://comms.example.com",
     "bot_username": "decafclaw",
@@ -95,7 +96,7 @@ List fields accept comma-separated (`a,b,c`) or JSON array (`["a","b"]`) format 
 
 ### `compaction`
 
-History compaction settings. Empty `url`/`model`/`api_key` fall back to the `llm` group values via `config.compaction.resolved(config)`.
+History compaction settings. Note: `url`, `model`, and `api_key` are deprecated in favor of setting `auxiliary_model` (which uses the modern `providers` / `model_configs` system).
 
 | Field | Type | Default | Env Var | Secret |
 |-------|------|---------|---------|--------|
@@ -422,7 +423,8 @@ Named model configurations referencing a provider. See [Model Selection](model-s
     "gemini-flash": { "provider": "vertex", "model": "gemini-2.5-flash" },
     "gpt-4o": { "provider": "openai", "model": "gpt-4o" }
   },
-  "default_model": "gemini-flash"
+  "default_model": "gemini-flash",
+  "auxiliary_model": "gemini-flash-8b"
 }
 ```
 
@@ -435,6 +437,8 @@ Named model configurations referencing a provider. See [Model Selection](model-s
 | `streaming` | bool | `true` | Use streaming responses |
 
 `default_model` (top-level string) sets which model config to use when none is explicitly selected.
+
+`auxiliary_model` (top-level string) sets the model config to use for background operations like compaction or scoring, where speed or cost might be prioritized over reasoning capability. If unset, these operations fall back to the active conversation model or `default_model`.
 
 **Migration:** If no `providers`/`model_configs` sections exist but the `llm` section is present, a "default" `openai-compat` provider and model config are auto-generated from the `llm` values.
 
