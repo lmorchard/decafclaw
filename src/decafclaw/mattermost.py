@@ -302,7 +302,6 @@ class MattermostClient:
         cooldown_sec = self.cooldown_ms / 1000.0
 
         # Busy queueing, cancel-on-new-message, and steering are handled by manager.send_message().
-        mgr_state = manager.get_state(conv_id)
 
         # Cooldown: wait if we responded too recently
         now = time.monotonic()
