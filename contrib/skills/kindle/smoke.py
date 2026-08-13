@@ -170,9 +170,8 @@ async def main() -> None:
     if step in ("cookies", "all"):
         await step_cookies(config, skill_config)
 
-    books: list = []
     if step in ("list", "all"):
-        books = await step_list(ctx)
+        _ = await step_list(ctx)
 
     if step == "fetch":
         if len(args) < 2:

@@ -4,7 +4,6 @@ import asyncio
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from decafclaw.media import ToolResult
 
 from decafclaw.heartbeat import (
     build_section_prompt,
