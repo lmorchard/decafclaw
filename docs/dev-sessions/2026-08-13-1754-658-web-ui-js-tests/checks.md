@@ -1,7 +1,7 @@
 # Frozen acceptance checks
 
 **Source:** https://github.com/lmorchard/decafclaw/issues/658
-**Frozen at:** (pending)
+**Frozen at:** bcabc023715e892f59e3f7ea8f4c4231a3dbca4c
 **Check files — read-only from Phase 1 onward:**
 - `src/decafclaw/web/static/lib/message-store.test.js`
 - `src/decafclaw/web/static/lib/tool-status-store.test.js`
