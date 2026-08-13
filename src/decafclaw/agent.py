@@ -756,6 +756,12 @@ class TurnRunner:
         if cancelled:
             return _Final(result=cancelled)
 
+        if self.ctx.steer_event and self.ctx.steer_event.is_set():
+            log.info("Agent loop interrupted by steering message")
+            text = "\n\n".join(self.accumulated_text_parts) if self.accumulated_text_parts else ""
+            from .media import ToolResult
+            return _Final(result=ToolResult(text=text))
+
         if isinstance(end_turn_signal, WidgetInputPause):
             inject_content = await _handle_widget_input_pause(
                 self.ctx, end_turn_signal,

@@ -328,6 +328,7 @@ async def _handle_send(ws_send: WSSendCallable, index, username, msg, state) -> 
     text = msg.get("text", "").strip()
     attachments = msg.get("attachments") or None
     wiki_page = msg.get("wiki_page") or None
+    steering = msg.get("steering", False)
     if not conv_id or (not text and not attachments):
         await ws_send({"type": WSMessageType.ERROR, "message": "conv_id and text (or attachments) required"})
         return
@@ -439,6 +440,7 @@ async def _handle_send(ws_send: WSSendCallable, index, username, msg, state) -> 
         attachments=attachments,
         command_ctx=command_ctx,
         wiki_page=wiki_page,
+        steering=steering,
     )
 
     # Auto-title: use first user message if title is still default
