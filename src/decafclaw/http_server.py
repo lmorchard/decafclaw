@@ -1,4 +1,4 @@
-"""HTTP server — Starlette ASGI app for interactive callbacks and future web UI."""
+"""HTTP server — FastAPI ASGI app for interactive callbacks and future web UI."""
 
 import asyncio
 import functools
@@ -11,10 +11,11 @@ from pathlib import Path
 
 import yaml
 from croniter import croniter
-from starlette.applications import Starlette
-from starlette.requests import Request
+from fastapi import FastAPI
+from fastapi import Request
 from starlette.responses import FileResponse, JSONResponse, Response
-from starlette.routing import Mount, Route, WebSocketRoute
+from starlette.routing import Mount, WebSocketRoute
+from fastapi.routing import APIRoute
 from starlette.staticfiles import StaticFiles
 
 from .frontmatter import (
@@ -96,8 +97,8 @@ def _authenticated(handler):
     Forwards to ``handler(request, username)``. Reads the active
     ``Config`` off ``request.app.state``, set up by ``create_app``.
     """
-    @functools.wraps(handler)
-    async def wrapper(request):
+    
+    async def wrapper(request: Request):
         username = _get_username_or_401(request)
         if not username:
             return JSONResponse({"error": "not authenticated"},
@@ -437,12 +438,17 @@ async def auth_logout(request: Request) -> JSONResponse:
     return response
 
 
-async def auth_me(request: Request) -> JSONResponse:
+from pydantic import BaseModel
+
+class UserResponse(BaseModel):
+    username: str | None
+
+async def auth_me(request: Request) -> UserResponse:
     """Return the current authenticated user."""
     username = _get_username_or_401(request)
     if not username:
         return JSONResponse({"error": "not authenticated"}, status_code=401)
-    return JSONResponse({"username": username})
+    return UserResponse(username=username)
 
 
 # -- Conversation routes ------------------------------------------------------
@@ -2384,78 +2390,78 @@ async def schedules_run(request: Request, username: str) -> JSONResponse:
     )
 
 
-def create_app(config, event_bus, app_ctx=None, manager=None) -> Starlette:
-    """Wire up the Starlette ASGI app — handlers live at module level
+def create_app(config, event_bus, app_ctx=None, manager=None) -> FastAPI:
+    """Wire up the FastAPI ASGI app — handlers live at module level
     and read deps off ``request.app.state`` (populated below).
     """
 
     routes = [
-        Route("/health", health, methods=["GET"]),
-        Route("/actions/confirm", handle_confirm, methods=["POST"]),
-        Route("/actions/cancel", handle_cancel, methods=["POST"]),
-        Route("/api/auth/login", auth_login, methods=["POST"]),
-        Route("/api/auth/logout", auth_logout, methods=["POST"]),
-        Route("/api/auth/me", auth_me, methods=["GET"]),
-        Route("/api/conversations", list_conversations, methods=["GET"]),
-        Route("/api/conversations/archived", list_archived_conversations, methods=["GET"]),
-        Route("/api/conversations/system", list_system_conversations, methods=["GET"]),
-        Route("/api/conversations", create_conversation, methods=["POST"]),
-        Route("/api/conversations/{id}", get_conversation, methods=["GET"]),
-        Route("/api/conversations/{id}", rename_conversation, methods=["PATCH"]),
-        Route("/api/conversations/{id}/history", get_conversation_history, methods=["GET"]),
-        Route("/api/conversations/{id}/context", get_context_diagnostics, methods=["GET"]),
-        Route("/api/conversations/{id}/export", export_conversation, methods=["GET"]),
-        Route("/api/conversations/folders", create_conv_folder, methods=["POST"]),
-        Route("/api/conversations/folders/{path:path}", delete_conv_folder, methods=["DELETE"]),
-        Route("/api/conversations/folders/{path:path}", rename_conv_folder, methods=["PUT"]),
-        Route("/api/conversations/{id}", delete_conversation, methods=["DELETE"]),
-        Route("/api/conversations/{id}/archive", archive_conversation, methods=["POST"]),
-        Route("/api/conversations/{id}/unarchive", unarchive_conversation, methods=["POST"]),
-        Route("/api/notifications", list_notifications, methods=["GET"]),
-        Route("/api/notifications/unread-count", notifications_unread_count, methods=["GET"]),
-        Route("/api/notifications/read-all", notifications_mark_all_read, methods=["POST"]),
-        Route("/api/notifications/{id}/read", notifications_mark_read, methods=["POST"]),
-        Route("/api/upload/{conv_id}", handle_upload, methods=["POST"]),
+        APIRoute("/health", health, methods=["GET"]),
+        APIRoute("/actions/confirm", handle_confirm, methods=["POST"]),
+        APIRoute("/actions/cancel", handle_cancel, methods=["POST"]),
+        APIRoute("/api/auth/login", auth_login, methods=["POST"]),
+        APIRoute("/api/auth/logout", auth_logout, methods=["POST"]),
+        APIRoute("/api/auth/me", auth_me, methods=["GET"]),
+        APIRoute("/api/conversations", list_conversations, methods=["GET"]),
+        APIRoute("/api/conversations/archived", list_archived_conversations, methods=["GET"]),
+        APIRoute("/api/conversations/system", list_system_conversations, methods=["GET"]),
+        APIRoute("/api/conversations", create_conversation, methods=["POST"]),
+        APIRoute("/api/conversations/{id}", get_conversation, methods=["GET"]),
+        APIRoute("/api/conversations/{id}", rename_conversation, methods=["PATCH"]),
+        APIRoute("/api/conversations/{id}/history", get_conversation_history, methods=["GET"]),
+        APIRoute("/api/conversations/{id}/context", get_context_diagnostics, methods=["GET"]),
+        APIRoute("/api/conversations/{id}/export", export_conversation, methods=["GET"]),
+        APIRoute("/api/conversations/folders", create_conv_folder, methods=["POST"]),
+        APIRoute("/api/conversations/folders/{path:path}", delete_conv_folder, methods=["DELETE"]),
+        APIRoute("/api/conversations/folders/{path:path}", rename_conv_folder, methods=["PUT"]),
+        APIRoute("/api/conversations/{id}", delete_conversation, methods=["DELETE"]),
+        APIRoute("/api/conversations/{id}/archive", archive_conversation, methods=["POST"]),
+        APIRoute("/api/conversations/{id}/unarchive", unarchive_conversation, methods=["POST"]),
+        APIRoute("/api/notifications", list_notifications, methods=["GET"]),
+        APIRoute("/api/notifications/unread-count", notifications_unread_count, methods=["GET"]),
+        APIRoute("/api/notifications/read-all", notifications_mark_all_read, methods=["POST"]),
+        APIRoute("/api/notifications/{id}/read", notifications_mark_read, methods=["POST"]),
+        APIRoute("/api/upload/{conv_id}", handle_upload, methods=["POST"]),
         # Literal workspace routes must come before the {path:path} catch-all.
-        Route("/api/workspace", workspace_list, methods=["GET"]),
-        Route("/api/workspace", workspace_create, methods=["POST"]),
-        Route("/api/workspace/recent", workspace_recent, methods=["GET"]),
-        Route("/api/autocomplete", autocomplete, methods=["GET"]),
-        Route("/api/workspace-file/{path:path}", workspace_read_json, methods=["GET"]),
-        Route("/api/workspace/{path:path}", serve_workspace_file, methods=["GET"]),
-        Route("/api/workspace/{path:path}", workspace_write, methods=["PUT"]),
-        Route("/api/workspace/{path:path}", workspace_delete, methods=["DELETE"]),
-        Route("/api/config/files", config_list_files, methods=["GET"]),
-        Route("/api/config/files/{path:path}", config_read_file, methods=["GET"]),
-        Route("/api/config/files/{path:path}", config_write_file, methods=["PUT"]),
-        Route("/api/models", models_list, methods=["GET"]),
-        Route("/api/schedules", schedules_list, methods=["GET"]),
-        Route("/api/schedules/{name}/run", schedules_run, methods=["POST"]),
-        Route("/api/schedules/{name}/overlay", schedules_reset, methods=["DELETE"]),
-        Route("/api/schedules/{name}", schedules_get, methods=["GET"]),
-        Route("/api/schedules/{name}", schedules_update, methods=["PUT"]),
-        Route("/api/vault", vault_create, methods=["POST"]),
-        Route("/api/vault", vault_list, methods=["GET"]),
-        Route("/api/vault/folders", vault_create_folder, methods=["POST"]),
-        Route("/api/vault/recent", vault_recent, methods=["GET"]),
-        Route("/api/vault/tags", vault_tags, methods=["GET"]),
-        Route("/api/vault/{page:path}", vault_write, methods=["PUT"]),
-        Route("/api/vault/{page:path}", vault_read, methods=["GET"]),
-        Route("/api/vault/{page:path}", vault_delete, methods=["DELETE"]),
-        Route("/vault/{page:path}", serve_vault_page, methods=["GET"]),
+        APIRoute("/api/workspace", workspace_list, methods=["GET"]),
+        APIRoute("/api/workspace", workspace_create, methods=["POST"]),
+        APIRoute("/api/workspace/recent", workspace_recent, methods=["GET"]),
+        APIRoute("/api/autocomplete", autocomplete, methods=["GET"]),
+        APIRoute("/api/workspace-file/{path:path}", workspace_read_json, methods=["GET"]),
+        APIRoute("/api/workspace/{path:path}", serve_workspace_file, methods=["GET"]),
+        APIRoute("/api/workspace/{path:path}", workspace_write, methods=["PUT"]),
+        APIRoute("/api/workspace/{path:path}", workspace_delete, methods=["DELETE"]),
+        APIRoute("/api/config/files", config_list_files, methods=["GET"]),
+        APIRoute("/api/config/files/{path:path}", config_read_file, methods=["GET"]),
+        APIRoute("/api/config/files/{path:path}", config_write_file, methods=["PUT"]),
+        APIRoute("/api/models", models_list, methods=["GET"]),
+        APIRoute("/api/schedules", schedules_list, methods=["GET"]),
+        APIRoute("/api/schedules/{name}/run", schedules_run, methods=["POST"]),
+        APIRoute("/api/schedules/{name}/overlay", schedules_reset, methods=["DELETE"]),
+        APIRoute("/api/schedules/{name}", schedules_get, methods=["GET"]),
+        APIRoute("/api/schedules/{name}", schedules_update, methods=["PUT"]),
+        APIRoute("/api/vault", vault_create, methods=["POST"]),
+        APIRoute("/api/vault", vault_list, methods=["GET"]),
+        APIRoute("/api/vault/folders", vault_create_folder, methods=["POST"]),
+        APIRoute("/api/vault/recent", vault_recent, methods=["GET"]),
+        APIRoute("/api/vault/tags", vault_tags, methods=["GET"]),
+        APIRoute("/api/vault/{page:path}", vault_write, methods=["PUT"]),
+        APIRoute("/api/vault/{page:path}", vault_read, methods=["GET"]),
+        APIRoute("/api/vault/{page:path}", vault_delete, methods=["DELETE"]),
+        APIRoute("/vault/{page:path}", serve_vault_page, methods=["GET"]),
         # Legacy /api/wiki/* aliases — vault handlers under the old name.
-        Route("/api/wiki", vault_list, methods=["GET"]),
-        Route("/api/wiki/{page:path}", vault_read, methods=["GET"]),
-        Route("/api/widgets", list_widgets, methods=["GET"]),
-        Route("/widgets/{tier}/{name}/widget.js", serve_widget_js,
+        APIRoute("/api/wiki", vault_list, methods=["GET"]),
+        APIRoute("/api/wiki/{page:path}", vault_read, methods=["GET"]),
+        APIRoute("/api/widgets", list_widgets, methods=["GET"]),
+        APIRoute("/widgets/{tier}/{name}/widget.js", serve_widget_js,
               methods=["GET"]),
-        Route("/api/canvas/{conv_id}", get_canvas_state, methods=["GET"]),
-        Route("/api/sticky/{conv_id}", get_sticky_state, methods=["GET"]),
-        Route("/api/canvas/{conv_id}/new_tab", post_canvas_new_tab, methods=["POST"]),
-        Route("/api/canvas/{conv_id}/active_tab", post_canvas_active_tab, methods=["POST"]),
-        Route("/api/canvas/{conv_id}/close_tab", post_canvas_close_tab, methods=["POST"]),
-        Route("/canvas/{conv_id}", get_canvas_page, methods=["GET"]),
-        Route("/canvas/{conv_id}/{tab_id}", get_canvas_page, methods=["GET"]),
+        APIRoute("/api/canvas/{conv_id}", get_canvas_state, methods=["GET"]),
+        APIRoute("/api/sticky/{conv_id}", get_sticky_state, methods=["GET"]),
+        APIRoute("/api/canvas/{conv_id}/new_tab", post_canvas_new_tab, methods=["POST"]),
+        APIRoute("/api/canvas/{conv_id}/active_tab", post_canvas_active_tab, methods=["POST"]),
+        APIRoute("/api/canvas/{conv_id}/close_tab", post_canvas_close_tab, methods=["POST"]),
+        APIRoute("/canvas/{conv_id}", get_canvas_page, methods=["GET"]),
+        APIRoute("/canvas/{conv_id}/{tab_id}", get_canvas_page, methods=["GET"]),
         WebSocketRoute("/ws/chat", ws_chat),
         WebSocketRoute("/ws/terminal/{conv_id}/{tab_id}", ws_terminal),
     ]
@@ -2466,10 +2472,10 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> Starlette:
         async def serve_index(request: Request):
             return FileResponse(static_dir / "index.html")
 
-        routes.append(Route("/", serve_index, methods=["GET"]))
+        routes.append(APIRoute("/", serve_index, methods=["GET"]))
         routes.append(Mount("/static", StaticFiles(directory=str(static_dir)), name="static"))
 
-    app = Starlette(routes=routes)
+    app = FastAPI(routes=routes)
     # Module-level handlers read deps off ``request.app.state``. Closures
     # currently capture them via the enclosing scope; as handlers migrate
     # out of `create_app` they switch to the state-based lookup.
@@ -2488,7 +2494,7 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> Starlette:
 
 
 _http_server = None  # uvicorn.Server instance, set by run_http_server
-_http_app: Starlette | None = None  # Starlette app instance, set by run_http_server
+_http_app: FastAPI | None = None  # FastAPI app instance, set by run_http_server
 
 
 async def run_http_server(config, event_bus, app_ctx=None, manager=None) -> None:

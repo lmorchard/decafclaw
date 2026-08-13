@@ -180,3 +180,8 @@ eval-history:
 # Rebuild eval embedding fixtures (run when changing embedding models)
 build-eval-fixtures:
 	uv run python scripts/build-eval-fixtures.py
+
+.PHONY: gen-api-client
+gen-api-client:
+	uv run python scripts/gen_api_client.py
+	touch src/decafclaw/web/static/lib/api-client.ts

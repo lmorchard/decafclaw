@@ -22,11 +22,12 @@ dependencies = [
     "pyyaml>=6.0",
     "requests>=2.0.0",
     "sqlite-vec>=0.1.7",
-    "starlette>=0.52.1",
     "tabstack>=2.6.1",
     "uvicorn>=0.41.0",
     "websockets>=16.0",
     "snowballstemmer>=2.2.0",
+    "fastapi>=0.141.1",
+    "pydantic>=2.12.5",
 ]
 
 [project.optional-dependencies]
