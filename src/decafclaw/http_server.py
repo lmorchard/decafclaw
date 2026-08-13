@@ -11,11 +11,11 @@ from pathlib import Path
 
 import yaml
 from croniter import croniter
-from fastapi import FastAPI
-from fastapi import Request
+from fastapi import FastAPI, Request
+from fastapi.routing import APIRoute
+from pydantic import BaseModel
 from starlette.responses import FileResponse, JSONResponse, Response
 from starlette.routing import Mount, WebSocketRoute
-from fastapi.routing import APIRoute
 from starlette.staticfiles import StaticFiles
 
 from .frontmatter import (
@@ -97,7 +97,7 @@ def _authenticated(handler):
     Forwards to ``handler(request, username)``. Reads the active
     ``Config`` off ``request.app.state``, set up by ``create_app``.
     """
-    
+
     async def wrapper(request: Request):
         username = _get_username_or_401(request)
         if not username:
@@ -438,7 +438,7 @@ async def auth_logout(request: Request) -> JSONResponse:
     return response
 
 
-from pydantic import BaseModel
+
 
 class UserResponse(BaseModel):
     username: str | None
@@ -447,7 +447,8 @@ async def auth_me(request: Request) -> UserResponse:
     """Return the current authenticated user."""
     username = _get_username_or_401(request)
     if not username:
-        return JSONResponse({"error": "not authenticated"}, status_code=401)
+        from fastapi import HTTPException
+        raise HTTPException(status_code=401, detail="not authenticated")
     return UserResponse(username=username)
 
 
