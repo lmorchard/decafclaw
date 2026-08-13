@@ -4,15 +4,15 @@ import asyncio
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from textual.app import App, ComposeResult
-from textual.containers import Horizontal, Vertical
-from textual.widgets import Header, Footer, Static, Input, ListView, ListItem, Label
-from textual.screen import ModalScreen
 from textual.binding import Binding
+from textual.containers import Horizontal, Vertical
+from textual.screen import ModalScreen
+from textual.widgets import Footer, Header, Input, Label, ListItem, ListView, Static
 
 if TYPE_CHECKING:
     from decafclaw.config import Config
-    from decafclaw.events import EventBus
     from decafclaw.conversation_manager import ConversationManager
+    from decafclaw.events import EventBus
 
 class ConfirmationModal(ModalScreen[tuple]):
     """Modal dialog for confirmation requests."""
@@ -41,7 +41,7 @@ class ConfirmationModal(ModalScreen[tuple]):
 
     def action_approve(self, approved: bool) -> None:
         self.dismiss((self.confirmation_id, approved, False, False))
-        
+
     def action_always(self) -> None:
         self.dismiss((self.confirmation_id, True, True, False))
 
@@ -135,7 +135,7 @@ class DecafClawApp(App):
             input_box.value = ""
             log_widget = self.query_one("#message-log", MessageLog)
             log_widget.append_text(f"you> {text}\n")
-            
+
             def terminal_context_setup(ctx_arg):
                 ctx_arg.channel_name = "interactive"
 

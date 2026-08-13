@@ -1,9 +1,12 @@
+import asyncio
+
 import pytest
-from decafclaw.tui.app import DecafClawApp
-from decafclaw.events import EventBus
+
 from decafclaw.config import Config
 from decafclaw.conversation_manager import ConversationManager
-import asyncio
+from decafclaw.events import EventBus
+from decafclaw.tui.app import DecafClawApp
+
 
 @pytest.fixture
 def manager():
@@ -33,7 +36,7 @@ async def test_tui_shows_confirmation_modal(manager):
         await pilot.pause(0.1)
         from decafclaw.tui.app import ConfirmationModal
         assert isinstance(app.screen, ConfirmationModal)
-        
+
         # Test clicking yes
         await pilot.press("y")
         await pilot.pause(0.1)
@@ -42,7 +45,7 @@ async def test_tui_shows_confirmation_modal(manager):
 async def test_tui_switches_conversation_on_click(manager):
     app = DecafClawApp(manager=manager, config=Config(), event_bus=manager.event_bus)
     async with app.run_test() as pilot:
-        sidebar = app.query_one("#sidebar")
+        app.query_one("#sidebar")
         app.switch_conversation("conv_2")
         await pilot.pause(0.1)
         assert app.active_conv_id == "conv_2"

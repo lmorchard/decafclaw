@@ -21,10 +21,11 @@ log = logging.getLogger(__name__)
 
 async def run_interactive(ctx: "Context"):
     """Run the agent in interactive terminal mode using Textual."""
+    from decafclaw.tui.app import DecafClawApp
+
     from .conversation_manager import ConversationManager
     from .mcp_client import init_mcp, shutdown_mcp
     from .widget_input import register_widget_handler
-    from decafclaw.tui.app import DecafClawApp
 
     config = ctx.config
     conv_id = "interactive"
@@ -40,7 +41,7 @@ async def run_interactive(ctx: "Context"):
     register_widget_handler(manager.confirmation_registry)
 
     app = DecafClawApp(manager=manager, config=config, event_bus=ctx.event_bus)
-    
+
     try:
         await app.run_async()
     finally:
