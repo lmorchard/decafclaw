@@ -68,6 +68,29 @@ log = logging.getLogger(__name__)
 # Track background tasks to prevent GC and surface exceptions
 
 
+
+def _is_context_length_exceeded(exc: Exception) -> bool:
+    from .llm.types import ContextLengthExceededError
+    if isinstance(exc, ContextLengthExceededError):
+        return True
+
+    import httpx
+    if isinstance(exc, httpx.HTTPStatusError):
+        status = exc.response.status_code
+        try:
+            body = exc.response.text.lower()
+        except Exception:
+            body = ""
+        if status in (400, 413) and any(k in body for k in ["context_length_exceeded", "maximum context length", "too many tokens", "exceeds the limit", "token limit exceeded", "string_too_long", "request payload size exceeds the limit"]):
+            return True
+
+    err_str = str(exc).lower()
+    if ("400" in err_str or "413" in err_str) and any(k in err_str for k in ["context_length_exceeded", "maximum context length", "too many tokens", "exceeds the limit", "token limit exceeded", "string_too_long", "request payload size exceeds the limit"]):
+        return True
+
+    return False
+
+
 def _conv_id(ctx: "Context") -> str:
     """Get conversation ID from context."""
     return ctx.conv_id or ctx.channel_id or "unknown"
@@ -702,10 +725,27 @@ class TurnRunner:
             except Exception as exc:
                 log.exception("BEFORE_LLM_CALL interceptor failed: %s", exc)
 
-        response = await _call_llm_with_events(
-            self.ctx, self.config, self.messages, all_tools,
-            **self.model_override,
-        )
+        try:
+            response = await _call_llm_with_events(
+                self.ctx, self.config, self.messages, all_tools,
+                **self.model_override,
+            )
+        except Exception as exc:
+            if _is_context_length_exceeded(exc):
+                log.warning("Context length exceeded during LLM call, forcing compaction.")
+                # Dynamically lower the compaction threshold
+                from .compaction import compact_history
+                self.config.compaction.max_tokens = max(1000, int((self.prompt_tokens or (self.composed.total_tokens_estimated if self.composed else 0) or 10000) * 0.8))
+
+                await compact_history(self.ctx, self.history)
+                # After compaction, summarized content replaces originals
+                self.ctx.composer.injected_paths.clear()
+                self.ctx.composer.cleanup_cleared_count = 0
+                self.ctx.composer.cleanup_cleared_bytes = 0
+                # Re-compose to pick up the compacted history
+                await self._compose()
+                return _Continue()
+            raise
 
         usage = response.get("usage")
         if usage:
