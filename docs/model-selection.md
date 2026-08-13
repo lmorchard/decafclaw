@@ -41,7 +41,8 @@ Model config has two layers in `config.json`:
       "model": "gpt-4o"
     }
   },
-  "default_model": "gemini-flash"
+  "default_model": "gemini-flash",
+  "auxiliary_model": "gemini-flash-8b"
 }
 ```
 
@@ -101,7 +102,7 @@ This is a suggestion, not automatic — you stay in control.
 
 ## How it works
 
-At the start of each agent turn, the active model is resolved through the provider registry. The resolved provider + model are used for that turn's LLM calls, without affecting subsystem models (compaction, reflection, embeddings still use their own configured models or fall back to the default).
+At the start of each agent turn, the active model is resolved through the provider registry. The resolved provider + model are used for that turn's LLM calls, without affecting subsystem models (reflection and embeddings still use their own configured models or fall back to the default). Background operations like compaction and scoring use the `auxiliary_model` if configured, falling back to the active model or default model if not.
 
 ## Migration from effort levels
 
