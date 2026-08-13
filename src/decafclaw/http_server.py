@@ -15,7 +15,7 @@ from fastapi import FastAPI, Request
 from fastapi.routing import APIRoute
 from pydantic import BaseModel
 from starlette.responses import FileResponse, JSONResponse, Response
-from starlette.routing import Mount, WebSocketRoute
+from starlette.routing import Mount, WebSocketRoute, BaseRoute
 from starlette.staticfiles import StaticFiles
 
 from .frontmatter import (
@@ -2391,12 +2391,22 @@ async def schedules_run(request: Request, username: str) -> JSONResponse:
     )
 
 
+
+async def openapi_yaml(request: Request) -> Response:
+    import yaml
+    app = request.app
+    return Response(
+        content=yaml.dump(app.openapi(), sort_keys=False),
+        media_type="application/x-yaml"
+    )
+
 def create_app(config, event_bus, app_ctx=None, manager=None) -> FastAPI:
     """Wire up the FastAPI ASGI app — handlers live at module level
     and read deps off ``request.app.state`` (populated below).
     """
 
-    routes = [
+    routes: list[BaseRoute] = [
+        APIRoute("/openapi.yaml", openapi_yaml, methods=["GET"], include_in_schema=False),
         APIRoute("/health", health, methods=["GET"]),
         APIRoute("/actions/confirm", handle_confirm, methods=["POST"]),
         APIRoute("/actions/cancel", handle_cancel, methods=["POST"]),
