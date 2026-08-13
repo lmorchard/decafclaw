@@ -761,8 +761,8 @@ async def test_compaction_uses_auxiliary_model():
 
     from decafclaw.compaction import _single_summarize
     from decafclaw.config import Config
-    from decafclaw.context import Context
     from decafclaw.config_types import ModelConfig
+    from decafclaw.context import Context
 
     config = Config()
     config.model_configs = {"primary": ModelConfig(provider="p", model="m"), "aux": ModelConfig(provider="p", model="m")}
