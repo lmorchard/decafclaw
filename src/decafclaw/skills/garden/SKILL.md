@@ -23,6 +23,12 @@ Perform a holistic maintenance pass over your agent pages in the vault. This is 
 - If two pages are about the same thing, consolidate into one well-organized page.
 - Redirect the merged page's content and update any `[[wiki-links]]` that pointed to it.
 
+## Step 2.5: Reorganize Clusters into Folders
+
+- Use `vault_reorganize_folders` to detect clusters of 3+ related agent pages and move them into dedicated subdirectories.
+- The tool automatically updates `[[wiki-links]]` pointing to the moved pages.
+- Review the proposed or executed moves. (If dry_run is true, the tool will just report proposed moves without executing them.)
+
 ## Step 3: Fix Broken Links
 
 - Scan pages for `[[wiki-links]]` that point to non-existent pages.
