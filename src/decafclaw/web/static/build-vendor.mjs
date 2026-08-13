@@ -87,6 +87,12 @@ const bundles = [
     outfile: join(outdir, 'xterm-addon-web-links.js'),
     external: ['@xterm/xterm'],
   },
+  {
+    name: 'diff',
+    entry: 'diff',
+    outfile: join(outdir, 'diff.js'),
+    external: [],
+  },
 ];
 
 for (const bundle of bundles) {

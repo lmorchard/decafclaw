@@ -1,0 +1,22 @@
+{
+  "name": "diff_view",
+  "description": "Side-by-side or unified diff between two text blobs.",
+  "modes": ["inline", "canvas"],
+  "accepts_input": false,
+  "data_schema": {
+    "type": "object",
+    "required": ["before", "after"],
+    "properties": {
+      "before": { "type": "string" },
+      "after": { "type": "string" },
+      "language": { "type": "string" },
+      "filename": { "type": "string" },
+      "view": {
+        "type": "string",
+        "enum": ["unified", "split"],
+        "default": "unified"
+      }
+    },
+    "additionalProperties": false
+  }
+}
