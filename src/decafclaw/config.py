@@ -179,6 +179,7 @@ class Config:
     model_configs: dict[str, ModelConfig] = field(default_factory=dict)
     default_model: str = ""
     extra_skill_paths: list[str] = field(default_factory=list)
+    max_tool_output_bytes: int | None = 51200
     # Skill names to treat as always-loaded regardless of frontmatter.
     # Lets a user opt a trusted-tier skill (bundled / admin / extra)
     # into the system prompt without editing its SKILL.md. Workspace
