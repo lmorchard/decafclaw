@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import re
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
@@ -9,7 +10,6 @@ from decafclaw import backlinks, retrieval_telemetry, tags
 from decafclaw.frontmatter import get_frontmatter_field, parse_frontmatter
 from decafclaw.media import ToolResult
 from decafclaw.skills.vault.tools import tool_vault_update_frontmatter
-from dataclasses import dataclass
 
 if TYPE_CHECKING:
     from decafclaw.context import Context
@@ -128,25 +128,25 @@ async def tool_vault_reorganize_folders(ctx: "Context", dry_run: bool | None = N
     """Detect clusters of 3+ related agent pages and move them into dedicated folders."""
     if dry_run is None:
         dry_run = _skill_config.dry_run
-        
+
     log.info(f"[tool:vault_reorganize_folders] dry_run={dry_run}")
-    
+
     all_tags = tags.collect_all_tags(ctx.config)
     vault = ctx.config.vault_root
     agent_pages_prefix = "agent/pages/"
-    
+
     proposed_moves = []
-    
+
     for tag_name, tag_info in all_tags.items():
         pages_to_move = []
         for p in tag_info["pages"]:
             if not p.startswith(agent_pages_prefix):
                 continue
-            
+
             rel_to_pages = p[len(agent_pages_prefix):]
             if "/" not in rel_to_pages:
                 pages_to_move.append(p)
-                
+
         if len(pages_to_move) >= 3:
             dest_folder = agent_pages_prefix + tags.normalize_tag(tag_name) + "/"
             for p in pages_to_move:
@@ -154,42 +154,42 @@ async def tool_vault_reorganize_folders(ctx: "Context", dry_run: bool | None = N
                 proposed_moves.append({"src": p, "dest": dest_path})
 
     executed = 0
-    
+
     for move in proposed_moves:
         src_path = vault / move["src"]
         dest_path = vault / move["dest"]
-        
+
         if dry_run:
             log.info(f"Dry run: would move {move['src']} to {move['dest']}")
             continue
-            
+
         dest_path.parent.mkdir(parents=True, exist_ok=True)
         src_path.rename(dest_path)
         executed += 1
-        
+
         old_stem = Path(move["src"]).stem
         new_link_target = move["dest"]
         if new_link_target.endswith(".md"):
             new_link_target = new_link_target[:-3]
-            
+
         for md_file in vault.rglob("*.md"):
             content = md_file.read_text(encoding="utf-8")
-            
+
             pattern1 = re.compile(rf"\[\[{re.escape(old_stem)}\]\]")
             pattern2 = re.compile(rf"\[\[{re.escape(move['src'])}(\|.*?)?\]\]")
-            
+
             new_content = content
             new_content = pattern1.sub(f"[[{new_link_target}|{old_stem}]]", new_content)
-            
+
             def replace_pattern2(m):
                 alias = m.group(1) or f"|{old_stem}"
                 return f"[[{new_link_target}{alias}]]"
-                
+
             new_content = pattern2.sub(replace_pattern2, new_content)
-            
+
             if new_content != content:
                 md_file.write_text(new_content, encoding="utf-8")
-                
+
     if dry_run:
         return ToolResult(text=f"[Dry run] Proposed {len(proposed_moves)} page moves into clusters.", data={"moves": proposed_moves})
     else:
