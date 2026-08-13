@@ -27,6 +27,7 @@ dependencies = [
     "uvicorn>=0.41.0",
     "websockets>=16.0",
     "snowballstemmer>=2.2.0",
+    "textual>=8.2.8",
 ]
 
 [project.optional-dependencies]
