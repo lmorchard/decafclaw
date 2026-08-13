@@ -20,6 +20,7 @@ import time
 from typing import TYPE_CHECKING
 
 from .archive import append_message
+from .conversation_paths import conversation_dir
 from .media import EndTurnConfirm, ToolResult, WidgetInputPause
 from .tools import execute_tool
 
@@ -252,6 +253,19 @@ async def execute_single_tool(call_ctx, tc, semaphore):
             log.error(f"Tool call {fn_name} failed: {e}", exc_info=True)
             result = ToolResult(text=f"[error executing {fn_name}: {e}]")
         finally:
+            limit = getattr(call_ctx.config, "max_tool_output_bytes", None)
+            if limit and result.text:
+                text_bytes = result.text.encode("utf-8")
+                if len(text_bytes) > limit:
+                    c_dir = conversation_dir(call_ctx.config, call_ctx.conv_id, create=True)
+                    outputs_dir = c_dir / "tool_outputs"
+                    outputs_dir.mkdir(parents=True, exist_ok=True)
+                    filepath = outputs_dir / f"{tool_call_id}.txt"
+                    filepath.write_bytes(text_bytes)
+                    
+                    truncated = text_bytes[:limit].decode("utf-8", errors="ignore")
+                    result.text = f"{truncated}\n\n[Output truncated. Full output saved to {filepath}. Use the 'read' tool to inspect it.]"
+
             widget_payload = resolve_widget(fn_name, result, tool_call_id)
             try:
                 input_bytes = len(json.dumps(fn_args, default=str).encode("utf-8"))
