@@ -248,6 +248,7 @@ class ConversationState:
     inmemory_turn_data: dict = field(default_factory=dict)
     agent_task: asyncio.Task | None = None
     cancel_event: asyncio.Event | None = None
+    steer_event: asyncio.Event | None = None
 
     # Streamed assistant text accumulated for the current turn so the
     # cancel handler can persist whatever was delivered before cancel
@@ -534,6 +535,17 @@ class ConversationManager:
                     if state.agent_task and not state.agent_task.done():
                         state.agent_task.cancel()
 
+                # Steering message: flag the current agent loop to exit after the current tool call
+                if (
+                    kind is TurnKind.USER
+                    and metadata
+                    and metadata.get("steering")
+                    and state.steer_event
+                    and not state.steer_event.is_set()
+                ):
+                    log.info("Conv %s busy, setting steering event", conv_id[:8])
+                    state.steer_event.set()
+
                 log.info("Conv %s busy, queued message", conv_id[:8])
                 return future
 
@@ -581,6 +593,7 @@ class ConversationManager:
         attachments: list[dict] | None = None,
         command_ctx: Any = None,
         wiki_page: str | None = None,
+        steering: bool = False,
     ) -> None:
         """Submit user input (thin wrapper over enqueue_turn for the USER kind)."""
         await self.enqueue_turn(
@@ -593,6 +606,7 @@ class ConversationManager:
             attachments=attachments,
             command_ctx=command_ctx,
             wiki_page=wiki_page,
+            metadata={"steering": steering},
         )
 
     async def respond_to_confirmation(
@@ -1449,6 +1463,7 @@ class ConversationManager:
         conv_id = state.conv_id
         state.busy = True
         state.cancel_event = asyncio.Event()
+        state.steer_event = asyncio.Event()
 
         # -- Persist / inherit transport context --------------------------------
         # USER turns save their user_id and context_setup so that subsequent
@@ -1480,6 +1495,7 @@ class ConversationManager:
                 task_mode=effective_task_mode,
             )
             ctx.cancelled = state.cancel_event
+            ctx.steer_event = state.steer_event
             ctx.wiki_page = wiki_page
 
             # WAKE turns fire on user conversations — restore per-conv state
@@ -1498,6 +1514,7 @@ class ConversationManager:
             ctx.channel_id = conv_id
             ctx.conv_id = conv_id
             ctx.cancelled = state.cancel_event
+            ctx.steer_event = state.steer_event
             ctx.wiki_page = wiki_page
 
             # Restore per-conversation state from previous turns
@@ -1716,6 +1733,7 @@ class ConversationManager:
                     state.busy = False
                     state.agent_task = None
                     state.cancel_event = None
+                    state.steer_event = None
 
                 await self.emit(conv_id, {"type": "turn_complete"})
 
