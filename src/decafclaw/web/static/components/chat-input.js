@@ -49,6 +49,9 @@ export class ChatInput extends LitElement {
     _trigger: { type: Object, state: true },
     _highlight: { type: Number, state: true },
     _mentionMatches: { type: Array, state: true },
+    _history: { type: Array, state: true },
+    _historyIndex: { type: Number, state: true },
+    _draft: { type: String, state: true },
   };
 
   createRenderRoot() { return this; }
@@ -87,6 +90,9 @@ export class ChatInput extends LitElement {
     this._trigger = null;
     this._highlight = 0;
     this._mentionMatches = [];
+    this._history = [];
+    this._historyIndex = -1;
+    this._draft = '';
     this._lastFetchedQuery = '';
     this._fetchTimeout = null;
   }
@@ -283,6 +289,44 @@ export class ChatInput extends LitElement {
       // Enter deliberately falls through: it sends, it never commits.
     }
 
+    const textarea = this.querySelector('textarea');
+    if (e.key === 'ArrowUp' && this._history.length > 0) {
+      const isFirstLine = textarea.selectionStart === textarea.selectionEnd &&
+        textarea.value.slice(0, textarea.selectionStart).indexOf('\n') === -1;
+
+      if (isFirstLine) {
+        e.preventDefault();
+        if (this._historyIndex === -1) {
+          this._draft = textarea.value;
+        }
+        if (this._historyIndex < this._history.length - 1) {
+          this._historyIndex++;
+          textarea.value = this._history[this._history.length - 1 - this._historyIndex];
+          textarea.dispatchEvent(new Event('input', { bubbles: true }));
+          textarea.selectionStart = textarea.selectionEnd = textarea.value.length;
+        }
+        return;
+      }
+    }
+
+    if (e.key === 'ArrowDown' && this._historyIndex !== -1) {
+      const isLastLine = textarea.selectionStart === textarea.selectionEnd &&
+        textarea.value.slice(textarea.selectionEnd).indexOf('\n') === -1;
+
+      if (isLastLine) {
+        e.preventDefault();
+        this._historyIndex--;
+        if (this._historyIndex === -1) {
+          textarea.value = this._draft;
+        } else {
+          textarea.value = this._history[this._history.length - 1 - this._historyIndex];
+        }
+        textarea.dispatchEvent(new Event('input', { bubbles: true }));
+        textarea.selectionStart = textarea.selectionEnd = textarea.value.length;
+        return;
+      }
+    }
+
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       this.#handleSend();
@@ -310,6 +354,14 @@ export class ChatInput extends LitElement {
       bubbles: true,
       composed: true,
     }));
+    if (text) {
+      // Don't record duplicates of the immediate previous message
+      if (this._history[this._history.length - 1] !== text) {
+        this._history = [...this._history, text];
+      }
+    }
+    this._historyIndex = -1;
+    this._draft = '';
     textarea.value = '';
     textarea.style.height = 'auto';
     this.#closeMenu();
