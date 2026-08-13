@@ -20,6 +20,7 @@ import time
 from typing import TYPE_CHECKING
 
 from .archive import append_message
+from .conversation_paths import conversation_dir
 from .media import EndTurnConfirm, ToolResult, WidgetInputPause
 from .tools import execute_tool
 
@@ -280,6 +281,20 @@ async def execute_single_tool(call_ctx, tc, semaphore):
         except (TypeError, ValueError) as e:
             log.warning(f"Failed to serialize ToolResult.data for {fn_name}: {e}")
             content += "\n\n[structured data omitted: serialization error]"
+
+    max_bytes = call_ctx.config.max_tool_output_bytes
+    if max_bytes is not None:
+        content_bytes = content.encode("utf-8")
+        if len(content_bytes) > max_bytes:
+            tool_outputs_dir = conversation_dir(call_ctx.config, call_ctx.conv_id, create=True) / "tool_outputs"
+            tool_outputs_dir.mkdir(parents=True, exist_ok=True)
+            filepath = tool_outputs_dir / f"{tool_call_id}.txt"
+            filepath.write_bytes(content_bytes)
+
+            truncated_bytes = content_bytes[:max_bytes]
+            content = truncated_bytes.decode("utf-8", errors="replace")
+            content += f"\n\n[Output truncated. Full output saved to {filepath}. Use the 'read' tool to inspect it.]"
+
     tool_msg = {
         "role": "tool",
         "tool_call_id": tool_call_id,
