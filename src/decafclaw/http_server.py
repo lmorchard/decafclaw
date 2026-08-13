@@ -15,7 +15,7 @@ from fastapi import FastAPI, Request
 from fastapi.routing import APIRoute
 from pydantic import BaseModel
 from starlette.responses import FileResponse, JSONResponse, Response
-from starlette.routing import Mount, WebSocketRoute, BaseRoute
+from starlette.routing import BaseRoute, Mount, WebSocketRoute
 from starlette.staticfiles import StaticFiles
 
 from .frontmatter import (
