@@ -1,7 +1,7 @@
 # Frozen acceptance checks
 
 **Source:** https://github.com/lmorchard/decafclaw/issues/785
-**Frozen at:** (pending)
+**Frozen at:** 8381ad48e4936b060d697804fc65b47ddb9901a4
 **Check files — read-only from Phase 1 onward:**
 (Every criterion is a command rather than a test; this list is empty.)
 
