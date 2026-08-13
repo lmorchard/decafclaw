@@ -138,7 +138,7 @@ class TestCompactHistory:
             "usage": None,
         }
 
-        with patch("decafclaw.compaction.call_llm", new_callable=AsyncMock, return_value=mock_response):
+        with patch("decafclaw.context.call_llm", new_callable=AsyncMock, return_value=mock_response):
             result = await compact_history(ctx, history)
 
         assert result is True
@@ -174,7 +174,7 @@ class TestCompactHistory:
         history = [{"role": "user", "content": "test"}]
         original_len = len(history)
 
-        with patch("decafclaw.compaction.call_llm", new_callable=AsyncMock, side_effect=Exception("LLM error")):
+        with patch("decafclaw.context.call_llm", new_callable=AsyncMock, side_effect=Exception("LLM error")):
             result = await compact_history(ctx, history)
 
         assert result is False
@@ -188,7 +188,7 @@ class TestCompactHistory:
 
         mock_response = {"content": "", "tool_calls": None, "role": "assistant", "usage": None}
 
-        with patch("decafclaw.compaction.call_llm", new_callable=AsyncMock, return_value=mock_response):
+        with patch("decafclaw.context.call_llm", new_callable=AsyncMock, return_value=mock_response):
             result = await compact_history(ctx, history)
 
         assert result is False
@@ -232,7 +232,7 @@ class TestCompactHistory:
             "usage": None,
         }
 
-        with patch("decafclaw.compaction.call_llm", new_callable=AsyncMock, return_value=mock_response) as mock_llm:
+        with patch("decafclaw.context.call_llm", new_callable=AsyncMock, return_value=mock_response) as mock_llm:
             result = await compact_history(ctx, history)
 
         assert result is True
@@ -350,7 +350,7 @@ class TestSkillProtectionDuringCompaction:
             "tool_calls": None, "role": "assistant", "usage": None,
         }
 
-        with patch("decafclaw.compaction.call_llm", new_callable=AsyncMock, return_value=mock_response):
+        with patch("decafclaw.context.call_llm", new_callable=AsyncMock, return_value=mock_response):
             result = await compact_history(ctx, history)
 
         assert result is True
@@ -421,7 +421,7 @@ class TestMemorySweep:
             return task
 
         with (
-            patch("decafclaw.compaction.call_llm", new_callable=AsyncMock, return_value=mock_response),
+            patch("decafclaw.context.call_llm", new_callable=AsyncMock, return_value=mock_response),
             patch("decafclaw.agent.run_agent_turn", new_callable=AsyncMock,
                   return_value=AsyncMock(text="sweep done")),
             patch("decafclaw.compaction.asyncio.create_task", side_effect=capture_create_task),
@@ -445,7 +445,7 @@ class TestMemorySweep:
         }
 
         with (
-            patch("decafclaw.compaction.call_llm", new_callable=AsyncMock, return_value=mock_response),
+            patch("decafclaw.context.call_llm", new_callable=AsyncMock, return_value=mock_response),
             patch("decafclaw.compaction.asyncio.create_task") as mock_ct,
         ):
             result = await compact_history(ctx, history)
@@ -536,7 +536,7 @@ class TestDecisionSliceIntegration:
             "usage": None,
         }
 
-        with patch("decafclaw.compaction.call_llm", new_callable=AsyncMock,
+        with patch("decafclaw.context.call_llm", new_callable=AsyncMock,
                    return_value=mock_response):
             result = await compact_history(ctx, history)
 
@@ -602,7 +602,7 @@ class TestDecisionSliceIntegration:
             "usage": None,
         }
 
-        with patch("decafclaw.compaction.call_llm", new_callable=AsyncMock,
+        with patch("decafclaw.context.call_llm", new_callable=AsyncMock,
                    return_value=mock_response):
             await compact_history(ctx, history)
 
@@ -635,7 +635,7 @@ class TestDecisionSliceIntegration:
             "usage": None,
         }
 
-        with patch("decafclaw.compaction.call_llm", new_callable=AsyncMock,
+        with patch("decafclaw.context.call_llm", new_callable=AsyncMock,
                    return_value=mock_response):
             result = await compact_history(ctx, history)
 
@@ -671,7 +671,7 @@ class TestDecisionSliceIntegration:
             "usage": None,
         }
 
-        with patch("decafclaw.compaction.call_llm", new_callable=AsyncMock,
+        with patch("decafclaw.context.call_llm", new_callable=AsyncMock,
                    return_value=mock_response):
             await compact_history(ctx, history)
 
@@ -753,3 +753,45 @@ class TestBuildSweepUserInput:
     def test_no_legacy_prefix_present(self):
         out = _build_sweep_user_input("any text")
         assert "Conversation history to review:" not in out
+
+@pytest.mark.asyncio
+async def test_compaction_uses_auxiliary_model():
+    """Verify compaction calls use the auxiliary model when configured."""
+    import pytest
+
+    from decafclaw.compaction import _single_summarize
+    from decafclaw.config import Config
+    from decafclaw.context import Context
+    from decafclaw.config_types import ModelConfig
+
+    config = Config()
+    config.model_configs = {"primary": ModelConfig(provider="p", model="m"), "aux": ModelConfig(provider="p", model="m")}
+    config.default_model = "primary"
+    config.auxiliary_model = "aux"
+
+    ctx = Context(config=config, event_bus=None)
+
+    # We'll mock ctx.aux_llm to verify it's called
+    class MockAuxClient:
+        def __init__(self):
+            self.called = False
+            self.messages = []
+
+        async def __call__(self, messages, **kwargs):
+            self.called = True
+            self.messages = messages
+            return {"content": "mocked summary"}
+
+    mock_client = MockAuxClient()
+
+    # Patch ctx.aux_llm
+    original_aux_llm = ctx.aux_llm
+    ctx.aux_llm = lambda: mock_client  # type: ignore
+
+    try:
+        res = await _single_summarize(ctx, config, "some text", "prompt")
+        assert res == "mocked summary"
+        assert mock_client.called
+        assert len(mock_client.messages) == 2
+    finally:
+        ctx.aux_llm = original_aux_llm
