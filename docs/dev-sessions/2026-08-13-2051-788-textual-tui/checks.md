@@ -13,3 +13,4 @@
 - C3: Good. Conversation switching tests history loading in UI. Fails with ModuleNotFoundError.
 - G1: Good. Ensures no raw `input()` blocking calls.
 - G2: Good. Ensures ConversationManager is used correctly.
+Freeze commit: 226d681ee2b92d27569ecd7c2120e065963cc2cb
