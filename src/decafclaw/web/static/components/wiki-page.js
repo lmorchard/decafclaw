@@ -10,6 +10,7 @@ import { LitElement, html, nothing } from 'lit';
 import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 import { renderMarkdown } from '../lib/markdown.js';
 import { encodePagePath } from '../lib/utils.js';
+import { WikiWriteMutex } from '../lib/wiki-page-write-mutex.js';
 import './wiki-editor.js';
 import './wiki-metadata.js';
 
@@ -87,28 +88,13 @@ export class WikiPage extends LitElement {
     this._renaming = false;
     /** @type {string} */ this._renameValue = '';
     /** @type {string} */ this._renameError = '';
+    this.#mutex = new WikiWriteMutex(this.#apiPut.bind(this));
   }
 
   /** @type {ReturnType<typeof setTimeout> | null} */
   #metaTimer = null;
-  /** @type {Record<string, any>} */
-  #pendingFields = {};
-  /**
-   * Gate serializing every metadata write (typed patch and raw replace)
-   * against every other. Whoever wants to write awaits any existing value
-   * here first, then installs their own until they're done — so a raw save
-   * and a typed-patch flush can never have two PUTs in flight at once, each
-   * carrying the same now-stale `modified`.
-   * @type {Promise<void> | null}
-   */
-  #metaInFlight = null;
-  /**
-   * What to resend for Retry/Overwrite after a metadata write fails. Typed
-   * patches don't need their fields stored here — a failed patch is merged
-   * back into #pendingFields, so retrying is just flushing again.
-   * @type {{kind: 'raw', raw: string} | {kind: 'patch'} | null}
-   */
-  #lastMetaAttempt = null;
+  /** @type {WikiWriteMutex} */
+  #mutex;
 
   /** @param {Map<string, any>} changed */
   willUpdate(changed) {
@@ -135,46 +121,14 @@ export class WikiPage extends LitElement {
 
   /** @param {CustomEvent} e */
   _onMetadataChange(e) {
-    Object.assign(this.#pendingFields, e.detail.fields);
-    // A conflict must be resolved (Reload/Overwrite) before we try again —
-    // auto-firing another flush would just carry the same stale `modified`
-    // into another silent 409. The edit stays queued in #pendingFields.
-    if (this._metaError?.status === 'conflict') return;
+    if (!this.#mutex.queueFields(e.detail.fields)) return;
     if (this.#metaTimer != null) clearTimeout(this.#metaTimer);
     this.#metaTimer = setTimeout(() => { this.#flushMetadata(); }, 600);
   }
 
   /**
-   * Serialize one metadata PUT against any other in-flight metadata write.
-   * Clears `_metaError` on success; leaves error handling to the caller on
-   * failure, since typed-patch and raw-replace failures need different
-   * retry bookkeeping.
-   * @param {Record<string, any>} payload
-   * @param {{skipModifiedCheck?: boolean, target?: MetaTarget}} [opts]
-   * @returns {Promise<{ok: boolean, status: number, error: string}>}
-   */
-  async #writeMeta(payload, opts) {
-    while (this.#metaInFlight) await this.#metaInFlight;
-    let release = () => {};
-    this.#metaInFlight = new Promise(r => { release = r; });
-    try {
-      const res = await this.#putMetadata(payload, opts);
-      // Only the page on screen owns `_metaError` / `#lastMetaAttempt`, so a
-      // departed page's success must not clear the current page's banner.
-      if (res.ok && !opts?.target) {
-        this._metaError = null;
-        this.#lastMetaAttempt = null;
-      }
-      return res;
-    } finally {
-      release();
-      this.#metaInFlight = null;
-    }
-  }
-
-  /**
    * Send any debounced typed patch now. Resolves when the write completes.
-   * @param {MetaTarget} [target] Page to write to, when it is no longer the
+   * @param {import('../lib/wiki-page-write-mutex.js').MetaTarget} [target] Page to write to, when it is no longer the
    *   one `this.page` names — i.e. we're navigating away from it.
    */
   async #flushMetadata(target) {
@@ -182,167 +136,61 @@ export class WikiPage extends LitElement {
       clearTimeout(this.#metaTimer);
       this.#metaTimer = null;
     }
-    const fields = this.#pendingFields;
-    // Don't auto-send into a known conflict; wait for the user to resolve it.
-    if (this._metaError?.status === 'conflict') {
-      // Unless we're leaving: _fetchPage() is about to wipe both the banner
-      // and the queued fields, so say what was lost instead of dropping it.
-      if (target && Object.keys(fields).length) {
-        this.#pendingFields = {};
-        this.#orphan(target.page, 'an unresolved conflict');
-      }
-      return;
-    }
-    this.#pendingFields = {};
-    if (!Object.keys(fields).length) return;
-    const res = await this.#writeMeta({ frontmatter: fields }, { target });
-    if (res.ok) return;
-    if (target) {
-      // #pendingFields, _metaError and #lastMetaAttempt are all implicitly
-      // scoped to whatever page is on screen now, and every retry affordance
-      // they drive PUTs to `this.page`. Requeueing the departed page's fields
-      // there is exactly the misdelivery we're fixing, so report the loss
-      // against the page it belongs to rather than carrying it forward.
-      this.#orphan(
-        target.page,
-        res.status === 409 ? 'it was modified externally' : res.error,
-      );
-      return;
-    }
-    // Nothing the user typed gets dropped: merge the failed fields back in
-    // (newer pending edits, if any landed during the write, win).
-    this.#pendingFields = { ...fields, ...this.#pendingFields };
-    this.#lastMetaAttempt = { kind: 'patch' };
-    this._metaError = res.status === 409
-      ? { status: 'conflict', message: 'Metadata was modified externally.' }
-      : { status: 'error', message: res.error };
-  }
-
-  /** @param {string} page @param {string} reason */
-  #orphan(page, reason) {
-    this._orphanMetaError =
-      `Metadata edit to "${page}" was not saved (${reason}). `
-      + 'Reopen that page to redo it.';
+    await this.#mutex.flush(this.page, this._modified, target);
+    this._syncMutexState();
   }
 
   /** @param {CustomEvent} e */
   async _onMetadataRawSave(e) {
-    // A typed patch landing after a raw replace would resurrect a key the
-    // raw save just deleted, so flush it first. The two PUT shapes are
-    // mutually exclusive server-side.
-    await this.#flushMetadata();
-    // If the flush left an unresolved conflict/error, don't pile a raw
-    // replace on top of it — the user needs to resolve that first, or a
-    // later flush of the still-pending typed fields could resurrect a key
-    // this raw save is about to remove. The banner above only talks about
-    // the typed fields, so give the raw editor its own inline word too
-    // (via its existing error channel) rather than a silent no-op — the
-    // raw text itself is left untouched.
-    if (this._metaError) {
-      /** @type {any} */ (this.querySelector('wiki-metadata'))
-        ?.setRawError('Resolve the pending metadata conflict above before saving raw YAML.');
-      return;
-    }
-    await this.#doRawSave(e.detail.raw);
-  }
-
-  /** @param {string} raw */
-  async #doRawSave(raw) {
-    const panel = /** @type {any} */ (this.querySelector('wiki-metadata'));
-    const res = await this.#writeMeta({ frontmatter_raw: raw });
-    if (res.ok) {
-      panel?.closeRaw();
-      // Anything typed while this write was in flight is still valid —
-      // send it now, on top of the just-applied raw content.
-      await this.#flushMetadata();
-    } else if (res.status === 409) {
-      this.#lastMetaAttempt = { kind: 'raw', raw };
-      this._metaError = { status: 'conflict', message: 'Metadata was modified externally.' };
-    } else {
+    const res = await this.#mutex.saveRaw(e.detail.raw, this.page, this._modified);
+    if (res?.ok) {
+      /** @type {any} */ (this.querySelector('wiki-metadata'))?.closeRaw();
+    } else if (res?.error && res.error !== 'Metadata was modified externally.' && res.error !== 'Resolve the pending metadata conflict above before saving raw YAML.') {
       // Malformed YAML etc. — keep the raw editor's existing inline error.
-      panel?.setRawError(res.error);
+      /** @type {any} */ (this.querySelector('wiki-metadata'))?.setRawError(res.error);
+    } else if (res?.error === 'Resolve the pending metadata conflict above before saving raw YAML.') {
+      /** @type {any} */ (this.querySelector('wiki-metadata'))?.setRawError(res.error);
     }
+    this._syncMutexState();
   }
 
   /** Refetch the page from the server, discarding any pending local metadata edit. */
   async _onMetadataReload() {
-    this.#pendingFields = {};
-    this.#lastMetaAttempt = null;
-    this._metaError = null;
+    this.#mutex.reload();
+    this._syncMutexState();
     /** @type {any} */ (this.querySelector('wiki-metadata'))?.closeRaw();
     await this._fetchPage();
   }
 
   /** Resend the last failed write, skipping the server's mtime check. */
   async _onMetadataOverwrite() {
-    const attempt = this.#lastMetaAttempt;
-    this.#lastMetaAttempt = null;
-    if (!attempt) {
-      this._metaError = null;
-      return;
+    const wasRaw = this.#mutex.lastMetaAttempt?.kind === 'raw';
+    await this.#mutex.overwrite(this.page, this._modified);
+    if (wasRaw && !this.#mutex.metaError) {
+      /** @type {any} */ (this.querySelector('wiki-metadata'))?.closeRaw();
     }
-    if (attempt.kind === 'raw') {
-      await this.#doOverwrite({ frontmatter_raw: attempt.raw }, attempt);
-      return;
-    }
-    const fields = this.#pendingFields;
-    this.#pendingFields = {};
-    if (!Object.keys(fields).length) {
-      this._metaError = null;
-      return;
-    }
-    await this.#doOverwrite({ frontmatter: fields }, { kind: 'patch' }, fields);
-  }
-
-  /**
-   * @param {Record<string, any>} payload
-   * @param {{kind: 'raw', raw: string} | {kind: 'patch'}} attempt
-   * @param {Record<string, any>} [patchFields] Original fields, to restore on failure
-   */
-  async #doOverwrite(payload, attempt, patchFields) {
-    const panel = /** @type {any} */ (this.querySelector('wiki-metadata'));
-    const res = await this.#writeMeta(payload, { skipModifiedCheck: true });
-    if (res.ok) {
-      if (attempt.kind === 'raw') panel?.closeRaw();
-      // Anything typed while conflicted (or while this overwrite was in
-      // flight) is still valid — send it now that we're no longer stuck.
-      await this.#flushMetadata();
-      return;
-    }
-    if (attempt.kind === 'patch' && patchFields) {
-      this.#pendingFields = { ...patchFields, ...this.#pendingFields };
-    }
-    this.#lastMetaAttempt = attempt;
-    this._metaError = { status: 'error', message: res.error };
+    this._syncMutexState();
   }
 
   /** Retry the last failed write with the normal (checked) path. */
   async _onMetadataRetry() {
-    const attempt = this.#lastMetaAttempt;
-    this._metaError = null;
-    if (attempt?.kind === 'raw') {
-      await this.#doRawSave(attempt.raw);
-    } else {
-      await this.#flushMetadata();
-    }
+    await this.#mutex.retry(this.page, this._modified);
+    this._syncMutexState();
+  }
+
+  _syncMutexState() {
+    this._metaError = this.#mutex.metaError;
+    this._orphanMetaError = this.#mutex.orphanMetaError;
   }
 
   /**
-   * @param {Record<string, any>} payload
-   * @param {{skipModifiedCheck?: boolean, target?: MetaTarget}} [opts]
-   * @returns {Promise<{ok: boolean, status: number, error: string}>}
+   * @param {object} body
+   * @param {string} page
+   * @param {number} modified
+   * @returns {Promise<{ok: boolean, status: number, error: string, data?: any}>}
    */
-  async #putMetadata(payload, opts) {
-    // Never read the page or mtime off `this` when an explicit target is
-    // given: `this.page` is already the page we navigated *to*, and pairing
-    // it with the departed page's `modified` sails past the server's
-    // `mtime > modified + 1` guard whenever the new page is the older one.
-    const page = opts?.target ? opts.target.page : this.page;
-    const modified = opts?.target ? opts.target.modified : this._modified;
+  async #apiPut(body, page, modified) {
     try {
-      const body = opts?.skipModifiedCheck
-        ? { ...payload }
-        : { ...payload, modified };
       const res = await fetch('/api/vault/' + encodePagePath(page), {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -352,31 +200,27 @@ export class WikiPage extends LitElement {
       if (!res.ok) {
         return { ok: false, status: res.status, error: data.error || `Save failed (${res.status})` };
       }
+      
       // Adopt the response into our own state only while we're still showing
-      // the page it was written to. This covers the explicit-target case and
-      // the narrower race where an untargeted write was already in flight
-      // when the user navigated.
+      // the page it was written to.
       if (page === this.page) {
         this._frontmatter = data.frontmatter ?? {};
-        // The response carries the new raw block, so no second GET is needed.
         this._frontmatterRaw = data.frontmatter_raw ?? '';
         this._frontmatterError = data.frontmatter_error ?? '';
         this._modified = data.modified;
-        // Push the new mtime into the body editor, or its next autosave 409s.
         /** @type {any} */
         const editor = this.querySelector('wiki-editor');
         if (editor) editor.modified = data.modified;
       }
-      return { ok: true, status: res.status, error: '' };
+      return { ok: true, status: res.status, error: '', data };
     } catch (err) {
       return { ok: false, status: 0, error: 'Save failed (network error)' };
     }
   }
 
   async _fetchPage() {
-    this.#pendingFields = {};
-    this.#lastMetaAttempt = null;
-    this._metaError = null;
+    this.#mutex.reload();
+    this._syncMutexState();
     this._loading = true;
     this._error = '';
     this._loaded = false;
