@@ -684,3 +684,44 @@ def test_diff_view_widget_validation(fake_config):
     assert ok is True, err
     ok, err = reg.validate("diff_view", {"before": "a", "after": "b", "view": "something"})
     assert ok is False
+
+
+def test_json_view_expand_depth(fake_config):
+    reg = load_widget_registry(fake_config,
+                               admin_dir=Path("/nonexistent/admin"))
+    desc = reg.get("json_view")
+    assert desc is not None
+    assert desc.tier == "bundled"
+    assert "inline" in desc.modes
+    # test validation with expand_depth
+    ok, err = reg.validate("json_view", {"value": {"a": 1}, "expand_depth": 3})
+    assert ok is True, err
+
+
+def test_json_view_path_filter(fake_config):
+    reg = load_widget_registry(fake_config,
+                               admin_dir=Path("/nonexistent/admin"))
+    desc = reg.get("json_view")
+    assert desc is not None
+    # test validation with path_filter
+    ok, err = reg.validate("json_view", {"value": {"a": 1}, "path_filter": "$.a"})
+    assert ok is True, err
+
+
+def test_json_view_schema_validation(fake_config):
+    reg = load_widget_registry(fake_config,
+                               admin_dir=Path("/nonexistent/admin"))
+    desc = reg.get("json_view")
+    assert desc is not None
+
+    # Missing required 'value'
+    bad_ok, _ = reg.validate("json_view", {"expand_depth": 2})
+    assert bad_ok is False
+
+    # Value can be anything (dict, list, string, number)
+    ok, err = reg.validate("json_view", {"value": [1, 2, 3]})
+    assert ok is True, err
+
+    # Wrong type for expand_depth
+    bad_ok, _ = reg.validate("json_view", {"value": {}, "expand_depth": "two"})
+    assert bad_ok is False
