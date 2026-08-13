@@ -225,3 +225,14 @@ TOOL_DEFINITIONS = [
         },
     },
 ]
+
+from dataclasses import dataclass
+@dataclass
+class SkillConfig:
+    dry_run: bool = False
+
+def init(config, skill_config: SkillConfig):
+    pass
+
+async def tool_vault_reorganize_folders(ctx: "Context", dry_run: bool | None = None) -> ToolResult:
+    return ToolResult(text="Not implemented yet")
