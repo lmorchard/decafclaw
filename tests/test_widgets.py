@@ -676,15 +676,15 @@ def test_json_view_schema_validation(fake_config):
                                admin_dir=Path("/nonexistent/admin"))
     desc = reg.get("json_view")
     assert desc is not None
-    
+
     # Missing required 'value'
     bad_ok, _ = reg.validate("json_view", {"expand_depth": 2})
     assert bad_ok is False
-    
+
     # Value can be anything (dict, list, string, number)
     ok, err = reg.validate("json_view", {"value": [1, 2, 3]})
     assert ok is True, err
-    
+
     # Wrong type for expand_depth
     bad_ok, _ = reg.validate("json_view", {"value": {}, "expand_depth": "two"})
     assert bad_ok is False
