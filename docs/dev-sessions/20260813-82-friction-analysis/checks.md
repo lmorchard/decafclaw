@@ -1,7 +1,7 @@
 # Frozen acceptance checks
 
 **Source:** https://github.com/lmorchard/decafclaw/issues/82
-**Frozen at:** (to be filled)
+**Frozen at:** 93d7d8ad
 **Check files — read-only from Phase 1 onward:**
 - `tests/test_friction.py`
 
