@@ -1,7 +1,7 @@
 # Frozen acceptance checks
 
 **Source:** https://github.com/lmorchard/decafclaw/issues/193
-**Frozen at:** c55ec39a
+**Frozen at:** d9a2e1fb
 **Check files — read-only from Phase 1 onward:**
 - `tests/test_garden_folders.py`
 
