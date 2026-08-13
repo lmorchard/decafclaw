@@ -649,6 +649,43 @@ def test_progress_tracker_validates_all_statuses(fake_config):
     missing_ok, _ = reg.validate("progress_tracker", {"steps": [{"label": "x"}]})
     assert missing_ok is False
 
+def test_diff_view_catalog(fake_config):
+    """WHEN widget metadata is requested via `/api/widgets`, THEN `diff_view` SHALL be returned with modes `["inline", "canvas"]`, `accepts_input: false`, and the correct data schema."""
+    reg = load_widget_registry(fake_config,
+                               admin_dir=Path("/nonexistent/admin"))
+    desc = reg.get("diff_view")
+    assert desc is not None
+    assert desc.tier == "bundled"
+    assert "inline" in desc.modes
+    assert "canvas" in desc.modes
+    assert desc.accepts_input is False
+    required = desc.data_schema.get("required", [])
+    assert "before" in required
+    assert "after" in required
+    props = desc.data_schema.get("properties", {})
+    assert "before" in props
+    assert "after" in props
+    assert "language" in props
+    assert "filename" in props
+    assert "view" in props
+
+
+def test_diff_view_widget_validation(fake_config):
+    """WHEN the `diff_view` widget is rendered with `before` and `after` text blobs, THEN the widget SHALL display the diff between the two texts with syntax highlighting and support switching between unified and split views."""
+    reg = load_widget_registry(fake_config,
+                               admin_dir=Path("/nonexistent/admin"))
+    ok, err = reg.validate("diff_view", {"before": "a", "after": "b"})
+    assert ok is True, err
+    # test required
+    ok, err = reg.validate("diff_view", {"before": "a"})
+    assert ok is False
+    # test view enum
+    ok, err = reg.validate("diff_view", {"before": "a", "after": "b", "view": "split"})
+    assert ok is True, err
+    ok, err = reg.validate("diff_view", {"before": "a", "after": "b", "view": "something"})
+    assert ok is False
+
+
 def test_json_view_expand_depth(fake_config):
     reg = load_widget_registry(fake_config,
                                admin_dir=Path("/nonexistent/admin"))
