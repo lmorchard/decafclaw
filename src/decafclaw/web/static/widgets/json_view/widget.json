@@ -1,0 +1,15 @@
+{
+  "name": "json_view",
+  "description": "Collapsible JSON tree for ToolResult.data payloads.",
+  "modes": ["inline", "canvas"],
+  "accepts_input": false,
+  "data_schema": {
+    "type": "object",
+    "required": ["value"],
+    "properties": {
+      "value": {},
+      "expand_depth": { "type": "integer", "default": 2 },
+      "path_filter": { "type": "string" }
+    }
+  }
+}
