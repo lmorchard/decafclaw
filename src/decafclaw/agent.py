@@ -15,6 +15,9 @@ import contextlib
 import inspect
 import json
 import logging
+from .telemetry import get_tracer
+
+_tracer = get_tracer(__name__)
 import re as _re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -691,6 +694,12 @@ class TurnRunner:
         self.turn_start_index = len(self.history)
 
     async def _run_iteration(self, iteration: int) -> IterationOutcome:
+        with _tracer.start_as_current_span("TurnRunner._run_iteration") as span:
+            span.set_attribute("iteration", iteration)
+            span.set_attribute("conversation.id", self.ctx.conv_id)
+            return await self._run_iteration_impl(iteration)
+
+    async def _run_iteration_impl(self, iteration: int) -> IterationOutcome:
         """Run one LLM iteration: cancel-check, tool refresh, deferred-list
         injection, the LLM call, and dispatch to tool-calls or no-tool-calls
         handler. Returns _Continue or _Final."""
