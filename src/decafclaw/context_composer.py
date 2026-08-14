@@ -39,6 +39,7 @@ from .memory_context import (
 from .notes import format_notes_for_context, read_notes
 from .preempt_search import extract_last_assistant_text, match_tools, tokenize
 from .prompts import wrap_xml
+from .telemetry import get_tracer
 from .tool_definitions import collect_all_tool_defs
 from .tools import TOOL_DEFINITIONS
 from .tools.search_tools import SEARCH_TOOL_DEFINITIONS
@@ -303,6 +304,8 @@ def _expand_background_event(rec: dict) -> list[dict]:
 
 
 class ContextComposer:
+    _tracer = get_tracer(__name__)
+
     """Assembles the complete context for each agent turn.
 
     Stateful per-conversation: tracks what was included and actual token usage
@@ -313,6 +316,20 @@ class ContextComposer:
         self.state = state or ComposerState()
 
     async def compose(
+        self,
+        ctx: "Context",
+        user_message: str,
+        history: list,
+        *,
+        mode: ComposerMode = ComposerMode.INTERACTIVE,
+        attachments: list[dict] | None = None,
+    ) -> ComposedContext:
+        with self._tracer.start_as_current_span("ContextComposer.compose") as span:
+            span.set_attribute("conversation.id", ctx.conv_id)
+            span.set_attribute("composer.mode", str(mode))
+            return await self._compose_impl(ctx, user_message, history, mode=mode, attachments=attachments)
+
+    async def _compose_impl(
         self,
         ctx: "Context",
         user_message: str,
