@@ -476,8 +476,14 @@ Instrumentation sidecars — append-only JSONL under `workspace/`, metadata only
 | `reflection_metrics_path` | str | `reflection/metrics.jsonl` | `TELEMETRY_REFLECTION_METRICS_PATH` |
 | `retrieval_enabled` | bool | `true` | `TELEMETRY_RETRIEVAL_ENABLED` |
 | `retrieval_path` | str | `telemetry/retrieval.jsonl` | `TELEMETRY_RETRIEVAL_PATH` |
+| `loop_breaker_enabled` | bool | `true` | `TELEMETRY_LOOP_BREAKER_ENABLED` |
+| `loop_breaker_path` | str | `telemetry/loop_breaker.jsonl` | `TELEMETRY_LOOP_BREAKER_PATH` |
+| `otlp_endpoint` | str \| None | `null` | `TELEMETRY_OTLP_ENDPOINT` |
+| `otlp_service_name` | str | `"decafclaw"` | `TELEMETRY_OTLP_SERVICE_NAME` |
 
 Paths are workspace-relative. Enabled by default so a deployed agent starts collecting without a config edit — the intent is a week of real data. No rotation yet (append-only); retention is a follow-up. Reports: `make tool-usage-report`, `make reflection-stats`, `make retrieval-report`.
+
+For OpenTelemetry configuration, see [Observability](observability.md).
 
 ### `env`
 
