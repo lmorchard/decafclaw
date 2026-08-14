@@ -9,11 +9,9 @@ Call sites can use either:
 """
 
 import logging
-from ..telemetry import get_tracer
-
-_tracer = get_tracer(__name__)
 from typing import Any
 
+from ..telemetry import get_tracer
 from .registry import (  # noqa: F401
     clear_providers,
     get_provider,
@@ -29,6 +27,8 @@ from .types import (  # noqa: F401
     Provider,
     StreamCallback,
 )
+
+_tracer = get_tracer(__name__)
 
 log = logging.getLogger(__name__)
 

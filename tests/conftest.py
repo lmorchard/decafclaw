@@ -2,6 +2,7 @@
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from opentelemetry import trace
 
 
 @pytest.fixture(autouse=True)
@@ -17,24 +18,15 @@ def mock_friction_llm(request):
     else:
         yield
 
-from opentelemetry import trace
 @pytest.fixture(autouse=True)
 def reset_otlp_singletons():
     yield
     trace._TRACER_PROVIDER = None
     if hasattr(trace._TRACER_PROVIDER_SET_ONCE, "__bool__"):
-        # Actually it's an object `_SetOnce` in newer opentelemetry. 
+        # Actually it's an object `_SetOnce` in newer opentelemetry.
         pass
-    
+
     # In opentelemetry-api 1.x, there is no _TRACER_PROVIDER_SET_ONCE boolean.
     # It might be in opentelemetry.util._once.Once
-    if hasattr(trace, "_TRACER_PROVIDER_SET_ONCE"):
-        trace._TRACER_PROVIDER_SET_ONCE._done = False
-
-@pytest.fixture(autouse=True)
-def reset_otlp_singletons():
-    yield
-    from opentelemetry import trace
-    trace._TRACER_PROVIDER = None
     if hasattr(trace, "_TRACER_PROVIDER_SET_ONCE"):
         trace._TRACER_PROVIDER_SET_ONCE._done = False
