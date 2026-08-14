@@ -1,7 +1,7 @@
 # Frozen acceptance checks
 
 **Source:** https://github.com/lmorchard/decafclaw/issues/786
-**Frozen at:** 3bf01d3e05d4480fd8f3a79e9b33a694667ee047 (2026-08-13)
+**Frozen at:** 2a51bee218665527abefbf88d7cc2d85667c1b9a (2026-08-13)
 **Check files — read-only from Phase 1 onward:**
 - `tests/test_telemetry_otlp.py`
 
