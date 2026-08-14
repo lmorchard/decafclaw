@@ -10,12 +10,14 @@ from decafclaw.tools.workspace_tools import (
     _resolve_safe,
     tool_file_share,
     tool_workspace_append,
+    tool_workspace_copy,
     tool_workspace_delete,
     tool_workspace_diff,
     tool_workspace_edit,
     tool_workspace_glob,
     tool_workspace_insert,
     tool_workspace_list,
+    tool_workspace_mkdir,
     tool_workspace_move,
     tool_workspace_preview_markdown,
     tool_workspace_read,
@@ -170,6 +172,62 @@ def test_read_large_file_with_range_not_capped(ctx):
     assert "showing first" not in _text(result).lower()
 
 
+# -- workspace_mkdir tests --
+
+
+def test_workspace_mkdir(ctx):
+    result = tool_workspace_mkdir(ctx, "new_dir/nested")
+    assert "Created directory" in _text(result)
+    assert ctx.config.workspace_path.joinpath("new_dir/nested").is_dir()
+
+def test_workspace_mkdir_exists(ctx):
+    ctx.config.workspace_path.joinpath("existing_dir").mkdir(parents=True)
+    result = tool_workspace_mkdir(ctx, "existing_dir")
+    assert "already exists" in _text(result).lower()
+
+def test_workspace_mkdir_escape_blocked(ctx):
+    result = tool_workspace_mkdir(ctx, "../../evil_dir")
+    assert "outside" in _text(result).lower()
+
+
+# -- workspace_copy tests --
+
+
+def test_workspace_copy(ctx):
+    tool_workspace_write(ctx, "src.txt", "copy me")
+    result = tool_workspace_copy(ctx, "src.txt", "dest.txt")
+    assert "Copied" in _text(result)
+    assert ctx.config.workspace_path.joinpath("src.txt").read_text() == "copy me"
+    assert ctx.config.workspace_path.joinpath("dest.txt").read_text() == "copy me"
+
+def test_workspace_copy_not_found(ctx):
+    result = tool_workspace_copy(ctx, "nope.txt", "dest.txt")
+    assert "error" in _text(result).lower()
+    assert "not found" in _text(result).lower()
+
+def test_workspace_copy_destination_exists(ctx):
+    tool_workspace_write(ctx, "src.txt", "src")
+    tool_workspace_write(ctx, "dest.txt", "dest")
+    result = tool_workspace_copy(ctx, "src.txt", "dest.txt")
+    assert "error" in _text(result).lower()
+    assert "already exists" in _text(result).lower()
+
+def test_workspace_copy_directory_blocked(ctx):
+    ctx.config.workspace_path.joinpath("srcdir").mkdir(parents=True, exist_ok=True)
+    result = tool_workspace_copy(ctx, "srcdir", "destdir")
+    assert "error" in _text(result).lower()
+    assert "is a directory" in _text(result).lower()
+
+def test_workspace_copy_escape_blocked_src(ctx):
+    result = tool_workspace_copy(ctx, "../../evil.txt", "dest.txt")
+    assert "outside" in _text(result).lower()
+
+def test_workspace_copy_escape_blocked_dst(ctx):
+    tool_workspace_write(ctx, "ok.txt", "data")
+    result = tool_workspace_copy(ctx, "ok.txt", "../../evil.txt")
+    assert "outside" in _text(result).lower()
+
+
 # -- workspace_move tests --
 
 
@@ -228,11 +286,29 @@ def test_delete_not_found(ctx):
     assert "not found" in _text(result).lower()
 
 
-def test_delete_directory_blocked(ctx):
-    ctx.config.workspace_path.joinpath("mydir").mkdir(parents=True)
-    result = tool_workspace_delete(ctx, "mydir")
+def test_workspace_delete_directory(ctx):
+    # Test deleting non-empty directory without recursive flag fails
+    dir_path = ctx.config.workspace_path.joinpath("mydir")
+    dir_path.mkdir(parents=True)
+    (dir_path / "file.txt").write_text("data")
+
+    result = tool_workspace_delete(ctx, "mydir", recursive=False)
     assert "error" in _text(result).lower()
     assert "directory" in _text(result).lower()
+    assert "recursive=true" in _text(result).lower()
+    assert dir_path.exists()
+
+    # Test deleting non-empty directory with recursive flag succeeds
+    result = tool_workspace_delete(ctx, "mydir", recursive=True)
+    assert "Deleted directory" in _text(result)
+    assert not dir_path.exists()
+
+def test_delete_empty_directory_succeeds(ctx):
+    dir_path = ctx.config.workspace_path.joinpath("emptydir")
+    dir_path.mkdir(parents=True)
+    result = tool_workspace_delete(ctx, "emptydir", recursive=False)
+    assert "Deleted directory" in _text(result)
+    assert not dir_path.exists()
 
 
 def test_delete_escape_blocked(ctx):
