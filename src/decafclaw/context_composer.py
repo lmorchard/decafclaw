@@ -12,7 +12,6 @@ import enum
 import html
 import json
 import logging
-from .telemetry import get_tracer
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -40,6 +39,7 @@ from .memory_context import (
 from .notes import format_notes_for_context, read_notes
 from .preempt_search import extract_last_assistant_text, match_tools, tokenize
 from .prompts import wrap_xml
+from .telemetry import get_tracer
 from .tool_definitions import collect_all_tool_defs
 from .tools import TOOL_DEFINITIONS
 from .tools.search_tools import SEARCH_TOOL_DEFINITIONS

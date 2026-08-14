@@ -15,9 +15,6 @@ import asyncio
 import functools
 import json
 import logging
-from .telemetry import get_tracer
-
-_tracer = get_tracer(__name__)
 import re as _re
 import time
 from typing import TYPE_CHECKING
@@ -25,7 +22,10 @@ from typing import TYPE_CHECKING
 from .archive import append_message
 from .conversation_paths import conversation_dir
 from .media import EndTurnConfirm, ToolResult, WidgetInputPause
+from .telemetry import get_tracer
 from .tools import execute_tool
+
+_tracer = get_tracer(__name__)
 
 if TYPE_CHECKING:
     from decafclaw.context import Context

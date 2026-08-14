@@ -15,9 +15,6 @@ import contextlib
 import inspect
 import json
 import logging
-from .telemetry import get_tracer
-
-_tracer = get_tracer(__name__)
 import re as _re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -25,7 +22,6 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from decafclaw.context import Context
 
-if TYPE_CHECKING:
     from .context_composer import ComposedContext
     from .reflection import ReflectionResult
 
@@ -49,8 +45,11 @@ from .media import EndTurnConfirm, ToolResult, WidgetInputPause, extract_workspa
 from .persistence import read_skill_data, read_skills_state, write_skill_data, write_skills_state
 from .reflection_metrics import classify_outcome, response_delta
 from .skills import activate_always_loaded
+from .telemetry import get_tracer
 from .tool_definitions import build_tool_list, refresh_dynamic_tools
 from .tool_execution import execute_tool_calls
+
+_tracer = get_tracer(__name__)
 
 _TASK_MODE_TO_COMPOSER: dict[str, ComposerMode] = {
     "heartbeat": ComposerMode.HEARTBEAT,
