@@ -14,10 +14,10 @@
 ## Phase 2: Instrument Core Execution Pathways
 **Advances:** C1
 **Focus:** Wrap critical pathways in the agent loop with OTLP spans.
-- [ ] Instrument `ContextComposer.compose` (`src/decafclaw/context_composer.py`).
-- [ ] Instrument `execute_single_tool` (`src/decafclaw/tool_execution.py`).
-- [ ] Instrument `TurnRunner._run_iteration` (`src/decafclaw/agent.py`).
-- [ ] Verify: `pytest tests/test_telemetry_otlp.py::test_otlp_spans_started_on_core_pathways`
+- [x] Instrument `ContextComposer.compose` (`src/decafclaw/context_composer.py`).
+- [x] Instrument `execute_single_tool` (`src/decafclaw/tool_execution.py`).
+- [x] Instrument `TurnRunner._run_iteration` (`src/decafclaw/agent.py`).
+- [x] Verify: `pytest tests/test_telemetry_otlp.py::test_otlp_spans_started_on_core_pathways`
 
 ## Phase 3: Instrument LLM Client
 **Advances:** C2
