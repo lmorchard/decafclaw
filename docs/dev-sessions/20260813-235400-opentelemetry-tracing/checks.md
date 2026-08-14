@@ -30,3 +30,7 @@ AT FREEZE: fails
 - G1: accepted - ensures we don't break existing telemetry.
 
 ## Amendments
+
+## Tamper check
+- Verdict: clean
+- Command: `git diff 2a51bee218665527abefbf88d7cc2d85667c1b9a -- tests/test_telemetry_otlp.py`
