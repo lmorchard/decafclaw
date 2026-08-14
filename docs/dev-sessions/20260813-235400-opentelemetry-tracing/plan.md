@@ -22,8 +22,8 @@
 ## Phase 3: Instrument LLM Client
 **Advances:** C2
 **Focus:** Wrap LLM requests with OTLP spans.
-- [ ] Instrument `call_llm` and `call_llm_streaming` in `src/decafclaw/llm/__init__.py`.
-- [ ] Verify: `pytest tests/test_telemetry_otlp.py::test_llm_client_emits_span`
+- [x] Instrument `call_llm` and `call_llm_streaming` in `src/decafclaw/llm/__init__.py`.
+- [x] Verify: `pytest tests/test_telemetry_otlp.py::test_llm_client_emits_span`
 
 ## Phase 4: Integration Verification
 **Advances:** G1
