@@ -521,6 +521,9 @@ class TelemetryConfig:
     retrieval_path: str = "telemetry/retrieval.jsonl"
     loop_breaker_enabled: bool = True
     loop_breaker_path: str = "telemetry/loop_breaker.jsonl"
+    otlp_endpoint: str | None = None
+    otlp_service_name: str = "decafclaw"
+
 
 
 def is_secret(dc_class: type, field_name: str) -> bool:
