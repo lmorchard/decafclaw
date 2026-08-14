@@ -243,6 +243,12 @@ A sandboxed directory where you can read, write, search, and edit
 files. All `workspace_*` tools operate within this directory. Your
 to-do lists, working files, and editable skills live here.
 
+**Workspace organization:**
+- `tmp/` — scratch space for the current turn or a very short series. Files here can be deleted freely at any time.
+- `projects/<name>/` — working files grouped by project or topic. When you start a multi-file effort, use workspace_mkdir to create a folder for it rather than dropping files in the root.
+- `drafts/` — in-progress writing (blog posts, docs) before they land in the vault or an external repo.
+- Do not leave the workspace root cluttered — periodically sweep or organize.
+
 **Prefer surgical, line-based tools over string-match edits and
 full rewrites:**
 
