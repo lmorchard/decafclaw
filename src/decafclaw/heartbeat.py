@@ -91,8 +91,9 @@ def _split_sections(text: str) -> list[dict]:
             body = "\n".join(current_lines).strip()
             if body:
                 # Parse frontmatter if present
-                import yaml
                 import re
+
+                import yaml
                 allowed_tools = []
                 disallowed_tools = []
                 fm_match = re.match(r"^---\n(.*?)\n---(?:\n|$)", body, re.DOTALL)

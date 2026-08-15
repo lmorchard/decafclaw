@@ -144,7 +144,7 @@ def parse_schedule_file(path: Path) -> ScheduleTask | None:
     elif isinstance(allowed_tools_raw, list):
         allowed_tools_raw = ", ".join(str(t) for t in allowed_tools_raw)
     allowed_tools, shell_patterns = _parse_allowed_tools(str(allowed_tools_raw))
-    
+
     disallowed_tools_raw = meta.get("disallowed-tools", "")
     if disallowed_tools_raw is None:
         disallowed_tools_raw = ""
@@ -748,11 +748,6 @@ async def run_schedule_task(config, event_bus, manager, task: ScheduleTask,
 
     allowed_tools_set = None
     preapproved = set()
-    if task.disallowed_tools:
-        ctx.tools.disallowed = set(task.disallowed_tools)
-        
-    if task.disallowed_tools:
-        fm["disallowed-tools"] = ", ".join(task.disallowed_tools)
     if task.allowed_tools or task.shell_patterns:
         allowed_tools_set = set(task.allowed_tools)
         if task.shell_patterns:
@@ -783,6 +778,8 @@ async def run_schedule_task(config, event_bus, manager, task: ScheduleTask,
         if allowed_tools_set is not None:
             ctx.tools.allowed = allowed_tools_set
             ctx.tools.preapproved = preapproved
+        if task.disallowed_tools:
+            ctx.tools.disallowed = set(task.disallowed_tools)
         if shell_patterns:
             ctx.tools.preapproved_shell_patterns = shell_patterns
         if email_recipients is not None:

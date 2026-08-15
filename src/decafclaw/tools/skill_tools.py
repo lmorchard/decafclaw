@@ -865,38 +865,38 @@ async def activate_skill_internal(ctx: "Context", skill_info, reloading: bool = 
             await _call_init(module, ctx.config, skill_info.name)
 
             allowed_set = set(skill_info.allowed_tools) if skill_info.allowed_tools else None
-            
+
             existing_tools = set()
             for s_name, (s_tools, _) in ctx.tools.skill_contributions.items():
                 if s_name != name:
                     existing_tools.update(s_tools.keys())
-            
+
             filtered_defs = []
             filtered_tools = {}
-            
+
             # Add all non-colliding tools by default? No, we filter by allowed_tools.
             # But we don't know which tools dictionary key belongs to which definition.
             # In typical cases, they match.
             for t_def in list(tool_defs):
                 t_name = t_def.get("function", {}).get("name")
-                if not t_name: 
+                if not t_name:
                     filtered_defs.append(t_def)
                     continue
-                
+
                 if allowed_set is not None and t_name not in allowed_set:
                     continue
-                    
+
                 final_name = t_name
                 if t_name in existing_tools:
                     final_name = f"{name}__{t_name}"
                     t_def["function"]["name"] = final_name
-                
+
                 filtered_defs.append(t_def)
-                
+
                 # Try to map the function in tools dict
                 if t_name in tools:
                     filtered_tools[final_name] = tools[t_name]
-            
+
             # If there are tools keys that were not mapped by name (like internal_key), just include them
             # if they aren't explicitly filtered out.
             for k, v in tools.items():

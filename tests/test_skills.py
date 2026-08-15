@@ -2697,15 +2697,15 @@ async def test_skill_invocation_flags_enforced(ctx, tmp_path):
     skill_dir2 = tmp_path / "hidden_from_model"
     _write_skill(skill_dir2, "name: hidden_from_model\ndescription: desc\ndisable-model-invocation: true")
 
-    from decafclaw.skills import parse_skill_md, find_command
+    from decafclaw.skills import find_command, parse_skill_md
     info1 = parse_skill_md(skill_dir1 / "SKILL.md")
     info2 = parse_skill_md(skill_dir2 / "SKILL.md")
-    
+
     ctx.config.discovered_skills = [info1, info2]
-    
+
     # User invocation enforcement
     assert find_command("hidden_from_user", ctx.config.discovered_skills) is None
-    
+
     # Model invocation enforcement
     from decafclaw.tools.skill_tools import tool_activate_skill
     result = await tool_activate_skill(ctx, "hidden_from_model")
@@ -2729,8 +2729,8 @@ TOOL_DEFINITIONS = [
     info = parse_skill_md(skill_dir / "SKILL.md")
     ctx.config.discovered_skills = [info]
 
-    from decafclaw.tools.skill_tools import activate_skill_internal
     from decafclaw.tool_definitions import build_tool_list
+    from decafclaw.tools.skill_tools import activate_skill_internal
     await activate_skill_internal(ctx, info)
     tools, text = build_tool_list(ctx)
     tool_names = [t["function"]["name"] for t in tools]
@@ -2758,16 +2758,15 @@ TOOL_DEFINITIONS = [{"function": {"name": "my_tool", "description": "2"}}]
     from decafclaw.skills import parse_skill_md
     info1 = parse_skill_md(skill1_dir / "SKILL.md")
     info2 = parse_skill_md(skill2_dir / "SKILL.md")
-    
+
     ctx.config.discovered_skills = [info1, info2]
-    
+
     from decafclaw.tools.skill_tools import activate_skill_internal
     await activate_skill_internal(ctx, info1)
     await activate_skill_internal(ctx, info2)
-    
+
     from decafclaw.tool_definitions import build_tool_list
     tools, text = build_tool_list(ctx)
-    
-    tool_names = [t["function"]["name"] for t in tools]
+
     my_tools = [t for t in tools if "my_tool" in t["function"]["name"]]
     assert len(my_tools) == 2
