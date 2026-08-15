@@ -365,6 +365,16 @@ HTTP server for interactive buttons and web UI.
 | `secret` | str | `""` | `HTTP_SECRET` | yes |
 | `base_url` | str | `""` | `HTTP_BASE_URL` | |
 
+### `shell`
+
+Settings for shell command execution and pre-approval logic (see #473).
+
+| Field | Type | Default | Env Var |
+|-------|------|---------|---------|
+| `aux_approval_enabled` | bool | `false` | `SHELL_AUX_APPROVAL_ENABLED` |
+
+When `aux_approval_enabled` is `true`, `check_shell_approval()` invokes the auxiliary LLM to screen unrecognized commands. If the aux LLM deems the command low-risk (e.g. `ls -la`, `git status`), it is auto-approved without prompting the user. If the aux LLM deems it risky or errors out, it falls through to standard interactive confirmation. Auto-approved patterns are temporarily cached per-conversation so repeated benign commands don't trigger redundant LLM calls.
+
 ### `agent`
 
 Agent identity, loop limits, tool loading, and delegation.
