@@ -168,6 +168,12 @@ class HttpConfig:
 
 
 @dataclass
+@dataclass
+class ShellConfig:
+    aux_approval_enabled: bool = False
+
+
+@dataclass
 class TerminalConfig:
     enabled: bool = True
     buffer_bytes: int = 10 * 1024 * 1024      # ring buffer cap per session
