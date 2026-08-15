@@ -40,6 +40,7 @@ class ToolState:
     allowed: set[str] | None = None
     preapproved: set[str] = field(default_factory=set)
     preapproved_shell_patterns: list[str] = field(default_factory=list)
+    llm_approved_shell_patterns: list[str] = field(default_factory=list)
     # Scheduled-task overlay: addresses + `@domain.com` suffix patterns
     # that bypass confirmation for the `send_email` tool. Merged with
     # `config.email.allowed_recipients` at check time. Empty for
