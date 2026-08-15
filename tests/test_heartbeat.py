@@ -573,7 +573,7 @@ def test_sentinel_helper_rejects_an_empty_sentinel():
     assert response_starts_with_sentinel("anything at all", "   ") is False
 
 @pytest.mark.asyncio
-async def test_heartbeat_tool_restrictions(ctx, tmp_path):
+async def test_heartbeat_tool_restrictions(ctx, config, tmp_path):
     # CRITERION: WHEN a heartbeat section or schedule defines tool allowlists or blocklists in frontmatter, THEN the system SHALL enforce them during heartbeat execution.
     from decafclaw.heartbeat import _parse_heartbeat_sections
     from decafclaw.config import Config
@@ -598,7 +598,7 @@ Do another thing.
     pass
 
 @pytest.mark.asyncio
-async def test_heartbeat_tool_restrictions(ctx, tmp_path):
+async def test_heartbeat_tool_restrictions(ctx, config, tmp_path):
     from decafclaw.heartbeat import _split_sections
     text = """## Section 1
 ---
@@ -623,7 +623,7 @@ Do another thing.
 
     # Test schedule parsing of disallowed-tools
     from decafclaw.schedules import discover_schedules, ScheduleTask
-    schedule_file = tmp_path / "data" / "schedules" / "test_sched.md"
+    schedule_file = config.agent_path / "schedules" / "test_sched.md"
     schedule_file.parent.mkdir(parents=True, exist_ok=True)
     schedule_file.write_text("""---
 name: test_sched
@@ -633,9 +633,7 @@ disallowed-tools: [workspace_write]
 Do something.
 """)
     from decafclaw.config import Config
-    cfg = Config()
-    cfg.agent_path = tmp_path / "data"
-    cfg.workspace_path = tmp_path / "workspace"
-    tasks = discover_schedules(cfg, [])
-    assert len(tasks) == 1
-    assert tasks[0].disallowed_tools == ["workspace_write"]
+    tasks = discover_schedules(config)
+    task = next(t for t in tasks if t.name == "test_sched")
+    assert task.disallowed_tools == ["workspace_write"]
+    
