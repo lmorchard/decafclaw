@@ -502,7 +502,7 @@ class LoopBreakerConfig:
 @dataclass
 class AuditLogConfig:
     """Persistent audit log event bus subscriber configuration.
-    
+
     Records tool calls, LLM requests, agent decisions, skill activations,
     and MCP connections to a structured JSONL log. Supports file rotation
     or truncation.

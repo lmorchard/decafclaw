@@ -1,9 +1,9 @@
 import json
 import logging
 from datetime import datetime, timezone
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Awaitable, Callable
-from logging.handlers import RotatingFileHandler
 
 log = logging.getLogger(__name__)
 
@@ -45,11 +45,11 @@ class AuditLogSubscriber:
         self.config = config
         path = config.workspace_path / config.audit_log.path
         path.parent.mkdir(parents=True, exist_ok=True)
-        
+
         self.logger = logging.getLogger(f"decafclaw.audit_log.writer.{id(self)}")
         self.logger.setLevel(logging.INFO)
         self.logger.propagate = False
-        
+
         handler = RotatingFileHandler(
             path,
             maxBytes=config.audit_log.max_size_bytes,
@@ -69,7 +69,7 @@ class AuditLogSubscriber:
     async def handle_event(self, event: dict) -> None:
         try:
             event_type = event.get("type")
-            
+
             if event_type == "llm_end":
                 usage = event.get("usage", {})
                 self.append_record({
@@ -88,7 +88,7 @@ class AuditLogSubscriber:
                     args_str = json.dumps(sanitized_args)
                 except Exception:
                     args_str = str(sanitized_args)
-                    
+
                 self.append_record({
                     "event": "tool_call",
                     "tool_name": event.get("tool", ""),

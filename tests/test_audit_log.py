@@ -3,10 +3,11 @@ import json
 import os
 from pathlib import Path
 from unittest.mock import patch
+
 import pytest
 
+from decafclaw.audit_log import AuditLogSubscriber, make_audit_log_subscriber
 from decafclaw.events import EventBus
-from decafclaw.audit_log import make_audit_log_subscriber, AuditLogSubscriber
 
 pytestmark = pytest.mark.asyncio
 
@@ -124,7 +125,7 @@ async def test_audit_log_records_skill_and_mcp(tmp_path):
     rec1 = json.loads(lines[0])
     assert rec1["event"] == "skill_activated"
     assert rec1["identifier"] == "test_skill"
-    
+
     rec2 = json.loads(lines[1])
     assert rec2["event"] == "mcp_server_connected"
     assert rec2["identifier"] == "test_mcp_server"
@@ -142,7 +143,7 @@ async def test_audit_log_rotation(tmp_path):
     })()
 
     subscriber = AuditLogSubscriber(config)
-    
+
     # Write entries that exceed 100 bytes
     for i in range(5):
         subscriber.append_record({
@@ -150,13 +151,13 @@ async def test_audit_log_rotation(tmp_path):
             "index": i,
             "data": "x" * 50
         })
-    
+
     log_path = tmp_path / "audit.jsonl"
     assert log_path.exists()
-    
+
     # Check that rotation occurred
     assert (tmp_path / "audit.jsonl.1").exists()
-    
+
     # Content of the latest log file should only be the last one or two events
     content = log_path.read_text().strip()
     assert "x" * 50 in content
