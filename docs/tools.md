@@ -85,6 +85,7 @@ Background process management (`shell_background_start/status/stop/list`) lives 
 1. `shell` (or the calling tool name) is in `ctx.tools.preapproved` — blanket approval from a command's `allowed-tools`.
 2. The command matches a **scoped pattern** from a skill's `allowed-tools: shell(...)` (see [Skills](skills.md#environment-for-shell-based-skills)).
 3. The command matches a **persisted pattern** in `data/{agent_id}/shell_allow_patterns.json`.
+4. (If `config.shell.aux_approval_enabled` is true) The **auxiliary LLM** analyzes the command and its risk, returning `auto_approve: true` for low-risk read-only commands (e.g. `ls`, `git status`). The pattern is then cached in `ctx.tools.llm_approved_shell_patterns` for the duration of the conversation.
 
 Otherwise it falls through to a user confirmation, which offers to save a suggested pattern.
 
