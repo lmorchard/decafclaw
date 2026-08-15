@@ -25,6 +25,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Awaitable, Callable
 
+from .telemetry_rotation import rotate_if_needed
+
 log = logging.getLogger(__name__)
 
 FINGERPRINT_MAX = 120
@@ -90,6 +92,7 @@ def append_record(config, record: dict) -> None:
     try:
         path = _metrics_path(config)
         path.parent.mkdir(parents=True, exist_ok=True)
+        rotate_if_needed(path, getattr(config.telemetry, "retention_days", 30))
         with path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(record) + "\n")
     except Exception as exc:  # fail-open: telemetry must never break a turn
