@@ -567,7 +567,7 @@ class MCPRegistry:
 
             state.status = "connected"
             state.retry_count = 0
-            
+
             if self.event_bus:
                 try:
                     await self.event_bus.publish({
