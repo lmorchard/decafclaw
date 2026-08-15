@@ -2232,6 +2232,7 @@ def _schedule_to_dict(config, task, skill_schedule_names: set | None = None) -> 
         "channel": task.channel,
         "model": task.model,
         "allowed_tools": list(task.allowed_tools),
+        "disallowed_tools": list(task.disallowed_tools),
         "required_skills": list(task.required_skills),
         "shell_patterns": list(task.shell_patterns),
         "email_recipients": list(task.email_recipients),

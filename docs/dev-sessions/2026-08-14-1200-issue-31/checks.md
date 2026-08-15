@@ -39,3 +39,9 @@ AT FREEZE: fails - `AssertionError: assert 1 == 2` (correct reason: duplicate to
 - G2: accepted — the existing suite passes.
 
 ## Amendments
+
+- C2: Amended test_heartbeat_tool_restrictions to correctly use the config fixture and discover_schedules signature.
+  Old: async def test_heartbeat_tool_restrictions(ctx, tmp_path): ... cfg = Config() ... tasks = discover_schedules(cfg, [])
+  New: async def test_heartbeat_tool_restrictions(ctx, config, tmp_path): ... tasks = discover_schedules(config) ...
+  Reason: Original check used incorrect argument signature for discover_schedules and lacked the config fixture.
+  New freeze sha for tests/test_heartbeat.py: ac95038a
