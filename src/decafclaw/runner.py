@@ -110,6 +110,11 @@ async def run_all(app_ctx):
 
         # Wire telemetry subscribers (measurement only, fail-open). Each
         # records to an append-only JSONL sidecar under workspace/.
+        if config.audit_log.enabled:
+            from .audit_log import make_audit_log_subscriber
+            app_ctx.event_bus.subscribe(make_audit_log_subscriber(config))
+            log.info("Audit log subscriber active (%s)",
+                     config.audit_log.path)
         if config.telemetry.tool_usage_enabled:
             from .tool_telemetry import make_tool_telemetry_subscriber
             app_ctx.event_bus.subscribe(make_tool_telemetry_subscriber(config))
