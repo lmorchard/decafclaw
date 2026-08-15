@@ -19,6 +19,7 @@ from dotenv import load_dotenv
 
 from .config_types import (
     AgentConfig,
+    AuditLogConfig,
     BackgroundConfig,
     CleanupConfig,
     CompactionConfig,
@@ -192,6 +193,7 @@ class Config:
     vault: VaultConfig = field(default_factory=VaultConfig)
     vault_guide: VaultGuideConfig = field(default_factory=VaultGuideConfig)
     notifications: NotificationsConfig = field(default_factory=NotificationsConfig)
+    audit_log: AuditLogConfig = field(default_factory=AuditLogConfig)
     email: EmailConfig = field(default_factory=EmailConfig)
     background: BackgroundConfig = field(default_factory=BackgroundConfig)
     workflow: WorkflowConfig = field(default_factory=WorkflowConfig)
@@ -481,6 +483,9 @@ def load_config() -> Config:
     notifications = load_sub_config(
         NotificationsConfig, file_data.get("notifications", {}), "NOTIFICATIONS")
 
+    audit_log = load_sub_config(
+        AuditLogConfig, file_data.get("audit_log", {}), "AUDIT_LOG")
+
     email = load_sub_config(
         EmailConfig, file_data.get("email", {}), "EMAIL")
 
@@ -588,6 +593,7 @@ def load_config() -> Config:
         vault=vault,
         vault_guide=vault_guide,
         notifications=notifications,
+        audit_log=audit_log,
         email=email,
         background=background,
         workflow=workflow,
