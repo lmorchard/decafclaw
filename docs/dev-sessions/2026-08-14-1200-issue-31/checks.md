@@ -1,7 +1,7 @@
 # Frozen acceptance checks
 
 **Source:** https://github.com/lmorchard/decafclaw/issues/31
-**Frozen at:** (pending)
+**Frozen at:** 2024e693
 **Check files — read-only from Phase 1 onward:**
 - `tests/test_skills.py`
 - `tests/test_heartbeat.py`
