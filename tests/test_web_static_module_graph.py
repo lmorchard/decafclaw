@@ -69,7 +69,7 @@ def _resolve(source: pathlib.Path, specifier: str) -> pathlib.Path | None:
     """
     target = specifier.split("?")[0].split("#")[0]
     if target.startswith("/static/"):
-        return STATIC_DIR / target[len("/static/") :]
+        return (STATIC_DIR / target[len("/static/") :]).resolve()
     if target.startswith("./") or target.startswith("../"):
         return (source.parent / target).resolve()
     return None
@@ -80,12 +80,25 @@ def test_served_module_specifiers_resolve_on_disk():
     for module in _served_modules():
         for lineno, specifier in _specifiers(module):
             resolved = _resolve(module, specifier)
-            if resolved is not None and not resolved.is_file():
-                rel = module.relative_to(STATIC_DIR)
-                broken.append(f"  {rel}:{lineno} imports {specifier!r}")
+            if resolved is None:
+                continue
+            rel = module.relative_to(STATIC_DIR)
+            # A specifier that climbs out of the mount is unreachable even if
+            # the file exists. `..` does not mean the same thing on both sides:
+            # the browser clamps at the URL root, so `../../../foo.js` from
+            # `/static/lib/` requests `/foo.js` — off the mount, always a 404 —
+            # while `pathlib` keeps walking up into the repo and could land on
+            # a real file. Checking containment keeps the two from diverging.
+            if not resolved.is_relative_to(STATIC_DIR):
+                broken.append(
+                    f"  {rel}:{lineno} imports {specifier!r} — climbs outside "
+                    "static/, so the browser requests a URL off the mount"
+                )
+            elif not resolved.is_file():
+                broken.append(f"  {rel}:{lineno} imports {specifier!r} — no such file")
 
     assert not broken, (
-        "Browser-served modules import files that do not exist. The browser "
+        "Browser-served modules import files the browser cannot fetch. It "
         "aborts the whole subgraph on any of these, so each one can blank the "
         "web UI:\n" + "\n".join(broken)
     )

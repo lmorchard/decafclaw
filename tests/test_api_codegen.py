@@ -8,10 +8,17 @@ covered none of the real output.
 """
 
 import pathlib
+import re
 import subprocess
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 CLIENT_DIR = REPO_ROOT / "src" / "decafclaw" / "web" / "static" / "lib" / "api-client"
+
+# Require the `from` / `import` context rather than matching `api-client/`
+# anywhere, so a comment or doc string mentioning the path is not a "reference".
+_API_CLIENT_IMPORT_RE = re.compile(
+    r"""(?:\bfrom\s*|\bimport\s*\(?\s*)['"][^'"]*api-client/[^'"]*['"]"""
+)
 
 
 def test_gen_api_client_emits_the_client_tree():
@@ -43,7 +50,11 @@ def test_generated_client_is_not_imported_by_served_code():
         for path in static_dir.rglob("*.js")
         if "node_modules" not in path.parts
         and "vendor" not in path.parts
-        and "api-client/" in path.read_text()
+        # `*.test.js` is never served, and vitest transpiles TS, so a unit test
+        # importing this tree is legitimate — matching the exclusion in
+        # `tests/test_web_static_module_graph.py`.
+        and not path.name.endswith(".test.js")
+        and _API_CLIENT_IMPORT_RE.search(path.read_text())
     ]
     assert not importers, (
         "These browser-served modules reference the generated api-client, which "
