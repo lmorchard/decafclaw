@@ -181,7 +181,9 @@ eval-history:
 build-eval-fixtures:
 	uv run python scripts/build-eval-fixtures.py
 
+# Regenerates openapi.json/yaml and the TypeScript client under
+# static/lib/api-client/. NOTE: nothing compiles that client to .js, so it is
+# not importable from browser-served code today — see #843.
 .PHONY: gen-api-client
 gen-api-client:
 	uv run python scripts/gen_api_client.py
-	touch src/decafclaw/web/static/lib/api-client.ts
