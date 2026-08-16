@@ -26,12 +26,10 @@ def dump_openapi():
         "--output", "src/decafclaw/web/static/lib/api-client",
         "--client", "fetch"
     ]
+    # openapi-typescript-codegen emits a directory tree of .ts files, not a
+    # single module. Nothing compiles them to .js, so browser-served code
+    # cannot import the result yet — see #843.
     subprocess.run(cmd, check=True)
-    # The output is a directory, not a single file. But the issue says:
-    # "assert the output .ts file is created/updated"
-    # Actually openapi-typescript generates a single file. Wait! openapi-typescript-codegen generates a folder.
-    # Let's use openapi-typescript to generate a single file?
-    pass
 
 if __name__ == "__main__":
     dump_openapi()

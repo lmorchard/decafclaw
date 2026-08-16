@@ -1,8 +1,6 @@
 import { LitElement, html, css } from 'lit';
 import { getActiveConvId } from '/static/lib/canvas-state.js';
 
-const INLINE_MAX_HEIGHT = '20rem';
-
 export class JsonViewWidget extends LitElement {
   static properties = {
     data: { type: Object },
@@ -22,8 +20,12 @@ export class JsonViewWidget extends LitElement {
       border-radius: var(--pico-border-radius);
       padding: 0.5rem;
     }
+    /* Inline literal, not an interpolated constant: lit's css tag throws on any
+       interpolation that is not a number or CSSResult, and static styles runs at
+       class-definition time — so a plain string here broke the module at load.
+       unsafeCSS() would also work, but not worth it for a hardcoded value. */
     .json-view-inline.collapsed .json-view-body {
-      max-height: ${INLINE_MAX_HEIGHT};
+      max-height: 20rem;
       overflow: hidden;
     }
     .json-view-inline.expanded .json-view-body {
