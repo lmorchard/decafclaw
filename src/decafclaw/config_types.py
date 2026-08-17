@@ -168,6 +168,12 @@ class HttpConfig:
 
 
 @dataclass
+@dataclass
+class ShellConfig:
+    aux_approval_enabled: bool = False
+
+
+@dataclass
 class TerminalConfig:
     enabled: bool = True
     buffer_bytes: int = 10 * 1024 * 1024      # ring buffer cap per session
@@ -524,9 +530,10 @@ class TelemetryConfig:
     fail-open EventBus subscribers: a telemetry write that raises must
     never break a turn. Paths are workspace-relative. Enabled by default
     so a deployed agent starts collecting without a config edit — the
-    point is a week of real data. No rotation yet (append-only); retention
-    is a follow-up. See docs/tools.md, docs/reflection.md, and docs/vault.md.
+    point is a week of real data. Records older than ``retention_days`` are
+    rotated into monthly archive files. See docs/tools.md, docs/reflection.md, and docs/vault.md.
     """
+    retention_days: int = 30
     tool_usage_enabled: bool = True
     tool_usage_path: str = "tool_usage.jsonl"
     reflection_metrics_enabled: bool = True
