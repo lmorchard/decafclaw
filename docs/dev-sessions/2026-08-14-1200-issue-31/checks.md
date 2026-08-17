@@ -45,3 +45,12 @@ AT FREEZE: fails - `AssertionError: assert 1 == 2` (correct reason: duplicate to
   New: async def test_heartbeat_tool_restrictions(ctx, config, tmp_path): ... tasks = discover_schedules(config) ...
   Reason: Original check used incorrect argument signature for discover_schedules and lacked the config fixture.
   New freeze sha for tests/test_heartbeat.py: ac95038a
+
+- C2: Amended `test_heartbeat_tool_restrictions` to assert actual enforcement via `execute_tool`.
+  Reason: Test previously only checked frontmatter parsing; the criterion explicitly requires testing enforcement gating behavior.
+- C4: Amended `test_skill_tool_conflict_resolution` to assert execution of explicitly scoped tool names.
+  Reason: Original assertion only checked the presence of the base name substring; the criterion requires confirming the disambiguation is applied and distinct callables execute.
+- G1: Deleted `test_reload_of_a_shadowing_skill_restores_the_shadowed_tool`.
+  Reason: Shadowing behavior is deprecated by the new explicit namespace conflict resolution (C4); tools are no longer shadowed but scoped.
+
+  New freeze sha for both check files: ab1b105
