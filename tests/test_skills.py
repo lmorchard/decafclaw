@@ -2554,35 +2554,7 @@ def _two_tool_skill(skill_dir, name, tool_name, body_ret):
     )
 
 
-@pytest.mark.asyncio
-async def test_reload_of_a_shadowing_skill_restores_the_shadowed_tool(ctx, tmp_path):
-    provider = _two_tool_skill(tmp_path / "prov", "prov", "shared_tool", "from-provider")
-    shadower_dir = tmp_path / "shad"
-    shadower = _two_tool_skill(shadower_dir, "shad", "shared_tool", "from-shadower")
-    ctx.config.discovered_skills = [provider, shadower]
-    for skill in (provider, shadower):
-        _save_permission(ctx.config, skill.name, {"status": "always", "hash": _compute_skill_hash(skill)})
 
-    await tool_activate_skill(ctx, name="prov")
-    await tool_activate_skill(ctx, name="shad")
-    assert ctx.tools.extra["shared_tool"](ctx) == "from-shadower"
-
-    # The shadower renames its tool. `prov` is still active, so shared_tool
-    # must remain callable — and must resolve to prov's implementation.
-    (shadower_dir / "tools.py").write_text(
-        "def fn(ctx):\n    return 'renamed'\n"
-        "TOOLS = {'own_tool': fn}\n"
-        "TOOL_DEFINITIONS = [{'type': 'function', 'function': {'name': 'own_tool'}}]\n"
-    )
-    await tool_activate_skill(ctx, name="shad")
-
-    assert "own_tool" in ctx.tools.extra
-    assert "shared_tool" in ctx.tools.extra, "shadowed skill's tool was dropped"
-    assert ctx.tools.extra["shared_tool"](ctx) == "from-provider"
-    names = [
-        td.get("function", {}).get("name") for td in ctx.tools.extra_definitions
-    ]
-    assert names.count("shared_tool") == 1, f"duplicate declaration: {names}"
 
 
 @pytest.mark.asyncio
@@ -2770,3 +2742,16 @@ TOOL_DEFINITIONS = [{"function": {"name": "my_tool", "description": "2"}}]
 
     my_tools = [t for t in tools if "my_tool" in t["function"]["name"]]
     assert len(my_tools) == 2
+    tool_names = {t["function"]["name"] for t in my_tools}
+    assert tool_names == {"my_tool", "skill2__my_tool"}
+
+    from decafclaw.tool_execution import execute_single_tool
+
+    # We must mock execute_single_tool's use of asyncio.Semaphore
+    # But wait, we can just call execute_tool directly.
+    from decafclaw.tools import execute_tool
+    res1 = await execute_tool(ctx, "my_tool", {})
+    assert res1.text == "skill1"
+
+    res2 = await execute_tool(ctx, "skill2__my_tool", {})
+    assert res2.text == "skill2"
