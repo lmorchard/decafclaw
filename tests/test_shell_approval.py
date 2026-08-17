@@ -1,7 +1,7 @@
 """Tests for shell command allowlist."""
 
 import json
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -29,7 +29,7 @@ def test_match_wildcard():
 
 
 def test_no_match():
-    assert _command_matches_pattern("rm -rf /", ["git *", "make *"]) is False
+    assert _command_matches_pattern("echo hello", ["git *", "make *"]) is False
 
 
 def test_match_multiple_patterns():
@@ -175,3 +175,91 @@ def test_save_pattern_no_duplicates(config):
     _save_allow_pattern(config, "git status")
     patterns = _load_allow_patterns(config)
     assert patterns.count("git status") == 1
+
+
+# -- aux LLM tests --
+
+
+
+@pytest.mark.asyncio
+async def test_allowlist_bypasses_aux_llm(ctx):
+    # Enable aux approval
+    ctx.config.shell.aux_approval_enabled = True
+
+    # Save a pattern to the allowlist
+    _save_allow_pattern(ctx.config, "git status")
+
+    mock_aux_llm = MagicMock(return_value=AsyncMock())
+    ctx.aux_llm = mock_aux_llm
+
+    with patch(
+        "decafclaw.tools.shell_tools._execute_command",
+        return_value="output",
+    ) as mock_exec:
+        result = await tool_shell(ctx, "git status")
+        mock_exec.assert_called_once()
+        assert result == "output"
+        # Aux LLM should NOT have been called because allowlist approved it instantly
+        mock_aux_llm.assert_not_called()
+
+@pytest.mark.asyncio
+async def test_aux_llm_auto_approve(ctx):
+    ctx.config.shell.aux_approval_enabled = True
+
+    mock_call = AsyncMock(return_value={"content": '{"auto_approve": true, "reason": "Looks safe", "risk": "low"}'})
+    mock_aux_llm = MagicMock(return_value=mock_call)
+    ctx.aux_llm = mock_aux_llm
+
+    with patch(
+        "decafclaw.tools.shell_tools._execute_command",
+        return_value="output",
+    ) as mock_exec:
+        result = await tool_shell(ctx, "ls -la")
+        mock_exec.assert_called_once()
+        assert result == "output"
+        mock_aux_llm.assert_called_once()
+        mock_call.assert_awaited_once()
+
+        # Verify per-session memory works (second call shouldn't invoke aux LLM)
+        mock_call.reset_mock()
+        mock_aux_llm.reset_mock()
+        result2 = await tool_shell(ctx, "ls -la")
+        assert result2 == "output"
+        mock_aux_llm.assert_not_called()
+        mock_call.assert_not_called()
+
+@pytest.mark.asyncio
+async def test_aux_llm_deny_or_error_falls_through(ctx):
+    ctx.config.shell.aux_approval_enabled = True
+
+    # Case 1: Aux LLM denies
+    mock_call = AsyncMock(return_value={"content": '{"auto_approve": false, "reason": "Too risky", "risk": "high"}'})
+    mock_aux_llm = MagicMock(return_value=mock_call)
+    ctx.aux_llm = mock_aux_llm
+
+    with patch(
+        "decafclaw.tools.shell_tools.request_confirmation",
+        new_callable=AsyncMock,
+        return_value={"approved": False},
+    ) as mock_confirm:
+        result = await tool_shell(ctx, "echo hello")
+        mock_confirm.assert_awaited_once()
+        assert "denied" in result.text
+        mock_aux_llm.assert_called_once()
+        mock_call.assert_awaited_once()
+
+    # Case 2: Aux LLM errors out (malformed JSON)
+    mock_call = AsyncMock(return_value={"content": 'INVALID JSON'})
+    mock_aux_llm = MagicMock(return_value=mock_call)
+    ctx.aux_llm = mock_aux_llm
+
+    with patch(
+        "decafclaw.tools.shell_tools.request_confirmation",
+        new_callable=AsyncMock,
+        return_value={"approved": False},
+    ) as mock_confirm:
+        result = await tool_shell(ctx, "echo another")
+        mock_confirm.assert_awaited_once()
+        assert "denied" in result.text
+        mock_aux_llm.assert_called_once()
+        mock_call.assert_awaited_once()

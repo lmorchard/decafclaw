@@ -189,6 +189,43 @@ async def check_shell_approval(ctx: "Context", command: str, tool_name: str = "s
         log.info(f"[{tool_name}] auto-approved by pattern: {command}")
         return {"approved": True}
 
+    if ctx.config.shell.aux_approval_enabled:
+        if _command_matches_pattern(command, ctx.tools.llm_approved_shell_patterns):
+            log.info(f"[{tool_name}] auto-approved by session aux-LLM memory: {command}")
+            return {"approved": True}
+
+        try:
+            prompt = (
+                "You are evaluating a shell command for execution.\n"
+                f"Command: {command}\n"
+                f"Working Directory: {ctx.config.workspace_path}\n"
+                "Determine if this is a low-risk command that should be auto-approved, or if it requires user confirmation.\n"
+                "Return a JSON object: {\"auto_approve\": bool, \"reason\": \"<string>\", \"risk\": \"low\" | \"medium\" | \"high\"}\n"
+                "Only auto-approve low risk read-only or harmless commands (like ls, git status, cat). "
+                "Do not auto-approve anything that modifies state, installs software, makes network requests, etc."
+            )
+            messages = [{"role": "user", "content": prompt}]
+            response = await ctx.aux_llm()(messages)
+            raw_text = response.get("content", "").strip()
+
+            import re as re_mod
+            if "```" in raw_text:
+                raw_text = re_mod.sub(r"^```(?:json)?\n?", "", raw_text, flags=re_mod.MULTILINE)
+                raw_text = re_mod.sub(r"```$", "", raw_text, flags=re_mod.MULTILINE).strip()
+
+            import json as json_mod
+            data = json_mod.loads(raw_text)
+
+            if data.get("auto_approve") is True:
+                log.info(f"[{tool_name}] auto-approved by aux LLM (risk: {data.get('risk')}): {command} - {data.get('reason')}")
+                suggested_pattern = _suggest_pattern(command)
+                ctx.tools.llm_approved_shell_patterns.append(suggested_pattern)
+                return {"approved": True}
+            else:
+                log.info(f"[{tool_name}] aux LLM declined auto-approval (risk: {data.get('risk')}): {command} - {data.get('reason')}")
+        except Exception as e:
+            log.warning(f"[{tool_name}] aux LLM approval failed, falling through: {e}")
+
     suggested_pattern = _suggest_pattern(command)
     if ctx.is_unattended:
         # Nobody can answer a prompt on this turn: it would block for the 60s

@@ -40,6 +40,7 @@ from .config_types import (
     RecentJournalConfig,
     ReflectionConfig,
     RelevanceConfig,
+    ShellConfig,
     TelemetryConfig,
     TerminalConfig,
     VaultConfig,
@@ -173,6 +174,7 @@ class Config:
     heartbeat: HeartbeatConfig = field(default_factory=HeartbeatConfig)
     http: HttpConfig = field(default_factory=HttpConfig)
     terminal: TerminalConfig = field(default_factory=TerminalConfig)
+    shell: ShellConfig = field(default_factory=ShellConfig)
     agent: AgentConfig = field(default_factory=AgentConfig)
     skills: dict[str, dict[str, Any]] = field(default_factory=dict)
     reflection: ReflectionConfig = field(default_factory=ReflectionConfig)
@@ -427,6 +429,9 @@ def load_config() -> Config:
     terminal = load_sub_config(
         TerminalConfig, file_data.get("terminal", {}), "TERMINAL")
 
+    shell = load_sub_config(
+        ShellConfig, file_data.get("shell", {}), "SHELL")
+
     agent = load_sub_config(
         AgentConfig, file_data.get("agent", {}), "",
         env_aliases={
@@ -578,6 +583,7 @@ def load_config() -> Config:
         heartbeat=heartbeat,
         http=http,
         terminal=terminal,
+        shell=shell,
         agent=agent,
         skills=skills,
         reflection=reflection,
