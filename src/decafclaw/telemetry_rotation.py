@@ -48,10 +48,10 @@ def rotate_if_needed(path: Path, retention_days: int) -> None:
                 continue
             try:
                 rec = json.loads(line)
-                first_valid_dt = _parse_iso(rec.get("timestamp", ""))
-                if first_valid_dt < cutoff:
+                dt = _parse_iso(rec.get("timestamp", ""))
+                if dt < cutoff:
                     needs_rotation = True
-                break
+                    break
             except (json.JSONDecodeError, ValueError, TypeError):
                 continue
 
