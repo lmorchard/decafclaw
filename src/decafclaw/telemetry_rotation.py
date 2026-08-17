@@ -37,24 +37,25 @@ def rotate_if_needed(path: Path, retention_days: int) -> None:
     if not path.exists():
         return
 
-    # Check first line cheaply before materializing
-    first_dt = None
+    cutoff = datetime.now(tz=timezone.utc) - timedelta(days=retention_days)
+    needs_rotation = False
+
+    # Check cheaply before materializing everything
     with path.open(encoding="utf-8") as f:
         for line in f:
             line = line.strip()
-            if line:
-                try:
-                    rec = json.loads(line)
-                    first_dt = _parse_iso(rec.get("timestamp", ""))
-                except (json.JSONDecodeError, ValueError, TypeError):
-                    pass
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+                first_valid_dt = _parse_iso(rec.get("timestamp", ""))
+                if first_valid_dt < cutoff:
+                    needs_rotation = True
                 break
+            except (json.JSONDecodeError, ValueError, TypeError):
+                continue
 
-    if first_dt is None:
-        return
-
-    cutoff = datetime.now(tz=timezone.utc) - timedelta(days=retention_days)
-    if first_dt >= cutoff:
+    if not needs_rotation:
         return
 
     # Materialize and partition
@@ -94,13 +95,15 @@ def rotate_if_needed(path: Path, retention_days: int) -> None:
                 f.write(json.dumps(rec) + "\n")
 
     # Atomic rewrite of the primary file
-    tmp = Path(tempfile.mktemp(dir=str(path.parent)))
-    try:
-        with tmp.open("w", encoding="utf-8") as f:
+    with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", delete=False, dir=str(path.parent)) as tf:
+        tmp_path = Path(tf.name)
+        try:
             for r in recent:
-                f.write(json.dumps(r) + "\n")
-        os.replace(str(tmp), str(path))
-    except Exception:
-        if tmp.exists():
-            tmp.unlink()
-        raise
+                tf.write(json.dumps(r) + "\n")
+            tf.flush()
+            os.replace(str(tmp_path), str(path))
+        except Exception:
+            tf.close()
+            if tmp_path.exists():
+                tmp_path.unlink()
+            raise

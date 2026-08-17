@@ -86,7 +86,7 @@ def test_rotate_if_needed_no_old_records(tmp_path):
     assert not (path.parent / "archive").exists()
 
 
-def test_rotate_preserves_malformed_lines(tmp_path):
+def test_rotate_preserves_malformed_timestamps_and_drops_malformed_json(tmp_path):
     path = tmp_path / "telemetry" / "tool_usage.jsonl"
     path.parent.mkdir(parents=True, exist_ok=True)
     # 1 old, 1 malformed JSON, 1 malformed timestamp, 1 new
@@ -98,13 +98,7 @@ def test_rotate_preserves_malformed_lines(tmp_path):
 
     rotate_if_needed(path, 30)
 
-    # The malformed JSON is dropped by the partition logic currently?
-    # Wait, the partition logic tries to parse it. If it fails `json.loads(line)`,
-    # the original file rewrite does NOT write it back because it's not in `recent`.
-    # Let's fix that in telemetry_rotation.py if we want to preserve unparsable lines,
-    # but the current `_partition_by_age` takes `records: list[dict]`.
-    # That means unparsable lines are dropped!
-    # Let's see if we should care. For notifications, they drop unparsable JSON lines too.
+    # Malformed JSON lines are dropped; records with malformed timestamps are retained as recent.
     lines = _read_jsonl(path)
     assert len(lines) == 2
     ids = {r["id"] for r in lines}
