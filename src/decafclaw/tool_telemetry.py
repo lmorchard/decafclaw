@@ -86,7 +86,7 @@ def append_record(config, record: dict) -> None:
     try:
         path = _usage_path(config)
         path.parent.mkdir(parents=True, exist_ok=True)
-        rotate_if_needed(path, getattr(config.telemetry, "retention_days", 30))
+        rotate_if_needed(path, config.telemetry.retention_days)
         with path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(record) + "\n")
     except Exception as exc:  # fail-open: telemetry must never break a turn
