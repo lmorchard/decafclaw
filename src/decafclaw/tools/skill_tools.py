@@ -2,6 +2,7 @@
 
 import ast
 import asyncio
+import copy
 import hashlib
 import importlib.util
 import inspect
@@ -656,7 +657,7 @@ async def tool_activate_skill(ctx: "Context", name: str) -> str | ToolResult:
         return ToolResult(text=f"[error: skill '{name}' not found. Check Available Skills in your instructions.]")
 
     if skill_info.disable_model_invocation:
-        return ToolResult(text=f"[error: activation of skill '{name}' was denied by user (model invocation disabled)]")
+        return ToolResult(text=f"[error: skill '{name}' cannot be invoked by the model (disabled by skill configuration)]")
 
     # Already active. For a text-only skill there is nothing to do, but for a
     # native skill this is the author's edit-and-reload path: re-import
@@ -877,6 +878,7 @@ async def activate_skill_internal(ctx: "Context", skill_info, reloading: bool = 
             # Add all non-colliding tools by default? No, we filter by allowed_tools.
             # But we don't know which tools dictionary key belongs to which definition.
             # In typical cases, they match.
+            processed_keys = set()
             for t_def in list(tool_defs):
                 t_name = t_def.get("function", {}).get("name")
                 if not t_name:
@@ -886,9 +888,12 @@ async def activate_skill_internal(ctx: "Context", skill_info, reloading: bool = 
                 if allowed_set is not None and t_name not in allowed_set:
                     continue
 
+                processed_keys.add(t_name)
+
                 final_name = t_name
                 if t_name in existing_tools:
                     final_name = f"{name}__{t_name}"
+                    t_def = copy.deepcopy(t_def)
                     t_def["function"]["name"] = final_name
 
                 filtered_defs.append(t_def)
@@ -900,7 +905,7 @@ async def activate_skill_internal(ctx: "Context", skill_info, reloading: bool = 
             # If there are tools keys that were not mapped by name (like internal_key), just include them
             # if they aren't explicitly filtered out.
             for k, v in tools.items():
-                if k not in filtered_tools:
+                if k not in processed_keys:
                     # Only include if no allowed_set is defined, or it's allowed.
                     if allowed_set is None or k in allowed_set:
                         filtered_tools[k] = v

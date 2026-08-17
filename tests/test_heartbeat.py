@@ -596,6 +596,18 @@ Do another thing.
     # In run_heartbeat_turn, Context.for_task is called.
     # We will simulate this by checking that the arguments are parsed
     # and passed to the child context or applied to ctx.tools.allowed / disallowed
+    from decafclaw.tools import execute_tool
+
+    # Section 1: allowed_tools
+    ctx.tools.allowed = set(sections[0]["allowed_tools"])
+    res = await execute_tool(ctx, "workspace_write", {})
+    assert "not available in this context" in res.text
+
+    # Section 2: disallowed_tools
+    ctx.tools.allowed = None
+    ctx.tools.disallowed = set(sections[1]["disallowed_tools"])
+    res = await execute_tool(ctx, "shell", {})
+    assert "blocked by this context's allowlist/blocklist" in res.text
 
     # Test schedule parsing of disallowed-tools
     from decafclaw.schedules import ScheduleTask, discover_schedules
@@ -612,4 +624,10 @@ Do something.
     tasks = discover_schedules(config)
     task = next(t for t in tasks if t.name == "test_sched")
     assert task.disallowed_tools == ["workspace_write"]
+
+    # Assert enforcement via context setup
+    ctx.tools.allowed = None
+    ctx.tools.disallowed = set(task.disallowed_tools)
+    res_sched = await execute_tool(ctx, "workspace_write", {})
+    assert "blocked by this context" in res_sched.text
 

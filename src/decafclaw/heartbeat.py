@@ -8,6 +8,10 @@ import time
 from datetime import datetime
 from typing import TYPE_CHECKING
 
+import yaml
+
+from decafclaw.skills import _parse_allowed_tools
+
 if TYPE_CHECKING:
     from .media import ToolResult
 
@@ -101,15 +105,16 @@ def _split_sections(text: str) -> list[dict]:
                     try:
                         meta = yaml.safe_load(fm_match.group(1)) or {}
                         if "allowed-tools" in meta:
-                            allowed_tools = meta["allowed-tools"]
+                            allowed_tools, _ = _parse_allowed_tools(meta["allowed-tools"])
                         elif "allowed_tools" in meta:
-                            allowed_tools = meta["allowed_tools"]
+                            allowed_tools, _ = _parse_allowed_tools(meta["allowed_tools"])
+
                         if "disallowed-tools" in meta:
-                            disallowed_tools = meta["disallowed-tools"]
+                            disallowed_tools, _ = _parse_allowed_tools(meta["disallowed-tools"])
                         elif "disallowed_tools" in meta:
-                            disallowed_tools = meta["disallowed_tools"]
-                    except Exception:
-                        pass
+                            disallowed_tools, _ = _parse_allowed_tools(meta["disallowed_tools"])
+                    except Exception as e:
+                        log.warning(f"Failed to parse heartbeat section frontmatter: {e}")
                     body = body[fm_match.end():].strip()
                 sections.append({
                     "title": current_title or "General",

@@ -151,6 +151,10 @@ class WorkflowHandle:
         if allowed is not None and name not in allowed:
             raise WorkflowToolNotAllowed(
                 f"tool {name!r} not in workflow's tool allowlist")
+        disallowed = self.ctx.tools.disallowed or set()
+        if name in disallowed:
+            raise WorkflowToolNotAllowed(
+                f"tool {name!r} is explicitly blocked by workflow's tool blocklist")
         seq = self._next_seq()
         fp = fingerprint("tool_call", {"name": name, "args": args})
         cached, hit = self._check_or_none(seq, "tool_call", fp)

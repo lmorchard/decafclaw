@@ -150,7 +150,10 @@ def parse_schedule_file(path: Path) -> ScheduleTask | None:
         disallowed_tools_raw = ""
     elif isinstance(disallowed_tools_raw, list):
         disallowed_tools_raw = ", ".join(str(t) for t in disallowed_tools_raw)
-    disallowed_tools, _ = _parse_allowed_tools(str(disallowed_tools_raw))
+    disallowed_tools, disallowed_patterns = _parse_allowed_tools(str(disallowed_tools_raw))
+    if disallowed_patterns:
+        log.warning("shell(...) patterns are not supported in disallowed-tools; use 'shell' to block the entire tool")
+        raise ValueError("shell(...) patterns are not supported in disallowed-tools; use 'shell' to block the entire tool")
 
     required_skills = meta.get("required-skills", [])
     if not isinstance(required_skills, list):
