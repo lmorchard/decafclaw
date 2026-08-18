@@ -8,7 +8,7 @@ interface ChatLogProps {
   state: State;
   isFocused: boolean;
   onSubmit: (text: string) => void;
-  onDecision?: (decision: { approved: boolean; always: boolean } | null) => void;
+  onDecision: (decision: { approved: boolean; always: boolean } | null) => void;
 }
 
 export function ChatLog({ state, isFocused, onSubmit, onDecision }: ChatLogProps): React.JSX.Element {
