@@ -5,7 +5,6 @@ import { dispatch, initialState, type State } from "./dispatcher.js";
 import type { ServerMessage } from "./types.generated.js";
 import { Sidebar } from "./Sidebar.js";
 import { ChatLog } from "./ChatLog.js";
-import { Modal } from "./Modal.js";
 
 export interface AppProps {
   client: WSClient;
@@ -173,12 +172,9 @@ export function App({
       <ChatLog 
         state={state} 
         isFocused={focus === "chat" && !state.confirm} 
-        onSubmit={onSubmit} 
+        onSubmit={onSubmit}
+        onDecision={handleDecision}
       />
-
-      {state.confirm && (
-        <Modal confirm={state.confirm} onDecision={handleDecision} />
-      )}
     </Box>
   );
 }
