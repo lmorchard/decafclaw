@@ -164,6 +164,9 @@ export function dispatch(s: State, m: ServerMessage): State {
     case "notification_created":
     case "notification_read":
     case "reflection_result":
+    case "command_list":
+    case "sticky_clear":
+    case "sticky_set":
     case "vault_changed":
       return s;
 
