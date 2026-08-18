@@ -93,7 +93,7 @@ class AuditLogSubscriber:
                     "event": "tool_call",
                     "tool_name": event.get("tool", ""),
                     "args": args_str,
-                    "result_length": len(result_text.encode("utf-8")),
+                    "result_length": len(result_text),
                     "duration_ms": event.get("duration_ms", 0),
                     "outcome": infer_outcome(result_text),
                 })

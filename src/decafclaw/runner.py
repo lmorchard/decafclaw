@@ -42,8 +42,36 @@ async def run_all(app_ctx):
     for sig in (signal.SIGTERM, signal.SIGINT):
         loop.add_signal_handler(sig, _signal_handler)
 
+    # Wire telemetry subscribers (measurement only, fail-open) early so
+    # they capture startup events (e.g. MCP connections).
+    if config.audit_log.enabled:
+        from .audit_log import make_audit_log_subscriber
+        app_ctx.event_bus.subscribe(make_audit_log_subscriber(config))
+        log.info("Audit log subscriber active (%s)",
+                 config.audit_log.path)
+    if config.telemetry.tool_usage_enabled:
+        from .tool_telemetry import make_tool_telemetry_subscriber
+        app_ctx.event_bus.subscribe(make_tool_telemetry_subscriber(config))
+        log.info("Telemetry: tool-usage subscriber active (%s)",
+                 config.telemetry.tool_usage_path)
+    if config.telemetry.reflection_metrics_enabled:
+        from .reflection_metrics import make_reflection_metrics_subscriber
+        app_ctx.event_bus.subscribe(make_reflection_metrics_subscriber(config))
+        log.info("Telemetry: reflection-metrics subscriber active (%s)",
+                 config.telemetry.reflection_metrics_path)
+    if config.telemetry.loop_breaker_enabled:
+        from .loop_breaker_telemetry import make_loop_breaker_subscriber
+        app_ctx.event_bus.subscribe(make_loop_breaker_subscriber(config))
+        log.info("Telemetry: loop-breaker subscriber active (%s)",
+                 config.telemetry.loop_breaker_path)
+    if config.telemetry.retrieval_enabled:
+        from .retrieval_telemetry import make_retrieval_telemetry_subscriber
+        app_ctx.event_bus.subscribe(make_retrieval_telemetry_subscriber(config))
+        log.info("Telemetry: retrieval subscriber active (%s)",
+                 config.telemetry.retrieval_path)
+
     # Init MCP servers (shared across all subsystems)
-    await init_mcp(config)
+    await init_mcp(config, event_bus=app_ctx.event_bus)
 
     http_task = None
     mattermost_task = None
@@ -108,33 +136,6 @@ async def run_all(app_ctx):
         from .workspace_index import make_workspace_index_subscriber
         app_ctx.event_bus.subscribe(make_workspace_index_subscriber(config))
 
-        # Wire telemetry subscribers (measurement only, fail-open). Each
-        # records to an append-only JSONL sidecar under workspace/.
-        if config.audit_log.enabled:
-            from .audit_log import make_audit_log_subscriber
-            app_ctx.event_bus.subscribe(make_audit_log_subscriber(config))
-            log.info("Audit log subscriber active (%s)",
-                     config.audit_log.path)
-        if config.telemetry.tool_usage_enabled:
-            from .tool_telemetry import make_tool_telemetry_subscriber
-            app_ctx.event_bus.subscribe(make_tool_telemetry_subscriber(config))
-            log.info("Telemetry: tool-usage subscriber active (%s)",
-                     config.telemetry.tool_usage_path)
-        if config.telemetry.reflection_metrics_enabled:
-            from .reflection_metrics import make_reflection_metrics_subscriber
-            app_ctx.event_bus.subscribe(make_reflection_metrics_subscriber(config))
-            log.info("Telemetry: reflection-metrics subscriber active (%s)",
-                     config.telemetry.reflection_metrics_path)
-        if config.telemetry.loop_breaker_enabled:
-            from .loop_breaker_telemetry import make_loop_breaker_subscriber
-            app_ctx.event_bus.subscribe(make_loop_breaker_subscriber(config))
-            log.info("Telemetry: loop-breaker subscriber active (%s)",
-                     config.telemetry.loop_breaker_path)
-        if config.telemetry.retrieval_enabled:
-            from .retrieval_telemetry import make_retrieval_telemetry_subscriber
-            app_ctx.event_bus.subscribe(make_retrieval_telemetry_subscriber(config))
-            log.info("Telemetry: retrieval subscriber active (%s)",
-                     config.telemetry.retrieval_path)
 
         # Start heartbeat timer
         if parse_interval(config.heartbeat.interval) is not None:
