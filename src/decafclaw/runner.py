@@ -130,6 +130,10 @@ async def run_all(app_ctx):
             app_ctx.event_bus.subscribe(make_retrieval_telemetry_subscriber(config))
             log.info("Telemetry: retrieval subscriber active (%s)",
                      config.telemetry.retrieval_path)
+                     
+        from .metrics import make_metrics_subscriber
+        app_ctx.event_bus.subscribe(make_metrics_subscriber(config))
+        log.info("Metrics: metrics subscriber active")
 
         # Start heartbeat timer
         if parse_interval(config.heartbeat.interval) is not None:
