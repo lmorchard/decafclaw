@@ -44,6 +44,7 @@ export function Sidebar({
   useEffect(() => {
     const controller = new AbortController();
     abortRef.current = controller;
+    setErr(null);
     fetch(host + "/api/conversations", {
       headers: { Cookie: `decafclaw_session=${token}` },
       signal: controller.signal,
@@ -109,8 +110,8 @@ export function Sidebar({
     if (key.upArrow) setCursor((c) => Math.max(0, c - 1));
     else if (key.downArrow) setCursor((c) => Math.min(max, c + 1));
     else if (key.return) {
-      if (cursor === max) void createConversation();
-      else onPick(convs[cursor]!.conv_id);
+      if (cursor === 0) void createConversation();
+      else onPick(convs[cursor - 1]!.conv_id);
     } else if (input === "n" || input === "N") {
       void createConversation();
     }
@@ -123,10 +124,14 @@ export function Sidebar({
 
     return (
       <Box flexDirection="column">
+        <Text color={cursor === 0 ? "cyan" : "gray"}>
+          {cursor === 0 ? "> " : "  "}[new]
+        </Text>
         {convs.map((c, i) => {
+          const itemIndex = i + 1;
           const rel = formatRelative(c.updated_at);
           const isSelected = pickedConv === c.conv_id;
-          const isHighlighted = i === cursor;
+          const isHighlighted = itemIndex === cursor;
           const color = isSelected ? "green" : (isHighlighted ? "cyan" : undefined);
           return (
             <Text key={c.conv_id} color={color}>
@@ -136,15 +141,12 @@ export function Sidebar({
             </Text>
           );
         })}
-        <Text color={cursor === convs.length ? "cyan" : "gray"}>
-          {cursor === convs.length ? "> " : "  "}[new]
-        </Text>
       </Box>
     );
   };
 
   return (
-    <Box flexDirection="column" borderStyle={isFocused ? "double" : "single"}>
+    <Box flexDirection="column" borderStyle={isFocused ? "double" : "single"} width={50}>
       <Text bold color={isFocused ? "cyan" : undefined}>Sidebar {isFocused ? "(focused)" : ""}</Text>
       {content()}
     </Box>

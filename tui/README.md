@@ -1,83 +1,49 @@
 # decafclaw-tui
 
-Minimal Ink (React-for-terminal) TUI that connects to a running decafclaw bot over
-its existing WebSocket gateway — the same surface the web UI drives. No competing
-bot process; the TUI is a thin viewer/driver.
+A Text User Interface (TUI) client for `decafclaw`. It connects to a running agent instance via WebSockets and allows interacting with the agent from a terminal.
 
-Design rationale and Phase 2 candidates: [`docs/dev-sessions/2026-05-13-1039-tui-spike/spec.md`](../docs/dev-sessions/2026-05-13-1039-tui-spike/spec.md).
+## Features
 
-## Running
+- **Conversation Picker:** Shows a list of recent conversations, allowing you to select one or start a new one.
+- **Chat Interface:** Provides a simple chat layout with message history and a text input prompt.
+- **Confirmation Modals:** Securely prompts the user for tool approvals (e.g., executing commands) via modal overlays that block other input.
+- **Tab Switching:** Use `Tab` to switch focus between the conversation picker (sidebar) and the chat log. (Auto-hides the conversation picker once you've selected a conversation; type `/resume` or press `Tab` in the chat to summon the picker back.)
+
+## Prerequisites
+
+- Node.js (v18+)
+- `decafclaw` server running (`make dev` or `make run`, starts on `http://localhost:18880`)
+
+## Installation
+
+Run `npm install` in this directory to install the dependencies.
+
+## Running the TUI
+
+You can run the TUI in development mode:
 
 ```bash
-cd tui
-npm install
-DECAFCLAW_TOKEN=<token> npm run dev
-# or
-npm run dev -- --token <token> --conv <conv_id>
+npm run dev -- --token <your-session-token>
 ```
 
-Requires the bot running locally (`make dev` in the repo root, default port 8088).
+Alternatively, you can provide the token via the `DECAFCLAW_TOKEN` environment variable.
 
-## Configuration
+The TUI connects to `http://localhost:18880` by default. If your server is running on a different port/host, you can provide the `--host` parameter or the `DECAFCLAW_HOST` environment variable:
 
-| Flag | Env var | Default |
-|---|---|---|
-| `--token <t>` | `DECAFCLAW_TOKEN` | (required) |
-| `--host <url>` | `DECAFCLAW_HOST` | `http://localhost:8088` |
-| `--conv <id>` | — | (picker shown if absent) |
-
-Tokens look like `dfc_<random>`. Find them as keys in
-`data/<agent_id>/web_tokens.json` in the main clone. `<agent_id>` is the
-subdirectory name under `data/` for the agent you want to connect to.
-
-## Creating a conversation
-
-Conversation IDs are server-assigned, not client-generated. Two ways to start
-one:
-
-- **From the picker** — launch without `--conv` and choose `[new conversation]`.
-  The picker POSTs `/api/conversations`, then opens the new conv.
-- **By REST first** — `curl -X POST -H "Cookie: decafclaw_session=$TOKEN"`
-  `-H "Content-Type: application/json" -d '{"title":"..."}'`
-  `http://localhost:18880/api/conversations`, then pass the returned `conv_id`
-  via `--conv`.
-
-`--conv <id>` with a non-existent ID will surface a `Conversation not found`
-error from the server.
-
-## Scripts
-
-```
-npm run dev       run the TUI
-npm test          dispatcher unit tests (vitest)
-npm run typecheck type-check without emitting
+```bash
+npm run dev -- --token <your-token> --host http://localhost:8088
 ```
 
-## Key bindings
+## Shortcuts
 
-- **Enter** — send message / confirm picker selection
-- **y / n / a** — approve / deny / always when a confirmation prompt is shown
-- **Ctrl+C** — cancel in-flight turn (first press while agent is busy); exit cleanly
-  (when idle, or second press within 2 s of cancel)
-- **Up / Down** — move cursor in conversation picker
+- `Up` / `Down`: Navigate the conversation list.
+- `Enter`: Select a conversation (or create a new one if `[new]` is selected).
+- `n` / `N`: Create a new conversation (when conversation picker is focused).
+- `Tab`: Toggle between the conversation picker and the chat log.
+- `Ctrl+C`: Abort a running turn, or exit if no turn is running.
 
-## Known limitations
+## Development
 
-This is a spike validating the "thin network client over the existing WebSocket
-gateway" architecture. The following are explicitly deferred to Phase 2:
+The UI is built with [React](https://reactjs.org/) and [Ink](https://github.com/vadimdemedes/ink).
 
-- **No markdown rendering** — assistant text is plain. Code blocks, tables, and
-  emphasis are not rendered. Likely the first Phase 2 add.
-- **Single-line composer** — no multi-line input, no `$EDITOR` integration, no
-  input history.
-- **No tab completion** — slash commands, `@[[Page]]` mentions, and file paths.
-- **Activity lane tracks one tool at a time** — concurrent tools show only the
-  last one started.
-- **No widget support** — `widget_input` flows from skills are silently ignored.
-- **No canvas panel** — `canvas_update` events are acknowledged but not rendered.
-- **Confirmation payload display is raw JSON** — pretty-printing is deferred.
-- **Mac/Linux only** — not tested on Windows.
-
-For the full Phase 2 candidates table (markdown rendering, multi-line composer,
-history, tab completion, theme, model picker, widgets, canvas, files, vault, etc.)
-see the spec linked above.
+- Run `npm run test` to run the component and unit tests using Vitest.

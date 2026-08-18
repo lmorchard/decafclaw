@@ -1,9 +1,7 @@
 import React from "react";
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render } from "ink-testing-library";
 import { App } from "./App.js";
-
-const delay = (ms: number) => new Promise(res => setTimeout(res, ms));
 
 class MockWSClient {
   on = () => {};
@@ -12,29 +10,35 @@ class MockWSClient {
 }
 
 describe("App Layout", () => {
-  it("renders a persistent two-pane layout with a Sidebar and a ChatLog", async () => {
-    const client = new MockWSClient() as any;
-    const { lastFrame } = render(<App client={client} initialConvId="conv1" host="http://localhost" token="t" />);
-    await delay(10);
-    const frame = lastFrame();
-    
-    expect(frame).toContain("Sidebar");
-    expect(frame).toContain("(connecting...)"); 
+  beforeEach(() => {
+    vi.useFakeTimers();
   });
 
-  it("switches focus between Chat Input and Sidebar on Tab", async () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("renders the Sidebar initially", async () => {
+    const client = new MockWSClient() as any;
+    const { lastFrame } = render(<App client={client} initialConvId="conv1" host="http://localhost" token="t" />);
+    await vi.advanceTimersByTimeAsync(10);
+    
+    const frame = lastFrame();
+    expect(frame).toContain("Sidebar");
+  });
+
+  it("switches focus to ChatLog on Tab", async () => {
     const client = new MockWSClient() as any;
     const { lastFrame, stdin } = render(<App client={client} initialConvId="conv1" host="http://localhost" token="t" />);
     
-    await delay(10);
+    await vi.advanceTimersByTimeAsync(10);
     expect(lastFrame()).toContain("Sidebar (focused)");
     
     // Press Tab
     stdin.write("\t");
+    await vi.advanceTimersByTimeAsync(10);
     
-    await delay(10);
-    
-    expect(lastFrame()).not.toContain("Sidebar (focused)");
-    expect(lastFrame()).toContain("Sidebar"); // Still present, just not focused
+    expect(lastFrame()).not.toContain("Sidebar");
+    expect(lastFrame()).toContain("(connecting...)"); 
   });
 });
