@@ -21,7 +21,7 @@ class MockWSClient {
 }
 
 describe("App Modal", () => {
-  it("pushes a Modal overlay when confirmation_request arrives and blocks input", async () => {
+  it("pushes a Modal overlay when confirm_request arrives and blocks input", async () => {
     const client = new MockWSClient();
     const { lastFrame, stdin } = render(<App client={client as any} initialConvId="conv1" host="http://localhost" token="t" />);
     

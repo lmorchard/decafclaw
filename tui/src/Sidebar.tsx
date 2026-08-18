@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Box, Text, useInput } from "ink";
+import { formatRelative } from "./conversationPicker.js";
 
 interface ConvSummary {
   conv_id: string;
@@ -24,22 +25,6 @@ interface Props {
   onExit: () => void;
   isFocused: boolean;
   pickedConv: string | null;
-}
-
-export function formatRelative(iso: string | undefined, now: Date = new Date()): string {
-  if (!iso) return "";
-  const t = new Date(iso).getTime();
-  if (Number.isNaN(t)) return "";
-  const diffMs = now.getTime() - t;
-  const sec = Math.max(0, Math.floor(diffMs / 1000));
-  if (sec < 60) return `${sec}s ago`;
-  const min = Math.floor(sec / 60);
-  if (min < 60) return `${min}m ago`;
-  const hr = Math.floor(min / 60);
-  if (hr < 24) return `${hr}h ago`;
-  const day = Math.floor(hr / 24);
-  if (day < 30) return `${day}d ago`;
-  return iso.slice(0, 10);
 }
 
 export function Sidebar({
