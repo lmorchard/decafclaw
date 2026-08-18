@@ -39,7 +39,6 @@ async def test_audit_log_records_llm_call(tmp_path):
         "streaming": True,
     })
 
-    await asyncio.sleep(0.01)
 
     log_path = tmp_path / "audit.jsonl"
     assert log_path.exists()
@@ -77,7 +76,6 @@ async def test_audit_log_records_tool_call(tmp_path):
         "input_bytes": 10,
     })
 
-    await asyncio.sleep(0.01)
 
     log_path = tmp_path / "audit.jsonl"
     assert log_path.exists()
@@ -117,7 +115,6 @@ async def test_audit_log_records_skill_and_mcp(tmp_path):
         "server": "test_mcp_server",
     })
 
-    await asyncio.sleep(0.01)
 
     log_path = tmp_path / "audit.jsonl"
     lines = log_path.read_text().strip().split("\n")
