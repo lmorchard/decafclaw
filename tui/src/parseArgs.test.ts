@@ -52,7 +52,7 @@ describe("parseArgs", () => {
     expect(r.kind).toBe("ok");
     if (r.kind === "ok") {
       expect(r.args.token).toBe("envtoken");
-      expect(r.args.host).toBe("http://localhost:8088");
+      expect(r.args.host).toBe("http://localhost:18880");
       expect(r.args.conv).toBeNull();
     }
   });

@@ -121,7 +121,7 @@ export function App({
       return;
     }
 
-    if (key.tab || input === "\t") {
+    if ((key.tab || input === "\t") && !state.confirm) {
       setFocus(prev => prev === "sidebar" ? "chat" : "sidebar");
       return;
     }
@@ -129,7 +129,12 @@ export function App({
 
   function onSubmit(text: string): void {
     if (!state.conv_id) return;
-    if (!text.trim()) return;
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    if (trimmed === "/resume") {
+      setFocus("sidebar");
+      return;
+    }
     client.send({
       type: "send",
       conv_id: state.conv_id,
@@ -154,27 +159,31 @@ export function App({
 
   return (
     <Box flexDirection="row" width="100%" height="100%">
-      <Sidebar
-        host={host}
-        token={token}
-        pickedConv={pickedConv}
-        isFocused={focus === "sidebar" && !state.confirm}
-        onPick={(id) => {
-          setPickedConv(id);
-          setFocus("chat");
-        }}
-        onExit={() => {
-          client.close();
-          exit();
-        }}
-      />
+      {focus === "sidebar" && !state.confirm && (
+        <Sidebar
+          host={host}
+          token={token}
+          pickedConv={pickedConv}
+          isFocused={true}
+          onPick={(id) => {
+            setPickedConv(id);
+            setFocus("chat");
+          }}
+          onExit={() => {
+            client.close();
+            exit();
+          }}
+        />
+      )}
       
-      <ChatLog 
-        state={state} 
-        isFocused={focus === "chat" && !state.confirm} 
-        onSubmit={onSubmit}
-        onDecision={handleDecision}
-      />
+      {(focus === "chat" || state.confirm) && (
+        <ChatLog 
+          state={state} 
+          isFocused={!state.confirm} 
+          onSubmit={onSubmit}
+          onDecision={handleDecision}
+        />
+      )}
     </Box>
   );
 }
