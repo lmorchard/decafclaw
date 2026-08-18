@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { formatRelative } from "./conversationPicker.js";
+import { formatRelative } from "./utils.js";
 
 const NOW = new Date("2026-05-15T16:00:00.000Z");
 

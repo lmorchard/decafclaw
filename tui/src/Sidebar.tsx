@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Box, Text, useInput } from "ink";
-import { formatRelative } from "./conversationPicker.js";
+import { formatRelative } from "./utils.js";
 
 interface ConvSummary {
   conv_id: string;
