@@ -38,6 +38,7 @@ class ToolState:
     extra_definitions: list[dict] = field(default_factory=list)
     deferred_pool: list[dict] = field(default_factory=list)
     allowed: set[str] | None = None
+    disallowed: set[str] | None = None
     preapproved: set[str] = field(default_factory=set)
     preapproved_shell_patterns: list[str] = field(default_factory=list)
     llm_approved_shell_patterns: list[str] = field(default_factory=list)

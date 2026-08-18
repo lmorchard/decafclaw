@@ -102,6 +102,7 @@ DISTINCT_VALUES = {
     "channel": "distinct-channel",
     "model": "distinct-model",
     "allowed_tools": ["distinct-tool"],
+    "disallowed_tools": ["distinct-disallowed-tool"],
     "shell_patterns": ["distinct-pattern"],
     "required_skills": ["distinct-skill"],
     "email_recipients": ["distinct@example.com"],

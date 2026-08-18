@@ -271,6 +271,11 @@ async def execute_tool(ctx: "Context", name: str, arguments: dict) -> ToolResult
     if allowed is not None and name not in allowed:
         return ToolResult(text=f"[error: tool '{name}' is not available in this context]")
 
+    # Check disallowed tools blocklist
+    disallowed = ctx.tools.disallowed or set()
+    if name in disallowed:
+        return ToolResult(text=f"[error: tool '{name}' is blocked by this context's allowlist/blocklist]")
+
     # Route MCP tools to the MCP registry (different call signature — no ctx)
     if name.startswith("mcp__"):
         from ..mcp_client import get_registry
