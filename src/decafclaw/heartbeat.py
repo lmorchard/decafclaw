@@ -8,6 +8,10 @@ import time
 from datetime import datetime
 from typing import TYPE_CHECKING
 
+import yaml
+
+from decafclaw.skills import _parse_allowed_tools
+
 if TYPE_CHECKING:
     from .media import ToolResult
 
@@ -86,30 +90,48 @@ def _split_sections(text: str) -> list[dict]:
     current_title = None
     current_lines = []
 
+    def save_section():
+        if current_title is not None or current_lines:
+            body = "\n".join(current_lines).strip()
+            if body:
+                # Parse frontmatter if present
+                import re
+
+                import yaml
+                allowed_tools = []
+                disallowed_tools = []
+                fm_match = re.match(r"^---\n(.*?)\n---(?:\n|$)", body, re.DOTALL)
+                if fm_match:
+                    try:
+                        meta = yaml.safe_load(fm_match.group(1)) or {}
+                        if "allowed-tools" in meta:
+                            allowed_tools, _ = _parse_allowed_tools(meta["allowed-tools"])
+                        elif "allowed_tools" in meta:
+                            allowed_tools, _ = _parse_allowed_tools(meta["allowed_tools"])
+
+                        if "disallowed-tools" in meta:
+                            disallowed_tools, _ = _parse_allowed_tools(meta["disallowed-tools"])
+                        elif "disallowed_tools" in meta:
+                            disallowed_tools, _ = _parse_allowed_tools(meta["disallowed_tools"])
+                    except Exception as e:
+                        log.warning(f"Failed to parse heartbeat section frontmatter: {e}")
+                    body = body[fm_match.end():].strip()
+                sections.append({
+                    "title": current_title or "General",
+                    "body": body,
+                    "allowed_tools": allowed_tools,
+                    "disallowed_tools": disallowed_tools,
+                })
+
     for line in text.splitlines():
         if line.startswith("## "):
-            # Save previous section
-            if current_title is not None or current_lines:
-                body = "\n".join(current_lines).strip()
-                if body:
-                    sections.append({
-                        "title": current_title or "General",
-                        "body": body,
-                    })
+            save_section()
             current_title = line[3:].strip()
             current_lines = []
         else:
             current_lines.append(line)
 
-    # Save final section
-    if current_title is not None or current_lines:
-        body = "\n".join(current_lines).strip()
-        if body:
-            sections.append({
-                "title": current_title or "General",
-                "body": body,
-            })
-
+    save_section()
     return sections
 
 
@@ -207,10 +229,17 @@ async def run_section_turn(
     conv_id = f"heartbeat-{timestamp}-{index}"
     prompt = build_section_prompt(section)
 
+    def context_setup(ctx):
+        if section.get("allowed_tools"):
+            ctx.tools.allowed = set(section["allowed_tools"])
+        if section.get("disallowed_tools"):
+            ctx.tools.disallowed = set(section["disallowed_tools"])
+
     try:
         future = await manager.enqueue_turn(
             conv_id=conv_id,
             kind=TurnKind.HEARTBEAT_SECTION,
+            context_setup=context_setup,
             prompt=prompt,
             history=[],
             task_mode="heartbeat",

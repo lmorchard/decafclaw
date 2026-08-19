@@ -25,6 +25,7 @@ Only include settings you want to override — absent keys use defaults.
     "gpt-4o": { "provider": "openai", "model": "gpt-4o" }
   },
   "default_model": "gemini-flash",
+  "auxiliary_model": "gemini-flash-8b",
   "mattermost": {
     "url": "https://comms.example.com",
     "bot_username": "decafclaw",
@@ -95,7 +96,7 @@ List fields accept comma-separated (`a,b,c`) or JSON array (`["a","b"]`) format 
 
 ### `compaction`
 
-History compaction settings. Empty `url`/`model`/`api_key` fall back to the `llm` group values via `config.compaction.resolved(config)`.
+History compaction settings. Note: `url`, `model`, and `api_key` are deprecated in favor of setting `auxiliary_model` (which uses the modern `providers` / `model_configs` system).
 
 | Field | Type | Default | Env Var | Secret |
 |-------|------|---------|---------|--------|
@@ -364,6 +365,16 @@ HTTP server for interactive buttons and web UI.
 | `secret` | str | `""` | `HTTP_SECRET` | yes |
 | `base_url` | str | `""` | `HTTP_BASE_URL` | |
 
+### `shell`
+
+Settings for shell command execution and pre-approval logic (see #473).
+
+| Field | Type | Default | Env Var |
+|-------|------|---------|---------|
+| `aux_approval_enabled` | bool | `false` | `SHELL_AUX_APPROVAL_ENABLED` |
+
+When `aux_approval_enabled` is `true`, `check_shell_approval()` invokes the auxiliary LLM to screen unrecognized commands. If the aux LLM deems the command low-risk (e.g. `ls -la`, `git status`), it is auto-approved without prompting the user. If the aux LLM deems it risky or errors out, it falls through to standard interactive confirmation. Auto-approved patterns are temporarily cached per-conversation so repeated benign commands don't trigger redundant LLM calls.
+
 ### `agent`
 
 Agent identity, loop limits, tool loading, and delegation.
@@ -422,7 +433,8 @@ Named model configurations referencing a provider. See [Model Selection](model-s
     "gemini-flash": { "provider": "vertex", "model": "gemini-2.5-flash" },
     "gpt-4o": { "provider": "openai", "model": "gpt-4o" }
   },
-  "default_model": "gemini-flash"
+  "default_model": "gemini-flash",
+  "auxiliary_model": "gemini-flash-8b"
 }
 ```
 
@@ -435,6 +447,8 @@ Named model configurations referencing a provider. See [Model Selection](model-s
 | `streaming` | bool | `true` | Use streaming responses |
 
 `default_model` (top-level string) sets which model config to use when none is explicitly selected.
+
+`auxiliary_model` (top-level string) sets the model config to use for background operations like compaction or scoring, where speed or cost might be prioritized over reasoning capability. If unset, these operations fall back to the active conversation model or `default_model`.
 
 **Migration:** If no `providers`/`model_configs` sections exist but the `llm` section is present, a "default" `openai-compat` provider and model config are auto-generated from the `llm` values.
 
@@ -472,8 +486,14 @@ Instrumentation sidecars — append-only JSONL under `workspace/`, metadata only
 | `reflection_metrics_path` | str | `reflection/metrics.jsonl` | `TELEMETRY_REFLECTION_METRICS_PATH` |
 | `retrieval_enabled` | bool | `true` | `TELEMETRY_RETRIEVAL_ENABLED` |
 | `retrieval_path` | str | `telemetry/retrieval.jsonl` | `TELEMETRY_RETRIEVAL_PATH` |
+| `loop_breaker_enabled` | bool | `true` | `TELEMETRY_LOOP_BREAKER_ENABLED` |
+| `loop_breaker_path` | str | `telemetry/loop_breaker.jsonl` | `TELEMETRY_LOOP_BREAKER_PATH` |
+| `otlp_endpoint` | str \| None | `null` | `TELEMETRY_OTLP_ENDPOINT` |
+| `otlp_service_name` | str | `"decafclaw"` | `TELEMETRY_OTLP_SERVICE_NAME` |
 
 Paths are workspace-relative. Enabled by default so a deployed agent starts collecting without a config edit — the intent is a week of real data. No rotation yet (append-only); retention is a follow-up. Reports: `make tool-usage-report`, `make reflection-stats`, `make retrieval-report`.
+
+For OpenTelemetry configuration, see [Observability](observability.md).
 
 ### `env`
 

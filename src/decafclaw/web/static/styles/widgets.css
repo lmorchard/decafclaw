@@ -434,3 +434,64 @@ chat-message .tool-result-raw pre {
 .progress-tracker__item--failed .progress-tracker__glyph { color: var(--pico-del-color, #c62828); }
 .progress-tracker__item--skipped { color: var(--pico-muted-color); }
 .progress-tracker__item--skipped .progress-tracker__label { text-decoration: line-through; }
+
+/* diff_view widget */
+.diff-view-widget {
+  background: var(--pico-background-color);
+  border: 1px solid var(--pico-muted-border-color);
+  border-radius: var(--pico-border-radius);
+  display: flex;
+  flex-direction: column;
+}
+.diff-view-widget.canvas-mode {
+  height: 100%;
+  border-radius: 0;
+  border: none;
+}
+.diff-view-widget pre {
+  margin: 0;
+  padding: 0.5rem;
+  background: transparent;
+}
+.diff-line {
+  display: flex;
+  font-family: var(--pico-font-family-monospace);
+  font-size: 0.85em;
+  white-space: pre-wrap;
+  word-break: break-all;
+  padding: 0 0.25rem;
+}
+.diff-line.added {
+  background-color: rgba(46, 160, 67, 0.15);
+}
+.diff-line.removed {
+  background-color: rgba(248, 81, 73, 0.15);
+}
+.diff-line.empty {
+  min-height: 1.25em;
+}
+.diff-marker {
+  user-select: none;
+  width: 1.5rem;
+  text-align: center;
+  color: var(--pico-muted-color);
+  flex-shrink: 0;
+}
+.diff-content {
+  flex: 1;
+}
+.diff-split {
+  display: flex;
+  width: 100%;
+}
+.diff-pane {
+  flex: 1;
+  width: 50%;
+  overflow-x: auto;
+}
+.diff-pane.left-pane {
+  border-right: 1px solid var(--pico-muted-border-color);
+}
+.diff-unified pre {
+  overflow-x: auto;
+}

@@ -1,10 +1,10 @@
 import React, { useEffect, useReducer, useRef, useState } from "react";
-import { Box, Text, useApp, useInput } from "ink";
-import TextInput from "ink-text-input";
+import { Box, useApp, useInput, Text } from "ink";
 import type { WSClient, WSEvent } from "./wsClient.js";
 import { dispatch, initialState, type State } from "./dispatcher.js";
 import type { ServerMessage } from "./types.generated.js";
-import { ConversationPicker } from "./conversationPicker.js";
+import { Sidebar } from "./Sidebar.js";
+import { ChatLog } from "./ChatLog.js";
 
 export interface AppProps {
   client: WSClient;
@@ -59,22 +59,16 @@ export function App({
   token,
 }: AppProps): React.JSX.Element {
   const [state, dispatchUi] = useReducer(reducer, initialState);
-  const [draft, setDraft] = useState("");
   const { exit } = useApp();
   const [pickedConv, setPickedConv] = useState<string | null>(initialConvId);
+  const [focus, setFocus] = useState<"sidebar" | "chat">("sidebar");
 
-  // Live pointer to the currently-active conversation. The WS subscription
-  // effect runs once on mount with stale-closed state, so it reads through
-  // this ref to know which conv to re-select after a reconnect.
+
   const activeConvIdRef = useRef<string | null>(initialConvId);
   useEffect(() => {
     activeConvIdRef.current = pickedConv;
   }, [pickedConv]);
 
-  // Subscribe to WS events once on mount. The empty dep array is deliberate —
-  // re-subscribing on every state change would accumulate handlers (wsClient.on
-  // is append-only). State references inside the handler are stale-closed; use
-  // activeConvIdRef.current for the currently-picked conversation id.
   useEffect(() => {
     client.on((e: WSEvent) => {
       if (e.type === "__reconnected") {
@@ -91,10 +85,6 @@ export function App({
     });
   }, []);
 
-  // Select the active conversation whenever the user picks one. WSClient
-  // buffers sends until OPEN, so we don't need to poll — fire once per
-  // (pickedConv, state.conv_id) change. The buffer absorbs the pre-open
-  // race; the __reconnected handler re-sends after drops.
   useEffect(() => {
     if (!pickedConv) return;
     if (state.conv_id === pickedConv) return;
@@ -104,8 +94,6 @@ export function App({
   const [cancelArmed, setCancelArmed] = useState(false);
   const cancelArmedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Clear any pending cancelArmed timer when the component unmounts so it
-  // can't fire setState after teardown.
   useEffect(() => {
     return () => {
       if (cancelArmedTimerRef.current) {
@@ -115,11 +103,7 @@ export function App({
   }, []);
 
   useInput((input, key) => {
-    // Universal escape: Ctrl+C always works, even mid-confirm.
-    // Mirrors what users expect from CLI prompts everywhere.
     if (key.ctrl && input === "c") {
-      // If a turn is in flight (and we haven't already armed), send cancel_turn
-      // and arm for 2s — a second Ctrl+C within that window forces exit.
       if (state.turnInFlight && !cancelArmed && state.conv_id) {
         client.send({ type: "cancel_turn", conv_id: state.conv_id });
         setCancelArmed(true);
@@ -132,94 +116,74 @@ export function App({
         }, 2000);
         return;
       }
-      // Otherwise: close cleanly and exit. This also fires from inside a
-      // confirm prompt — server will time out the confirm on its end.
       client.close();
       exit();
       return;
     }
 
-    // Confirm prompt active: y/n/a keys send decision.
-    if (state.confirm) {
-      // Map UI keys to the server's flat-flag confirm shape (websocket.py).
-      // y → approved once, n → deny, a → approved + always.
-      const decision =
-        input === "y" || input === "Y" ? { approved: true, always: false } :
-        input === "n" || input === "N" ? { approved: false, always: false } :
-        input === "a" || input === "A" ? { approved: true, always: true } :
-        null;
-      if (decision && state.conv_id) {
-        client.send({
-          type: "confirm_response",
-          conv_id: state.conv_id,
-          confirmation_id: state.confirm.confirmation_id,
-          approved: decision.approved,
-          always: decision.always,
-          add_pattern: false,
-        });
-        dispatchUi({ kind: "clear_confirm" });
-      }
+    if ((key.tab || input === "\t") && !state.confirm) {
+      setFocus(prev => prev === "sidebar" ? "chat" : "sidebar");
       return;
     }
   });
 
   function onSubmit(text: string): void {
     if (!state.conv_id) return;
-    if (!text.trim()) return;
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    if (trimmed === "/resume") {
+      setFocus("sidebar");
+      return;
+    }
     client.send({
       type: "send",
       conv_id: state.conv_id,
       text,
       attachments: [],
     });
-    setDraft("");
   }
 
-  if (!pickedConv) {
-    return (
-      <ConversationPicker
-        host={host}
-        token={token}
-        onPick={(id) => setPickedConv(id)}
-        onExit={() => {
-          client.close();
-          exit();
-        }}
-      />
-    );
+  function handleDecision(decision: { approved: boolean; always: boolean } | null) {
+    if (decision && state.conv_id && state.confirm) {
+      client.send({
+        type: "confirm_response",
+        conv_id: state.conv_id,
+        confirmation_id: state.confirm.confirmation_id,
+        approved: decision.approved,
+        always: decision.always,
+        add_pattern: false,
+      });
+      dispatchUi({ kind: "clear_confirm" });
+    }
   }
 
   return (
-    <Box flexDirection="column">
-      {state.transcript.map((item, i) => (
-        <Text key={i} color={item.kind === "system" ? "yellow" : undefined}>
-          {item.kind === "user" ? "you> " : item.kind === "assistant" ? "bot> " : ""}
-          {item.text}
-        </Text>
-      ))}
-      {state.draft && <Text color="cyan">{"bot> "}{state.draft}</Text>}
-      {state.activity && (
-        <Text color="gray">
-          [{state.activity.name}] {state.activity.status || "running..."}
-        </Text>
+    <Box flexDirection="row" width="100%" height="100%">
+      {focus === "sidebar" && !state.confirm && (
+        <Sidebar
+          host={host}
+          token={token}
+          pickedConv={pickedConv}
+          isFocused={true}
+          onPick={(id) => {
+            setPickedConv(id);
+            setFocus("chat");
+          }}
+          onExit={() => {
+            client.close();
+            exit();
+          }}
+        />
       )}
-      {state.confirm && (
-        <Box flexDirection="column">
-          <Text color="magenta">
-            confirm ({state.confirm.action_type}): {state.confirm.command || state.confirm.message}
-          </Text>
-          {state.confirm.suggested_pattern && (
-            <Text color="magenta">suggested pattern: {state.confirm.suggested_pattern}</Text>
-          )}
-          <Text color="magenta">[y]es / [n]o / [a]lways</Text>
-        </Box>
+      
+      {(focus === "chat" || state.confirm) && (
+        <ChatLog 
+          state={state} 
+          isFocused={!state.confirm} 
+          onSubmit={onSubmit}
+          onDecision={handleDecision}
+        />
       )}
-      <Box>
-        <Text>{state.conv_id ? "> " : "(connecting...) "}</Text>
-        {!state.confirm && (
-          <TextInput value={draft} onChange={setDraft} onSubmit={onSubmit} />
-        )}
-      </Box>
     </Box>
   );
 }

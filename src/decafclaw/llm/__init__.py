@@ -11,6 +11,7 @@ Call sites can use either:
 import logging
 from typing import Any
 
+from ..telemetry import get_tracer
 from .registry import (  # noqa: F401
     clear_providers,
     get_provider,
@@ -27,10 +28,20 @@ from .types import (  # noqa: F401
     StreamCallback,
 )
 
+_tracer = get_tracer(__name__)
+
 log = logging.getLogger(__name__)
 
 
 async def call_llm(config: Any, messages: list, tools: list | None = None,
+                   llm_url: str | None = None, llm_model: str | None = None,
+                   llm_api_key: str | None = None,
+                   model_name: str | None = None) -> dict:
+    with _tracer.start_as_current_span("call_llm") as span:
+        span.set_attribute("llm.model_name", model_name or "")
+        return await _call_llm_impl(config, messages, tools, llm_url, llm_model, llm_api_key, model_name)
+
+async def _call_llm_impl(config: Any, messages: list, tools: list | None = None,
                    llm_url: str | None = None, llm_model: str | None = None,
                    llm_api_key: str | None = None,
                    model_name: str | None = None) -> dict:
@@ -49,6 +60,17 @@ async def call_llm(config: Any, messages: list, tools: list | None = None,
 
 
 async def call_llm_streaming(
+    config: Any, messages: list, tools: list | None = None,
+    on_chunk: Any = None, cancel_event: Any = None,
+    llm_url: str | None = None, llm_model: str | None = None,
+    llm_api_key: str | None = None,
+    model_name: str | None = None,
+) -> dict:
+    with _tracer.start_as_current_span("call_llm_streaming") as span:
+        span.set_attribute("llm.model_name", model_name or "")
+        return await _call_llm_streaming_impl(config, messages, tools, on_chunk, cancel_event, llm_url, llm_model, llm_api_key, model_name)
+
+async def _call_llm_streaming_impl(
     config: Any, messages: list, tools: list | None = None,
     on_chunk: Any = None, cancel_event: Any = None,
     llm_url: str | None = None, llm_model: str | None = None,

@@ -196,12 +196,28 @@ def build_tool_list(ctx: "Context") -> tuple[list, str | None]:
         preempt_matches=ctx.tools.preempt_matches,
     )
 
-    # Apply allowed_tools filter to the active set only
+    # Apply allowed_tools / disallowed_tools filters
     allowed = ctx.tools.allowed
+    disallowed = ctx.tools.disallowed or set()
+
     if allowed is not None:
         active = [
             t for t in active
             if t.get("function", {}).get("name") in allowed
+        ]
+        deferred = [
+            t for t in deferred
+            if t.get("function", {}).get("name") in allowed
+        ]
+
+    if disallowed:
+        active = [
+            t for t in active
+            if t.get("function", {}).get("name") not in disallowed
+        ]
+        deferred = [
+            t for t in deferred
+            if t.get("function", {}).get("name") not in disallowed
         ]
 
     if not deferred:

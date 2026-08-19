@@ -25,6 +25,7 @@
     "@types/node": "^22.7.5",
     "@types/react": "^18.3.11",
     "@types/ws": "^8.5.12",
+    "ink-testing-library": "^4.0.0",
     "tsx": "^4.19.1",
     "typescript": "^5.6.3",
     "vitest": "^2.1.2"

@@ -72,6 +72,7 @@ async def _run_memory_sweep(ctx: "Context", old_messages: list[dict]) -> None:
             child_config, ctx.event_bus,
             user_id="memory-sweep",
             conv_id=conv_id,
+            active_model=config.auxiliary_model or ctx.active_model or config.default_model,
             task_mode="scheduled",
             skip_reflection=True,
             skip_vault_retrieval=True,
@@ -282,18 +283,7 @@ async def _single_summarize(ctx: "Context", config, flattened_text: str, prompt:
         {"role": "system", "content": prompt},
         {"role": "user", "content": flattened_text},
     ]
-    # Route through named model config: explicit > default_model > legacy
-    cc_model = config.compaction.model
-    if cc_model and cc_model in config.model_configs:
-        response = await call_llm(config, summary_messages, model_name=cc_model)
-    elif config.default_model:
-        response = await call_llm(config, summary_messages, model_name=config.default_model)
-    else:
-        cc = config.compaction.resolved(config)
-        response = await call_llm(
-            config, summary_messages,
-            llm_url=cc.url, llm_model=cc.model, llm_api_key=cc.api_key,
-        )
+    response = await ctx.aux_llm()(summary_messages)
     return response.get("content", "")
 
 

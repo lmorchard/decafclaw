@@ -49,6 +49,7 @@ class SkillInfo:
     has_native_tools: bool = False
     requires_env: list[str] = field(default_factory=list)
     user_invocable: bool = True
+    disable_model_invocation: bool = False
     allowed_tools: list[str] = field(default_factory=list)
     shell_patterns: list[str] = field(default_factory=list)
     context: str = "inline"  # "inline" or "fork"
@@ -188,6 +189,7 @@ def build_skill_info(result: SkillValidation) -> SkillInfo:
         has_native_tools=has_native_tools,
         requires_env=requires_env,
         user_invocable=meta.get("user-invocable", meta.get("user_invocable", True)),
+        disable_model_invocation=meta.get("disable-model-invocation", meta.get("disable_model_invocation", False)),
         allowed_tools=allowed_tools,
         shell_patterns=shell_patterns,
         context=meta.get("context", "inline"),

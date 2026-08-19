@@ -10,6 +10,7 @@ from typing import Any, Callable
 from uuid import uuid4
 
 from .context_composer import ComposerState
+from .llm import call_llm, call_llm_streaming
 
 
 class TurnLifecycle(Enum):
@@ -37,8 +38,10 @@ class ToolState:
     extra_definitions: list[dict] = field(default_factory=list)
     deferred_pool: list[dict] = field(default_factory=list)
     allowed: set[str] | None = None
+    disallowed: set[str] | None = None
     preapproved: set[str] = field(default_factory=set)
     preapproved_shell_patterns: list[str] = field(default_factory=list)
+    llm_approved_shell_patterns: list[str] = field(default_factory=list)
     # Scheduled-task overlay: addresses + `@domain.com` suffix patterns
     # that bypass confirmation for the `send_email` tool. Merged with
     # `config.email.allowed_recipients` at check time. Empty for
@@ -91,6 +94,27 @@ class SkillState:
     # short hint system message so the agent considers activate_skill
     # without needing a failed-tool round-trip.
     preempt_matches: set[str] = field(default_factory=set)
+
+
+class BoundLlmClient:
+    """An LLM client bound to a specific config and model name."""
+    def __init__(self, config: Any, model_name: str):
+        self.config = config
+        self.model_name = model_name
+
+    async def __call__(self, messages: list, tools: list | None = None, **kwargs) -> dict:
+        return await call_llm(
+            self.config, messages, tools=tools, model_name=self.model_name, **kwargs
+        )
+
+    async def complete(self, messages: list, tools: list | None = None, streaming: bool = False, **kwargs) -> dict:
+        if streaming:
+            return await call_llm_streaming(
+                self.config, messages, tools=tools, model_name=self.model_name, **kwargs
+            )
+        return await call_llm(
+            self.config, messages, tools=tools, model_name=self.model_name, **kwargs
+        )
 
 
 class Context:
@@ -150,6 +174,16 @@ class Context:
     def get_interceptors(self, phase: TurnLifecycle) -> list[Callable]:
         """Get all registered hooks for a lifecycle phase in registration order."""
         return list(self._interceptors.get(phase, []))
+
+    def llm(self) -> BoundLlmClient:
+        """Return an LLM client configured with the primary model ID."""
+        model_name = self.active_model or self.config.default_model
+        return BoundLlmClient(self.config, model_name)
+
+    def aux_llm(self) -> BoundLlmClient:
+        """Return an LLM client configured with the auxiliary model ID, or fallback to primary."""
+        model_name = self.config.auxiliary_model or self.active_model or self.config.default_model
+        return BoundLlmClient(self.config, model_name)
 
     # Turn kinds where no human can answer a confirmation prompt: it is emitted
     # only to subscribers of an ephemeral conv_id, so it blocks for the full 60s

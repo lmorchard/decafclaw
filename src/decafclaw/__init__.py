@@ -28,6 +28,11 @@ def main():
 
     config = load_config()
 
+    # Initialize OpenTelemetry native tracing
+    from .telemetry import init_tracer
+    init_tracer(config)
+
+
     # Initialize LLM provider registry from config
     from .llm import init_providers
     init_providers(config)

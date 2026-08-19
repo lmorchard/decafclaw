@@ -80,6 +80,7 @@ class ScheduleTask:
     enabled: bool = True
     model: str = ""  # named model config, empty = default
     allowed_tools: list[str] = field(default_factory=list)
+    disallowed_tools: list[str] = field(default_factory=list)
     shell_patterns: list[str] = field(default_factory=list)
     required_skills: list[str] = field(default_factory=list)
     # Per-task overlay for `send_email` — exact addresses or
@@ -104,6 +105,7 @@ _KNOWN_FRONTMATTER_KEYS = frozenset({
 
 # Valid patch keys accepted by `write_overlay`. Any other key raises ValueError.
 VALID_PATCH_KEYS = frozenset({
+    "disallowed_tools",
     "enabled", "schedule", "body", "channel", "allowed_tools",
     "required_skills", "shell_patterns", "email_recipients", "model", "pre_script",
 })
@@ -143,6 +145,16 @@ def parse_schedule_file(path: Path) -> ScheduleTask | None:
         allowed_tools_raw = ", ".join(str(t) for t in allowed_tools_raw)
     allowed_tools, shell_patterns = _parse_allowed_tools(str(allowed_tools_raw))
 
+    disallowed_tools_raw = meta.get("disallowed-tools", "")
+    if disallowed_tools_raw is None:
+        disallowed_tools_raw = ""
+    elif isinstance(disallowed_tools_raw, list):
+        disallowed_tools_raw = ", ".join(str(t) for t in disallowed_tools_raw)
+    disallowed_tools, disallowed_patterns = _parse_allowed_tools(str(disallowed_tools_raw))
+    if disallowed_patterns:
+        log.warning("shell(...) patterns are not supported in disallowed-tools; use 'shell' to block the entire tool")
+        raise ValueError("shell(...) patterns are not supported in disallowed-tools; use 'shell' to block the entire tool")
+
     required_skills = meta.get("required-skills", [])
     if not isinstance(required_skills, list):
         required_skills = [str(required_skills)] if required_skills else []
@@ -167,6 +179,7 @@ def parse_schedule_file(path: Path) -> ScheduleTask | None:
         enabled=enabled,
         model=str(meta.get("model", meta.get("effort", ""))),
         allowed_tools=allowed_tools,
+        disallowed_tools=disallowed_tools,
         shell_patterns=shell_patterns,
         required_skills=[str(s) for s in required_skills],
         email_recipients=[str(r) for r in email_recipients],
@@ -272,6 +285,8 @@ def serialize_to_markdown(task: ScheduleTask) -> str:
         fm["channel"] = task.channel
     if task.model:
         fm["model"] = task.model
+    if task.disallowed_tools:
+        fm["disallowed-tools"] = ", ".join(task.disallowed_tools)
     if task.allowed_tools or task.shell_patterns:
         entries = list(task.allowed_tools)
         entries.extend(f"shell({p})" for p in task.shell_patterns)
@@ -336,7 +351,7 @@ def write_overlay(config, name: str, patch: dict) -> ScheduleTask:
 
     # Validate list fields — reject non-list values (e.g. comma-separated strings)
     # rather than silently iterating characters.
-    for list_field in ("allowed_tools", "required_skills",
+    for list_field in ("allowed_tools", "disallowed_tools", "required_skills",
                        "shell_patterns", "email_recipients"):
         if list_field in patch and not isinstance(patch[list_field], list):
             raise ValueError(f"{list_field} must be a list of strings")
@@ -348,6 +363,7 @@ def write_overlay(config, name: str, patch: dict) -> ScheduleTask:
         body=patch.get("body", base.body),
         channel=patch.get("channel", base.channel),
         allowed_tools=list(patch.get("allowed_tools", base.allowed_tools)),
+        disallowed_tools=list(patch.get("disallowed_tools", base.disallowed_tools)),
         required_skills=list(patch.get("required_skills", base.required_skills)),
         shell_patterns=list(patch.get("shell_patterns", base.shell_patterns)),
         email_recipients=list(patch.get("email_recipients", base.email_recipients)),
@@ -765,6 +781,8 @@ async def run_schedule_task(config, event_bus, manager, task: ScheduleTask,
         if allowed_tools_set is not None:
             ctx.tools.allowed = allowed_tools_set
             ctx.tools.preapproved = preapproved
+        if task.disallowed_tools:
+            ctx.tools.disallowed = set(task.disallowed_tools)
         if shell_patterns:
             ctx.tools.preapproved_shell_patterns = shell_patterns
         if email_recipients is not None:

@@ -22,7 +22,10 @@ from typing import TYPE_CHECKING
 from .archive import append_message
 from .conversation_paths import conversation_dir
 from .media import EndTurnConfirm, ToolResult, WidgetInputPause
+from .telemetry import get_tracer
 from .tools import execute_tool
+
+_tracer = get_tracer(__name__)
 
 if TYPE_CHECKING:
     from decafclaw.context import Context
@@ -214,6 +217,11 @@ def resolve_widget(fn_name: str, result: ToolResult,
 
 
 async def execute_single_tool(call_ctx, tc, semaphore):
+    with _tracer.start_as_current_span("execute_single_tool") as span:
+        span.set_attribute("tool.name", tc["function"]["name"])
+        return await _execute_single_tool_impl(call_ctx, tc, semaphore)
+
+async def _execute_single_tool_impl(call_ctx, tc, semaphore):
     """Execute one tool call. Returns (tool_msg dict, end_turn flag).
 
     Designed to run concurrently — uses its own forked ctx so
@@ -260,6 +268,7 @@ async def execute_single_tool(call_ctx, tc, semaphore):
                 input_bytes = 0
             publish_kwargs = {
                 "tool": fn_name,
+                "args": fn_args,
                 "result_text": result.text,
                 "display_text": getattr(result, "display_text", None),
                 "display_short_text": getattr(

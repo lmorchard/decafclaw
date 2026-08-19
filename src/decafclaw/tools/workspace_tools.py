@@ -309,20 +309,71 @@ def tool_workspace_move(ctx: "Context", path: str, destination: str) -> str | To
         return _file_error(e, path)
 
 
-def tool_workspace_delete(ctx: "Context", path: str) -> str | ToolResult:
-    """Delete a file from the workspace."""
-    log.info(f"[tool:workspace_delete] {path}")
+def tool_workspace_mkdir(ctx: "Context", path: str) -> str | ToolResult:
+    """Create an empty directory (and parents) in the workspace."""
+    log.info(f"[tool:workspace_mkdir] {path}")
+    resolved = _resolve_safe(ctx.config, path)
+    if resolved is None:
+        return ToolResult(text=f"[error: path '{path}' is outside the workspace]")
+    try:
+        if resolved.exists():
+            return f"Directory {path} already exists"
+        resolved.mkdir(parents=True, exist_ok=True)
+        invalidate_workspace_file_cache(ctx.config)
+        return f"Created directory {path}"
+    except PermissionError as e:
+        return _file_error(e, path)
+
+
+def tool_workspace_copy(ctx: "Context", source: str, destination: str) -> str | ToolResult:
+    """Copy a file within the workspace."""
+    import shutil
+    log.info(f"[tool:workspace_copy] {source} -> {destination}")
+    resolved_src = _resolve_safe(ctx.config, source)
+    if resolved_src is None:
+        return ToolResult(text=f"[error: source path '{source}' is outside the workspace]")
+    resolved_dst = _resolve_safe(ctx.config, destination)
+    if resolved_dst is None:
+        return ToolResult(text=f"[error: destination '{destination}' is outside the workspace]")
+    if not resolved_src.exists():
+        return ToolResult(text=f"[error: source file not found: {source}]")
+    if resolved_src.is_dir():
+        return ToolResult(text=f"[error: source '{source}' is a directory, workspace_copy only copies files]")
+    if resolved_dst.exists():
+        return ToolResult(text=f"[error: destination already exists: {destination}]")
+    try:
+        resolved_dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(resolved_src, resolved_dst)
+        invalidate_workspace_file_cache(ctx.config)
+        return f"Copied {source} -> {destination}"
+    except PermissionError as e:
+        return _file_error(e, destination)
+
+
+def tool_workspace_delete(ctx: "Context", path: str, recursive: bool = False) -> str | ToolResult:
+    """Delete a file or directory from the workspace."""
+    import shutil
+    log.info(f"[tool:workspace_delete] {path} recursive={recursive}")
     resolved = _resolve_safe(ctx.config, path)
     if resolved is None:
         return ToolResult(text=f"[error: path '{path}' is outside the workspace]")
     if not resolved.exists():
         return ToolResult(text=f"[error: file not found: {path}]")
-    if resolved.is_dir():
-        return ToolResult(text=f"[error: '{path}' is a directory. Use shell to remove directories.]")
     try:
-        resolved.unlink()
-        invalidate_workspace_file_cache(ctx.config)
-        return f"Deleted {path}"
+        if resolved.is_dir():
+            is_empty = not any(resolved.iterdir())
+            if not is_empty and not recursive:
+                return ToolResult(text=f"[error: '{path}' is a directory. Use recursive=true to remove non-empty directories, or use shell to remove directories.]")
+            if not is_empty:
+                shutil.rmtree(resolved)
+            else:
+                resolved.rmdir()
+            invalidate_workspace_file_cache(ctx.config)
+            return f"Deleted directory {path}"
+        else:
+            resolved.unlink()
+            invalidate_workspace_file_cache(ctx.config)
+            return f"Deleted {path}"
     except PermissionError as e:
         return _file_error(e, path)
 
@@ -630,6 +681,8 @@ WORKSPACE_TOOLS = {
     "workspace_search": tool_workspace_search,
     "workspace_glob": tool_workspace_glob,
     "workspace_move": tool_workspace_move,
+    "workspace_mkdir": tool_workspace_mkdir,
+    "workspace_copy": tool_workspace_copy,
     "workspace_delete": tool_workspace_delete,
     "workspace_diff": tool_workspace_diff,
 }
@@ -916,14 +969,58 @@ WORKSPACE_TOOL_DEFINITIONS = [
         "type": "function",
         "priority": "normal",
         "function": {
-            "name": "workspace_delete",
-            "description": "Delete a file from the workspace. Cannot delete directories. NEVER guess a filename if a target is described ambiguously (e.g. 'the Q1 report' with multiple matching files) — use workspace_list to check existing files or ask the user for clarification first.",
+            "name": "workspace_mkdir",
+            "description": "Create an empty directory (and its parents) in the workspace. No-op if it exists. Useful for scaffolding project layouts up front.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "path": {
                         "type": "string",
-                        "description": "Relative path of the file to delete",
+                        "description": "Relative path of the directory to create",
+                    },
+                },
+                "required": ["path"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "priority": "normal",
+        "function": {
+            "name": "workspace_copy",
+            "description": "Copy a file within the workspace. Fails if the destination already exists.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "source": {
+                        "type": "string",
+                        "description": "Current relative path of the file",
+                    },
+                    "destination": {
+                        "type": "string",
+                        "description": "New relative path for the copied file",
+                    },
+                },
+                "required": ["source", "destination"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "priority": "normal",
+        "function": {
+            "name": "workspace_delete",
+            "description": "Delete a file or directory from the workspace. By default, it will only delete files or empty directories. To delete a non-empty directory and its contents, you must set recursive to true. NEVER guess a filename if a target is described ambiguously (e.g. 'the Q1 report' with multiple matching files) — use workspace_list to check existing files or ask the user for clarification first.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Relative path of the file or directory to delete",
+                    },
+                    "recursive": {
+                        "type": "boolean",
+                        "description": "If true, delete directory and all its contents recursively. Default is false.",
                     },
                 },
                 "required": ["path"],

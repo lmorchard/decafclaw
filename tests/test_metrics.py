@@ -48,7 +48,7 @@ async def test_llm_call_latency_recorded(config):
     # Check JSONL log
     jsonl_path = config.workspace_path / "metrics.jsonl"
     assert jsonl_path.exists()
-    records = [json.loads(l) for l in jsonl_path.read_text().splitlines()]
+    records = [json.loads(line) for line in jsonl_path.read_text().splitlines()]
 
     latency_rec = next(r for r in records if r["metric_name"] == "llm_call_latency_ms")
     assert latency_rec["labels"]["model"] == "gpt-4o"

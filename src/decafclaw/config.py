@@ -19,6 +19,7 @@ from dotenv import load_dotenv
 
 from .config_types import (
     AgentConfig,
+    AuditLogConfig,
     BackgroundConfig,
     CleanupConfig,
     CompactionConfig,
@@ -39,6 +40,7 @@ from .config_types import (
     RecentJournalConfig,
     ReflectionConfig,
     RelevanceConfig,
+    ShellConfig,
     TelemetryConfig,
     TerminalConfig,
     VaultConfig,
@@ -172,12 +174,14 @@ class Config:
     heartbeat: HeartbeatConfig = field(default_factory=HeartbeatConfig)
     http: HttpConfig = field(default_factory=HttpConfig)
     terminal: TerminalConfig = field(default_factory=TerminalConfig)
+    shell: ShellConfig = field(default_factory=ShellConfig)
     agent: AgentConfig = field(default_factory=AgentConfig)
     skills: dict[str, dict[str, Any]] = field(default_factory=dict)
     reflection: ReflectionConfig = field(default_factory=ReflectionConfig)
     providers: dict[str, ProviderConfig] = field(default_factory=dict)
     model_configs: dict[str, ModelConfig] = field(default_factory=dict)
     default_model: str = ""
+    auxiliary_model: str = ""
     extra_skill_paths: list[str] = field(default_factory=list)
     max_tool_output_bytes: int | None = 51200
     # Skill names to treat as always-loaded regardless of frontmatter.
@@ -191,6 +195,7 @@ class Config:
     vault: VaultConfig = field(default_factory=VaultConfig)
     vault_guide: VaultGuideConfig = field(default_factory=VaultGuideConfig)
     notifications: NotificationsConfig = field(default_factory=NotificationsConfig)
+    audit_log: AuditLogConfig = field(default_factory=AuditLogConfig)
     email: EmailConfig = field(default_factory=EmailConfig)
     background: BackgroundConfig = field(default_factory=BackgroundConfig)
     workflow: WorkflowConfig = field(default_factory=WorkflowConfig)
@@ -424,6 +429,9 @@ def load_config() -> Config:
     terminal = load_sub_config(
         TerminalConfig, file_data.get("terminal", {}), "TERMINAL")
 
+    shell = load_sub_config(
+        ShellConfig, file_data.get("shell", {}), "SHELL")
+
     agent = load_sub_config(
         AgentConfig, file_data.get("agent", {}), "",
         env_aliases={
@@ -480,6 +488,9 @@ def load_config() -> Config:
     notifications = load_sub_config(
         NotificationsConfig, file_data.get("notifications", {}), "NOTIFICATIONS")
 
+    audit_log = load_sub_config(
+        AuditLogConfig, file_data.get("audit_log", {}), "AUDIT_LOG")
+
     email = load_sub_config(
         EmailConfig, file_data.get("email", {}), "EMAIL")
 
@@ -515,6 +526,7 @@ def load_config() -> Config:
     providers = _load_providers(file_data.get("providers", {}))
     model_configs = _load_model_configs(file_data.get("model_configs", {}))
     default_model = file_data.get("default_model", "")
+    auxiliary_model = file_data.get("auxiliary_model", "")
 
     env_extra = os.getenv("EXTRA_SKILL_PATHS", "")
     if env_extra:
@@ -571,12 +583,14 @@ def load_config() -> Config:
         heartbeat=heartbeat,
         http=http,
         terminal=terminal,
+        shell=shell,
         agent=agent,
         skills=skills,
         reflection=reflection,
         providers=providers,
         model_configs=model_configs,
         default_model=default_model,
+        auxiliary_model=auxiliary_model,
         extra_skill_paths=extra_skill_paths,
         skills_always_loaded=skills_always_loaded,
         vault_retrieval=vault_retrieval,
@@ -585,6 +599,7 @@ def load_config() -> Config:
         vault=vault,
         vault_guide=vault_guide,
         notifications=notifications,
+        audit_log=audit_log,
         email=email,
         background=background,
         workflow=workflow,

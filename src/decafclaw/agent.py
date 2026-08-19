@@ -22,7 +22,6 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from decafclaw.context import Context
 
-if TYPE_CHECKING:
     from .context_composer import ComposedContext
     from .reflection import ReflectionResult
 
@@ -46,8 +45,11 @@ from .media import EndTurnConfirm, ToolResult, WidgetInputPause, extract_workspa
 from .persistence import read_skill_data, read_skills_state, write_skill_data, write_skills_state
 from .reflection_metrics import classify_outcome, response_delta
 from .skills import activate_always_loaded
+from .telemetry import get_tracer
 from .tool_definitions import build_tool_list, refresh_dynamic_tools
 from .tool_execution import execute_tool_calls
+
+_tracer = get_tracer(__name__)
 
 _TASK_MODE_TO_COMPOSER: dict[str, ComposerMode] = {
     "heartbeat": ComposerMode.HEARTBEAT,
@@ -696,6 +698,12 @@ class TurnRunner:
         self.turn_start_index = len(self.history)
 
     async def _run_iteration(self, iteration: int) -> IterationOutcome:
+        with _tracer.start_as_current_span("TurnRunner._run_iteration") as span:
+            span.set_attribute("iteration", iteration)
+            span.set_attribute("conversation.id", self.ctx.conv_id)
+            return await self._run_iteration_impl(iteration)
+
+    async def _run_iteration_impl(self, iteration: int) -> IterationOutcome:
         """Run one LLM iteration: cancel-check, tool refresh, deferred-list
         injection, the LLM call, and dispatch to tool-calls or no-tool-calls
         handler. Returns _Continue or _Final."""
