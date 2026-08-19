@@ -299,6 +299,13 @@ async def health(request: Request) -> JSONResponse:
     return JSONResponse(get_health_data(request.app.state.config))
 
 
+async def metrics_endpoint(request: Request) -> Response:
+    """Prometheus text format metrics endpoint."""
+    from .metrics import format_prometheus_metrics
+    content = format_prometheus_metrics()
+    return Response(content, media_type="text/plain")
+
+
 async def handle_confirm(request: Request) -> JSONResponse:
     """Handle Mattermost interactive button callbacks for tool confirmation."""
     config = request.app.state.config
@@ -2409,6 +2416,7 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> FastAPI:
     routes: list[BaseRoute] = [
         APIRoute("/openapi.yaml", openapi_yaml, methods=["GET"], include_in_schema=False),
         APIRoute("/health", health, methods=["GET"]),
+        APIRoute("/metrics", metrics_endpoint, methods=["GET"]),
         APIRoute("/actions/confirm", handle_confirm, methods=["POST"]),
         APIRoute("/actions/cancel", handle_cancel, methods=["POST"]),
         APIRoute("/api/auth/login", auth_login, methods=["POST"]),

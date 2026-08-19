@@ -412,6 +412,8 @@ async def _call_llm_with_events(ctx: "Context", config, messages, tools,
 
     iteration = ctx._current_iteration
     await ctx.publish("llm_start", iteration=iteration)
+    import time
+    start_time = time.monotonic()
     from .config import resolve_streaming
     if resolve_streaming(config, ctx.active_model):
         from .llm import call_llm_streaming
@@ -442,9 +444,12 @@ async def _call_llm_with_events(ctx: "Context", config, messages, tools,
                 response = llm_task.result()
         else:
             response = await call_llm(config, messages, tools=tools, **llm_kwargs)
+    duration_ms = (time.monotonic() - start_time) * 1000
     await ctx.publish("llm_end", iteration=iteration,
                       content=response.get("content"),
-                      has_tool_calls=bool(response.get("tool_calls")))
+                      has_tool_calls=bool(response.get("tool_calls")),
+                      duration_ms=duration_ms,
+                      model=ctx.active_model)
     return response
 
 

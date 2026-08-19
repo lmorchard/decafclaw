@@ -20,6 +20,18 @@ export class DefaultService {
         });
     }
     /**
+     * Metrics Endpoint
+     * Prometheus text format metrics endpoint.
+     * @returns any Successful Response
+     * @throws ApiError
+     */
+    public static metricsEndpointMetricsGet(): CancelablePromise<any> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/metrics',
+        });
+    }
+    /**
      * Handle Confirm
      * Handle Mattermost interactive button callbacks for tool confirmation.
      * @returns any Successful Response

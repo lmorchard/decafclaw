@@ -70,6 +70,10 @@ async def run_all(app_ctx):
         log.info("Telemetry: retrieval subscriber active (%s)",
                  config.telemetry.retrieval_path)
 
+    from .metrics import make_metrics_subscriber
+    app_ctx.event_bus.subscribe(make_metrics_subscriber(config))
+    log.info("Metrics: metrics subscriber active")
+
     # Init MCP servers (shared across all subsystems)
     await init_mcp(config, event_bus=app_ctx.event_bus)
 
@@ -135,7 +139,6 @@ async def run_all(app_ctx):
 
         from .workspace_index import make_workspace_index_subscriber
         app_ctx.event_bus.subscribe(make_workspace_index_subscriber(config))
-
 
         # Start heartbeat timer
         if parse_interval(config.heartbeat.interval) is not None:
