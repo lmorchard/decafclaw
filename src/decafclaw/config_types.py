@@ -506,6 +506,20 @@ class LoopBreakerConfig:
 
 
 @dataclass
+class AuditLogConfig:
+    """Persistent audit log event bus subscriber configuration.
+
+    Records tool calls, LLM requests, skill activations,
+    and MCP connections to a structured JSONL log. Supports file rotation
+    or truncation.
+    """
+    enabled: bool = True
+    path: str = "audit.jsonl"
+    max_size_bytes: int = 10 * 1024 * 1024  # 10 MB default
+    max_backups: int = 5
+
+
+@dataclass
 class TelemetryConfig:
     """Instrumentation sidecars (#310 tool usage, #409 reflection metrics,
     #197 retrieval telemetry).
