@@ -43,7 +43,7 @@ export function parseArgs(
   }
 
   const token = partial.token ?? env.DECAFCLAW_TOKEN;
-  const host = partial.host ?? env.DECAFCLAW_HOST ?? "http://localhost:8088";
+  const host = partial.host ?? env.DECAFCLAW_HOST ?? "http://localhost:18880";
 
   if (!token) {
     return {

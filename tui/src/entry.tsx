@@ -33,6 +33,8 @@ function main(): void {
   const client = new WSClient({ host, token });
   client.connect();
 
+  console.clear();
+
   render(
     <App client={client} initialConvId={conv} host={host} token={token} />,
     { exitOnCtrlC: false }
