@@ -989,6 +989,12 @@ async def activate_skill_internal(ctx: "Context", skill_info, reloading: bool = 
         log.info(f"Activated shell-based skill '{name}'")
 
     ctx.skills.activated[name] = _compute_skill_hash(skill_info)
+
+    try:
+        await ctx.publish("skill_activated", skill=name)
+    except Exception as e:
+        log.debug("failed to publish skill_activated: %s", e)
+
     return "\n".join(result_parts)
 
 

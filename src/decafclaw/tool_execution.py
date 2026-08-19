@@ -268,6 +268,7 @@ async def _execute_single_tool_impl(call_ctx, tc, semaphore):
                 input_bytes = 0
             publish_kwargs = {
                 "tool": fn_name,
+                "args": fn_args,
                 "result_text": result.text,
                 "display_text": getattr(result, "display_text", None),
                 "display_short_text": getattr(

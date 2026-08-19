@@ -57,7 +57,23 @@ async def run_interactive(ctx: "Context"):
     ctx.channel_name = ctx.channel_name or "interactive"
     ctx.conv_id = conv_id
 
-    await init_mcp(config)
+    if config.audit_log.enabled:
+        from .audit_log import make_audit_log_subscriber
+        ctx.event_bus.subscribe(make_audit_log_subscriber(config))
+    if config.telemetry.tool_usage_enabled:
+        from .tool_telemetry import make_tool_telemetry_subscriber
+        ctx.event_bus.subscribe(make_tool_telemetry_subscriber(config))
+    if config.telemetry.reflection_metrics_enabled:
+        from .reflection_metrics import make_reflection_metrics_subscriber
+        ctx.event_bus.subscribe(make_reflection_metrics_subscriber(config))
+    if config.telemetry.loop_breaker_enabled:
+        from .loop_breaker_telemetry import make_loop_breaker_subscriber
+        ctx.event_bus.subscribe(make_loop_breaker_subscriber(config))
+    if config.telemetry.retrieval_enabled:
+        from .retrieval_telemetry import make_retrieval_telemetry_subscriber
+        ctx.event_bus.subscribe(make_retrieval_telemetry_subscriber(config))
+
+    await init_mcp(config, event_bus=ctx.event_bus)
     _print_banner(config)
 
     # Create conversation manager

@@ -372,8 +372,9 @@ class MCPServerState:
 class MCPRegistry:
     """Registry of MCP server connections and their tools."""
 
-    def __init__(self):
+    def __init__(self, event_bus=None):
         self.servers: dict[str, MCPServerState] = {}
+        self.event_bus = event_bus
 
     def get_tools(self) -> dict:
         """Return all MCP tools as {namespaced_name: async_callable}."""
@@ -566,6 +567,16 @@ class MCPRegistry:
 
             state.status = "connected"
             state.retry_count = 0
+
+            if self.event_bus:
+                try:
+                    await self.event_bus.publish({
+                        "type": "mcp_server_connected",
+                        "server": name
+                    })
+                except Exception as e:
+                    log.debug("failed to publish mcp_server_connected: %s", e)
+
             log.info(f"MCP server {name!r} connected: {len(state.tools)} tool(s), "
                      f"{len(state.resources)} resource(s), {len(state.prompts)} prompt(s)")
 
@@ -765,7 +776,7 @@ def get_registry() -> MCPRegistry | None:
     return _registry
 
 
-async def init_mcp(config):
+async def init_mcp(config, event_bus=None):
     """Initialize the global MCP registry and connect all servers."""
     global _registry
     configs = load_mcp_config(config)
@@ -773,7 +784,7 @@ async def init_mcp(config):
         log.info("No MCP servers configured")
         return
 
-    _registry = MCPRegistry()
+    _registry = MCPRegistry(event_bus=event_bus)
     await _registry.connect_all(configs)
 
 
