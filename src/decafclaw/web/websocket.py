@@ -851,6 +851,15 @@ def _subscribe_to_conv(state, conv_id):
                 "message": event.get("message", ""),
             })
 
+        elif event_type == "shell_approval":
+            await ws_send({
+                "type": WSMessageType.SHELL_APPROVAL, "conv_id": event_conv_id,
+                "command": event.get("command", ""),
+                "risk": event.get("risk", ""),
+                "reason": event.get("reason", ""),
+                "approved": event.get("approved", False),
+            })
+
         elif event_type == "reflection_result":
             visibility = config.reflection.visibility
             passed = event.get("passed", True)

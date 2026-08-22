@@ -19,6 +19,7 @@ export const MESSAGE_TYPES = Object.freeze({
   NOTIFICATION_CREATED: 'notification_created',
   NOTIFICATION_READ: 'notification_read',
   REFLECTION_RESULT: 'reflection_result',
+  SHELL_APPROVAL: 'shell_approval',
   STICKY_CLEAR: 'sticky_clear',
   STICKY_SET: 'sticky_set',
   TOOL_END: 'tool_end',
