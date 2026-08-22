@@ -136,6 +136,15 @@ export interface SrvReflectionResult {
   error: string;
 }
 
+export interface SrvShellApproval {
+  type: "shell_approval";
+  conv_id: string;
+  command: string;
+  risk: string;
+  reason: string;
+  approved: boolean;
+}
+
 export interface SrvStickyClear {
   type: "sticky_clear";
   conv_id: string;
@@ -270,6 +279,7 @@ export type ServerMessage =
   | SrvNotificationCreated
   | SrvNotificationRead
   | SrvReflectionResult
+  | SrvShellApproval
   | SrvStickyClear
   | SrvStickySet
   | SrvToolEnd

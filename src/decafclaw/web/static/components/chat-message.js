@@ -96,6 +96,12 @@ export class ChatMessage extends LitElement {
       return html`<div class="compaction-notice">${this.content}</div>`;
     }
 
+    if (this.role === 'shell_approval') {
+      const isDeclined = this.tool && this.tool.includes('DECLINED');
+      const icon = isDeclined ? '\u{1f6d1}' : '\u{1f6e1}\u{fe0f}'; // STOP sign or SHIELD
+      return html`<tool-message .tool=${this.tool || 'shell_approval'} .content=${this.content} .icon=${icon}></tool-message>`;
+    }
+
     if (this.role === 'reflection') {
       return html`<tool-message .tool=${this.tool || 'reflection'} .content=${this.content} .icon=${'\u{1f441}'}></tool-message>`;
     }

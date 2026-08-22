@@ -231,6 +231,19 @@ export class ToolStatusStore {
         return true;
       }
 
+      case MESSAGE_TYPES.SHELL_APPROVAL:
+        if (msg.conv_id === currentConvId) {
+          const statusLabel = msg.approved ? 'ALLOWED' : 'DECLINED';
+          const detail = `Risk: ${msg.risk}\nReason: ${msg.reason}`;
+          this.#messageStore.pushMessage({
+            role: 'shell_approval',
+            tool: `shell auto-approval: ${statusLabel}`,
+            content: `Command: ${msg.command}\n${detail}`,
+            timestamp: new Date().toISOString(),
+          });
+        }
+        return true;
+
       case MESSAGE_TYPES.REFLECTION_RESULT:
         if (msg.conv_id === currentConvId) {
           const passed = msg.passed;
