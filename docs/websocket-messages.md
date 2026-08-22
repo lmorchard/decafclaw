@@ -195,6 +195,18 @@ Output of the post-turn reflection step for a conversation.
 - `raw_response` — string
 - `error` — string
 
+### `shell_approval`
+
+Narrative about an LLM auto-approval of a shell command.
+
+**Fields:**
+
+- `conv_id` — string
+- `command` — string
+- `risk` — string
+- `reason` — string
+- `approved` — boolean
+
 ### `sticky_clear`
 
 The conversation's sticky slot was cleared.
