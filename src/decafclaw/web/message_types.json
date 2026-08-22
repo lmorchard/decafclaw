@@ -132,6 +132,11 @@
       "description": "The conversation's sticky slot was cleared.",
       "fields": {"conv_id": "string"}
     },
+    "shell_approval": {
+      "direction": "server_to_client",
+      "description": "Narrative about an LLM auto-approval of a shell command.",
+      "fields": {"conv_id": "string", "command": "string", "risk": "string", "reason": "string", "approved": "boolean"}
+    },
 
     "cancel_turn": {
       "direction": "client_to_server",
