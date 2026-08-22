@@ -225,7 +225,7 @@ async def check_shell_approval(ctx: "Context", command: str, tool_name: str = "s
                 if not ctx.skip_archive:
                     try:
                         from decafclaw.archive import append_message
-                        append_message(ctx.config, ctx.event_context_id or ctx.context_id, {
+                        append_message(ctx.config, ctx.conv_id, {
                             "role": "shell_approval", "tool": "shell auto-approval: ALLOWED", "content": msg_content
                         })
                     except Exception as e:
@@ -240,7 +240,7 @@ async def check_shell_approval(ctx: "Context", command: str, tool_name: str = "s
                 if not ctx.skip_archive:
                     try:
                         from decafclaw.archive import append_message
-                        append_message(ctx.config, ctx.event_context_id or ctx.context_id, {
+                        append_message(ctx.config, ctx.conv_id, {
                             "role": "shell_approval", "tool": "shell auto-approval: DECLINED", "content": msg_content
                         })
                     except Exception as e:
