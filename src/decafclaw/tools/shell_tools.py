@@ -225,11 +225,12 @@ async def check_shell_approval(ctx: "Context", command: str, tool_name: str = "s
                 if not ctx.skip_archive:
                     try:
                         from decafclaw.archive import append_message
-                        append_message(ctx.config, ctx.conv_id, {
+                        conv_id = ctx.conv_id or ctx.channel_id or "unknown"
+                        append_message(ctx.config, conv_id, {
                             "role": "shell_approval", "tool": "shell auto-approval: ALLOWED", "content": msg_content
                         })
-                    except Exception as e:
-                        log.error(f"Archive write failed for shell_approval: {e}")
+                    except Exception:
+                        log.exception("Archive write failed for shell_approval")
                 await ctx.publish("shell_approval", command=command, risk=data.get("risk", ""), reason=data.get("reason", ""), approved=True)
 
                 return {"approved": True}
@@ -240,11 +241,12 @@ async def check_shell_approval(ctx: "Context", command: str, tool_name: str = "s
                 if not ctx.skip_archive:
                     try:
                         from decafclaw.archive import append_message
-                        append_message(ctx.config, ctx.conv_id, {
+                        conv_id = ctx.conv_id or ctx.channel_id or "unknown"
+                        append_message(ctx.config, conv_id, {
                             "role": "shell_approval", "tool": "shell auto-approval: DECLINED", "content": msg_content
                         })
-                    except Exception as e:
-                        log.error(f"Archive write failed for shell_approval: {e}")
+                    except Exception:
+                        log.exception("Archive write failed for shell_approval")
                 await ctx.publish("shell_approval", command=command, risk=data.get("risk", ""), reason=data.get("reason", ""), approved=False)
         except Exception as e:
             log.warning(f"[{tool_name}] aux LLM approval failed, falling through: {e}")
