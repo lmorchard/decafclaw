@@ -155,6 +155,14 @@ retrieval-report:
 migrate-sidecars-dry:
 	uv run python scripts/migrate_sidecars_to_dirs.py --dry-run
 
+# Report git worktrees/branches whose work already landed (no changes made)
+prune-worktrees-dry:
+	uv run python scripts/prune_agent_worktrees.py
+
+# Remove landed worktrees and delete their branches
+prune-worktrees:
+	uv run python scripts/prune_agent_worktrees.py --apply
+
 # Build web UI vendor bundle (npm + esbuild)
 # Run after changing JS dependencies in src/decafclaw/web/static/package.json
 # Requires Node.js. Output is committed to git, so only needed for dev.
