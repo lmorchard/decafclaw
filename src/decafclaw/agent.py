@@ -16,6 +16,7 @@ import inspect
 import json
 import logging
 import re as _re
+import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -412,7 +413,6 @@ async def _call_llm_with_events(ctx: "Context", config, messages, tools,
 
     iteration = ctx._current_iteration
     await ctx.publish("llm_start", iteration=iteration)
-    import time
     start_time = time.monotonic()
     from .config import resolve_streaming
     if resolve_streaming(config, ctx.active_model):
@@ -449,7 +449,7 @@ async def _call_llm_with_events(ctx: "Context", config, messages, tools,
                       content=response.get("content"),
                       has_tool_calls=bool(response.get("tool_calls")),
                       duration_ms=duration_ms,
-                      model=ctx.active_model)
+                      model=model_name or ctx.active_model or config.default_model)
     return response
 
 

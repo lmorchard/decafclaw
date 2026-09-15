@@ -67,6 +67,7 @@ These docs are as much for me as they are for agents working on this project. Th
 
 - [Architecture Overview](architecture.md) — Narrative walkthrough: entry points, Context, EventBus, agent turn lifecycle, tool concurrency
 - [Observability](observability.md) — OpenTelemetry tracing for agent loops, LLM calls, and context composition
+- [Metrics](metrics.md) — Prometheus `/metrics` endpoint, counters and latency for LLM calls, tools, and loop-breaker trips
 - [Data Layout](data-layout.md) — File structure, admin vs workspace trust boundary
 - [Context Composer](context-composer.md) — Context assembly, vault retrieval, relevance scoring, token budget
 - [Original Agent Spec](original-agent-spec.md) — The original design sketch

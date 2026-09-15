@@ -69,10 +69,10 @@ async def run_all(app_ctx):
         app_ctx.event_bus.subscribe(make_retrieval_telemetry_subscriber(config))
         log.info("Telemetry: retrieval subscriber active (%s)",
                  config.telemetry.retrieval_path)
-
-    from .metrics import make_metrics_subscriber
-    app_ctx.event_bus.subscribe(make_metrics_subscriber(config))
-    log.info("Metrics: metrics subscriber active")
+    if config.telemetry.metrics_enabled:
+        from .metrics import make_metrics_subscriber
+        app_ctx.event_bus.subscribe(make_metrics_subscriber())
+        log.info("Metrics: Prometheus subscriber active (in-memory, scrape /metrics)")
 
     # Init MCP servers (shared across all subsystems)
     await init_mcp(config, event_bus=app_ctx.event_bus)
