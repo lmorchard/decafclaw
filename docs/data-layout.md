@@ -52,6 +52,10 @@ data/{agent_id}/                    # Admin-level (read-only to agent)
     media/                          # Media files saved from tool results
     HEARTBEAT.md                    # Agent-managed heartbeat tasks
     embeddings.db                   # Semantic search index (SQLite + sqlite-vec)
+    telemetry/                      # Instrumentation sidecars (rotated past retention_days)
+      retrieval.jsonl               # Vault retrieval telemetry
+      loop_breaker.jsonl            # Loop-breaker trip telemetry
+      archive/                      # Rotated monthly archives
     .schedule_last_run/             # Per-task last-run timestamps
     .heartbeat_last_run             # Heartbeat cycle tracking
     debug_context.json              # Debug dump (last debug_context call)

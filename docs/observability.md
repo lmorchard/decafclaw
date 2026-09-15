@@ -39,3 +39,5 @@ If `otlp_endpoint` is set, DecafClaw initializes an `OTLPSpanExporter` that send
 DecafClaw also maintains homegrown, file-based telemetry for usage and cost analysis (e.g., `tool_usage.jsonl`, `retrieval.jsonl`, `reflection_metrics.jsonl`). 
 
 OpenTelemetry tracing **supplements** rather than replaces these sidecars. The homegrown JSONL logs are used for historical reports (`make tool-usage-report`), while OpenTelemetry provides real-time performance bottleneck analysis and distributed tracing.
+
+Aggregate counters and latency are a third surface again, scraped from `/metrics` rather than traced or reported — see [Metrics](metrics.md).

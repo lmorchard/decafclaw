@@ -476,7 +476,7 @@ Config CLI shows skill values as raw JSON (`config show skills`). Use `--reveal`
 
 ### `telemetry`
 
-Instrumentation sidecars — append-only JSONL under `workspace/`, metadata only (never tool args/returns, reflection bodies, or prompt contents). Producers are fail-open EventBus subscribers. See [tools.md#tool-usage-telemetry-310](tools.md#tool-usage-telemetry-310) (#310), [reflection.md#metrics-409](reflection.md#metrics-409) (#409), and [context-composer.md#retrieval-telemetry-197](context-composer.md#retrieval-telemetry-197) (#197).
+Instrumentation sidecars — append-only JSONL under `workspace/`, metadata only (never tool args/returns, reflection bodies, or prompt contents). Producers are fail-open EventBus subscribers. See [tools.md#tool-usage-telemetry-310](tools.md#tool-usage-telemetry-310) (#310), [reflection.md#metrics-409](reflection.md#metrics-409) (#409), and [context-composer.md#retrieval-telemetry-197](context-composer.md#retrieval-telemetry-197) (#197). `metrics_enabled` gates the Prometheus subscriber, which writes no sidecar — see [metrics.md](metrics.md) (#10).
 
 | Field | Type | Default | Env Var |
 |-------|------|---------|---------|
@@ -488,6 +488,7 @@ Instrumentation sidecars — append-only JSONL under `workspace/`, metadata only
 | `retrieval_path` | str | `telemetry/retrieval.jsonl` | `TELEMETRY_RETRIEVAL_PATH` |
 | `loop_breaker_enabled` | bool | `true` | `TELEMETRY_LOOP_BREAKER_ENABLED` |
 | `loop_breaker_path` | str | `telemetry/loop_breaker.jsonl` | `TELEMETRY_LOOP_BREAKER_PATH` |
+| `metrics_enabled` | bool | `true` | `TELEMETRY_METRICS_ENABLED` |
 | `otlp_endpoint` | str \| None | `null` | `TELEMETRY_OTLP_ENDPOINT` |
 | `otlp_service_name` | str | `"decafclaw"` | `TELEMETRY_OTLP_SERVICE_NAME` |
 

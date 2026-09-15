@@ -207,6 +207,7 @@ Full doc index: [docs/index.md](docs/index.md). Hot files for navigation:
 - `reflection.py` — Self-reflection (Reflexion pattern)
 - `loop_breaker.py` — Per-turn autonomous tool-call thrash detector (watermarked trip detection; nudge → redirect → hard-stop escalation, #598/#707)
 - `tool_telemetry.py` — Tool-usage telemetry subscriber + report (#310); `make tool-usage-report`
+- `metrics.py` — Prometheus metrics (#10); in-memory counters from EventBus events, scraped at `/metrics`, no sidecar ([docs/metrics.md](docs/metrics.md))
 - `reflection_metrics.py` — Reflection cost/effectiveness telemetry subscriber + stats (#409); `make reflection-stats`
 - `heartbeat.py`, `schedules.py`, `polling.py`
 - `notifications.py`, `notification_channels/`, `mail.py`
