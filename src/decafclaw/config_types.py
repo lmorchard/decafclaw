@@ -522,7 +522,7 @@ class AuditLogConfig:
 @dataclass
 class TelemetryConfig:
     """Instrumentation sidecars (#310 tool usage, #409 reflection metrics,
-    #197 retrieval telemetry).
+    #197 retrieval telemetry, #10 Prometheus metrics).
 
     Append-only JSONL under ``workspace/``, metadata only — never tool
     args/returns, reflection response bodies, or prompt contents; only
@@ -531,7 +531,9 @@ class TelemetryConfig:
     never break a turn. Paths are workspace-relative. Enabled by default
     so a deployed agent starts collecting without a config edit — the
     point is a week of real data. Records older than ``retention_days`` are
-    rotated into monthly archive files. See docs/tools.md, docs/reflection.md, and docs/vault.md.
+    rotated into monthly archive files. ``metrics_enabled`` is the odd one
+    out — it gates the Prometheus subscriber, which keeps no sidecar at all.
+    See docs/tools.md, docs/reflection.md, docs/vault.md, and docs/metrics.md.
     """
     retention_days: int = 30
     tool_usage_enabled: bool = True
@@ -542,6 +544,7 @@ class TelemetryConfig:
     retrieval_path: str = "telemetry/retrieval.jsonl"
     loop_breaker_enabled: bool = True
     loop_breaker_path: str = "telemetry/loop_breaker.jsonl"
+    metrics_enabled: bool = True
     otlp_endpoint: str | None = None
     otlp_service_name: str = "decafclaw"
 
