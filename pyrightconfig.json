@@ -1,5 +1,5 @@
 {
-  "include": ["src/decafclaw"],
+  "include": ["src/decafclaw", "scripts"],
   "exclude": [
     "**/skills/*/cli.py",
     "**/skills/*/tests",
