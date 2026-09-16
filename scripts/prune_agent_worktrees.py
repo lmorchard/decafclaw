@@ -16,6 +16,17 @@ Anything else is reported as UNLANDED and never touched -- that includes
 abandoned experiments, which are the whole reason this isn't just
 ``git worktree prune``.
 
+Two deliberate escape hatches, both off by default:
+
+* ``--adopt BRANCH`` prunes one named UNLANDED branch. It takes a branch name
+  rather than a blanket "also do the unlanded ones" switch, so abandoning work
+  stays a per-branch human decision and can never happen in bulk by accident.
+* ``--prune-detached`` removes detached worktrees whose HEAD is already an
+  ancestor of ``origin/main``. Those hold no unique commits by definition;
+  detached checkouts with unmerged HEADs are still left alone.
+
+Every deletion prints the command that recreates the ref.
+
 Dry run by default. See ``make prune-worktrees-dry`` / ``make prune-worktrees``.
 """
 
@@ -55,8 +66,8 @@ class Branch:
     untracked: list[str] = field(default_factory=list)
 
     @property
-    def landed(self) -> bool:
-        return self.verdict == "LANDED"
+    def prunable(self) -> bool:
+        return self.verdict in ("LANDED", "ADOPTED")
 
 
 def scan_worktrees() -> tuple[dict[str, Path], list[tuple[Path, str]]]:
@@ -106,8 +117,10 @@ def merged_prs() -> dict[str, str]:
     return {pr["headRefName"]: pr["mergedAt"] for pr in json.loads(proc.stdout or "[]") if pr.get("mergedAt")}
 
 
-def classify(name: str, prs: dict[str, str]) -> tuple[str, str]:
+def classify(name: str, prs: dict[str, str], adopt: set[str]) -> tuple[str, str]:
     """Decide whether a branch's work is already in origin/main."""
+    if name in adopt:
+        return "ADOPTED", "explicitly adopted for deletion"
     ancestor = subprocess.run(
         ["git", "merge-base", "--is-ancestor", name, "origin/main"],
         cwd=REPO_ROOT,
@@ -128,6 +141,19 @@ def classify(name: str, prs: dict[str, str]) -> tuple[str, str]:
     return "UNLANDED", f"no merged PR, {ahead} commit(s) ahead"
 
 
+def in_main(sha: str) -> bool:
+    """True if sha is already an ancestor of origin/main."""
+    return (
+        subprocess.run(
+            ["git", "merge-base", "--is-ancestor", sha, "origin/main"],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            check=False,
+        ).returncode
+        == 0
+    )
+
+
 def inspect_worktree(wt: Path) -> tuple[list[str], list[str]]:
     """Return (tracked modifications, untracked paths) for a worktree."""
     proc = subprocess.run(
@@ -144,7 +170,7 @@ def inspect_worktree(wt: Path) -> tuple[list[str], list[str]]:
     return tracked, untracked
 
 
-def collect(only: str | None) -> tuple[list[Branch], list[tuple[Path, str]]]:
+def collect(only: str | None, adopt: set[str]) -> tuple[list[Branch], list[tuple[Path, str]]]:
     wts, detached = scan_worktrees()
     prs = merged_prs()
     current = git("rev-parse", "--abbrev-ref", "HEAD")
@@ -155,16 +181,23 @@ def collect(only: str | None) -> tuple[list[Branch], list[tuple[Path, str]]]:
             continue
         if only and only not in name and only not in str(wts.get(name, "")):
             continue
-        verdict, reason = classify(name, prs)
+        verdict, reason = classify(name, prs, adopt)
         b = Branch(name=name, verdict=verdict, reason=reason, worktree=wts.get(name))
         if b.worktree and b.worktree.exists():
             b.dirty_tracked, b.untracked = inspect_worktree(b.worktree)
         branches.append(b)
+
+    if only:
+        detached = [(path, sha) for path, sha in detached if only in str(path)]
     return branches, detached
 
 
-def report(branches: list[Branch], detached: list[tuple[Path, str]]) -> None:
-    for verdict in ("LANDED", "UNLANDED"):
+def report(
+    branches: list[Branch],
+    detached: list[tuple[Path, str]],
+    prune_detached: bool = False,
+) -> None:
+    for verdict in ("LANDED", "ADOPTED", "UNLANDED"):
         rows = [b for b in branches if b.verdict == verdict]
         print(f"\n=== {verdict} ({len(rows)}) ===")
         for b in sorted(rows, key=lambda x: x.name):
@@ -180,25 +213,17 @@ def report(branches: list[Branch], detached: list[tuple[Path, str]]) -> None:
                 print(f"      ! {path}")
 
     if detached:
-        print(f"\n=== DETACHED worktrees ({len(detached)}) - not pruned, review by hand ===")
+        note = "pruned below" if prune_detached else "not pruned, review by hand"
+        print(f"\n=== DETACHED worktrees ({len(detached)}) - {note} ===")
         for path, sha in detached:
-            in_main = (
-                subprocess.run(
-                    ["git", "merge-base", "--is-ancestor", sha, "origin/main"],
-                    cwd=REPO_ROOT,
-                    capture_output=True,
-                    check=False,
-                ).returncode
-                == 0
-            )
-            state = "in origin/main" if in_main else "NOT in origin/main"
+            state = "in origin/main" if in_main(sha) else "NOT in origin/main"
             print(f"  {str(path):<60} {sha}  {state}")
 
 
 def apply(branches: list[Branch], force: bool) -> int:
     failures = 0
     for b in sorted(branches, key=lambda x: x.name):
-        if not b.landed:
+        if not b.prunable:
             continue
         if b.dirty_tracked and not force:
             print(f"SKIP     {b.name}: {len(b.dirty_tracked)} tracked edit(s); use --force")
@@ -232,24 +257,72 @@ def apply(branches: list[Branch], force: bool) -> int:
     return failures
 
 
+def prune_detached_worktrees(detached: list[tuple[Path, str]]) -> int:
+    """Remove detached worktrees whose HEAD is already in origin/main."""
+    failures = 0
+    for path, sha in detached:
+        if not in_main(sha):
+            print(f"SKIP     detached {path}: {sha} is NOT in origin/main")
+            continue
+        out = subprocess.run(
+            ["git", "worktree", "remove", "--force", str(path)],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if out.returncode != 0:
+            print(f"FAILED   detached {path}: {out.stderr.strip()}")
+            failures += 1
+        else:
+            print(f"REMOVED  detached worktree {path} (was {sha}, in origin/main)")
+    return failures
+
+
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--apply", action="store_true", help="actually remove worktrees and delete branches")
     p.add_argument("--force", action="store_true", help="also prune landed worktrees that have tracked edits")
     p.add_argument("--only", metavar="SUBSTR", help="limit to branches or worktree paths containing SUBSTR")
+    p.add_argument(
+        "--adopt",
+        metavar="BRANCH",
+        action="append",
+        default=[],
+        help="prune this UNLANDED branch too (repeatable; names one branch at a time on purpose)",
+    )
+    p.add_argument(
+        "--prune-detached",
+        action="store_true",
+        help="also remove detached worktrees whose HEAD is already in origin/main",
+    )
     args = p.parse_args()
 
     git("fetch", "origin", "--quiet")
-    branches, detached = collect(args.only)
-    report(branches, detached)
 
-    landed = [b for b in branches if b.landed]
+    # Fail loudly on a mistyped --adopt rather than silently pruning nothing.
+    known = set(git("for-each-ref", "--format=%(refname:short)", "refs/heads/").splitlines())
+    unknown = [b for b in args.adopt if b not in known]
+    if unknown:
+        print(f"error: --adopt names no such local branch: {', '.join(unknown)}")
+        return 2
+    protected = [b for b in args.adopt if b in PROTECTED]
+    if protected:
+        print(f"error: refusing to adopt protected branch: {', '.join(protected)}")
+        return 2
+
+    branches, detached = collect(args.only, set(args.adopt))
+    report(branches, detached, args.prune_detached)
+
+    prunable = [b for b in branches if b.prunable]
     if not args.apply:
-        print(f"\nDry run. {len(landed)} branch(es) would be pruned; re-run with --apply.")
+        print(f"\nDry run. {len(prunable)} branch(es) would be pruned; re-run with --apply.")
         return 0
 
-    print(f"\nPruning {len(landed)} landed branch(es)...")
+    print(f"\nPruning {len(prunable)} branch(es)...")
     failures = apply(branches, args.force)
+    if args.prune_detached:
+        failures += prune_detached_worktrees(detached)
     git("worktree", "prune")
     return 1 if failures else 0
 
