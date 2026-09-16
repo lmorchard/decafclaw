@@ -157,6 +157,56 @@ describe("dispatcher", () => {
     });
   });
 
+  it("shell_approval appends a system line when auto-approval is ALLOWED", () => {
+    const s0 = { ...initialState, conv_id: CONV };
+    const s1 = dispatch(s0, {
+      type: "shell_approval",
+      conv_id: CONV,
+      command: "ls -la",
+      risk: "low",
+      reason: "read-only listing",
+      approved: true,
+    });
+    expect(s1.transcript.at(-1)).toEqual({
+      kind: "system",
+      text: "[shell auto-approval: ALLOWED] ls -la (risk: low)",
+    });
+  });
+
+  it("shell_approval says DECLINED when not approved", () => {
+    const s0 = { ...initialState, conv_id: CONV };
+    const s1 = dispatch(s0, {
+      type: "shell_approval",
+      conv_id: CONV,
+      command: "rm -rf /",
+      risk: "high",
+      reason: "destructive",
+      approved: false,
+    });
+    expect(s1.transcript.at(-1)).toEqual({
+      kind: "system",
+      text: "[shell auto-approval: DECLINED] rm -rf / (risk: high)",
+    });
+  });
+
+  // The server publishes risk via data.get("risk", ""), so an empty string is
+  // reachable and must not render a dangling "(risk: )".
+  it("shell_approval omits the risk suffix when risk is empty", () => {
+    const s0 = { ...initialState, conv_id: CONV };
+    const s1 = dispatch(s0, {
+      type: "shell_approval",
+      conv_id: CONV,
+      command: "echo hi",
+      risk: "",
+      reason: "",
+      approved: true,
+    });
+    expect(s1.transcript.at(-1)).toEqual({
+      kind: "system",
+      text: "[shell auto-approval: ALLOWED] echo hi",
+    });
+  });
+
   it("conv_history populates transcript with user + assistant messages in order", () => {
     const s0 = { ...initialState };
     const s1 = dispatch(s0, {
