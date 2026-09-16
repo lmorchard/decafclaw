@@ -70,6 +70,33 @@ check-js: install-js
 test-js: install-js
 	cd src/decafclaw/web/static && npx vitest run
 
+# Install TUI deps. Same `npm ci` rationale as install-js above (#706/#716):
+# npm ci cannot rewrite the lockfile, and fails outright when package.json and
+# package-lock.json disagree. The guard stays as a regression detector.
+install-tui:
+	@cd tui && \
+	  before=$$(git hash-object package-lock.json) && \
+	  npm ci && \
+	  after=$$(git hash-object package-lock.json) && \
+	  if [ "$$before" != "$$after" ]; then \
+	    echo ""; \
+	    echo "ERROR: npm ci rewrote tui/package-lock.json during a check."; \
+	    echo "  This should be impossible — npm ci does not write the lockfile."; \
+	    echo "  Intentional dependency change?  run 'npm install' in tui/ and commit the lockfile."; \
+	    echo "  Otherwise restore it:  git checkout -- tui/package-lock.json"; \
+	    echo "  Background: #706 (silent rewrites have ridden into unrelated PRs), #716."; \
+	    echo ""; \
+	    exit 1; \
+	  fi
+
+# Type check the TUI (mirrors check-js)
+check-tui: install-tui
+	cd tui && npx tsc --noEmit
+
+# Test the TUI with vitest (mirrors test-js)
+test-tui: install-tui
+	cd tui && npx vitest run
+
 # Lint + type check (Python + JS)
 check: install-js check-message-types
 	uv run ruff check src/ tests/

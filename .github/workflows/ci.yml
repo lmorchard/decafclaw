@@ -54,3 +54,20 @@ jobs:
 
       - name: Test
         run: make test-js
+
+  # tui/ is gated separately from `make check` (#725): it has its own
+  # package-lock and node_modules, and nothing in the Python gate needs it.
+  # Both goals run in one `make` invocation so install-tui's npm ci happens
+  # once rather than per target.
+  check-tui:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+
+      - name: Type check + test
+        run: make check-tui test-tui
