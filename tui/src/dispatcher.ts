@@ -156,6 +156,19 @@ export function dispatch(s: State, m: ServerMessage): State {
     case "error":
       return appendTranscript(s, { kind: "system", text: `[error: ${m.message}]` });
 
+    // Auto-approved shell commands are security-relevant, so the TUI surfaces
+    // them the way the web UI does rather than dropping them silently. `risk`
+    // is published as data.get("risk", ""), so an empty value is reachable and
+    // must not leave a dangling "(risk: )".
+    case "shell_approval": {
+      const verdict = m.approved ? "ALLOWED" : "DECLINED";
+      const risk = m.risk ? ` (risk: ${m.risk})` : "";
+      return appendTranscript(s, {
+        kind: "system",
+        text: `[shell auto-approval: ${verdict}] ${m.command}${risk}`,
+      });
+    }
+
     // Spike-deferred. Acknowledged in types.ts but not surfaced in UI.
     case "background_event":
     case "canvas_update":
