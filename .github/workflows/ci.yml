@@ -18,14 +18,23 @@ jobs:
       - name: Set up Python
         run: uv python install 3.13
 
+      # `make check` shells out to npm/npx for install-js and the static/
+      # typecheck, so Node has to be here even though this job is "the Python
+      # one". Version comes from .nvmrc so CI and local shells cannot drift.
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+
       - name: Install dependencies
         run: uv sync
 
-      - name: Lint
-        run: uv run ruff check src/ tests/
-
-      - name: Type check
-        run: uv run pyright
+      # Runs the same gate a human runs: install-js, check-message-types,
+      # ruff, pyright, and tsc --noEmit over static/. Previously this job
+      # open-coded only ruff and pyright, which left the generated-file drift
+      # check and the JS typecheck running nowhere at all.
+      - name: Check
+        run: make check
 
       - name: Test
         # Parallelism is configured in pyproject.toml (addopts = "-n auto
@@ -41,7 +50,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version-file: '.nvmrc'
 
       - name: Test
         run: make test-js
