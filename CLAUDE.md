@@ -125,6 +125,17 @@ See [docs/conversations.md](docs/conversations.md), [docs/web-ui.md](docs/web-ui
 ### Workflow
 
 - **Sync with `origin/main` before starting any significant task.** `git fetch origin && git log --oneline main..origin/main`. Stale local main → ghost references and missing docs in audits — every session that skipped this ended with conflicts or rework.
+- **A gate that exists can still run nowhere.** `make check` is *composed* from
+  `install-js check-message-types lint typecheck check-js` — never give it (or CI) its
+  own copy of those commands. A
+  duplicated command means widening one copy silently gates nothing: that is how
+  `check-message-types` and `check-js` ran nowhere for months (#854), how `tui/`'s
+  typecheck sat failing on main (#855/#725), and how `scripts/` stayed outside every
+  gate while hiding a script that clobbered the live embedding index (#856). When you
+  add a gate: confirm CI invokes the *target*, read the job log to see the commands
+  actually execute, then probe it for teeth with a deliberate fault in a throwaway file.
+  Note `pyright` exits 0 when it reports only warnings — adding a path to
+  `pyrightconfig.json` makes it report without failing.
 - **Bug fix = test first.** Reproduce with a failing test, then fix.
 - **Commit after each logical step.** Lint and test before committing.
 - **Iterative changes go in a branch.** Don't push rapid-fire fixes directly to main — regressions compound (especially in UX-sensitive code like streaming/placeholder logic).
@@ -225,15 +236,19 @@ make run          # Interactive mode (stdin/stdout)
 make dev          # Auto-restart on file changes (10s graceful shutdown)
 make debug        # Debug logging
 make run-pro      # gemini-2.5-pro
-make lint         # Compile-check
+make lint         # ruff check over src/ tests/ scripts/ contrib/
 make typecheck    # Pyright
 make check-js     # tsc --checkJs
-make check        # Lint + typecheck (Python + JS)
-make test-js      # vitest (JS unit tests)
+make check        # Full gate: install-js + check-message-types + lint + typecheck + check-js
+make test-js      # vitest (JS unit tests, web/static)
+make check-tui    # tsc --noEmit for tui/ (separate from `make check`)
+make test-tui     # vitest (tui/)
 make test         # Pytest
 make vendor       # Rebuild web UI vendor bundle
 make reindex      # Rebuild embedding index
 make prune-embeddings  # Drop stale rows from the embedding index (missing source files + legacy types)
+make prune-worktrees-dry  # Report git worktrees/branches whose work already landed
+make prune-worktrees   # Remove landed worktrees and delete their branches
 make build-eval-fixtures
 make config       # Show resolved config
 ```
