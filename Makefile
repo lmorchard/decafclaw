@@ -18,7 +18,7 @@ run-pro:
 
 # Lint with ruff
 lint:
-	uv run ruff check src/ tests/
+	uv run ruff check src/ tests/ scripts/ contrib/
 
 # Type check with pyright
 typecheck:
@@ -98,10 +98,11 @@ test-tui: install-tui
 	cd tui && npx vitest run
 
 # Lint + type check (Python + JS)
-check: install-js check-message-types
-	uv run ruff check src/ tests/
-	uv run pyright
-	cd src/decafclaw/web/static && npx tsc --noEmit
+# Composed from the individual targets rather than repeating their commands.
+# `check` used to carry its own `ruff check src/ tests/` line, so widening the
+# `lint` target did not widen what CI actually gates — the same duplication
+# that let check-message-types and check-js run nowhere before #854.
+check: install-js check-message-types lint typecheck check-js
 
 # Regenerate the WebSocket message-type enum/JS/docs from the manifest
 gen-message-types:
@@ -114,11 +115,11 @@ check-message-types:
 
 # Auto-fix lint issues
 lint-fix:
-	uv run ruff check --fix src/ tests/
+	uv run ruff check --fix src/ tests/ scripts/ contrib/
 
 # Format with ruff
 fmt:
-	uv run ruff format src/ tests/
+	uv run ruff format src/ tests/ scripts/ contrib/
 
 # Run tests (pytest, excludes integration tests by default — see pyproject.toml addopts).
 # Includes contrib/skills/ so contrib-skill tests don't bit-rot.
