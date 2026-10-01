@@ -5,14 +5,14 @@ var ApiError = class extends Error {
   statusText;
   body;
   request;
-  constructor(request2, response, message) {
+  constructor(request3, response, message) {
     super(message);
     this.name = "ApiError";
     this.url = response.url;
     this.status = response.status;
     this.statusText = response.statusText;
     this.body = response.body;
-    this.request = request2;
+    this.request = request3;
   }
 };
 
@@ -122,7 +122,7 @@ var OpenAPI = {
   ENCODE_PATH: void 0
 };
 
-// src/decafclaw/web/static/lib/api-client/core/request.ts
+// src/decafclaw/web/static/lib/api-client/core/generated-request.ts
 var isDefined = (value) => {
   return value !== void 0 && value !== null;
 };
@@ -263,17 +263,17 @@ var getRequestBody = (options) => {
 };
 var sendRequest = async (config, options, url, body, formData, headers, onCancel) => {
   const controller = new AbortController();
-  const request2 = {
+  const request3 = {
     headers,
     body: body ?? formData,
     method: options.method,
     signal: controller.signal
   };
   if (config.WITH_CREDENTIALS) {
-    request2.credentials = config.CREDENTIALS;
+    request3.credentials = config.CREDENTIALS;
   }
   onCancel(() => controller.abort());
-  return await fetch(url, request2);
+  return await fetch(url, request3);
 };
 var getResponseHeader = (response, responseHeader) => {
   if (responseHeader) {
@@ -362,6 +362,39 @@ var request = (config, options) => {
   });
 };
 
+// src/decafclaw/web/static/lib/api-client/core/request.ts
+var request2 = (config, options) => {
+  if (options.method !== "GET" || options.url !== "/api/sticky/{conv_id}") {
+    return request(config, options);
+  }
+  return new CancelablePromise(async (resolve2, reject, onCancel) => {
+    try {
+      const url = `${config.BASE}/api/sticky/${encodeURIComponent(options.path.conv_id)}`;
+      const headers = await getHeaders(config, options);
+      if (onCancel.isCancelled) return;
+      const response = await sendRequest(
+        { ...config, WITH_CREDENTIALS: true, CREDENTIALS: "same-origin" },
+        options,
+        url,
+        void 0,
+        void 0,
+        headers,
+        onCancel
+      );
+      catchErrorCodes(options, {
+        url,
+        ok: response.ok,
+        status: response.status,
+        statusText: response.statusText,
+        body: void 0
+      });
+      resolve2(await response.json());
+    } catch (error) {
+      reject(error);
+    }
+  });
+};
+
 // src/decafclaw/web/static/lib/api-client/services/DefaultService.ts
 var DefaultService = class {
   /**
@@ -371,7 +404,7 @@ var DefaultService = class {
    * @throws ApiError
    */
   static healthHealthGet() {
-    return request(OpenAPI, {
+    return request2(OpenAPI, {
       method: "GET",
       url: "/health"
     });
@@ -383,7 +416,7 @@ var DefaultService = class {
    * @throws ApiError
    */
   static metricsEndpointMetricsGet() {
-    return request(OpenAPI, {
+    return request2(OpenAPI, {
       method: "GET",
       url: "/metrics"
     });
@@ -395,7 +428,7 @@ var DefaultService = class {
    * @throws ApiError
    */
   static handleConfirmActionsConfirmPost() {
-    return request(OpenAPI, {
+    return request2(OpenAPI, {
       method: "POST",
       url: "/actions/confirm"
     });
@@ -407,7 +440,7 @@ var DefaultService = class {
    * @throws ApiError
    */
   static handleCancelActionsCancelPost() {
-    return request(OpenAPI, {
+    return request2(OpenAPI, {
       method: "POST",
       url: "/actions/cancel"
     });
@@ -419,7 +452,7 @@ var DefaultService = class {
    * @throws ApiError
    */
   static authLoginApiAuthLoginPost() {
-    return request(OpenAPI, {
+    return request2(OpenAPI, {
       method: "POST",
       url: "/api/auth/login"
     });
@@ -431,7 +464,7 @@ var DefaultService = class {
    * @throws ApiError
    */
   static authLogoutApiAuthLogoutPost() {
-    return request(OpenAPI, {
+    return request2(OpenAPI, {
       method: "POST",
       url: "/api/auth/logout"
     });
@@ -443,7 +476,7 @@ var DefaultService = class {
    * @throws ApiError
    */
   static authMeApiAuthMeGet() {
-    return request(OpenAPI, {
+    return request2(OpenAPI, {
       method: "GET",
       url: "/api/auth/me"
     });
@@ -454,7 +487,7 @@ var DefaultService = class {
    * @throws ApiError
    */
   static wrapperApiConversationsGet() {
-    return request(OpenAPI, {
+    return request2(OpenAPI, {
       method: "GET",
       url: "/api/conversations"
     });
@@ -465,7 +498,7 @@ var DefaultService = class {
    * @throws ApiError
    */
   static wrapperApiConversationsPost() {
-    return request(OpenAPI, {
+    return request2(OpenAPI, {
       method: "POST",
       url: "/api/conversations"
     });
@@ -476,7 +509,7 @@ var DefaultService = class {
    * @throws ApiError
    */
   static wrapperApiConversationsArchivedGet() {
-    return request(OpenAPI, {
+    return request2(OpenAPI, {
       method: "GET",
       url: "/api/conversations/archived"
     });
@@ -487,7 +520,7 @@ var DefaultService = class {
    * @throws ApiError
    */
   static wrapperApiConversationsSystemGet() {
-    return request(OpenAPI, {
+    return request2(OpenAPI, {
       method: "GET",
       url: "/api/conversations/system"
     });
@@ -498,7 +531,7 @@ var DefaultService = class {
    * @throws ApiError
    */
   static wrapperApiConversationsIdGet() {
-    return request(OpenAPI, {
+    return request2(OpenAPI, {
       method: "GET",
       url: "/api/conversations/{id}"
     });
@@ -509,7 +542,7 @@ var DefaultService = class {
    * @throws ApiError
    */
   static wrapperApiConversationsIdDelete() {
-    return request(OpenAPI, {
+    return request2(OpenAPI, {
       method: "DELETE",
       url: "/api/conversations/{id}"
     });
@@ -520,7 +553,7 @@ var DefaultService = class {
    * @throws ApiError
    */
   static wrapperApiConversationsIdPatch() {
-    return request(OpenAPI, {
+    return request2(OpenAPI, {
       method: "PATCH",
       url: "/api/conversations/{id}"
     });
@@ -531,7 +564,7 @@ var DefaultService = class {
    * @throws ApiError
    */
   static wrapperApiConversationsIdHistoryGet() {
-    return request(OpenAPI, {
+    return request2(OpenAPI, {
       method: "GET",
       url: "/api/conversations/{id}/history"
     });
@@ -542,7 +575,7 @@ var DefaultService = class {
    * @throws ApiError
    */
   static wrapperApiConversationsIdContextGet() {
-    return request(OpenAPI, {
+    return request2(OpenAPI, {
       method: "GET",
       url: "/api/conversations/{id}/context"
     });
@@ -553,7 +586,7 @@ var DefaultService = class {
    * @throws ApiError
    */
   static wrapperApiConversationsIdExportGet() {
-    return request(OpenAPI, {
+    return request2(OpenAPI, {
       method: "GET",
       url: "/api/conversations/{id}/export"
     });
@@ -564,7 +597,7 @@ var DefaultService = class {
    * @throws ApiError
    */
   static wrapperApiConversationsFoldersPost() {
-    return request(OpenAPI, {
+    return request2(OpenAPI, {
       method: "POST",
       url: "/api/conversations/folders"
     });
@@ -575,7 +608,7 @@ var DefaultService = class {
    * @throws ApiError
    */
   static wrapperApiConversationsFoldersPathPut() {
-    return request(OpenAPI, {
+    return request2(OpenAPI, {
       method: "PUT",
       url: "/api/conversations/folders/{path}"
     });
@@ -586,7 +619,7 @@ var DefaultService = class {
    * @throws ApiError
    */
   static wrapperApiConversationsFoldersPathDelete() {
-    return request(OpenAPI, {
+    return request2(OpenAPI, {
       method: "DELETE",
       url: "/api/conversations/folders/{path}"
     });
@@ -597,7 +630,7 @@ var DefaultService = class {
    * @throws ApiError
    */
   static wrapperApiConversationsIdArchivePost() {
-    return request(OpenAPI, {
+    return request2(OpenAPI, {
       method: "POST",
       url: "/api/conversations/{id}/archive"
     });
@@ -608,7 +641,7 @@ var DefaultService = class {
    * @throws ApiError
    */
   static wrapperApiConversationsIdUnarchivePost() {
-    return request(OpenAPI, {
+    return request2(OpenAPI, {
       method: "POST",
       url: "/api/conversations/{id}/unarchive"
     });
@@ -619,7 +652,7 @@ var DefaultService = class {
    * @throws ApiError
    */
   static wrapperApiNotificationsGet() {
-    return request(OpenAPI, {
+    return request2(OpenAPI, {
       method: "GET",
       url: "/api/notifications"
     });
@@ -630,7 +663,7 @@ var DefaultService = class {
    * @throws ApiError
    */
   static wrapperApiNotificationsUnreadCountGet() {
-    return request(OpenAPI, {
+    return request2(OpenAPI, {
       method: "GET",
       url: "/api/notifications/unread-count"
     });
@@ -641,7 +674,7 @@ var DefaultService = class {
    * @throws ApiError
    */
   static wrapperApiNotificationsReadAllPost() {
-    return request(OpenAPI, {
+    return request2(OpenAPI, {
       method: "POST",
       url: "/api/notifications/read-all"
     });
@@ -652,7 +685,7 @@ var DefaultService = class {
    * @throws ApiError
    */
   static wrapperApiNotificationsIdReadPost() {
-    return request(OpenAPI, {
+    return request2(OpenAPI, {
       method: "POST",
       url: "/api/notifications/{id}/read"
     });
@@ -663,7 +696,7 @@ var DefaultService = class {
    * @throws ApiError
    */
   static wrapperApiUploadConvIdPost() {
-    return request(OpenAPI, {
+    return request2(OpenAPI, {
       method: "POST",
       url: "/api/upload/{conv_id}"
     });
@@ -674,7 +707,7 @@ var DefaultService = class {
    * @throws ApiError
    */
   static wrapperApiWorkspaceGet() {
-    return request(OpenAPI, {
+    return request2(OpenAPI, {
       method: "GET",
       url: "/api/workspace"
     });
@@ -685,7 +718,7 @@ var DefaultService = class {
    * @throws ApiError
    */
   static wrapperApiWorkspacePost() {
-    return request(OpenAPI, {
+    return request2(OpenAPI, {
       method: "POST",
       url: "/api/workspace"
     });
@@ -696,7 +729,7 @@ var DefaultService = class {
    * @throws ApiError
    */
   static wrapperApiWorkspaceRecentGet() {
-    return request(OpenAPI, {
+    return request2(OpenAPI, {
       method: "GET",
       url: "/api/workspace/recent"
     });
@@ -707,7 +740,7 @@ var DefaultService = class {
    * @throws ApiError
    */
   static wrapperApiAutocompleteGet() {
-    return request(OpenAPI, {
+    return request2(OpenAPI, {
       method: "GET",
       url: "/api/autocomplete"
     });
@@ -718,7 +751,7 @@ var DefaultService = class {
    * @throws ApiError
    */
   static wrapperApiWorkspaceFilePathGet() {
-    return request(OpenAPI, {
+    return request2(OpenAPI, {
       method: "GET",
       url: "/api/workspace-file/{path}"
     });
@@ -729,7 +762,7 @@ var DefaultService = class {
    * @throws ApiError
    */
   static wrapperApiWorkspacePathGet() {
-    return request(OpenAPI, {
+    return request2(OpenAPI, {
       method: "GET",
       url: "/api/workspace/{path}"
     });
@@ -740,7 +773,7 @@ var DefaultService = class {
    * @throws ApiError
    */
   static wrapperApiWorkspacePathPut() {
-    return request(OpenAPI, {
+    return request2(OpenAPI, {
       method: "PUT",
       url: "/api/workspace/{path}"
     });
@@ -751,7 +784,7 @@ var DefaultService = class {
    * @throws ApiError
    */
   static wrapperApiWorkspacePathDelete() {
-    return request(OpenAPI, {
+    return request2(OpenAPI, {
       method: "DELETE",
       url: "/api/workspace/{path}"
     });
@@ -762,7 +795,7 @@ var DefaultService = class {
    * @throws ApiError
    */
   static wrapperApiConfigFilesGet() {
-    return request(OpenAPI, {
+    return request2(OpenAPI, {
       method: "GET",
       url: "/api/config/files"
     });
@@ -773,7 +806,7 @@ var DefaultService = class {
    * @throws ApiError
    */
   static wrapperApiConfigFilesPathGet() {
-    return request(OpenAPI, {
+    return request2(OpenAPI, {
       method: "GET",
       url: "/api/config/files/{path}"
     });
@@ -784,7 +817,7 @@ var DefaultService = class {
    * @throws ApiError
    */
   static wrapperApiConfigFilesPathPut() {
-    return request(OpenAPI, {
+    return request2(OpenAPI, {
       method: "PUT",
       url: "/api/config/files/{path}"
     });
@@ -795,7 +828,7 @@ var DefaultService = class {
    * @throws ApiError
    */
   static wrapperApiModelsGet() {
-    return request(OpenAPI, {
+    return request2(OpenAPI, {
       method: "GET",
       url: "/api/models"
     });
@@ -806,7 +839,7 @@ var DefaultService = class {
    * @throws ApiError
    */
   static wrapperApiSchedulesGet() {
-    return request(OpenAPI, {
+    return request2(OpenAPI, {
       method: "GET",
       url: "/api/schedules"
     });
@@ -817,7 +850,7 @@ var DefaultService = class {
    * @throws ApiError
    */
   static wrapperApiSchedulesNameRunPost() {
-    return request(OpenAPI, {
+    return request2(OpenAPI, {
       method: "POST",
       url: "/api/schedules/{name}/run"
     });
@@ -828,7 +861,7 @@ var DefaultService = class {
    * @throws ApiError
    */
   static wrapperApiSchedulesNameOverlayDelete() {
-    return request(OpenAPI, {
+    return request2(OpenAPI, {
       method: "DELETE",
       url: "/api/schedules/{name}/overlay"
     });
@@ -839,7 +872,7 @@ var DefaultService = class {
    * @throws ApiError
    */
   static wrapperApiSchedulesNameGet() {
-    return request(OpenAPI, {
+    return request2(OpenAPI, {
       method: "GET",
       url: "/api/schedules/{name}"
     });
@@ -850,7 +883,7 @@ var DefaultService = class {
    * @throws ApiError
    */
   static wrapperApiSchedulesNamePut() {
-    return request(OpenAPI, {
+    return request2(OpenAPI, {
       method: "PUT",
       url: "/api/schedules/{name}"
     });
@@ -861,7 +894,7 @@ var DefaultService = class {
    * @throws ApiError
    */
   static wrapperApiVaultGet() {
-    return request(OpenAPI, {
+    return request2(OpenAPI, {
       method: "GET",
       url: "/api/vault"
     });
@@ -872,7 +905,7 @@ var DefaultService = class {
    * @throws ApiError
    */
   static wrapperApiVaultPost() {
-    return request(OpenAPI, {
+    return request2(OpenAPI, {
       method: "POST",
       url: "/api/vault"
     });
@@ -883,7 +916,7 @@ var DefaultService = class {
    * @throws ApiError
    */
   static wrapperApiVaultFoldersPost() {
-    return request(OpenAPI, {
+    return request2(OpenAPI, {
       method: "POST",
       url: "/api/vault/folders"
     });
@@ -894,7 +927,7 @@ var DefaultService = class {
    * @throws ApiError
    */
   static wrapperApiVaultRecentGet() {
-    return request(OpenAPI, {
+    return request2(OpenAPI, {
       method: "GET",
       url: "/api/vault/recent"
     });
@@ -905,7 +938,7 @@ var DefaultService = class {
    * @throws ApiError
    */
   static wrapperApiVaultTagsGet() {
-    return request(OpenAPI, {
+    return request2(OpenAPI, {
       method: "GET",
       url: "/api/vault/tags"
     });
@@ -916,7 +949,7 @@ var DefaultService = class {
    * @throws ApiError
    */
   static wrapperApiVaultPageGet() {
-    return request(OpenAPI, {
+    return request2(OpenAPI, {
       method: "GET",
       url: "/api/vault/{page}"
     });
@@ -927,7 +960,7 @@ var DefaultService = class {
    * @throws ApiError
    */
   static wrapperApiVaultPagePut() {
-    return request(OpenAPI, {
+    return request2(OpenAPI, {
       method: "PUT",
       url: "/api/vault/{page}"
     });
@@ -938,7 +971,7 @@ var DefaultService = class {
    * @throws ApiError
    */
   static wrapperApiVaultPageDelete() {
-    return request(OpenAPI, {
+    return request2(OpenAPI, {
       method: "DELETE",
       url: "/api/vault/{page}"
     });
@@ -949,7 +982,7 @@ var DefaultService = class {
    * @throws ApiError
    */
   static wrapperVaultPageGet() {
-    return request(OpenAPI, {
+    return request2(OpenAPI, {
       method: "GET",
       url: "/vault/{page}"
     });
@@ -960,7 +993,7 @@ var DefaultService = class {
    * @throws ApiError
    */
   static wrapperApiWikiGet() {
-    return request(OpenAPI, {
+    return request2(OpenAPI, {
       method: "GET",
       url: "/api/wiki"
     });
@@ -971,7 +1004,7 @@ var DefaultService = class {
    * @throws ApiError
    */
   static wrapperApiWikiPageGet() {
-    return request(OpenAPI, {
+    return request2(OpenAPI, {
       method: "GET",
       url: "/api/wiki/{page}"
     });
@@ -982,7 +1015,7 @@ var DefaultService = class {
    * @throws ApiError
    */
   static wrapperApiWidgetsGet() {
-    return request(OpenAPI, {
+    return request2(OpenAPI, {
       method: "GET",
       url: "/api/widgets"
     });
@@ -993,7 +1026,7 @@ var DefaultService = class {
    * @throws ApiError
    */
   static wrapperWidgetsTierNameWidgetJsGet() {
-    return request(OpenAPI, {
+    return request2(OpenAPI, {
       method: "GET",
       url: "/widgets/{tier}/{name}/widget.js"
     });
@@ -1004,20 +1037,28 @@ var DefaultService = class {
    * @throws ApiError
    */
   static wrapperApiCanvasConvIdGet() {
-    return request(OpenAPI, {
+    return request2(OpenAPI, {
       method: "GET",
       url: "/api/canvas/{conv_id}"
     });
   }
   /**
-   * Wrapper
-   * @returns any Successful Response
+   * Get Sticky State
+   * Load current sticky-slot state for a conversation (reload recovery).
+   * @param convId
+   * @returns StickyResponse Successful Response
    * @throws ApiError
    */
-  static wrapperApiStickyConvIdGet() {
-    return request(OpenAPI, {
+  static getStickyStateApiStickyConvIdGet(convId) {
+    return request2(OpenAPI, {
       method: "GET",
-      url: "/api/sticky/{conv_id}"
+      url: "/api/sticky/{conv_id}",
+      path: {
+        "conv_id": convId
+      },
+      errors: {
+        422: `Validation Error`
+      }
     });
   }
   /**
@@ -1026,7 +1067,7 @@ var DefaultService = class {
    * @throws ApiError
    */
   static wrapperApiCanvasConvIdNewTabPost() {
-    return request(OpenAPI, {
+    return request2(OpenAPI, {
       method: "POST",
       url: "/api/canvas/{conv_id}/new_tab"
     });
@@ -1037,7 +1078,7 @@ var DefaultService = class {
    * @throws ApiError
    */
   static wrapperApiCanvasConvIdActiveTabPost() {
-    return request(OpenAPI, {
+    return request2(OpenAPI, {
       method: "POST",
       url: "/api/canvas/{conv_id}/active_tab"
     });
@@ -1048,7 +1089,7 @@ var DefaultService = class {
    * @throws ApiError
    */
   static wrapperApiCanvasConvIdCloseTabPost() {
-    return request(OpenAPI, {
+    return request2(OpenAPI, {
       method: "POST",
       url: "/api/canvas/{conv_id}/close_tab"
     });
@@ -1059,7 +1100,7 @@ var DefaultService = class {
    * @throws ApiError
    */
   static wrapperCanvasConvIdGet() {
-    return request(OpenAPI, {
+    return request2(OpenAPI, {
       method: "GET",
       url: "/canvas/{conv_id}"
     });
@@ -1070,7 +1111,7 @@ var DefaultService = class {
    * @throws ApiError
    */
   static wrapperCanvasConvIdTabIdGet() {
-    return request(OpenAPI, {
+    return request2(OpenAPI, {
       method: "GET",
       url: "/canvas/{conv_id}/{tab_id}"
     });
@@ -1081,7 +1122,7 @@ var DefaultService = class {
    * @throws ApiError
    */
   static serveIndexGet() {
-    return request(OpenAPI, {
+    return request2(OpenAPI, {
       method: "GET",
       url: "/"
     });
