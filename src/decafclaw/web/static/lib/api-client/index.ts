@@ -7,6 +7,11 @@ export { CancelablePromise, CancelError } from './core/CancelablePromise';
 export { OpenAPI } from './core/OpenAPI';
 export type { OpenAPIConfig } from './core/OpenAPI';
 
+export type { ContextCandidate } from './models/ContextCandidate';
+export type { ContextDiagnosticsResponse } from './models/ContextDiagnosticsResponse';
+export type { ContextMatch } from './models/ContextMatch';
+export type { ContextSource } from './models/ContextSource';
+export type { ContextSourceDetails } from './models/ContextSourceDetails';
 export type { ConversationCreateResponse } from './models/ConversationCreateResponse';
 export type { ConversationFolderCreateResponse } from './models/ConversationFolderCreateResponse';
 export type { ConversationFolderEntry } from './models/ConversationFolderEntry';

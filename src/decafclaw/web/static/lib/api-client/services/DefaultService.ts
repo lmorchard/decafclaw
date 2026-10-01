@@ -1,7 +1,9 @@
+import { textRequest as __textRequest } from '../core/request';
 /* generated using openapi-typescript-codegen -- do not edit */
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { ContextDiagnosticsResponse } from '../models/ContextDiagnosticsResponse';
 import type { ConversationCreateResponse } from '../models/ConversationCreateResponse';
 import type { ConversationFolderCreateResponse } from '../models/ConversationFolderCreateResponse';
 import type { ConversationFolderResponse } from '../models/ConversationFolderResponse';
@@ -312,25 +314,54 @@ export class DefaultService {
         });
     }
     /**
-     * Wrapper
-     * @returns any Successful Response
+     * Get Context Diagnostics
+     * Return context composer diagnostics for a conversation.
+     * @param id
+     * @returns ContextDiagnosticsResponse Successful Response
      * @throws ApiError
      */
-    public static wrapperApiConversationsIdContextGet(): CancelablePromise<any> {
+    public static getContextDiagnosticsApiConversationsIdContextGet(
+        id: string,
+    ): CancelablePromise<ContextDiagnosticsResponse> {
         return __request(OpenAPI, {
             method: 'GET',
             url: '/api/conversations/{id}/context',
+            path: {
+                'id': id,
+            },
+            errors: {
+                422: `Validation Error`,
+            },
         });
     }
     /**
-     * Wrapper
-     * @returns any Successful Response
+     * Export Conversation
+     * Export a conversation as raw JSONL or rendered markdown.
+     *
+     * Query param ``format`` must be ``jsonl`` or ``markdown``. 400 on missing
+     * or unknown format, 404 if the conversation isn't owned by the user or
+     * no archive exists.
+     * @param id
+     * @param format
+     * @returns string Successful Response
      * @throws ApiError
      */
-    public static wrapperApiConversationsIdExportGet(): CancelablePromise<any> {
-        return __request(OpenAPI, {
+    public static exportConversationApiConversationsIdExportGet(
+        id: string,
+        format: 'jsonl' | 'markdown',
+    ): CancelablePromise<string> {
+        return __textRequest(OpenAPI, {
             method: 'GET',
             url: '/api/conversations/{id}/export',
+            path: {
+                'id': id,
+            },
+            query: {
+                'format': format,
+            },
+            errors: {
+                422: `Validation Error`,
+            },
         });
     }
     /**

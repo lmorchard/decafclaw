@@ -760,13 +760,59 @@ async def get_conversation_history(request: Request, username: str) -> JSONRespo
     return JSONResponse({"messages": messages, "has_more": has_more})
 
 
-@_authenticated
-async def get_context_diagnostics(request: Request, username: str) -> JSONResponse:
+class ContextMatch(BaseModel):
+    name: str
+    score: float
+
+
+class ContextSourceDetails(BaseModel):
+    top_score: float | None = None
+    min_score: float | None = None
+    budget_source: str | None = None
+    deferred_mode: bool | None = None
+    matches: list[ContextMatch] | None = None
+    input_tokens: list[str] | None = None
+
+
+class ContextSource(BaseModel):
+    source: str
+    tokens_estimated: int | None = None
+    items_included: int | None = None
+    items_truncated: int | None = None
+    details: ContextSourceDetails | None = None
+
+
+class ContextCandidate(BaseModel):
+    file_path: str | None = None
+    source_type: str | None = None
+    composite_score: float | None = None
+    tokens_estimated: int | None = None
+    similarity: float | None = None
+    recency: float | None = None
+    importance: float | None = None
+    linked_from: str | None = None
+
+
+class ContextDiagnosticsResponse(BaseModel):
+    sources: list[ContextSource] | None = None
+    memory_candidates: list[ContextCandidate] | None = None
+    total_tokens_estimated: int | None = None
+    total_tokens_actual: int | None = None
+    cached_prompt_tokens: int | None = None
+    cache_hit_rate: float | None = None
+    context_window_size: int | None = None
+    compaction_threshold: int | None = None
+
+
+async def get_context_diagnostics(request: Request, id: str) -> JSONResponse:
     """Return context composer diagnostics for a conversation."""
     from .context_composer import read_context_sidecar
     from .web.conversations import ConversationIndex, can_read_conversation
+    username = _get_username_or_401(request)
+    if not username:
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
     config = request.app.state.config
-    conv_id = request.path_params["id"]
+    conv_id = id
     index = ConversationIndex(config)
     if not can_read_conversation(config, index, conv_id, username):
         return JSONResponse({"error": "not found"}, status_code=404)
@@ -776,8 +822,7 @@ async def get_context_diagnostics(request: Request, username: str) -> JSONRespon
     return JSONResponse(data)
 
 
-@_authenticated
-async def export_conversation(request: Request, username: str) -> Response:
+async def export_conversation(request: Request, id: str) -> Response:
     """Export a conversation as raw JSONL or rendered markdown.
 
     Query param ``format`` must be ``jsonl`` or ``markdown``. 400 on missing
@@ -787,8 +832,11 @@ async def export_conversation(request: Request, username: str) -> Response:
     from .archive import archive_path, read_archive
     from .conversation_export import render_markdown
     from .web.conversations import ConversationIndex, can_read_conversation
+    username = _get_username_or_401(request)
+    if not username:
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
     config = request.app.state.config
-    conv_id = request.path_params["id"]
+    conv_id = id
     fmt = request.query_params.get("format", "")
     if fmt not in ("jsonl", "markdown"):
         return JSONResponse(
@@ -2566,8 +2614,17 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> FastAPI:
                      "application/json": {"schema": ConversationPatchRequest.model_json_schema()},
                  }}}),
         APIRoute("/api/conversations/{id}/history", get_conversation_history, methods=["GET"]),
-        APIRoute("/api/conversations/{id}/context", get_context_diagnostics, methods=["GET"]),
-        APIRoute("/api/conversations/{id}/export", export_conversation, methods=["GET"]),
+        APIRoute("/api/conversations/{id}/context", get_context_diagnostics, methods=["GET"],
+                 response_model=ContextDiagnosticsResponse),
+        APIRoute("/api/conversations/{id}/export", export_conversation, methods=["GET"],
+                 response_class=Response,
+                 # Describe the query without changing legacy 400/auth ordering.
+                 openapi_extra={"parameters": [{"name": "format", "in": "query", "required": True,
+                                                "schema": {"type": "string", "enum": ["jsonl", "markdown"]}}]},
+                 responses={200: {"content": {
+                     "application/x-ndjson": {"schema": {"type": "string"}},
+                     "text/markdown": {"schema": {"type": "string"}},
+                 }}}),
         APIRoute("/api/conversations/folders", create_conv_folder, methods=["POST"],
                  response_model=ConversationFolderCreateResponse,
                  openapi_extra={"requestBody": {"required": True, "content": {

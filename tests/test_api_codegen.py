@@ -12,6 +12,8 @@ import uvicorn
 from playwright.sync_api import sync_playwright
 from starlette.staticfiles import StaticFiles
 
+from decafclaw.archive import append_message, archive_path
+from decafclaw.context_composer import write_context_sidecar
 from decafclaw.events import EventBus
 from decafclaw.http_server import create_app
 from decafclaw.sticky import write_sticky_state
@@ -128,10 +130,19 @@ def test_browser_uses_clean_built_client(source_tree, config):
     assert write_sticky_state(config, conv_id, {
         "schema_version": 1, "widget_type": "markdown_document", "data": payload,
     })
+    append_message(config, conv_id, {"role": "user", "content": "Export 日本語"})
+    append_message(config, conv_id, {"role": "assistant", "content": "Second line"})
+    diagnostics_payload = {
+        "total_tokens_estimated": 123, "context_window_size": 1000,
+        "sources": [{"source": "memory", "tokens_estimated": 123, "items_included": 1,
+                     "details": {"top_score": 0.9, "budget_source": "dynamic"}}],
+    }
+    write_context_sidecar(config, conv_id, diagnostics_payload)
     app = create_app(config, EventBus())
     for route in app.routes:
         if getattr(route, "path", None) == "/static":
             route.app = StaticFiles(directory=source_tree / STATIC_REL)
+    context_export_requests = []
     listing_requests = []
     patch_requests = []
     folder_requests = []
@@ -139,6 +150,10 @@ def test_browser_uses_clean_built_client(source_tree, config):
 
     @app.middleware("http")
     async def record_listing_request(request, call_next):
+        if request.url.path.endswith(("/context", "/export")):
+            context_export_requests.append((request.method, request.url.path,
+                                            list(request.query_params.multi_items()),
+                                            await request.body(), bool(request.cookies)))
         if request.method == "GET" and request.url.path in {
             "/api/conversations", "/api/conversations/archived", "/api/conversations/system",
         }:
@@ -191,6 +206,38 @@ def test_browser_uses_clean_built_client(source_tree, config):
                     return { username: await client.checkSession(), currentUser: client.currentUser };
                 }""", token)
                 assert result == {"username": "browser-user", "currentUser": "browser-user"}
+                page.add_script_tag(type="importmap", content='{"imports":{"lit":"/static/vendor/bundle/lit.js"}}')
+                inspected = page.evaluate("""async (convId) => {
+                    await import('/static/components/context-inspector.js');
+                    const el = document.createElement('context-inspector');
+                    el.convId = convId; el.open = true; document.body.append(el);
+                    return true;
+                }""", conv_id)
+                assert inspected
+                page.wait_for_function("document.querySelector('context-inspector')._data !== null")
+                assert page.locator("context-inspector").inner_text().find("dynamic budget") >= 0
+                assert page.evaluate("document.querySelector('context-inspector')._data") == diagnostics_payload
+                copied = page.evaluate("""async (convId) => {
+                    await import('/static/components/copy-conversation-menu.js');
+                    const copies = [];
+                    Object.defineProperty(navigator, 'clipboard', {
+                        configurable: true, value: { writeText: async text => copies.push(text) },
+                    });
+                    const el = document.createElement('copy-conversation-menu');
+                    el.convId = convId;
+                    await el._copy('jsonl');
+                    await el._copy('markdown');
+                    return copies;
+                }""", conv_id)
+                assert copied[0] == archive_path(config, conv_id).read_text()
+                assert "## User\n\nExport 日本語" in copied[1]
+                assert "## Assistant\n\nSecond line" in copied[1]
+                assert context_export_requests == [
+                    ("GET", f"/api/conversations/{conv_id}/context", [], b"", True),
+                    ("GET", f"/api/conversations/{conv_id}/export", [("format", "jsonl")], b"", True),
+                    ("GET", f"/api/conversations/{conv_id}/export", [("format", "markdown")], b"", True),
+                ]
+                page.locator("context-inspector").evaluate("el => el.remove()")
                 sticky_requests = []
                 page.on("request", lambda request: sticky_requests.append(request.url)
                         if "/api/sticky/" in request.url else None)
@@ -581,3 +628,45 @@ def test_auth_generated_contracts(source_tree):
     assert "): CancelablePromise<UserResponse>" in service
     for model, field in [("LoginResponse", "username: string"), ("LogoutResponse", "ok: boolean")]:
         assert field in (source_tree / CLIENT_REL / f"models/{model}.ts").read_text()
+
+
+@pytest.mark.parametrize("contract", ["context_id", "export_id", "format", "source", "details", "candidate", "cache", "window"])
+def test_context_export_contract_drift_fails_at_unchanged_caller(source_tree, contract):
+    result, output = run_make(source_tree, "check-js")
+    assert result.returncode == 0, output
+    backend = source_tree / "src/decafclaw/http_server.py"
+    original = backend.read_text()
+    component = "copy-conversation-menu.js" if contract in {"export_id", "format"} else "context-inspector.js"
+    caller = source_tree / STATIC_REL / "components" / component
+    original_caller = caller.read_bytes()
+    if contract in {"context_id", "export_id"}:
+        operation = "get_context_diagnostics" if contract == "context_id" else "export_conversation"
+        changed = original.replace(f"async def {operation}(request: Request, id: str)",
+                                   f"async def {operation}(request: Request, id: int)")
+        diagnostic = "Argument of type 'string' is not assignable to parameter of type 'number'"
+        code = "TS2345"
+    elif contract == "format":
+        changed = original.replace('"enum": ["jsonl", "markdown"]', '"enum": ["html"]')
+        diagnostic = "is not assignable to parameter of type"
+        code = "TS2345"
+    else:
+        model, field = {
+            "source": ("ContextSource", "tokens_estimated"),
+            "details": ("ContextSourceDetails", "matches"),
+            "candidate": ("ContextCandidate", "file_path"),
+            "cache": ("ContextDiagnosticsResponse", "cached_prompt_tokens"),
+            "window": ("ContextDiagnosticsResponse", "context_window_size"),
+        }[contract]
+        start = original.index(f"class {model}(BaseModel):")
+        end = original.index("\n\n", start)
+        changed = original[:start] + original[start:end].replace(f"    {field}:", f"    renamed_{field}:") + original[end:]
+        diagnostic = f"Property '{field}' does not exist on type '{model}'"
+        code = "TS2339"
+    assert changed != original
+    backend.write_text(changed)
+    result, output = run_make(source_tree, "check-js")
+    assert result.returncode != 0, output
+    diagnostics = [line for line in output.splitlines() if "error TS" in line]
+    assert any(component in line and code in line and diagnostic in line for line in diagnostics), output
+    assert all(component in line for line in diagnostics), output
+    assert caller.read_bytes() == original_caller
