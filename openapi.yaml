@@ -52,12 +52,26 @@ paths:
       summary: Auth Login
       description: Validate a one-time login token, then set the session cookie.
       operationId: auth_login_api_auth_login_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              properties:
+                token:
+                  type: string
+                  title: Token
+              type: object
+              required:
+              - token
+              title: LoginRequest
+        required: true
       responses:
         '200':
           description: Successful Response
           content:
             application/json:
-              schema: {}
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
   /api/auth/logout:
     post:
       summary: Auth Logout
@@ -68,7 +82,8 @@ paths:
           description: Successful Response
           content:
             application/json:
-              schema: {}
+              schema:
+                $ref: '#/components/schemas/LogoutResponse'
   /api/auth/me:
     get:
       summary: Auth Me
@@ -1029,6 +1044,24 @@ components:
           title: Detail
       type: object
       title: HTTPValidationError
+    LoginResponse:
+      properties:
+        username:
+          type: string
+          title: Username
+      type: object
+      required:
+      - username
+      title: LoginResponse
+    LogoutResponse:
+      properties:
+        ok:
+          type: boolean
+          title: Ok
+      type: object
+      required:
+      - ok
+      title: LogoutResponse
     StickyResponse:
       properties:
         widget_type:

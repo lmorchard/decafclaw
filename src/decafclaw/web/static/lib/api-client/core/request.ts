@@ -6,6 +6,11 @@ import { request as generatedRequest, getHeaders, sendRequest, catchErrorCodes, 
 
 /** Preserve migrated callers' session, JSON, and HTTP-error semantics. */
 export const request = <T>(config: OpenAPIConfig, options: ApiRequestOptions & { discardResponse?: boolean }): CancelablePromise<T> => {
+    const login = options.method === 'POST' && options.url === '/api/auth/login';
+    const logout = options.method === 'POST' && options.url === '/api/auth/logout';
+    // Keep the main session check on its existing transport; only the vault
+    // guard selects the response-discarding overload.
+    const vaultGuard = options.method === 'GET' && options.url === '/api/auth/me' && options.discardResponse;
     const sticky = options.url === '/api/sticky/{conv_id}';
     const listing = ['/api/conversations', '/api/conversations/archived', '/api/conversations/system'].includes(options.url);
     const patch = options.method === 'PATCH' && options.url === '/api/conversations/{id}';
@@ -14,7 +19,7 @@ export const request = <T>(config: OpenAPIConfig, options: ApiRequestOptions & {
         || (options.method === 'POST' && ['/api/conversations/{id}/archive', '/api/conversations/{id}/unarchive'].includes(options.url));
     const folder = (options.method === 'POST' && options.url === '/api/conversations/folders')
         || (['PUT', 'DELETE'].includes(options.method) && options.url === '/api/conversations/folders/{path}');
-    if (!create && !lifecycle && !folder && !patch && (options.method !== 'GET' || (!sticky && !listing))) {
+    if (!login && !logout && !vaultGuard && !create && !lifecycle && !folder && !patch && (options.method !== 'GET' || (!sticky && !listing))) {
         return generatedRequest<T>(config, options);
     }
     return new CancelablePromise(async (resolve, reject, onCancel) => {
@@ -35,9 +40,9 @@ export const request = <T>(config: OpenAPIConfig, options: ApiRequestOptions & {
                 options, url, getRequestBody(options), undefined, headers, onCancel,
             );
             // Folder mutations decode error JSON for the existing error log.
-            // Other migrated callers reject HTTP errors before decoding.
-            // Propagate JSON failures rather than swallowing them.
-            catchErrorCodes(options, {
+            // Logout's discard caller accepts any HTTP response. Other callers
+            // reject HTTP errors before decoding. Propagate JSON failures.
+            if (!(logout && options.discardResponse)) catchErrorCodes(options, {
                 url, ok: response.ok, status: response.status,
                 statusText: response.statusText, body: folder && !response.ok ? await response.json() : undefined,
             });

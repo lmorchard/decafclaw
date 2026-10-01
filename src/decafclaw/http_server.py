@@ -422,6 +422,18 @@ async def handle_cancel(request: Request) -> JSONResponse:
 # -- Auth routes -------------------------------------------------------------
 
 
+class LoginRequest(BaseModel):
+    token: str
+
+
+class LoginResponse(BaseModel):
+    username: str
+
+
+class LogoutResponse(BaseModel):
+    ok: bool
+
+
 async def auth_login(request: Request) -> JSONResponse:
     """Validate a one-time login token, then set the session cookie."""
     from .web.auth import validate_token
@@ -2528,8 +2540,11 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> FastAPI:
         APIRoute("/metrics", metrics_endpoint, methods=["GET"]),
         APIRoute("/actions/confirm", handle_confirm, methods=["POST"]),
         APIRoute("/actions/cancel", handle_cancel, methods=["POST"]),
-        APIRoute("/api/auth/login", auth_login, methods=["POST"]),
-        APIRoute("/api/auth/logout", auth_logout, methods=["POST"]),
+        APIRoute("/api/auth/login", auth_login, methods=["POST"], response_model=LoginResponse,
+                 openapi_extra={"requestBody": {"required": True, "content": {
+                     "application/json": {"schema": LoginRequest.model_json_schema()},
+                 }}}),
+        APIRoute("/api/auth/logout", auth_logout, methods=["POST"], response_model=LogoutResponse),
         APIRoute("/api/auth/me", auth_me, methods=["GET"]),
         APIRoute("/api/conversations", list_conversations, methods=["GET"],
                  response_model=ConversationListingResponse),

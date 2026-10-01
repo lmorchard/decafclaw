@@ -184,13 +184,12 @@ def test_browser_uses_clean_built_client(source_tree, config):
                 page.on("response", lambda response: failed_requests.append(response.url) if response.status >= 400 else None)
                 # A same-origin document without the full app's unrelated services.
                 page.goto(base + "/static/lib/auth-client.js")
-                login = page.request.post(base + "/api/auth/login", data={"token": token})
-                assert login.status == 200
-                result = page.evaluate("""async () => {
+                result = page.evaluate("""async (token) => {
                     const { AuthClient } = await import('/static/lib/auth-client.js');
                     const client = new AuthClient();
+                    await client.login(token);
                     return { username: await client.checkSession(), currentUser: client.currentUser };
-                }""")
+                }""", token)
                 assert result == {"username": "browser-user", "currentUser": "browser-user"}
                 sticky_requests = []
                 page.on("request", lambda request: sticky_requests.append(request.url)
@@ -296,6 +295,62 @@ def test_browser_uses_clean_built_client(source_tree, config):
                 assert ConversationIndex(config).get(created["conv_id"]) is None
                 assert not errors, errors
                 assert not failed_requests, failed_requests
+
+                # Load the actual standalone page and its module graph, including
+                # decoding a page name and observing the loaded title.
+                page.evaluate("localStorage.setItem('wiki-edit-mode', 'false')")
+                page.route("**/api/vault/**", lambda route: route.fulfill(json={
+                    "title": "Browser vault title", "body": "# Vault body", "modified": 1,
+                }))
+                vault_url = base + "/vault/Page%20%26%20%E6%97%A5%E6%9C%AC%E8%AA%9E"
+                with page.expect_response("**/api/auth/me") as guard_response:
+                    page.goto(vault_url)
+                assert guard_response.value.status == 200
+                page.wait_for_function("document.querySelector('wiki-page')._loaded")
+                # The component currently renders no .wiki-page-title element.
+                # Preserve the page's existing observer reaction without fixing
+                # that independent mismatch in this auth migration.
+                assert page.title() == "Vault — DecafClaw"
+                page.locator("wiki-page").evaluate("""node => {
+                    const title = document.createElement('span');
+                    title.className = 'wiki-page-title';
+                    title.textContent = 'Browser vault title';
+                    node.append(title);
+                }""")
+                page.wait_for_function("document.title === 'Browser vault title — DecafClaw Vault'")
+                assert page.locator("wiki-page").evaluate("node => node.page") == "Page & 日本語"
+                assert page.url == vault_url
+                assert not errors, errors
+                assert not failed_requests, failed_requests
+
+                # The no-body /me overload must not decode a successful response.
+                page.route("**/api/auth/me", lambda route: route.fulfill(status=200, body="not JSON"))
+                with page.expect_response("**/api/auth/me"):
+                    page.goto(vault_url)
+                page.wait_for_function("document.querySelector('wiki-page')._loaded")
+                assert page.url == vault_url
+                assert not errors, errors
+                page.unroute("**/api/auth/me")
+
+                # Real generated logout deletes the browser cookie. The guard's
+                # unauthenticated HTTP response redirects the standalone page.
+                page.evaluate("""async () => {
+                    const { AuthClient } = await import('/static/lib/auth-client.js');
+                    await new AuthClient().logout();
+                }""")
+                assert not any(cookie["name"] == "decafclaw_session" for cookie in page.context.cookies())
+                page.route(base + "/", lambda route: route.fulfill(body="Login destination"))
+                # /vault itself requires auth. Serve the real shell as though
+                # it loaded before the session expired, then exercise its guard
+                # against the real unauthenticated backend response.
+                page.route(vault_url, lambda route: route.fulfill(
+                    content_type="text/html", body=(source_tree / STATIC_REL / "vault.html").read_text(),
+                ))
+                with page.expect_response("**/api/auth/me") as guard_response:
+                    page.goto(vault_url)
+                assert guard_response.value.status == 401
+                page.wait_for_url(base + "/")
+                assert not errors, errors
             finally:
                 browser.close()
     finally:
@@ -473,3 +528,56 @@ def test_lifecycle_contract_drift_fails_at_unchanged_caller(source_tree, contrac
     else:
         assert "'string' is not assignable to" in output and "'number'" in output, output
     assert caller.read_bytes() == original_caller
+
+
+@pytest.mark.parametrize("contract", ["request", "response"])
+def test_login_contract_drift_fails_at_unchanged_caller(source_tree, contract):
+    result, output = run_make(source_tree, "check-js")
+    assert result.returncode == 0, output
+    caller = source_tree / STATIC_REL / "lib/auth-client.js"
+    original_caller = caller.read_bytes()
+    backend = source_tree / "src/decafclaw/http_server.py"
+    original = backend.read_text()
+    if contract == "request":
+        changed = original.replace("class LoginRequest(BaseModel):\n    token: str",
+                                   "class LoginRequest(BaseModel):\n    token: int")
+        diagnostic = "Type 'string' is not assignable to type 'number'"
+        code = "TS2322"
+    else:
+        changed = original.replace("class LoginResponse(BaseModel):\n    username:",
+                                   "class LoginResponse(BaseModel):\n    renamed_username:")
+        diagnostic = "Property 'username' does not exist on type 'LoginResponse'"
+        code = "TS2339"
+    assert changed != original
+    backend.write_text(changed)
+    result, output = run_make(source_tree, "check-js")
+    assert result.returncode != 0, output
+    diagnostics = [line for line in output.splitlines() if "error TS" in line]
+    assert len(diagnostics) == (1 if contract == "request" else 3), output
+    assert all("auth-client.js(" in line and code in line and diagnostic in line for line in diagnostics), output
+    assert caller.read_bytes() == original_caller
+
+
+def test_vault_guard_is_typechecked(source_tree):
+    caller = source_tree / STATIC_REL / "lib/vault-auth.js"
+    original = caller.read_text()
+    changed = original.replace("authMeApiAuthMeGet(true)", "authMeApiAuthMeGet('invalid')")
+    assert changed != original
+    caller.write_text(changed)
+    result, output = run_make(source_tree, "check-js")
+    assert result.returncode != 0, output
+    diagnostics = [line for line in output.splitlines() if "error TS" in line]
+    assert len(diagnostics) == 1, output
+    assert "vault-auth.js(" in diagnostics[0] and "TS2345" in diagnostics[0], output
+
+
+def test_auth_generated_contracts(source_tree):
+    result, output = run_make(source_tree, "gen-api-client")
+    assert result.returncode == 0, output
+    service = (source_tree / CLIENT_REL / "services/DefaultService.ts").read_text()
+    assert "token: string" in service
+    assert "): CancelablePromise<LoginResponse>" in service
+    assert "): CancelablePromise<LogoutResponse>" in service
+    assert "): CancelablePromise<UserResponse>" in service
+    for model, field in [("LoginResponse", "username: string"), ("LogoutResponse", "ok: boolean")]:
+        assert field in (source_tree / CLIENT_REL / f"models/{model}.ts").read_text()
