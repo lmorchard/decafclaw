@@ -9,6 +9,8 @@
  * expanded on desktop). Survives reload and conv-switch.
  */
 
+import { ApiError, DefaultService } from './api-client/index.js';
+
 const COLLAPSE_KEY_PREFIX = 'sticky-collapsed.';
 const MOBILE_MAX = 639;
 
@@ -65,20 +67,17 @@ export function subscribe(callback) {
   return () => _state.subscribers.delete(callback);
 }
 
+/** @param {string|null} convId */
 export async function setActiveConv(convId) {
   _state.active = convId;
   if (!convId) { _publish(); return; }
   const s = _ensure(convId);
   try {
-    const resp = await fetch(`/api/sticky/${encodeURIComponent(convId)}`,
-                             { credentials: 'same-origin' });
-    if (resp.ok) {
-      const data = await resp.json();
-      s.widgetType = data.widget_type || null;
-      s.data = data.data || null;
-    }
+    const data = await DefaultService.getStickyStateApiStickyConvIdGet(convId);
+    s.widgetType = data.widget_type || null;
+    s.data = data.data || null;
   } catch (err) {
-    console.warn('sticky state load failed', err);
+    if (!(err instanceof ApiError)) console.warn('sticky state load failed', err);
   }
   _publish();
 }
