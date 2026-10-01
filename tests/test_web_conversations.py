@@ -5,12 +5,13 @@ import time
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from pydantic import ValidationError
 
 from decafclaw.archive import append_message
 from decafclaw.events import EventBus
 from decafclaw.http_server import create_app
 from decafclaw.web.auth import create_token
-from decafclaw.web.conversations import ConversationIndex
+from decafclaw.web.conversations import ConversationIndex, ConversationMeta
 
 # -- ConversationIndex tests ---------------------------------------------------
 
@@ -984,3 +985,29 @@ async def test_system_listing_shapes_order_and_delegated_user_filter(authed_clie
         assert body["folders"] == []
         assert [c["conv_id"] for c in body["conversations"]] == expected
         assert all(set(c) == {"conv_id", "title", "conv_type", "updated_at"} for c in body["conversations"])
+
+
+@pytest.mark.parametrize("route", ["/api/conversations", "/api/conversations/archived", "/api/conversations/system"])
+async def test_listing_success_rejects_payload_contract_drift(route, authed_client, http_config, monkeypatch):
+    """A schema must also guard the actual payload, not just generated callers."""
+    index = ConversationIndex(http_config)
+    conv = index.create("testuser", "Required title")
+    if route.endswith("/archived"):
+        index.archive(conv.conv_id)
+    if route.endswith("/system"):
+        monkeypatch.setattr("decafclaw.web.conversations.list_system_conversations", lambda *args, **kwargs: [
+            {"conv_id": "heartbeat-20260401-100000-0", "conv_type": "heartbeat", "updated_at": "2026-04-01"},
+        ])
+        query = {"folder": "heartbeat"}
+    else:
+        original = ConversationMeta.to_dict
+
+        def omit_title(self):
+            payload = original(self)
+            del payload["title"]
+            return payload
+
+        monkeypatch.setattr(ConversationMeta, "to_dict", omit_title)
+        query = {}
+    with pytest.raises(ValidationError, match="conversations.0.title"):
+        await authed_client.get(route, params=query)
