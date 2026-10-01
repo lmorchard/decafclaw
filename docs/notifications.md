@@ -39,6 +39,16 @@ The **Mark all read** button POSTs to `/api/notifications/read-all`, which
 appends a `read-all` event. Records with a timestamp at or before that event
 are treated as read on subsequent reads.
 
+The inbox uses generated REST methods for list, count, and read actions.
+Generated record types continue through its state, display, and navigation helpers.
+`make check-js` regenerates these types before checking the component.
+
+Count failures leave the badge unchanged. List failures appear in the panel.
+A row click updates read state immediately and navigates after the request settles.
+Read actions ignore HTTP status and response bodies, including malformed JSON.
+Mark all read updates local state after any HTTP response, but a network failure leaves it unchanged.
+Later list refreshes restore server state. These calls use same-origin session cookies.
+
 ## Storage
 
 All notification state lives as JSONL files under

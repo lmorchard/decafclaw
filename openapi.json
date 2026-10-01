@@ -782,30 +782,57 @@
     },
     "/api/notifications": {
       "get": {
-        "summary": "Wrapper",
-        "operationId": "wrapper_api_notifications_get",
+        "summary": "List Notifications",
+        "description": "Return inbox records newest first, with a joined ``read`` bool.",
+        "operationId": "list_notifications_api_notifications_get",
         "responses": {
           "200": {
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationListResponse"
+                }
               }
             }
           }
-        }
+        },
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 20,
+              "minimum": 1,
+              "maximum": 200
+            }
+          },
+          {
+            "name": "before",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
       }
     },
     "/api/notifications/unread-count": {
       "get": {
-        "summary": "Wrapper",
-        "operationId": "wrapper_api_notifications_unread_count_get",
+        "summary": "Notifications Unread Count",
+        "description": "Return ``{\"count\": N}`` \u2014 called frequently, stays cheap.",
+        "operationId": "notifications_unread_count_api_notifications_unread_count_get",
         "responses": {
           "200": {
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationCountResponse"
+                }
               }
             }
           }
@@ -814,14 +841,17 @@
     },
     "/api/notifications/read-all": {
       "post": {
-        "summary": "Wrapper",
-        "operationId": "wrapper_api_notifications_read_all_post",
+        "summary": "Notifications Mark All Read",
+        "description": "Mark all currently-visible notifications read.",
+        "operationId": "notifications_mark_all_read_api_notifications_read_all_post",
         "responses": {
           "200": {
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationReadResponse"
+                }
               }
             }
           }
@@ -830,14 +860,38 @@
     },
     "/api/notifications/{id}/read": {
       "post": {
-        "summary": "Wrapper",
-        "operationId": "wrapper_api_notifications__id__read_post",
+        "summary": "Notifications Mark Read",
+        "description": "Mark a single notification read. Idempotent.",
+        "operationId": "notifications_mark_read_api_notifications__id__read_post",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Id"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationReadResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
               }
             }
           }
@@ -2060,6 +2114,120 @@
           "ok"
         ],
         "title": "LogoutResponse"
+      },
+      "NotificationCountResponse": {
+        "properties": {
+          "count": {
+            "type": "integer",
+            "title": "Count"
+          }
+        },
+        "type": "object",
+        "required": [
+          "count"
+        ],
+        "title": "NotificationCountResponse"
+      },
+      "NotificationListResponse": {
+        "properties": {
+          "records": {
+            "items": {
+              "$ref": "#/components/schemas/NotificationResponse"
+            },
+            "type": "array",
+            "title": "Records"
+          },
+          "has_more": {
+            "type": "boolean",
+            "title": "Has More"
+          }
+        },
+        "type": "object",
+        "required": [
+          "records",
+          "has_more"
+        ],
+        "title": "NotificationListResponse"
+      },
+      "NotificationReadResponse": {
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "title": "Ok"
+          }
+        },
+        "type": "object",
+        "required": [
+          "ok"
+        ],
+        "title": "NotificationReadResponse"
+      },
+      "NotificationResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "timestamp": {
+            "type": "string",
+            "title": "Timestamp"
+          },
+          "category": {
+            "type": "string",
+            "title": "Category"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "priority": {
+            "type": "string",
+            "title": "Priority"
+          },
+          "body": {
+            "type": "string",
+            "title": "Body"
+          },
+          "link": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Link"
+          },
+          "conv_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Conv Id"
+          },
+          "read": {
+            "type": "boolean",
+            "title": "Read"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "timestamp",
+          "category",
+          "title",
+          "priority",
+          "body",
+          "link",
+          "conv_id",
+          "read"
+        ],
+        "title": "NotificationResponse"
       },
       "StickyResponse": {
         "properties": {
