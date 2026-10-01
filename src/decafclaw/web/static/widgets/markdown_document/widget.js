@@ -53,6 +53,10 @@ export class MarkdownDocumentWidget extends LitElement {
     this._savedScroll = null;
   }
 
+  /**
+   * @param {string|null|undefined} content
+   * @returns {string}
+   */
   _firstH1(content) {
     if (!content) return 'Untitled';
     for (const line of content.split('\n')) {

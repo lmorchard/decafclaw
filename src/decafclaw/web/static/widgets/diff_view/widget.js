@@ -43,6 +43,7 @@ export class DiffViewWidget extends LitElement {
     }
   }
 
+  /** @returns {string} */
   _headerLabel() {
     return this.data?.filename || 'Diff';
   }

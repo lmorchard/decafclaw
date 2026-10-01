@@ -70,6 +70,7 @@ export class CodeBlockWidget extends LitElement {
     }
   }
 
+  /** @returns {string} */
   _headerLabel() {
     return this.data?.filename
       || (this.data?.language ? `${this.data.language} snippet` : 'code');

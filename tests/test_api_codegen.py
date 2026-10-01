@@ -857,13 +857,28 @@ def _mutate_canvas_contract(source_tree, replacements):
     return output
 
 
+def _canvas_caller_diagnostic_prefix(source_tree, caller, operation, argument):
+    caller_path = source_tree / "src/decafclaw/web/static" / caller
+    lines = caller_path.read_text().splitlines()
+    operation_line = next(i for i, line in enumerate(lines) if operation in line)
+    argument_line = next(
+        i for i, line in enumerate(lines[operation_line:operation_line + 15], operation_line)
+        if argument in line
+    )
+    return f"{caller}({argument_line + 1},"
+
+
 @pytest.mark.parametrize("contract", [
     "state_path", "new_tab_path", "active_tab_path", "close_tab_path",
     "widget_type", "data", "label", "tab_id",
 ])
 def test_canvas_used_input_contract_drift_fails_at_unchanged_callers(source_tree, contract):
-    widgets = ["code_block/widget.js", "diff_view/widget.js", "json_view/widget.js",
-               "markdown_document/widget.js"]
+    new_tab_callers = [
+        ("widgets/code_block/widget.js", "widget_type: 'code_block'"),
+        ("widgets/diff_view/widget.js", "widget_type: 'diff_view'"),
+        ("widgets/json_view/widget.js", "widget_type: 'json_view'"),
+        ("widgets/markdown_document/widget.js", "widget_type: 'markdown_document'"),
+    ]
     if contract.endswith("_path"):
         operation = {
             "state_path": "get_canvas_state",
@@ -873,20 +888,32 @@ def test_canvas_used_input_contract_drift_fails_at_unchanged_callers(source_tree
         }[contract]
         replacements = [(f"async def {operation}(request: Request, conv_id: str)",
                          f"async def {operation}(request: Request, conv_id: int)")]
-        callers = {
-            # canvas-page derives convId from location.pathname, so it remains a
-            # statically typed string. canvas-state's public setter accepts
-            # untyped JavaScript input and cannot prove this mismatch.
-            "state_path": ["canvas-page.js"],
-            "new_tab_path": widgets,
-            "active_tab_path": ["canvas-state.js"],
-            "close_tab_path": ["canvas-state.js"],
+        expectations = {
+            "state_path": [
+                ("canvas-page.js", "getCanvasStateApiCanvasConvIdGet", "getCanvasStateApiCanvasConvIdGet"),
+                ("lib/canvas-state.js", "getCanvasStateApiCanvasConvIdGet", "getCanvasStateApiCanvasConvIdGet"),
+            ],
+            "new_tab_path": [
+                (caller, "postCanvasNewTabApiCanvasConvIdNewTabPost", "convId")
+                for caller, _ in new_tab_callers
+            ],
+            "active_tab_path": [
+                ("lib/canvas-state.js", "postCanvasActiveTabApiCanvasConvIdActiveTabPost",
+                 "convId"),
+            ],
+            "close_tab_path": [
+                ("lib/canvas-state.js", "postCanvasCloseTabApiCanvasConvIdCloseTabPost",
+                 "convId"),
+            ],
         }[contract]
         diagnostic, code = "not assignable to parameter of type 'number'", "TS2345"
     elif contract == "tab_id":
         replacements = [("class CanvasTabRequest(BaseModel):\n    tab_id: str",
                          "class CanvasTabRequest(BaseModel):\n    tab_id: int")]
-        callers = ["canvas-state.js"]
+        expectations = [
+            ("lib/canvas-state.js", "postCanvasActiveTabApiCanvasConvIdActiveTabPost", "tab_id: tabId"),
+            ("lib/canvas-state.js", "postCanvasCloseTabApiCanvasConvIdCloseTabPost", "tab_id: tabId"),
+        ]
         diagnostic, code = "Type 'string' is not assignable to type 'number'", "TS2322"
     else:
         replacement = {
@@ -895,20 +922,25 @@ def test_canvas_used_input_contract_drift_fails_at_unchanged_callers(source_tree
             "label": ("    label: str | None = None", "    label: int | None = None"),
         }[contract]
         replacements = [replacement]
-        callers = widgets
+        argument = {
+            "widget_type": lambda marker: marker,
+            "data": lambda marker: "data:",
+            "label": lambda marker: "label",
+        }[contract]
+        expectations = [
+            (caller, "postCanvasNewTabApiCanvasConvIdNewTabPost", argument(marker))
+            for caller, marker in new_tab_callers
+        ]
         diagnostic, code = {
             "widget_type": ("Type 'string' is not assignable to type 'number'", "TS2322"),
             "data": ("'data' does not exist", "TS2353"),
             "label": ("Type 'string' is not assignable to type 'number'", "TS2322"),
         }[contract]
-        if contract == "label":
-            # json_view supplies a literal label. diff_view computes its label
-            # through untyped widget data, while the other callers omit it.
-            callers = ["json_view/widget.js"]
     output = _mutate_canvas_contract(source_tree, replacements)
     diagnostics = [line for line in output.splitlines() if "error TS" in line]
-    for caller in callers:
-        assert any(caller in line and code in line and diagnostic in line
+    for caller, operation, argument in expectations:
+        prefix = _canvas_caller_diagnostic_prefix(source_tree, caller, operation, argument)
+        assert any(line.startswith(prefix) and code in line and diagnostic in line
                    for line in diagnostics), output
 
 
