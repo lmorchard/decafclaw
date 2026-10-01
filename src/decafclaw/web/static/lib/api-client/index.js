@@ -367,14 +367,16 @@ var request2 = (config, options) => {
   const sticky = options.url === "/api/sticky/{conv_id}";
   const listing = ["/api/conversations", "/api/conversations/archived", "/api/conversations/system"].includes(options.url);
   const patch = options.method === "PATCH" && options.url === "/api/conversations/{id}";
+  const create = options.method === "POST" && options.url === "/api/conversations";
+  const lifecycle = options.method === "DELETE" && options.url === "/api/conversations/{id}" || options.method === "POST" && ["/api/conversations/{id}/archive", "/api/conversations/{id}/unarchive"].includes(options.url);
   const folder = options.method === "POST" && options.url === "/api/conversations/folders" || ["PUT", "DELETE"].includes(options.method) && options.url === "/api/conversations/folders/{path}";
-  if (!folder && !patch && (options.method !== "GET" || !sticky && !listing)) {
+  if (!create && !lifecycle && !folder && !patch && (options.method !== "GET" || !sticky && !listing)) {
     return request(config, options);
   }
   return new CancelablePromise(async (resolve2, reject, onCancel) => {
     try {
       const query = listing && options.query?.folder === "" ? void 0 : options.query;
-      const url = folder ? `${config.BASE}/api/conversations/folders${options.path ? "/" + String(options.path.path).split("/").map(encodeURIComponent).join("/") : ""}` : patch ? `${config.BASE}/api/conversations/${encodeURIComponent(options.path.id)}` : sticky ? `${config.BASE}/api/sticky/${encodeURIComponent(options.path.conv_id)}` : `${config.BASE}${options.url}${query ? getQueryString(query) : ""}`;
+      const url = folder ? `${config.BASE}/api/conversations/folders${options.path ? "/" + String(options.path.path).split("/").map(encodeURIComponent).join("/") : ""}` : patch || lifecycle ? `${config.BASE}${options.url.replace("{id}", encodeURIComponent(options.path.id))}` : sticky ? `${config.BASE}/api/sticky/${encodeURIComponent(options.path.conv_id)}` : `${config.BASE}${options.url}${query ? getQueryString(query) : ""}`;
       const headers = await getHeaders(config, options);
       if (onCancel.isCancelled) return;
       const response = await sendRequest(
@@ -515,14 +517,18 @@ var DefaultService = class {
     });
   }
   /**
-   * Wrapper
-   * @returns any Successful Response
+   * Create Conversation
+   * Create a new conversation, optionally in a folder with a model.
+   * @param requestBody
+   * @returns ConversationCreateResponse Successful Response
    * @throws ApiError
    */
-  static wrapperApiConversationsPost() {
+  static createConversationApiConversationsPost(requestBody) {
     return request2(OpenAPI, {
       method: "POST",
-      url: "/api/conversations"
+      url: "/api/conversations",
+      body: requestBody,
+      mediaType: "application/json"
     });
   }
   /**
@@ -589,15 +595,17 @@ var DefaultService = class {
       }
     });
   }
-  /**
-   * Wrapper
-   * @returns any Successful Response
-   * @throws ApiError
-   */
-  static wrapperApiConversationsIdDelete() {
+  static deleteConversationApiConversationsIdDelete(id, discardResponse = false) {
     return request2(OpenAPI, {
+      discardResponse,
       method: "DELETE",
-      url: "/api/conversations/{id}"
+      url: "/api/conversations/{id}",
+      path: {
+        "id": id
+      },
+      errors: {
+        422: `Validation Error`
+      }
     });
   }
   /**
@@ -670,26 +678,30 @@ var DefaultService = class {
       }
     });
   }
-  /**
-   * Wrapper
-   * @returns any Successful Response
-   * @throws ApiError
-   */
-  static wrapperApiConversationsIdArchivePost() {
+  static archiveConversationApiConversationsIdArchivePost(id, discardResponse = false) {
     return request2(OpenAPI, {
+      discardResponse,
       method: "POST",
-      url: "/api/conversations/{id}/archive"
+      url: "/api/conversations/{id}/archive",
+      path: {
+        "id": id
+      },
+      errors: {
+        422: `Validation Error`
+      }
     });
   }
-  /**
-   * Wrapper
-   * @returns any Successful Response
-   * @throws ApiError
-   */
-  static wrapperApiConversationsIdUnarchivePost() {
+  static unarchiveConversationApiConversationsIdUnarchivePost(id, discardResponse = false) {
     return request2(OpenAPI, {
+      discardResponse,
       method: "POST",
-      url: "/api/conversations/{id}/unarchive"
+      url: "/api/conversations/{id}/unarchive",
+      path: {
+        "id": id
+      },
+      errors: {
+        422: `Validation Error`
+      }
     });
   }
   /**

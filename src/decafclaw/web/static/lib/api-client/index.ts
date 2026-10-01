@@ -7,9 +7,11 @@ export { CancelablePromise, CancelError } from './core/CancelablePromise';
 export { OpenAPI } from './core/OpenAPI';
 export type { OpenAPIConfig } from './core/OpenAPI';
 
+export type { ConversationCreateResponse } from './models/ConversationCreateResponse';
 export type { ConversationFolderCreateResponse } from './models/ConversationFolderCreateResponse';
 export type { ConversationFolderEntry } from './models/ConversationFolderEntry';
 export type { ConversationFolderResponse } from './models/ConversationFolderResponse';
+export type { ConversationLifecycleResponse } from './models/ConversationLifecycleResponse';
 export type { ConversationListingItem } from './models/ConversationListingItem';
 export type { ConversationListingResponse } from './models/ConversationListingResponse';
 export type { ConversationPatchResponse } from './models/ConversationPatchResponse';
