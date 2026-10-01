@@ -16,8 +16,8 @@ Each operation has isolated query-type and response-field mutation tests.
 
 The shared authentication decorator hides handler parameters from FastAPI.
 The three listing handlers now call the same authentication helper directly.
-Their existing JSON responses and manual folder checks remain in place.
-The schema models describe the response without adding wire fields or defaults.
+The initial implementation retained JSON responses and manual folder checks.
+The schema models described the response without adding wire fields or defaults.
 System items have no `created_at` field.
 
 The first runtime test run caught an empty-root URL change caused by the generated
@@ -39,3 +39,22 @@ The final full `make test` run passed 3930 tests and skipped two in 82.91 second
 The implementation received self-review only at this stage. Independent review
 and PR preparation belong to the next phase. No push, PR, merge, or deployment
 occurred during implementation.
+
+
+## Review correction
+
+Copilot review `5378924249` on `689713bed5ed214f72a4b052175bd22ff17a247d`
+identified that successful JSON responses bypassed model validation. Missing
+payload fields could therefore evade the declared backend contract.
+
+Three new tests removed a required title from each route's actual payload.
+All failed before the correction because no validation error occurred.
+The success paths now return validated response-model instances. Manual
+folder validation and explicit error responses remain unchanged.
+Existing exact-field tests confirm that virtual flags survive and that system
+items do not acquire regular-item fields or default/null values.
+
+The affected route, browser, and codegen suite passed 88 tests after the correction.
+`make check` and all 213 JavaScript tests also passed. Hosted checks for the
+original commit all passed; these do not cover the later correction.
+The corrected full `make test` run passed 3933 tests and skipped two in 82.61 seconds.

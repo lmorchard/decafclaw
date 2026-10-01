@@ -519,7 +519,8 @@ contain `conv_id`, `title`, `created_at`, and `updated_at`. System items contain
 `conv_id`, `title`, `conv_type`, and `updated_at`, without `created_at`.
 Folder entries contain `name` and `path`. Active root virtual entries also
 contain `virtual: true`. Generated types continue through the listing state,
-getters, and sidebar. The backend keeps its existing JSON fields and manual
+getters, and sidebar. Successful responses pass through the listing models to validate required fields
+before serialization. The backend preserves the existing wire fields and manual
 folder validation, including whitespace trimming and HTTP 400 errors.
 
 The listing reads also use the adapter for same-origin cookies and error handling.

@@ -498,7 +498,7 @@ class SystemConversationListingResponse(BaseModel):
     conversations: list[SystemConversationListingItem]
 
 
-async def list_conversations(request: Request, folder: str = "") -> JSONResponse:
+async def list_conversations(request: Request, folder: str = "") -> ConversationListingResponse | JSONResponse:
     """List conversations and subfolders for a specific folder.
 
     Query params:
@@ -532,14 +532,14 @@ async def list_conversations(request: Request, folder: str = "") -> JSONResponse
     if not folder_param:
         folders.append({"name": "Archived", "path": "_archived", "virtual": True})
         folders.append({"name": "System", "path": "_system", "virtual": True})
-    return JSONResponse({
+    return ConversationListingResponse.model_validate({
         "folder": folder_param,
         "folders": folders,
         "conversations": [c.to_dict() for c in filtered],
     })
 
 
-async def list_archived_conversations(request: Request, folder: str = "") -> JSONResponse:
+async def list_archived_conversations(request: Request, folder: str = "") -> ConversationListingResponse | JSONResponse:
     """List archived conversations, optionally filtered by folder."""
     from .web.conversation_folders import ConversationFolderIndex
     from .web.conversations import ConversationIndex
@@ -578,14 +578,14 @@ async def list_archived_conversations(request: Request, folder: str = "") -> JSO
         {"name": name, "path": f"{folder_param}/{name}" if folder_param else name}
         for name in sorted(child_names)
     ]
-    return JSONResponse({
+    return ConversationListingResponse.model_validate({
         "folder": folder_param,
         "folders": folders,
         "conversations": [c.to_dict() for c in filtered],
     })
 
 
-async def list_system_conversations(request: Request, folder: str = "") -> JSONResponse:
+async def list_system_conversations(request: Request, folder: str = "") -> SystemConversationListingResponse | JSONResponse:
     """List system conversations, grouped by type sub-folders."""
     from .web.conversations import list_system_conversations as list_sys
     username = _get_username_or_401(request)
@@ -600,7 +600,7 @@ async def list_system_conversations(request: Request, folder: str = "") -> JSONR
             {"name": "Schedule", "path": "schedule"},
             {"name": "Delegated", "path": "delegated"},
         ]
-        return JSONResponse({
+        return SystemConversationListingResponse.model_validate({
             "folder": "",
             "folders": folders,
             "conversations": [],
@@ -609,7 +609,7 @@ async def list_system_conversations(request: Request, folder: str = "") -> JSONR
     if folder_param not in valid_types:
         return JSONResponse({"error": "invalid system folder"}, status_code=400)
     filtered = [c for c in all_sys if c.get("conv_type") == folder_param]
-    return JSONResponse({
+    return SystemConversationListingResponse.model_validate({
         "folder": folder_param,
         "folders": [],
         "conversations": filtered,
