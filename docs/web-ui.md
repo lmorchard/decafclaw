@@ -478,3 +478,30 @@ See [Configuration Reference](config.md#http) for the full `http` config group.
 - `src/decafclaw/web/conversation_folders.py` — Per-user folder management
 - `src/decafclaw/web/websocket.py` — WebSocket message handlers
 - `src/decafclaw/web/static/` — Frontend components and service layer
+
+## Generated session client
+
+`AuthClient.checkSession()` calls the generated client for `GET /api/auth/me`.
+It returns the username and stores it in `currentUser`. An unsuccessful request
+returns `null` and clears `currentUser`, including after an earlier success.
+Login and logout retain their existing request paths.
+
+Run `make gen-api-client` to regenerate the OpenAPI schema, TypeScript client,
+and browser bundle from the current backend. The build uses the existing
+OpenAPI generator and esbuild. It writes `lib/api-client/index.js` beside
+`index.ts`. Browser imports use the JavaScript bundle. The frontend type check
+uses the adjacent TypeScript definitions, so changes to consumed response
+fields fail at the caller. The generated JavaScript bundle is excluded from
+TypeScript's input scan because its generated TypeScript source supplies the types.
+
+`make check-js` regenerates the client before checking frontend types.
+`make check` also runs the static module path tests after generation. These
+commands rebuild missing or outdated client output. Commit the generated
+schema, types, and bundle with changes to the API.
+
+The isolated tests in `tests/test_api_codegen.py` delete generated output,
+rename the backend response field, and load the client in Chromium through
+`/static` against a test server. They use temporary data and require no live
+credentials. Before running `make test`, run `make install-js` and install the
+browser with `uv run playwright install chromium`. CI installs its system dependencies with
+`uv run playwright install --with-deps chromium`.

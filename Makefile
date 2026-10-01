@@ -62,8 +62,8 @@ install-js:
 	    exit 1; \
 	  fi
 
-# Type check JS (runs npm install if needed)
-check-js: install-js
+# Regenerate backend types and browser output, then type check frontend callers.
+check-js: gen-api-client
 	cd src/decafclaw/web/static && npx tsc --noEmit
 
 # Test JS with vitest
@@ -102,7 +102,7 @@ test-tui: install-tui
 # `check` used to carry its own `ruff check src/ tests/` line, so widening the
 # `lint` target did not widen what CI actually gates — the same duplication
 # that let check-message-types and check-js run nowhere before #854.
-check: install-js check-message-types lint typecheck check-js
+check: install-js check-message-types lint typecheck check-js check-browser-assets
 
 # Regenerate the WebSocket message-type enum/JS/docs from the manifest
 gen-message-types:
@@ -217,9 +217,12 @@ eval-history:
 build-eval-fixtures:
 	uv run python scripts/build-eval-fixtures.py
 
-# Regenerates openapi.json/yaml and the TypeScript client under
-# static/lib/api-client/. NOTE: nothing compiles that client to .js, so it is
-# not importable from browser-served code today — see #843.
+# Regenerate current backend types and the browser-loadable client bundle.
 .PHONY: gen-api-client
-gen-api-client:
+gen-api-client: install-js
 	uv run python scripts/gen_api_client.py
+
+# Keep runtime module resolution in the normal gate, after producing assets.
+.PHONY: check-browser-assets
+check-browser-assets: gen-api-client
+	uv run pytest tests/test_web_static_module_graph.py -n 0 -q
