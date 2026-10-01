@@ -1,4 +1,8 @@
 import { LitElement, html, nothing } from 'lit';
+import { ApiError, DefaultService } from '../lib/api-client/index.js';
+
+/** @typedef {import('../lib/api-client/index.js').ContextDiagnosticsResponse} Diagnostics */
+/** @typedef {import('../lib/api-client/index.js').ContextSource} Source */
 
 const SOURCE_COLORS = {
   system_prompt: '#4A90D9',
@@ -42,6 +46,7 @@ export class ContextInspector extends LitElement {
     this.convId = '';
     this.open = false;
     this.contextVersion = 0;
+    /** @type {Diagnostics|null} */
     this._data = null;
     this._loading = false;
     this._error = '';
@@ -90,21 +95,19 @@ export class ContextInspector extends LitElement {
     this._error = '';
     this._data = null;
     try {
-      const res = await fetch(`/api/conversations/${encodeURIComponent(this.convId)}/context`);
-      if (res.status === 404) {
-        this._data = null;
-        this._loading = false;
-        return;
-      }
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      this._data = await res.json();
+      this._data = await DefaultService.getContextDiagnosticsApiConversationsIdContextGet(this.convId);
     } catch (e) {
-      this._error = e.message || 'Failed to load';
+      if (!(e instanceof ApiError && e.status === 404)) {
+        this._error = e instanceof ApiError ? `HTTP ${e.status}` : e.message || 'Failed to load';
+      }
     } finally {
       this._loading = false;
     }
   }
 
+  /** @param {Diagnostics["sources"]} sources
+   * @param {Diagnostics["context_window_size"]} windowSize
+   * @param {Diagnostics["total_tokens_actual"]} totalActual */
   #renderWaffle(sources, windowSize, totalActual) {
     if (!windowSize || !sources?.length) return nothing;
 
@@ -152,6 +155,7 @@ export class ContextInspector extends LitElement {
     `;
   }
 
+  /** @param {Diagnostics} data */
   #renderStats(data) {
     return html`
       <dl class="stats">
@@ -173,6 +177,7 @@ export class ContextInspector extends LitElement {
     `;
   }
 
+  /** @param {Diagnostics["sources"]} sources */
   #renderSourceTable(sources) {
     if (!sources?.length) return nothing;
     return html`
@@ -197,6 +202,7 @@ export class ContextInspector extends LitElement {
     `;
   }
 
+  /** @param {Source} s */
   #sourceDetail(s) {
     if (s.source === 'memory' && s.details) {
       const d = s.details;
@@ -213,6 +219,7 @@ export class ContextInspector extends LitElement {
     return '';
   }
 
+  /** @param {Diagnostics["memory_candidates"]} candidates */
   #renderCandidates(candidates) {
     if (!candidates?.length) return nothing;
 
