@@ -8,6 +8,7 @@
  */
 
 import { LitElement, html, nothing } from 'lit';
+import { ApiError, DefaultService } from '../lib/api-client/index.js';
 import { encodePagePath } from '../lib/utils.js';
 import './file-editor.js';
 
@@ -115,9 +116,7 @@ export class FilePage extends LitElement {
       const modified = this._modified;
       let data;
       try {
-        const res = await fetch('/api/workspace-file/' + encodePagePath(path));
-        if (!res.ok) return;
-        data = await res.json();
+        data = await DefaultService.wrapperApiWorkspaceFilePathGet(path);
       } catch {
         return;
       }
@@ -149,7 +148,10 @@ export class FilePage extends LitElement {
     await this.#fetchFile();
   }
 
-  /** Apply already-fetched file data and force an editor remount. */
+  /**
+   * Apply already-fetched file data and force an editor remount.
+   * @param {import('../lib/api-client/index.js').WorkspaceTextResponse} data
+   */
   async #applyFetchedData(data) {
     this._loading = true;
     this._error = '';
@@ -169,23 +171,22 @@ export class FilePage extends LitElement {
     this._error = '';
     this._content = '';
     try {
-      const res = await fetch('/api/workspace-file/' + encodePagePath(this.path));
-      if (!res.ok) {
-        if (res.status === 403) this._error = `File "${this.path}" is not readable.`;
-        else if (res.status === 404) this._error = `File "${this.path}" not found.`;
-        else if (res.status === 415) this._error = `File "${this.path}" is not a text file.`;
-        else this._error = `Error loading file (${res.status}).`;
-        return;
-      }
-      const data = await res.json();
+      const data = await DefaultService.wrapperApiWorkspaceFilePathGet(this.path);
       this._content = data.content ?? '';
       this._modified = data.modified ?? 0;
       // Trust server readonly if it tightens ours
       if (data.readonly === true) this.readonly = true;
       // Clear conflict after successful reload; editor remounts via loading swap.
       this._conflict = false;
-    } catch {
-      this._error = 'Failed to load file.';
+    } catch (error) {
+      if (error instanceof ApiError) {
+        if (error.status === 403) this._error = `File "${this.path}" is not readable.`;
+        else if (error.status === 404) this._error = `File "${this.path}" not found.`;
+        else if (error.status === 415) this._error = `File "${this.path}" is not a text file.`;
+        else this._error = `Error loading file (${error.status}).`;
+      } else {
+        this._error = 'Failed to load file.';
+      }
     } finally {
       this._loading = false;
     }

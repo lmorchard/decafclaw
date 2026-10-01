@@ -10,6 +10,26 @@ from decafclaw.config import Config
 from decafclaw.http_server import create_app
 
 
+def normalize_codegen_literals(value) -> None:
+    """Expose OpenAPI 3.1 string constants to the TypeScript generator.
+
+    Pydantic emits ``Literal["value"]`` as ``const``. The stock generator
+    ignores that keyword but preserves a single-value ``enum``, so normalize
+    the schema generically instead of copying literal values into a second
+    client-side contract.
+    """
+    if isinstance(value, dict):
+        constant = value.get("const")
+        if isinstance(constant, str) and "enum" not in value:
+            value["enum"] = [constant]
+            del value["const"]
+        for child in value.values():
+            normalize_codegen_literals(child)
+    elif isinstance(value, list):
+        for child in value:
+            normalize_codegen_literals(child)
+
+
 def add_discard_overload(service: Path, method_name: str, verb: str, url: str) -> None:
     """Derive both response call modes from the generated signature, never copy its types.
 
@@ -85,6 +105,7 @@ def repair_arbitrary_json_types(static: Path) -> None:
 def dump_openapi():
     app = create_app(Config(), None, None, None)
     openapi_schema = app.openapi()
+    normalize_codegen_literals(openapi_schema)
 
     with open("openapi.json", "w") as f:
         json.dump(openapi_schema, f, indent=2)

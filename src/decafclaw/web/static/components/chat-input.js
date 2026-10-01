@@ -1,5 +1,9 @@
 import { LitElement, html, nothing } from 'lit';
+import { ApiError, DefaultService } from '../lib/api-client/index.js';
 import { uploadFile } from '../lib/upload-client.js';
+
+/** @typedef {import('../lib/api-client/index.js').AutocompleteResponse['results'][number]} Completion */
+/** @typedef {{name: string, description: string, argument_hint: string}} Command */
 
 /** A `/` or `!` command token filling the current line up to the caret. */
 const TRIGGER_RE = /^([/!])(\S*)$/;
@@ -35,6 +39,14 @@ export function commandMatchScore(query, name) {
   }
   return score;
 }
+
+/**
+ * Ignore a completion variant that this generated client does not know how to
+ * insert. The `never` parameter makes a server-side variant addition fail the
+ * unchanged caller during `check-js` instead of falling through as a file.
+ * @param {never} _item
+ */
+function ignoreUnsupportedCompletion(_item) {}
 
 export class ChatInput extends LitElement {
   static properties = {
@@ -82,13 +94,14 @@ export class ChatInput extends LitElement {
     this.busy = false;
     this.placeholder = 'Type a message...';
     this.convId = '';
-    /** @type {{name: string, description: string, argument_hint: string}[]} */
+    /** @type {Command[]} */
     this.commands = [];
     this._pendingAttachments = [];
     this._dragOver = false;
     /** @type {{prefix: string, query: string, start: number}|null} */
     this._trigger = null;
     this._highlight = 0;
+    /** @type {Completion[]} */
     this._mentionMatches = [];
     this._history = [];
     this._historyIndex = -1;
@@ -142,19 +155,15 @@ export class ChatInput extends LitElement {
     return null;
   }
 
+  /** @param {string} query */
   async #fetchMentions(query) {
     this._lastFetchedQuery = query;
     try {
-      const res = await fetch(`/api/autocomplete?q=${encodeURIComponent(query)}`);
+      const data = await DefaultService.wrapperApiAutocompleteGet(query);
       if (this._lastFetchedQuery !== query) return;
-      if (res.ok) {
-        const data = await res.json();
-        this._mentionMatches = data.results || [];
-      } else {
-        this._mentionMatches = [];
-      }
+      this._mentionMatches = data.results || [];
     } catch (err) {
-      console.warn('Autocomplete fetch failed:', err);
+      if (!(err instanceof ApiError)) console.warn('Autocomplete fetch failed:', err);
       if (this._lastFetchedQuery === query) {
         this._mentionMatches = [];
       }
@@ -204,7 +213,7 @@ export class ChatInput extends LitElement {
     }
   }
 
-  /** Commands matching the open trigger, best first. @returns {any[]} */
+  /** Commands matching the open trigger, best first. @returns {Command[]} */
   #matchingCommands() {
     if (!this._trigger) return [];
     const scored = [];
@@ -218,23 +227,38 @@ export class ChatInput extends LitElement {
     return scored.map((s) => s.cmd);
   }
 
-  /** Replace the trigger token with the chosen command or mention. @param {any} item */
-  #commitAutocomplete(item) {
+  /** Replace the trigger token with the chosen mention. @param {Completion} item */
+  #commitCompletion(item) {
     const ctx = this.#triggerContext();
-    if (!ctx || !item) return;
+    if (!ctx || ctx.prefix !== '@' || !item) return;
     const { textarea } = ctx;
     let insert = '';
-    if (ctx.prefix === '@') {
-      if (item.type === 'vault') {
-        insert = `@[[${item.id}]] `;
-      } else if (item.type === 'mcp') {
-        insert = `@mcp/${item.id} `;
-      } else {
-        insert = `@${item.id} `;
-      }
+    if (item.type === 'vault') {
+      insert = `@[[${item.id}]] `;
+    } else if (item.type === 'mcp') {
+      insert = `@mcp/${item.id} `;
+    } else if (item.type === 'file') {
+      insert = `@${item.id} `;
     } else {
-      insert = `${ctx.prefix}${item.name} `;
+      ignoreUnsupportedCompletion(item);
+      return;
     }
+    this.#replaceTrigger(ctx, insert);
+  }
+
+  /** Replace the trigger token with the chosen command. @param {Command} item */
+  #commitCommand(item) {
+    const ctx = this.#triggerContext();
+    if (!ctx || ctx.prefix === '@' || !item) return;
+    this.#replaceTrigger(ctx, `${ctx.prefix}${item.name} `);
+  }
+
+  /**
+   * @param {{textarea: HTMLTextAreaElement, caret: number, start: number}} ctx
+   * @param {string} insert
+   */
+  #replaceTrigger(ctx, insert) {
+    const { textarea } = ctx;
     textarea.value = textarea.value.slice(0, ctx.start)
       + insert + textarea.value.slice(ctx.caret);
     const caret = ctx.start + insert.length;
@@ -276,7 +300,8 @@ export class ChatInput extends LitElement {
       }
       if (e.key === 'Tab') {
         e.preventDefault();
-        this.#commitAutocomplete(matches[highlight]);
+        if (isMention) this.#commitCompletion(this._mentionMatches[highlight]);
+        else this.#commitCommand(this.#matchingCommands()[highlight]);
         return;
       }
       if (e.key === 'Escape') {
@@ -463,54 +488,65 @@ export class ChatInput extends LitElement {
     // Otherwise let normal text paste proceed
   }
 
+  /** @param {Completion[]} matches @param {number} highlight */
+  #renderMentionItems(matches, highlight) {
+    return matches.map((item, i) => {
+      const isHighlighted = i === highlight;
+      return html`
+        <div class="command-menu-item ${isHighlighted ? 'highlighted' : ''}"
+          role="option"
+          aria-selected=${isHighlighted}
+          data-mention-id=${item.id}
+          @mousedown=${(/** @type {MouseEvent} */ e) => {
+            e.preventDefault();
+            this.#commitCompletion(item);
+          }}>
+          <span class="command-menu-name">${item.label}</span>
+          <span class="command-menu-hint">${item.type}</span>
+          ${item.description
+            ? html`<span class="command-menu-desc">${item.description}</span>`
+            : nothing}
+        </div>
+      `;
+    });
+  }
+
+  /** @param {Command[]} matches @param {number} highlight */
+  #renderCommandItems(matches, highlight) {
+    return matches.map((item, i) => {
+      const isHighlighted = i === highlight;
+      return html`
+        <div class="command-menu-item ${isHighlighted ? 'highlighted' : ''}"
+          role="option"
+          aria-selected=${isHighlighted}
+          data-command=${item.name}
+          @mousedown=${(/** @type {MouseEvent} */ e) => {
+            e.preventDefault();
+            this.#commitCommand(item);
+          }}>
+          <span class="command-menu-name">${item.name}</span>
+          ${item.argument_hint
+            ? html`<span class="command-menu-hint">${item.argument_hint}</span>`
+            : nothing}
+          ${item.description
+            ? html`<span class="command-menu-desc">${item.description}</span>`
+            : nothing}
+        </div>
+      `;
+    });
+  }
+
   render() {
     const hasAttachments = this._pendingAttachments.length > 0;
     const isMention = this._trigger?.prefix === '@';
-    const matches = isMention ? (this._mentionMatches || []) : this.#matchingCommands();
-    const highlight = Math.min(this._highlight, matches.length - 1);
+    const matchCount = isMention ? this._mentionMatches.length : this.#matchingCommands().length;
+    const highlight = Math.min(this._highlight, matchCount - 1);
     return html`
-      ${matches.length ? html`
+      ${matchCount ? html`
         <div class="command-menu" role="listbox">
-          ${matches.map((item, i) => {
-            const isHighlighted = i === highlight;
-            if (isMention) {
-              return html`
-                <div class="command-menu-item ${isHighlighted ? 'highlighted' : ''}"
-                  role="option"
-                  aria-selected=${isHighlighted}
-                  data-mention-id=${item.id}
-                  @mousedown=${(/** @type {MouseEvent} */ e) => {
-                    e.preventDefault();  // keep focus in the textarea
-                    this.#commitAutocomplete(item);
-                  }}>
-                  <span class="command-menu-name">${item.label}</span>
-                  <span class="command-menu-hint">${item.type}</span>
-                  ${item.description
-                    ? html`<span class="command-menu-desc">${item.description}</span>`
-                    : nothing}
-                </div>
-              `;
-            } else {
-              return html`
-                <div class="command-menu-item ${isHighlighted ? 'highlighted' : ''}"
-                  role="option"
-                  aria-selected=${isHighlighted}
-                  data-command=${item.name}
-                  @mousedown=${(/** @type {MouseEvent} */ e) => {
-                    e.preventDefault();  // keep focus in the textarea
-                    this.#commitAutocomplete(item);
-                  }}>
-                  <span class="command-menu-name">${item.name}</span>
-                  ${item.argument_hint
-                    ? html`<span class="command-menu-hint">${item.argument_hint}</span>`
-                    : nothing}
-                  ${item.description
-                    ? html`<span class="command-menu-desc">${item.description}</span>`
-                    : nothing}
-                </div>
-              `;
-            }
-          })}
+          ${isMention
+            ? this.#renderMentionItems(this._mentionMatches, highlight)
+            : this.#renderCommandItems(this.#matchingCommands(), highlight)}
         </div>
       ` : nothing}
       ${hasAttachments ? html`
