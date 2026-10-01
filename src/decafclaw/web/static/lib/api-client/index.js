@@ -122,6 +122,33 @@ var OpenAPI = {
   ENCODE_PATH: void 0
 };
 
+// src/decafclaw/web/static/lib/api-client/models/FileCompletion.ts
+var FileCompletion;
+((FileCompletion2) => {
+  let type;
+  ((type2) => {
+    type2["FILE"] = "file";
+  })(type = FileCompletion2.type || (FileCompletion2.type = {}));
+})(FileCompletion || (FileCompletion = {}));
+
+// src/decafclaw/web/static/lib/api-client/models/McpCompletion.ts
+var McpCompletion;
+((McpCompletion2) => {
+  let type;
+  ((type2) => {
+    type2["MCP"] = "mcp";
+  })(type = McpCompletion2.type || (McpCompletion2.type = {}));
+})(McpCompletion || (McpCompletion = {}));
+
+// src/decafclaw/web/static/lib/api-client/models/VaultCompletion.ts
+var VaultCompletion;
+((VaultCompletion2) => {
+  let type;
+  ((type2) => {
+    type2["VAULT"] = "vault";
+  })(type = VaultCompletion2.type || (VaultCompletion2.type = {}));
+})(VaultCompletion || (VaultCompletion = {}));
+
 // src/decafclaw/web/static/lib/api-client/models/WorkspaceFileEntry.ts
 var WorkspaceFileEntry;
 ((WorkspaceFileEntry2) => {
@@ -1302,6 +1329,9 @@ export {
   CancelError,
   CancelablePromise,
   DefaultService,
+  FileCompletion,
+  McpCompletion,
   OpenAPI,
+  VaultCompletion,
   WorkspaceFileEntry
 };

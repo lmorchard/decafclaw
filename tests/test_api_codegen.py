@@ -1153,6 +1153,46 @@ def test_workspace_read_output_drift_fails_at_unchanged_caller(
     assert caller_path.read_bytes() == original_caller
 
 
+@pytest.mark.parametrize("drift", ["rename", "add"])
+def test_completion_variant_drift_fails_at_unchanged_routing(source_tree, drift):
+    caller = source_tree / STATIC_REL / "components/chat-input.js"
+    original_caller = caller.read_bytes()
+
+    def mutate(original):
+        if drift == "rename":
+            before = 'class McpCompletion(BaseModel):\n    type: Literal["mcp"]'
+            assert original.count(before) == 1
+            return original.replace(before, before.replace('"mcp"', '"resource"'))
+
+        file_completion = '''class FileCompletion(BaseModel):
+    type: Literal["file"]
+    id: str
+    label: str
+    description: str'''
+        added_completion = '''class AddedCompletion(BaseModel):
+    type: Literal["added"]
+    id: str
+    label: str
+    description: str'''
+        assert original.count(file_completion) == 1
+        union = "list[VaultCompletion | McpCompletion | FileCompletion]"
+        assert original.count(union) == 1
+        return original.replace(
+            file_completion,
+            file_completion + "\n\n\n" + added_completion,
+        ).replace(union, union[:-1] + " | AddedCompletion]")
+
+    output = _mutate_workspace_contract(source_tree, mutate)
+    diagnostics = [line for line in output.splitlines() if "error TS" in line]
+    assert diagnostics and all("components/chat-input.js(" in line for line in diagnostics), output
+    if drift == "rename":
+        assert any("TS2367" in line and "no overlap" in line for line in diagnostics), output
+    else:
+        assert len(diagnostics) == 1, output
+        assert "TS2345" in diagnostics[0] and "parameter of type 'never'" in diagnostics[0], output
+    assert caller.read_bytes() == original_caller
+
+
 def test_workspace_read_generated_contracts(source_tree):
     result, output = run_make(source_tree, "gen-api-client")
     assert result.returncode == 0, output
@@ -1174,3 +1214,11 @@ def test_workspace_read_generated_contracts(source_tree):
     ):
         generated = (source_tree / CLIENT_REL / f"models/{model}.ts").read_text()
         assert "any" not in generated
+    for model, literal in (
+        ("VaultCompletion", "vault"),
+        ("McpCompletion", "mcp"),
+        ("FileCompletion", "file"),
+    ):
+        generated = (source_tree / CLIENT_REL / f"models/{model}.ts").read_text()
+        assert f"type: {model}.type;" in generated
+        assert f"{literal.upper()} = '{literal}'" in generated

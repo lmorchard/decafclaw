@@ -40,6 +40,14 @@ export function commandMatchScore(query, name) {
   return score;
 }
 
+/**
+ * Ignore a completion variant that this generated client does not know how to
+ * insert. The `never` parameter makes a server-side variant addition fail the
+ * unchanged caller during `check-js` instead of falling through as a file.
+ * @param {never} _item
+ */
+function ignoreUnsupportedCompletion(_item) {}
+
 export class ChatInput extends LitElement {
   static properties = {
     disabled: { type: Boolean },
@@ -229,8 +237,11 @@ export class ChatInput extends LitElement {
       insert = `@[[${item.id}]] `;
     } else if (item.type === 'mcp') {
       insert = `@mcp/${item.id} `;
-    } else {
+    } else if (item.type === 'file') {
       insert = `@${item.id} `;
+    } else {
+      ignoreUnsupportedCompletion(item);
+      return;
     }
     this.#replaceTrigger(ctx, insert);
   }

@@ -3,9 +3,14 @@
 /* tslint:disable */
 /* eslint-disable */
 export type McpCompletion = {
-    type: string;
+    type: McpCompletion.type;
     id: string;
     label: string;
     description: string;
 };
+export namespace McpCompletion {
+    export enum type {
+        MCP = 'mcp',
+    }
+}
 

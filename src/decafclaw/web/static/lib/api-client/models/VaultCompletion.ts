@@ -3,9 +3,14 @@
 /* tslint:disable */
 /* eslint-disable */
 export type VaultCompletion = {
-    type: string;
+    type: VaultCompletion.type;
     id: string;
     label: string;
     description: string;
 };
+export namespace VaultCompletion {
+    export enum type {
+        VAULT = 'vault',
+    }
+}
 

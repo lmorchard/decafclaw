@@ -2422,8 +2422,10 @@
         "properties": {
           "type": {
             "type": "string",
-            "const": "file",
-            "title": "Type"
+            "title": "Type",
+            "enum": [
+              "file"
+            ]
           },
           "id": {
             "type": "string",
@@ -2491,8 +2493,10 @@
         "properties": {
           "type": {
             "type": "string",
-            "const": "mcp",
-            "title": "Type"
+            "title": "Type",
+            "enum": [
+              "mcp"
+            ]
           },
           "id": {
             "type": "string",
@@ -2784,8 +2788,10 @@
         "properties": {
           "type": {
             "type": "string",
-            "const": "vault",
-            "title": "Type"
+            "title": "Type",
+            "enum": [
+              "vault"
+            ]
           },
           "id": {
             "type": "string",
