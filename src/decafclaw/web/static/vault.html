@@ -43,6 +43,7 @@
   </div>
   <script type="module">
     import '/static/components/wiki-page.js';
+    import { checkVaultSession } from '/static/lib/vault-auth.js';
 
     // Extract page name from URL: /vault/Page%20Name
     const path = decodeURIComponent(window.location.pathname.replace(/^\/vault\//, ''));
@@ -62,9 +63,7 @@
     }
 
     // Auth check — redirect to login if not authenticated
-    fetch('/api/auth/me').then(r => {
-      if (!r.ok) window.location.href = '/';
-    });
+    checkVaultSession();
   </script>
 </body>
 </html>

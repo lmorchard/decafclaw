@@ -364,13 +364,16 @@ var request = (config, options) => {
 
 // src/decafclaw/web/static/lib/api-client/core/request.ts
 var request2 = (config, options) => {
+  const login = options.method === "POST" && options.url === "/api/auth/login";
+  const logout = options.method === "POST" && options.url === "/api/auth/logout";
+  const vaultGuard = options.method === "GET" && options.url === "/api/auth/me" && options.discardResponse;
   const sticky = options.url === "/api/sticky/{conv_id}";
   const listing = ["/api/conversations", "/api/conversations/archived", "/api/conversations/system"].includes(options.url);
   const patch = options.method === "PATCH" && options.url === "/api/conversations/{id}";
   const create = options.method === "POST" && options.url === "/api/conversations";
   const lifecycle = options.method === "DELETE" && options.url === "/api/conversations/{id}" || options.method === "POST" && ["/api/conversations/{id}/archive", "/api/conversations/{id}/unarchive"].includes(options.url);
   const folder = options.method === "POST" && options.url === "/api/conversations/folders" || ["PUT", "DELETE"].includes(options.method) && options.url === "/api/conversations/folders/{path}";
-  if (!create && !lifecycle && !folder && !patch && (options.method !== "GET" || !sticky && !listing)) {
+  if (!login && !logout && !vaultGuard && !create && !lifecycle && !folder && !patch && (options.method !== "GET" || !sticky && !listing)) {
     return request(config, options);
   }
   return new CancelablePromise(async (resolve2, reject, onCancel) => {
@@ -388,7 +391,7 @@ var request2 = (config, options) => {
         headers,
         onCancel
       );
-      catchErrorCodes(options, {
+      if (!(logout && options.discardResponse)) catchErrorCodes(options, {
         url,
         ok: response.ok,
         status: response.status,
@@ -459,35 +462,28 @@ var DefaultService = class {
   /**
    * Auth Login
    * Validate a one-time login token, then set the session cookie.
-   * @returns any Successful Response
+   * @param requestBody
+   * @returns LoginResponse Successful Response
    * @throws ApiError
    */
-  static authLoginApiAuthLoginPost() {
+  static authLoginApiAuthLoginPost(requestBody) {
     return request2(OpenAPI, {
       method: "POST",
-      url: "/api/auth/login"
+      url: "/api/auth/login",
+      body: requestBody,
+      mediaType: "application/json"
     });
   }
-  /**
-   * Auth Logout
-   * Clear the session cookie.
-   * @returns any Successful Response
-   * @throws ApiError
-   */
-  static authLogoutApiAuthLogoutPost() {
+  static authLogoutApiAuthLogoutPost(discardResponse = false) {
     return request2(OpenAPI, {
+      discardResponse,
       method: "POST",
       url: "/api/auth/logout"
     });
   }
-  /**
-   * Auth Me
-   * Return the current authenticated user.
-   * @returns UserResponse Successful Response
-   * @throws ApiError
-   */
-  static authMeApiAuthMeGet() {
+  static authMeApiAuthMeGet(discardResponse = false) {
     return request2(OpenAPI, {
+      discardResponse,
       method: "GET",
       url: "/api/auth/me"
     });

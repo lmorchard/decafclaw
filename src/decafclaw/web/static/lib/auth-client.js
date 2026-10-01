@@ -1,4 +1,4 @@
-import { DefaultService } from './api-client/index.js';
+import { ApiError, DefaultService } from './api-client/index.js';
 
 /**
  * REST client for authentication.
@@ -37,15 +37,10 @@ export class AuthClient extends EventTarget {
    * @throws {Error} on invalid token
    */
   async login(token) {
-    const resp = await fetch('/api/auth/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ token }),
+    const data = await DefaultService.authLoginApiAuthLoginPost({ token }).catch(error => {
+      if (error instanceof ApiError) throw new Error('Invalid token');
+      throw error;
     });
-    if (!resp.ok) {
-      throw new Error('Invalid token');
-    }
-    const data = await resp.json();
     this.#currentUser = data.username;
     this.dispatchEvent(new CustomEvent('login', { detail: { username: data.username } }));
     return data.username;
@@ -56,7 +51,7 @@ export class AuthClient extends EventTarget {
    * @returns {Promise<void>}
    */
   async logout() {
-    await fetch('/api/auth/logout', { method: 'POST' });
+    await DefaultService.authLogoutApiAuthLogoutPost(true);
     this.#currentUser = null;
     this.dispatchEvent(new CustomEvent('logout'));
   }
