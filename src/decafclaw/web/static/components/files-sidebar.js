@@ -1,8 +1,9 @@
 import { LitElement, html, nothing } from 'lit';
+import { ApiError, DefaultService } from '../lib/api-client/index.js';
 
 /**
- * @typedef {{name: string, path: string, size: number, modified: number, kind: string, readonly: boolean, secret: boolean}} FileEntry
- * @typedef {{name: string, path: string}} FolderEntry
+ * @typedef {import('../lib/api-client/index.js').WorkspaceFileEntry} FileEntry
+ * @typedef {import('../lib/api-client/index.js').WorkspaceFolderEntry} FolderEntry
  */
 
 export class FilesSidebar extends LitElement {
@@ -89,32 +90,21 @@ export class FilesSidebar extends LitElement {
     const silent = opts.silent === true;
     if (!silent) this._loading = true;
     try {
-      const url = this._currentFolder
-        ? `/api/workspace?folder=${encodeURIComponent(this._currentFolder)}`
-        : '/api/workspace';
-      const res = await fetch(url);
-      if (res.ok) {
-        const data = await res.json();
-        this._folders = data.folders || [];
-        this._files = data.files || [];
-      } else {
-        // Silent (auto-refresh on turn-complete) errors shouldn't blank the
-        // listing the user is looking at — a transient blip is invisible.
-        if (silent) {
-          console.debug('files-sidebar: silent refresh got non-ok response', res.status);
-          return;
-        }
-        this._folders = [];
-        this._files = [];
-        if (res.status === 404) this._currentFolder = '';
-      }
+      const data = await DefaultService.wrapperApiWorkspaceGet(this._currentFolder || undefined);
+      this._folders = data.folders || [];
+      this._files = data.files || [];
     } catch (e) {
       if (silent) {
-        console.debug('files-sidebar: silent refresh failed', e);
+        if (e instanceof ApiError) {
+          console.debug('files-sidebar: silent refresh got non-ok response', e.status);
+        } else {
+          console.debug('files-sidebar: silent refresh failed', e);
+        }
         return;
       }
       this._folders = [];
       this._files = [];
+      if (e instanceof ApiError && e.status === 404) this._currentFolder = '';
     } finally {
       if (!silent) this._loading = false;
     }
@@ -125,20 +115,15 @@ export class FilesSidebar extends LitElement {
     const silent = opts.silent === true;
     if (!silent) this._loading = true;
     try {
-      const res = await fetch('/api/workspace/recent');
-      if (res.ok) {
-        const data = await res.json();
-        this._recentFiles = data.files || [];
-      } else {
-        if (silent) {
-          console.debug('files-sidebar: silent refresh got non-ok response', res.status);
-          return;
-        }
-        this._recentFiles = [];
-      }
+      const data = await DefaultService.wrapperApiWorkspaceRecentGet();
+      this._recentFiles = data.files || [];
     } catch (e) {
       if (silent) {
-        console.debug('files-sidebar: silent refresh failed', e);
+        if (e instanceof ApiError) {
+          console.debug('files-sidebar: silent refresh got non-ok response', e.status);
+        } else {
+          console.debug('files-sidebar: silent refresh failed', e);
+        }
         return;
       }
       this._recentFiles = [];

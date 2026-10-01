@@ -141,6 +141,13 @@ def test_browser_uses_clean_built_client(source_tree, config):
                      "details": {"top_score": 0.9, "budget_source": "dynamic"}}],
     }
     write_context_sidecar(config, conv_id, diagnostics_payload)
+    workspace_folder = "Browser files/日本語 #?"
+    workspace_rel_path = f"{workspace_folder}/Browser note #?.md"
+    workspace_path = config.workspace_path / workspace_rel_path
+    workspace_path.parent.mkdir(parents=True, exist_ok=True)
+    workspace_path.write_text("first browser content")
+    config.vault_root.mkdir(parents=True, exist_ok=True)
+    (config.vault_root / "Browser Vault.md").write_text("# Browser Vault")
     init_widgets(config)
     app = create_app(config, EventBus())
     for route in app.routes:
@@ -162,6 +169,7 @@ def test_browser_uses_clean_built_client(source_tree, config):
     lifecycle_requests = []
     canvas_requests = []
     widget_catalog_requests = []
+    workspace_read_requests = []
 
     @app.middleware("http")
     async def record_listing_request(request, call_next):
@@ -197,6 +205,13 @@ def test_browser_uses_clean_built_client(source_tree, config):
             ))
         if request.url.path == "/api/widgets":
             widget_catalog_requests.append(bool(request.cookies))
+        if (request.method == "GET" and (
+            request.url.path in {"/api/workspace", "/api/workspace/recent", "/api/autocomplete"}
+            or request.url.path.startswith("/api/workspace-file/")
+        )):
+            workspace_read_requests.append((request.scope["path"],
+                                            list(request.query_params.multi_items()),
+                                            bool(request.cookies)))
         return await call_next(request)
 
     # Bind before starting the server, avoiding a free-port check/use race.
@@ -240,7 +255,62 @@ def test_browser_uses_clean_built_client(source_tree, config):
                     "marked": "/static/vendor/bundle/marked.js",
                     "dompurify": "/static/vendor/bundle/dompurify.js",
                     "hljs": "/static/vendor/bundle/highlight.js",
+                    "codemirror": "/static/vendor/bundle/codemirror.js",
                 }}))
+                workspace_result = page.evaluate("""async ({ folder, path }) => {
+                    await Promise.all([
+                        import('/static/components/files-sidebar.js'),
+                        import('/static/components/file-page.js'),
+                        import('/static/components/chat-input.js'),
+                    ]);
+                    const sidebar = document.createElement('files-sidebar');
+                    sidebar.id = 'browser-files';
+                    sidebar._currentFolder = folder;
+                    document.body.append(sidebar);
+                    await sidebar.updateComplete;
+                    sidebar.active = true;
+
+                    const filePage = document.createElement('file-page');
+                    filePage.id = 'browser-file-page';
+                    filePage.kind = 'text';
+                    filePage.readonly = true;
+                    filePage.path = path;
+                    document.body.append(filePage);
+
+                    const chat = document.createElement('chat-input');
+                    chat.id = 'browser-chat-input';
+                    document.body.append(chat);
+                    await chat.updateComplete;
+                    const textarea = chat.querySelector('textarea');
+                    textarea.value = '@Browser';
+                    textarea.selectionStart = textarea.selectionEnd = textarea.value.length;
+                    textarea.dispatchEvent(new Event('input', { bubbles: true }));
+                    return true;
+                }""", {"folder": workspace_folder, "path": workspace_rel_path})
+                assert workspace_result
+                page.wait_for_function("""() => {
+                    const sidebar = document.querySelector('#browser-files');
+                    const filePage = document.querySelector('#browser-file-page');
+                    const chat = document.querySelector('#browser-chat-input');
+                    return sidebar?._files?.length === 1
+                        && filePage?._content === 'first browser content'
+                        && chat?._mentionMatches?.some(item => item.type === 'vault'
+                            && item.id === 'Browser Vault');
+                }""")
+                assert page.evaluate("document.querySelector('#browser-files')._files[0].path") == workspace_rel_path
+                assert page.evaluate("document.querySelector('#browser-file-page')._modified > 0")
+                assert page.evaluate("document.querySelector('#browser-chat-input')._mentionMatches[0].label") == "Browser Vault"
+                workspace_path.write_text("second browser content")
+                page.evaluate("document.querySelector('#browser-file-page').reload()")
+                page.wait_for_function("document.querySelector('#browser-file-page')._content === 'second browser content'")
+                assert workspace_read_requests == [
+                    ("/api/workspace", [("folder", workspace_folder)], True),
+                    (f"/api/workspace-file/{workspace_rel_path}", [], True),
+                    ("/api/autocomplete", [("q", "Browser")], True),
+                    (f"/api/workspace-file/{workspace_rel_path}", [], True),
+                ]
+                page.locator('#browser-files, #browser-file-page, #browser-chat-input').evaluate_all(
+                    "nodes => nodes.forEach(node => node.remove())")
                 page.evaluate("""async () => {
                     await import('/static/components/notification-inbox.js');
                     document.body.append(document.createElement('notification-inbox'));
@@ -990,3 +1060,117 @@ def test_widget_descriptor_field_drift_fails_at_unchanged_callers(source_tree, f
     caller = "widget-catalog.js" if field == "name" else "widget-host.js"
     assert caller in output and "TS2339" in output, output
     assert f"Property '{field}' does not exist on type 'WidgetDescriptorResponse'" in output, output
+
+
+def _mutate_workspace_contract(source_tree, mutate):
+    result, output = run_make(source_tree, "check-js")
+    assert result.returncode == 0, output
+    backend = source_tree / "src/decafclaw/http_server.py"
+    original = backend.read_text()
+    changed = mutate(original)
+    assert changed != original
+    backend.write_text(changed)
+    result, output = run_make(source_tree, "check-js")
+    assert result.returncode != 0, output
+    assert "error TS" in output, output
+    return output
+
+
+@pytest.mark.parametrize("contract", ["folder", "path", "query"])
+def test_workspace_read_input_drift_fails_at_every_unchanged_call(source_tree, contract):
+    callers = {
+        "folder": ("components/files-sidebar.js", "wrapperApiWorkspaceGet"),
+        "path": ("components/file-page.js", "wrapperApiWorkspaceFilePathGet"),
+        "query": ("components/chat-input.js", "wrapperApiAutocompleteGet"),
+    }
+    caller, operation = callers[contract]
+    caller_path = source_tree / STATIC_REL / caller
+    original_caller = caller_path.read_bytes()
+    expected_lines = [
+        line_no for line_no, line in enumerate(original_caller.decode().splitlines(), 1)
+        if f"DefaultService.{operation}(" in line
+    ]
+
+    def mutate(original):
+        parameter = "q" if contract == "query" else contract
+        before = (f'"name": "{parameter}", "in": "'
+                  + ("path" if contract == "path" else "query")
+                  + '", "required": ' + ("True" if contract != "folder" else "False")
+                  + ',\n                     "schema": {"type": "string"},')
+        after = before.replace('"type": "string"', '"type": "integer"')
+        assert original.count(before) == 1
+        return original.replace(before, after)
+
+    output = _mutate_workspace_contract(source_tree, mutate)
+    diagnostics = [line for line in output.splitlines() if "error TS" in line]
+    assert len(diagnostics) == len(expected_lines), output
+    for line_no in expected_lines:
+        assert any(
+            line.startswith(f"{caller}({line_no},") and "TS2345" in line
+            and "not assignable to parameter of type 'number'" in line
+            for line in diagnostics
+        ), output
+    assert caller_path.read_bytes() == original_caller
+
+
+@pytest.mark.parametrize(("model", "field", "caller"), [
+    ("WorkspaceListingResponse", "folders", "components/files-sidebar.js"),
+    ("WorkspaceListingResponse", "files", "components/files-sidebar.js"),
+    ("WorkspaceRecentResponse", "files", "components/files-sidebar.js"),
+    ("WorkspaceFolderEntry", "name", "components/files-sidebar.js"),
+    ("WorkspaceFolderEntry", "path", "components/files-sidebar.js"),
+    *[("WorkspaceFileEntry", field, "components/files-sidebar.js") for field in
+      ("name", "path", "size", "modified", "kind", "readonly", "secret")],
+    *[("WorkspaceTextResponse", field, "components/file-page.js") for field in
+      ("content", "modified", "readonly")],
+    ("AutocompleteResponse", "results", "components/chat-input.js"),
+    *[(model, field, "components/chat-input.js")
+      for model in ("VaultCompletion", "McpCompletion", "FileCompletion")
+      for field in ("type", "id", "label", "description")],
+])
+def test_workspace_read_output_drift_fails_at_unchanged_caller(
+    source_tree, model, field, caller,
+):
+    caller_path = source_tree / STATIC_REL / caller
+    original_caller = caller_path.read_bytes()
+
+    def mutate(original):
+        start = original.index(f"class {model}(BaseModel):")
+        end = original.index("\n\n\n", start)
+        block = original[start:end]
+        before = f"    {field}:"
+        assert block.count(before) == 1
+        changed_block = block.replace(before, f"    renamed_{field}:")
+        return original[:start] + changed_block + original[end:]
+
+    output = _mutate_workspace_contract(source_tree, mutate)
+    diagnostics = [line for line in output.splitlines() if "error TS" in line]
+    expected = f"Property '{field}' does not exist"
+    assert any(caller in line and ("TS2339" in line or "TS2551" in line)
+               and expected in line
+               for line in diagnostics), output
+    assert all(caller in line for line in diagnostics), output
+    assert caller_path.read_bytes() == original_caller
+
+
+def test_workspace_read_generated_contracts(source_tree):
+    result, output = run_make(source_tree, "gen-api-client")
+    assert result.returncode == 0, output
+    service = (source_tree / CLIENT_REL / "services/DefaultService.ts").read_text()
+    for signature in (
+        "folder?: string",
+        "q: string",
+        "path: string",
+        "): CancelablePromise<WorkspaceListingResponse>",
+        "): CancelablePromise<WorkspaceRecentResponse>",
+        "): CancelablePromise<WorkspaceTextResponse>",
+        "): CancelablePromise<AutocompleteResponse>",
+    ):
+        assert signature in service
+    for model in (
+        "WorkspaceListingResponse", "WorkspaceRecentResponse", "WorkspaceTextResponse",
+        "WorkspaceFolderEntry", "WorkspaceFileEntry", "AutocompleteResponse",
+        "VaultCompletion", "McpCompletion", "FileCompletion",
+    ):
+        generated = (source_tree / CLIENT_REL / f"models/{model}.ts").read_text()
+        assert "any" not in generated
