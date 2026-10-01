@@ -22,5 +22,5 @@
     }
   },
   "include": ["app.js", "lib/**/*.js", "components/**/*.js", "widgets/**/*.js"],
-  "exclude": ["**/*.test.js"]
+  "exclude": ["**/*.test.js", "lib/api-client/**/*.js"]
 }

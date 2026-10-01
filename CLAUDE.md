@@ -116,7 +116,7 @@ See [docs/conversations.md](docs/conversations.md), [docs/web-ui.md](docs/web-ui
 - **Mattermost concerns stay in `mattermost.py`.** Progress formatting, placeholders, threading.
 - **Web UI conversation management is REST-only.** WebSocket only for chat streaming, history loading, model changes, cancellation. Workspace files via `/api/workspace/*`. Conversation folders are metadata-only (per-user JSON index); archive files stay in place.
 - **`/terminal` is a server-side side-effect command** ([docs/web-terminal.md](docs/web-terminal.md)) — no LLM turn, no archive write; `terminals.py` must never be imported by `tools/` or `skills/` (enforced by a test) since the web terminal is human-only.
-- **App code under `static/` is served raw — there is no bundler, so every import specifier must name a file that exists on disk.** `make vendor` bundles third-party deps into `static/vendor/bundle/` (reached via the import map in `index.html`); nothing transpiles our own modules. `make check-js` is `tsc --noEmit`: it type-checks, it never emits. So a `.ts` file in `static/` is unreachable from browser code, and one unresolvable specifier blanks the *entire* UI — the browser aborts the whole module subgraph, so a bad leaf seven imports deep takes down `app.js`. **`tsc` cannot catch this**: `moduleResolution: "bundler"` rewrites `./x.js` → `x.ts` and calls it valid, modelling a build step we don't have. That's how #825 shipped `auth-client.js` importing a never-emitted `./api-client/index.js` and left the web client dead for three days with `make check` green. `tests/test_web_static_module_graph.py` guards it structurally; the generated OpenAPI client stays unimported until #843 adds an emit step.
+- **Hand-written app code under `static/` is served raw.** Every import specifier must name a browser-loadable file. `make vendor` bundles third-party dependencies. `make gen-api-client` generates the OpenAPI TypeScript client and bundles its runtime as `lib/api-client/index.js`. `make check-js` regenerates that client before `tsc --noEmit`; the adjacent TypeScript supplies response types. `moduleResolution: "bundler"` can accept imports of missing JavaScript files, so `make check` also runs `tests/test_web_static_module_graph.py`. The browser test in `tests/test_api_codegen.py` exercises the generated session client. See [docs/web-ui.md](docs/web-ui.md#generated-session-client).
 - **WebSocket message types are centralized.** Add new wire types in `src/decafclaw/web/message_types.json` and run `make gen-message-types`. Code references `WSMessageType.X` in Python and `MESSAGE_TYPES.X` in JS — never bare string literals. The drift check (`make check-message-types`, wired into `make check`) catches manual edits to the generated files. See [docs/websocket-messages.md](docs/websocket-messages.md).
 - **Mattermost PATCH quirks.** Omitting `props` preserves existing props (including attachments) — to strip, send `props: {"attachments": []}`. Sending only `props` without `message` clears the text (shows "(message deleted)"). Always include the message text when patching props.
 - **Interactive button gotchas.** Button IDs must not contain underscores (callbacks silently dropped). `http_callback_base` must be reachable from MM server's network. Check `AllowedUntrustedInternalConnections` and laptop DHCP IP changes.
@@ -126,7 +126,7 @@ See [docs/conversations.md](docs/conversations.md), [docs/web-ui.md](docs/web-ui
 
 - **Sync with `origin/main` before starting any significant task.** `git fetch origin && git log --oneline main..origin/main`. Stale local main → ghost references and missing docs in audits — every session that skipped this ended with conflicts or rework.
 - **A gate that exists can still run nowhere.** `make check` is *composed* from
-  `install-js check-message-types lint typecheck check-js` — never give it (or CI) its
+  `install-js check-message-types lint typecheck check-js check-browser-assets` — never give it (or CI) its
   own copy of those commands. A
   duplicated command means widening one copy silently gates nothing: that is how
   `check-message-types` and `check-js` ran nowhere for months (#854), how `tui/`'s
@@ -238,8 +238,8 @@ make debug        # Debug logging
 make run-pro      # gemini-2.5-pro
 make lint         # ruff check over src/ tests/ scripts/ contrib/
 make typecheck    # Pyright
-make check-js     # tsc --checkJs
-make check        # Full gate: install-js + check-message-types + lint + typecheck + check-js
+make check-js     # Generate API client + tsc --checkJs
+make check        # Full gate: install-js + check-message-types + lint + typecheck + check-js + check-browser-assets
 make test-js      # vitest (JS unit tests, web/static)
 make check-tui    # tsc --noEmit for tui/ (separate from `make check`)
 make test-tui     # vitest (tui/)

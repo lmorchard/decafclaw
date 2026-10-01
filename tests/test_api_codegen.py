@@ -1,62 +1,137 @@
-"""`make gen-api-client` produces the generated OpenAPI client tree.
+"""Exercise current backend types and browser output in disposable source trees."""
 
-This asserted `lib/api-client.ts` until #843. That path was a zero-byte file
-the Makefile `touch`ed into place purely to satisfy this assertion — the
-codegen tool emits a *directory* of `.ts` files, never a single module. So
-the test passed while checking an artifact the build fabricated for it, and
-covered none of the real output.
-"""
-
+import os
 import pathlib
-import re
+import shutil
+import socket
 import subprocess
+import threading
+
+import pytest
+import uvicorn
+from playwright.sync_api import sync_playwright
+from starlette.staticfiles import StaticFiles
+
+from decafclaw.events import EventBus
+from decafclaw.http_server import create_app
+from decafclaw.web.auth import create_token
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
-CLIENT_DIR = REPO_ROOT / "src" / "decafclaw" / "web" / "static" / "lib" / "api-client"
-
-# Require the `from` / `import` context rather than matching `api-client/`
-# anywhere, so a comment or doc string mentioning the path is not a "reference".
-_API_CLIENT_IMPORT_RE = re.compile(
-    r"""(?:\bfrom\s*|\bimport\s*\(?\s*)['"][^'"]*api-client/[^'"]*['"]"""
-)
+STATIC_REL = pathlib.Path("src/decafclaw/web/static")
+CLIENT_REL = STATIC_REL / "lib/api-client"
 
 
-def test_gen_api_client_emits_the_client_tree():
-    result = subprocess.run(
-        ["make", "gen-api-client"],
-        cwd=REPO_ROOT,
-        capture_output=True,
-        text=True,
-    )
-    assert result.returncode == 0, f"make gen-api-client failed: {result.stderr}"
+@pytest.fixture
+def source_tree(tmp_path):
+    root = tmp_path / "source"
+    shutil.copytree(REPO_ROOT, root, ignore=shutil.ignore_patterns(
+        ".git", ".claude", ".codex", ".venv", ".env", "node_modules", "__pycache__", ".pytest_cache", ".ruff_cache", "data",
+    ))
+    # Dependencies are already installed by the normal check/test setup. Share
+    # only those, never generated files or the backend source under mutation.
+    (root / STATIC_REL / "node_modules").symlink_to(REPO_ROOT / STATIC_REL / "node_modules", target_is_directory=True)
+    subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+    subprocess.run(["git", "add", "src/decafclaw/web/message_types.py",
+                    "src/decafclaw/web/static/lib/message-types.js", "docs/websocket-messages.md",
+                    "tui/src/types.generated.ts"], cwd=root, check=True)
+    return root
 
-    for relative in ("index.ts", "core/request.ts", "services/DefaultService.ts"):
-        assert (CLIENT_DIR / relative).is_file(), f"codegen did not emit {relative}"
+
+def run_make(root, *targets):
+    env = dict(os.environ, PYTHONPATH=str(root / "src"), UV_NO_SYNC="1",
+               UV_PROJECT_ENVIRONMENT=str(REPO_ROOT / ".venv"))
+    # Do not reinstall into the shared dependency directory. Every other
+    # prerequisite (including generation) runs through the real Makefile.
+    result = subprocess.run(["make", "-o", "install-js", *targets], cwd=root,
+                            env=env, capture_output=True, text=True, timeout=180)
+    return result, result.stdout + result.stderr
 
 
-def test_generated_client_is_not_imported_by_served_code():
-    """The client is `.ts` and nothing compiles it, so importing it 404s.
+def test_missing_output_is_rebuilt_by_project_check(source_tree):
+    shutil.rmtree(source_tree / CLIENT_REL)
+    result, output = run_make(source_tree, "check")
+    assert result.returncode == 0, output
+    for relative in ("index.ts", "core/request.ts", "services/DefaultService.ts", "index.js"):
+        assert (source_tree / CLIENT_REL / relative).is_file(), relative
 
-    PR #825 pointed `auth-client.js` at `./api-client/index.js`, which was
-    never emitted — that aborted the `app.js` module subgraph and blanked the
-    whole web UI. Until #843 adds an emit step, browser-served code must not
-    import this tree. `tests/test_web_static_module_graph.py` is the general
-    guard; this one names the specific trap so re-adding the import fails
-    with the reason attached.
-    """
-    static_dir = REPO_ROOT / "src" / "decafclaw" / "web" / "static"
-    importers = [
-        path.relative_to(static_dir)
-        for path in static_dir.rglob("*.js")
-        if "node_modules" not in path.parts
-        and "vendor" not in path.parts
-        # `*.test.js` is never served, and vitest transpiles TS, so a unit test
-        # importing this tree is legitimate — matching the exclusion in
-        # `tests/test_web_static_module_graph.py`.
-        and not path.name.endswith(".test.js")
-        and _API_CLIENT_IMPORT_RE.search(path.read_text())
-    ]
-    assert not importers, (
-        "These browser-served modules reference the generated api-client, which "
-        f"has no compiled .js and will 404: {importers}. See #843."
-    )
+
+
+def test_browser_asset_gate_rejects_missing_module(source_tree):
+    (source_tree / STATIC_REL / "lib/auth-client.js").unlink()
+    result, output = run_make(source_tree, "check-browser-assets")
+    assert result.returncode != 0, output
+    assert "auth-client.js" in output and "no such file" in output, output
+
+
+def test_backend_response_drift_fails_at_unchanged_caller(source_tree):
+    result, output = run_make(source_tree, "check-js")
+    assert result.returncode == 0, output
+    backend = source_tree / "src/decafclaw/http_server.py"
+    original = backend.read_text()
+    changed = original.replace("class UserResponse(BaseModel):\n    username:",
+                               "class UserResponse(BaseModel):\n    renamed_username:")
+    assert changed != original
+    backend.write_text(changed)
+    # Leave stale generated types and JS in place: check-js must regenerate.
+    result, output = run_make(source_tree, "check-js")
+    assert result.returncode != 0, output
+    assert "auth-client.js" in output and "TS2339" in output, output
+    assert "Property 'username' does not exist on type 'UserResponse'" in output, output
+    assert "renamed_username" in (source_tree / CLIENT_REL / "models/UserResponse.ts").read_text()
+
+
+def test_browser_uses_clean_built_client(source_tree, config):
+    shutil.rmtree(source_tree / CLIENT_REL)
+    result, output = run_make(source_tree, "gen-api-client", "check-browser-assets")
+    assert result.returncode == 0, output
+    config.http.secret = "isolated-browser-test-secret"
+    config.agent_path.mkdir(parents=True, exist_ok=True)
+    token = create_token(config, "browser-user")
+    app = create_app(config, EventBus())
+    for route in app.routes:
+        if getattr(route, "path", None) == "/static":
+            route.app = StaticFiles(directory=source_tree / STATIC_REL)
+    # Bind before starting the server, avoiding a free-port check/use race.
+    sock = socket.socket()
+    sock.bind(("127.0.0.1", 0))
+    ready = threading.Event()
+
+    class Server(uvicorn.Server):
+        async def startup(self, sockets=None):
+            await super().startup(sockets=sockets)
+            ready.set()
+
+    server = Server(uvicorn.Config(app, log_level="error", ws="none"))
+    thread = threading.Thread(target=server.run, kwargs={"sockets": [sock]}, daemon=True)
+    thread.start()
+    try:
+        assert ready.wait(15), "test server failed to start"
+        base = f"http://127.0.0.1:{sock.getsockname()[1]}"
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            try:
+                page = browser.new_page()
+                errors = []
+                failed_requests = []
+                page.on("pageerror", lambda error: errors.append(str(error)))
+                page.on("requestfailed", lambda request: failed_requests.append(request.url))
+                page.on("response", lambda response: failed_requests.append(response.url) if response.status >= 400 else None)
+                # A same-origin document without the full app's unrelated services.
+                page.goto(base + "/static/lib/auth-client.js")
+                login = page.request.post(base + "/api/auth/login", data={"token": token})
+                assert login.status == 200
+                result = page.evaluate("""async () => {
+                    const { AuthClient } = await import('/static/lib/auth-client.js');
+                    const client = new AuthClient();
+                    return { username: await client.checkSession(), currentUser: client.currentUser };
+                }""")
+                assert result == {"username": "browser-user", "currentUser": "browser-user"}
+                assert not errors, errors
+                assert not failed_requests, failed_requests
+            finally:
+                browser.close()
+    finally:
+        server.should_exit = True
+        thread.join(timeout=15)
+        sock.close()
+        assert not thread.is_alive(), "test server did not stop"

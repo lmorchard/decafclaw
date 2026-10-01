@@ -1,3 +1,5 @@
+import { DefaultService } from './api-client/index.js';
+
 /**
  * REST client for authentication.
  * @fires AuthClient#login
@@ -18,12 +20,9 @@ export class AuthClient extends EventTarget {
    */
   async checkSession() {
     try {
-      const resp = await fetch('/api/auth/me');
-      if (resp.ok) {
-        const data = await resp.json();
-        this.#currentUser = data.username;
-        return data.username;
-      }
+      const data = await DefaultService.authMeApiAuthMeGet();
+      this.#currentUser = data.username;
+      return data.username;
     } catch (e) {
       // not authenticated
     }

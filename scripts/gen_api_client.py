@@ -1,6 +1,6 @@
 import json
-import os
 import subprocess
+from pathlib import Path
 
 import yaml
 
@@ -18,18 +18,23 @@ def dump_openapi():
     with open("openapi.yaml", "w") as f:
         yaml.dump(openapi_schema, f, sort_keys=False)
 
-    # Run npx openapi-typescript-codegen
-    # Assume it is installed in node_modules
+    static = Path("src/decafclaw/web/static")
     cmd = [
-        "npx", "openapi-typescript-codegen",
+        str(static / "node_modules/.bin/openapi"),
         "--input", "openapi.json",
         "--output", "src/decafclaw/web/static/lib/api-client",
         "--client", "fetch"
     ]
-    # openapi-typescript-codegen emits a directory tree of .ts files, not a
-    # single module. Nothing compiles them to .js, so browser-served code
-    # cannot import the result yet — see #843.
     subprocess.run(cmd, check=True)
+    # Bundle only the generated runtime. The adjacent index.ts preserves
+    # response types for checkJs callers importing index.js.
+    subprocess.run([
+        str(static / "node_modules/.bin/esbuild"),
+        str(static / "lib/api-client/index.ts"),
+        "--bundle", "--format=esm", "--platform=browser", "--target=es2022",
+        "--outfile=" + str(static / "lib/api-client/index.js"),
+    ], check=True)
+
 
 if __name__ == "__main__":
     dump_openapi()

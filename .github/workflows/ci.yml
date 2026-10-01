@@ -36,6 +36,9 @@ jobs:
       - name: Check
         run: make check
 
+      - name: Install test browser
+        run: uv run playwright install --with-deps chromium
+
       - name: Test
         # Parallelism is configured in pyproject.toml (addopts = "-n auto
         # --dist=worksteal"). `-v` is omitted because worker output
