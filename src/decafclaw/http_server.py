@@ -8,7 +8,7 @@ import os
 import re
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Literal
+from typing import Literal, NotRequired, TypedDict
 
 import yaml
 from croniter import croniter
@@ -660,12 +660,27 @@ async def get_conversation(request: Request, username: str) -> JSONResponse:
     return JSONResponse(conv.to_dict())
 
 
-@_authenticated
-async def rename_conversation(request: Request, username: str) -> JSONResponse:
+class ConversationPatchRequest(BaseModel):
+    title: str | None = None
+    folder: str | None = None
+
+
+class ConversationPatchResponse(TypedDict):
+    conv_id: str
+    title: str
+    created_at: str
+    updated_at: str
+    folder: NotRequired[str]
+
+
+async def rename_conversation(request: Request, id: str) -> JSONResponse:
     """Rename and/or move a conversation to a different folder."""
     from .web.conversations import ConversationIndex
+    username = _get_username_or_401(request)
+    if not username:
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
     config = request.app.state.config
-    conv_id = request.path_params["id"]
+    conv_id = id
     body = await request.json()
     index = ConversationIndex(config)
     conv = index.get(conv_id)
@@ -2478,7 +2493,13 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> FastAPI:
                  response_model=SystemConversationListingResponse),
         APIRoute("/api/conversations", create_conversation, methods=["POST"]),
         APIRoute("/api/conversations/{id}", get_conversation, methods=["GET"]),
-        APIRoute("/api/conversations/{id}", rename_conversation, methods=["PATCH"]),
+        # Document the input without replacing this route's legacy parsing,
+        # null/coercion behavior, authentication order, or 400 responses.
+        APIRoute("/api/conversations/{id}", rename_conversation, methods=["PATCH"],
+                 response_model=ConversationPatchResponse,
+                 openapi_extra={"requestBody": {"required": True, "content": {
+                     "application/json": {"schema": ConversationPatchRequest.model_json_schema()},
+                 }}}),
         APIRoute("/api/conversations/{id}/history", get_conversation_history, methods=["GET"]),
         APIRoute("/api/conversations/{id}/context", get_context_diagnostics, methods=["GET"]),
         APIRoute("/api/conversations/{id}/export", export_conversation, methods=["GET"]),

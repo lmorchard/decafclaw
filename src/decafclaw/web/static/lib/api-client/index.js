@@ -366,20 +366,21 @@ var request = (config, options) => {
 var request2 = (config, options) => {
   const sticky = options.url === "/api/sticky/{conv_id}";
   const listing = ["/api/conversations", "/api/conversations/archived", "/api/conversations/system"].includes(options.url);
-  if (options.method !== "GET" || !sticky && !listing) {
+  const patch = options.method === "PATCH" && options.url === "/api/conversations/{id}";
+  if (!patch && (options.method !== "GET" || !sticky && !listing)) {
     return request(config, options);
   }
   return new CancelablePromise(async (resolve2, reject, onCancel) => {
     try {
       const query = listing && options.query?.folder === "" ? void 0 : options.query;
-      const url = sticky ? `${config.BASE}/api/sticky/${encodeURIComponent(options.path.conv_id)}` : `${config.BASE}${options.url}${query ? getQueryString(query) : ""}`;
+      const url = patch ? `${config.BASE}/api/conversations/${encodeURIComponent(options.path.id)}` : sticky ? `${config.BASE}/api/sticky/${encodeURIComponent(options.path.conv_id)}` : `${config.BASE}${options.url}${query ? getQueryString(query) : ""}`;
       const headers = await getHeaders(config, options);
       if (onCancel.isCancelled) return;
       const response = await sendRequest(
         { ...config, WITH_CREDENTIALS: true, CREDENTIALS: "same-origin" },
         options,
         url,
-        void 0,
+        getRequestBody(options),
         void 0,
         headers,
         onCancel
@@ -391,7 +392,11 @@ var request2 = (config, options) => {
         statusText: response.statusText,
         body: void 0
       });
-      resolve2(await response.json());
+      if (options.discardResponse) {
+        resolve2(void 0);
+      } else {
+        resolve2(await response.json());
+      }
     } catch (error) {
       reject(error);
     }
@@ -568,6 +573,21 @@ var DefaultService = class {
       url: "/api/conversations/{id}"
     });
   }
+  static renameConversationApiConversationsIdPatch(id, requestBody, discardResponse = false) {
+    return request2(OpenAPI, {
+      discardResponse,
+      method: "PATCH",
+      url: "/api/conversations/{id}",
+      path: {
+        "id": id
+      },
+      body: requestBody,
+      mediaType: "application/json",
+      errors: {
+        422: `Validation Error`
+      }
+    });
+  }
   /**
    * Wrapper
    * @returns any Successful Response
@@ -576,17 +596,6 @@ var DefaultService = class {
   static wrapperApiConversationsIdDelete() {
     return request2(OpenAPI, {
       method: "DELETE",
-      url: "/api/conversations/{id}"
-    });
-  }
-  /**
-   * Wrapper
-   * @returns any Successful Response
-   * @throws ApiError
-   */
-  static wrapperApiConversationsIdPatch() {
-    return request2(OpenAPI, {
-      method: "PATCH",
       url: "/api/conversations/{id}"
     });
   }

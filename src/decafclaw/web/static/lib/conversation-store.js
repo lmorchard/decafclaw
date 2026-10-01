@@ -259,18 +259,13 @@ export class ConversationStore extends EventTarget {
   /** @param {string} convId @param {string} title */
   async renameConversation(convId, title) {
     try {
-      const resp = await fetch(`/api/conversations/${convId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title }),
-      });
-      if (!resp.ok) return;
-      const updated = await resp.json();
+      const updated = await DefaultService.renameConversationApiConversationsIdPatch(convId, { title });
       this.#conversations = this.#conversations.map(c =>
         c.conv_id === convId ? { ...c, ...updated } : c
       );
       this.#emitChange();
     } catch (err) {
+      if (err instanceof ApiError) return;
       console.error('Failed to rename conversation:', err);
     }
   }
@@ -278,15 +273,11 @@ export class ConversationStore extends EventTarget {
   /** @param {string} convId @param {string} folder */
   async moveConversation(convId, folder) {
     try {
-      const resp = await fetch(`/api/conversations/${convId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ folder }),
-      });
-      if (!resp.ok) return;
+      await DefaultService.renameConversationApiConversationsIdPatch(convId, { folder }, true);
       // Re-fetch current folder listing
       await this.listConversations(this.#currentFolder);
     } catch (err) {
+      if (err instanceof ApiError) return;
       console.error('Failed to move conversation:', err);
     }
   }

@@ -1011,3 +1011,93 @@ async def test_listing_success_rejects_payload_contract_drift(route, authed_clie
         query = {}
     with pytest.raises(ValidationError, match="conversations.0.title"):
         await authed_client.get(route, params=query)
+
+
+@pytest.mark.parametrize("body", [{}, {"title": None}, {"folder": None}, {"title": None, "folder": None},
+                                  {"title": "Title 日本語 & + #"}, {"folder": "  Work space/日本語 & + #  "},
+                                  {"title": "Title 日本語 & + #", "folder": ""}])
+async def test_patch_contract_behavior(authed_client, folder_index, body):
+    nested = "Work space/日本語 & + #"
+    await folder_index.create_folder(nested)
+    original = (await authed_client.post("/api/conversations", json={"title": "Original"})).json()
+    conv_id = original["conv_id"]
+    await folder_index.set_folder(conv_id, nested)
+    response = await authed_client.patch(f"/api/conversations/{conv_id}", json=body)
+    assert response.status_code == 200
+    result = response.json()
+    expected_keys = {"conv_id", "title", "created_at", "updated_at"}
+    if body.get("folder") is not None:
+        expected_keys.add("folder")
+        assert result["folder"] == body["folder"].strip()
+    assert set(result) == expected_keys
+    assert result["conv_id"] == conv_id
+    assert result["created_at"] == original["created_at"]
+    assert result["title"] == (body.get("title") if body.get("title") is not None else "Original")
+    persisted = (await authed_client.get(f"/api/conversations/{conv_id}")).json()
+    assert persisted == {key: result[key] for key in original}
+    assert await folder_index.get_folder(conv_id) == (body["folder"].strip() if body.get("folder") is not None else nested)
+
+
+@pytest.mark.parametrize("folder", ["missing", "/bad", "../bad", 123, False])
+async def test_patch_invalid_destination_does_not_rename(authed_client, folder):
+    original = (await authed_client.post("/api/conversations", json={"title": "Original"})).json()
+    url = f"/api/conversations/{original['conv_id']}"
+    response = await authed_client.patch(url, json={"title": "Must not apply", "folder": folder})
+    assert response.status_code == 400
+    assert response.json() == {"error": "Folder does not exist"}
+    assert (await authed_client.get(url)).json() == original
+
+
+async def test_patch_preserves_folder_coercion_and_title_value(authed_client, folder_index):
+    await folder_index.create_folder("123")
+    original = (await authed_client.post("/api/conversations", json={"title": "Original"})).json()
+    url = f"/api/conversations/{original['conv_id']}"
+    response = await authed_client.patch(url, json={"title": 123, "folder": 123})
+    assert response.status_code == 200
+    assert response.json()["title"] == 123
+    assert response.json()["folder"] == "123"
+    assert (await authed_client.get(url)).json()["title"] == 123
+
+
+def test_patch_openapi_contract(http_config):
+    app = create_app(http_config, EventBus())
+    schema = app.openapi()
+    operation = schema["paths"]["/api/conversations/{id}"]["patch"]
+    assert operation["parameters"][0] == {"name": "id", "in": "path", "required": True,
+                                          "schema": {"type": "string", "title": "Id"}}
+    body = operation["requestBody"]["content"]["application/json"]["schema"]
+    assert set(body["properties"]) == {"title", "folder"}
+    assert not body.get("required")
+    for field in body["properties"].values():
+        assert {part["type"] for part in field["anyOf"]} == {"string", "null"}
+    response = schema["components"]["schemas"]["ConversationPatchResponse"]
+    assert set(response["required"]) == {"conv_id", "title", "created_at", "updated_at"}
+    assert response["properties"]["folder"]["type"] == "string"
+
+
+async def test_patch_auth_ownership_and_missing(authed_client, unauthed_client, http_config):
+    index = ConversationIndex(http_config)
+    other = index.create("another-user", "Private")
+    for conv_id in ["missing", other.conv_id]:
+        url = f"/api/conversations/{conv_id}"
+        assert (await unauthed_client.patch(url, json={"title": "Changed"})).status_code == 401
+        response = await authed_client.patch(url, json={"title": "Changed"})
+        assert response.status_code == 404
+        assert response.json() == {"error": "not found"}
+    assert index.get(other.conv_id).title == "Private"
+
+
+@pytest.mark.parametrize("encoded", [False, True])
+async def test_patch_supported_identifier_decoding(authed_client, http_config, encoded):
+    index = ConversationIndex(http_config)
+    conv = index.create("testuser", "Old")
+    # Exercise every supported punctuation character as well as the generated ID.
+    custom_id = conv.conv_id + ".part_1--child-abc"
+    data = index._load()
+    data[0]["conv_id"] = custom_id
+    index._save(data)
+    path_id = custom_id.replace(".", "%2E").replace("_", "%5F").replace("-", "%2D") if encoded else custom_id
+    response = await authed_client.patch(f"/api/conversations/{path_id}", json={"title": "Decoded"})
+    assert response.status_code == 200
+    assert response.json()["conv_id"] == custom_id
+    assert index.get(custom_id).title == "Decoded"
