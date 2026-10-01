@@ -11,6 +11,7 @@ import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 import { renderMarkdown } from '../lib/markdown.js';
 import { encodePagePath } from '../lib/utils.js';
 import { WikiWriteMutex } from '../lib/wiki-page-write-mutex.js';
+import { ApiError, DefaultService } from '../lib/api-client/index.js';
 import './wiki-editor.js';
 import './wiki-metadata.js';
 
@@ -60,7 +61,7 @@ export class WikiPage extends LitElement {
     this.page = '';
     this.standalone = false;
     /** @type {string} */ this._body = '';
-    /** @type {Record<string, any>} */ this._frontmatter = {};
+    /** @type {import('../lib/api-client/index.js').VaultPageResponse['frontmatter']} */ this._frontmatter = {};
     /** @type {string} */ this._frontmatterRaw = '';
     /** @type {string} */ this._frontmatterError = '';
     /**
@@ -96,15 +97,15 @@ export class WikiPage extends LitElement {
   /** @type {WikiWriteMutex} */
   #mutex;
 
-  /** @param {Map<string, any>} changed */
+  /** @param {Map<string, unknown>} changed */
   willUpdate(changed) {
     if (!changed.has('page')) return;
     // Lit has already assigned the NEW page to `this.page` by the time
     // willUpdate runs, so anything that must reach the page we're *leaving*
     // has to be told which page that is. `this._modified` is still the old
     // page's mtime here, so it travels with it.
-    /** @type {string} */
-    const prev = changed.get('page') || '';
+    const previousPage = changed.get('page');
+    const prev = typeof previousPage === 'string' ? previousPage : '';
     if (this._editing && prev) {
       void this.#flushMetadata({ page: prev, modified: this._modified });
       // <wiki-editor> needs no target: it holds its own `page` property, and
@@ -144,12 +145,18 @@ export class WikiPage extends LitElement {
   async _onMetadataRawSave(e) {
     const res = await this.#mutex.saveRaw(e.detail.raw, this.page, this._modified);
     if (res?.ok) {
-      /** @type {any} */ (this.querySelector('wiki-metadata'))?.closeRaw();
+      /** @type {import('./wiki-metadata.js').WikiMetadata|null} */
+      const metadata = this.querySelector('wiki-metadata');
+      metadata?.closeRaw();
     } else if (res?.error && res.error !== 'Metadata was modified externally.' && res.error !== 'Resolve the pending metadata conflict above before saving raw YAML.') {
       // Malformed YAML etc. — keep the raw editor's existing inline error.
-      /** @type {any} */ (this.querySelector('wiki-metadata'))?.setRawError(res.error);
+      /** @type {import('./wiki-metadata.js').WikiMetadata|null} */
+      const metadata = this.querySelector('wiki-metadata');
+      metadata?.setRawError(res.error);
     } else if (res?.error === 'Resolve the pending metadata conflict above before saving raw YAML.') {
-      /** @type {any} */ (this.querySelector('wiki-metadata'))?.setRawError(res.error);
+      /** @type {import('./wiki-metadata.js').WikiMetadata|null} */
+      const metadata = this.querySelector('wiki-metadata');
+      metadata?.setRawError(res.error);
     }
     this._syncMutexState();
   }
@@ -158,7 +165,9 @@ export class WikiPage extends LitElement {
   async _onMetadataReload() {
     this.#mutex.reload();
     this._syncMutexState();
-    /** @type {any} */ (this.querySelector('wiki-metadata'))?.closeRaw();
+    /** @type {import('./wiki-metadata.js').WikiMetadata|null} */
+    const metadata = this.querySelector('wiki-metadata');
+    metadata?.closeRaw();
     await this._fetchPage();
   }
 
@@ -167,7 +176,9 @@ export class WikiPage extends LitElement {
     const wasRaw = this.#mutex.lastMetaAttempt?.kind === 'raw';
     await this.#mutex.overwrite(this.page, this._modified);
     if (wasRaw && !this.#mutex.metaError) {
-      /** @type {any} */ (this.querySelector('wiki-metadata'))?.closeRaw();
+      /** @type {import('./wiki-metadata.js').WikiMetadata|null} */
+      const metadata = this.querySelector('wiki-metadata');
+      metadata?.closeRaw();
     }
     this._syncMutexState();
   }
@@ -208,7 +219,7 @@ export class WikiPage extends LitElement {
         this._frontmatterRaw = data.frontmatter_raw ?? '';
         this._frontmatterError = data.frontmatter_error ?? '';
         this._modified = data.modified;
-        /** @type {any} */
+        /** @type {import('./wiki-editor.js').WikiEditor|null} */
         const editor = this.querySelector('wiki-editor');
         if (editor) editor.modified = data.modified;
       }
@@ -226,21 +237,18 @@ export class WikiPage extends LitElement {
     this._loaded = false;
     this._body = '';
     try {
-      const res = await fetch('/api/vault/' + encodePagePath(this.page));
-      if (!res.ok) {
-        this._error = res.status === 404 ? `Page "${this.page}" not found.` : `Error loading page (${res.status}).`;
-        return;
-      }
-      const data = await res.json();
+      const data = await DefaultService.wrapperApiVaultPageGet(this.page);
       this._title = data.title;
-      this._body = data.body ?? '';
-      this._frontmatter = data.frontmatter ?? {};
-      this._frontmatterRaw = data.frontmatter_raw ?? '';
+      this._body = data.body;
+      this._frontmatter = data.frontmatter;
+      this._frontmatterRaw = data.frontmatter_raw;
       this._frontmatterError = data.frontmatter_error ?? '';
       this._modified = data.modified;
       this._loaded = true;
     } catch (e) {
-      this._error = 'Failed to load page.';
+      this._error = e instanceof ApiError
+        ? (e.status === 404 ? `Page "${this.page}" not found.` : `Error loading page (${e.status}).`)
+        : 'Failed to load page.';
     } finally {
       this._loading = false;
     }

@@ -18,6 +18,7 @@
 
 import { LitElement, html, nothing } from 'lit';
 import { encodePagePath } from '../lib/utils.js';
+import { ApiError, DefaultService } from '../lib/api-client/index.js';
 import {
   Editor, rootCtx, defaultValueCtx,
   commonmark, gfm, history, listener, listenerCtx, clipboard,
@@ -243,17 +244,30 @@ export class WikiEditor extends LitElement {
 
   async #reload() {
     try {
-      const res = await fetch(
-        `${this.saveEndpoint}${encodePagePath(this.page)}`,
-      );
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      // Every host's GET returns the editable markdown at the top level: the
-      // vault and schedule endpoints as `body`, config files as `content`.
-      // Assigned once so all four uses stay in sync.
-      const newContent = data.body ?? data.content ?? '';
+      /** @type {string} */
+      let newContent;
+      /** @type {number} */
+      let newModified;
+      if (this.saveEndpoint === '/api/vault/') {
+        try {
+          const data = await DefaultService.wrapperApiVaultPageGet(this.page);
+          newContent = data.body;
+          newModified = data.modified;
+        } catch (e) {
+          if (e instanceof ApiError) throw new Error(`HTTP ${e.status}`);
+          throw e;
+        }
+      } else {
+        // Config and schedule hosts keep their existing transport until their
+        // own generated contracts migrate.
+        const res = await fetch(`${this.saveEndpoint}${encodePagePath(this.page)}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        newContent = data.body ?? data.content ?? '';
+        newModified = data.modified;
+      }
       this.content = newContent;
-      this.modified = data.modified;
+      this.modified = newModified;
       if (this.#editor) {
         this.#editor.action(replaceAll(newContent));
       }

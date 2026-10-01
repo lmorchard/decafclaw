@@ -200,6 +200,49 @@ class WorkspaceDeleteResponse(BaseModel):
     ok: Literal[True]
 
 
+class VaultFolderEntry(BaseModel):
+    name: str
+    path: str
+
+
+class VaultPageListEntry(BaseModel):
+    title: str
+    path: str
+    folder: str
+    modified: float
+    summary: str
+
+
+class VaultListingResponse(BaseModel):
+    folder: str
+    folders: list[VaultFolderEntry]
+    pages: list[VaultPageListEntry]
+
+
+class VaultRecentResponse(BaseModel):
+    pages: list[VaultPageListEntry]
+
+
+class VaultTagEntry(BaseModel):
+    tag: str
+    count: int
+    pages: list[str]
+
+
+class VaultTagsResponse(BaseModel):
+    tags: list[VaultTagEntry]
+
+
+class VaultPageResponse(BaseModel):
+    title: str
+    path: str
+    body: str
+    modified: float
+    frontmatter: dict[str, JsonValue]
+    frontmatter_raw: str
+    frontmatter_error: str | None = None
+
+
 class VaultCompletion(BaseModel):
     type: Literal["vault"]
     id: str
@@ -2873,12 +2916,26 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> FastAPI:
         APIRoute("/api/schedules/{name}", schedules_get, methods=["GET"]),
         APIRoute("/api/schedules/{name}", schedules_update, methods=["PUT"]),
         APIRoute("/api/vault", vault_create, methods=["POST"]),
-        APIRoute("/api/vault", vault_list, methods=["GET"]),
+        APIRoute("/api/vault", vault_list, methods=["GET"],
+                 response_model=VaultListingResponse,
+                 # Schema-only query metadata preserves the handler's current
+                 # validation and its established 400/403/404 responses.
+                 openapi_extra={"parameters": [{
+                     "name": "folder", "in": "query", "required": False,
+                     "schema": {"type": "string"},
+                 }]}),
         APIRoute("/api/vault/folders", vault_create_folder, methods=["POST"]),
-        APIRoute("/api/vault/recent", vault_recent, methods=["GET"]),
-        APIRoute("/api/vault/tags", vault_tags, methods=["GET"]),
+        APIRoute("/api/vault/recent", vault_recent, methods=["GET"],
+                 response_model=VaultRecentResponse),
+        APIRoute("/api/vault/tags", vault_tags, methods=["GET"],
+                 response_model=VaultTagsResponse),
         APIRoute("/api/vault/{page:path}", vault_write, methods=["PUT"]),
-        APIRoute("/api/vault/{page:path}", vault_read, methods=["GET"]),
+        APIRoute("/api/vault/{page:path}", vault_read, methods=["GET"],
+                 response_model=VaultPageResponse,
+                 openapi_extra={"parameters": [{
+                     "name": "page", "in": "path", "required": True,
+                     "schema": {"type": "string"},
+                 }]}),
         APIRoute("/api/vault/{page:path}", vault_delete, methods=["DELETE"]),
         APIRoute("/vault/{page:path}", serve_vault_page, methods=["GET"]),
         # Legacy /api/wiki/* aliases — vault handlers under the old name.
