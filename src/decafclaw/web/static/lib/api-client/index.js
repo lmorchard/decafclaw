@@ -367,19 +367,20 @@ var request2 = (config, options) => {
   const login = options.method === "POST" && options.url === "/api/auth/login";
   const logout = options.method === "POST" && options.url === "/api/auth/logout";
   const vaultGuard = options.method === "GET" && options.url === "/api/auth/me" && options.discardResponse;
+  const diagnostics = options.method === "GET" && options.url === "/api/conversations/{id}/context";
   const sticky = options.url === "/api/sticky/{conv_id}";
   const listing = ["/api/conversations", "/api/conversations/archived", "/api/conversations/system"].includes(options.url);
   const patch = options.method === "PATCH" && options.url === "/api/conversations/{id}";
   const create = options.method === "POST" && options.url === "/api/conversations";
   const lifecycle = options.method === "DELETE" && options.url === "/api/conversations/{id}" || options.method === "POST" && ["/api/conversations/{id}/archive", "/api/conversations/{id}/unarchive"].includes(options.url);
   const folder = options.method === "POST" && options.url === "/api/conversations/folders" || ["PUT", "DELETE"].includes(options.method) && options.url === "/api/conversations/folders/{path}";
-  if (!login && !logout && !vaultGuard && !create && !lifecycle && !folder && !patch && (options.method !== "GET" || !sticky && !listing)) {
+  if (!diagnostics && !login && !logout && !vaultGuard && !create && !lifecycle && !folder && !patch && (options.method !== "GET" || !sticky && !listing)) {
     return request(config, options);
   }
   return new CancelablePromise(async (resolve2, reject, onCancel) => {
     try {
       const query = listing && options.query?.folder === "" ? void 0 : options.query;
-      const url = folder ? `${config.BASE}/api/conversations/folders${options.path ? "/" + String(options.path.path).split("/").map(encodeURIComponent).join("/") : ""}` : patch || lifecycle ? `${config.BASE}${options.url.replace("{id}", encodeURIComponent(options.path.id))}` : sticky ? `${config.BASE}/api/sticky/${encodeURIComponent(options.path.conv_id)}` : `${config.BASE}${options.url}${query ? getQueryString(query) : ""}`;
+      const url = folder ? `${config.BASE}/api/conversations/folders${options.path ? "/" + String(options.path.path).split("/").map(encodeURIComponent).join("/") : ""}` : patch || lifecycle || diagnostics ? `${config.BASE}${options.url.replace("{id}", encodeURIComponent(options.path.id))}${query ? getQueryString(query) : ""}` : sticky ? `${config.BASE}/api/sticky/${encodeURIComponent(options.path.conv_id)}` : `${config.BASE}${options.url}${query ? getQueryString(query) : ""}`;
       const headers = await getHeaders(config, options);
       if (onCancel.isCancelled) return;
       const response = await sendRequest(
@@ -403,6 +404,34 @@ var request2 = (config, options) => {
       } else {
         resolve2(await response.json());
       }
+    } catch (error) {
+      reject(error);
+    }
+  });
+};
+var textRequest = (config, options) => {
+  return new CancelablePromise(async (resolve2, reject, onCancel) => {
+    try {
+      const url = `${config.BASE}${options.url.replace("{id}", encodeURIComponent(options.path.id))}${options.query ? getQueryString(options.query) : ""}`;
+      const headers = await getHeaders(config, options);
+      if (onCancel.isCancelled) return;
+      const response = await sendRequest(
+        { ...config, WITH_CREDENTIALS: true, CREDENTIALS: "same-origin" },
+        options,
+        url,
+        void 0,
+        void 0,
+        headers,
+        onCancel
+      );
+      catchErrorCodes(options, {
+        url,
+        ok: response.ok,
+        status: response.status,
+        statusText: response.statusText,
+        body: void 0
+      });
+      resolve2(await response.text());
     } catch (error) {
       reject(error);
     }
@@ -616,25 +645,49 @@ var DefaultService = class {
     });
   }
   /**
-   * Wrapper
-   * @returns any Successful Response
+   * Get Context Diagnostics
+   * Return context composer diagnostics for a conversation.
+   * @param id
+   * @returns ContextDiagnosticsResponse Successful Response
    * @throws ApiError
    */
-  static wrapperApiConversationsIdContextGet() {
+  static getContextDiagnosticsApiConversationsIdContextGet(id) {
     return request2(OpenAPI, {
       method: "GET",
-      url: "/api/conversations/{id}/context"
+      url: "/api/conversations/{id}/context",
+      path: {
+        "id": id
+      },
+      errors: {
+        422: `Validation Error`
+      }
     });
   }
   /**
-   * Wrapper
-   * @returns any Successful Response
+   * Export Conversation
+   * Export a conversation as raw JSONL or rendered markdown.
+   *
+   * Query param ``format`` must be ``jsonl`` or ``markdown``. 400 on missing
+   * or unknown format, 404 if the conversation isn't owned by the user or
+   * no archive exists.
+   * @param id
+   * @param format
+   * @returns string Successful Response
    * @throws ApiError
    */
-  static wrapperApiConversationsIdExportGet() {
-    return request2(OpenAPI, {
+  static exportConversationApiConversationsIdExportGet(id, format) {
+    return textRequest(OpenAPI, {
       method: "GET",
-      url: "/api/conversations/{id}/export"
+      url: "/api/conversations/{id}/export",
+      path: {
+        "id": id
+      },
+      query: {
+        "format": format
+      },
+      errors: {
+        422: `Validation Error`
+      }
     });
   }
   static createConvFolderApiConversationsFoldersPost(requestBody, discardResponse = false) {

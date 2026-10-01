@@ -1364,3 +1364,23 @@ async def test_create_lifecycle_keeps_legacy_title_value(authed_client):
     response = await authed_client.post('/api/conversations', json={'title': 123})
     assert response.status_code == 201
     assert response.json()['title'] == 123
+
+
+@pytest.mark.parametrize("suffix", ["context", "export", "export?format=html", "export?format=jsonl"])
+async def test_context_export_requires_auth_before_format(suffix, unauthed_client):
+    response = await unauthed_client.get(f"/api/conversations/missing/{suffix}")
+    assert response.status_code == 401
+
+
+async def test_context_optional_and_extra_diagnostics_are_unchanged(authed_client, http_config):
+    from decafclaw.context_composer import write_context_sidecar
+
+    conv = (await authed_client.post("/api/conversations", json={})).json()
+    conv_id = conv["conv_id"]
+    assert (await authed_client.get(f"/api/conversations/{conv_id}/context")).status_code == 404
+    payload = {"sources": [{"source": "custom", "details": {"arbitrary": [1, None, {"nested": True}]}}],
+               "future_data": {"enabled": True}}
+    write_context_sidecar(http_config, conv_id, payload)
+    response = await authed_client.get(f"/api/conversations/{conv_id}/context")
+    assert response.status_code == 200
+    assert response.json() == payload

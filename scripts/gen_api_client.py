@@ -72,6 +72,15 @@ def dump_openapi():
         ("renameConvFolderApiConversationsFoldersPathPut", "PUT", "/api/conversations/folders/{path}"),
     ):
         add_discard_overload(static / "lib/api-client/services/DefaultService.ts", method, verb, url)
+    service = static / "lib/api-client/services/DefaultService.ts"
+    source = service.read_text()
+    source = "import { textRequest as __textRequest } from '../core/request';\n" + source
+    # Only the documented text operation uses this strictly string transport.
+    pattern = r"(public static exportConversationApiConversationsIdExportGet\([\s\S]*?return )__request"
+    source, count = re.subn(pattern, r"\1__textRequest", source)
+    if count != 1:
+        raise ValueError("Expected exactly one generated text export method")
+    service.write_text(source)
     # Preserve the stock transport outside migrated conversation operations.
     # The adapter uses generated helpers but retains those callers' encoding and
     # error behavior without mutating the shared OpenAPI configuration.
