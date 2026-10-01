@@ -180,18 +180,51 @@ paths:
           content:
             application/json:
               schema: {}
-    delete:
-      summary: Wrapper
-      operationId: wrapper_api_conversations__id__delete
+    patch:
+      summary: Rename Conversation
+      description: Rename and/or move a conversation to a different folder.
+      operationId: rename_conversation_api_conversations__id__patch
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Id
       responses:
         '200':
           description: Successful Response
           content:
             application/json:
-              schema: {}
-    patch:
+              schema:
+                $ref: '#/components/schemas/ConversationPatchResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              properties:
+                title:
+                  anyOf:
+                  - type: string
+                  - type: 'null'
+                  title: Title
+                folder:
+                  anyOf:
+                  - type: string
+                  - type: 'null'
+                  title: Folder
+              title: ConversationPatchRequest
+              type: object
+    delete:
       summary: Wrapper
-      operationId: wrapper_api_conversations__id__patch
+      operationId: wrapper_api_conversations__id__delete
       responses:
         '200':
           description: Successful Response
@@ -773,6 +806,30 @@ components:
       - folders
       - conversations
       title: ConversationListingResponse
+    ConversationPatchResponse:
+      properties:
+        conv_id:
+          type: string
+          title: Conv Id
+        title:
+          type: string
+          title: Title
+        created_at:
+          type: string
+          title: Created At
+        updated_at:
+          type: string
+          title: Updated At
+        folder:
+          type: string
+          title: Folder
+      type: object
+      required:
+      - conv_id
+      - title
+      - created_at
+      - updated_at
+      title: ConversationPatchResponse
     HTTPValidationError:
       properties:
         detail:
