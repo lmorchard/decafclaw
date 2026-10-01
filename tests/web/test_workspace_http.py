@@ -409,6 +409,23 @@ async def test_workspace_write_path_escape_returns_404(client, http_config):
     assert resp.status_code == 404
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("request_kwargs", "error"),
+    [
+        ({"content": b"not-json", "headers": {"Content-Type": "application/json"}},
+         "invalid JSON body"),
+        ({"json": {}}, "content (string) required"),
+        ({"json": {"content": "keep", "modified": "not-a-number"}},
+         "modified must be a number"),
+    ],
+)
+async def test_workspace_write_invalid_body_retains_400(client, request_kwargs, error):
+    resp = await client.put("/api/workspace/note.md", **request_kwargs)
+    assert resp.status_code == 400
+    assert resp.json() == {"error": error}
+
+
 # -- workspace_delete (DELETE /api/workspace/{path}) --------------------------
 
 
@@ -875,5 +892,4 @@ async def test_workspace_recent_prunes_heavy_subtrees(client, http_config):
     assert "attachments/blob.bin" not in paths
     assert ".schedule_last_run/task.txt" not in paths
     assert "nested/attachments/ignored.bin" not in paths
-
 

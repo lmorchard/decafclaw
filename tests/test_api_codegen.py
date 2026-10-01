@@ -143,6 +143,7 @@ def test_browser_uses_clean_built_client(source_tree, config):
     write_context_sidecar(config, conv_id, diagnostics_payload)
     workspace_folder = "Browser files/日本語 #?"
     workspace_rel_path = f"{workspace_folder}/Browser note #?.md"
+    renamed_workspace_rel_path = f"{workspace_folder}/Renamed 日本語 & #?.md"
     workspace_path = config.workspace_path / workspace_rel_path
     workspace_path.parent.mkdir(parents=True, exist_ok=True)
     workspace_path.write_text("first browser content")
@@ -170,6 +171,7 @@ def test_browser_uses_clean_built_client(source_tree, config):
     canvas_requests = []
     widget_catalog_requests = []
     workspace_read_requests = []
+    workspace_mutation_requests = []
 
     @app.middleware("http")
     async def record_listing_request(request, call_next):
@@ -212,6 +214,12 @@ def test_browser_uses_clean_built_client(source_tree, config):
             workspace_read_requests.append((request.scope["path"],
                                             list(request.query_params.multi_items()),
                                             bool(request.cookies)))
+        if (request.method in {"PUT", "DELETE"}
+                and request.url.path.startswith("/api/workspace/")):
+            workspace_mutation_requests.append((
+                request.method, request.scope["path"], list(request.query_params.multi_items()),
+                await request.body(), request.headers.get("content-type"), bool(request.cookies),
+            ))
         return await call_next(request)
 
     # Bind before starting the server, avoiding a free-port check/use race.
@@ -273,7 +281,7 @@ def test_browser_uses_clean_built_client(source_tree, config):
                     const filePage = document.createElement('file-page');
                     filePage.id = 'browser-file-page';
                     filePage.kind = 'text';
-                    filePage.readonly = true;
+                    filePage.readonly = false;
                     filePage.path = path;
                     document.body.append(filePage);
 
@@ -303,12 +311,83 @@ def test_browser_uses_clean_built_client(source_tree, config):
                 workspace_path.write_text("second browser content")
                 page.evaluate("document.querySelector('#browser-file-page').reload()")
                 page.wait_for_function("document.querySelector('#browser-file-page')._content === 'second browser content'")
+
+                page.locator('#browser-file-page .cm-content').fill('saved browser content')
+                page.evaluate("document.querySelector('#browser-file-page file-editor').flushSave()")
+                page.wait_for_function("document.querySelector('#browser-file-page')._saveStatus === 'saved'")
+                assert workspace_path.read_text() == "saved browser content"
+
+                stale_mtime = workspace_path.stat().st_mtime
+                workspace_path.write_text("server conflict content")
+                os.utime(workspace_path, (stale_mtime + 100, stale_mtime + 100))
+                page.locator('#browser-file-page .cm-content').fill('stale browser content')
+                page.evaluate("document.querySelector('#browser-file-page file-editor').flushSave()")
+                page.wait_for_function("document.querySelector('#browser-file-page')._conflict === true")
+                assert workspace_path.read_text() == "server conflict content"
+                page.locator('#browser-file-page .file-editor-conflict button').click()
+                page.wait_for_function(
+                    "document.querySelector('#browser-file-page')._content === 'server conflict content'")
+
+                page.evaluate("""() => {
+                    window.workspaceFileOpen = null;
+                    document.querySelector('#browser-file-page').addEventListener(
+                        'file-open', event => window.workspaceFileOpen = event.detail.path,
+                        {once: true});
+                }""")
+                page.locator('#browser-file-page .file-rename-btn').click()
+                page.locator('#browser-file-page .file-rename-input').fill(renamed_workspace_rel_path)
+                page.locator('#browser-file-page .file-rename-ok').click()
+                page.wait_for_function("window.workspaceFileOpen !== null")
+                assert page.evaluate("window.workspaceFileOpen") == renamed_workspace_rel_path
+                renamed_workspace_path = config.workspace_path / renamed_workspace_rel_path
+                assert renamed_workspace_path.read_text() == "server conflict content"
+                assert not workspace_path.exists()
+
+                page.evaluate("""path => {
+                    const filePage = document.querySelector('#browser-file-page');
+                    filePage.kind = 'binary';
+                    filePage.path = path;
+                }""", renamed_workspace_rel_path)
+                page.wait_for_function(
+                    "document.querySelector('#browser-file-page .file-delete-btn') !== null")
+                page.evaluate("""() => {
+                    window.workspaceFileDeleted = false;
+                    window.addEventListener('workspace-file-deleted',
+                        () => window.workspaceFileDeleted = true, {once: true});
+                }""")
+                page.once("dialog", lambda dialog: dialog.accept())
+                page.locator('#browser-file-page .file-delete-btn').click()
+                page.wait_for_function("window.workspaceFileDeleted === true")
+                # The standalone test page has no app-level close handler; route
+                # completion is the observable delete result here.
+                assert not renamed_workspace_path.exists()
                 assert workspace_read_requests == [
                     ("/api/workspace", [("folder", workspace_folder)], True),
                     (f"/api/workspace-file/{workspace_rel_path}", [], True),
                     ("/api/autocomplete", [("q", "Browser")], True),
                     (f"/api/workspace-file/{workspace_rel_path}", [], True),
+                    (f"/api/workspace-file/{workspace_rel_path}", [], True),
+                    ("/api/workspace", [("folder", workspace_folder)], True),
                 ]
+                assert [
+                    (method, path, query, content_type, authenticated)
+                    for method, path, query, _body, content_type, authenticated
+                    in workspace_mutation_requests
+                ] == [
+                    ("PUT", f"/api/workspace/{workspace_rel_path}", [], "application/json", True),
+                    ("PUT", f"/api/workspace/{workspace_rel_path}", [], "application/json", True),
+                    ("PUT", f"/api/workspace/{workspace_rel_path}",
+                     [("rename_to", renamed_workspace_rel_path)], None, True),
+                    ("DELETE", f"/api/workspace/{renamed_workspace_rel_path}", [], None, True),
+                ]
+                first_save = json.loads(workspace_mutation_requests[0][3])
+                conflict_save = json.loads(workspace_mutation_requests[1][3])
+                assert first_save["content"] == "saved browser content"
+                assert isinstance(first_save["modified"], float)
+                assert conflict_save["content"] == "stale browser content"
+                assert isinstance(conflict_save["modified"], float)
+                assert workspace_mutation_requests[2][3] == b""
+                assert workspace_mutation_requests[3][3] == b""
                 page.locator('#browser-files, #browser-file-page, #browser-chat-input').evaluate_all(
                     "nodes => nodes.forEach(node => node.remove())")
                 page.evaluate("""async () => {
@@ -1098,6 +1177,14 @@ def test_workspace_read_input_drift_fails_at_every_unchanged_call(source_tree, c
                   + '", "required": ' + ("True" if contract != "folder" else "False")
                   + ',\n                     "schema": {"type": "string"},')
         after = before.replace('"type": "string"', '"type": "integer"')
+        if contract == "path":
+            start = original.index(
+                'APIRoute("/api/workspace-file/{path:path}", workspace_read_json')
+            end = original.index(
+                'APIRoute("/api/workspace/{path:path}", serve_workspace_file', start)
+            block = original[start:end]
+            assert block.count(before) == 1
+            return original[:start] + block.replace(before, after) + original[end:]
         assert original.count(before) == 1
         return original.replace(before, after)
 
@@ -1222,3 +1309,111 @@ def test_workspace_read_generated_contracts(source_tree):
         generated = (source_tree / CLIENT_REL / f"models/{model}.ts").read_text()
         assert f"type: {model}.type;" in generated
         assert f"{literal.upper()} = '{literal}'" in generated
+
+
+def test_workspace_mutation_generated_contracts(source_tree):
+    result, output = run_make(source_tree, "gen-api-client")
+    assert result.returncode == 0, output
+    service = (source_tree / CLIENT_REL / "services/DefaultService.ts").read_text()
+    put_start = service.index("public static wrapperApiWorkspacePathPut(")
+    put_end = service.index("    /**", put_start)
+    put_method = service[put_start:put_end]
+    for signature in (
+        "path: string",
+        "renameTo?: string",
+        "requestBody?: {",
+        "content: string",
+        "modified?: (number | null)",
+        "CancelablePromise<WorkspaceWriteResponse>",
+    ):
+        assert signature in put_method
+    assert "CancelablePromise<any>" not in put_method
+
+    delete_start = service.index("public static wrapperApiWorkspacePathDelete(")
+    delete_end = service.index("    /**", delete_start)
+    delete_method = service[delete_start:delete_end]
+    for signature in (
+        "path: string",
+        "CancelablePromise<WorkspaceDeleteResponse>",
+        "discardResponse: true",
+    ):
+        assert signature in delete_method
+    assert "CancelablePromise<any>" not in delete_method
+
+    for model in ("WorkspaceWriteResponse", "WorkspaceDeleteResponse"):
+        generated = (source_tree / CLIENT_REL / f"models/{model}.ts").read_text()
+        assert "any" not in generated
+
+    write_response = (source_tree / CLIENT_REL / "models/WorkspaceWriteResponse.ts").read_text()
+    assert "modified: number" in write_response
+    assert "path?: (string | null)" in write_response
+    delete_response = (source_tree / CLIENT_REL / "models/WorkspaceDeleteResponse.ts").read_text()
+    assert "ok: boolean" in delete_response
+
+
+@pytest.mark.parametrize(
+    "contract",
+    ["put_path", "save_content", "save_modified", "rename_query", "delete_path", "response_modified"],
+)
+def test_workspace_mutation_contract_drift_fails_at_unchanged_callers(
+    source_tree, contract,
+):
+    callers = {
+        "file-editor.js": source_tree / STATIC_REL / "components/file-editor.js",
+        "file-page.js": source_tree / STATIC_REL / "components/file-page.js",
+    }
+    original_callers = {name: path.read_bytes() for name, path in callers.items()}
+
+    def mutate(original):
+        if contract in {"save_content", "save_modified", "response_modified"}:
+            before, after = {
+                "save_content": ("class WorkspaceSaveRequest(BaseModel):\n    content: str",
+                                 "class WorkspaceSaveRequest(BaseModel):\n    content: int"),
+                "save_modified": ("    modified: float | None = None",
+                                  "    modified: str | None = None"),
+                "response_modified": ("class WorkspaceWriteResponse(BaseModel):\n    ok: Literal[True]\n    modified:",
+                                      "class WorkspaceWriteResponse(BaseModel):\n    ok: Literal[True]\n    renamed_modified:"),
+            }[contract]
+            assert original.count(before) == 1
+            return original.replace(before, after)
+
+        route = "workspace_delete" if contract == "delete_path" else "workspace_write"
+        start = original.index(f'APIRoute("/api/workspace/{{path:path}}", {route}')
+        end_marker = ("APIRoute(\"/api/config/files\"" if route == "workspace_delete"
+                      else 'APIRoute("/api/workspace/{path:path}", workspace_delete')
+        end = original.index(end_marker, start)
+        block = original[start:end]
+        parameter = "rename_to" if contract == "rename_query" else "path"
+        before = (f'"name": "{parameter}", "in": '
+                  + ('"query"' if parameter == "rename_to" else '"path"'))
+        parameter_start = block.index(before)
+        schema_start = block.index('"schema": {"type": "string"}', parameter_start)
+        schema_end = schema_start + len('"schema": {"type": "string"}')
+        changed_block = (block[:schema_start] + '"schema": {"type": "integer"}'
+                         + block[schema_end:])
+        return original[:start] + changed_block + original[end:]
+
+    output = _mutate_workspace_contract(source_tree, mutate)
+    diagnostics = [line for line in output.splitlines() if "error TS" in line]
+    expectations = {
+        "put_path": [
+            ("file-editor.js", "this.path,", "TS2345"),
+            ("file-page.js", "this.path,", "TS2345"),
+        ],
+        "save_content": [("file-editor.js", "{ content, modified:", "TS2322")],
+        "save_modified": [("file-editor.js", "{ content, modified:", "TS2322")],
+        "rename_query": [("file-page.js", "newPath,", "TS2345")],
+        "delete_path": [("file-page.js", "wrapperApiWorkspacePathDelete(this.path", "TS2345")],
+        "response_modified": [("file-editor.js", "data.modified", "TS2339")],
+    }[contract]
+    for caller, marker, code in expectations:
+        line_no = next(
+            line_no for line_no, line in enumerate(original_callers[caller].decode().splitlines(), 1)
+            if marker in line
+        )
+        assert any(
+            diagnostic.startswith(f"components/{caller}({line_no},") and code in diagnostic
+            for diagnostic in diagnostics
+        ), output
+    for name, path in callers.items():
+        assert path.read_bytes() == original_callers[name]
