@@ -2,7 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { ConversationListingResponse } from '../models/ConversationListingResponse';
 import type { StickyResponse } from '../models/StickyResponse';
+import type { SystemConversationListingResponse } from '../models/SystemConversationListingResponse';
 import type { UserResponse } from '../models/UserResponse';
 import type { CancelablePromise } from '../core/CancelablePromise';
 import { OpenAPI } from '../core/OpenAPI';
@@ -93,14 +95,29 @@ export class DefaultService {
         });
     }
     /**
-     * Wrapper
-     * @returns any Successful Response
+     * List Conversations
+     * List conversations and subfolders for a specific folder.
+     *
+     * Query params:
+     * folder — folder path (default: top-level)
+     *
+     * Returns ``{folder, folders, conversations}`` mirroring vault_list pattern.
+     * @param folder
+     * @returns ConversationListingResponse Successful Response
      * @throws ApiError
      */
-    public static wrapperApiConversationsGet(): CancelablePromise<any> {
+    public static listConversationsApiConversationsGet(
+        folder: string = '',
+    ): CancelablePromise<ConversationListingResponse> {
         return __request(OpenAPI, {
             method: 'GET',
             url: '/api/conversations',
+            query: {
+                'folder': folder,
+            },
+            errors: {
+                422: `Validation Error`,
+            },
         });
     }
     /**
@@ -115,25 +132,45 @@ export class DefaultService {
         });
     }
     /**
-     * Wrapper
-     * @returns any Successful Response
+     * List Archived Conversations
+     * List archived conversations, optionally filtered by folder.
+     * @param folder
+     * @returns ConversationListingResponse Successful Response
      * @throws ApiError
      */
-    public static wrapperApiConversationsArchivedGet(): CancelablePromise<any> {
+    public static listArchivedConversationsApiConversationsArchivedGet(
+        folder: string = '',
+    ): CancelablePromise<ConversationListingResponse> {
         return __request(OpenAPI, {
             method: 'GET',
             url: '/api/conversations/archived',
+            query: {
+                'folder': folder,
+            },
+            errors: {
+                422: `Validation Error`,
+            },
         });
     }
     /**
-     * Wrapper
-     * @returns any Successful Response
+     * List System Conversations
+     * List system conversations, grouped by type sub-folders.
+     * @param folder
+     * @returns SystemConversationListingResponse Successful Response
      * @throws ApiError
      */
-    public static wrapperApiConversationsSystemGet(): CancelablePromise<any> {
+    public static listSystemConversationsApiConversationsSystemGet(
+        folder: string = '',
+    ): CancelablePromise<SystemConversationListingResponse> {
         return __request(OpenAPI, {
             method: 'GET',
             url: '/api/conversations/system',
+            query: {
+                'folder': folder,
+            },
+            errors: {
+                422: `Validation Error`,
+            },
         });
     }
     /**

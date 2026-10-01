@@ -1,5 +1,6 @@
 """Tests for web gateway conversation management."""
 
+import os
 import time
 
 import pytest
@@ -904,3 +905,82 @@ async def test_delete_conv_wrong_user(authed_client, http_config):
 
     # Should still exist
     assert index.get(conv.conv_id) is not None
+
+
+@pytest.mark.parametrize("route", ["/api/conversations", "/api/conversations/archived", "/api/conversations/system"])
+async def test_listing_auth_and_root_contract(route, authed_client, unauthed_client):
+    assert (await unauthed_client.get(route)).status_code == 401
+    omitted = await authed_client.get(route)
+    assert omitted.status_code == 200
+    for folder in ["", "   "]:
+        response = await authed_client.get(route, params={"folder": folder})
+        assert response.status_code == 200
+        assert response.json() == omitted.json()
+    assert set(omitted.json()) == {"folder", "folders", "conversations"}
+    if route == "/api/conversations":
+        assert omitted.json()["folders"] == [
+            {"name": "Archived", "path": "_archived", "virtual": True},
+            {"name": "System", "path": "_system", "virtual": True},
+        ]
+
+
+@pytest.mark.parametrize("archived", [False, True])
+async def test_listing_special_folder_filter_order_and_shape(archived, authed_client, folder_index, http_config):
+    folder = "Work space/日本語 & plus+ #hash"
+    await folder_index.create_folder(folder)
+    index = ConversationIndex(http_config)
+    first = index.create("testuser", "Older")
+    second = index.create("testuser", "Newer")
+    other = index.create("someone-else", "Private")
+    for conv in [first, second, other]:
+        await folder_index.set_folder(conv.conv_id, folder)
+        if archived:
+            index.archive(conv.conv_id)
+    route = "/api/conversations" + ("/archived" if archived else "")
+    response = await authed_client.get(route, params={"folder": f"  {folder}  "})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["folder"] == folder
+    assert [c["conv_id"] for c in body["conversations"]] == [second.conv_id, first.conv_id]
+    assert all(set(c) == {"conv_id", "title", "created_at", "updated_at"} for c in body["conversations"])
+    assert body["folders"] == []
+    opposite = "/api/conversations" + ("" if archived else "/archived")
+    assert (await authed_client.get(opposite, params={"folder": folder})).json()["conversations"] == []
+    root = (await authed_client.get(route)).json()
+    assert {"name": "Work space", "path": "Work space"} in root["folders"]
+    ancestor = (await authed_client.get(route, params={"folder": "Work space"})).json()
+    assert ancestor["folders"] == [{"name": "日本語 & plus+ #hash", "path": folder}]
+
+
+@pytest.mark.parametrize("route", ["/api/conversations", "/api/conversations/archived"])
+@pytest.mark.parametrize("folder", ["../escape", "/absolute", "a//b", "a/..", "a/"])
+async def test_listing_preserves_bad_folder_status(route, folder, authed_client):
+    response = await authed_client.get(route, params={"folder": folder})
+    assert response.status_code == 400
+    assert response.json() == {"error": "invalid folder path"}
+
+
+@pytest.mark.parametrize("folder", ["unknown", "heartbeat/nested", "schedule/nested", "delegated/nested"])
+async def test_system_listing_rejects_noncategory_folders(folder, authed_client):
+    response = await authed_client.get("/api/conversations/system", params={"folder": folder})
+    assert response.status_code == 400
+    assert response.json() == {"error": "invalid system folder"}
+
+
+async def test_system_listing_shapes_order_and_delegated_user_filter(authed_client, http_config):
+    ids = ["heartbeat-20260401-100000-0", "schedule-daily-20260401-090000",
+           "web-testuser-parent--child-aabb", "web-testuser-parent--child-ccdd",
+           "web-other-parent--child-eeff"]
+    for i, conv_id in enumerate(ids):
+        path = http_config.workspace_path / "conversations" / conv_id / "archive.jsonl"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("{}\n")
+        os.utime(path, (1000 + i, 1000 + i))
+    for category, expected in [("heartbeat", ids[:1]), ("schedule", ids[1:2]), ("delegated", [ids[3], ids[2]])]:
+        response = await authed_client.get("/api/conversations/system", params={"folder": f" {category} "})
+        assert response.status_code == 200
+        body = response.json()
+        assert body["folder"] == category
+        assert body["folders"] == []
+        assert [c["conv_id"] for c in body["conversations"]] == expected
+        assert all(set(c) == {"conv_id", "title", "conv_type", "updated_at"} for c in body["conversations"])
