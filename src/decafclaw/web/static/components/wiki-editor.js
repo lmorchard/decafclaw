@@ -186,6 +186,38 @@ export class WikiEditor extends LitElement {
     }
 
     this._status = 'saving';
+    if (this.saveEndpoint === '/api/vault/') {
+      try {
+        const data = await DefaultService.wrapperApiVaultPagePut(
+          this.page, { content, modified: this.modified },
+        );
+        const newModified = data.modified;
+        this.modified = newModified;
+        this.#lastSavedContent = content;
+        this._status = 'saved';
+        this._error = '';
+        this.dispatchEvent(new CustomEvent('saved', {
+          detail: { modified: newModified, page: this.page },
+          bubbles: true,
+          composed: true,
+        }));
+      } catch (error) {
+        if (error instanceof ApiError && error.status === 409) {
+          this._status = 'conflict';
+          this._error = 'Page was modified externally.';
+        } else if (error instanceof ApiError) {
+          this._status = 'error';
+          this._error = `Save failed (${error.status})`;
+        } else {
+          this._status = 'error';
+          this._error = 'Save failed (network error)';
+        }
+      }
+      return;
+    }
+
+    // Config and schedule hosts keep their existing transport until their
+    // own generated contracts migrate.
     try {
       const res = await fetch(
         `${this.saveEndpoint}${encodePagePath(this.page)}`,
@@ -291,8 +323,33 @@ export class WikiEditor extends LitElement {
     // Send with modified=null to skip server-side mtime check
     this._status = 'saving';
     const savedModified = this.modified;
+    const content = this.#currentMarkdown;
+    if (this.saveEndpoint === '/api/vault/') {
+      try {
+        const data = await DefaultService.wrapperApiVaultPagePut(
+          this.page, { content },
+        );
+        this.modified = data.modified;
+        this.#lastSavedContent = content;
+        this._status = 'saved';
+        this._error = '';
+        this.dispatchEvent(new CustomEvent('saved', {
+          detail: { modified: this.modified, page: this.page },
+          bubbles: true,
+          composed: true,
+        }));
+      } catch (error) {
+        this._status = 'error';
+        this._error = error instanceof ApiError
+          ? `Force save failed (${error.status})`
+          : 'Force save failed (network error)';
+      }
+      return;
+    }
+
+    // Config and schedule hosts keep their existing transport until their
+    // own generated contracts migrate.
     try {
-      const content = this.#currentMarkdown;
       const res = await fetch(
         `${this.saveEndpoint}${encodePagePath(this.page)}`,
         {

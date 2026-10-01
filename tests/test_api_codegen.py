@@ -180,6 +180,7 @@ def test_browser_uses_clean_built_client(source_tree, config):
     workspace_read_requests = []
     workspace_mutation_requests = []
     vault_read_requests = []
+    vault_mutation_requests = []
 
     @app.middleware("http")
     async def record_listing_request(request, call_next):
@@ -235,6 +236,15 @@ def test_browser_uses_clean_built_client(source_tree, config):
             vault_read_requests.append((request.scope["path"],
                                         list(request.query_params.multi_items()),
                                         bool(request.cookies)))
+        if (request.method in {"POST", "PUT", "DELETE"} and (
+            request.url.path in {"/api/vault", "/api/vault/folders"}
+            or request.url.path.startswith("/api/vault/")
+        )):
+            vault_mutation_requests.append((
+                request.method, request.scope["path"],
+                await request.json() if request.method != "DELETE" else None,
+                request.headers.get("content-type"), bool(request.cookies),
+            ))
         return await call_next(request)
 
     # Bind before starting the server, avoiding a free-port check/use race.
@@ -720,8 +730,119 @@ def test_browser_uses_clean_built_client(source_tree, config):
                     ("/api/vault/recent", [], True),
                     (f"/api/vault/{vault_page_name}", [], True),
                 ]
+
+                page.locator('#browser-vault-sidebar button', has_text='Browse').click()
+                page.wait_for_function("""() => document.querySelector(
+                    '#browser-vault-sidebar .wiki-new-page-btn') !== null""")
+                page.once("dialog", lambda dialog: dialog.accept("Created #1"))
+                page.locator('#browser-vault-sidebar .wiki-new-page-btn').click()
+                created_vault_page = config.vault_root / "agent/pages/Created #1.md"
+                page.wait_for_function("""() => document.querySelector('#browser-vault-sidebar')
+                    ._wikiPages.some(item => item.path === 'agent/pages/Created #1')""")
+                assert created_vault_page.exists()
+
+                page.once("dialog", lambda dialog: dialog.accept("Folder #1"))
+                page.locator('#browser-vault-sidebar .wiki-new-folder-btn').click()
+                page.wait_for_function("""() => document.querySelector('#browser-vault-sidebar')
+                    ._vaultFolder === 'agent/pages/Folder #1'""")
+                assert (config.vault_root / "agent/pages/Folder #1").is_dir()
+
+                vault_editor = page.locator('#browser-vault-editor .milkdown .ProseMirror')
+                initial_vault_mtime = page.evaluate(
+                    "document.querySelector('#browser-vault-editor').modified")
+                vault_editor.fill("Saved through generated client")
+                page.wait_for_function(
+                    "document.querySelector('#browser-vault-editor')._status === 'editing'")
+                page.evaluate("document.querySelector('#browser-vault-editor').flushSave()")
+                page.wait_for_function(
+                    "document.querySelector('#browser-vault-editor')._status === 'saved'")
+                assert vault_page_path.read_text().endswith("# Saved through generated client\n")
+
+                stale_vault_mtime = vault_page_path.stat().st_mtime
+                vault_page_path.write_text("# Server conflict")
+                os.utime(vault_page_path, (stale_vault_mtime + 100, stale_vault_mtime + 100))
+                vault_editor.fill("Forced through generated client")
+                page.wait_for_function(
+                    "document.querySelector('#browser-vault-editor')._status === 'editing'")
+                page.evaluate("document.querySelector('#browser-vault-editor').flushSave()")
+                page.wait_for_function(
+                    "document.querySelector('#browser-vault-editor')._status === 'conflict'")
+                page.locator('#browser-vault-editor .wiki-editor-conflict button',
+                             has_text='Overwrite').click()
+                page.wait_for_function(
+                    "document.querySelector('#browser-vault-editor')._status === 'saved'")
+                assert vault_page_path.read_text().endswith("# Forced through generated client\n")
+
+                page.evaluate("document.querySelector('wiki-page')._onMetadataReload()")
+                page.wait_for_function("""() => document.querySelector('wiki-page')._body
+                    === '# Forced through generated client\\n'""")
+                metadata_modified = page.evaluate(
+                    "document.querySelector('wiki-page')._modified")
+                page.evaluate("""() => document.querySelector('wiki-page')._onMetadataRawSave(
+                    new CustomEvent('metadata-raw-save', {
+                        detail: {raw: 'summary: Generated write\\nnested: [1, true, null]'},
+                    }))""")
+                page.wait_for_function("""() => document.querySelector('wiki-page')
+                    ._frontmatter.summary === 'Generated write'""")
+                assert "nested: [1, true, null]" in vault_page_path.read_text()
+
+                renamed_vault_name = "agent/archive/Renamed 日本語 #1"
+                renamed_vault_path = config.vault_root / f"{renamed_vault_name}.md"
+                page.locator('wiki-page .wiki-rename-btn').click()
+                page.locator('wiki-page .wiki-rename-input').fill(renamed_vault_name)
+                with page.expect_response("**/api/vault/agent/pages/Browser**") as rename_response:
+                    page.locator('wiki-page .wiki-rename-ok').click()
+                assert rename_response.value.status == 200
+                assert renamed_vault_path.exists()
+                assert not vault_page_path.exists()
+
+                page.evaluate("""name => { document.querySelector('wiki-page').page = name; }""",
+                              renamed_vault_name)
+                page.wait_for_function("""() => document.querySelector('wiki-page')._loaded
+                    && document.querySelector('wiki-page').page
+                        === 'agent/archive/Renamed 日本語 #1'""")
+                page.once("dialog", lambda dialog: dialog.accept())
+                with page.expect_response("**/api/vault/agent/archive/Renamed**") as delete_response:
+                    page.locator('wiki-page .wiki-delete-btn').click()
+                assert delete_response.value.status == 200
+                assert not renamed_vault_path.exists()
+
+                assert vault_mutation_requests == [
+                    ("POST", "/api/vault", {"name": "agent/pages/Created #1"},
+                     "application/json", True),
+                    ("POST", "/api/vault/folders", {"folder": "agent/pages/Folder #1"},
+                     "application/json", True),
+                        ("PUT", f"/api/vault/{vault_page_name}", {
+                            "content": "# Saved through generated client\n",
+                            "modified": initial_vault_mtime,
+                    }, "application/json", True),
+                    ("PUT", f"/api/vault/{vault_page_name}", {
+                        "content": "# Forced through generated client\n",
+                        "modified": stale_vault_mtime,
+                    }, "application/json", True),
+                    ("PUT", f"/api/vault/{vault_page_name}", {
+                        "content": "# Forced through generated client\n",
+                    }, "application/json", True),
+                    ("PUT", f"/api/vault/{vault_page_name}", {
+                        "frontmatter_raw": "summary: Generated write\nnested: [1, true, null]",
+                        "modified": metadata_modified,
+                    }, "application/json", True),
+                    ("PUT", f"/api/vault/{vault_page_name}", {
+                        "rename_to": renamed_vault_name,
+                    }, "application/json", True),
+                    ("DELETE", f"/api/vault/{renamed_vault_name}", None, None, True),
+                ]
+                assert len(failed_requests) == 1
+                assert failed_requests[0].endswith(
+                    "/api/vault/agent/pages/Browser%20%26%20%E6%97%A5%E6%9C%AC%E8%AA%9E")
+                failed_requests.clear()
                 assert not errors, errors
                 assert not failed_requests, failed_requests
+
+                # Restore the fixture removed by the delete scenario so the
+                # remaining auth-client regressions can revisit this page.
+                vault_page_path.parent.mkdir(parents=True, exist_ok=True)
+                vault_page_path.write_text("# Restored after delete\n")
 
                 # The no-body /me overload must not decode a successful response.
                 page.route("**/api/auth/me", lambda route: route.fulfill(status=200, body="not JSON"))
@@ -1519,7 +1640,7 @@ def test_vault_page_incompatible_types_fail_at_unchanged_editor_assignment(
     assignment = f"new{'Content' if field == 'body' else 'Modified'} = data.{field};"
     target = next(
         line_no for line_no, line in enumerate(original_caller.decode().splitlines(), 1)
-        if assignment in line
+        if line.strip() == assignment
     )
 
     def mutate(original):
@@ -1571,6 +1692,130 @@ def test_vault_recent_modified_type_fails_at_unchanged_formatter_call(source_tre
         for diagnostic in diagnostics
     ), output
     assert caller.read_bytes() == original_caller
+
+
+def test_vault_write_generated_contracts(source_tree):
+    result, output = run_make(source_tree, "gen-api-client")
+    assert result.returncode == 0, output
+    service = (source_tree / CLIENT_REL / "services/DefaultService.ts").read_text()
+    for method, signatures in {
+        "wrapperApiVaultPost": ("name: string", "VaultCreateResponse"),
+        "wrapperApiVaultFoldersPost": ("folder: string", "VaultFolderCreateResponse"),
+        "wrapperApiVaultPagePut": (
+            "page: string", "content?: (string | null)", "body?: (string | null)",
+            "modified?: (number | null)",
+            "frontmatter?: (Record<string, JsonValue> | null)",
+            "frontmatter_raw?: (string | null)", "rename_to?: (string | null)",
+            "VaultWriteResponse",
+        ),
+        "wrapperApiVaultPageDelete": ("page: string", "VaultDeleteResponse"),
+    }.items():
+        start = service.index(f"public static {method}(")
+        end = service.index("    /**", start)
+        block = service[start:end]
+        for signature in signatures:
+            assert signature in block
+        assert "any" not in block
+    for model in (
+        "VaultCreateResponse", "VaultFolderCreateResponse",
+        "VaultWriteResponse", "VaultDeleteResponse",
+    ):
+        assert "any" not in (source_tree / CLIENT_REL / f"models/{model}.ts").read_text()
+    assert "frontmatter?: (Record<string, JsonValue> | null)" in service
+    assert "export type JsonValue = unknown" in (
+        source_tree / CLIENT_REL / "models/JsonValue.ts"
+    ).read_text()
+
+
+@pytest.mark.parametrize(("model", "field", "old_type", "new_type", "caller"), [
+    ("VaultCreateRequest", "name", "str", "int", "components/vault-sidebar.js"),
+    ("VaultFolderCreateRequest", "folder", "str", "int", "components/vault-sidebar.js"),
+    ("VaultWriteRequest", "content", "str", "int", "components/wiki-editor.js"),
+    ("VaultWriteRequest", "modified", "float", "str", "components/wiki-editor.js"),
+    ("VaultWriteRequest", "frontmatter", "dict[str, JsonValue]", "str",
+     "lib/wiki-page-write-mutex.js"),
+    ("VaultWriteRequest", "frontmatter_raw", "str", "int",
+     "lib/wiki-page-write-mutex.js"),
+    ("VaultWriteRequest", "rename_to", "str", "int", "components/wiki-page.js"),
+])
+def test_vault_write_input_type_drift_fails_at_unchanged_caller(
+    source_tree, model, field, old_type, new_type, caller,
+):
+    caller_path = source_tree / STATIC_REL / caller
+    original_caller = caller_path.read_bytes()
+
+    def mutate(original):
+        start = original.index(f"class {model}(BaseModel):")
+        end = original.index("\n\n\n", start)
+        block = original[start:end]
+        before = f"    {field}: {old_type}"
+        assert block.count(before) == 1
+        return original[:start] + block.replace(
+            before, f"    {field}: {new_type}",
+        ) + original[end:]
+
+    output = _mutate_workspace_contract(source_tree, mutate)
+    diagnostics = [line for line in output.splitlines() if "error TS" in line]
+    assert any(caller in diagnostic and "assignable" in diagnostic for diagnostic in diagnostics), output
+    assert caller_path.read_bytes() == original_caller
+
+
+def test_vault_write_page_type_drift_fails_at_every_unchanged_caller(source_tree):
+    callers = [
+        "components/wiki-page.js", "components/wiki-editor.js",
+    ]
+    originals = {
+        caller: (source_tree / STATIC_REL / caller).read_bytes() for caller in callers
+    }
+
+    def mutate(original):
+        route = 'APIRoute("/api/vault/{page:path}", vault_write'
+        start = original.index(route)
+        end = original.index("),\n", start) + len("),\n")
+        block = original[start:end]
+        before = '"schema": {"type": "string"}'
+        assert block.count(before) == 1
+        return original[:start] + block.replace(
+            before, '"schema": {"type": "integer"}',
+        ) + original[end:]
+
+    output = _mutate_workspace_contract(source_tree, mutate)
+    diagnostics = [line for line in output.splitlines() if "error TS" in line]
+    for caller in callers:
+        assert any(
+            caller in diagnostic and "TS2345" in diagnostic
+            and "not assignable to parameter of type 'number'" in diagnostic
+            for diagnostic in diagnostics
+        ), output
+        assert (source_tree / STATIC_REL / caller).read_bytes() == originals[caller]
+
+
+@pytest.mark.parametrize(("field", "old_type", "new_type", "caller"), [
+    ("modified", "float", "str", "components/wiki-editor.js"),
+    ("frontmatter", "dict[str, JsonValue]", "str", "components/wiki-page.js"),
+    ("frontmatter_raw", "str", "int", "components/wiki-page.js"),
+    ("frontmatter_error", "str", "int", "components/wiki-page.js"),
+])
+def test_vault_write_output_type_drift_fails_at_unchanged_consumer(
+    source_tree, field, old_type, new_type, caller,
+):
+    caller_path = source_tree / STATIC_REL / caller
+    original_caller = caller_path.read_bytes()
+
+    def mutate(original):
+        start = original.index("class VaultWriteResponse(BaseModel):")
+        end = original.index("\n\n\n", start)
+        block = original[start:end]
+        before = f"    {field}: {old_type}"
+        assert block.count(before) == 1
+        return original[:start] + block.replace(
+            before, f"    {field}: {new_type}",
+        ) + original[end:]
+
+    output = _mutate_workspace_contract(source_tree, mutate)
+    diagnostics = [line for line in output.splitlines() if "error TS" in line]
+    assert any(caller in diagnostic and "assignable" in diagnostic for diagnostic in diagnostics), output
+    assert caller_path.read_bytes() == original_caller
 
 
 def test_workspace_mutation_generated_contracts(source_tree):
@@ -1631,8 +1876,14 @@ def test_workspace_mutation_contract_drift_fails_at_unchanged_callers(
             before, after = {
                 "save_content": ("class WorkspaceSaveRequest(BaseModel):\n    content: str",
                                  "class WorkspaceSaveRequest(BaseModel):\n    content: int"),
-                "save_modified": ("    modified: float | None = None",
-                                  "    modified: str | None = None"),
+                "save_modified": (
+                    "class WorkspaceSaveRequest(BaseModel):\n"
+                    "    content: str\n"
+                    "    modified: float | None = None",
+                    "class WorkspaceSaveRequest(BaseModel):\n"
+                    "    content: str\n"
+                    "    modified: str | None = None",
+                ),
                 "response_modified": ("class WorkspaceWriteResponse(BaseModel):\n    ok: Literal[True]\n    modified:",
                                       "class WorkspaceWriteResponse(BaseModel):\n    ok: Literal[True]\n    renamed_modified:"),
             }[contract]

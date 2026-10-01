@@ -416,19 +416,20 @@ var request2 = (config, options) => {
   const canvas = canvasState || canvasNewTab || canvasIgnoredMutation;
   const workspaceRead = options.method === "GET" && ["/api/workspace", "/api/workspace/recent", "/api/workspace-file/{path}", "/api/autocomplete"].includes(options.url);
   const vaultRead = options.method === "GET" && ["/api/vault", "/api/vault/recent", "/api/vault/tags", "/api/vault/{page}"].includes(options.url);
+  const vaultMutation = ["POST", "PUT", "DELETE"].includes(options.method) && ["/api/vault", "/api/vault/folders", "/api/vault/{page}"].includes(options.url);
   const workspaceMutation = options.url === "/api/workspace/{path}" && ["PUT", "DELETE"].includes(options.method);
   const listing = ["/api/conversations", "/api/conversations/archived", "/api/conversations/system"].includes(options.url);
   const patch = options.method === "PATCH" && options.url === "/api/conversations/{id}";
   const create = options.method === "POST" && options.url === "/api/conversations";
   const lifecycle = options.method === "DELETE" && options.url === "/api/conversations/{id}" || options.method === "POST" && ["/api/conversations/{id}/archive", "/api/conversations/{id}/unarchive"].includes(options.url);
   const folder = options.method === "POST" && options.url === "/api/conversations/folders" || ["PUT", "DELETE"].includes(options.method) && options.url === "/api/conversations/folders/{path}";
-  if (!notification && !diagnostics && !login && !logout && !vaultGuard && !create && !lifecycle && !folder && !patch && !widgetCatalog && !canvas && !workspaceRead && !vaultRead && !workspaceMutation && (options.method !== "GET" || !sticky && !listing)) {
+  if (!notification && !diagnostics && !login && !logout && !vaultGuard && !create && !lifecycle && !folder && !patch && !widgetCatalog && !canvas && !workspaceRead && !vaultRead && !vaultMutation && !workspaceMutation && (options.method !== "GET" || !sticky && !listing)) {
     return request(config, options);
   }
   return new CancelablePromise(async (resolve2, reject, onCancel) => {
     try {
       const query = listing && options.query?.folder === "" ? void 0 : options.query;
-      const url = workspaceMutation ? `${config.BASE}/api/workspace/${String(options.path.path).split("/").map(encodeURIComponent).join("/")}${options.query ? getQueryString(options.query) : ""}` : vaultRead && options.url === "/api/vault/{page}" ? `${config.BASE}/api/vault/${String(options.path.page).split("/").map(encodeURIComponent).join("/")}` : vaultRead ? `${config.BASE}${options.url}${options.query ? getQueryString(options.query) : ""}` : workspaceRead && options.url === "/api/workspace-file/{path}" ? `${config.BASE}/api/workspace-file/${String(options.path.path).split("/").map(encodeURIComponent).join("/")}` : workspaceRead ? `${config.BASE}${options.url}${options.query ? getQueryString(options.query) : ""}` : folder ? `${config.BASE}/api/conversations/folders${options.path ? "/" + String(options.path.path).split("/").map(encodeURIComponent).join("/") : ""}` : canvas ? `${config.BASE}${options.url.replace("{conv_id}", encodeURIComponent(options.path.conv_id))}` : patch || lifecycle || diagnostics || notificationRead && options.path ? `${config.BASE}${options.url.replace("{id}", encodeURIComponent(options.path.id))}${query ? getQueryString(query) : ""}` : sticky ? `${config.BASE}/api/sticky/${encodeURIComponent(options.path.conv_id)}` : `${config.BASE}${options.url}${query ? getQueryString(query) : ""}`;
+      const url = workspaceMutation ? `${config.BASE}/api/workspace/${String(options.path.path).split("/").map(encodeURIComponent).join("/")}${options.query ? getQueryString(options.query) : ""}` : vaultMutation && options.url === "/api/vault/{page}" ? `${config.BASE}/api/vault/${String(options.path.page).split("/").map(encodeURIComponent).join("/")}` : vaultRead && options.url === "/api/vault/{page}" ? `${config.BASE}/api/vault/${String(options.path.page).split("/").map(encodeURIComponent).join("/")}` : vaultRead ? `${config.BASE}${options.url}${options.query ? getQueryString(options.query) : ""}` : workspaceRead && options.url === "/api/workspace-file/{path}" ? `${config.BASE}/api/workspace-file/${String(options.path.path).split("/").map(encodeURIComponent).join("/")}` : workspaceRead ? `${config.BASE}${options.url}${options.query ? getQueryString(options.query) : ""}` : folder ? `${config.BASE}/api/conversations/folders${options.path ? "/" + String(options.path.path).split("/").map(encodeURIComponent).join("/") : ""}` : canvas ? `${config.BASE}${options.url.replace("{conv_id}", encodeURIComponent(options.path.conv_id))}` : patch || lifecycle || diagnostics || notificationRead && options.path ? `${config.BASE}${options.url.replace("{id}", encodeURIComponent(options.path.id))}${query ? getQueryString(query) : ""}` : sticky ? `${config.BASE}/api/sticky/${encodeURIComponent(options.path.conv_id)}` : `${config.BASE}${options.url}${query ? getQueryString(query) : ""}`;
       const headers = await getHeaders(config, options);
       if (onCancel.isCancelled) return;
       const response = await sendRequest(
@@ -451,7 +452,7 @@ var request2 = (config, options) => {
         ok: response.ok,
         status: response.status,
         statusText: response.statusText,
-        body: folder && !response.ok ? await response.json() : workspaceMutation && !response.ok ? workspaceSave ? await response.text() : await response.json().catch(() => void 0) : canvasNewTab && !response.ok ? await response.text() : void 0
+        body: folder && !response.ok ? await response.json() : vaultMutation && !response.ok ? await response.json().catch(() => void 0) : workspaceMutation && !response.ok ? workspaceSave ? await response.text() : await response.json().catch(() => void 0) : canvasNewTab && !response.ok ? await response.text() : void 0
       });
       if (options.discardResponse || workspaceRename) {
         resolve2(void 0);
@@ -1077,15 +1078,13 @@ var DefaultService = class {
       url: "/api/schedules/{name}"
     });
   }
-  /**
-   * Wrapper
-   * @returns any Successful Response
-   * @throws ApiError
-   */
-  static wrapperApiVaultPost() {
+  static wrapperApiVaultPost(requestBody, discardResponse = false) {
     return request2(OpenAPI, {
+      discardResponse,
       method: "POST",
-      url: "/api/vault"
+      url: "/api/vault",
+      body: requestBody,
+      mediaType: "application/json"
     });
   }
   /**
@@ -1103,15 +1102,13 @@ var DefaultService = class {
       }
     });
   }
-  /**
-   * Wrapper
-   * @returns any Successful Response
-   * @throws ApiError
-   */
-  static wrapperApiVaultFoldersPost() {
+  static wrapperApiVaultFoldersPost(requestBody, discardResponse = false) {
     return request2(OpenAPI, {
+      discardResponse,
       method: "POST",
-      url: "/api/vault/folders"
+      url: "/api/vault/folders",
+      body: requestBody,
+      mediaType: "application/json"
     });
   }
   /**
@@ -1136,15 +1133,16 @@ var DefaultService = class {
       url: "/api/vault/tags"
     });
   }
-  /**
-   * Wrapper
-   * @returns any Successful Response
-   * @throws ApiError
-   */
-  static wrapperApiVaultPagePut() {
+  static wrapperApiVaultPagePut(page, requestBody, discardResponse = false) {
     return request2(OpenAPI, {
+      discardResponse,
       method: "PUT",
-      url: "/api/vault/{page}"
+      url: "/api/vault/{page}",
+      path: {
+        "page": page
+      },
+      body: requestBody,
+      mediaType: "application/json"
     });
   }
   /**
@@ -1162,15 +1160,14 @@ var DefaultService = class {
       }
     });
   }
-  /**
-   * Wrapper
-   * @returns any Successful Response
-   * @throws ApiError
-   */
-  static wrapperApiVaultPageDelete() {
+  static wrapperApiVaultPageDelete(page, discardResponse = false) {
     return request2(OpenAPI, {
+      discardResponse,
       method: "DELETE",
-      url: "/api/vault/{page}"
+      url: "/api/vault/{page}",
+      path: {
+        "page": page
+      }
     });
   }
   /**

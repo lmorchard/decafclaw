@@ -820,7 +820,26 @@ paths:
           description: Successful Response
           content:
             application/json:
-              schema: {}
+              schema:
+                $ref: '#/components/schemas/VaultCreateResponse'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              properties:
+                name:
+                  title: Name
+                  type: string
+                content:
+                  anyOf:
+                  - type: string
+                  - type: 'null'
+                  title: Content
+              required:
+              - name
+              title: VaultCreateRequest
+              type: object
     get:
       summary: Wrapper
       operationId: wrapper_api_vault_get
@@ -841,12 +860,26 @@ paths:
     post:
       summary: Wrapper
       operationId: wrapper_api_vault_folders_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              properties:
+                folder:
+                  type: string
+                  title: Folder
+              type: object
+              required:
+              - folder
+              title: VaultFolderCreateRequest
+        required: true
       responses:
         '200':
           description: Successful Response
           content:
             application/json:
-              schema: {}
+              schema:
+                $ref: '#/components/schemas/VaultFolderCreateResponse'
   /api/vault/recent:
     get:
       summary: Wrapper
@@ -878,7 +911,54 @@ paths:
           description: Successful Response
           content:
             application/json:
-              schema: {}
+              schema:
+                $ref: '#/components/schemas/VaultWriteResponse'
+      parameters:
+      - name: page
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              properties:
+                content:
+                  anyOf:
+                  - type: string
+                  - type: 'null'
+                  title: Content
+                body:
+                  anyOf:
+                  - type: string
+                  - type: 'null'
+                  title: Body
+                modified:
+                  anyOf:
+                  - type: number
+                  - type: 'null'
+                  title: Modified
+                frontmatter:
+                  anyOf:
+                  - additionalProperties:
+                      $ref: '#/components/schemas/JsonValue'
+                    type: object
+                  - type: 'null'
+                  title: Frontmatter
+                frontmatter_raw:
+                  anyOf:
+                  - type: string
+                  - type: 'null'
+                  title: Frontmatter Raw
+                rename_to:
+                  anyOf:
+                  - type: string
+                  - type: 'null'
+                  title: Rename To
+              title: VaultWriteRequest
+              type: object
     get:
       summary: Wrapper
       operationId: wrapper_api_vault__page__get
@@ -903,7 +983,14 @@ paths:
           description: Successful Response
           content:
             application/json:
-              schema: {}
+              schema:
+                $ref: '#/components/schemas/VaultDeleteResponse'
+      parameters:
+      - name: page
+        in: path
+        required: true
+        schema:
+          type: string
   /vault/{page}:
     get:
       summary: Wrapper
@@ -1833,6 +1920,48 @@ components:
       - label
       - description
       title: VaultCompletion
+    VaultCreateResponse:
+      properties:
+        ok:
+          type: boolean
+          const: true
+          title: Ok
+        page:
+          type: string
+          title: Page
+        modified:
+          type: number
+          title: Modified
+      type: object
+      required:
+      - ok
+      - page
+      - modified
+      title: VaultCreateResponse
+    VaultDeleteResponse:
+      properties:
+        ok:
+          type: boolean
+          const: true
+          title: Ok
+      type: object
+      required:
+      - ok
+      title: VaultDeleteResponse
+    VaultFolderCreateResponse:
+      properties:
+        ok:
+          type: boolean
+          const: true
+          title: Ok
+        folder:
+          type: string
+          title: Folder
+      type: object
+      required:
+      - ok
+      - folder
+      title: VaultFolderCreateResponse
     VaultFolderEntry:
       properties:
         name:
@@ -1969,6 +2098,52 @@ components:
       required:
       - tags
       title: VaultTagsResponse
+    VaultWriteResponse:
+      properties:
+        ok:
+          type: boolean
+          const: true
+          title: Ok
+        modified:
+          type: number
+          title: Modified
+        frontmatter:
+          anyOf:
+          - additionalProperties:
+              $ref: '#/components/schemas/JsonValue'
+            type: object
+          - type: 'null'
+          title: Frontmatter
+        frontmatter_raw:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Frontmatter Raw
+        frontmatter_error:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Frontmatter Error
+        title:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Title
+        path:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Path
+        folder:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Folder
+      type: object
+      required:
+      - ok
+      - modified
+      title: VaultWriteResponse
     VirtualConversationFolderEntry:
       properties:
         name:
