@@ -499,8 +499,18 @@ TypeScript's input scan because its generated TypeScript source supplies the typ
 commands rebuild missing or outdated client output. Commit the generated
 schema, types, and bundle with changes to the API.
 
+`sticky-state.js:setActiveConv()` also uses a generated method for
+`GET /api/sticky/{conv_id}`. Its identifier is a required string. The response
+has required, nullable `widget_type` and `data` properties; widget payloads
+remain heterogeneous objects, with validation owned by the widget registry.
+The generator installs `scripts/sticky_api_request.ts` as a transport adapter.
+Only this GET operation uses its path-segment encoding, explicit same-origin
+credentials, and error handling: HTTP failures retain the cache silently;
+transport and JSON failures retain it and warn. Other operations delegate to
+the unmodified generated transport. Edit the adapter source, then regenerate.
+
 The isolated tests in `tests/test_api_codegen.py` delete generated output,
-rename the backend response field, and load the client in Chromium through
+change backend identifier and response contracts, and load the client in Chromium through
 `/static` against a test server. They use temporary data and require no live
 credentials. Before running `make test`, run `make install-js` and install the
 browser with `uv run playwright install chromium`. CI installs its system dependencies with

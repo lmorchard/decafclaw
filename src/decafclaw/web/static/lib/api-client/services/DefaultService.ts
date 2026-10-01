@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { StickyResponse } from '../models/StickyResponse';
 import type { UserResponse } from '../models/UserResponse';
 import type { CancelablePromise } from '../core/CancelablePromise';
 import { OpenAPI } from '../core/OpenAPI';
@@ -653,14 +654,24 @@ export class DefaultService {
         });
     }
     /**
-     * Wrapper
-     * @returns any Successful Response
+     * Get Sticky State
+     * Load current sticky-slot state for a conversation (reload recovery).
+     * @param convId
+     * @returns StickyResponse Successful Response
      * @throws ApiError
      */
-    public static wrapperApiStickyConvIdGet(): CancelablePromise<any> {
+    public static getStickyStateApiStickyConvIdGet(
+        convId: string,
+    ): CancelablePromise<StickyResponse> {
         return __request(OpenAPI, {
             method: 'GET',
             url: '/api/sticky/{conv_id}',
+            path: {
+                'conv_id': convId,
+            },
+            errors: {
+                422: `Validation Error`,
+            },
         });
     }
     /**

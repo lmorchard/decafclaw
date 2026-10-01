@@ -132,7 +132,7 @@ async def test_get_sticky_state_empty_when_unset(authed_client, owned_conv):
 @pytest.mark.asyncio
 async def test_get_sticky_state_requires_auth(unauthed_client, owned_conv):
     resp = await unauthed_client.get(f"/api/sticky/{owned_conv}")
-    assert resp.status_code in (401, 302, 403)
+    assert resp.status_code == 401
 
 
 @pytest.mark.asyncio
@@ -140,3 +140,22 @@ async def test_get_sticky_state_other_user_conv_404(authed_client, other_user_co
     """Accessing another user's sticky state must return 404, not the actual state."""
     resp = await authed_client.get(f"/api/sticky/{other_user_conv}")
     assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("conv_id,status", [("bad!id", 400), ("missing-conversation", 404)])
+async def test_get_sticky_state_invalid_or_missing(authed_client, conv_id, status):
+    resp = await authed_client.get(f"/api/sticky/{conv_id}")
+    assert resp.status_code == status
+
+
+@pytest.mark.asyncio
+async def test_get_sticky_preserves_heterogeneous_payload(authed_client, http_config, owned_conv):
+    from decafclaw import sticky as sticky_mod
+
+    data = {"content": "# Doc", "unknown": {"rows": [1, True, None, {"name": "nested"}]}}
+    result = await sticky_mod.set_sticky(http_config, owned_conv, "markdown_document", data)
+    assert result.ok, result.error
+    resp = await authed_client.get(f"/api/sticky/{owned_conv}")
+    assert resp.status_code == 200
+    assert resp.json() == {"widget_type": "markdown_document", "data": data}
