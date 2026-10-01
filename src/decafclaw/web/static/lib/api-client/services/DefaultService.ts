@@ -12,6 +12,9 @@ import type { ConversationListingResponse } from '../models/ConversationListingR
 import type { ConversationPatchResponse } from '../models/ConversationPatchResponse';
 import type { LoginResponse } from '../models/LoginResponse';
 import type { LogoutResponse } from '../models/LogoutResponse';
+import type { NotificationCountResponse } from '../models/NotificationCountResponse';
+import type { NotificationListResponse } from '../models/NotificationListResponse';
+import type { NotificationReadResponse } from '../models/NotificationReadResponse';
 import type { StickyResponse } from '../models/StickyResponse';
 import type { SystemConversationListingResponse } from '../models/SystemConversationListingResponse';
 import type { UserResponse } from '../models/UserResponse';
@@ -529,47 +532,86 @@ export class DefaultService {
         });
     }
     /**
-     * Wrapper
-     * @returns any Successful Response
+     * List Notifications
+     * Return inbox records newest first, with a joined ``read`` bool.
+     * @param limit
+     * @param before
+     * @returns NotificationListResponse Successful Response
      * @throws ApiError
      */
-    public static wrapperApiNotificationsGet(): CancelablePromise<any> {
+    public static listNotificationsApiNotificationsGet(
+        limit: number = 20,
+        before?: string,
+    ): CancelablePromise<NotificationListResponse> {
         return __request(OpenAPI, {
             method: 'GET',
             url: '/api/notifications',
+            query: {
+                'limit': limit,
+                'before': before,
+            },
         });
     }
     /**
-     * Wrapper
-     * @returns any Successful Response
+     * Notifications Unread Count
+     * Return ``{"count": N}`` — called frequently, stays cheap.
+     * @returns NotificationCountResponse Successful Response
      * @throws ApiError
      */
-    public static wrapperApiNotificationsUnreadCountGet(): CancelablePromise<any> {
+    public static notificationsUnreadCountApiNotificationsUnreadCountGet(): CancelablePromise<NotificationCountResponse> {
         return __request(OpenAPI, {
             method: 'GET',
             url: '/api/notifications/unread-count',
         });
     }
     /**
-     * Wrapper
-     * @returns any Successful Response
+     * Notifications Mark All Read
+     * Mark all currently-visible notifications read.
+     * @returns NotificationReadResponse Successful Response
      * @throws ApiError
      */
-    public static wrapperApiNotificationsReadAllPost(): CancelablePromise<any> {
+    public static notificationsMarkAllReadApiNotificationsReadAllPost(
+    ): CancelablePromise<NotificationReadResponse>;
+    public static notificationsMarkAllReadApiNotificationsReadAllPost(
+        discardResponse: true,
+    ): CancelablePromise<void>;
+    public static notificationsMarkAllReadApiNotificationsReadAllPost(
+        discardResponse = false,
+    ): CancelablePromise<NotificationReadResponse | void> {
         return __request(OpenAPI, {
+            discardResponse,
             method: 'POST',
             url: '/api/notifications/read-all',
         });
     }
     /**
-     * Wrapper
-     * @returns any Successful Response
+     * Notifications Mark Read
+     * Mark a single notification read. Idempotent.
+     * @param id
+     * @returns NotificationReadResponse Successful Response
      * @throws ApiError
      */
-    public static wrapperApiNotificationsIdReadPost(): CancelablePromise<any> {
+    public static notificationsMarkReadApiNotificationsIdReadPost(
+        id: string,
+    ): CancelablePromise<NotificationReadResponse>;
+    public static notificationsMarkReadApiNotificationsIdReadPost(
+        id: string,
+        discardResponse: true,
+    ): CancelablePromise<void>;
+    public static notificationsMarkReadApiNotificationsIdReadPost(
+        id: string,
+        discardResponse = false,
+    ): CancelablePromise<NotificationReadResponse | void> {
         return __request(OpenAPI, {
+            discardResponse,
             method: 'POST',
             url: '/api/notifications/{id}/read',
+            path: {
+                'id': id,
+            },
+            errors: {
+                422: `Validation Error`,
+            },
         });
     }
     /**

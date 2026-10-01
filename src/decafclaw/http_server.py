@@ -1001,9 +1001,35 @@ async def rename_conv_folder(request: Request, path: str) -> JSONResponse:
 # "Coming in Phase 2+". Do not expose across tenants until partitioning lands.
 
 
-@_authenticated
-async def list_notifications(request: Request, username: str) -> JSONResponse:
+class NotificationResponse(BaseModel):
+    id: str
+    timestamp: str
+    category: str
+    title: str
+    priority: str
+    body: str
+    link: str | None
+    conv_id: str | None
+    read: bool
+
+
+class NotificationListResponse(BaseModel):
+    records: list[NotificationResponse]
+    has_more: bool
+
+
+class NotificationCountResponse(BaseModel):
+    count: int
+
+
+class NotificationReadResponse(BaseModel):
+    ok: bool
+
+
+async def list_notifications(request: Request) -> JSONResponse:
     """Return inbox records newest first, with a joined ``read`` bool."""
+    if not _get_username_or_401(request):
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
     from . import notifications as notifs
     config = request.app.state.config
     try:
@@ -1024,29 +1050,32 @@ async def list_notifications(request: Request, username: str) -> JSONResponse:
     })
 
 
-@_authenticated
-async def notifications_unread_count(request: Request, username: str) -> JSONResponse:
+async def notifications_unread_count(request: Request) -> JSONResponse:
     """Return ``{"count": N}`` — called frequently, stays cheap."""
+    if not _get_username_or_401(request):
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
     from . import notifications as notifs
     return JSONResponse({"count": notifs.unread_count(request.app.state.config)})
 
 
-@_authenticated
-async def notifications_mark_read(request: Request, username: str) -> JSONResponse:
+async def notifications_mark_read(request: Request, id: str) -> JSONResponse:
     """Mark a single notification read. Idempotent."""
+    if not _get_username_or_401(request):
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
     from . import notifications as notifs
     config = request.app.state.config
     event_bus = request.app.state.event_bus
-    record_id = request.path_params.get("id", "")
+    record_id = id
     if not record_id:
         return JSONResponse({"error": "id required"}, status_code=400)
     await notifs.mark_read(config, record_id, event_bus=event_bus)
     return JSONResponse({"ok": True})
 
 
-@_authenticated
-async def notifications_mark_all_read(request: Request, username: str) -> JSONResponse:
+async def notifications_mark_all_read(request: Request) -> JSONResponse:
     """Mark all currently-visible notifications read."""
+    if not _get_username_or_401(request):
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
     from . import notifications as notifs
     await notifs.mark_all_read(
         request.app.state.config, event_bus=request.app.state.event_bus,
@@ -2643,10 +2672,21 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> FastAPI:
                  response_model=ConversationLifecycleResponse),
         APIRoute("/api/conversations/{id}/unarchive", unarchive_conversation, methods=["POST"],
                  response_model=ConversationLifecycleResponse),
-        APIRoute("/api/notifications", list_notifications, methods=["GET"]),
-        APIRoute("/api/notifications/unread-count", notifications_unread_count, methods=["GET"]),
-        APIRoute("/api/notifications/read-all", notifications_mark_all_read, methods=["POST"]),
-        APIRoute("/api/notifications/{id}/read", notifications_mark_read, methods=["POST"]),
+        APIRoute("/api/notifications", list_notifications, methods=["GET"],
+                 response_model=NotificationListResponse,
+                 # Schema-only queries preserve legacy parsing and 400 responses.
+                 openapi_extra={"parameters": [
+                     {"name": "limit", "in": "query", "required": False,
+                      "schema": {"type": "integer", "default": 20, "minimum": 1, "maximum": 200}},
+                     {"name": "before", "in": "query", "required": False,
+                      "schema": {"type": "string"}},
+                 ]}),
+        APIRoute("/api/notifications/unread-count", notifications_unread_count, methods=["GET"],
+                 response_model=NotificationCountResponse),
+        APIRoute("/api/notifications/read-all", notifications_mark_all_read, methods=["POST"],
+                 response_model=NotificationReadResponse),
+        APIRoute("/api/notifications/{id}/read", notifications_mark_read, methods=["POST"],
+                 response_model=NotificationReadResponse),
         APIRoute("/api/upload/{conv_id}", handle_upload, methods=["POST"]),
         # Literal workspace routes must come before the {path:path} catch-all.
         APIRoute("/api/workspace", workspace_list, methods=["GET"]),

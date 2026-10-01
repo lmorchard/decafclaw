@@ -61,6 +61,8 @@ def dump_openapi():
     ]
     subprocess.run(cmd, check=True)
     for method, verb, url in (
+        ("notificationsMarkReadApiNotificationsIdReadPost", "POST", "/api/notifications/{id}/read"),
+        ("notificationsMarkAllReadApiNotificationsReadAllPost", "POST", "/api/notifications/read-all"),
         ("authLogoutApiAuthLogoutPost", "POST", "/api/auth/logout"),
         ("authMeApiAuthMeGet", "GET", "/api/auth/me"),
         ("archiveConversationApiConversationsIdArchivePost", "POST", "/api/conversations/{id}/archive"),

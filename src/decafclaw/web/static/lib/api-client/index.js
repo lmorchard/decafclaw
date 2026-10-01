@@ -364,6 +364,8 @@ var request = (config, options) => {
 
 // src/decafclaw/web/static/lib/api-client/core/request.ts
 var request2 = (config, options) => {
+  const notificationRead = options.method === "POST" && ["/api/notifications/{id}/read", "/api/notifications/read-all"].includes(options.url);
+  const notification = notificationRead || options.method === "GET" && ["/api/notifications", "/api/notifications/unread-count"].includes(options.url);
   const login = options.method === "POST" && options.url === "/api/auth/login";
   const logout = options.method === "POST" && options.url === "/api/auth/logout";
   const vaultGuard = options.method === "GET" && options.url === "/api/auth/me" && options.discardResponse;
@@ -374,13 +376,13 @@ var request2 = (config, options) => {
   const create = options.method === "POST" && options.url === "/api/conversations";
   const lifecycle = options.method === "DELETE" && options.url === "/api/conversations/{id}" || options.method === "POST" && ["/api/conversations/{id}/archive", "/api/conversations/{id}/unarchive"].includes(options.url);
   const folder = options.method === "POST" && options.url === "/api/conversations/folders" || ["PUT", "DELETE"].includes(options.method) && options.url === "/api/conversations/folders/{path}";
-  if (!diagnostics && !login && !logout && !vaultGuard && !create && !lifecycle && !folder && !patch && (options.method !== "GET" || !sticky && !listing)) {
+  if (!notification && !diagnostics && !login && !logout && !vaultGuard && !create && !lifecycle && !folder && !patch && (options.method !== "GET" || !sticky && !listing)) {
     return request(config, options);
   }
   return new CancelablePromise(async (resolve2, reject, onCancel) => {
     try {
       const query = listing && options.query?.folder === "" ? void 0 : options.query;
-      const url = folder ? `${config.BASE}/api/conversations/folders${options.path ? "/" + String(options.path.path).split("/").map(encodeURIComponent).join("/") : ""}` : patch || lifecycle || diagnostics ? `${config.BASE}${options.url.replace("{id}", encodeURIComponent(options.path.id))}${query ? getQueryString(query) : ""}` : sticky ? `${config.BASE}/api/sticky/${encodeURIComponent(options.path.conv_id)}` : `${config.BASE}${options.url}${query ? getQueryString(query) : ""}`;
+      const url = folder ? `${config.BASE}/api/conversations/folders${options.path ? "/" + String(options.path.path).split("/").map(encodeURIComponent).join("/") : ""}` : patch || lifecycle || diagnostics || notificationRead && options.path ? `${config.BASE}${options.url.replace("{id}", encodeURIComponent(options.path.id))}${query ? getQueryString(query) : ""}` : sticky ? `${config.BASE}/api/sticky/${encodeURIComponent(options.path.conv_id)}` : `${config.BASE}${options.url}${query ? getQueryString(query) : ""}`;
       const headers = await getHeaders(config, options);
       if (onCancel.isCancelled) return;
       const response = await sendRequest(
@@ -392,7 +394,7 @@ var request2 = (config, options) => {
         headers,
         onCancel
       );
-      if (!(logout && options.discardResponse)) catchErrorCodes(options, {
+      if (!((logout || notificationRead) && options.discardResponse)) catchErrorCodes(options, {
         url,
         ok: response.ok,
         status: response.status,
@@ -754,47 +756,53 @@ var DefaultService = class {
     });
   }
   /**
-   * Wrapper
-   * @returns any Successful Response
+   * List Notifications
+   * Return inbox records newest first, with a joined ``read`` bool.
+   * @param limit
+   * @param before
+   * @returns NotificationListResponse Successful Response
    * @throws ApiError
    */
-  static wrapperApiNotificationsGet() {
+  static listNotificationsApiNotificationsGet(limit = 20, before) {
     return request2(OpenAPI, {
       method: "GET",
-      url: "/api/notifications"
+      url: "/api/notifications",
+      query: {
+        "limit": limit,
+        "before": before
+      }
     });
   }
   /**
-   * Wrapper
-   * @returns any Successful Response
+   * Notifications Unread Count
+   * Return ``{"count": N}`` — called frequently, stays cheap.
+   * @returns NotificationCountResponse Successful Response
    * @throws ApiError
    */
-  static wrapperApiNotificationsUnreadCountGet() {
+  static notificationsUnreadCountApiNotificationsUnreadCountGet() {
     return request2(OpenAPI, {
       method: "GET",
       url: "/api/notifications/unread-count"
     });
   }
-  /**
-   * Wrapper
-   * @returns any Successful Response
-   * @throws ApiError
-   */
-  static wrapperApiNotificationsReadAllPost() {
+  static notificationsMarkAllReadApiNotificationsReadAllPost(discardResponse = false) {
     return request2(OpenAPI, {
+      discardResponse,
       method: "POST",
       url: "/api/notifications/read-all"
     });
   }
-  /**
-   * Wrapper
-   * @returns any Successful Response
-   * @throws ApiError
-   */
-  static wrapperApiNotificationsIdReadPost() {
+  static notificationsMarkReadApiNotificationsIdReadPost(id, discardResponse = false) {
     return request2(OpenAPI, {
+      discardResponse,
       method: "POST",
-      url: "/api/notifications/{id}/read"
+      url: "/api/notifications/{id}/read",
+      path: {
+        "id": id
+      },
+      errors: {
+        422: `Validation Error`
+      }
     });
   }
   /**
