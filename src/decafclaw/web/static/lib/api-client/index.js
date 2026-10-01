@@ -367,13 +367,14 @@ var request2 = (config, options) => {
   const sticky = options.url === "/api/sticky/{conv_id}";
   const listing = ["/api/conversations", "/api/conversations/archived", "/api/conversations/system"].includes(options.url);
   const patch = options.method === "PATCH" && options.url === "/api/conversations/{id}";
-  if (!patch && (options.method !== "GET" || !sticky && !listing)) {
+  const folder = options.method === "POST" && options.url === "/api/conversations/folders" || ["PUT", "DELETE"].includes(options.method) && options.url === "/api/conversations/folders/{path}";
+  if (!folder && !patch && (options.method !== "GET" || !sticky && !listing)) {
     return request(config, options);
   }
   return new CancelablePromise(async (resolve2, reject, onCancel) => {
     try {
       const query = listing && options.query?.folder === "" ? void 0 : options.query;
-      const url = patch ? `${config.BASE}/api/conversations/${encodeURIComponent(options.path.id)}` : sticky ? `${config.BASE}/api/sticky/${encodeURIComponent(options.path.conv_id)}` : `${config.BASE}${options.url}${query ? getQueryString(query) : ""}`;
+      const url = folder ? `${config.BASE}/api/conversations/folders${options.path ? "/" + String(options.path.path).split("/").map(encodeURIComponent).join("/") : ""}` : patch ? `${config.BASE}/api/conversations/${encodeURIComponent(options.path.id)}` : sticky ? `${config.BASE}/api/sticky/${encodeURIComponent(options.path.conv_id)}` : `${config.BASE}${options.url}${query ? getQueryString(query) : ""}`;
       const headers = await getHeaders(config, options);
       if (onCancel.isCancelled) return;
       const response = await sendRequest(
@@ -390,7 +391,7 @@ var request2 = (config, options) => {
         ok: response.ok,
         status: response.status,
         statusText: response.statusText,
-        body: void 0
+        body: folder && !response.ok ? await response.json() : void 0
       });
       if (options.discardResponse) {
         resolve2(void 0);
@@ -632,37 +633,41 @@ var DefaultService = class {
       url: "/api/conversations/{id}/export"
     });
   }
-  /**
-   * Wrapper
-   * @returns any Successful Response
-   * @throws ApiError
-   */
-  static wrapperApiConversationsFoldersPost() {
+  static createConvFolderApiConversationsFoldersPost(requestBody, discardResponse = false) {
     return request2(OpenAPI, {
+      discardResponse,
       method: "POST",
-      url: "/api/conversations/folders"
+      url: "/api/conversations/folders",
+      body: requestBody,
+      mediaType: "application/json"
     });
   }
-  /**
-   * Wrapper
-   * @returns any Successful Response
-   * @throws ApiError
-   */
-  static wrapperApiConversationsFoldersPathPut() {
+  static deleteConvFolderApiConversationsFoldersPathDelete(path, discardResponse = false) {
     return request2(OpenAPI, {
-      method: "PUT",
-      url: "/api/conversations/folders/{path}"
-    });
-  }
-  /**
-   * Wrapper
-   * @returns any Successful Response
-   * @throws ApiError
-   */
-  static wrapperApiConversationsFoldersPathDelete() {
-    return request2(OpenAPI, {
+      discardResponse,
       method: "DELETE",
-      url: "/api/conversations/folders/{path}"
+      url: "/api/conversations/folders/{path}",
+      path: {
+        "path": path
+      },
+      errors: {
+        422: `Validation Error`
+      }
+    });
+  }
+  static renameConvFolderApiConversationsFoldersPathPut(path, requestBody, discardResponse = false) {
+    return request2(OpenAPI, {
+      discardResponse,
+      method: "PUT",
+      url: "/api/conversations/folders/{path}",
+      path: {
+        "path": path
+      },
+      body: requestBody,
+      mediaType: "application/json",
+      errors: {
+        422: `Validation Error`
+      }
     });
   }
   /**

@@ -2,6 +2,7 @@
 
 import os
 import time
+from urllib.parse import quote
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -1101,3 +1102,121 @@ async def test_patch_supported_identifier_decoding(authed_client, http_config, e
     assert response.status_code == 200
     assert response.json()["conv_id"] == custom_id
     assert index.get(custom_id).title == "Decoded"
+
+
+@pytest.mark.parametrize("method,route,model", [
+    ("post", "/api/conversations/folders", "ConversationFolderCreateResponse"),
+    ("put", "/api/conversations/folders/{path}", "ConversationFolderResponse"),
+    ("delete", "/api/conversations/folders/{path}", "ConversationFolderResponse"),
+])
+def test_folder_openapi_contract(http_config, method, route, model):
+    schema = create_app(http_config, EventBus()).openapi()
+    operation = schema["paths"][route][method]
+    if method != "post":
+        assert operation["parameters"] == [{"name": "path", "in": "path", "required": True,
+                                             "schema": {"type": "string", "title": "Path"}}]
+    if method != "delete":
+        request = operation["requestBody"]
+        assert request["required"] is True
+        body = request["content"]["application/json"]["schema"]
+        assert body["required"] == ["path"]
+        assert body["properties"]["path"]["type"] == "string"
+    response = operation["responses"]["200"]["content"]["application/json"]["schema"]
+    assert response == {"$ref": f"#/components/schemas/{model}"}
+    response = schema["components"]["schemas"][model]
+    assert set(response["required"]) == ({"ok", "path"} if method == "post" else {"ok"})
+    assert response["properties"]["ok"]["const"] is True
+    if method == "post":
+        assert response["properties"]["path"]["type"] == "string"
+
+
+@pytest.mark.parametrize("method,url", [("POST", "/api/conversations/folders"),
+                                       ("PUT", "/api/conversations/folders/existing"),
+                                       ("DELETE", "/api/conversations/folders/existing")])
+async def test_folder_auth_precedes_body_parsing(unauthed_client, method, url):
+    response = await unauthed_client.request(method, url, content="malformed")
+    assert response.status_code == 401
+    assert response.json() == {"error": "not authenticated"}
+
+
+@pytest.mark.parametrize("method", ["POST", "PUT"])
+@pytest.mark.parametrize("body,error", [
+    ({}, "required"), ({"path": None}, "required"), ({"path": 123}, "required"),
+    ({"path": False}, "required"), ({"path": ""}, "required"),
+    ({"path": "  "}, "empty"), ({"path": "/absolute"}, "start"),
+    ({"path": "a//b"}, "empty segments"), ({"path": "a/../b"}, ".."),
+    ({"path": "a/_private"}, "reserved"),
+])
+async def test_folder_body_validation_preserved(authed_client, folder_index, method, body, error):
+    await folder_index.create_folder("existing")
+    url = "/api/conversations/folders" + ("/existing" if method == "PUT" else "")
+    response = await authed_client.request(method, url, json=body)
+    assert response.status_code == 400
+    assert error in response.json()["error"]
+    assert await folder_index.folder_exists("existing")
+
+
+@pytest.mark.parametrize("method", ["PUT", "DELETE"])
+async def test_folder_missing_and_empty_path(authed_client, method):
+    for path, status, error in [("missing", 404, "Folder not found"), ("", 400, "path required")]:
+        response = await authed_client.request(method, "/api/conversations/folders/" + path,
+                                              json={"path": "new"})
+        assert response.status_code == status
+        assert response.json() == {"error": error}
+
+
+async def test_folder_nested_special_create_rename_merge_delete(authed_client, folder_index):
+    source = "Work space/日本語 & plus+ #hash%?"
+    target = "Target space/merged % +"
+    def url(path):
+        return "/api/conversations/folders/" + quote(path, safe="/")
+    response = await authed_client.post("/api/conversations/folders", json={"path": "  " + source + "  "})
+    assert response.status_code == 200
+    assert response.json() == {"ok": True, "path": source}
+    assert await folder_index.folder_exists("Work space")
+    duplicate = await authed_client.post("/api/conversations/folders", json={"path": source})
+    assert duplicate.status_code == 409
+    assert duplicate.json() == {"error": "Folder already exists"}
+    await folder_index.create_folder(source + "/child")
+    await folder_index.create_folder(target + "/child")
+    await folder_index.create_folder(target + "/retained")
+    await folder_index.set_folder("direct", source)
+    await folder_index.set_folder("nested", source + "/child")
+    await folder_index.set_folder("retained", target + "/child")
+    renamed = await authed_client.put(url(source), json={"path": "  " + target + "  "})
+    assert renamed.status_code == 200
+    assert renamed.json() == {"ok": True}
+    assert not await folder_index.folder_exists(source)
+    assert not await folder_index.folder_exists(source + "/child")
+    assert await folder_index.list_folders(target) == ["child", "retained"]
+    assert await folder_index.get_folder("direct") == target
+    assert await folder_index.get_folder("nested") == target + "/child"
+    assert await folder_index.get_folder("retained") == target + "/child"
+    blocked = await authed_client.delete(url(target))
+    assert blocked.status_code == 409
+    assert blocked.json() == {"error": "Folder contains conversations"}
+    await folder_index.remove_assignment("direct")
+    blocked = await authed_client.delete(url(target))
+    assert blocked.status_code == 409
+    assert blocked.json() == {"error": "Folder contains subfolders"}
+    deleted = await authed_client.delete(url(target + "/retained"))
+    assert deleted.status_code == 200
+    assert deleted.json() == {"ok": True}
+    assert not await folder_index.folder_exists(target + "/retained")
+
+
+async def test_folder_operations_are_per_user(authed_client, folder_index, http_config):
+    from decafclaw.web.conversation_folders import ConversationFolderIndex
+    other = ConversationFolderIndex(http_config, "another-user")
+    await other.create_folder("private")
+    await other.set_folder("private-conv", "private")
+    for method in ["PUT", "DELETE"]:
+        response = await authed_client.request(method, "/api/conversations/folders/private", json={"path": "stolen"})
+        assert response.status_code == 404
+    created = await authed_client.post("/api/conversations/folders", json={"path": "private"})
+    assert created.status_code == 200
+    assert (await authed_client.put("/api/conversations/folders/private", json={"path": "ours"})).status_code == 200
+    assert (await authed_client.delete("/api/conversations/folders/ours")).status_code == 200
+    assert await other.folder_exists("private")
+    assert await other.get_folder("private-conv") == "private"
+    assert not await folder_index.folder_exists("private")

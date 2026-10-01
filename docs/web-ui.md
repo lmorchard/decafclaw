@@ -551,8 +551,24 @@ Neither failure path emits a change event.
 
 The PATCH adapter sends same-origin cookies and encodes the identifier once as
 one path segment. Authentication and ownership checks remain in the handler.
-Other operations use the unmodified generated transport. Edit the adapter or
-generator source, then regenerate.
+The folder operations below also use the adapter. Other operations use the
+unmodified generated transport. Edit the adapter or generator source, then regenerate.
+
+`ConversationStore.createFolder()`, `renameFolder()`, and `deleteFolder()` use
+generated calls for `POST /api/conversations/folders` and
+`PUT`/`DELETE /api/conversations/folders/{path}`. Create and rename require a
+JSON `path` string; rename and delete require the original folder path.
+The adapter encodes each path segment once, preserving nested paths, and sends
+same-origin cookies. The backend keeps its existing parser, validation, status
+codes, per-user storage, rename/merge behavior, and empty-only deletion.
+
+Create returns `{ok: true, path: string}` with the trimmed path. Rename and
+delete return `{ok: true}`. These response contracts remain available to
+generated callers, but the store uses the derived `void` overloads: it only
+needs HTTP success. Each store method returns a boolean and refreshes the
+current listing after success. Failures log the server's JSON error, or the
+network/JSON decoding error, and skip the refresh. Empty or malformed success
+bodies remain ignored.
 
 The isolated tests in `tests/test_api_codegen.py` delete generated output,
 change backend identifier, listing query, PATCH body, and response contracts, and load the client in Chromium through
@@ -563,7 +579,11 @@ PATCH mutation tests independently change the identifier, title, folder, and
 returned title type. Each starts with passing checks and requires a relevant
 type diagnostic at the unchanged store call or rename merge.
 The browser test checks session cookies, decoded folder queries, and PATCH paths
-and JSON bodies at the test server.
+and JSON bodies at the test server. Folder tests also check decoded nested
+paths, cookies, and success shapes in Chromium. Folder contract mutations
+change the shared body path and each route path type independently; each must
+fail at the unchanged store callers. The actual store runtime tests cover
+success, HTTP/network failures, malformed error JSON, and unused success bodies.
 Before running `make test`, run `make install-js` and install the
 browser with `uv run playwright install chromium`. CI installs its system dependencies with
 `uv run playwright install --with-deps chromium`.
