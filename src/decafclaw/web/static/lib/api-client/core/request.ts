@@ -23,6 +23,8 @@ export const request = <T>(config: OpenAPIConfig, options: ApiRequestOptions & {
     const canvasIgnoredMutation = options.method === 'POST'
         && ['/api/canvas/{conv_id}/active_tab', '/api/canvas/{conv_id}/close_tab'].includes(options.url);
     const canvas = canvasState || canvasNewTab || canvasIgnoredMutation;
+    const workspaceRead = options.method === 'GET'
+        && ['/api/workspace', '/api/workspace/recent', '/api/workspace-file/{path}', '/api/autocomplete'].includes(options.url);
     const listing = ['/api/conversations', '/api/conversations/archived', '/api/conversations/system'].includes(options.url);
     const patch = options.method === 'PATCH' && options.url === '/api/conversations/{id}';
     const create = options.method === 'POST' && options.url === '/api/conversations';
@@ -30,14 +32,18 @@ export const request = <T>(config: OpenAPIConfig, options: ApiRequestOptions & {
         || (options.method === 'POST' && ['/api/conversations/{id}/archive', '/api/conversations/{id}/unarchive'].includes(options.url));
     const folder = (options.method === 'POST' && options.url === '/api/conversations/folders')
         || (['PUT', 'DELETE'].includes(options.method) && options.url === '/api/conversations/folders/{path}');
-    if (!notification && !diagnostics && !login && !logout && !vaultGuard && !create && !lifecycle && !folder && !patch && !widgetCatalog && !canvas && (options.method !== 'GET' || (!sticky && !listing))) {
+    if (!notification && !diagnostics && !login && !logout && !vaultGuard && !create && !lifecycle && !folder && !patch && !widgetCatalog && !canvas && !workspaceRead && (options.method !== 'GET' || (!sticky && !listing))) {
         return generatedRequest<T>(config, options);
     }
     return new CancelablePromise(async (resolve, reject, onCancel) => {
         try {
             // The handwritten listing callers omitted an empty root query.
             const query = listing && options.query?.folder === "" ? undefined : options.query;
-            const url = folder
+            const url = workspaceRead && options.url === '/api/workspace-file/{path}'
+                ? `${config.BASE}/api/workspace-file/${String(options.path!.path).split('/').map(encodeURIComponent).join('/')}`
+                : workspaceRead
+                ? `${config.BASE}${options.url}${options.query ? getQueryString(options.query) : ''}`
+                : folder
                 ? `${config.BASE}/api/conversations/folders${options.path ? '/' + String(options.path.path).split('/').map(encodeURIComponent).join('/') : ''}`
                 : canvas
                 ? `${config.BASE}${options.url.replace('{conv_id}', encodeURIComponent(options.path!.conv_id))}`

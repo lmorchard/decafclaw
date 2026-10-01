@@ -923,11 +923,23 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceListingResponse"
+                }
               }
             }
           }
-        }
+        },
+        "parameters": [
+          {
+            "name": "folder",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
       },
       "post": {
         "summary": "Wrapper",
@@ -953,7 +965,9 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceRecentResponse"
+                }
               }
             }
           }
@@ -969,11 +983,23 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/AutocompleteResponse"
+                }
               }
             }
           }
-        }
+        },
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
       }
     },
     "/api/workspace-file/{path}": {
@@ -985,11 +1011,23 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceTextResponse"
+                }
               }
             }
           }
-        }
+        },
+        "parameters": [
+          {
+            "name": "path",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
       }
     },
     "/api/workspace/{path}": {
@@ -1709,6 +1747,32 @@
   },
   "components": {
     "schemas": {
+      "AutocompleteResponse": {
+        "properties": {
+          "results": {
+            "items": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/VaultCompletion"
+                },
+                {
+                  "$ref": "#/components/schemas/McpCompletion"
+                },
+                {
+                  "$ref": "#/components/schemas/FileCompletion"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Results"
+          }
+        },
+        "type": "object",
+        "required": [
+          "results"
+        ],
+        "title": "AutocompleteResponse"
+      },
       "CanvasMutationResponse": {
         "properties": {
           "ok": {
@@ -2354,6 +2418,35 @@
         ],
         "title": "ConversationPatchResponse"
       },
+      "FileCompletion": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "file",
+            "title": "Type"
+          },
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description"
+          }
+        },
+        "type": "object",
+        "required": [
+          "type",
+          "id",
+          "label",
+          "description"
+        ],
+        "title": "FileCompletion"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -2393,6 +2486,35 @@
           "ok"
         ],
         "title": "LogoutResponse"
+      },
+      "McpCompletion": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "mcp",
+            "title": "Type"
+          },
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description"
+          }
+        },
+        "type": "object",
+        "required": [
+          "type",
+          "id",
+          "label",
+          "description"
+        ],
+        "title": "McpCompletion"
       },
       "NotificationCountResponse": {
         "properties": {
@@ -2658,6 +2780,35 @@
         ],
         "title": "ValidationError"
       },
+      "VaultCompletion": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "vault",
+            "title": "Type"
+          },
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description"
+          }
+        },
+        "type": "object",
+        "required": [
+          "type",
+          "id",
+          "label",
+          "description"
+        ],
+        "title": "VaultCompletion"
+      },
       "VirtualConversationFolderEntry": {
         "properties": {
           "name": {
@@ -2746,6 +2897,140 @@
           "js_url"
         ],
         "title": "WidgetDescriptorResponse"
+      },
+      "WorkspaceFileEntry": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "path": {
+            "type": "string",
+            "title": "Path"
+          },
+          "size": {
+            "type": "integer",
+            "title": "Size"
+          },
+          "modified": {
+            "type": "number",
+            "title": "Modified"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "text",
+              "image",
+              "binary"
+            ],
+            "title": "Kind"
+          },
+          "readonly": {
+            "type": "boolean",
+            "title": "Readonly"
+          },
+          "secret": {
+            "type": "boolean",
+            "title": "Secret"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "path",
+          "size",
+          "modified",
+          "kind",
+          "readonly",
+          "secret"
+        ],
+        "title": "WorkspaceFileEntry"
+      },
+      "WorkspaceFolderEntry": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "path": {
+            "type": "string",
+            "title": "Path"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "path"
+        ],
+        "title": "WorkspaceFolderEntry"
+      },
+      "WorkspaceListingResponse": {
+        "properties": {
+          "folder": {
+            "type": "string",
+            "title": "Folder"
+          },
+          "folders": {
+            "items": {
+              "$ref": "#/components/schemas/WorkspaceFolderEntry"
+            },
+            "type": "array",
+            "title": "Folders"
+          },
+          "files": {
+            "items": {
+              "$ref": "#/components/schemas/WorkspaceFileEntry"
+            },
+            "type": "array",
+            "title": "Files"
+          }
+        },
+        "type": "object",
+        "required": [
+          "folder",
+          "folders",
+          "files"
+        ],
+        "title": "WorkspaceListingResponse"
+      },
+      "WorkspaceRecentResponse": {
+        "properties": {
+          "files": {
+            "items": {
+              "$ref": "#/components/schemas/WorkspaceFileEntry"
+            },
+            "type": "array",
+            "title": "Files"
+          }
+        },
+        "type": "object",
+        "required": [
+          "files"
+        ],
+        "title": "WorkspaceRecentResponse"
+      },
+      "WorkspaceTextResponse": {
+        "properties": {
+          "content": {
+            "type": "string",
+            "title": "Content"
+          },
+          "modified": {
+            "type": "number",
+            "title": "Modified"
+          },
+          "readonly": {
+            "type": "boolean",
+            "title": "Readonly"
+          }
+        },
+        "type": "object",
+        "required": [
+          "content",
+          "modified",
+          "readonly"
+        ],
+        "title": "WorkspaceTextResponse"
       }
     }
   }

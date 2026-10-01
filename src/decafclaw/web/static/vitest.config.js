@@ -16,6 +16,7 @@ export default defineConfig({
     alias: [
       { find: /^@milkdown\/kit$/, replacement: here('./milkdown-entry.js') },
       { find: /^hljs$/, replacement: here('./hljs-entry.js') },
+      { find: /^codemirror$/, replacement: here('./codemirror-entry.js') },
       // Widgets are served from /widgets/{tier}/{name}/widget.js, not from
       // /static/, so they import shared modules by absolute URL
       // (`/static/lib/…`) — a relative `../../lib/…` would resolve against
