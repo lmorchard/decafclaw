@@ -217,7 +217,10 @@ export class VaultSidebar extends LitElement {
     `;
   }
 
-  /** Format a timestamp as a relative time string (e.g., "2h ago"). */
+  /**
+   * Format a timestamp as a relative time string (e.g., "2h ago").
+   * @param {number} mtime
+   */
   #formatRelativeTime(mtime) {
     const seconds = Math.floor((Date.now() / 1000) - mtime);
     if (seconds < 60) return 'just now';

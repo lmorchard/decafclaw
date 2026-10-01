@@ -1543,6 +1543,36 @@ def test_vault_page_incompatible_types_fail_at_unchanged_editor_assignment(
     assert caller.read_bytes() == original_caller
 
 
+def test_vault_recent_modified_type_fails_at_unchanged_formatter_call(source_tree):
+    caller = source_tree / STATIC_REL / "components/vault-sidebar.js"
+    original_caller = caller.read_bytes()
+    call = "this.#formatRelativeTime(p.modified)"
+    target = next(
+        line_no for line_no, line in enumerate(original_caller.decode().splitlines(), 1)
+        if call in line
+    )
+
+    def mutate(original):
+        start = original.index("class VaultPageListEntry(BaseModel):")
+        end = original.index("\n\n\n", start)
+        block = original[start:end]
+        before = "    modified: float"
+        assert block.count(before) == 1
+        return original[:start] + block.replace(
+            before, "    modified: str",
+        ) + original[end:]
+
+    output = _mutate_workspace_contract(source_tree, mutate)
+    diagnostics = [line for line in output.splitlines() if "error TS" in line]
+    assert any(
+        diagnostic.startswith(f"components/vault-sidebar.js({target},")
+        and "TS2345" in diagnostic
+        and "not assignable to parameter of type 'number'" in diagnostic
+        for diagnostic in diagnostics
+    ), output
+    assert caller.read_bytes() == original_caller
+
+
 def test_workspace_mutation_generated_contracts(source_tree):
     result, output = run_make(source_tree, "gen-api-client")
     assert result.returncode == 0, output
