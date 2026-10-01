@@ -154,6 +154,62 @@ def _workspace_file_entry(resolved_path: Path, rel_path: str) -> dict:
     }
 
 
+class WorkspaceFolderEntry(BaseModel):
+    name: str
+    path: str
+
+
+class WorkspaceFileEntry(BaseModel):
+    name: str
+    path: str
+    size: int
+    modified: float
+    kind: Literal["text", "image", "binary"]
+    readonly: bool
+    secret: bool
+
+
+class WorkspaceListingResponse(BaseModel):
+    folder: str
+    folders: list[WorkspaceFolderEntry]
+    files: list[WorkspaceFileEntry]
+
+
+class WorkspaceRecentResponse(BaseModel):
+    files: list[WorkspaceFileEntry]
+
+
+class WorkspaceTextResponse(BaseModel):
+    content: str
+    modified: float
+    readonly: bool
+
+
+class VaultCompletion(BaseModel):
+    type: Literal["vault"]
+    id: str
+    label: str
+    description: str
+
+
+class McpCompletion(BaseModel):
+    type: Literal["mcp"]
+    id: str
+    label: str
+    description: str
+
+
+class FileCompletion(BaseModel):
+    type: Literal["file"]
+    id: str
+    label: str
+    description: str
+
+
+class AutocompleteResponse(BaseModel):
+    results: list[VaultCompletion | McpCompletion | FileCompletion]
+
+
 def _can_write_as_text(path: Path) -> bool:
     """Return True if this path may be written as text by the Files-tab editor.
 
@@ -2742,11 +2798,31 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> FastAPI:
                  response_model=NotificationReadResponse),
         APIRoute("/api/upload/{conv_id}", handle_upload, methods=["POST"]),
         # Literal workspace routes must come before the {path:path} catch-all.
-        APIRoute("/api/workspace", workspace_list, methods=["GET"]),
+        APIRoute("/api/workspace", workspace_list, methods=["GET"],
+                 response_model=WorkspaceListingResponse,
+                 # Describe the optional query without changing legacy parsing
+                 # or the existing 404 response for invalid folders.
+                 openapi_extra={"parameters": [{
+                     "name": "folder", "in": "query", "required": False,
+                     "schema": {"type": "string"},
+                 }]}),
         APIRoute("/api/workspace", workspace_create, methods=["POST"]),
-        APIRoute("/api/workspace/recent", workspace_recent, methods=["GET"]),
-        APIRoute("/api/autocomplete", autocomplete, methods=["GET"]),
-        APIRoute("/api/workspace-file/{path:path}", workspace_read_json, methods=["GET"]),
+        APIRoute("/api/workspace/recent", workspace_recent, methods=["GET"],
+                 response_model=WorkspaceRecentResponse),
+        APIRoute("/api/autocomplete", autocomplete, methods=["GET"],
+                 response_model=AutocompleteResponse,
+                 # Every browser caller supplies q, while the handler still
+                 # accepts a missing value for legacy clients.
+                 openapi_extra={"parameters": [{
+                     "name": "q", "in": "query", "required": True,
+                     "schema": {"type": "string"},
+                 }]}),
+        APIRoute("/api/workspace-file/{path:path}", workspace_read_json, methods=["GET"],
+                 response_model=WorkspaceTextResponse,
+                 openapi_extra={"parameters": [{
+                     "name": "path", "in": "path", "required": True,
+                     "schema": {"type": "string"},
+                 }]}),
         APIRoute("/api/workspace/{path:path}", serve_workspace_file, methods=["GET"]),
         APIRoute("/api/workspace/{path:path}", workspace_write, methods=["PUT"]),
         APIRoute("/api/workspace/{path:path}", workspace_delete, methods=["DELETE"]),

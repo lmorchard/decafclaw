@@ -596,7 +596,14 @@ paths:
           description: Successful Response
           content:
             application/json:
-              schema: {}
+              schema:
+                $ref: '#/components/schemas/WorkspaceListingResponse'
+      parameters:
+      - name: folder
+        in: query
+        required: false
+        schema:
+          type: string
     post:
       summary: Wrapper
       operationId: wrapper_api_workspace_post
@@ -615,7 +622,8 @@ paths:
           description: Successful Response
           content:
             application/json:
-              schema: {}
+              schema:
+                $ref: '#/components/schemas/WorkspaceRecentResponse'
   /api/autocomplete:
     get:
       summary: Wrapper
@@ -625,7 +633,14 @@ paths:
           description: Successful Response
           content:
             application/json:
-              schema: {}
+              schema:
+                $ref: '#/components/schemas/AutocompleteResponse'
+      parameters:
+      - name: q
+        in: query
+        required: true
+        schema:
+          type: string
   /api/workspace-file/{path}:
     get:
       summary: Wrapper
@@ -635,7 +650,14 @@ paths:
           description: Successful Response
           content:
             application/json:
-              schema: {}
+              schema:
+                $ref: '#/components/schemas/WorkspaceTextResponse'
+      parameters:
+      - name: path
+        in: path
+        required: true
+        schema:
+          type: string
   /api/workspace/{path}:
     get:
       summary: Wrapper
@@ -1087,6 +1109,20 @@ paths:
               schema: {}
 components:
   schemas:
+    AutocompleteResponse:
+      properties:
+        results:
+          items:
+            anyOf:
+            - $ref: '#/components/schemas/VaultCompletion'
+            - $ref: '#/components/schemas/McpCompletion'
+            - $ref: '#/components/schemas/FileCompletion'
+          type: array
+          title: Results
+      type: object
+      required:
+      - results
+      title: AutocompleteResponse
     CanvasMutationResponse:
       properties:
         ok:
@@ -1472,6 +1508,29 @@ components:
       - created_at
       - updated_at
       title: ConversationPatchResponse
+    FileCompletion:
+      properties:
+        type:
+          type: string
+          title: Type
+          enum:
+          - file
+        id:
+          type: string
+          title: Id
+        label:
+          type: string
+          title: Label
+        description:
+          type: string
+          title: Description
+      type: object
+      required:
+      - type
+      - id
+      - label
+      - description
+      title: FileCompletion
     HTTPValidationError:
       properties:
         detail:
@@ -1500,6 +1559,29 @@ components:
       required:
       - ok
       title: LogoutResponse
+    McpCompletion:
+      properties:
+        type:
+          type: string
+          title: Type
+          enum:
+          - mcp
+        id:
+          type: string
+          title: Id
+        label:
+          type: string
+          title: Label
+        description:
+          type: string
+          title: Description
+      type: object
+      required:
+      - type
+      - id
+      - label
+      - description
+      title: McpCompletion
     NotificationCountResponse:
       properties:
         count:
@@ -1675,6 +1757,29 @@ components:
       - msg
       - type
       title: ValidationError
+    VaultCompletion:
+      properties:
+        type:
+          type: string
+          title: Type
+          enum:
+          - vault
+        id:
+          type: string
+          title: Id
+        label:
+          type: string
+          title: Label
+        description:
+          type: string
+          title: Description
+      type: object
+      required:
+      - type
+      - id
+      - label
+      - description
+      title: VaultCompletion
     VirtualConversationFolderEntry:
       properties:
         name:
@@ -1741,3 +1846,102 @@ components:
       - data_schema
       - js_url
       title: WidgetDescriptorResponse
+    WorkspaceFileEntry:
+      properties:
+        name:
+          type: string
+          title: Name
+        path:
+          type: string
+          title: Path
+        size:
+          type: integer
+          title: Size
+        modified:
+          type: number
+          title: Modified
+        kind:
+          type: string
+          enum:
+          - text
+          - image
+          - binary
+          title: Kind
+        readonly:
+          type: boolean
+          title: Readonly
+        secret:
+          type: boolean
+          title: Secret
+      type: object
+      required:
+      - name
+      - path
+      - size
+      - modified
+      - kind
+      - readonly
+      - secret
+      title: WorkspaceFileEntry
+    WorkspaceFolderEntry:
+      properties:
+        name:
+          type: string
+          title: Name
+        path:
+          type: string
+          title: Path
+      type: object
+      required:
+      - name
+      - path
+      title: WorkspaceFolderEntry
+    WorkspaceListingResponse:
+      properties:
+        folder:
+          type: string
+          title: Folder
+        folders:
+          items:
+            $ref: '#/components/schemas/WorkspaceFolderEntry'
+          type: array
+          title: Folders
+        files:
+          items:
+            $ref: '#/components/schemas/WorkspaceFileEntry'
+          type: array
+          title: Files
+      type: object
+      required:
+      - folder
+      - folders
+      - files
+      title: WorkspaceListingResponse
+    WorkspaceRecentResponse:
+      properties:
+        files:
+          items:
+            $ref: '#/components/schemas/WorkspaceFileEntry'
+          type: array
+          title: Files
+      type: object
+      required:
+      - files
+      title: WorkspaceRecentResponse
+    WorkspaceTextResponse:
+      properties:
+        content:
+          type: string
+          title: Content
+        modified:
+          type: number
+          title: Modified
+        readonly:
+          type: boolean
+          title: Readonly
+      type: object
+      required:
+      - content
+      - modified
+      - readonly
+      title: WorkspaceTextResponse

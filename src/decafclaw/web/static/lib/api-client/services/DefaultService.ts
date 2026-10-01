@@ -3,6 +3,7 @@ import { textRequest as __textRequest } from '../core/request';
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { AutocompleteResponse } from '../models/AutocompleteResponse';
 import type { CanvasMutationResponse } from '../models/CanvasMutationResponse';
 import type { CanvasNewTabResponse } from '../models/CanvasNewTabResponse';
 import type { CanvasStateResponse } from '../models/CanvasStateResponse';
@@ -23,6 +24,9 @@ import type { StickyResponse } from '../models/StickyResponse';
 import type { SystemConversationListingResponse } from '../models/SystemConversationListingResponse';
 import type { UserResponse } from '../models/UserResponse';
 import type { WidgetCatalogResponse } from '../models/WidgetCatalogResponse';
+import type { WorkspaceListingResponse } from '../models/WorkspaceListingResponse';
+import type { WorkspaceRecentResponse } from '../models/WorkspaceRecentResponse';
+import type { WorkspaceTextResponse } from '../models/WorkspaceTextResponse';
 import type { CancelablePromise } from '../core/CancelablePromise';
 import { OpenAPI } from '../core/OpenAPI';
 import { request as __request } from '../core/request';
@@ -632,13 +636,19 @@ export class DefaultService {
     }
     /**
      * Wrapper
-     * @returns any Successful Response
+     * @param folder
+     * @returns WorkspaceListingResponse Successful Response
      * @throws ApiError
      */
-    public static wrapperApiWorkspaceGet(): CancelablePromise<any> {
+    public static wrapperApiWorkspaceGet(
+        folder?: string,
+    ): CancelablePromise<WorkspaceListingResponse> {
         return __request(OpenAPI, {
             method: 'GET',
             url: '/api/workspace',
+            query: {
+                'folder': folder,
+            },
         });
     }
     /**
@@ -654,10 +664,10 @@ export class DefaultService {
     }
     /**
      * Wrapper
-     * @returns any Successful Response
+     * @returns WorkspaceRecentResponse Successful Response
      * @throws ApiError
      */
-    public static wrapperApiWorkspaceRecentGet(): CancelablePromise<any> {
+    public static wrapperApiWorkspaceRecentGet(): CancelablePromise<WorkspaceRecentResponse> {
         return __request(OpenAPI, {
             method: 'GET',
             url: '/api/workspace/recent',
@@ -665,24 +675,36 @@ export class DefaultService {
     }
     /**
      * Wrapper
-     * @returns any Successful Response
+     * @param q
+     * @returns AutocompleteResponse Successful Response
      * @throws ApiError
      */
-    public static wrapperApiAutocompleteGet(): CancelablePromise<any> {
+    public static wrapperApiAutocompleteGet(
+        q: string,
+    ): CancelablePromise<AutocompleteResponse> {
         return __request(OpenAPI, {
             method: 'GET',
             url: '/api/autocomplete',
+            query: {
+                'q': q,
+            },
         });
     }
     /**
      * Wrapper
-     * @returns any Successful Response
+     * @param path
+     * @returns WorkspaceTextResponse Successful Response
      * @throws ApiError
      */
-    public static wrapperApiWorkspaceFilePathGet(): CancelablePromise<any> {
+    public static wrapperApiWorkspaceFilePathGet(
+        path: string,
+    ): CancelablePromise<WorkspaceTextResponse> {
         return __request(OpenAPI, {
             method: 'GET',
             url: '/api/workspace-file/{path}',
+            path: {
+                'path': path,
+            },
         });
     }
     /**

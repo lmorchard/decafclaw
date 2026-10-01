@@ -430,23 +430,21 @@ describe('chat-input mention autocomplete', () => {
           { type: 'mcp', id: 'demo/notes', label: 'mcp/demo/notes', description: 'MCP Resource' }
         ]
       };
-      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(() =>
-        Promise.resolve({
-          ok: true,
-          json: () => Promise.resolve(mockResults)
-        })
-      );
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(
+        JSON.stringify(mockResults),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ));
 
       const el = await mount();
       await type(el, 'Check @');
 
       // Fast-forward timers to trigger debounced fetch
-      vi.advanceTimersByTime(150);
+      await vi.advanceTimersByTimeAsync(150);
 
-      expect(fetchSpy).toHaveBeenCalledWith('/api/autocomplete?q=');
-      
-      // Set the state manually to simulate async resolution since updateComplete won't wait for fetch inside click/input
-      el._mentionMatches = mockResults.results;
+      expect(fetchSpy).toHaveBeenCalledWith('/api/autocomplete?q=', expect.objectContaining({
+        method: 'GET',
+        credentials: 'same-origin',
+      }));
       await el.updateComplete;
 
       expect(el.querySelector(MENU)).not.toBeNull();
@@ -455,6 +453,34 @@ describe('chat-input mention autocomplete', () => {
       expect(rows[0].getAttribute('data-mention-id')).toBe('src/agent.py');
       expect(rows[1].getAttribute('data-mention-id')).toBe('TestPage');
       expect(rows[2].getAttribute('data-mention-id')).toBe('demo/notes');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('ignores a response for a superseded mention query', async () => {
+    vi.useFakeTimers();
+    try {
+      const pending = [];
+      vi.spyOn(globalThis, 'fetch').mockImplementation(() => new Promise(resolve => pending.push(resolve)));
+      const el = await mount();
+
+      await type(el, '@old');
+      await vi.advanceTimersByTimeAsync(150);
+      await type(el, '@new');
+      await vi.advanceTimersByTimeAsync(150);
+      expect(pending).toHaveLength(2);
+
+      pending[1](new Response(JSON.stringify({ results: [
+        { type: 'file', id: 'new.md', label: 'new.md', description: 'Workspace File' },
+      ] }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+      await vi.waitFor(() => expect(el._mentionMatches[0]?.id).toBe('new.md'));
+
+      pending[0](new Response(JSON.stringify({ results: [
+        { type: 'file', id: 'old.md', label: 'old.md', description: 'Workspace File' },
+      ] }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+      await Promise.resolve();
+      expect(el._mentionMatches.map(item => item.id)).toEqual(['new.md']);
     } finally {
       vi.useRealTimers();
     }
@@ -500,5 +526,18 @@ describe('chat-input mention autocomplete', () => {
 
     expect(textareaOf(el).value).toBe('Inspect @mcp/demo/notes ');
     expect(el.querySelector(MENU)).toBeNull();
+  });
+
+  it('does not insert an unknown completion variant as a file mention', async () => {
+    const el = await mount();
+    await type(el, 'Check @');
+    el._mentionMatches = [
+      { type: 'added', id: 'new-target', label: 'New target', description: 'New variant' }
+    ];
+    await el.updateComplete;
+
+    await press(el, 'Tab');
+
+    expect(textareaOf(el).value).toBe('Check @');
   });
 });

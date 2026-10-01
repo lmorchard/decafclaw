@@ -52,6 +52,13 @@ ride on socket `open` — a reconnect with no conversation selected must put
 nothing on the wire (#704). The consequence is that the menu is empty until a
 conversation exists, which for a fresh session means the first message.
 
+**Resource autocomplete.** Typing `@` requests file, vault-page, and MCP-resource
+matches from `GET /api/autocomplete?q=...`. The composer uses the generated
+browser method and keeps the generated discriminated result types through menu
+rendering and insertion. Files insert as `@path`, vault pages as `@[[Page]]`, and
+MCP resources as `@mcp/server/name`. A response for an older query is ignored
+when the user has already changed the token.
+
 **Input focus.** The composer takes focus on a conversation switch, and again
 when the agent finishes a turn — but only if the user hasn't moved focus
 somewhere else in the meantime (canvas terminal, wiki editor, a widget). It
