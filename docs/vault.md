@@ -57,6 +57,13 @@ The vault supports hierarchical folders. The API and web UI provide folder-aware
 
 `GET /api/vault/tags` returns `{tags: [{tag, count, pages}, ...]}` — every tag in use across the vault, sorted by count descending (tie-broken by tag name), mirroring the `vault_tags` tool. `pages` lists the vault-relative paths carrying that tag, for click-through UI (#318).
 
+The web UI reads vault folders, recent pages, tags, and individual pages through
+the generated API client. Its contracts cover nested folder/page inputs, list
+records, page body and modification time, raw frontmatter text, parse errors,
+and arbitrary JSON-safe frontmatter values. The shared editor uses this typed
+page read only for its vault host; config and schedule hosts keep their own
+endpoint behavior until their contracts migrate.
+
 ## Wiki Links
 
 Standard Obsidian `[[wiki-links]]` connect pages:

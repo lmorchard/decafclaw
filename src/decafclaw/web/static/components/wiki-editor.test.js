@@ -138,6 +138,17 @@ describe('wiki-editor #reload', () => {
     });
   }
 
+  it('preserves the vault reload HTTP status through the generated call', async () => {
+    fetchMock.mockResolvedValue({
+      ok: false, status: 409, statusText: 'Conflict',
+      json: async () => ({ error: 'conflict' }),
+    });
+    const el = await mountInConflict({ page: 'Some Page' });
+
+    clickReload(el);
+    await vi.waitFor(() => expect(el._error).toBe('Reload failed: HTTP 409'));
+  });
+
   it('surfaces a failed reload instead of blanking the editor', async () => {
     fetchMock.mockResolvedValue({ ok: false, status: 404, json: async () => ({}) });
     const el = await mountInConflict({ page: 'dream', saveEndpoint: '/api/schedules/' });
