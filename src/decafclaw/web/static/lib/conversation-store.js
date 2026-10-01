@@ -42,7 +42,6 @@ import { ApiError, DefaultService } from './api-client/index.js';
  */
 
 import { uploadFile } from './upload-client.js';
-import { encodePagePath } from './utils.js';
 import { MessageStore } from './message-store.js';
 import { ToolStatusStore } from './tool-status-store.js';
 import { WebSocketClient } from './websocket-client.js';
@@ -340,20 +339,11 @@ export class ConversationStore extends EventTarget {
   /** @param {string} path */
   async createFolder(path) {
     try {
-      const resp = await fetch('/api/conversations/folders', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path }),
-      });
-      if (!resp.ok) {
-        const data = await resp.json();
-        console.error('Failed to create folder:', data.error);
-        return false;
-      }
+      await DefaultService.createConvFolderApiConversationsFoldersPost({ path }, true);
       await this.listConversations(this.#currentFolder);
       return true;
     } catch (err) {
-      console.error('Failed to create folder:', err);
+      console.error('Failed to create folder:', err instanceof ApiError ? err.body?.error : err);
       return false;
     }
   }
@@ -361,18 +351,11 @@ export class ConversationStore extends EventTarget {
   /** @param {string} path */
   async deleteFolder(path) {
     try {
-      const resp = await fetch(`/api/conversations/folders/${encodePagePath(path)}`, {
-        method: 'DELETE',
-      });
-      if (!resp.ok) {
-        const data = await resp.json();
-        console.error('Failed to delete folder:', data.error);
-        return false;
-      }
+      await DefaultService.deleteConvFolderApiConversationsFoldersPathDelete(path, true);
       await this.listConversations(this.#currentFolder);
       return true;
     } catch (err) {
-      console.error('Failed to delete folder:', err);
+      console.error('Failed to delete folder:', err instanceof ApiError ? err.body?.error : err);
       return false;
     }
   }
@@ -380,20 +363,11 @@ export class ConversationStore extends EventTarget {
   /** @param {string} oldPath @param {string} newPath */
   async renameFolder(oldPath, newPath) {
     try {
-      const resp = await fetch(`/api/conversations/folders/${encodePagePath(oldPath)}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path: newPath }),
-      });
-      if (!resp.ok) {
-        const data = await resp.json();
-        console.error('Failed to rename folder:', data.error);
-        return false;
-      }
+      await DefaultService.renameConvFolderApiConversationsFoldersPathPut(oldPath, { path: newPath }, true);
       await this.listConversations(this.#currentFolder);
       return true;
     } catch (err) {
-      console.error('Failed to rename folder:', err);
+      console.error('Failed to rename folder:', err instanceof ApiError ? err.body?.error : err);
       return false;
     }
   }

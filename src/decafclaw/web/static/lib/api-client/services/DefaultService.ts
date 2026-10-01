@@ -2,6 +2,8 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { ConversationFolderCreateResponse } from '../models/ConversationFolderCreateResponse';
+import type { ConversationFolderResponse } from '../models/ConversationFolderResponse';
 import type { ConversationListingResponse } from '../models/ConversationListingResponse';
 import type { ConversationPatchResponse } from '../models/ConversationPatchResponse';
 import type { StickyResponse } from '../models/StickyResponse';
@@ -275,36 +277,107 @@ export class DefaultService {
         });
     }
     /**
-     * Wrapper
-     * @returns any Successful Response
+     * Create Conv Folder
+     * Create a conversation folder.
+     * @param requestBody
+     * @returns ConversationFolderCreateResponse Successful Response
      * @throws ApiError
      */
-    public static wrapperApiConversationsFoldersPost(): CancelablePromise<any> {
+    public static createConvFolderApiConversationsFoldersPost(
+        requestBody: {
+            path: string;
+        },
+    ): CancelablePromise<ConversationFolderCreateResponse>;
+    public static createConvFolderApiConversationsFoldersPost(
+        requestBody: {
+            path: string;
+        },
+        discardResponse: true,
+    ): CancelablePromise<void>;
+    public static createConvFolderApiConversationsFoldersPost(
+        requestBody: {
+            path: string;
+        },
+        discardResponse = false,
+    ): CancelablePromise<ConversationFolderCreateResponse | void> {
         return __request(OpenAPI, {
+            discardResponse,
             method: 'POST',
             url: '/api/conversations/folders',
+            body: requestBody,
+            mediaType: 'application/json',
         });
     }
     /**
-     * Wrapper
-     * @returns any Successful Response
+     * Delete Conv Folder
+     * Delete an empty conversation folder.
+     * @param path
+     * @returns ConversationFolderResponse Successful Response
      * @throws ApiError
      */
-    public static wrapperApiConversationsFoldersPathPut(): CancelablePromise<any> {
+    public static deleteConvFolderApiConversationsFoldersPathDelete(
+        path: string,
+    ): CancelablePromise<ConversationFolderResponse>;
+    public static deleteConvFolderApiConversationsFoldersPathDelete(
+        path: string,
+        discardResponse: true,
+    ): CancelablePromise<void>;
+    public static deleteConvFolderApiConversationsFoldersPathDelete(
+        path: string,
+        discardResponse = false,
+    ): CancelablePromise<ConversationFolderResponse | void> {
         return __request(OpenAPI, {
-            method: 'PUT',
-            url: '/api/conversations/folders/{path}',
-        });
-    }
-    /**
-     * Wrapper
-     * @returns any Successful Response
-     * @throws ApiError
-     */
-    public static wrapperApiConversationsFoldersPathDelete(): CancelablePromise<any> {
-        return __request(OpenAPI, {
+            discardResponse,
             method: 'DELETE',
             url: '/api/conversations/folders/{path}',
+            path: {
+                'path': path,
+            },
+            errors: {
+                422: `Validation Error`,
+            },
+        });
+    }
+    /**
+     * Rename Conv Folder
+     * Rename/move a conversation folder. Merges if target exists.
+     * @param path
+     * @param requestBody
+     * @returns ConversationFolderResponse Successful Response
+     * @throws ApiError
+     */
+    public static renameConvFolderApiConversationsFoldersPathPut(
+        path: string,
+        requestBody: {
+            path: string;
+        },
+    ): CancelablePromise<ConversationFolderResponse>;
+    public static renameConvFolderApiConversationsFoldersPathPut(
+        path: string,
+        requestBody: {
+            path: string;
+        },
+        discardResponse: true,
+    ): CancelablePromise<void>;
+    public static renameConvFolderApiConversationsFoldersPathPut(
+        path: string,
+        requestBody: {
+            path: string;
+        },
+        discardResponse = false,
+    ): CancelablePromise<ConversationFolderResponse | void> {
+        return __request(OpenAPI, {
+            discardResponse,
+            method: 'PUT',
+            url: '/api/conversations/folders/{path}',
+            path: {
+                'path': path,
+            },
+            body: requestBody,
+            mediaType: 'application/json',
+            errors: {
+                422: `Validation Error`,
+            },
         });
     }
     /**
