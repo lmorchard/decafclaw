@@ -233,6 +233,57 @@ class VaultTagsResponse(BaseModel):
     tags: list[VaultTagEntry]
 
 
+class VaultCreateRequest(BaseModel):
+    name: str
+    content: str | None = None
+
+
+class VaultCreateResponse(BaseModel):
+    ok: Literal[True]
+    page: str
+    modified: float
+
+
+class VaultFolderCreateRequest(BaseModel):
+    folder: str
+
+
+class VaultFolderCreateResponse(BaseModel):
+    ok: Literal[True]
+    folder: str
+
+
+class VaultWriteRequest(BaseModel):
+    content: str | None = None
+    body: str | None = None
+    modified: float | None = None
+    frontmatter: dict[str, JsonValue] | None = None
+    frontmatter_raw: str | None = None
+    rename_to: str | None = None
+
+
+class VaultWriteResponse(BaseModel):
+    ok: Literal[True]
+    modified: float
+    frontmatter: dict[str, JsonValue] | None = None
+    frontmatter_raw: str | None = None
+    frontmatter_error: str | None = None
+    title: str | None = None
+    path: str | None = None
+    folder: str | None = None
+
+
+class VaultDeleteResponse(BaseModel):
+    ok: Literal[True]
+
+
+def _request_schema(model: type[BaseModel]) -> dict:
+    """Build schema-only request metadata with refs into OpenAPI components."""
+    schema = model.model_json_schema(ref_template="#/components/schemas/{model}")
+    schema.pop("$defs", None)
+    return schema
+
+
 class VaultPageResponse(BaseModel):
     title: str
     path: str
@@ -2915,7 +2966,13 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> FastAPI:
         APIRoute("/api/schedules/{name}/overlay", schedules_reset, methods=["DELETE"]),
         APIRoute("/api/schedules/{name}", schedules_get, methods=["GET"]),
         APIRoute("/api/schedules/{name}", schedules_update, methods=["PUT"]),
-        APIRoute("/api/vault", vault_create, methods=["POST"]),
+        APIRoute("/api/vault", vault_create, methods=["POST"],
+                 response_model=VaultCreateResponse,
+                 openapi_extra={"requestBody": {"required": True, "content": {
+                     "application/json": {
+                         "schema": _request_schema(VaultCreateRequest),
+                     },
+                 }}}),
         APIRoute("/api/vault", vault_list, methods=["GET"],
                  response_model=VaultListingResponse,
                  # Schema-only query metadata preserves the handler's current
@@ -2924,19 +2981,44 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> FastAPI:
                      "name": "folder", "in": "query", "required": False,
                      "schema": {"type": "string"},
                  }]}),
-        APIRoute("/api/vault/folders", vault_create_folder, methods=["POST"]),
+        APIRoute("/api/vault/folders", vault_create_folder, methods=["POST"],
+                 response_model=VaultFolderCreateResponse,
+                 openapi_extra={"requestBody": {"required": True, "content": {
+                     "application/json": {
+                         "schema": _request_schema(VaultFolderCreateRequest),
+                     },
+                 }}}),
         APIRoute("/api/vault/recent", vault_recent, methods=["GET"],
                  response_model=VaultRecentResponse),
         APIRoute("/api/vault/tags", vault_tags, methods=["GET"],
                  response_model=VaultTagsResponse),
-        APIRoute("/api/vault/{page:path}", vault_write, methods=["PUT"]),
+        APIRoute("/api/vault/{page:path}", vault_write, methods=["PUT"],
+                 response_model=VaultWriteResponse,
+                 # Schema metadata only: the handler keeps its manual parsing,
+                 # conflict checks, mutually-exclusive fields, and 400s.
+                 openapi_extra={
+                     "parameters": [{
+                         "name": "page", "in": "path", "required": True,
+                         "schema": {"type": "string"},
+                     }],
+                     "requestBody": {"required": True, "content": {
+                         "application/json": {
+                             "schema": _request_schema(VaultWriteRequest),
+                         },
+                     }},
+                 }),
         APIRoute("/api/vault/{page:path}", vault_read, methods=["GET"],
                  response_model=VaultPageResponse,
                  openapi_extra={"parameters": [{
                      "name": "page", "in": "path", "required": True,
                      "schema": {"type": "string"},
                  }]}),
-        APIRoute("/api/vault/{page:path}", vault_delete, methods=["DELETE"]),
+        APIRoute("/api/vault/{page:path}", vault_delete, methods=["DELETE"],
+                 response_model=VaultDeleteResponse,
+                 openapi_extra={"parameters": [{
+                     "name": "page", "in": "path", "required": True,
+                     "schema": {"type": "string"},
+                 }]}),
         APIRoute("/vault/{page:path}", serve_vault_page, methods=["GET"]),
         # Legacy /api/wiki/* aliases — vault handlers under the old name.
         APIRoute("/api/wiki", vault_list, methods=["GET"]),

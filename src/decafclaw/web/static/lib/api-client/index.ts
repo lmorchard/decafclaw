@@ -41,6 +41,9 @@ export type { SystemConversationListingResponse } from './models/SystemConversat
 export type { UserResponse } from './models/UserResponse';
 export type { ValidationError } from './models/ValidationError';
 export { VaultCompletion } from './models/VaultCompletion';
+export type { VaultCreateResponse } from './models/VaultCreateResponse';
+export type { VaultDeleteResponse } from './models/VaultDeleteResponse';
+export type { VaultFolderCreateResponse } from './models/VaultFolderCreateResponse';
 export type { VaultFolderEntry } from './models/VaultFolderEntry';
 export type { VaultListingResponse } from './models/VaultListingResponse';
 export type { VaultPageListEntry } from './models/VaultPageListEntry';
@@ -48,6 +51,7 @@ export type { VaultPageResponse } from './models/VaultPageResponse';
 export type { VaultRecentResponse } from './models/VaultRecentResponse';
 export type { VaultTagEntry } from './models/VaultTagEntry';
 export type { VaultTagsResponse } from './models/VaultTagsResponse';
+export type { VaultWriteResponse } from './models/VaultWriteResponse';
 export type { VirtualConversationFolderEntry } from './models/VirtualConversationFolderEntry';
 export type { WidgetCatalogResponse } from './models/WidgetCatalogResponse';
 export type { WidgetDescriptorResponse } from './models/WidgetDescriptorResponse';

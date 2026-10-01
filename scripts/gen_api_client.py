@@ -84,9 +84,9 @@ def repair_arbitrary_json_types(static: Path) -> None:
     import_marker = "import type { ContextDiagnosticsResponse }"
     if source.count(import_marker) != 1:
         raise ValueError("Expected generated service import marker")
-    source = source.replace(import_marker,
-                            "import type { JsonValue } from '../models/JsonValue';\n"
-                            + import_marker)
+    json_import = "import type { JsonValue } from '../models/JsonValue';"
+    if json_import not in source:
+        source = source.replace(import_marker, json_import + "\n" + import_marker)
     method_start = source.index("    public static postCanvasNewTabApiCanvasConvIdNewTabPost(")
     method_end = source.index("    /**", method_start)
     method = source[method_start:method_end]
@@ -138,6 +138,10 @@ def dump_openapi():
         ("deleteConvFolderApiConversationsFoldersPathDelete", "DELETE", "/api/conversations/folders/{path}"),
         ("renameConvFolderApiConversationsFoldersPathPut", "PUT", "/api/conversations/folders/{path}"),
         ("wrapperApiWorkspacePathDelete", "DELETE", "/api/workspace/{path}"),
+        ("wrapperApiVaultPost", "POST", "/api/vault"),
+        ("wrapperApiVaultFoldersPost", "POST", "/api/vault/folders"),
+        ("wrapperApiVaultPagePut", "PUT", "/api/vault/{page}"),
+        ("wrapperApiVaultPageDelete", "DELETE", "/api/vault/{page}"),
     ):
         add_discard_overload(static / "lib/api-client/services/DefaultService.ts", method, verb, url)
     service = static / "lib/api-client/services/DefaultService.ts"
