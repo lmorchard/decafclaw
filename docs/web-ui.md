@@ -186,7 +186,11 @@ each occupies a draggable column to the right of chat.
 
 **State:** per-conversation, persisted in
 `workspace/conversations/{conv_id}/canvas.json` (sidecar). Loaded on
-conversation-select via `GET /api/canvas/{conv_id}`.
+conversation-select via `GET /api/canvas/{conv_id}`. The panel state client and
+the standalone canvas entry use the generated API contract for this snapshot;
+tab identifiers, labels, widget types, and active-tab state stay typed while a
+widget's `data` remains arbitrary JSON. User tab selection and close requests
+use the generated body and path contracts as well.
 
 **Tabs (Phase 4 multi-tab):** the panel holds multiple tabs. The agent
 opens tabs with `canvas_new_tab` (returns a `tab_id`), updates by
@@ -237,6 +241,8 @@ sticks.
 
 Both are auth-gated with the same web-auth as the main UI. Useful for
 sharing persistent links (e.g. to a Mattermost user who has a web token).
+The standalone entry participates in the normal JavaScript type check and uses
+the same generated state contract as the embedded panel.
 
 **Resize:** drag handle on the left edge of `#canvas-main`. Width persists
 to `localStorage["canvas-width"]`.

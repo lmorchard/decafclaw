@@ -1,6 +1,7 @@
 import { LitElement, html } from 'lit';
 import { renderMarkdown } from '/static/lib/markdown.js';
 import { getActiveConvId } from '/static/lib/canvas-state.js';
+import { ApiError, DefaultService } from '/static/lib/api-client/index.js';
 
 const INLINE_MAX_HEIGHT = '8rem';
 
@@ -70,21 +71,15 @@ export class MarkdownDocumentWidget extends LitElement {
     if (!convId) return;
     const label = this._firstH1(this.data?.content);
     try {
-      const resp = await fetch(`/api/canvas/${encodeURIComponent(convId)}/new_tab`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'same-origin',
-        body: JSON.stringify({
+      await DefaultService.postCanvasNewTabApiCanvasConvIdNewTabPost(
+        convId, {
           widget_type: 'markdown_document',
           data: { content: this.data?.content ?? '' },
           label,
-        }),
-      });
-      if (!resp.ok) {
-        console.error('canvas new_tab failed', resp.status, await resp.text());
-      }
+        }, true);
     } catch (err) {
-      console.error('canvas new_tab error', err);
+      if (err instanceof ApiError) console.error('canvas new_tab failed', err.status, err.body);
+      else console.error('canvas new_tab error', err);
     }
   }
 

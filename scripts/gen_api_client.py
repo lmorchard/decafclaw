@@ -42,6 +42,46 @@ def add_discard_overload(service: Path, method_name: str, verb: str, url: str) -
     service.write_text(source.replace(marker, "            discardResponse,\n" + marker))
 
 
+def repair_arbitrary_json_types(static: Path) -> None:
+    """Keep arbitrary JSON explicit when the stock generator emits ``any``.
+
+    Pydantic's ``JsonValue`` schema is intentionally unconstrained. The client
+    generator turns that component into an empty object and turns an embedded
+    JSON object in a request into ``Record<string, any>``. Both erase checking
+    beyond the intended arbitrary-data boundary. Repair those generated forms
+    to ``unknown`` / ``JsonValue`` while leaving the generated operation and
+    all structural canvas fields intact.
+    """
+    json_value = static / "lib/api-client/models/JsonValue.ts"
+    source = json_value.read_text()
+    old = "export type JsonValue = {\n};"
+    if source.count(old) != 1:
+        raise ValueError("Expected exactly one generated empty JsonValue type")
+    json_value.write_text(source.replace(old, "export type JsonValue = unknown;"))
+
+    service = static / "lib/api-client/services/DefaultService.ts"
+    source = service.read_text()
+    import_marker = "import type { ContextDiagnosticsResponse }"
+    if source.count(import_marker) != 1:
+        raise ValueError("Expected generated service import marker")
+    source = source.replace(import_marker,
+                            "import type { JsonValue } from '../models/JsonValue';\n"
+                            + import_marker)
+    method_start = source.index("    public static postCanvasNewTabApiCanvasConvIdNewTabPost(")
+    method_end = source.index("    /**", method_start)
+    method = source[method_start:method_end]
+    old_data = "            data: Record<string, any>;"
+    if method.count(old_data) == 1:
+        method = method.replace(old_data, "            data: Record<string, JsonValue>;")
+    elif "            data:" in method:
+        raise ValueError("Unexpected generated canvas new-tab arbitrary data field")
+    # A contract-change test can deliberately rename ``data``. Leave that
+    # incompatible generated signature alone so tsc reports the unchanged
+    # caller rather than the generator masking it with its own failure.
+    source = source[:method_start] + method + source[method_end:]
+    service.write_text(source)
+
+
 def dump_openapi():
     app = create_app(Config(), None, None, None)
     openapi_schema = app.openapi()
@@ -60,7 +100,11 @@ def dump_openapi():
         "--client", "fetch"
     ]
     subprocess.run(cmd, check=True)
+    repair_arbitrary_json_types(static)
     for method, verb, url in (
+        ("postCanvasNewTabApiCanvasConvIdNewTabPost", "POST", "/api/canvas/{conv_id}/new_tab"),
+        ("postCanvasActiveTabApiCanvasConvIdActiveTabPost", "POST", "/api/canvas/{conv_id}/active_tab"),
+        ("postCanvasCloseTabApiCanvasConvIdCloseTabPost", "POST", "/api/canvas/{conv_id}/close_tab"),
         ("notificationsMarkReadApiNotificationsIdReadPost", "POST", "/api/notifications/{id}/read"),
         ("notificationsMarkAllReadApiNotificationsReadAllPost", "POST", "/api/notifications/read-all"),
         ("authLogoutApiAuthLogoutPost", "POST", "/api/auth/logout"),

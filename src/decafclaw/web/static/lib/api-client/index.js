@@ -371,22 +371,31 @@ var request2 = (config, options) => {
   const vaultGuard = options.method === "GET" && options.url === "/api/auth/me" && options.discardResponse;
   const diagnostics = options.method === "GET" && options.url === "/api/conversations/{id}/context";
   const sticky = options.url === "/api/sticky/{conv_id}";
+  const widgetCatalog = options.method === "GET" && options.url === "/api/widgets";
+  const canvasState = options.method === "GET" && options.url === "/api/canvas/{conv_id}";
+  const canvasNewTab = options.method === "POST" && options.url === "/api/canvas/{conv_id}/new_tab";
+  const canvasIgnoredMutation = options.method === "POST" && ["/api/canvas/{conv_id}/active_tab", "/api/canvas/{conv_id}/close_tab"].includes(options.url);
+  const canvas = canvasState || canvasNewTab || canvasIgnoredMutation;
   const listing = ["/api/conversations", "/api/conversations/archived", "/api/conversations/system"].includes(options.url);
   const patch = options.method === "PATCH" && options.url === "/api/conversations/{id}";
   const create = options.method === "POST" && options.url === "/api/conversations";
   const lifecycle = options.method === "DELETE" && options.url === "/api/conversations/{id}" || options.method === "POST" && ["/api/conversations/{id}/archive", "/api/conversations/{id}/unarchive"].includes(options.url);
   const folder = options.method === "POST" && options.url === "/api/conversations/folders" || ["PUT", "DELETE"].includes(options.method) && options.url === "/api/conversations/folders/{path}";
-  if (!notification && !diagnostics && !login && !logout && !vaultGuard && !create && !lifecycle && !folder && !patch && (options.method !== "GET" || !sticky && !listing)) {
+  if (!notification && !diagnostics && !login && !logout && !vaultGuard && !create && !lifecycle && !folder && !patch && !widgetCatalog && !canvas && (options.method !== "GET" || !sticky && !listing)) {
     return request(config, options);
   }
   return new CancelablePromise(async (resolve2, reject, onCancel) => {
     try {
       const query = listing && options.query?.folder === "" ? void 0 : options.query;
-      const url = folder ? `${config.BASE}/api/conversations/folders${options.path ? "/" + String(options.path.path).split("/").map(encodeURIComponent).join("/") : ""}` : patch || lifecycle || diagnostics || notificationRead && options.path ? `${config.BASE}${options.url.replace("{id}", encodeURIComponent(options.path.id))}${query ? getQueryString(query) : ""}` : sticky ? `${config.BASE}/api/sticky/${encodeURIComponent(options.path.conv_id)}` : `${config.BASE}${options.url}${query ? getQueryString(query) : ""}`;
+      const url = folder ? `${config.BASE}/api/conversations/folders${options.path ? "/" + String(options.path.path).split("/").map(encodeURIComponent).join("/") : ""}` : canvas ? `${config.BASE}${options.url.replace("{conv_id}", encodeURIComponent(options.path.conv_id))}` : patch || lifecycle || diagnostics || notificationRead && options.path ? `${config.BASE}${options.url.replace("{id}", encodeURIComponent(options.path.id))}${query ? getQueryString(query) : ""}` : sticky ? `${config.BASE}/api/sticky/${encodeURIComponent(options.path.conv_id)}` : `${config.BASE}${options.url}${query ? getQueryString(query) : ""}`;
       const headers = await getHeaders(config, options);
       if (onCancel.isCancelled) return;
       const response = await sendRequest(
-        { ...config, WITH_CREDENTIALS: true, CREDENTIALS: "same-origin" },
+        {
+          ...config,
+          WITH_CREDENTIALS: true,
+          CREDENTIALS: widgetCatalog ? "include" : "same-origin"
+        },
         options,
         url,
         getRequestBody(options),
@@ -394,12 +403,12 @@ var request2 = (config, options) => {
         headers,
         onCancel
       );
-      if (!((logout || notificationRead) && options.discardResponse)) catchErrorCodes(options, {
+      if (!((logout || notificationRead || canvasIgnoredMutation) && options.discardResponse)) catchErrorCodes(options, {
         url,
         ok: response.ok,
         status: response.status,
         statusText: response.statusText,
-        body: folder && !response.ok ? await response.json() : void 0
+        body: folder && !response.ok ? await response.json() : canvasNewTab && !response.ok ? await response.text() : void 0
       });
       if (options.discardResponse) {
         resolve2(void 0);
@@ -1125,11 +1134,12 @@ var DefaultService = class {
     });
   }
   /**
-   * Wrapper
-   * @returns any Successful Response
+   * List Widgets
+   * Return the widget catalog with cache-busted js URLs.
+   * @returns WidgetCatalogResponse Successful Response
    * @throws ApiError
    */
-  static wrapperApiWidgetsGet() {
+  static listWidgetsApiWidgetsGet() {
     return request2(OpenAPI, {
       method: "GET",
       url: "/api/widgets"
@@ -1147,14 +1157,22 @@ var DefaultService = class {
     });
   }
   /**
-   * Wrapper
-   * @returns any Successful Response
+   * Get Canvas State
+   * Load current canvas state for a conversation.
+   * @param convId
+   * @returns CanvasStateResponse Successful Response
    * @throws ApiError
    */
-  static wrapperApiCanvasConvIdGet() {
+  static getCanvasStateApiCanvasConvIdGet(convId) {
     return request2(OpenAPI, {
       method: "GET",
-      url: "/api/canvas/{conv_id}"
+      url: "/api/canvas/{conv_id}",
+      path: {
+        "conv_id": convId
+      },
+      errors: {
+        422: `Validation Error`
+      }
     });
   }
   /**
@@ -1176,37 +1194,49 @@ var DefaultService = class {
       }
     });
   }
-  /**
-   * Wrapper
-   * @returns any Successful Response
-   * @throws ApiError
-   */
-  static wrapperApiCanvasConvIdNewTabPost() {
+  static postCanvasNewTabApiCanvasConvIdNewTabPost(convId, requestBody, discardResponse = false) {
     return request2(OpenAPI, {
+      discardResponse,
       method: "POST",
-      url: "/api/canvas/{conv_id}/new_tab"
+      url: "/api/canvas/{conv_id}/new_tab",
+      path: {
+        "conv_id": convId
+      },
+      body: requestBody,
+      mediaType: "application/json",
+      errors: {
+        422: `Validation Error`
+      }
     });
   }
-  /**
-   * Wrapper
-   * @returns any Successful Response
-   * @throws ApiError
-   */
-  static wrapperApiCanvasConvIdActiveTabPost() {
+  static postCanvasActiveTabApiCanvasConvIdActiveTabPost(convId, requestBody, discardResponse = false) {
     return request2(OpenAPI, {
+      discardResponse,
       method: "POST",
-      url: "/api/canvas/{conv_id}/active_tab"
+      url: "/api/canvas/{conv_id}/active_tab",
+      path: {
+        "conv_id": convId
+      },
+      body: requestBody,
+      mediaType: "application/json",
+      errors: {
+        422: `Validation Error`
+      }
     });
   }
-  /**
-   * Wrapper
-   * @returns any Successful Response
-   * @throws ApiError
-   */
-  static wrapperApiCanvasConvIdCloseTabPost() {
+  static postCanvasCloseTabApiCanvasConvIdCloseTabPost(convId, requestBody, discardResponse = false) {
     return request2(OpenAPI, {
+      discardResponse,
       method: "POST",
-      url: "/api/canvas/{conv_id}/close_tab"
+      url: "/api/canvas/{conv_id}/close_tab",
+      path: {
+        "conv_id": convId
+      },
+      body: requestBody,
+      mediaType: "application/json",
+      errors: {
+        422: `Validation Error`
+      }
     });
   }
   /**

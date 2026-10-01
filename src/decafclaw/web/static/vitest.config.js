@@ -15,6 +15,7 @@ export default defineConfig({
     // `@milkdown/kit/core` etc. must still resolve to the npm package.
     alias: [
       { find: /^@milkdown\/kit$/, replacement: here('./milkdown-entry.js') },
+      { find: /^hljs$/, replacement: here('./hljs-entry.js') },
       // Widgets are served from /widgets/{tier}/{name}/widget.js, not from
       // /static/, so they import shared modules by absolute URL
       // (`/static/lib/…`) — a relative `../../lib/…` would resolve against

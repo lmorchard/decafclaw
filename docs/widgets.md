@@ -152,6 +152,12 @@ The browser dynamic-imports this module the first time the widget is
 needed. Use bare specifiers like `'lit'` — they resolve through the
 existing importmap.
 
+The browser loads descriptors through the generated `GET /api/widgets`
+contract. Descriptor names and `js_url` values remain typed through the
+catalog and widget host; `data_schema` remains arbitrary JSON because each
+widget owns its schema. The host imports the contract-provided `js_url`, so
+admin and bundled widget asset delivery keeps its existing cache-busted URL.
+
 ## Input widgets (Phase 2)
 
 Some widgets collect structured input from the user. They pause the
@@ -307,7 +313,8 @@ gradient at the bottom. Two buttons appear below the fade:
 - **Expand** — toggles full inline render (removes `max-height` cap).
 - **Open in Canvas** — POSTs to `/api/canvas/{conv_id}/new_tab` to push
   the widget into a new canvas tab. The panel opens on the right side of
-  the layout.
+  the layout. Canvas-aware bundled widgets use the generated request contract
+  for this operation while preserving each widget's heterogeneous payload.
 
 **Canvas mode:** full content rendered with no truncation. Scroll
 position is preserved across `canvas_update` events (clamped to current
