@@ -81,6 +81,7 @@ export function subscribe(callback) {
 
 export function getActiveConvId() { return _state.active; }
 
+/** @param {string|null} convId */
 export async function setActiveConv(convId) {
   _state.active = convId;
   if (!convId) { _publish(); return; }
@@ -152,7 +153,10 @@ export function resummon() {
   _publish();
 }
 
-/** User clicks a tab — switch active. POSTs to server, optimistic UI. */
+/**
+ * User clicks a tab — switch active. POSTs to server, optimistic UI.
+ * @param {string} tabId
+ */
 export async function switchToTab(tabId) {
   const convId = _state.active;
   if (!convId) return;
@@ -215,7 +219,10 @@ export async function closeTabById(convId, tabId) {
   }
 }
 
-/** User clicks [×] on a tab — confirm, then close via REST. */
+/**
+ * User clicks [×] on a tab — confirm, then close via REST.
+ * @param {string} tabId
+ */
 export async function closeTabFromUi(tabId) {
   const convId = _state.active;
   if (!convId) return;
