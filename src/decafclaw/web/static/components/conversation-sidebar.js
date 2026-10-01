@@ -32,10 +32,12 @@ export class ConversationSidebar extends LitElement {
 
   constructor() {
     super();
+    /** @type {import("../lib/conversation-store.js").ConversationStore | null} */
     this.store = null;
     this.authClient = null;
+    /** @type {Array<import("../lib/conversation-store.js").ConversationMeta | import("../lib/conversation-store.js").SystemConversationMeta>} */
     this._conversations = [];
-    /** @type {Array<{name: string, path: string, virtual?: boolean}>} */
+    /** @type {import("../lib/conversation-store.js").FolderEntry[]} */
     this._chatFolders = [];
     /** @type {string} which section: '' (active), '_archived', '_system' */
     this._chatSection = '';
@@ -405,7 +407,7 @@ export class ConversationSidebar extends LitElement {
 
   /**
    * Render a single conversation item.
-   * @param {object} conv
+   * @param {import("../lib/conversation-store.js").ConversationMeta | import("../lib/conversation-store.js").SystemConversationMeta} conv
    * @param {object} [opts]
    * @param {boolean}  [opts.isActive]    - Whether this item is currently selected
    * @param {string}   [opts.extraClass]  - Additional CSS class (e.g. 'archived', 'system')
@@ -530,7 +532,7 @@ export class ConversationSidebar extends LitElement {
         ` : nothing}
         ${this.#renderChatBreadcrumbs()}
         ${this._chatFolders.map(f => {
-          const isVirtual = f.virtual || f.path === '_archived' || f.path === '_system' || this._chatSection !== '';
+          const isVirtual = ('virtual' in f && f.virtual) || f.path === '_archived' || f.path === '_system' || this._chatSection !== '';
           return html`
             <div class="conv-item wiki-item wiki-folder-item"
               @click=${() => {
@@ -571,8 +573,8 @@ export class ConversationSidebar extends LitElement {
             ? this._conversations.map(c => this.#renderConversationItem(c, {
                 isActive: c.conv_id === this._activeId,
                 extraClass: 'system',
-                badge: c.conv_type,
-                titleSuffix: c.conv_type,
+                badge: 'conv_type' in c ? c.conv_type : '',
+                titleSuffix: 'conv_type' in c ? c.conv_type : '',
               }))
             : this._conversations.map(c => this.#renderConversationItem(c, {
                 isActive: c.conv_id === this._activeId,

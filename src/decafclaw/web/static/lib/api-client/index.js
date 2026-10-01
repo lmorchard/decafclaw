@@ -364,12 +364,15 @@ var request = (config, options) => {
 
 // src/decafclaw/web/static/lib/api-client/core/request.ts
 var request2 = (config, options) => {
-  if (options.method !== "GET" || options.url !== "/api/sticky/{conv_id}") {
+  const sticky = options.url === "/api/sticky/{conv_id}";
+  const listing = ["/api/conversations", "/api/conversations/archived", "/api/conversations/system"].includes(options.url);
+  if (options.method !== "GET" || !sticky && !listing) {
     return request(config, options);
   }
   return new CancelablePromise(async (resolve2, reject, onCancel) => {
     try {
-      const url = `${config.BASE}/api/sticky/${encodeURIComponent(options.path.conv_id)}`;
+      const query = listing && options.query?.folder === "" ? void 0 : options.query;
+      const url = sticky ? `${config.BASE}/api/sticky/${encodeURIComponent(options.path.conv_id)}` : `${config.BASE}${options.url}${query ? getQueryString(query) : ""}`;
       const headers = await getHeaders(config, options);
       if (onCancel.isCancelled) return;
       const response = await sendRequest(
@@ -482,14 +485,27 @@ var DefaultService = class {
     });
   }
   /**
-   * Wrapper
-   * @returns any Successful Response
+   * List Conversations
+   * List conversations and subfolders for a specific folder.
+   *
+   * Query params:
+   * folder — folder path (default: top-level)
+   *
+   * Returns ``{folder, folders, conversations}`` mirroring vault_list pattern.
+   * @param folder
+   * @returns ConversationListingResponse Successful Response
    * @throws ApiError
    */
-  static wrapperApiConversationsGet() {
+  static listConversationsApiConversationsGet(folder = "") {
     return request2(OpenAPI, {
       method: "GET",
-      url: "/api/conversations"
+      url: "/api/conversations",
+      query: {
+        "folder": folder
+      },
+      errors: {
+        422: `Validation Error`
+      }
     });
   }
   /**
@@ -504,25 +520,41 @@ var DefaultService = class {
     });
   }
   /**
-   * Wrapper
-   * @returns any Successful Response
+   * List Archived Conversations
+   * List archived conversations, optionally filtered by folder.
+   * @param folder
+   * @returns ConversationListingResponse Successful Response
    * @throws ApiError
    */
-  static wrapperApiConversationsArchivedGet() {
+  static listArchivedConversationsApiConversationsArchivedGet(folder = "") {
     return request2(OpenAPI, {
       method: "GET",
-      url: "/api/conversations/archived"
+      url: "/api/conversations/archived",
+      query: {
+        "folder": folder
+      },
+      errors: {
+        422: `Validation Error`
+      }
     });
   }
   /**
-   * Wrapper
-   * @returns any Successful Response
+   * List System Conversations
+   * List system conversations, grouped by type sub-folders.
+   * @param folder
+   * @returns SystemConversationListingResponse Successful Response
    * @throws ApiError
    */
-  static wrapperApiConversationsSystemGet() {
+  static listSystemConversationsApiConversationsSystemGet(folder = "") {
     return request2(OpenAPI, {
       method: "GET",
-      url: "/api/conversations/system"
+      url: "/api/conversations/system",
+      query: {
+        "folder": folder
+      },
+      errors: {
+        422: `Validation Error`
+      }
     });
   }
   /**
