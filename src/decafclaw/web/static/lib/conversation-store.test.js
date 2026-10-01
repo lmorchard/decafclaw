@@ -313,3 +313,147 @@ describe.each([
     expect(log).toHaveBeenCalledWith(expect.any(String), error);
   });
 });
+
+// Lifecycle tests exercise actual store callers through the emitted client.
+describe('conversation creation transport', () => {
+  let store, ws, fetchMock, log;
+  const metadata = { conv_id: 'created', title: '日本語 & + #', created_at: 'then', updated_at: 'now', model: 'chosen' };
+  beforeEach(() => {
+    ws = new FakeWS();
+    store = makeStore(ws);
+    fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    log = vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+  afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+
+  it.each([false, true])('sends optional inputs (%s), inserts metadata, selects and emits', async (optional) => {
+    const existing = { ...metadata, conv_id: 'existing', title: 'Existing' };
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ conversations: [existing], folders: [], folder: '' })));
+    await store.listConversations();
+    store.selectConversation('existing');
+    store.sendMessage('old message');
+    ws.sent = [];
+    fetchMock.mockClear();
+    const change = vi.fn();
+    store.addEventListener('change', change);
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify(metadata), { status: 201 }));
+    await store.createConversation(metadata.title, optional ? 'chosen' : '', optional ? 'Work/日本語 & + #' : '');
+    const [url, options] = fetchMock.mock.calls[0];
+    expect(url).toBe('/api/conversations');
+    expect(options.method).toBe('POST');
+    expect(options.credentials).toBe('same-origin');
+    expect(new Headers(options.headers).get('content-type')).toBe('application/json');
+    expect(JSON.parse(options.body)).toEqual(optional
+      ? { title: metadata.title, model: 'chosen', folder: 'Work/日本語 & + #' } : { title: metadata.title });
+    expect(store.conversations).toEqual([metadata, existing]);
+    expect(store.currentMessages).toEqual([]);
+    expect(store.currentConvId).toBe('created');
+    // Selection retains the established reset; conv_selected later supplies the model.
+    expect(store.activeModel).toBe('');
+    expect(ws.sent.map(m => m.type)).toEqual([MESSAGE_TYPES.SELECT_CONV, MESSAGE_TYPES.LOAD_HISTORY, MESSAGE_TYPES.LIST_COMMANDS]);
+    expect(change).toHaveBeenCalledTimes(1);
+    expect(log).not.toHaveBeenCalled();
+  });
+
+  it('flushes queued text and uploads attachments after selection, exactly once', async () => {
+    store.setModel('chosen');
+    const file = new File(['data'], 'note.txt', { type: 'text/plain' });
+    const uploaded = { filename: 'note.txt', path: 'uploads/note.txt', mime_type: 'text/plain' };
+    const sent = new Promise(resolve => {
+      const original = ws.send.bind(ws);
+      ws.send = message => { original(message); if (message.type === MESSAGE_TYPES.SEND) resolve(message); };
+    });
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify(metadata), { status: 201 }));
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify(uploaded)));
+    store.sendMessage('queued text', [{ file }]);
+    expect(await sent).toEqual({ type: MESSAGE_TYPES.SEND, conv_id: 'created', text: 'queued text', attachments: [uploaded] });
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ title: '', model: 'chosen' });
+    expect(fetchMock.mock.calls[1][0]).toBe('/api/upload/created');
+    expect(fetchMock.mock.calls[1][1].body.get('file').name).toBe('note.txt');
+    expect(store.currentMessages[0]).toMatchObject({ content: 'queued text', attachments: [uploaded] });
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ ...metadata, conv_id: 'second' }), { status: 201 }));
+    await store.createConversation();
+    expect(ws.sent.filter(m => m.type === MESSAGE_TYPES.SEND)).toHaveLength(1);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it.each(['http', 'network', 'json'])('preserves state on %s failure', async failure => {
+    store.selectConversation('existing');
+    store.sendMessage('existing message');
+    const change = vi.fn();
+    store.addEventListener('change', change);
+    const messages = store.currentMessages;
+    if (failure === 'network') fetchMock.mockRejectedValueOnce(new Error('offline'));
+    else fetchMock.mockResolvedValueOnce(new Response('malformed', { status: failure === 'http' ? 403 : 201 }));
+    await store.createConversation();
+    expect(store.conversations).toEqual([]);
+    expect(store.currentConvId).toBe('existing');
+    expect(store.currentMessages).toBe(messages);
+    expect(change).not.toHaveBeenCalled();
+    if (failure === 'http') expect(log).not.toHaveBeenCalled();
+    else expect(log).toHaveBeenCalledWith('Failed to create conversation:', expect.any(Error));
+  });
+});
+
+describe.each([
+  ['archiveConversation', 'POST', '/archive', false, true, 1],
+  ['unarchiveConversation', 'POST', '/unarchive', true, false, 1],
+  ['deleteConversation', 'DELETE', '', true, true, 2],
+])('lifecycle %s transport', (method, verb, suffix, archived, clears, events) => {
+  const id = 'web-user-日本語 & + #%?';
+  let store, fetchMock, log, change;
+  beforeEach(async () => {
+    store = makeStore(new FakeWS());
+    fetchMock = vi.fn(async () => new Response(JSON.stringify({ folder: 'Work/Nested', folders: [], conversations: [] })));
+    vi.stubGlobal('fetch', fetchMock);
+    await store.listConversations('Work/Nested');
+    await store.listArchivedConversations('Work/Nested');
+    store.selectConversation(id);
+    store.sendMessage('existing');
+    change = vi.fn();
+    store.addEventListener('change', change);
+    log = vi.spyOn(console, 'error').mockImplementation(() => {});
+    fetchMock.mockClear();
+  });
+  afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+
+  it.each(['{"ok":true}', '', 'malformed'])('ignores success acknowledgement (%s) and refreshes state', async body => {
+    fetchMock.mockResolvedValueOnce(new Response(body));
+    const refreshed = { folder: 'Work/Nested', folders: [{ name: 'Child', path: 'Work/Nested/Child', count: 2 }], conversations: [] };
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify(refreshed)));
+    await store[method](id);
+    const [url, options] = fetchMock.mock.calls[0];
+    expect(url).toBe(`/api/conversations/${encodeURIComponent(id)}${suffix}`);
+    expect(options.method).toBe(verb);
+    expect(options.credentials).toBe('same-origin');
+    expect(options.body).toBeUndefined();
+    expect(fetchMock.mock.calls[1][0]).toBe(`/api/conversations${archived ? '/archived' : ''}?folder=Work%2FNested`);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(store.currentConvId).toBe(clears ? null : id);
+    expect(store.currentMessages).toHaveLength(clears ? 0 : 1);
+    expect(archived ? store.archivedFolders : store.folders).toEqual(refreshed.folders);
+    expect(change).toHaveBeenCalledTimes(events);
+    expect(log).not.toHaveBeenCalled();
+  });
+
+  it('preserves an unrelated selection on success', async () => {
+    fetchMock.mockResolvedValueOnce(new Response(''));
+    await store[method]('another');
+    expect(store.currentConvId).toBe(id);
+    expect(store.currentMessages).toHaveLength(1);
+  });
+
+  it.each([401, 404, 500, 'network'])('preserves state and refresh count on failure (%s)', async status => {
+    const messages = store.currentMessages;
+    if (status === 'network') fetchMock.mockRejectedValueOnce(new Error('offline'));
+    else fetchMock.mockResolvedValueOnce(new Response('malformed', { status }));
+    await store[method](id);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(store.currentConvId).toBe(id);
+    expect(store.currentMessages).toBe(messages);
+    expect(change).not.toHaveBeenCalled();
+    if (status === 'network') expect(log).toHaveBeenCalledWith(`Failed to ${method.replace('Conversation', '')} conversation:`, expect.any(Error));
+    else expect(log).not.toHaveBeenCalled();
+  });
+});

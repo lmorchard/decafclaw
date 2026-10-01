@@ -2,8 +2,10 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { ConversationCreateResponse } from '../models/ConversationCreateResponse';
 import type { ConversationFolderCreateResponse } from '../models/ConversationFolderCreateResponse';
 import type { ConversationFolderResponse } from '../models/ConversationFolderResponse';
+import type { ConversationLifecycleResponse } from '../models/ConversationLifecycleResponse';
 import type { ConversationListingResponse } from '../models/ConversationListingResponse';
 import type { ConversationPatchResponse } from '../models/ConversationPatchResponse';
 import type { StickyResponse } from '../models/StickyResponse';
@@ -124,14 +126,25 @@ export class DefaultService {
         });
     }
     /**
-     * Wrapper
-     * @returns any Successful Response
+     * Create Conversation
+     * Create a new conversation, optionally in a folder with a model.
+     * @param requestBody
+     * @returns ConversationCreateResponse Successful Response
      * @throws ApiError
      */
-    public static wrapperApiConversationsPost(): CancelablePromise<any> {
+    public static createConversationApiConversationsPost(
+        requestBody: {
+            title?: string;
+            model?: string;
+            folder?: string;
+            effort?: string;
+        },
+    ): CancelablePromise<ConversationCreateResponse> {
         return __request(OpenAPI, {
             method: 'POST',
             url: '/api/conversations',
+            body: requestBody,
+            mediaType: 'application/json',
         });
     }
     /**
@@ -233,14 +246,33 @@ export class DefaultService {
         });
     }
     /**
-     * Wrapper
-     * @returns any Successful Response
+     * Delete Conversation
+     * Permanently delete a conversation and all associated files.
+     * @param id
+     * @returns ConversationLifecycleResponse Successful Response
      * @throws ApiError
      */
-    public static wrapperApiConversationsIdDelete(): CancelablePromise<any> {
+    public static deleteConversationApiConversationsIdDelete(
+        id: string,
+    ): CancelablePromise<ConversationLifecycleResponse>;
+    public static deleteConversationApiConversationsIdDelete(
+        id: string,
+        discardResponse: true,
+    ): CancelablePromise<void>;
+    public static deleteConversationApiConversationsIdDelete(
+        id: string,
+        discardResponse = false,
+    ): CancelablePromise<ConversationLifecycleResponse | void> {
         return __request(OpenAPI, {
+            discardResponse,
             method: 'DELETE',
             url: '/api/conversations/{id}',
+            path: {
+                'id': id,
+            },
+            errors: {
+                422: `Validation Error`,
+            },
         });
     }
     /**
@@ -381,25 +413,63 @@ export class DefaultService {
         });
     }
     /**
-     * Wrapper
-     * @returns any Successful Response
+     * Archive Conversation
+     * Archive a conversation (hide from list, keep data).
+     * @param id
+     * @returns ConversationLifecycleResponse Successful Response
      * @throws ApiError
      */
-    public static wrapperApiConversationsIdArchivePost(): CancelablePromise<any> {
+    public static archiveConversationApiConversationsIdArchivePost(
+        id: string,
+    ): CancelablePromise<ConversationLifecycleResponse>;
+    public static archiveConversationApiConversationsIdArchivePost(
+        id: string,
+        discardResponse: true,
+    ): CancelablePromise<void>;
+    public static archiveConversationApiConversationsIdArchivePost(
+        id: string,
+        discardResponse = false,
+    ): CancelablePromise<ConversationLifecycleResponse | void> {
         return __request(OpenAPI, {
+            discardResponse,
             method: 'POST',
             url: '/api/conversations/{id}/archive',
+            path: {
+                'id': id,
+            },
+            errors: {
+                422: `Validation Error`,
+            },
         });
     }
     /**
-     * Wrapper
-     * @returns any Successful Response
+     * Unarchive Conversation
+     * Unarchive a conversation (restore to active list).
+     * @param id
+     * @returns ConversationLifecycleResponse Successful Response
      * @throws ApiError
      */
-    public static wrapperApiConversationsIdUnarchivePost(): CancelablePromise<any> {
+    public static unarchiveConversationApiConversationsIdUnarchivePost(
+        id: string,
+    ): CancelablePromise<ConversationLifecycleResponse>;
+    public static unarchiveConversationApiConversationsIdUnarchivePost(
+        id: string,
+        discardResponse: true,
+    ): CancelablePromise<void>;
+    public static unarchiveConversationApiConversationsIdUnarchivePost(
+        id: string,
+        discardResponse = false,
+    ): CancelablePromise<ConversationLifecycleResponse | void> {
         return __request(OpenAPI, {
+            discardResponse,
             method: 'POST',
             url: '/api/conversations/{id}/unarchive',
+            path: {
+                'id': id,
+            },
+            errors: {
+                422: `Validation Error`,
+            },
         });
     }
     /**

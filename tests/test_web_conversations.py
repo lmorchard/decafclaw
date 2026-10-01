@@ -2,6 +2,7 @@
 
 import os
 import time
+from unittest.mock import AsyncMock
 from urllib.parse import quote
 
 import pytest
@@ -1220,3 +1221,146 @@ async def test_folder_operations_are_per_user(authed_client, folder_index, http_
     assert await other.folder_exists("private")
     assert await other.get_folder("private-conv") == "private"
     assert not await folder_index.folder_exists("private")
+
+
+def test_lifecycle_openapi_contracts(app):
+    schema = app.openapi()
+    create = schema['paths']['/api/conversations']['post']
+    body = create['requestBody']['content']['application/json']['schema']
+    assert set(body['properties']) == {'title', 'model', 'folder', 'effort'}
+    for field in body['properties'].values():
+        assert field['type'] == 'string'
+    response = create['responses']['201']['content']['application/json']['schema']
+    model = schema['components']['schemas'][response['$ref'].split('/')[-1]]
+    assert set(model['required']) == {'conv_id', 'title', 'created_at', 'updated_at'}
+    assert set(model['properties']) == set(model['required']) | {'folder', 'model'}
+    for path, method in [('/api/conversations/{id}', 'delete'),
+                         ('/api/conversations/{id}/archive', 'post'),
+                         ('/api/conversations/{id}/unarchive', 'post')]:
+        operation = schema['paths'][path][method]
+        assert operation['parameters'] == [{'name': 'id', 'in': 'path', 'required': True,
+                                           'schema': {'type': 'string', 'title': 'Id'}}]
+        response = operation['responses']['200']['content']['application/json']['schema']
+        acknowledgement = schema['components']['schemas'][response['$ref'].split('/')[-1]]
+        assert acknowledgement['required'] == ['ok']
+        assert acknowledgement['properties']['ok']['const'] is True
+
+
+@pytest.mark.parametrize('method,path', [('POST', '/api/conversations'),
+    ('POST', '/api/conversations/missing/archive'), ('POST', '/api/conversations/missing/unarchive'),
+    ('DELETE', '/api/conversations/missing')])
+async def test_lifecycle_auth_before_body_or_lookup(unauthed_client, method, path):
+    response = await unauthed_client.request(method, path, content='not json',
+                                             headers={'content-type': 'application/json'})
+    assert response.status_code == 401
+    assert response.json() == {'error': 'not authenticated'}
+
+
+@pytest.mark.parametrize('method,suffix', [('POST', '/archive'), ('POST', '/unarchive'), ('DELETE', '')])
+@pytest.mark.parametrize('foreign', [False, True])
+async def test_lifecycle_missing_or_foreign(authed_client, http_config, app, monkeypatch, method, suffix, foreign):
+    index = ConversationIndex(http_config)
+    conv_id = index.create('otheruser', 'Private').conv_id if foreign else 'missing'
+    kill = AsyncMock()
+    monkeypatch.setattr(app.state.terminal_registry, 'kill_sessions_for_conv', kill)
+    response = await authed_client.request(method, f'/api/conversations/{conv_id}{suffix}')
+    assert response.status_code == 404
+    assert response.json() == {'error': 'not found'}
+    kill.assert_not_awaited()
+    if foreign:
+        conv = ConversationIndex(http_config).get(conv_id)
+        assert conv is not None and conv.archived is False
+
+
+@pytest.mark.parametrize('body', [{}, {'title': ''}, {'title': None}, {'title': False}, {'title': 0}])
+async def test_create_lifecycle_title_defaults(authed_client, body):
+    response = await authed_client.post('/api/conversations', json=body)
+    assert response.status_code == 201
+    assert response.json()['title'] == 'New conversation'
+    assert set(response.json()) == {'conv_id', 'title', 'created_at', 'updated_at'}
+
+
+@pytest.mark.parametrize('body,expected', [
+    ({'effort': ' legacy '}, 'legacy'),
+    ({'model': ' chosen ', 'effort': 'legacy'}, 'chosen'),
+    ({'model': '', 'effort': 'legacy'}, ''),
+    ({'model': 42}, '42'),
+    ({'model': None}, 'None'),
+])
+async def test_create_lifecycle_model_coercion(authed_client, http_config, body, expected):
+    from decafclaw.archive import read_archive
+    from decafclaw.config_types import ModelConfig
+    http_config.model_configs = {name: ModelConfig() for name in ['legacy', 'chosen', '42', 'None']}
+    response = await authed_client.post('/api/conversations', json=body)
+    assert response.status_code == 201
+    data = response.json()
+    assert data.get('model', '') == expected
+    assert ('model' in data) is bool(expected)
+    messages = read_archive(http_config, data['conv_id'])
+    assert [(message['role'], message['content']) for message in messages] == ([('model', expected)] if expected else [])
+
+
+@pytest.mark.parametrize('folder,normalized', [('  Work/日本語 & + #  ', 'Work/日本語 & + #'), (42, '42'),
+                                               (None, 'None'), ('  ', '')])
+async def test_create_lifecycle_folder_coercion(authed_client, folder_index, folder, normalized):
+    if normalized:
+        await folder_index.create_folder(normalized)
+    response = await authed_client.post('/api/conversations', json={'folder': folder, 'title': '日本語 & + #'})
+    assert response.status_code == 201
+    data = response.json()
+    assert data['title'] == '日本語 & + #'
+    assert data.get('folder', '') == normalized
+    assert ('folder' in data) is bool(normalized)
+    listing = await authed_client.get('/api/conversations', params={'folder': normalized})
+    assert any(c['conv_id'] == data['conv_id'] for c in listing.json()['conversations'])
+
+
+@pytest.mark.parametrize('body,error', [({'model': 'missing', 'folder': 'missing'}, 'Unknown model: missing'),
+                                      ({'folder': 'missing'}, 'Folder does not exist')])
+async def test_create_lifecycle_invalid_inputs_do_not_create(authed_client, http_config, body, error):
+    response = await authed_client.post('/api/conversations', json=body)
+    assert response.status_code == 400
+    assert response.json() == {'error': error}
+    assert ConversationIndex(http_config).list_for_user('testuser') == []
+
+
+async def test_lifecycle_preserves_then_deletes_storage(authed_client, http_config, folder_index, app, monkeypatch):
+    from decafclaw.archive import read_archive
+    await folder_index.create_folder('Work/Nested')
+    response = await authed_client.post('/api/conversations', json={'folder': 'Work/Nested'})
+    conv_id = response.json()['conv_id']
+    append_message(http_config, conv_id, {'role': 'user', 'content': 'kept'})
+    directory = http_config.workspace_path / 'conversations' / conv_id
+    (directory / 'uploads').mkdir()
+    (directory / 'uploads' / 'file.txt').write_text('attachment')
+    (directory / 'workflow.json').write_text('{}')
+    for suffix, archived in [('archive', True), ('unarchive', False)]:
+        response = await authed_client.post(f'/api/conversations/{conv_id}/{suffix}')
+        assert response.status_code == 200 and response.json() == {'ok': True}
+        conv = ConversationIndex(http_config).get(conv_id)
+        assert conv is not None and conv.archived is archived
+        assert read_archive(http_config, conv_id)[0]['content'] == 'kept'
+        listing = await authed_client.get('/api/conversations/archived' if archived else '/api/conversations',
+                                          params={'folder': 'Work/Nested'})
+        assert [c['conv_id'] for c in listing.json()['conversations']] == [conv_id]
+    killed = []
+
+    async def kill_before_cleanup(identifier):
+        assert directory.exists()
+        killed.append(identifier)
+
+    monkeypatch.setattr(app.state.terminal_registry, 'kill_sessions_for_conv', kill_before_cleanup)
+    response = await authed_client.delete(f'/api/conversations/{conv_id}')
+    assert response.status_code == 200 and response.json() == {'ok': True}
+    assert killed == [conv_id]
+    assert not directory.exists()
+    assert ConversationIndex(http_config).get(conv_id) is None
+    # Assignment cleanup makes the now-empty folder deletable.
+    response = await authed_client.delete('/api/conversations/folders/Work/Nested')
+    assert response.status_code == 200
+
+
+async def test_create_lifecycle_keeps_legacy_title_value(authed_client):
+    response = await authed_client.post('/api/conversations', json={'title': 123})
+    assert response.status_code == 201
+    assert response.json()['title'] == 123

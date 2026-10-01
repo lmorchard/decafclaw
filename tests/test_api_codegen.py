@@ -135,6 +135,7 @@ def test_browser_uses_clean_built_client(source_tree, config):
     listing_requests = []
     patch_requests = []
     folder_requests = []
+    lifecycle_requests = []
 
     @app.middleware("http")
     async def record_listing_request(request, call_next):
@@ -149,6 +150,11 @@ def test_browser_uses_clean_built_client(source_tree, config):
             folder_requests.append((request.method, request.scope["path"],
                                     await request.json() if request.method != "DELETE" else None,
                                     bool(request.cookies)))
+        if (request.method in {"POST", "DELETE"} and request.url.path.startswith("/api/conversations")
+                and not request.url.path.startswith("/api/conversations/folders")):
+            lifecycle_requests.append((request.method, request.scope["path"],
+                                       await request.json() if request.url.path == "/api/conversations" else None,
+                                       bool(request.cookies)))
         return await call_next(request)
 
     # Bind before starting the server, avoiding a free-port check/use race.
@@ -263,6 +269,31 @@ def test_browser_uses_clean_built_client(source_tree, config):
                     ("PUT", "/api/conversations/folders/" + folder_path, {"path": renamed_path}, True),
                     ("DELETE", "/api/conversations/folders/" + renamed_path, None, True),
                 ]
+                lifecycle_requests.clear()
+                lifecycle = page.evaluate("""async (folder) => {
+                    const { ConversationStore } = await import('/static/lib/conversation-store.js');
+                    const ws = new EventTarget();
+                    ws.send = () => {};
+                    const store = new ConversationStore(ws);
+                    await store.createConversation('Lifecycle 日本語 & + #', '', folder);
+                    const created = store.conversations[0];
+                    await store.archiveConversation(created.conv_id);
+                    const deselected = store.currentConvId === null;
+                    await store.unarchiveConversation(created.conv_id);
+                    await store.deleteConversation(created.conv_id);
+                    return { created, deselected };
+                }""", nested)
+                created = lifecycle["created"]
+                assert created["title"] == "Lifecycle 日本語 & + #"
+                assert created["folder"] == nested
+                assert lifecycle["deselected"] is True
+                assert lifecycle_requests == [
+                    ("POST", "/api/conversations", {"title": created["title"], "folder": nested}, True),
+                    ("POST", f"/api/conversations/{created['conv_id']}/archive", None, True),
+                    ("POST", f"/api/conversations/{created['conv_id']}/unarchive", None, True),
+                    ("DELETE", f"/api/conversations/{created['conv_id']}", None, True),
+                ]
+                assert ConversationIndex(config).get(created["conv_id"]) is None
                 assert not errors, errors
                 assert not failed_requests, failed_requests
             finally:
@@ -403,4 +434,42 @@ def test_folder_contract_drift_fails_at_unchanged_callers(source_tree, contract)
         assert f"conversation-store.js({target}," in diagnostic, output
         assert ("TS2322" if contract == "body" else "TS2345") in diagnostic, output
         assert "'string' is not assignable to" in diagnostic and "'number'" in diagnostic, output
+    assert caller.read_bytes() == original_caller
+
+
+@pytest.mark.parametrize("contract", ["title", "model", "folder", "response", "archive", "unarchive", "delete"])
+def test_lifecycle_contract_drift_fails_at_unchanged_caller(source_tree, contract):
+    caller = source_tree / STATIC_REL / "lib/conversation-store.js"
+    original_caller = caller.read_bytes()
+    result, output = run_make(source_tree, "check-js")
+    assert result.returncode == 0, output
+    backend = source_tree / "src/decafclaw/http_server.py"
+    original = backend.read_text()
+    if contract in {"archive", "unarchive", "delete"}:
+        changed = original.replace(f"async def {contract}_conversation(request: Request, id: str)",
+                                   f"async def {contract}_conversation(request: Request, id: int)")
+        target_text = f"await DefaultService.{contract}Conversation"
+        code = "TS2345"
+    else:
+        model = "ConversationCreateResponse(TypedDict)" if contract == "response" else "ConversationCreateRequest(BaseModel)"
+        start = original.index(f"class {model}:")
+        end = original.index("\n\n\n", start)
+        field = "title" if contract == "response" else contract
+        changed = original[:start] + original[start:end].replace(f"    {field}: str", f"    {field}: int") + original[end:]
+        target_text = "this.#conversations.unshift(conv)" if contract == "response" else (
+            "title, ...(model" if contract == "title" else "const conv = await DefaultService.createConversation")
+        code = "TS2322" if contract == "title" else "TS2345"
+    assert changed != original
+    backend.write_text(changed)
+    result, output = run_make(source_tree, "check-js")
+    assert result.returncode != 0, output
+    diagnostics = [line for line in output.splitlines() if "error TS" in line]
+    target = next(i for i, line in enumerate(original_caller.decode().splitlines(), 1) if target_text in line)
+    assert len(diagnostics) == 1, output
+    assert f"conversation-store.js({target}," in diagnostics[0] and code in diagnostics[0], output
+    if contract == "response":
+        assert "Types of property 'title' are incompatible" in output, output
+        assert "Type 'number' is not assignable to type 'string'" in output, output
+    else:
+        assert "'string' is not assignable to" in output and "'number'" in output, output
     assert caller.read_bytes() == original_caller
