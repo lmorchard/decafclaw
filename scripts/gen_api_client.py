@@ -137,6 +137,7 @@ def dump_openapi():
         ("createConvFolderApiConversationsFoldersPost", "POST", "/api/conversations/folders"),
         ("deleteConvFolderApiConversationsFoldersPathDelete", "DELETE", "/api/conversations/folders/{path}"),
         ("renameConvFolderApiConversationsFoldersPathPut", "PUT", "/api/conversations/folders/{path}"),
+        ("wrapperApiWorkspacePathDelete", "DELETE", "/api/workspace/{path}"),
     ):
         add_discard_overload(static / "lib/api-client/services/DefaultService.ts", method, verb, url)
     service = static / "lib/api-client/services/DefaultService.ts"

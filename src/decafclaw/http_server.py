@@ -185,6 +185,21 @@ class WorkspaceTextResponse(BaseModel):
     readonly: bool
 
 
+class WorkspaceSaveRequest(BaseModel):
+    content: str
+    modified: float | None = None
+
+
+class WorkspaceWriteResponse(BaseModel):
+    ok: Literal[True]
+    modified: float
+    path: str | None = None
+
+
+class WorkspaceDeleteResponse(BaseModel):
+    ok: Literal[True]
+
+
 class VaultCompletion(BaseModel):
     type: Literal["vault"]
     id: str
@@ -2824,8 +2839,30 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> FastAPI:
                      "schema": {"type": "string"},
                  }]}),
         APIRoute("/api/workspace/{path:path}", serve_workspace_file, methods=["GET"]),
-        APIRoute("/api/workspace/{path:path}", workspace_write, methods=["PUT"]),
-        APIRoute("/api/workspace/{path:path}", workspace_delete, methods=["DELETE"]),
+        # Describe both existing PUT forms without moving parsing into FastAPI:
+        # saves have an optional JSON body schema, while renames send only the
+        # rename_to query. The handlers retain their legacy 400 responses.
+        APIRoute("/api/workspace/{path:path}", workspace_write, methods=["PUT"],
+                 response_model=WorkspaceWriteResponse,
+                 openapi_extra={
+                     "parameters": [
+                         {"name": "path", "in": "path", "required": True,
+                          "schema": {"type": "string"}},
+                         {"name": "rename_to", "in": "query", "required": False,
+                          "schema": {"type": "string"}},
+                     ],
+                     "requestBody": {"required": False, "content": {
+                         "application/json": {
+                             "schema": WorkspaceSaveRequest.model_json_schema(),
+                         },
+                     }},
+                 }),
+        APIRoute("/api/workspace/{path:path}", workspace_delete, methods=["DELETE"],
+                 response_model=WorkspaceDeleteResponse,
+                 openapi_extra={"parameters": [{
+                     "name": "path", "in": "path", "required": True,
+                     "schema": {"type": "string"},
+                 }]}),
         APIRoute("/api/config/files", config_list_files, methods=["GET"]),
         APIRoute("/api/config/files/{path:path}", config_read_file, methods=["GET"]),
         APIRoute("/api/config/files/{path:path}", config_write_file, methods=["PUT"]),

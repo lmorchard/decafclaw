@@ -25,6 +25,8 @@ export const request = <T>(config: OpenAPIConfig, options: ApiRequestOptions & {
     const canvas = canvasState || canvasNewTab || canvasIgnoredMutation;
     const workspaceRead = options.method === 'GET'
         && ['/api/workspace', '/api/workspace/recent', '/api/workspace-file/{path}', '/api/autocomplete'].includes(options.url);
+    const workspaceMutation = options.url === '/api/workspace/{path}'
+        && ['PUT', 'DELETE'].includes(options.method);
     const listing = ['/api/conversations', '/api/conversations/archived', '/api/conversations/system'].includes(options.url);
     const patch = options.method === 'PATCH' && options.url === '/api/conversations/{id}';
     const create = options.method === 'POST' && options.url === '/api/conversations';
@@ -32,14 +34,16 @@ export const request = <T>(config: OpenAPIConfig, options: ApiRequestOptions & {
         || (options.method === 'POST' && ['/api/conversations/{id}/archive', '/api/conversations/{id}/unarchive'].includes(options.url));
     const folder = (options.method === 'POST' && options.url === '/api/conversations/folders')
         || (['PUT', 'DELETE'].includes(options.method) && options.url === '/api/conversations/folders/{path}');
-    if (!notification && !diagnostics && !login && !logout && !vaultGuard && !create && !lifecycle && !folder && !patch && !widgetCatalog && !canvas && !workspaceRead && (options.method !== 'GET' || (!sticky && !listing))) {
+    if (!notification && !diagnostics && !login && !logout && !vaultGuard && !create && !lifecycle && !folder && !patch && !widgetCatalog && !canvas && !workspaceRead && !workspaceMutation && (options.method !== 'GET' || (!sticky && !listing))) {
         return generatedRequest<T>(config, options);
     }
     return new CancelablePromise(async (resolve, reject, onCancel) => {
         try {
             // The handwritten listing callers omitted an empty root query.
             const query = listing && options.query?.folder === "" ? undefined : options.query;
-            const url = workspaceRead && options.url === '/api/workspace-file/{path}'
+            const url = workspaceMutation
+                ? `${config.BASE}/api/workspace/${String(options.path!.path).split('/').map(encodeURIComponent).join('/')}${options.query ? getQueryString(options.query) : ''}`
+                : workspaceRead && options.url === '/api/workspace-file/{path}'
                 ? `${config.BASE}/api/workspace-file/${String(options.path!.path).split('/').map(encodeURIComponent).join('/')}`
                 : workspaceRead
                 ? `${config.BASE}${options.url}${options.query ? getQueryString(options.query) : ''}`
@@ -59,22 +63,35 @@ export const request = <T>(config: OpenAPIConfig, options: ApiRequestOptions & {
                   CREDENTIALS: widgetCatalog ? 'include' : 'same-origin' },
                 options, url, getRequestBody(options), undefined, headers, onCancel,
             );
-            // Folder mutations decode error JSON for the existing error log.
+            // Folder and workspace file actions decode error JSON for their
+            // existing UI messages. Workspace saves retain raw error text.
             // Logout and notification read callers accept any HTTP response when
             // discarding the body. Other callers
             // reject HTTP errors before decoding. Propagate JSON failures.
+            const workspaceSave = workspaceMutation && options.method === 'PUT'
+                && options.query?.rename_to === undefined;
+            const workspaceRename = workspaceMutation && options.method === 'PUT'
+                && options.query?.rename_to !== undefined;
             if (!((logout || notificationRead || canvasIgnoredMutation) && options.discardResponse)) catchErrorCodes(options, {
                 url, ok: response.ok, status: response.status,
                 statusText: response.statusText,
                 body: folder && !response.ok ? await response.json()
+                    : workspaceMutation && !response.ok
+                        ? workspaceSave ? await response.text()
+                            : await response.json().catch(() => undefined)
                     : canvasNewTab && !response.ok ? await response.text() : undefined,
             });
-            if (options.discardResponse) {
-                // The generated void overload makes the caller's unused body explicit.
+            if (options.discardResponse || workspaceRename) {
+                // Void overloads and the legacy rename caller do not decode
+                // response bodies that their callers never consumed.
                 resolve(undefined);
 
             } else {
-                resolve(await response.json());
+                // The old file editor treated an empty or malformed success
+                // body as a successful save and retained its previous mtime.
+                resolve(workspaceSave
+                    ? await response.json().catch(() => ({}))
+                    : await response.json());
             }
         } catch (error) {
             reject(error);

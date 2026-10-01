@@ -22,6 +22,16 @@ function formatDate(ts) {
   return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
 }
 
+/**
+ * Extract a server-provided error without trusting arbitrary response JSON.
+ * @param {unknown} body
+ * @returns {string}
+ */
+function responseError(body) {
+  if (typeof body !== 'object' || body === null || !('error' in body)) return '';
+  return typeof body.error === 'string' ? body.error : '';
+}
+
 export class FilePage extends LitElement {
   static properties = {
     path: { type: String },
@@ -273,18 +283,10 @@ export class FilePage extends LitElement {
       if (editor && typeof editor.flushSave === 'function') {
         await editor.flushSave();
       }
-      const url = '/api/workspace/' + encodePagePath(this.path)
-        + '?rename_to=' + encodeURIComponent(newPath);
-      const res = await fetch(url, { method: 'PUT' });
-      if (res.status === 409) {
-        this._renameError = 'A file already exists at that path.';
-        return;
-      }
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        this._renameError = data.error || `Rename failed (${res.status})`;
-        return;
-      }
+      await DefaultService.wrapperApiWorkspacePathPut(
+        this.path,
+        newPath,
+      );
       this._renaming = false;
       this._renameError = '';
       this.dispatchEvent(new CustomEvent('file-open', {
@@ -292,7 +294,17 @@ export class FilePage extends LitElement {
         bubbles: true,
         composed: true,
       }));
-    } catch {
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 409) {
+        this._renameError = 'A file already exists at that path.';
+        return;
+      }
+      if (error instanceof ApiError) {
+        /** @type {unknown} */
+        const body = error.body;
+        this._renameError = responseError(body) || `Rename failed (${error.status})`;
+        return;
+      }
       this._renameError = 'Rename failed.';
     }
   }
@@ -301,20 +313,19 @@ export class FilePage extends LitElement {
   async #deleteFile() {
     if (!confirm(`Delete "${this.path}"?`)) return;
     try {
-      const res = await fetch('/api/workspace/' + encodePagePath(this.path), {
-        method: 'DELETE',
-      });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        alert(data.error || `Delete failed (${res.status})`);
-        return;
-      }
+      await DefaultService.wrapperApiWorkspacePathDelete(this.path, true);
       window.dispatchEvent(new CustomEvent('workspace-file-deleted', {
         detail: { path: this.path },
       }));
       this._close();
-    } catch {
-      alert('Delete failed.');
+    } catch (error) {
+      if (error instanceof ApiError) {
+        /** @type {unknown} */
+        const body = error.body;
+        alert(responseError(body) || `Delete failed (${error.status})`);
+      } else {
+        alert('Delete failed.');
+      }
     }
   }
 
@@ -411,7 +422,6 @@ export class FilePage extends LitElement {
           .modified=${this._modified}
           kind=${this.kind}
           ?readonly=${this.readonly}
-          save-endpoint="/api/workspace/"
           @saving=${() => this.#onSaving()}
           @saved=${(/** @type {CustomEvent} */ e) => this.#onSaved(e)}
           @conflict=${(/** @type {CustomEvent} */ e) => this.#onConflict(e)}

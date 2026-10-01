@@ -24,9 +24,11 @@ import type { StickyResponse } from '../models/StickyResponse';
 import type { SystemConversationListingResponse } from '../models/SystemConversationListingResponse';
 import type { UserResponse } from '../models/UserResponse';
 import type { WidgetCatalogResponse } from '../models/WidgetCatalogResponse';
+import type { WorkspaceDeleteResponse } from '../models/WorkspaceDeleteResponse';
 import type { WorkspaceListingResponse } from '../models/WorkspaceListingResponse';
 import type { WorkspaceRecentResponse } from '../models/WorkspaceRecentResponse';
 import type { WorkspaceTextResponse } from '../models/WorkspaceTextResponse';
+import type { WorkspaceWriteResponse } from '../models/WorkspaceWriteResponse';
 import type { CancelablePromise } from '../core/CancelablePromise';
 import { OpenAPI } from '../core/OpenAPI';
 import { request as __request } from '../core/request';
@@ -720,24 +722,57 @@ export class DefaultService {
     }
     /**
      * Wrapper
-     * @returns any Successful Response
+     * @param path
+     * @param renameTo
+     * @param requestBody
+     * @returns WorkspaceWriteResponse Successful Response
      * @throws ApiError
      */
-    public static wrapperApiWorkspacePathPut(): CancelablePromise<any> {
+    public static wrapperApiWorkspacePathPut(
+        path: string,
+        renameTo?: string,
+        requestBody?: {
+            content: string;
+            modified?: (number | null);
+        },
+    ): CancelablePromise<WorkspaceWriteResponse> {
         return __request(OpenAPI, {
             method: 'PUT',
             url: '/api/workspace/{path}',
+            path: {
+                'path': path,
+            },
+            query: {
+                'rename_to': renameTo,
+            },
+            body: requestBody,
+            mediaType: 'application/json',
         });
     }
     /**
      * Wrapper
-     * @returns any Successful Response
+     * @param path
+     * @returns WorkspaceDeleteResponse Successful Response
      * @throws ApiError
      */
-    public static wrapperApiWorkspacePathDelete(): CancelablePromise<any> {
+    public static wrapperApiWorkspacePathDelete(
+        path: string,
+    ): CancelablePromise<WorkspaceDeleteResponse>;
+    public static wrapperApiWorkspacePathDelete(
+        path: string,
+        discardResponse: true,
+    ): CancelablePromise<void>;
+    public static wrapperApiWorkspacePathDelete(
+        path: string,
+        discardResponse = false,
+    ): CancelablePromise<WorkspaceDeleteResponse | void> {
         return __request(OpenAPI, {
+            discardResponse,
             method: 'DELETE',
             url: '/api/workspace/{path}',
+            path: {
+                'path': path,
+            },
         });
     }
     /**
