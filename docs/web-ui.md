@@ -504,14 +504,38 @@ schema, types, and bundle with changes to the API.
 has required, nullable `widget_type` and `data` properties; widget payloads
 remain heterogeneous objects, with validation owned by the widget registry.
 The generator installs `scripts/sticky_api_request.ts` as a transport adapter.
-Only this GET operation uses its path-segment encoding, explicit same-origin
-credentials, and error handling: HTTP failures retain the cache silently;
-transport and JSON failures retain it and warn. Other operations delegate to
-the unmodified generated transport. Edit the adapter source, then regenerate.
+The adapter encodes the sticky identifier as one path segment and sends same-origin
+session cookies. HTTP failures retain the cache silently. Transport and JSON
+failures retain it and warn.
+
+`ConversationStore.listConversations()`, `listArchivedConversations()`, and
+`listSystemConversations()` use generated methods for their listing routes.
+Each accepts an optional string `folder`. Empty and omitted folders select the
+root without a query string. Other folder values use the generated query
+serializer, including nested paths and names with spaces, Unicode, `&`, `+`, or `#`.
+
+Each response contains `folder`, `folders`, and `conversations`. Regular items
+contain `conv_id`, `title`, `created_at`, and `updated_at`. System items contain
+`conv_id`, `title`, `conv_type`, and `updated_at`, without `created_at`.
+Folder entries contain `name` and `path`. Active root virtual entries also
+contain `virtual: true`. Generated types continue through the listing state,
+getters, and sidebar. Successful responses pass through the listing models to validate required fields
+before serialization. The backend preserves the existing wire fields and manual
+folder validation, including whitespace trimming and HTTP 400 errors.
+
+The listing reads also use the adapter for same-origin cookies and error handling.
+Success replaces the corresponding listing state and publishes a change event.
+HTTP failures leave state unchanged without a change event or error log.
+Transport and JSON failures also leave state unchanged, with the existing error log.
+Other operations use the unmodified generated transport. Edit the adapter source,
+then regenerate.
 
 The isolated tests in `tests/test_api_codegen.py` delete generated output,
-change backend identifier and response contracts, and load the client in Chromium through
+change backend identifier, listing query, and response contracts, and load the client in Chromium through
 `/static` against a test server. They use temporary data and require no live
-credentials. Before running `make test`, run `make install-js` and install the
+credentials. Listing mutation tests isolate each operation, require a passing baseline,
+and require a type diagnostic at the unchanged store call or response read.
+The browser test checks session cookies and decoded folder queries at the test server.
+Before running `make test`, run `make install-js` and install the
 browser with `uv run playwright install chromium`. CI installs its system dependencies with
 `uv run playwright install --with-deps chromium`.

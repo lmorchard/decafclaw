@@ -8,6 +8,7 @@ import os
 import re
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Literal
 
 import yaml
 from croniter import croniter
@@ -462,8 +463,42 @@ async def auth_me(request: Request) -> UserResponse:
 # -- Conversation routes ------------------------------------------------------
 
 
-@_authenticated
-async def list_conversations(request: Request, username: str) -> JSONResponse:
+class ConversationListingItem(BaseModel):
+    conv_id: str
+    title: str
+    created_at: str
+    updated_at: str
+
+
+class SystemConversationListingItem(BaseModel):
+    conv_id: str
+    title: str
+    conv_type: str
+    updated_at: str
+
+
+class ConversationFolderEntry(BaseModel):
+    name: str
+    path: str
+
+
+class VirtualConversationFolderEntry(ConversationFolderEntry):
+    virtual: Literal[True]
+
+
+class ConversationListingResponse(BaseModel):
+    folder: str
+    folders: list[ConversationFolderEntry | VirtualConversationFolderEntry]
+    conversations: list[ConversationListingItem]
+
+
+class SystemConversationListingResponse(BaseModel):
+    folder: str
+    folders: list[ConversationFolderEntry]
+    conversations: list[SystemConversationListingItem]
+
+
+async def list_conversations(request: Request, folder: str = "") -> ConversationListingResponse | JSONResponse:
     """List conversations and subfolders for a specific folder.
 
     Query params:
@@ -473,8 +508,11 @@ async def list_conversations(request: Request, username: str) -> JSONResponse:
     """
     from .web.conversation_folders import ConversationFolderIndex
     from .web.conversations import ConversationIndex
+    username = _get_username_or_401(request)
+    if not username:
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
     config = request.app.state.config
-    folder_param = request.query_params.get("folder", "").strip()
+    folder_param = folder.strip()
     err = _validate_folder_param(folder_param)
     if err:
         return JSONResponse({"error": err}, status_code=400)
@@ -494,20 +532,22 @@ async def list_conversations(request: Request, username: str) -> JSONResponse:
     if not folder_param:
         folders.append({"name": "Archived", "path": "_archived", "virtual": True})
         folders.append({"name": "System", "path": "_system", "virtual": True})
-    return JSONResponse({
+    return ConversationListingResponse.model_validate({
         "folder": folder_param,
         "folders": folders,
         "conversations": [c.to_dict() for c in filtered],
     })
 
 
-@_authenticated
-async def list_archived_conversations(request: Request, username: str) -> JSONResponse:
+async def list_archived_conversations(request: Request, folder: str = "") -> ConversationListingResponse | JSONResponse:
     """List archived conversations, optionally filtered by folder."""
     from .web.conversation_folders import ConversationFolderIndex
     from .web.conversations import ConversationIndex
+    username = _get_username_or_401(request)
+    if not username:
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
     config = request.app.state.config
-    folder_param = request.query_params.get("folder", "").strip()
+    folder_param = folder.strip()
     err = _validate_folder_param(folder_param)
     if err:
         return JSONResponse({"error": err}, status_code=400)
@@ -538,19 +578,21 @@ async def list_archived_conversations(request: Request, username: str) -> JSONRe
         {"name": name, "path": f"{folder_param}/{name}" if folder_param else name}
         for name in sorted(child_names)
     ]
-    return JSONResponse({
+    return ConversationListingResponse.model_validate({
         "folder": folder_param,
         "folders": folders,
         "conversations": [c.to_dict() for c in filtered],
     })
 
 
-@_authenticated
-async def list_system_conversations(request: Request, username: str) -> JSONResponse:
+async def list_system_conversations(request: Request, folder: str = "") -> SystemConversationListingResponse | JSONResponse:
     """List system conversations, grouped by type sub-folders."""
     from .web.conversations import list_system_conversations as list_sys
+    username = _get_username_or_401(request)
+    if not username:
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
     config = request.app.state.config
-    folder_param = request.query_params.get("folder", "").strip()
+    folder_param = folder.strip()
     all_sys = list_sys(config, username=username)
     if not folder_param:
         folders = [
@@ -558,7 +600,7 @@ async def list_system_conversations(request: Request, username: str) -> JSONResp
             {"name": "Schedule", "path": "schedule"},
             {"name": "Delegated", "path": "delegated"},
         ]
-        return JSONResponse({
+        return SystemConversationListingResponse.model_validate({
             "folder": "",
             "folders": folders,
             "conversations": [],
@@ -567,7 +609,7 @@ async def list_system_conversations(request: Request, username: str) -> JSONResp
     if folder_param not in valid_types:
         return JSONResponse({"error": "invalid system folder"}, status_code=400)
     filtered = [c for c in all_sys if c.get("conv_type") == folder_param]
-    return JSONResponse({
+    return SystemConversationListingResponse.model_validate({
         "folder": folder_param,
         "folders": [],
         "conversations": filtered,
@@ -2428,9 +2470,12 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> FastAPI:
         APIRoute("/api/auth/login", auth_login, methods=["POST"]),
         APIRoute("/api/auth/logout", auth_logout, methods=["POST"]),
         APIRoute("/api/auth/me", auth_me, methods=["GET"]),
-        APIRoute("/api/conversations", list_conversations, methods=["GET"]),
-        APIRoute("/api/conversations/archived", list_archived_conversations, methods=["GET"]),
-        APIRoute("/api/conversations/system", list_system_conversations, methods=["GET"]),
+        APIRoute("/api/conversations", list_conversations, methods=["GET"],
+                 response_model=ConversationListingResponse),
+        APIRoute("/api/conversations/archived", list_archived_conversations, methods=["GET"],
+                 response_model=ConversationListingResponse),
+        APIRoute("/api/conversations/system", list_system_conversations, methods=["GET"],
+                 response_model=SystemConversationListingResponse),
         APIRoute("/api/conversations", create_conversation, methods=["POST"]),
         APIRoute("/api/conversations/{id}", get_conversation, methods=["GET"]),
         APIRoute("/api/conversations/{id}", rename_conversation, methods=["PATCH"]),

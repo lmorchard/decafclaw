@@ -1,12 +1,10 @@
 import { MESSAGE_TYPES } from './message-types.js';
 
-/**
- * @typedef {object} ConversationMeta
- * @property {string} conv_id
- * @property {string} title
- * @property {string} created_at
- * @property {string} updated_at
- */
+import { ApiError, DefaultService } from './api-client/index.js';
+
+/** @typedef {import('./api-client/index.js').ConversationListingItem} ConversationMeta */
+/** @typedef {import('./api-client/index.js').SystemConversationListingItem} SystemConversationMeta */
+/** @typedef {import('./api-client/index.js').ConversationListingResponse['folders'][number]} FolderEntry */
 
 /**
  * @typedef {object} ChatMessage
@@ -41,13 +39,6 @@ import { MESSAGE_TYPES } from './message-types.js';
  * @property {string} deny_label
  * @property {string} action_type
  * @property {object} action_data
- */
-
-/**
- * @typedef {object} FolderEntry
- * @property {string} name
- * @property {string} path
- * @property {boolean} [virtual]
  */
 
 import { uploadFile } from './upload-client.js';
@@ -88,7 +79,7 @@ export class ConversationStore extends EventTarget {
   #archivedCurrentFolder = '';
 
   // -- System conversations state --
-  /** @type {object[]} */
+  /** @type {SystemConversationMeta[]} */
   #systemConversations = [];
   /** @type {FolderEntry[]} */
   #systemFolders = [];
@@ -177,7 +168,7 @@ export class ConversationStore extends EventTarget {
   get defaultModel() { return this.#defaultModel; }
   /** @returns {{name: string, description: string, argument_hint: string}[]} */
   get commands() { return this.#commands; }
-  /** @returns {object[]} */
+  /** @returns {SystemConversationMeta[]} */
   get systemConversations() { return this.#systemConversations; }
   /** @returns {FolderEntry[]} */
   get systemFolders() { return this.#systemFolders; }
@@ -191,17 +182,13 @@ export class ConversationStore extends EventTarget {
   /** @param {string} [folder] */
   async listConversations(folder = '') {
     try {
-      const url = folder
-        ? `/api/conversations?folder=${encodeURIComponent(folder)}`
-        : '/api/conversations';
-      const resp = await fetch(url);
-      if (!resp.ok) return;
-      const data = await resp.json();
+      const data = await DefaultService.listConversationsApiConversationsGet(folder || undefined);
       this.#conversations = data.conversations || [];
       this.#folders = data.folders || [];
       this.#currentFolder = data.folder || '';
       this.#emitChange();
     } catch (err) {
+      if (err instanceof ApiError) return;
       console.error('Failed to list conversations:', err);
     }
   }
@@ -209,17 +196,13 @@ export class ConversationStore extends EventTarget {
   /** @param {string} [folder] */
   async listArchivedConversations(folder = '') {
     try {
-      const url = folder
-        ? `/api/conversations/archived?folder=${encodeURIComponent(folder)}`
-        : '/api/conversations/archived';
-      const resp = await fetch(url);
-      if (!resp.ok) return;
-      const data = await resp.json();
+      const data = await DefaultService.listArchivedConversationsApiConversationsArchivedGet(folder || undefined);
       this.#archivedConversations = data.conversations || [];
       this.#archivedFolders = data.folders || [];
       this.#archivedCurrentFolder = data.folder || '';
       this.#emitChange();
     } catch (err) {
+      if (err instanceof ApiError) return;
       console.error('Failed to list archived conversations:', err);
     }
   }
@@ -227,17 +210,13 @@ export class ConversationStore extends EventTarget {
   /** @param {string} [folder] */
   async listSystemConversations(folder = '') {
     try {
-      const url = folder
-        ? `/api/conversations/system?folder=${encodeURIComponent(folder)}`
-        : '/api/conversations/system';
-      const resp = await fetch(url);
-      if (!resp.ok) return;
-      const data = await resp.json();
+      const data = await DefaultService.listSystemConversationsApiConversationsSystemGet(folder || undefined);
       this.#systemConversations = data.conversations || [];
       this.#systemFolders = data.folders || [];
       this.#systemCurrentFolder = data.folder || '';
       this.#emitChange();
     } catch (err) {
+      if (err instanceof ApiError) return;
       console.error('Failed to list system conversations:', err);
     }
   }

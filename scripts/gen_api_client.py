@@ -27,8 +27,8 @@ def dump_openapi():
         "--client", "fetch"
     ]
     subprocess.run(cmd, check=True)
-    # Preserve the stock transport for all operations except the sticky lookup.
-    # The adapter uses generated helpers but retains that caller's encoding and
+    # Preserve the stock transport for all operations except migrated sticky and listing reads.
+    # The adapter uses generated helpers but retains those callers' encoding and
     # error behavior without mutating the shared OpenAPI configuration.
     core = static / "lib/api-client/core"
     (core / "request.ts").replace(core / "generated-request.ts")

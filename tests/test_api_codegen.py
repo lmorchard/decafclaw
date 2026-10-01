@@ -132,6 +132,16 @@ def test_browser_uses_clean_built_client(source_tree, config):
     for route in app.routes:
         if getattr(route, "path", None) == "/static":
             route.app = StaticFiles(directory=source_tree / STATIC_REL)
+    listing_requests = []
+
+    @app.middleware("http")
+    async def record_listing_request(request, call_next):
+        if request.method == "GET" and request.url.path in {
+            "/api/conversations", "/api/conversations/archived", "/api/conversations/system",
+        }:
+            listing_requests.append((request.url.path, list(request.query_params.multi_items()), bool(request.cookies)))
+        return await call_next(request)
+
     # Bind before starting the server, avoiding a free-port check/use race.
     sock = socket.socket()
     sock.bind(("127.0.0.1", 0))
@@ -180,6 +190,36 @@ def test_browser_uses_clean_built_client(source_tree, config):
                     "collapsed": False, "visible": True,
                 }
                 assert sticky_requests == [f"{base}/api/sticky/{conv_id}"]
+                nested = "Work space/日本語 & plus+ #hash"
+                assert page.request.post(base + "/api/conversations/folders", data={"path": nested}).status == 200
+                active = page.request.post(base + "/api/conversations", data={"title": "Nested", "folder": nested}).json()
+                archived = page.request.post(base + "/api/conversations", data={"title": "Archived", "folder": nested}).json()
+                assert page.request.post(base + f"/api/conversations/{archived['conv_id']}/archive").status == 200
+                listings = page.evaluate("""async (folder) => {
+                    const { DefaultService } = await import('/static/lib/api-client/index.js');
+                    const result = [];
+                    for (const method of ['listConversationsApiConversationsGet',
+                        'listArchivedConversationsApiConversationsArchivedGet']) {
+                        for (const arg of [undefined, '', folder]) result.push(await DefaultService[method](arg));
+                    }
+                    for (const arg of [undefined, '', 'heartbeat', 'schedule', 'delegated']) {
+                        result.push(await DefaultService.listSystemConversationsApiConversationsSystemGet(arg));
+                    }
+                    return result;
+                }""", nested)
+                assert listings[0] == listings[1]
+                assert listings[3] == listings[4]
+                assert listings[2]["conversations"][0]["conv_id"] == active["conv_id"]
+                assert listings[5]["conversations"][0]["conv_id"] == archived["conv_id"]
+                assert listings[2]["folder"] == listings[5]["folder"] == nested
+                assert listings[6] == listings[7]
+                expected_requests = []
+                for route_path in ["/api/conversations", "/api/conversations/archived"]:
+                    expected_requests.extend([(route_path, [], True), (route_path, [], True),
+                                              (route_path, [("folder", nested)], True)])
+                for folder in [None, "", "heartbeat", "schedule", "delegated"]:
+                    expected_requests.append(("/api/conversations/system", [] if not folder else [("folder", folder)], True))
+                assert listing_requests == expected_requests
                 assert not errors, errors
                 assert not failed_requests, failed_requests
             finally:
@@ -189,3 +229,54 @@ def test_browser_uses_clean_built_client(source_tree, config):
         thread.join(timeout=15)
         sock.close()
         assert not thread.is_alive(), "test server did not stop"
+
+
+@pytest.mark.parametrize("operation,model", [
+    ("list_conversations", "ConversationListingResponse"),
+    ("list_archived_conversations", "ConversationListingResponse"),
+    ("list_system_conversations", "SystemConversationListingResponse"),
+])
+@pytest.mark.parametrize("contract", ["query", "response"])
+def test_listing_contract_drift_fails_at_unchanged_caller(source_tree, operation, model, contract):
+    caller = source_tree / STATIC_REL / "lib/conversation-store.js"
+    original_caller = caller.read_bytes()
+    result, output = run_make(source_tree, "check-js")
+    assert result.returncode == 0, output
+    backend = source_tree / "src/decafclaw/http_server.py"
+    original = backend.read_text()
+    if contract == "query":
+        changed = original.replace(
+            f'async def {operation}(request: Request, folder: str = "")',
+            f'async def {operation}(request: Request, folder: int = 0)',
+        )
+        diagnostic = "Argument of type 'string' is not assignable to parameter of type 'number'"
+        code = "TS2345"
+    else:
+        # Give only the selected operation a changed envelope, including when
+        # active and archived share the regular response model.
+        start = original.index(f"class {model}(BaseModel):")
+        end = original.index("\n\n\n", start)
+        isolated = original[start:end].replace(model, "ChangedListingResponse").replace(
+            "    conversations:", "    renamed_conversations:")
+        changed = original[:start] + isolated + "\n\n\n" + original[start:]
+        route = changed.index(f', {operation}, methods=["GET"],')
+        prefix, suffix = changed[:route], changed[route:]
+        changed = prefix + suffix.replace(f"response_model={model}", "response_model=ChangedListingResponse", 1)
+        diagnostic = "Property 'conversations' does not exist on type 'ChangedListingResponse'"
+        code = "TS2339"
+    assert changed != original
+    backend.write_text(changed)
+    result, output = run_make(source_tree, "check-js")
+    assert result.returncode != 0, output
+    diagnostics = [line for line in output.splitlines() if "error TS" in line]
+    assert len(diagnostics) == 1, output
+    assert "conversation-store.js(" in diagnostics[0] and code in diagnostics[0], output
+    assert diagnostic in diagnostics[0], output
+    method = {"list_conversations": "listConversations", "list_archived_conversations": "listArchivedConversations",
+              "list_system_conversations": "listSystemConversations"}[operation]
+    lines = original_caller.decode().splitlines()
+    start = next(i for i, line in enumerate(lines, 1) if f"async {method}(" in line)
+    target = next(i for i, line in enumerate(lines[start:], start + 1)
+                  if ("await DefaultService." if contract == "query" else "= data.conversations") in line)
+    assert f"conversation-store.js({target}," in diagnostics[0], output
+    assert caller.read_bytes() == original_caller

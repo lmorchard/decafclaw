@@ -128,14 +128,39 @@
     },
     "/api/conversations": {
       "get": {
-        "summary": "Wrapper",
-        "operationId": "wrapper_api_conversations_get",
+        "summary": "List Conversations",
+        "description": "List conversations and subfolders for a specific folder.\n\nQuery params:\n    folder \u2014 folder path (default: top-level)\n\nReturns ``{folder, folders, conversations}`` mirroring vault_list pattern.",
+        "operationId": "list_conversations_api_conversations_get",
+        "parameters": [
+          {
+            "name": "folder",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Folder"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationListingResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
               }
             }
           }
@@ -158,14 +183,39 @@
     },
     "/api/conversations/archived": {
       "get": {
-        "summary": "Wrapper",
-        "operationId": "wrapper_api_conversations_archived_get",
+        "summary": "List Archived Conversations",
+        "description": "List archived conversations, optionally filtered by folder.",
+        "operationId": "list_archived_conversations_api_conversations_archived_get",
+        "parameters": [
+          {
+            "name": "folder",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Folder"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationListingResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
               }
             }
           }
@@ -174,14 +224,39 @@
     },
     "/api/conversations/system": {
       "get": {
-        "summary": "Wrapper",
-        "operationId": "wrapper_api_conversations_system_get",
+        "summary": "List System Conversations",
+        "description": "List system conversations, grouped by type sub-folders.",
+        "operationId": "list_system_conversations_api_conversations_system_get",
+        "parameters": [
+          {
+            "name": "folder",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Folder"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/SystemConversationListingResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
               }
             }
           }
@@ -1057,6 +1132,88 @@
   },
   "components": {
     "schemas": {
+      "ConversationFolderEntry": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "path": {
+            "type": "string",
+            "title": "Path"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "path"
+        ],
+        "title": "ConversationFolderEntry"
+      },
+      "ConversationListingItem": {
+        "properties": {
+          "conv_id": {
+            "type": "string",
+            "title": "Conv Id"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "conv_id",
+          "title",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "ConversationListingItem"
+      },
+      "ConversationListingResponse": {
+        "properties": {
+          "folder": {
+            "type": "string",
+            "title": "Folder"
+          },
+          "folders": {
+            "items": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/ConversationFolderEntry"
+                },
+                {
+                  "$ref": "#/components/schemas/VirtualConversationFolderEntry"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Folders"
+          },
+          "conversations": {
+            "items": {
+              "$ref": "#/components/schemas/ConversationListingItem"
+            },
+            "type": "array",
+            "title": "Conversations"
+          }
+        },
+        "type": "object",
+        "required": [
+          "folder",
+          "folders",
+          "conversations"
+        ],
+        "title": "ConversationListingResponse"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -1102,6 +1259,63 @@
           "data"
         ],
         "title": "StickyResponse"
+      },
+      "SystemConversationListingItem": {
+        "properties": {
+          "conv_id": {
+            "type": "string",
+            "title": "Conv Id"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "conv_type": {
+            "type": "string",
+            "title": "Conv Type"
+          },
+          "updated_at": {
+            "type": "string",
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "conv_id",
+          "title",
+          "conv_type",
+          "updated_at"
+        ],
+        "title": "SystemConversationListingItem"
+      },
+      "SystemConversationListingResponse": {
+        "properties": {
+          "folder": {
+            "type": "string",
+            "title": "Folder"
+          },
+          "folders": {
+            "items": {
+              "$ref": "#/components/schemas/ConversationFolderEntry"
+            },
+            "type": "array",
+            "title": "Folders"
+          },
+          "conversations": {
+            "items": {
+              "$ref": "#/components/schemas/SystemConversationListingItem"
+            },
+            "type": "array",
+            "title": "Conversations"
+          }
+        },
+        "type": "object",
+        "required": [
+          "folder",
+          "folders",
+          "conversations"
+        ],
+        "title": "SystemConversationListingResponse"
       },
       "UserResponse": {
         "properties": {
@@ -1162,6 +1376,30 @@
           "type"
         ],
         "title": "ValidationError"
+      },
+      "VirtualConversationFolderEntry": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "path": {
+            "type": "string",
+            "title": "Path"
+          },
+          "virtual": {
+            "type": "boolean",
+            "const": true,
+            "title": "Virtual"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "path",
+          "virtual"
+        ],
+        "title": "VirtualConversationFolderEntry"
       }
     }
   }
