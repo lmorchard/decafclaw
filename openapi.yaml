@@ -263,33 +263,91 @@ paths:
               schema: {}
   /api/conversations/folders:
     post:
-      summary: Wrapper
-      operationId: wrapper_api_conversations_folders_post
+      summary: Create Conv Folder
+      description: Create a conversation folder.
+      operationId: create_conv_folder_api_conversations_folders_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              properties:
+                path:
+                  type: string
+                  title: Path
+              type: object
+              required:
+              - path
+              title: ConversationFolderRequest
+        required: true
       responses:
         '200':
           description: Successful Response
           content:
             application/json:
-              schema: {}
+              schema:
+                $ref: '#/components/schemas/ConversationFolderCreateResponse'
   /api/conversations/folders/{path}:
-    put:
-      summary: Wrapper
-      operationId: wrapper_api_conversations_folders__path__put
-      responses:
-        '200':
-          description: Successful Response
-          content:
-            application/json:
-              schema: {}
     delete:
-      summary: Wrapper
-      operationId: wrapper_api_conversations_folders__path__delete
+      summary: Delete Conv Folder
+      description: Delete an empty conversation folder.
+      operationId: delete_conv_folder_api_conversations_folders__path__delete
+      parameters:
+      - name: path
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Path
       responses:
         '200':
           description: Successful Response
           content:
             application/json:
-              schema: {}
+              schema:
+                $ref: '#/components/schemas/ConversationFolderResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    put:
+      summary: Rename Conv Folder
+      description: Rename/move a conversation folder. Merges if target exists.
+      operationId: rename_conv_folder_api_conversations_folders__path__put
+      parameters:
+      - name: path
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Path
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConversationFolderResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              properties:
+                path:
+                  title: Path
+                  type: string
+              required:
+              - path
+              title: ConversationFolderRequest
+              type: object
   /api/conversations/{id}/archive:
     post:
       summary: Wrapper
@@ -749,6 +807,20 @@ paths:
               schema: {}
 components:
   schemas:
+    ConversationFolderCreateResponse:
+      properties:
+        ok:
+          type: boolean
+          const: true
+          title: Ok
+        path:
+          type: string
+          title: Path
+      type: object
+      required:
+      - ok
+      - path
+      title: ConversationFolderCreateResponse
     ConversationFolderEntry:
       properties:
         name:
@@ -762,6 +834,16 @@ components:
       - name
       - path
       title: ConversationFolderEntry
+    ConversationFolderResponse:
+      properties:
+        ok:
+          type: boolean
+          const: true
+          title: Ok
+      type: object
+      required:
+      - ok
+      title: ConversationFolderResponse
     ConversationListingItem:
       properties:
         conv_id:

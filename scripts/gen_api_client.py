@@ -10,18 +10,18 @@ from decafclaw.config import Config
 from decafclaw.http_server import create_app
 
 
-def add_patch_discard_overload(service: Path) -> None:
-    """Derive both PATCH call modes from the generated signature, never copy its types.
+def add_discard_overload(service: Path, method_name: str, verb: str, url: str) -> None:
+    """Derive both response call modes from the generated signature, never copy its types.
 
-    Rename reads metadata; move only waits for HTTP success. The stock generator
+    Some callers read JSON; others only wait for HTTP success. The stock generator
     has no per-call option to skip decoding an unused response body.
     """
     source = service.read_text()
-    pattern = (r"    public static renameConversationApiConversationsIdPatch\(\n"
+    pattern = (rf"    public static {re.escape(method_name)}\(\n"
                r"(?P<parameters>.*?)    \): CancelablePromise<(?P<response>[^>]+)> \{")
 
     def overload(match: re.Match) -> str:
-        method = "    public static renameConversationApiConversationsIdPatch(\n"
+        method = f"    public static {method_name}(\n"
         parameters = match["parameters"]
         response = match["response"]
         return (
@@ -33,10 +33,10 @@ def add_patch_discard_overload(service: Path) -> None:
 
     source, count = re.subn(pattern, overload, source, flags=re.DOTALL)
     if count != 1:
-        raise ValueError("Expected exactly one generated conversation PATCH method")
-    marker = "            method: 'PATCH',\n            url: '/api/conversations/{id}',"
+        raise ValueError(f"Expected exactly one generated {method_name} method")
+    marker = f"            method: '{verb}',\n            url: '{url}',"
     if source.count(marker) != 1:
-        raise ValueError("Expected exactly one generated conversation PATCH request")
+        raise ValueError(f"Expected exactly one generated {verb} {url} request")
     service.write_text(source.replace(marker, "            discardResponse,\n" + marker))
 
 
@@ -58,8 +58,14 @@ def dump_openapi():
         "--client", "fetch"
     ]
     subprocess.run(cmd, check=True)
-    add_patch_discard_overload(static / "lib/api-client/services/DefaultService.ts")
-    # Preserve the stock transport outside migrated reads and conversation PATCH.
+    for method, verb, url in (
+        ("renameConversationApiConversationsIdPatch", "PATCH", "/api/conversations/{id}"),
+        ("createConvFolderApiConversationsFoldersPost", "POST", "/api/conversations/folders"),
+        ("deleteConvFolderApiConversationsFoldersPathDelete", "DELETE", "/api/conversations/folders/{path}"),
+        ("renameConvFolderApiConversationsFoldersPathPut", "PUT", "/api/conversations/folders/{path}"),
+    ):
+        add_discard_overload(static / "lib/api-client/services/DefaultService.ts", method, verb, url)
+    # Preserve the stock transport outside migrated conversation operations.
     # The adapter uses generated helpers but retains those callers' encoding and
     # error behavior without mutating the shared OpenAPI configuration.
     core = static / "lib/api-client/core"

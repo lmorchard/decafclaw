@@ -835,10 +835,24 @@ async def delete_conversation(request: Request, username: str) -> JSONResponse:
 # -- Conversation folder routes ----------------------------------------------
 
 
-@_authenticated
-async def create_conv_folder(request: Request, username: str) -> JSONResponse:
+class ConversationFolderRequest(BaseModel):
+    path: str
+
+
+class ConversationFolderResponse(BaseModel):
+    ok: Literal[True]
+
+
+class ConversationFolderCreateResponse(ConversationFolderResponse):
+    path: str
+
+
+async def create_conv_folder(request: Request) -> JSONResponse:
     """Create a conversation folder."""
     from .web.conversation_folders import ConversationFolderIndex
+    username = _get_username_or_401(request)
+    if not username:
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
     config = request.app.state.config
     body = await request.json()
     path = body.get("path", "")
@@ -852,12 +866,13 @@ async def create_conv_folder(request: Request, username: str) -> JSONResponse:
     return JSONResponse({"ok": True, "path": path.strip()})
 
 
-@_authenticated
-async def delete_conv_folder(request: Request, username: str) -> JSONResponse:
+async def delete_conv_folder(request: Request, path: str) -> JSONResponse:
     """Delete an empty conversation folder."""
     from .web.conversation_folders import ConversationFolderIndex
+    username = _get_username_or_401(request)
+    if not username:
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
     config = request.app.state.config
-    path = request.path_params.get("path", "")
     if not path:
         return JSONResponse({"error": "path required"}, status_code=400)
     folder_index = ConversationFolderIndex(config, username)
@@ -868,12 +883,14 @@ async def delete_conv_folder(request: Request, username: str) -> JSONResponse:
     return JSONResponse({"ok": True})
 
 
-@_authenticated
-async def rename_conv_folder(request: Request, username: str) -> JSONResponse:
+async def rename_conv_folder(request: Request, path: str) -> JSONResponse:
     """Rename/move a conversation folder. Merges if target exists."""
     from .web.conversation_folders import ConversationFolderIndex
+    username = _get_username_or_401(request)
+    if not username:
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
     config = request.app.state.config
-    old_path = request.path_params.get("path", "")
+    old_path = path
     if not old_path:
         return JSONResponse({"error": "path required"}, status_code=400)
     body = await request.json()
@@ -2503,9 +2520,18 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> FastAPI:
         APIRoute("/api/conversations/{id}/history", get_conversation_history, methods=["GET"]),
         APIRoute("/api/conversations/{id}/context", get_context_diagnostics, methods=["GET"]),
         APIRoute("/api/conversations/{id}/export", export_conversation, methods=["GET"]),
-        APIRoute("/api/conversations/folders", create_conv_folder, methods=["POST"]),
-        APIRoute("/api/conversations/folders/{path:path}", delete_conv_folder, methods=["DELETE"]),
-        APIRoute("/api/conversations/folders/{path:path}", rename_conv_folder, methods=["PUT"]),
+        APIRoute("/api/conversations/folders", create_conv_folder, methods=["POST"],
+                 response_model=ConversationFolderCreateResponse,
+                 openapi_extra={"requestBody": {"required": True, "content": {
+                     "application/json": {"schema": ConversationFolderRequest.model_json_schema()},
+                 }}}),
+        APIRoute("/api/conversations/folders/{path:path}", delete_conv_folder, methods=["DELETE"],
+                 response_model=ConversationFolderResponse),
+        APIRoute("/api/conversations/folders/{path:path}", rename_conv_folder, methods=["PUT"],
+                 response_model=ConversationFolderResponse,
+                 openapi_extra={"requestBody": {"required": True, "content": {
+                     "application/json": {"schema": ConversationFolderRequest.model_json_schema()},
+                 }}}),
         APIRoute("/api/conversations/{id}", delete_conversation, methods=["DELETE"]),
         APIRoute("/api/conversations/{id}/archive", archive_conversation, methods=["POST"]),
         APIRoute("/api/conversations/{id}/unarchive", unarchive_conversation, methods=["POST"]),
