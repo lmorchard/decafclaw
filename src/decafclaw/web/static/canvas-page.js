@@ -8,6 +8,9 @@
 
 import { MESSAGE_TYPES } from './lib/message-types.js';
 import { WebSocketClient } from './lib/websocket-client.js';
+import { ApiError, DefaultService } from './lib/api-client/index.js';
+
+/** @typedef {import('./lib/api-client/index.js').CanvasTabResponse} CanvasTab */
 
 const PATH_RE = /^\/canvas\/([^/?#]+)(?:\/([^/?#]+))?/;
 const m = location.pathname.match(PATH_RE);
@@ -24,7 +27,7 @@ if (!convId) {
   throw new Error('no conv_id');
 }
 
-const host = /** @type {HTMLElement & {widgetType: string, data: any, mode: string, convId: string, tabId: string}} */ (
+const host = /** @type {HTMLElement & {widgetType: string, data: unknown, mode: string, convId: string, tabId: string}} */ (
   document.getElementById('canvas-standalone-host')
 );
 const empty = document.getElementById('canvas-empty-state');
@@ -32,10 +35,14 @@ const labelEl = document.getElementById('canvas-label');
 const backLink = /** @type {HTMLAnchorElement} */ (document.getElementById('canvas-back-link'));
 backLink.href = `/?conv=${encodeURIComponent(convId)}`;
 
+/** @type {CanvasTab|null} */
 let currentTab = null;
+/** @type {CanvasTab[]} */
 let allTabs = [];
+/** @type {string|null} */
 let serverActiveTabId = null;
 
+/** @param {string} msg */
 function showEmpty(msg) {
   if (host) host.hidden = true;
   if (empty) {
@@ -47,6 +54,7 @@ function showEmpty(msg) {
   currentTab = null;
 }
 
+/** @param {CanvasTab|null} tab */
 function showTab(tab) {
   if (!tab) {
     showEmpty(lockedTabId ? `Tab "${lockedTabId}" no longer exists.` : 'No canvas content yet.');
@@ -73,19 +81,13 @@ function pickTabForRender() {
 
 async function loadInitial() {
   try {
-    const resp = await fetch(`/api/canvas/${encodeURIComponent(convId)}`,
-                             { credentials: 'same-origin' });
-    if (!resp.ok) {
-      console.warn('canvas load failed', resp.status);
-      showEmpty('No canvas content yet.');
-      return;
-    }
-    const data = await resp.json();
-    allTabs = data.tabs || [];
+    const data = await DefaultService.getCanvasStateApiCanvasConvIdGet(convId);
+    allTabs = data.tabs;
     serverActiveTabId = data.active_tab || null;
     showTab(pickTabForRender());
   } catch (err) {
-    console.error('canvas load error', err);
+    if (err instanceof ApiError) console.warn('canvas load failed', err.status);
+    else console.error('canvas load error', err);
     showEmpty('No canvas content yet.');
   }
 }

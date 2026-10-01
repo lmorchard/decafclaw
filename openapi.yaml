@@ -861,14 +861,16 @@ paths:
               schema: {}
   /api/widgets:
     get:
-      summary: Wrapper
-      operationId: wrapper_api_widgets_get
+      summary: List Widgets
+      description: Return the widget catalog with cache-busted js URLs.
+      operationId: list_widgets_api_widgets_get
       responses:
         '200':
           description: Successful Response
           content:
             application/json:
-              schema: {}
+              schema:
+                $ref: '#/components/schemas/WidgetCatalogResponse'
   /widgets/{tier}/{name}/widget.js:
     get:
       summary: Wrapper
@@ -881,14 +883,29 @@ paths:
               schema: {}
   /api/canvas/{conv_id}:
     get:
-      summary: Wrapper
-      operationId: wrapper_api_canvas__conv_id__get
+      summary: Get Canvas State
+      description: Load current canvas state for a conversation.
+      operationId: get_canvas_state_api_canvas__conv_id__get
+      parameters:
+      - name: conv_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Conv Id
       responses:
         '200':
           description: Successful Response
           content:
             application/json:
-              schema: {}
+              schema:
+                $ref: '#/components/schemas/CanvasStateResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /api/sticky/{conv_id}:
     get:
       summary: Get Sticky State
@@ -916,34 +933,128 @@ paths:
                 $ref: '#/components/schemas/HTTPValidationError'
   /api/canvas/{conv_id}/new_tab:
     post:
-      summary: Wrapper
-      operationId: wrapper_api_canvas__conv_id__new_tab_post
+      summary: Post Canvas New Tab
+      description: Create a new canvas tab. Backs the inline 'Open in Canvas' button.
+      operationId: post_canvas_new_tab_api_canvas__conv_id__new_tab_post
+      parameters:
+      - name: conv_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Conv Id
       responses:
         '200':
           description: Successful Response
           content:
             application/json:
-              schema: {}
+              schema:
+                $ref: '#/components/schemas/CanvasNewTabResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              properties:
+                widget_type:
+                  title: Widget Type
+                  type: string
+                data:
+                  additionalProperties: true
+                  title: Data
+                  type: object
+                label:
+                  anyOf:
+                  - type: string
+                  - type: 'null'
+                  title: Label
+              required:
+              - widget_type
+              - data
+              title: CanvasNewTabRequest
+              type: object
   /api/canvas/{conv_id}/active_tab:
     post:
-      summary: Wrapper
-      operationId: wrapper_api_canvas__conv_id__active_tab_post
+      summary: Post Canvas Active Tab
+      description: Set the active tab via user click in the panel.
+      operationId: post_canvas_active_tab_api_canvas__conv_id__active_tab_post
+      parameters:
+      - name: conv_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Conv Id
       responses:
         '200':
           description: Successful Response
           content:
             application/json:
-              schema: {}
+              schema:
+                $ref: '#/components/schemas/CanvasMutationResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              properties:
+                tab_id:
+                  title: Tab Id
+                  type: string
+              required:
+              - tab_id
+              title: CanvasTabRequest
+              type: object
   /api/canvas/{conv_id}/close_tab:
     post:
-      summary: Wrapper
-      operationId: wrapper_api_canvas__conv_id__close_tab_post
+      summary: Post Canvas Close Tab
+      description: "Close a tab via user [\xD7] click."
+      operationId: post_canvas_close_tab_api_canvas__conv_id__close_tab_post
+      parameters:
+      - name: conv_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Conv Id
       responses:
         '200':
           description: Successful Response
           content:
             application/json:
-              schema: {}
+              schema:
+                $ref: '#/components/schemas/CanvasMutationResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              properties:
+                tab_id:
+                  title: Tab Id
+                  type: string
+              required:
+              - tab_id
+              title: CanvasTabRequest
+              type: object
   /canvas/{conv_id}:
     get:
       summary: Wrapper
@@ -976,6 +1087,78 @@ paths:
               schema: {}
 components:
   schemas:
+    CanvasMutationResponse:
+      properties:
+        ok:
+          type: boolean
+          const: true
+          title: Ok
+      type: object
+      required:
+      - ok
+      title: CanvasMutationResponse
+    CanvasNewTabResponse:
+      properties:
+        ok:
+          type: boolean
+          const: true
+          title: Ok
+        tab_id:
+          type: string
+          title: Tab Id
+      type: object
+      required:
+      - ok
+      - tab_id
+      title: CanvasNewTabResponse
+    CanvasStateResponse:
+      properties:
+        schema_version:
+          type: integer
+          title: Schema Version
+        active_tab:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Active Tab
+        next_tab_id:
+          type: integer
+          title: Next Tab Id
+        tabs:
+          items:
+            $ref: '#/components/schemas/CanvasTabResponse'
+          type: array
+          title: Tabs
+      type: object
+      required:
+      - schema_version
+      - active_tab
+      - next_tab_id
+      - tabs
+      title: CanvasStateResponse
+    CanvasTabResponse:
+      properties:
+        id:
+          type: string
+          title: Id
+        label:
+          type: string
+          title: Label
+        widget_type:
+          type: string
+          title: Widget Type
+        data:
+          additionalProperties:
+            $ref: '#/components/schemas/JsonValue'
+          type: object
+          title: Data
+      type: object
+      required:
+      - id
+      - label
+      - widget_type
+      - data
+      title: CanvasTabResponse
     ContextCandidate:
       properties:
         file_path:
@@ -1298,6 +1481,7 @@ components:
           title: Detail
       type: object
       title: HTTPValidationError
+    JsonValue: {}
     LoginResponse:
       properties:
         username:
@@ -1509,3 +1693,51 @@ components:
       - path
       - virtual
       title: VirtualConversationFolderEntry
+    WidgetCatalogResponse:
+      properties:
+        widgets:
+          items:
+            $ref: '#/components/schemas/WidgetDescriptorResponse'
+          type: array
+          title: Widgets
+      type: object
+      required:
+      - widgets
+      title: WidgetCatalogResponse
+    WidgetDescriptorResponse:
+      properties:
+        name:
+          type: string
+          title: Name
+        tier:
+          type: string
+          title: Tier
+        description:
+          type: string
+          title: Description
+        modes:
+          items:
+            type: string
+          type: array
+          title: Modes
+        accepts_input:
+          type: boolean
+          title: Accepts Input
+        data_schema:
+          additionalProperties:
+            $ref: '#/components/schemas/JsonValue'
+          type: object
+          title: Data Schema
+        js_url:
+          type: string
+          title: Js Url
+      type: object
+      required:
+      - name
+      - tier
+      - description
+      - modes
+      - accepts_input
+      - data_schema
+      - js_url
+      title: WidgetDescriptorResponse

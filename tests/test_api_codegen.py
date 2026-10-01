@@ -21,6 +21,7 @@ from decafclaw.http_server import create_app
 from decafclaw.sticky import write_sticky_state
 from decafclaw.web.auth import create_token
 from decafclaw.web.conversations import ConversationIndex
+from decafclaw.widgets import init_widgets
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 STATIC_REL = pathlib.Path("src/decafclaw/web/static")
@@ -140,6 +141,7 @@ def test_browser_uses_clean_built_client(source_tree, config):
                      "details": {"top_score": 0.9, "budget_source": "dynamic"}}],
     }
     write_context_sidecar(config, conv_id, diagnostics_payload)
+    init_widgets(config)
     app = create_app(config, EventBus())
     for route in app.routes:
         if getattr(route, "path", None) == "/static":
@@ -158,6 +160,8 @@ def test_browser_uses_clean_built_client(source_tree, config):
     patch_requests = []
     folder_requests = []
     lifecycle_requests = []
+    canvas_requests = []
+    widget_catalog_requests = []
 
     @app.middleware("http")
     async def record_listing_request(request, call_next):
@@ -185,6 +189,14 @@ def test_browser_uses_clean_built_client(source_tree, config):
             lifecycle_requests.append((request.method, request.scope["path"],
                                        await request.json() if request.url.path == "/api/conversations" else None,
                                        bool(request.cookies)))
+        if request.url.path.startswith(f"/api/canvas/{conv_id}"):
+            canvas_requests.append((
+                request.method, request.scope["path"],
+                await request.json() if request.method == "POST" else None,
+                request.headers.get("content-type"), bool(request.cookies),
+            ))
+        if request.url.path == "/api/widgets":
+            widget_catalog_requests.append(bool(request.cookies))
         return await call_next(request)
 
     # Bind before starting the server, avoiding a free-port check/use race.
@@ -221,7 +233,14 @@ def test_browser_uses_clean_built_client(source_tree, config):
                     return { username: await client.checkSession(), currentUser: client.currentUser };
                 }""", token)
                 assert result == {"username": "browser-user", "currentUser": "browser-user"}
-                page.add_script_tag(type="importmap", content='{"imports":{"lit":"/static/vendor/bundle/lit.js"}}')
+                page.add_script_tag(type="importmap", content=json.dumps({"imports": {
+                    "lit": "/static/vendor/bundle/lit.js",
+                    "lit/directives/unsafe-html.js": "/static/vendor/bundle/lit-unsafe-html.js",
+                    "diff": "/static/vendor/bundle/diff.js",
+                    "marked": "/static/vendor/bundle/marked.js",
+                    "dompurify": "/static/vendor/bundle/dompurify.js",
+                    "hljs": "/static/vendor/bundle/highlight.js",
+                }}))
                 page.evaluate("""async () => {
                     await import('/static/components/notification-inbox.js');
                     document.body.append(document.createElement('notification-inbox'));
@@ -386,6 +405,78 @@ def test_browser_uses_clean_built_client(source_tree, config):
                     ("DELETE", f"/api/conversations/{created['conv_id']}", None, True),
                 ]
                 assert ConversationIndex(config).get(created["conv_id"]) is None
+                canvas_result = page.evaluate("""async (convId) => {
+                    const canvas = await import('/static/lib/canvas-state.js');
+                    const catalog = await import('/static/lib/widget-catalog.js');
+                    await canvas.setActiveConv(convId);
+                    const descriptors = await catalog.getCatalog();
+                    const modules = [
+                        ['/static/widgets/code_block/widget.js', 'dc-widget-code-block',
+                         {code: 'print(1)', language: 'python', filename: 'demo.py'}],
+                        ['/static/widgets/diff_view/widget.js', 'dc-widget-diff-view',
+                         {before: 'a', after: 'b', filename: 'demo.txt'}],
+                        ['/static/widgets/json_view/widget.js', 'dc-widget-json-view',
+                         {nested: [1, true, null]}],
+                        ['/static/widgets/markdown_document/widget.js', 'dc-widget-markdown-document',
+                         {content: '# Browser doc\\n\\nBody'}],
+                    ];
+                    for (const [url, tag, data] of modules) {
+                        await import(url);
+                        const widget = document.createElement(tag);
+                        widget.data = data;
+                        await widget._openInCanvas();
+                    }
+                    await canvas.switchToTab('canvas_1');
+                    await canvas.closeTabById(convId, 'canvas_4');
+                    const descriptor = descriptors.get('code_block');
+                    return {
+                        snapshot: canvas.currentSnapshot(),
+                        descriptor: {name: descriptor.name, js_url: descriptor.js_url,
+                                     schemaType: descriptor.data_schema.type},
+                    };
+                }""", conv_id)
+                assert canvas_result["descriptor"]["name"] == "code_block"
+                assert canvas_result["descriptor"]["schemaType"] == "object"
+                assert canvas_result["descriptor"]["js_url"].startswith(
+                    "/widgets/bundled/code_block/widget.js?v=")
+                assert canvas_result["snapshot"]["activeTabId"] == "canvas_1"
+                assert canvas_result["snapshot"]["tabs"] == []  # REST changes arrive over WS.
+                assert widget_catalog_requests == [True]
+                assert canvas_requests == [
+                    ("GET", f"/api/canvas/{conv_id}", None, None, True),
+                    ("POST", f"/api/canvas/{conv_id}/new_tab", {
+                        "widget_type": "code_block",
+                        "data": {"code": "print(1)", "language": "python", "filename": "demo.py"},
+                        "label": "demo.py",
+                    }, "application/json", True),
+                    ("POST", f"/api/canvas/{conv_id}/new_tab", {
+                        "widget_type": "diff_view",
+                        "data": {"before": "a", "after": "b", "filename": "demo.txt", "view": "unified"},
+                        "label": "demo.txt",
+                    }, "application/json", True),
+                    ("POST", f"/api/canvas/{conv_id}/new_tab", {
+                        "widget_type": "json_view", "data": {"nested": [1, True, None]},
+                        "label": "JSON View",
+                    }, "application/json", True),
+                    ("POST", f"/api/canvas/{conv_id}/new_tab", {
+                        "widget_type": "markdown_document",
+                        "data": {"content": "# Browser doc\n\nBody"}, "label": "Browser doc",
+                    }, "application/json", True),
+                    ("POST", f"/api/canvas/{conv_id}/active_tab", {"tab_id": "canvas_1"},
+                     "application/json", True),
+                    ("POST", f"/api/canvas/{conv_id}/close_tab", {"tab_id": "canvas_4"},
+                     "application/json", True),
+                ]
+                errors.clear()
+                failed_requests.clear()
+                page.goto(base + f"/canvas/{conv_id}/canvas_1")
+                page.wait_for_function("document.querySelector('dc-widget-code-block') !== null")
+                assert page.locator("dc-widget-code-block").inner_text().find("print(1)") >= 0
+                assert page.title() == "Canvas — demo.py"
+                assert canvas_requests[-1] == (
+                    "GET", f"/api/canvas/{conv_id}", None, None, True,
+                )
+                assert widget_catalog_requests == [True, True]
                 assert not errors, errors
                 assert not failed_requests, failed_requests
 
@@ -748,3 +839,154 @@ def test_notification_contract_drift_fails_at_unchanged_caller(source_tree, cont
     assert any("notification-inbox.js(" in line and code in line and diagnostic in line for line in diagnostics), output
     assert all("notification-inbox.js(" in line for line in diagnostics), output
     assert caller.read_bytes() == original_caller
+
+
+def _mutate_canvas_contract(source_tree, replacements):
+    result, output = run_make(source_tree, "check-js")
+    assert result.returncode == 0, output
+    backend = source_tree / "src/decafclaw/http_server.py"
+    original = backend.read_text()
+    changed = original
+    for before, after in replacements:
+        assert before in changed
+        changed = changed.replace(before, after)
+    backend.write_text(changed)
+    result, output = run_make(source_tree, "check-js")
+    assert result.returncode != 0, output
+    assert "error TS" in output, output
+    return output
+
+
+def _canvas_caller_diagnostic_prefix(source_tree, caller, operation, argument):
+    caller_path = source_tree / "src/decafclaw/web/static" / caller
+    lines = caller_path.read_text().splitlines()
+    operation_line = next(i for i, line in enumerate(lines) if operation in line)
+    argument_line = next(
+        i for i, line in enumerate(lines[operation_line:operation_line + 15], operation_line)
+        if argument in line
+    )
+    return f"{caller}({argument_line + 1},"
+
+
+@pytest.mark.parametrize("contract", [
+    "state_path", "new_tab_path", "active_tab_path", "close_tab_path",
+    "widget_type", "data", "label", "tab_id",
+])
+def test_canvas_used_input_contract_drift_fails_at_unchanged_callers(source_tree, contract):
+    new_tab_callers = [
+        ("widgets/code_block/widget.js", "widget_type: 'code_block'"),
+        ("widgets/diff_view/widget.js", "widget_type: 'diff_view'"),
+        ("widgets/json_view/widget.js", "widget_type: 'json_view'"),
+        ("widgets/markdown_document/widget.js", "widget_type: 'markdown_document'"),
+    ]
+    if contract.endswith("_path"):
+        operation = {
+            "state_path": "get_canvas_state",
+            "new_tab_path": "post_canvas_new_tab",
+            "active_tab_path": "post_canvas_active_tab",
+            "close_tab_path": "post_canvas_close_tab",
+        }[contract]
+        replacements = [(f"async def {operation}(request: Request, conv_id: str)",
+                         f"async def {operation}(request: Request, conv_id: int)")]
+        expectations = {
+            "state_path": [
+                ("canvas-page.js", "getCanvasStateApiCanvasConvIdGet", "getCanvasStateApiCanvasConvIdGet"),
+                ("lib/canvas-state.js", "getCanvasStateApiCanvasConvIdGet", "getCanvasStateApiCanvasConvIdGet"),
+            ],
+            "new_tab_path": [
+                (caller, "postCanvasNewTabApiCanvasConvIdNewTabPost", "convId")
+                for caller, _ in new_tab_callers
+            ],
+            "active_tab_path": [
+                ("lib/canvas-state.js", "postCanvasActiveTabApiCanvasConvIdActiveTabPost",
+                 "convId"),
+            ],
+            "close_tab_path": [
+                ("lib/canvas-state.js", "postCanvasCloseTabApiCanvasConvIdCloseTabPost",
+                 "convId"),
+            ],
+        }[contract]
+        diagnostic, code = "not assignable to parameter of type 'number'", "TS2345"
+    elif contract == "tab_id":
+        replacements = [("class CanvasTabRequest(BaseModel):\n    tab_id: str",
+                         "class CanvasTabRequest(BaseModel):\n    tab_id: int")]
+        expectations = [
+            ("lib/canvas-state.js", "postCanvasActiveTabApiCanvasConvIdActiveTabPost", "tab_id: tabId"),
+            ("lib/canvas-state.js", "postCanvasCloseTabApiCanvasConvIdCloseTabPost", "tab_id: tabId"),
+        ]
+        diagnostic, code = "Type 'string' is not assignable to type 'number'", "TS2322"
+    else:
+        replacement = {
+            "widget_type": ("    widget_type: str", "    widget_type: int"),
+            "data": ("    data: dict[str, object]", "    renamed_data: dict[str, object]"),
+            "label": ("    label: str | None = None", "    label: int | None = None"),
+        }[contract]
+        replacements = [replacement]
+        argument = {
+            "widget_type": lambda marker: marker,
+            "data": lambda marker: "data:",
+            "label": lambda marker: "label",
+        }[contract]
+        expectations = [
+            (caller, "postCanvasNewTabApiCanvasConvIdNewTabPost", argument(marker))
+            for caller, marker in new_tab_callers
+        ]
+        diagnostic, code = {
+            "widget_type": ("Type 'string' is not assignable to type 'number'", "TS2322"),
+            "data": ("'data' does not exist", "TS2353"),
+            "label": ("Type 'string' is not assignable to type 'number'", "TS2322"),
+        }[contract]
+    output = _mutate_canvas_contract(source_tree, replacements)
+    diagnostics = [line for line in output.splitlines() if "error TS" in line]
+    for caller, operation, argument in expectations:
+        prefix = _canvas_caller_diagnostic_prefix(source_tree, caller, operation, argument)
+        assert any(line.startswith(prefix) and code in line and diagnostic in line
+                   for line in diagnostics), output
+
+
+def test_canvas_state_field_drift_fails_at_unchanged_callers(source_tree):
+    output = _mutate_canvas_contract(source_tree, [
+        ("    active_tab: str | None\n    next_tab_id: int\n    tabs:",
+         "    renamed_active_tab: str | None\n    next_tab_id: int\n    renamed_tabs:"),
+    ])
+    assert "canvas-state.js" in output and "canvas-page.js" in output, output
+    assert "Property 'tabs' does not exist on type 'CanvasStateResponse'" in output, output
+    assert "Property 'active_tab' does not exist on type 'CanvasStateResponse'" in output, output
+
+
+@pytest.mark.parametrize("field", ["id", "label", "widget_type", "data"])
+def test_canvas_tab_field_drift_fails_at_unchanged_callers(source_tree, field):
+    before = {
+        "id": "class CanvasTabResponse(BaseModel):\n    id:",
+        "label": "    id: str\n    label:",
+        "widget_type": "    label: str\n    widget_type:",
+        "data": "    label: str\n    widget_type: str\n    data:",
+    }[field]
+    output = _mutate_canvas_contract(source_tree, [
+        (before, before.replace(f"    {field}:", f"    renamed_{field}:"))
+    ])
+    assert "canvas-page.js" in output or "canvas-state.js" in output, output
+    assert f"Property '{field}' does not exist on type 'CanvasTabResponse'" in output, output
+
+
+def test_widget_catalog_envelope_drift_fails_at_unchanged_caller(source_tree):
+    output = _mutate_canvas_contract(source_tree, [
+        ("class WidgetCatalogResponse(BaseModel):\n    widgets:",
+         "class WidgetCatalogResponse(BaseModel):\n    renamed_widgets:"),
+    ])
+    assert "widget-catalog.js" in output and "TS2339" in output, output
+    assert "Property 'widgets' does not exist on type 'WidgetCatalogResponse'" in output, output
+
+
+@pytest.mark.parametrize("field", ["name", "js_url"])
+def test_widget_descriptor_field_drift_fails_at_unchanged_callers(source_tree, field):
+    before = {
+        "name": "class WidgetDescriptorResponse(BaseModel):\n    name:",
+        "js_url": "    data_schema: dict[str, JsonValue]\n    js_url:",
+    }[field]
+    output = _mutate_canvas_contract(source_tree, [
+        (before, before.replace(f"    {field}:", f"    renamed_{field}:"))
+    ])
+    caller = "widget-catalog.js" if field == "name" else "widget-host.js"
+    assert caller in output and "TS2339" in output, output
+    assert f"Property '{field}' does not exist on type 'WidgetDescriptorResponse'" in output, output

@@ -14,7 +14,7 @@ import yaml
 from croniter import croniter
 from fastapi import FastAPI, Request
 from fastapi.routing import APIRoute
-from pydantic import BaseModel
+from pydantic import BaseModel, JsonValue
 from starlette.responses import FileResponse, JSONResponse, Response
 from starlette.routing import BaseRoute, Mount, WebSocketRoute
 from starlette.staticfiles import StaticFiles
@@ -2151,9 +2151,24 @@ async def ws_terminal(websocket):
 # -- Widget routes ------------------------------------------------------------
 
 
-@_authenticated
-async def list_widgets(request: Request, username: str) -> JSONResponse:
+class WidgetDescriptorResponse(BaseModel):
+    name: str
+    tier: str
+    description: str
+    modes: list[str]
+    accepts_input: bool
+    data_schema: dict[str, JsonValue]
+    js_url: str
+
+
+class WidgetCatalogResponse(BaseModel):
+    widgets: list[WidgetDescriptorResponse]
+
+
+async def list_widgets(request: Request) -> JSONResponse:
     """Return the widget catalog with cache-busted js URLs."""
+    if not _get_username_or_401(request):
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
     from .widgets import get_widget_registry
     registry = get_widget_registry()
     if registry is None:
@@ -2213,6 +2228,40 @@ async def serve_widget_js(request: Request, username: str):
 # -- Canvas routes ------------------------------------------------------------
 
 
+class CanvasTabResponse(BaseModel):
+    id: str
+    label: str
+    widget_type: str
+    data: dict[str, JsonValue]
+
+
+class CanvasStateResponse(BaseModel):
+    schema_version: int
+    active_tab: str | None
+    next_tab_id: int
+    tabs: list[CanvasTabResponse]
+
+
+# Schema-only inputs: handlers retain legacy JSON parsing and status codes.
+class CanvasNewTabRequest(BaseModel):
+    widget_type: str
+    data: dict[str, object]
+    label: str | None = None
+
+
+class CanvasTabRequest(BaseModel):
+    tab_id: str
+
+
+class CanvasNewTabResponse(BaseModel):
+    ok: Literal[True]
+    tab_id: str
+
+
+class CanvasMutationResponse(BaseModel):
+    ok: Literal[True]
+
+
 def _user_owns_conv(config, conv_id: str, username: str) -> bool:
     """Authorization gate for canvas routes — caller must own the conv."""
     from .web.conversations import ConversationIndex
@@ -2221,12 +2270,13 @@ def _user_owns_conv(config, conv_id: str, username: str) -> bool:
     return bool(conv and conv.user_id == username)
 
 
-@_authenticated
-async def get_canvas_state(request: Request, username: str) -> JSONResponse:
+async def get_canvas_state(request: Request, conv_id: str) -> JSONResponse:
     """Load current canvas state for a conversation."""
     from . import canvas as canvas_mod
     config = request.app.state.config
-    conv_id = request.path_params.get("conv_id", "")
+    username = _get_username_or_401(request)
+    if not username:
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
     if not _is_safe_conv_id(conv_id):
         return JSONResponse({"error": "invalid conv_id"}, status_code=400)
     if not _user_owns_conv(config, conv_id, username):
@@ -2258,13 +2308,14 @@ async def get_sticky_state(request: Request, conv_id: str) -> StickyResponse | J
     )
 
 
-@_authenticated
-async def post_canvas_new_tab(request: Request, username: str) -> JSONResponse:
+async def post_canvas_new_tab(request: Request, conv_id: str) -> JSONResponse:
     """Create a new canvas tab. Backs the inline 'Open in Canvas' button."""
     from . import canvas as canvas_mod
     config = request.app.state.config
     manager = request.app.state.manager
-    conv_id = request.path_params.get("conv_id", "")
+    username = _get_username_or_401(request)
+    if not username:
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
     if not _is_safe_conv_id(conv_id):
         return JSONResponse({"error": "invalid conv_id"}, status_code=400)
     if not _user_owns_conv(config, conv_id, username):
@@ -2288,13 +2339,14 @@ async def post_canvas_new_tab(request: Request, username: str) -> JSONResponse:
     return JSONResponse({"ok": True, "tab_id": result.tab_id})
 
 
-@_authenticated
-async def post_canvas_active_tab(request: Request, username: str) -> JSONResponse:
+async def post_canvas_active_tab(request: Request, conv_id: str) -> JSONResponse:
     """Set the active tab via user click in the panel."""
     from . import canvas as canvas_mod
     config = request.app.state.config
     manager = request.app.state.manager
-    conv_id = request.path_params.get("conv_id", "")
+    username = _get_username_or_401(request)
+    if not username:
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
     if not _is_safe_conv_id(conv_id):
         return JSONResponse({"error": "invalid conv_id"}, status_code=400)
     if not _user_owns_conv(config, conv_id, username):
@@ -2313,13 +2365,14 @@ async def post_canvas_active_tab(request: Request, username: str) -> JSONRespons
     return JSONResponse({"ok": True})
 
 
-@_authenticated
-async def post_canvas_close_tab(request: Request, username: str) -> JSONResponse:
+async def post_canvas_close_tab(request: Request, conv_id: str) -> JSONResponse:
     """Close a tab via user [×] click."""
     from . import canvas as canvas_mod
     config = request.app.state.config
     manager = request.app.state.manager
-    conv_id = request.path_params.get("conv_id", "")
+    username = _get_username_or_401(request)
+    if not username:
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
     if not _is_safe_conv_id(conv_id):
         return JSONResponse({"error": "invalid conv_id"}, status_code=400)
     if not _user_owns_conv(config, conv_id, username):
@@ -2718,14 +2771,25 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> FastAPI:
         # Legacy /api/wiki/* aliases — vault handlers under the old name.
         APIRoute("/api/wiki", vault_list, methods=["GET"]),
         APIRoute("/api/wiki/{page:path}", vault_read, methods=["GET"]),
-        APIRoute("/api/widgets", list_widgets, methods=["GET"]),
+        APIRoute("/api/widgets", list_widgets, methods=["GET"],
+                 response_model=WidgetCatalogResponse),
         APIRoute("/widgets/{tier}/{name}/widget.js", serve_widget_js,
               methods=["GET"]),
-        APIRoute("/api/canvas/{conv_id}", get_canvas_state, methods=["GET"]),
+        APIRoute("/api/canvas/{conv_id}", get_canvas_state, methods=["GET"],
+                 response_model=CanvasStateResponse),
         APIRoute("/api/sticky/{conv_id}", get_sticky_state, methods=["GET"], response_model=StickyResponse),
-        APIRoute("/api/canvas/{conv_id}/new_tab", post_canvas_new_tab, methods=["POST"]),
-        APIRoute("/api/canvas/{conv_id}/active_tab", post_canvas_active_tab, methods=["POST"]),
-        APIRoute("/api/canvas/{conv_id}/close_tab", post_canvas_close_tab, methods=["POST"]),
+        APIRoute("/api/canvas/{conv_id}/new_tab", post_canvas_new_tab, methods=["POST"],
+                 response_model=CanvasNewTabResponse,
+                 openapi_extra={"requestBody": {"required": True, "content": {
+                     "application/json": {"schema": CanvasNewTabRequest.model_json_schema()}}}}),
+        APIRoute("/api/canvas/{conv_id}/active_tab", post_canvas_active_tab, methods=["POST"],
+                 response_model=CanvasMutationResponse,
+                 openapi_extra={"requestBody": {"required": True, "content": {
+                     "application/json": {"schema": CanvasTabRequest.model_json_schema()}}}}),
+        APIRoute("/api/canvas/{conv_id}/close_tab", post_canvas_close_tab, methods=["POST"],
+                 response_model=CanvasMutationResponse,
+                 openapi_extra={"requestBody": {"required": True, "content": {
+                     "application/json": {"schema": CanvasTabRequest.model_json_schema()}}}}),
         APIRoute("/canvas/{conv_id}", get_canvas_page, methods=["GET"]),
         APIRoute("/canvas/{conv_id}/{tab_id}", get_canvas_page, methods=["GET"]),
         WebSocketRoute("/ws/chat", ws_chat),

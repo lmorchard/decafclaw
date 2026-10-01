@@ -17,6 +17,12 @@ export const request = <T>(config: OpenAPIConfig, options: ApiRequestOptions & {
     const vaultGuard = options.method === 'GET' && options.url === '/api/auth/me' && options.discardResponse;
     const diagnostics = options.method === 'GET' && options.url === '/api/conversations/{id}/context';
     const sticky = options.url === '/api/sticky/{conv_id}';
+    const widgetCatalog = options.method === 'GET' && options.url === '/api/widgets';
+    const canvasState = options.method === 'GET' && options.url === '/api/canvas/{conv_id}';
+    const canvasNewTab = options.method === 'POST' && options.url === '/api/canvas/{conv_id}/new_tab';
+    const canvasIgnoredMutation = options.method === 'POST'
+        && ['/api/canvas/{conv_id}/active_tab', '/api/canvas/{conv_id}/close_tab'].includes(options.url);
+    const canvas = canvasState || canvasNewTab || canvasIgnoredMutation;
     const listing = ['/api/conversations', '/api/conversations/archived', '/api/conversations/system'].includes(options.url);
     const patch = options.method === 'PATCH' && options.url === '/api/conversations/{id}';
     const create = options.method === 'POST' && options.url === '/api/conversations';
@@ -24,7 +30,7 @@ export const request = <T>(config: OpenAPIConfig, options: ApiRequestOptions & {
         || (options.method === 'POST' && ['/api/conversations/{id}/archive', '/api/conversations/{id}/unarchive'].includes(options.url));
     const folder = (options.method === 'POST' && options.url === '/api/conversations/folders')
         || (['PUT', 'DELETE'].includes(options.method) && options.url === '/api/conversations/folders/{path}');
-    if (!notification && !diagnostics && !login && !logout && !vaultGuard && !create && !lifecycle && !folder && !patch && (options.method !== 'GET' || (!sticky && !listing))) {
+    if (!notification && !diagnostics && !login && !logout && !vaultGuard && !create && !lifecycle && !folder && !patch && !widgetCatalog && !canvas && (options.method !== 'GET' || (!sticky && !listing))) {
         return generatedRequest<T>(config, options);
     }
     return new CancelablePromise(async (resolve, reject, onCancel) => {
@@ -33,6 +39,8 @@ export const request = <T>(config: OpenAPIConfig, options: ApiRequestOptions & {
             const query = listing && options.query?.folder === "" ? undefined : options.query;
             const url = folder
                 ? `${config.BASE}/api/conversations/folders${options.path ? '/' + String(options.path.path).split('/').map(encodeURIComponent).join('/') : ''}`
+                : canvas
+                ? `${config.BASE}${options.url.replace('{conv_id}', encodeURIComponent(options.path!.conv_id))}`
                 : patch || lifecycle || diagnostics || (notificationRead && options.path)
                 ? `${config.BASE}${options.url.replace('{id}', encodeURIComponent(options.path!.id))}${query ? getQueryString(query) : ''}`
                 : sticky
@@ -41,16 +49,19 @@ export const request = <T>(config: OpenAPIConfig, options: ApiRequestOptions & {
             const headers = await getHeaders(config, options);
             if (onCancel.isCancelled) return;
             const response = await sendRequest(
-                { ...config, WITH_CREDENTIALS: true, CREDENTIALS: 'same-origin' },
+                { ...config, WITH_CREDENTIALS: true,
+                  CREDENTIALS: widgetCatalog ? 'include' : 'same-origin' },
                 options, url, getRequestBody(options), undefined, headers, onCancel,
             );
             // Folder mutations decode error JSON for the existing error log.
             // Logout and notification read callers accept any HTTP response when
             // discarding the body. Other callers
             // reject HTTP errors before decoding. Propagate JSON failures.
-            if (!((logout || notificationRead) && options.discardResponse)) catchErrorCodes(options, {
+            if (!((logout || notificationRead || canvasIgnoredMutation) && options.discardResponse)) catchErrorCodes(options, {
                 url, ok: response.ok, status: response.status,
-                statusText: response.statusText, body: folder && !response.ok ? await response.json() : undefined,
+                statusText: response.statusText,
+                body: folder && !response.ok ? await response.json()
+                    : canvasNewTab && !response.ok ? await response.text() : undefined,
             });
             if (options.discardResponse) {
                 // The generated void overload makes the caller's unused body explicit.

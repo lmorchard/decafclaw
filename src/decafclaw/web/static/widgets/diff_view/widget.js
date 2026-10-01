@@ -3,6 +3,7 @@ import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 import hljs from 'hljs';
 import * as Diff from 'diff';
 import { getActiveConvId } from '/static/lib/canvas-state.js';
+import { ApiError, DefaultService } from '/static/lib/api-client/index.js';
 
 const INLINE_MAX_HEIGHT = '20rem';
 
@@ -42,6 +43,7 @@ export class DiffViewWidget extends LitElement {
     }
   }
 
+  /** @returns {string} */
   _headerLabel() {
     return this.data?.filename || 'Diff';
   }
@@ -58,21 +60,17 @@ export class DiffViewWidget extends LitElement {
     const convId = getActiveConvId() || '';
     if (!convId) return;
     try {
-      await fetch(`/api/canvas/${encodeURIComponent(convId)}/new_tab`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'same-origin',
-        body: JSON.stringify({
+      await DefaultService.postCanvasNewTabApiCanvasConvIdNewTabPost(
+        convId, {
           widget_type: 'diff_view',
           data: {
             ...this.data,
             view: this.viewMode,
           },
           label: this._headerLabel(),
-        }),
-      });
+        }, true);
     } catch (err) {
-      console.error('canvas new_tab error', err);
+      if (!(err instanceof ApiError)) console.error('canvas new_tab error', err);
     }
   }
 
