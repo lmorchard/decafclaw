@@ -149,6 +149,13 @@ def test_browser_uses_clean_built_client(source_tree, config):
     workspace_path.write_text("first browser content")
     config.vault_root.mkdir(parents=True, exist_ok=True)
     (config.vault_root / "Browser Vault.md").write_text("# Browser Vault")
+    vault_page_name = "agent/pages/Browser & 日本語"
+    vault_page_path = config.vault_root / f"{vault_page_name}.md"
+    vault_page_path.parent.mkdir(parents=True, exist_ok=True)
+    vault_page_path.write_text(
+        "---\nsummary: Browser summary\ntags: [BrowserTag]\n"
+        "nested:\n  rows: [1, true, null]\n---\n# Browser vault body\n",
+    )
     init_widgets(config)
     app = create_app(config, EventBus())
     for route in app.routes:
@@ -172,6 +179,7 @@ def test_browser_uses_clean_built_client(source_tree, config):
     widget_catalog_requests = []
     workspace_read_requests = []
     workspace_mutation_requests = []
+    vault_read_requests = []
 
     @app.middleware("http")
     async def record_listing_request(request, call_next):
@@ -220,6 +228,13 @@ def test_browser_uses_clean_built_client(source_tree, config):
                 request.method, request.scope["path"], list(request.query_params.multi_items()),
                 await request.body(), request.headers.get("content-type"), bool(request.cookies),
             ))
+        if request.method == "GET" and (
+            request.url.path in {"/api/vault", "/api/vault/recent", "/api/vault/tags"}
+            or request.url.path.startswith("/api/vault/")
+        ):
+            vault_read_requests.append((request.scope["path"],
+                                        list(request.query_params.multi_items()),
+                                        bool(request.cookies)))
         return await call_next(request)
 
     # Bind before starting the server, avoiding a free-port check/use race.
@@ -307,7 +322,8 @@ def test_browser_uses_clean_built_client(source_tree, config):
                 }""")
                 assert page.evaluate("document.querySelector('#browser-files')._files[0].path") == workspace_rel_path
                 assert page.evaluate("document.querySelector('#browser-file-page')._modified > 0")
-                assert page.evaluate("document.querySelector('#browser-chat-input')._mentionMatches[0].label") == "Browser Vault"
+                assert page.evaluate("""document.querySelector('#browser-chat-input')
+                    ._mentionMatches.find(item => item.id === 'Browser Vault').label""") == "Browser Vault"
                 workspace_path.write_text("second browser content")
                 page.evaluate("document.querySelector('#browser-file-page').reload()")
                 page.wait_for_function("document.querySelector('#browser-file-page')._content === 'second browser content'")
@@ -632,14 +648,14 @@ def test_browser_uses_clean_built_client(source_tree, config):
                 # Load the actual standalone page and its module graph, including
                 # decoding a page name and observing the loaded title.
                 page.evaluate("localStorage.setItem('wiki-edit-mode', 'false')")
-                page.route("**/api/vault/**", lambda route: route.fulfill(json={
-                    "title": "Browser vault title", "body": "# Vault body", "modified": 1,
-                }))
-                vault_url = base + "/vault/Page%20%26%20%E6%97%A5%E6%9C%AC%E8%AA%9E"
+                vault_url = base + "/vault/agent/pages/Browser%20%26%20%E6%97%A5%E6%9C%AC%E8%AA%9E"
                 with page.expect_response("**/api/auth/me") as guard_response:
                     page.goto(vault_url)
                 assert guard_response.value.status == 200
                 page.wait_for_function("document.querySelector('wiki-page')._loaded")
+                assert page.locator("wiki-page").evaluate("node => node._body") == "# Browser vault body\n"
+                assert page.locator("wiki-page").evaluate(
+                    "node => node._frontmatter.nested.rows") == [1, True, None]
                 # The component currently renders no .wiki-page-title element.
                 # Preserve the page's existing observer reaction without fixing
                 # that independent mismatch in this auth migration.
@@ -647,12 +663,63 @@ def test_browser_uses_clean_built_client(source_tree, config):
                 page.locator("wiki-page").evaluate("""node => {
                     const title = document.createElement('span');
                     title.className = 'wiki-page-title';
-                    title.textContent = 'Browser vault title';
+                    title.textContent = 'Browser & 日本語';
                     node.append(title);
                 }""")
-                page.wait_for_function("document.title === 'Browser vault title — DecafClaw Vault'")
-                assert page.locator("wiki-page").evaluate("node => node.page") == "Page & 日本語"
+                page.wait_for_function("document.title === 'Browser & 日本語 — DecafClaw Vault'")
+                assert page.locator("wiki-page").evaluate("node => node.page") == vault_page_name
                 assert page.url == vault_url
+
+                page.evaluate("""async (pageName) => {
+                    await Promise.all([
+                        import('/static/components/vault-sidebar.js'),
+                        import('/static/components/tags-sidebar.js'),
+                    ]);
+                    const sidebar = document.createElement('vault-sidebar');
+                    sidebar.id = 'browser-vault-sidebar';
+                    sidebar._vaultFolder = 'agent/pages';
+                    document.body.append(sidebar);
+                    await sidebar.updateComplete;
+                    sidebar.active = true;
+
+                    const tags = document.createElement('tags-sidebar');
+                    tags.id = 'browser-tags-sidebar';
+                    document.body.append(tags);
+                    await tags.updateComplete;
+                    tags.active = true;
+
+                    const editor = document.createElement('wiki-editor');
+                    editor.id = 'browser-vault-editor';
+                    editor.page = pageName;
+                    editor.content = 'stale editor body';
+                    editor.modified = 0;
+                    document.body.append(editor);
+                    await editor.updateComplete;
+                    editor._status = 'conflict';
+                    await editor.updateComplete;
+                }""", vault_page_name)
+                page.wait_for_function("""() =>
+                    document.querySelector('#browser-vault-sidebar')._wikiPages.length === 1
+                    && document.querySelector('#browser-tags-sidebar')._tags.length === 1
+                """)
+                assert page.locator('#browser-vault-sidebar').evaluate(
+                    "node => node._wikiPages[0].path") == vault_page_name
+                assert page.locator('#browser-tags-sidebar').evaluate(
+                    "node => node._tags[0].pages") == [f"{vault_page_name}.md"]
+                page.locator('#browser-vault-sidebar button', has_text='Recent').click()
+                page.wait_for_function(
+                    "document.querySelector('#browser-vault-sidebar')._recentPages.length === 1")
+                page.locator('#browser-vault-editor .wiki-editor-conflict button',
+                             has_text='Reload').click()
+                page.wait_for_function(
+                    "document.querySelector('#browser-vault-editor').content === '# Browser vault body\\n'")
+                assert vault_read_requests == [
+                    (f"/api/vault/{vault_page_name}", [], True),
+                    ("/api/vault", [("folder", "agent/pages")], True),
+                    ("/api/vault/tags", [], True),
+                    ("/api/vault/recent", [], True),
+                    (f"/api/vault/{vault_page_name}", [], True),
+                ]
                 assert not errors, errors
                 assert not failed_requests, failed_requests
 
@@ -1185,6 +1252,12 @@ def test_workspace_read_input_drift_fails_at_every_unchanged_call(source_tree, c
             block = original[start:end]
             assert block.count(before) == 1
             return original[:start] + block.replace(before, after) + original[end:]
+        if contract == "folder":
+            start = original.index('APIRoute("/api/workspace", workspace_list')
+            end = original.index('APIRoute("/api/workspace", workspace_create', start)
+            block = original[start:end]
+            assert block.count(before) == 1
+            return original[:start] + block.replace(before, after) + original[end:]
         assert original.count(before) == 1
         return original.replace(before, after)
 
@@ -1309,6 +1382,129 @@ def test_workspace_read_generated_contracts(source_tree):
         generated = (source_tree / CLIENT_REL / f"models/{model}.ts").read_text()
         assert f"type: {model}.type;" in generated
         assert f"{literal.upper()} = '{literal}'" in generated
+
+
+def test_vault_read_generated_contracts(source_tree):
+    result, output = run_make(source_tree, "gen-api-client")
+    assert result.returncode == 0, output
+    service = (source_tree / CLIENT_REL / "services/DefaultService.ts").read_text()
+    for signature in (
+        "folder?: string",
+        "page: string",
+        "): CancelablePromise<VaultListingResponse>",
+        "): CancelablePromise<VaultRecentResponse>",
+        "): CancelablePromise<VaultTagsResponse>",
+        "): CancelablePromise<VaultPageResponse>",
+    ):
+        assert signature in service
+    models = (
+        "VaultFolderEntry", "VaultPageListEntry", "VaultListingResponse",
+        "VaultRecentResponse", "VaultTagEntry", "VaultTagsResponse",
+        "VaultPageResponse",
+    )
+    for model in models:
+        generated = (source_tree / CLIENT_REL / f"models/{model}.ts").read_text()
+        assert "any" not in generated
+    page = (source_tree / CLIENT_REL / "models/VaultPageResponse.ts").read_text()
+    assert "frontmatter: Record<string, JsonValue>" in page
+    arbitrary = (source_tree / CLIENT_REL / "models/JsonValue.ts").read_text()
+    assert "export type JsonValue = unknown" in arbitrary
+
+
+@pytest.mark.parametrize("contract", ["folder", "page"])
+def test_vault_read_input_drift_fails_at_every_unchanged_call(source_tree, contract):
+    callers = {
+        "folder": [("components/vault-sidebar.js", "wrapperApiVaultGet")],
+        "page": [
+            ("components/wiki-page.js", "wrapperApiVaultPageGet"),
+            ("components/wiki-editor.js", "wrapperApiVaultPageGet"),
+        ],
+    }[contract]
+    originals = {
+        caller: (source_tree / STATIC_REL / caller).read_bytes()
+        for caller, _operation in callers
+    }
+    diagnostic_markers = {
+        "components/vault-sidebar.js": "this._vaultFolder || undefined",
+        "components/wiki-page.js": "wrapperApiVaultPageGet(this.page)",
+        "components/wiki-editor.js": "wrapperApiVaultPageGet(this.page)",
+    }
+
+    def mutate(original):
+        route = 'APIRoute("/api/vault", vault_list' if contract == "folder" \
+            else 'APIRoute("/api/vault/{page:path}", vault_read'
+        start = original.index(route)
+        end = original.index("),\n", start) + len("),\n")
+        block = original[start:end]
+        before = '"schema": {"type": "string"}'
+        assert block.count(before) == 1
+        return original[:start] + block.replace(
+            before, '"schema": {"type": "integer"}',
+        ) + original[end:]
+
+    output = _mutate_workspace_contract(source_tree, mutate)
+    diagnostics = [line for line in output.splitlines() if "error TS" in line]
+    for caller, _operation in callers:
+        expected_lines = [
+            line_no for line_no, line in enumerate(originals[caller].decode().splitlines(), 1)
+            if diagnostic_markers[caller] in line
+        ]
+        assert expected_lines
+        for line_no in expected_lines:
+            assert any(
+                diagnostic.startswith(f"{caller}({line_no},")
+                and "TS2345" in diagnostic
+                and "not assignable to parameter of type 'number'" in diagnostic
+                for diagnostic in diagnostics
+            ), output
+        assert (source_tree / STATIC_REL / caller).read_bytes() == originals[caller]
+
+
+@pytest.mark.parametrize(("model", "field", "callers"), [
+    ("VaultListingResponse", "folders", ["components/vault-sidebar.js"]),
+    ("VaultListingResponse", "pages", ["components/vault-sidebar.js"]),
+    ("VaultRecentResponse", "pages", ["components/vault-sidebar.js"]),
+    ("VaultTagsResponse", "tags", ["components/tags-sidebar.js"]),
+    *[("VaultFolderEntry", field, ["components/vault-sidebar.js"])
+      for field in ("name", "path")],
+    *[("VaultPageListEntry", field, ["components/vault-sidebar.js"])
+      for field in ("title", "path", "folder", "modified", "summary")],
+    *[("VaultTagEntry", field, ["components/tags-sidebar.js"])
+      for field in ("tag", "count", "pages")],
+    ("VaultPageResponse", "title", ["components/wiki-page.js"]),
+    ("VaultPageResponse", "body", ["components/wiki-page.js", "components/wiki-editor.js"]),
+    ("VaultPageResponse", "modified", ["components/wiki-page.js", "components/wiki-editor.js"]),
+    *[("VaultPageResponse", field, ["components/wiki-page.js"])
+      for field in ("frontmatter", "frontmatter_raw", "frontmatter_error")],
+])
+def test_vault_read_output_drift_fails_at_unchanged_callers(
+    source_tree, model, field, callers,
+):
+    originals = {
+        caller: (source_tree / STATIC_REL / caller).read_bytes()
+        for caller in callers
+    }
+
+    def mutate(original):
+        start = original.index(f"class {model}(BaseModel):")
+        end = original.index("\n\n\n", start)
+        block = original[start:end]
+        before = f"    {field}:"
+        assert block.count(before) == 1
+        return original[:start] + block.replace(
+            before, f"    renamed_{field}:",
+        ) + original[end:]
+
+    output = _mutate_workspace_contract(source_tree, mutate)
+    diagnostics = [line for line in output.splitlines() if "error TS" in line]
+    for caller in callers:
+        assert any(
+            caller in diagnostic
+            and ("TS2339" in diagnostic or "TS2551" in diagnostic)
+            and f"Property '{field}' does not exist" in diagnostic
+            for diagnostic in diagnostics
+        ), output
+        assert (source_tree / STATIC_REL / caller).read_bytes() == originals[caller]
 
 
 def test_workspace_mutation_generated_contracts(source_tree):

@@ -1,4 +1,5 @@
 import { LitElement, html, nothing } from 'lit';
+import { ApiError, DefaultService } from '../lib/api-client/index.js';
 
 export class VaultSidebar extends LitElement {
   static properties = {
@@ -17,16 +18,16 @@ export class VaultSidebar extends LitElement {
   constructor() {
     super();
     this.active = false;
-    /** @type {Array<{title: string, path?: string, folder?: string, modified: number, summary?: string}>} */
+    /** @type {import('../lib/api-client/index.js').VaultPageListEntry[]} */
     this._wikiPages = [];
     this._wikiLoading = false;
     this._vaultFolder = '';
-    /** @type {Array<{name: string, path: string}>} */
+    /** @type {import('../lib/api-client/index.js').VaultFolderEntry[]} */
     this._vaultFolders = [];
     /** @type {string|null} */
     this._openWikiPage = null;
     this._vaultView = 'browse'; // 'browse' | 'recent'
-    /** @type {Array<{title: string, path: string, folder: string, modified: number, summary?: string}>} */
+    /** @type {import('../lib/api-client/index.js').VaultPageListEntry[]} */
     this._recentPages = [];
   }
 
@@ -58,22 +59,15 @@ export class VaultSidebar extends LitElement {
   async #fetchWikiPages() {
     this._wikiLoading = true;
     try {
-      const url = this._vaultFolder
-        ? `/api/vault?folder=${encodeURIComponent(this._vaultFolder)}`
-        : '/api/vault';
-      const res = await fetch(url);
-      if (res.ok) {
-        const data = await res.json();
-        this._vaultFolders = data.folders || [];
-        this._wikiPages = data.pages || [];
-      } else {
-        this._vaultFolders = [];
-        this._wikiPages = [];
-        if (res.status === 404) this._vaultFolder = '';
-      }
+      const data = await DefaultService.wrapperApiVaultGet(
+        this._vaultFolder || undefined,
+      );
+      this._vaultFolders = data.folders;
+      this._wikiPages = data.pages;
     } catch (e) {
       this._vaultFolders = [];
       this._wikiPages = [];
+      if (e instanceof ApiError && e.status === 404) this._vaultFolder = '';
     } finally {
       this._wikiLoading = false;
     }
@@ -82,13 +76,8 @@ export class VaultSidebar extends LitElement {
   async #fetchRecentPages() {
     this._wikiLoading = true;
     try {
-      const res = await fetch('/api/vault/recent');
-      if (res.ok) {
-        const data = await res.json();
-        this._recentPages = data.pages || [];
-      } else {
-        this._recentPages = [];
-      }
+      const data = await DefaultService.wrapperApiVaultRecentGet();
+      this._recentPages = data.pages;
     } catch (e) {
       this._recentPages = [];
     } finally {

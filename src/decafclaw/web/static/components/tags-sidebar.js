@@ -1,8 +1,5 @@
 import { LitElement, html, nothing } from 'lit';
-
-/**
- * @typedef {{ tag: string, count: number, pages: string[] }} TagEntry
- */
+import { DefaultService } from '../lib/api-client/index.js';
 
 export class TagsSidebar extends LitElement {
   static properties = {
@@ -17,7 +14,7 @@ export class TagsSidebar extends LitElement {
   constructor() {
     super();
     this.active = false;
-    /** @type {TagEntry[]} */
+    /** @type {import('../lib/api-client/index.js').VaultTagEntry[]} */
     this._tags = [];
     this._loading = false;
     /** @type {string|null} */
@@ -48,13 +45,8 @@ export class TagsSidebar extends LitElement {
   async #fetchTags() {
     this._loading = true;
     try {
-      const res = await fetch('/api/vault/tags');
-      if (res.ok) {
-        const data = await res.json();
-        this._tags = data.tags || [];
-      } else {
-        this._tags = [];
-      }
+      const data = await DefaultService.wrapperApiVaultTagsGet();
+      this._tags = data.tags;
     } catch {
       this._tags = [];
     } finally {

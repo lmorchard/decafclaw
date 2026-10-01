@@ -23,6 +23,10 @@ import type { NotificationReadResponse } from '../models/NotificationReadRespons
 import type { StickyResponse } from '../models/StickyResponse';
 import type { SystemConversationListingResponse } from '../models/SystemConversationListingResponse';
 import type { UserResponse } from '../models/UserResponse';
+import type { VaultListingResponse } from '../models/VaultListingResponse';
+import type { VaultPageResponse } from '../models/VaultPageResponse';
+import type { VaultRecentResponse } from '../models/VaultRecentResponse';
+import type { VaultTagsResponse } from '../models/VaultTagsResponse';
 import type { WidgetCatalogResponse } from '../models/WidgetCatalogResponse';
 import type { WorkspaceDeleteResponse } from '../models/WorkspaceDeleteResponse';
 import type { WorkspaceListingResponse } from '../models/WorkspaceListingResponse';
@@ -879,21 +883,27 @@ export class DefaultService {
      * @returns any Successful Response
      * @throws ApiError
      */
-    public static wrapperApiVaultGet(): CancelablePromise<any> {
+    public static wrapperApiVaultPost(): CancelablePromise<any> {
         return __request(OpenAPI, {
-            method: 'GET',
+            method: 'POST',
             url: '/api/vault',
         });
     }
     /**
      * Wrapper
-     * @returns any Successful Response
+     * @param folder
+     * @returns VaultListingResponse Successful Response
      * @throws ApiError
      */
-    public static wrapperApiVaultPost(): CancelablePromise<any> {
+    public static wrapperApiVaultGet(
+        folder?: string,
+    ): CancelablePromise<VaultListingResponse> {
         return __request(OpenAPI, {
-            method: 'POST',
+            method: 'GET',
             url: '/api/vault',
+            query: {
+                'folder': folder,
+            },
         });
     }
     /**
@@ -909,10 +919,10 @@ export class DefaultService {
     }
     /**
      * Wrapper
-     * @returns any Successful Response
+     * @returns VaultRecentResponse Successful Response
      * @throws ApiError
      */
-    public static wrapperApiVaultRecentGet(): CancelablePromise<any> {
+    public static wrapperApiVaultRecentGet(): CancelablePromise<VaultRecentResponse> {
         return __request(OpenAPI, {
             method: 'GET',
             url: '/api/vault/recent',
@@ -920,24 +930,13 @@ export class DefaultService {
     }
     /**
      * Wrapper
-     * @returns any Successful Response
+     * @returns VaultTagsResponse Successful Response
      * @throws ApiError
      */
-    public static wrapperApiVaultTagsGet(): CancelablePromise<any> {
+    public static wrapperApiVaultTagsGet(): CancelablePromise<VaultTagsResponse> {
         return __request(OpenAPI, {
             method: 'GET',
             url: '/api/vault/tags',
-        });
-    }
-    /**
-     * Wrapper
-     * @returns any Successful Response
-     * @throws ApiError
-     */
-    public static wrapperApiVaultPageGet(): CancelablePromise<any> {
-        return __request(OpenAPI, {
-            method: 'GET',
-            url: '/api/vault/{page}',
         });
     }
     /**
@@ -949,6 +948,23 @@ export class DefaultService {
         return __request(OpenAPI, {
             method: 'PUT',
             url: '/api/vault/{page}',
+        });
+    }
+    /**
+     * Wrapper
+     * @param page
+     * @returns VaultPageResponse Successful Response
+     * @throws ApiError
+     */
+    public static wrapperApiVaultPageGet(
+        page: string,
+    ): CancelablePromise<VaultPageResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/vault/{page}',
+            path: {
+                'page': page,
+            },
         });
     }
     /**
