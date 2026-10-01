@@ -857,26 +857,59 @@ def _mutate_canvas_contract(source_tree, replacements):
     return output
 
 
-def test_canvas_used_input_contract_drift_fails_at_unchanged_callers(source_tree):
-    output = _mutate_canvas_contract(source_tree, [
-        ("async def get_canvas_state(request: Request, conv_id: str)",
-         "async def get_canvas_state(request: Request, conv_id: int)"),
-        ("async def post_canvas_new_tab(request: Request, conv_id: str)",
-         "async def post_canvas_new_tab(request: Request, conv_id: int)"),
-        ("async def post_canvas_active_tab(request: Request, conv_id: str)",
-         "async def post_canvas_active_tab(request: Request, conv_id: int)"),
-        ("async def post_canvas_close_tab(request: Request, conv_id: str)",
-         "async def post_canvas_close_tab(request: Request, conv_id: int)"),
-        ("class CanvasNewTabRequest(BaseModel):\n    widget_type: str\n    data: dict[str, object]\n    label: str | None = None",
-         "class CanvasNewTabRequest(BaseModel):\n    widget_type: int\n    renamed_data: list[str]\n    label: int | None = None"),
-        ("class CanvasTabRequest(BaseModel):\n    tab_id: str",
-         "class CanvasTabRequest(BaseModel):\n    tab_id: int"),
-    ])
-    for caller in ["canvas-page.js", "canvas-state.js", "code_block/widget.js",
-                   "diff_view/widget.js", "json_view/widget.js",
-                   "markdown_document/widget.js"]:
-        assert caller in output, output
-    assert "TS2345" in output, output
+@pytest.mark.parametrize("contract", [
+    "state_path", "new_tab_path", "active_tab_path", "close_tab_path",
+    "widget_type", "data", "label", "tab_id",
+])
+def test_canvas_used_input_contract_drift_fails_at_unchanged_callers(source_tree, contract):
+    widgets = ["code_block/widget.js", "diff_view/widget.js", "json_view/widget.js",
+               "markdown_document/widget.js"]
+    if contract.endswith("_path"):
+        operation = {
+            "state_path": "get_canvas_state",
+            "new_tab_path": "post_canvas_new_tab",
+            "active_tab_path": "post_canvas_active_tab",
+            "close_tab_path": "post_canvas_close_tab",
+        }[contract]
+        replacements = [(f"async def {operation}(request: Request, conv_id: str)",
+                         f"async def {operation}(request: Request, conv_id: int)")]
+        callers = {
+            # canvas-page derives convId from location.pathname, so it remains a
+            # statically typed string. canvas-state's public setter accepts
+            # untyped JavaScript input and cannot prove this mismatch.
+            "state_path": ["canvas-page.js"],
+            "new_tab_path": widgets,
+            "active_tab_path": ["canvas-state.js"],
+            "close_tab_path": ["canvas-state.js"],
+        }[contract]
+        diagnostic, code = "not assignable to parameter of type 'number'", "TS2345"
+    elif contract == "tab_id":
+        replacements = [("class CanvasTabRequest(BaseModel):\n    tab_id: str",
+                         "class CanvasTabRequest(BaseModel):\n    tab_id: int")]
+        callers = ["canvas-state.js"]
+        diagnostic, code = "Type 'string' is not assignable to type 'number'", "TS2322"
+    else:
+        replacement = {
+            "widget_type": ("    widget_type: str", "    widget_type: int"),
+            "data": ("    data: dict[str, object]", "    renamed_data: dict[str, object]"),
+            "label": ("    label: str | None = None", "    label: int | None = None"),
+        }[contract]
+        replacements = [replacement]
+        callers = widgets
+        diagnostic, code = {
+            "widget_type": ("Type 'string' is not assignable to type 'number'", "TS2322"),
+            "data": ("'data' does not exist", "TS2353"),
+            "label": ("Type 'string' is not assignable to type 'number'", "TS2322"),
+        }[contract]
+        if contract == "label":
+            # json_view supplies a literal label. diff_view computes its label
+            # through untyped widget data, while the other callers omit it.
+            callers = ["json_view/widget.js"]
+    output = _mutate_canvas_contract(source_tree, replacements)
+    diagnostics = [line for line in output.splitlines() if "error TS" in line]
+    for caller in callers:
+        assert any(caller in line and code in line and diagnostic in line
+                   for line in diagnostics), output
 
 
 def test_canvas_state_field_drift_fails_at_unchanged_callers(source_tree):
