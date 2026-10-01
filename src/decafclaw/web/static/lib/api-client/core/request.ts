@@ -9,9 +9,12 @@ export const request = <T>(config: OpenAPIConfig, options: ApiRequestOptions & {
     const sticky = options.url === '/api/sticky/{conv_id}';
     const listing = ['/api/conversations', '/api/conversations/archived', '/api/conversations/system'].includes(options.url);
     const patch = options.method === 'PATCH' && options.url === '/api/conversations/{id}';
+    const create = options.method === 'POST' && options.url === '/api/conversations';
+    const lifecycle = (options.method === 'DELETE' && options.url === '/api/conversations/{id}')
+        || (options.method === 'POST' && ['/api/conversations/{id}/archive', '/api/conversations/{id}/unarchive'].includes(options.url));
     const folder = (options.method === 'POST' && options.url === '/api/conversations/folders')
         || (['PUT', 'DELETE'].includes(options.method) && options.url === '/api/conversations/folders/{path}');
-    if (!folder && !patch && (options.method !== 'GET' || (!sticky && !listing))) {
+    if (!create && !lifecycle && !folder && !patch && (options.method !== 'GET' || (!sticky && !listing))) {
         return generatedRequest<T>(config, options);
     }
     return new CancelablePromise(async (resolve, reject, onCancel) => {
@@ -20,8 +23,8 @@ export const request = <T>(config: OpenAPIConfig, options: ApiRequestOptions & {
             const query = listing && options.query?.folder === "" ? undefined : options.query;
             const url = folder
                 ? `${config.BASE}/api/conversations/folders${options.path ? '/' + String(options.path.path).split('/').map(encodeURIComponent).join('/') : ''}`
-                : patch
-                ? `${config.BASE}/api/conversations/${encodeURIComponent(options.path!.id)}`
+                : patch || lifecycle
+                ? `${config.BASE}${options.url.replace('{id}', encodeURIComponent(options.path!.id))}`
                 : sticky
                 ? `${config.BASE}/api/sticky/${encodeURIComponent(options.path!.conv_id)}`
                 : `${config.BASE}${options.url}${query ? getQueryString(query) : ""}`;

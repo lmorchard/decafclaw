@@ -227,17 +227,9 @@ export class ConversationStore extends EventTarget {
    */
   async createConversation(title = '', model = '', folder = '') {
     try {
-      /** @type {Record<string, string>} */
-      const body = { title };
-      if (model) body.model = model;
-      if (folder) body.folder = folder;
-      const resp = await fetch('/api/conversations', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
+      const conv = await DefaultService.createConversationApiConversationsPost({
+        title, ...(model ? { model } : {}), ...(folder ? { folder } : {}),
       });
-      if (!resp.ok) return;
-      const conv = await resp.json();
       // Insert into local list and select
       this.#conversations.unshift(conv);
       if (conv.model) this.#activeModel = conv.model;
@@ -251,6 +243,7 @@ export class ConversationStore extends EventTarget {
         this.#uploadAndSend(conv.conv_id, text, atts);
       }
     } catch (err) {
+      if (err instanceof ApiError) return;
       console.error('Failed to create conversation:', err);
     }
   }
@@ -284,10 +277,7 @@ export class ConversationStore extends EventTarget {
   /** @param {string} convId */
   async archiveConversation(convId) {
     try {
-      const resp = await fetch(`/api/conversations/${convId}/archive`, {
-        method: 'POST',
-      });
-      if (!resp.ok) return;
+      await DefaultService.archiveConversationApiConversationsIdArchivePost(convId, true);
       // If we're viewing the archived conversation, deselect it
       if (this.#currentConvId === convId) {
         this.#currentConvId = null;
@@ -296,6 +286,7 @@ export class ConversationStore extends EventTarget {
       // Re-fetch current folder listing
       await this.listConversations(this.#currentFolder);
     } catch (err) {
+      if (err instanceof ApiError) return;
       console.error('Failed to archive conversation:', err);
     }
   }
@@ -303,10 +294,7 @@ export class ConversationStore extends EventTarget {
   /** @param {string} convId */
   async deleteConversation(convId) {
     try {
-      const resp = await fetch(`/api/conversations/${convId}`, {
-        method: 'DELETE',
-      });
-      if (!resp.ok) return;
+      await DefaultService.deleteConversationApiConversationsIdDelete(convId, true);
       // If we're viewing the deleted conversation, deselect it
       if (this.#currentConvId === convId) {
         this.#currentConvId = null;
@@ -316,6 +304,7 @@ export class ConversationStore extends EventTarget {
       await this.listArchivedConversations(this.#archivedCurrentFolder);
       this.#emitChange();
     } catch (err) {
+      if (err instanceof ApiError) return;
       console.error('Failed to delete conversation:', err);
     }
   }
@@ -323,13 +312,11 @@ export class ConversationStore extends EventTarget {
   /** @param {string} convId */
   async unarchiveConversation(convId) {
     try {
-      const resp = await fetch(`/api/conversations/${convId}/unarchive`, {
-        method: 'POST',
-      });
-      if (!resp.ok) return;
+      await DefaultService.unarchiveConversationApiConversationsIdUnarchivePost(convId, true);
       // Re-fetch archived listing
       await this.listArchivedConversations(this.#archivedCurrentFolder);
     } catch (err) {
+      if (err instanceof ApiError) return;
       console.error('Failed to unarchive conversation:', err);
     }
   }

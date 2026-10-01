@@ -59,6 +59,9 @@ def dump_openapi():
     ]
     subprocess.run(cmd, check=True)
     for method, verb, url in (
+        ("archiveConversationApiConversationsIdArchivePost", "POST", "/api/conversations/{id}/archive"),
+        ("unarchiveConversationApiConversationsIdUnarchivePost", "POST", "/api/conversations/{id}/unarchive"),
+        ("deleteConversationApiConversationsIdDelete", "DELETE", "/api/conversations/{id}"),
         ("renameConversationApiConversationsIdPatch", "PATCH", "/api/conversations/{id}"),
         ("createConvFolderApiConversationsFoldersPost", "POST", "/api/conversations/folders"),
         ("deleteConvFolderApiConversationsFoldersPathDelete", "DELETE", "/api/conversations/folders/{path}"),
