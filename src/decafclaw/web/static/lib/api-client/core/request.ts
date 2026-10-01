@@ -9,14 +9,18 @@ export const request = <T>(config: OpenAPIConfig, options: ApiRequestOptions & {
     const sticky = options.url === '/api/sticky/{conv_id}';
     const listing = ['/api/conversations', '/api/conversations/archived', '/api/conversations/system'].includes(options.url);
     const patch = options.method === 'PATCH' && options.url === '/api/conversations/{id}';
-    if (!patch && (options.method !== 'GET' || (!sticky && !listing))) {
+    const folder = (options.method === 'POST' && options.url === '/api/conversations/folders')
+        || (['PUT', 'DELETE'].includes(options.method) && options.url === '/api/conversations/folders/{path}');
+    if (!folder && !patch && (options.method !== 'GET' || (!sticky && !listing))) {
         return generatedRequest<T>(config, options);
     }
     return new CancelablePromise(async (resolve, reject, onCancel) => {
         try {
             // The handwritten listing callers omitted an empty root query.
             const query = listing && options.query?.folder === "" ? undefined : options.query;
-            const url = patch
+            const url = folder
+                ? `${config.BASE}/api/conversations/folders${options.path ? '/' + String(options.path.path).split('/').map(encodeURIComponent).join('/') : ''}`
+                : patch
                 ? `${config.BASE}/api/conversations/${encodeURIComponent(options.path!.id)}`
                 : sticky
                 ? `${config.BASE}/api/sticky/${encodeURIComponent(options.path!.conv_id)}`
@@ -27,14 +31,15 @@ export const request = <T>(config: OpenAPIConfig, options: ApiRequestOptions & {
                 { ...config, WITH_CREDENTIALS: true, CREDENTIALS: 'same-origin' },
                 options, url, getRequestBody(options), undefined, headers, onCancel,
             );
-            // Like the original caller, ignore HTTP failures before decoding.
-            // Unlike the stock transport, propagate JSON failures to the caller.
+            // Folder mutations decode error JSON for the existing error log.
+            // Other migrated callers reject HTTP errors before decoding.
+            // Propagate JSON failures rather than swallowing them.
             catchErrorCodes(options, {
                 url, ok: response.ok, status: response.status,
-                statusText: response.statusText, body: undefined,
+                statusText: response.statusText, body: folder && !response.ok ? await response.json() : undefined,
             });
             if (options.discardResponse) {
-                // The generated void overload makes move's unused body explicit.
+                // The generated void overload makes the caller's unused body explicit.
                 resolve(undefined);
             } else {
                 resolve(await response.json());

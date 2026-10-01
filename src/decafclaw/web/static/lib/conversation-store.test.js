@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ConversationStore } from './conversation-store.js';
 import { MESSAGE_TYPES } from './message-types.js';
@@ -239,5 +239,77 @@ describe('ConversationStore reconnect handling', () => {
     await flush();
 
     expect(ws.sent).toEqual([]);
+  });
+});
+
+
+// Exercise the real store and generated transport, never a service mock.
+describe.each([
+  ['createFolder', 'POST', false],
+  ['renameFolder', 'PUT', true],
+  ['deleteFolder', 'DELETE', true],
+])('folder operation %s', (method, verb, hasPath) => {
+  const path = 'Work space/日本語 & plus+ #hash%?';
+  const destination = 'Destination/renamed + %';
+  const encoded = path.split('/').map(encodeURIComponent).join('/');
+  const invoke = (store) => method === 'renameFolder'
+    ? store.renameFolder(path, destination) : store[method](path);
+  let store;
+  let fetchMock;
+  let log;
+  beforeEach(async () => {
+    log = vi.spyOn(console, 'error').mockImplementation(() => {});
+    fetchMock = vi.fn(async () => new Response(JSON.stringify({
+      folder: 'Current folder', folders: [], conversations: [],
+    })));
+    vi.stubGlobal('fetch', fetchMock);
+    store = makeStore(new FakeWS());
+    await store.listConversations('Current folder');
+    fetchMock.mockClear();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it.each(['{"ok":true}', '', 'malformed'])('sends inputs and refreshes after HTTP success (%s)', async (body) => {
+    fetchMock.mockResolvedValueOnce(new Response(body));
+    expect(await invoke(store)).toBe(true);
+    const [url, options] = fetchMock.mock.calls[0];
+    expect(url).toBe('/api/conversations/folders' + (hasPath ? '/' + encoded : ''));
+    expect(options.method).toBe(verb);
+    expect(options.credentials).toBe('same-origin');
+    if (verb !== 'DELETE') {
+      expect(new Headers(options.headers).get('Content-Type')).toBe('application/json');
+      expect(JSON.parse(options.body)).toEqual({ path: method === 'renameFolder' ? destination : path });
+    } else {
+      expect(options.body).toBeUndefined();
+    }
+    expect(fetchMock.mock.calls[1][0]).toBe('/api/conversations?folder=Current%20folder');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(log).not.toHaveBeenCalled();
+  });
+
+  it.each([400, 401, 404, 409, 500])('returns false and preserves server error (%s)', async (status) => {
+    fetchMock.mockResolvedValueOnce(new Response('{"error":"folder problem"}', { status }));
+    expect(await invoke(store)).toBe(false);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(log).toHaveBeenCalledWith(expect.any(String), 'folder problem');
+  });
+
+  it('handles malformed error JSON without refreshing', async () => {
+    fetchMock.mockResolvedValueOnce(new Response('broken', { status: 400 }));
+    expect(await invoke(store)).toBe(false);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(log).toHaveBeenCalledWith(expect.any(String), expect.any(SyntaxError));
+  });
+
+  it('handles network rejection without refreshing', async () => {
+    const error = new Error('offline');
+    fetchMock.mockRejectedValueOnce(error);
+    expect(await invoke(store)).toBe(false);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(log).toHaveBeenCalledWith(expect.any(String), error);
   });
 });

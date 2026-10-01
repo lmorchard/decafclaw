@@ -134,6 +134,7 @@ def test_browser_uses_clean_built_client(source_tree, config):
             route.app = StaticFiles(directory=source_tree / STATIC_REL)
     listing_requests = []
     patch_requests = []
+    folder_requests = []
 
     @app.middleware("http")
     async def record_listing_request(request, call_next):
@@ -144,6 +145,10 @@ def test_browser_uses_clean_built_client(source_tree, config):
         if request.method == "PATCH":
             patch_requests.append((request.url.path, await request.json(),
                                    request.headers.get("content-type"), bool(request.cookies)))
+        if request.method in {"POST", "PUT", "DELETE"} and request.url.path.startswith("/api/conversations/folders"):
+            folder_requests.append((request.method, request.scope["path"],
+                                    await request.json() if request.method != "DELETE" else None,
+                                    bool(request.cookies)))
         return await call_next(request)
 
     # Bind before starting the server, avoiding a free-port check/use race.
@@ -241,6 +246,23 @@ def test_browser_uses_clean_built_client(source_tree, config):
                 ]
                 saved = page.request.get(base + "/api/conversations", params={"folder": nested}).json()
                 assert any(c["conv_id"] == conv_id and c["title"] == patch_title for c in saved["conversations"])
+                folder_requests.clear()
+                folder_path = "Folder space/日本語 & plus+ #hash%?"
+                renamed_path = "Folder space/new + %?"
+                folders = page.evaluate("""async ({ path, renamed }) => {
+                    const { DefaultService } = await import('/static/lib/api-client/index.js');
+                    return [
+                        await DefaultService.createConvFolderApiConversationsFoldersPost({ path }),
+                        await DefaultService.renameConvFolderApiConversationsFoldersPathPut(path, { path: renamed }),
+                        await DefaultService.deleteConvFolderApiConversationsFoldersPathDelete(renamed),
+                    ];
+                }""", {"path": folder_path, "renamed": renamed_path})
+                assert folders == [{"ok": True, "path": folder_path}, {"ok": True}, {"ok": True}]
+                assert folder_requests == [
+                    ("POST", "/api/conversations/folders", {"path": folder_path}, True),
+                    ("PUT", "/api/conversations/folders/" + folder_path, {"path": renamed_path}, True),
+                    ("DELETE", "/api/conversations/folders/" + renamed_path, None, True),
+                ]
                 assert not errors, errors
                 assert not failed_requests, failed_requests
             finally:
@@ -348,4 +370,37 @@ def test_patch_contract_drift_fails_at_unchanged_caller(source_tree, contract):
         assert "Type 'number' is not assignable to type 'string'" in output, output
     else:
         assert "'string' is not assignable to" in diagnostics[0] and "'number'" in diagnostics[0], output
+    assert caller.read_bytes() == original_caller
+
+
+@pytest.mark.parametrize("contract", ["body", "rename_path", "delete_path"])
+def test_folder_contract_drift_fails_at_unchanged_callers(source_tree, contract):
+    caller = source_tree / STATIC_REL / "lib/conversation-store.js"
+    original_caller = caller.read_bytes()
+    result, output = run_make(source_tree, "check-js")
+    assert result.returncode == 0, output
+    backend = source_tree / "src/decafclaw/http_server.py"
+    original = backend.read_text()
+    if contract == "body":
+        changed = original.replace("class ConversationFolderRequest(BaseModel):\n    path: str",
+                                   "class ConversationFolderRequest(BaseModel):\n    path: int")
+        methods = ["createConvFolder", "renameConvFolder"]
+    else:
+        operation = "rename" if contract == "rename_path" else "delete"
+        changed = original.replace(f"async def {operation}_conv_folder(request: Request, path: str)",
+                                   f"async def {operation}_conv_folder(request: Request, path: int)")
+        methods = [operation + "ConvFolder"]
+    assert changed != original
+    backend.write_text(changed)
+    result, output = run_make(source_tree, "check-js")
+    assert result.returncode != 0, output
+    diagnostics = [line for line in output.splitlines() if "error TS" in line]
+    lines = original_caller.decode().splitlines()
+    targets = [next(i for i, line in enumerate(lines, 1) if "await DefaultService." + method in line)
+               for method in methods]
+    assert len(diagnostics) == len(targets), output
+    for diagnostic, target in zip(diagnostics, targets, strict=True):
+        assert f"conversation-store.js({target}," in diagnostic, output
+        assert ("TS2322" if contract == "body" else "TS2345") in diagnostic, output
+        assert "'string' is not assignable to" in diagnostic and "'number'" in diagnostic, output
     assert caller.read_bytes() == original_caller
