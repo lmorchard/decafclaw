@@ -39,7 +39,7 @@ export class WikiMetadata extends LitElement {
 
   constructor() {
     super();
-    /** @type {Record<string, any>} */ this.frontmatter = {};
+    /** @type {import('../lib/api-client/index.js').VaultPageResponse['frontmatter']} */ this.frontmatter = {};
     /** @type {string} */ this.frontmatterRaw = '';
     /** @type {string} */ this.frontmatterError = '';
     /**
@@ -57,7 +57,7 @@ export class WikiMetadata extends LitElement {
     this._rawDirty = false;
   }
 
-  /** @param {Map<string, any>} changed */
+  /** @param {Map<string, unknown>} changed */
   willUpdate(changed) {
     // Reseed the raw editor from the server's bytes whenever the page's
     // frontmatter changes underneath us, unless the user is mid-edit or
@@ -74,7 +74,7 @@ export class WikiMetadata extends LitElement {
 
   /**
    * @param {string} field
-   * @param {any} value — null removes the key
+   * @param {unknown} value — null removes the key
    */
   #emitChange(field, value) {
     this.dispatchEvent(new CustomEvent('metadata-change', {
@@ -164,7 +164,7 @@ export class WikiMetadata extends LitElement {
         <chip-list
           .label=${label}
           .items=${this.#list(field)}
-          @chips-change=${(/** @type {any} */ e) => this.#emitList(field, e.detail.items)}
+          @chips-change=${(/** @type {CustomEvent<{items: string[]}>} */ e) => this.#emitList(field, e.detail.items)}
         ></chip-list>
       </dd>
     `;

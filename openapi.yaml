@@ -812,15 +812,6 @@ paths:
             application/json:
               schema: {}
   /api/vault:
-    get:
-      summary: Wrapper
-      operationId: wrapper_api_vault_get
-      responses:
-        '200':
-          description: Successful Response
-          content:
-            application/json:
-              schema: {}
     post:
       summary: Wrapper
       operationId: wrapper_api_vault_post
@@ -830,6 +821,22 @@ paths:
           content:
             application/json:
               schema: {}
+    get:
+      summary: Wrapper
+      operationId: wrapper_api_vault_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VaultListingResponse'
+      parameters:
+      - name: folder
+        in: query
+        required: false
+        schema:
+          type: string
   /api/vault/folders:
     post:
       summary: Wrapper
@@ -849,7 +856,8 @@ paths:
           description: Successful Response
           content:
             application/json:
-              schema: {}
+              schema:
+                $ref: '#/components/schemas/VaultRecentResponse'
   /api/vault/tags:
     get:
       summary: Wrapper
@@ -859,17 +867,9 @@ paths:
           description: Successful Response
           content:
             application/json:
-              schema: {}
+              schema:
+                $ref: '#/components/schemas/VaultTagsResponse'
   /api/vault/{page}:
-    get:
-      summary: Wrapper
-      operationId: wrapper_api_vault__page__get
-      responses:
-        '200':
-          description: Successful Response
-          content:
-            application/json:
-              schema: {}
     put:
       summary: Wrapper
       operationId: wrapper_api_vault__page__put
@@ -879,6 +879,22 @@ paths:
           content:
             application/json:
               schema: {}
+    get:
+      summary: Wrapper
+      operationId: wrapper_api_vault__page__get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VaultPageResponse'
+      parameters:
+      - name: page
+        in: path
+        required: true
+        schema:
+          type: string
     delete:
       summary: Wrapper
       operationId: wrapper_api_vault__page__delete
@@ -1817,6 +1833,142 @@ components:
       - label
       - description
       title: VaultCompletion
+    VaultFolderEntry:
+      properties:
+        name:
+          type: string
+          title: Name
+        path:
+          type: string
+          title: Path
+      type: object
+      required:
+      - name
+      - path
+      title: VaultFolderEntry
+    VaultListingResponse:
+      properties:
+        folder:
+          type: string
+          title: Folder
+        folders:
+          items:
+            $ref: '#/components/schemas/VaultFolderEntry'
+          type: array
+          title: Folders
+        pages:
+          items:
+            $ref: '#/components/schemas/VaultPageListEntry'
+          type: array
+          title: Pages
+      type: object
+      required:
+      - folder
+      - folders
+      - pages
+      title: VaultListingResponse
+    VaultPageListEntry:
+      properties:
+        title:
+          type: string
+          title: Title
+        path:
+          type: string
+          title: Path
+        folder:
+          type: string
+          title: Folder
+        modified:
+          type: number
+          title: Modified
+        summary:
+          type: string
+          title: Summary
+      type: object
+      required:
+      - title
+      - path
+      - folder
+      - modified
+      - summary
+      title: VaultPageListEntry
+    VaultPageResponse:
+      properties:
+        title:
+          type: string
+          title: Title
+        path:
+          type: string
+          title: Path
+        body:
+          type: string
+          title: Body
+        modified:
+          type: number
+          title: Modified
+        frontmatter:
+          additionalProperties:
+            $ref: '#/components/schemas/JsonValue'
+          type: object
+          title: Frontmatter
+        frontmatter_raw:
+          type: string
+          title: Frontmatter Raw
+        frontmatter_error:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Frontmatter Error
+      type: object
+      required:
+      - title
+      - path
+      - body
+      - modified
+      - frontmatter
+      - frontmatter_raw
+      title: VaultPageResponse
+    VaultRecentResponse:
+      properties:
+        pages:
+          items:
+            $ref: '#/components/schemas/VaultPageListEntry'
+          type: array
+          title: Pages
+      type: object
+      required:
+      - pages
+      title: VaultRecentResponse
+    VaultTagEntry:
+      properties:
+        tag:
+          type: string
+          title: Tag
+        count:
+          type: integer
+          title: Count
+        pages:
+          items:
+            type: string
+          type: array
+          title: Pages
+      type: object
+      required:
+      - tag
+      - count
+      - pages
+      title: VaultTagEntry
+    VaultTagsResponse:
+      properties:
+        tags:
+          items:
+            $ref: '#/components/schemas/VaultTagEntry'
+          type: array
+          title: Tags
+      type: object
+      required:
+      - tags
+      title: VaultTagsResponse
     VirtualConversationFolderEntry:
       properties:
         name:
