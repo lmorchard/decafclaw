@@ -1,20 +1,10 @@
 import { LitElement, html, nothing, render } from 'lit';
+import { DefaultService, ApiError } from '../lib/api-client/index.js';
 import { formatRelativeTime } from '../lib/utils.js';
 
 const LIST_LIMIT = 20;
 
-/**
- * @typedef {Object} NotificationRecord
- * @property {string} id
- * @property {string} timestamp
- * @property {string} category
- * @property {string} title
- * @property {string} body
- * @property {string} priority
- * @property {?string} link
- * @property {?string} conv_id
- * @property {boolean} read
- */
+/** @typedef {import('../lib/api-client/index.js').NotificationResponse} NotificationRecord */
 
 export class NotificationInbox extends LitElement {
   static properties = {
@@ -31,6 +21,7 @@ export class NotificationInbox extends LitElement {
   constructor() {
     super();
     this._open = false;
+    /** @type {import('../lib/api-client/index.js').NotificationCountResponse['count']} */
     this._count = 0;
     /** @type {NotificationRecord[]} */
     this._records = [];
@@ -105,9 +96,7 @@ export class NotificationInbox extends LitElement {
 
   async #refreshCount() {
     try {
-      const res = await fetch('/api/notifications/unread-count');
-      if (!res.ok) return;
-      const data = await res.json();
+      const data = await DefaultService.notificationsUnreadCountApiNotificationsUnreadCountGet();
       this._count = data.count || 0;
     } catch (_e) {
       // Poll quietly — network blips shouldn't break UI
@@ -118,12 +107,11 @@ export class NotificationInbox extends LitElement {
     this._loading = true;
     this._error = '';
     try {
-      const res = await fetch(`/api/notifications?limit=${LIST_LIMIT}`);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
+      const data = await DefaultService.listNotificationsApiNotificationsGet(LIST_LIMIT);
       this._records = data.records || [];
     } catch (e) {
-      this._error = /** @type {Error} */ (e).message || 'Failed to load';
+      this._error = e instanceof ApiError ? `HTTP ${e.status}` :
+        (e instanceof Error ? e.message : '') || 'Failed to load';
     } finally {
       this._loading = false;
     }
@@ -208,7 +196,7 @@ export class NotificationInbox extends LitElement {
       );
       this._count = Math.max(0, this._count - 1);
       try {
-        await fetch(`/api/notifications/${encodeURIComponent(rec.id)}/read`, { method: 'POST' });
+        await DefaultService.notificationsMarkReadApiNotificationsIdReadPost(rec.id, true);
       } catch (_e) {
         // If the mark-read call fails the server truth will refresh on next poll.
       }
@@ -256,7 +244,7 @@ export class NotificationInbox extends LitElement {
 
   async #markAllRead() {
     try {
-      await fetch('/api/notifications/read-all', { method: 'POST' });
+      await DefaultService.notificationsMarkAllReadApiNotificationsReadAllPost(true);
       this._records = this._records.map(r => ({ ...r, read: true }));
       this._count = 0;
     } catch (_e) {
@@ -270,6 +258,7 @@ export class NotificationInbox extends LitElement {
     return html`<span class="notification-badge">${label}</span>`;
   }
 
+  /** @param {NotificationRecord} rec */
   #renderRow(rec) {
     const rel = formatRelativeTime(rec.timestamp);
     return html`

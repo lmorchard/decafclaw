@@ -23,6 +23,10 @@ export type { ConversationPatchResponse } from './models/ConversationPatchRespon
 export type { HTTPValidationError } from './models/HTTPValidationError';
 export type { LoginResponse } from './models/LoginResponse';
 export type { LogoutResponse } from './models/LogoutResponse';
+export type { NotificationCountResponse } from './models/NotificationCountResponse';
+export type { NotificationListResponse } from './models/NotificationListResponse';
+export type { NotificationReadResponse } from './models/NotificationReadResponse';
+export type { NotificationResponse } from './models/NotificationResponse';
 export type { StickyResponse } from './models/StickyResponse';
 export type { SystemConversationListingItem } from './models/SystemConversationListingItem';
 export type { SystemConversationListingResponse } from './models/SystemConversationListingResponse';
