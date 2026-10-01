@@ -3,17 +3,11 @@
  * and hands back descriptors so dc-widget-host can dynamic-import them.
  */
 
-/** @typedef {{
- *   name: string,
- *   tier: string,
- *   description: string,
- *   modes: string[],
- *   accepts_input: boolean,
- *   data_schema: object,
- *   js_url: string,
- * }} WidgetDescriptor
- */
+import { DefaultService } from './api-client/index.js';
 
+/** @typedef {import('./api-client/index.js').WidgetDescriptorResponse} WidgetDescriptor */
+
+/** @type {Promise<Map<string, WidgetDescriptor>>|null} */
 let _catalogPromise = null;
 /** @type {Map<string, WidgetDescriptor>} */
 let _byName = new Map();
@@ -23,14 +17,9 @@ let _byName = new Map();
  */
 export function getCatalog() {
   if (!_catalogPromise) {
-    _catalogPromise = fetch('/api/widgets', { credentials: 'include' })
-      .then(resp => {
-        if (!resp.ok) throw new Error(`widget catalog fetch ${resp.status}`);
-        return resp.json();
-      })
+    _catalogPromise = DefaultService.listWidgetsApiWidgetsGet()
       .then(body => {
-        const list = body?.widgets || [];
-        _byName = new Map(list.map(w => [w.name, w]));
+        _byName = new Map(body.widgets.map(w => [w.name, w]));
         return _byName;
       })
       .catch(err => {

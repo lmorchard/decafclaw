@@ -17,13 +17,15 @@ describe('WidgetCatalog', () => {
                 { name: 'test_widget', tier: 'builtin', js_url: '/test.js' }
             ]
         };
-        globalThis.fetch.mockResolvedValueOnce({
-            ok: true,
-            json: async () => mockWidgets
-        });
+        globalThis.fetch.mockResolvedValueOnce(new Response(JSON.stringify(mockWidgets), {
+            status: 200, headers: { 'Content-Type': 'application/json' },
+        }));
 
         const catalog = await getCatalog();
         expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+        expect(globalThis.fetch).toHaveBeenCalledWith('/api/widgets', expect.objectContaining({
+            method: 'GET', credentials: 'include',
+        }));
         expect(catalog.get('test_widget')).toEqual(mockWidgets.widgets[0]);
 
         // Memoized
@@ -41,10 +43,9 @@ describe('WidgetCatalog', () => {
         expect(catalog.size).toBe(0);
         
         // Should retry on next call
-        globalThis.fetch.mockResolvedValueOnce({
-            ok: true,
-            json: async () => ({ widgets: [{ name: 'retry_widget' }] })
-        });
+        globalThis.fetch.mockResolvedValueOnce(new Response(JSON.stringify({
+            widgets: [{ name: 'retry_widget' }],
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
         
         const retryCatalog = await getCatalog();
         expect(globalThis.fetch).toHaveBeenCalledTimes(2);

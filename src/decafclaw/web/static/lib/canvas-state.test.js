@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
-  applyEvent, closeTabById, currentSnapshot, setActiveConv,
+  applyEvent, closeTabById, currentSnapshot, setActiveConv, switchToTab,
 } from './canvas-state.js';
 
 /**
@@ -18,7 +18,9 @@ import {
 describe('closeTabById', () => {
   beforeEach(async () => {
     // setActiveConv fetches; stub it so state comes from applyEvent below.
-    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, json: async () => ({}) })));
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', {
+      status: 500, headers: { 'Content-Type': 'application/json' },
+    })));
     await setActiveConv('c1');
     // The store is module-level and survives between cases; the stubbed fetch
     // above means setActiveConv won't overwrite it. Reset explicitly.
@@ -49,6 +51,9 @@ describe('closeTabById', () => {
     const post = calls.find((/** @type {any[]} */ c) => String(c[0]).includes('close_tab'));
     expect(post).toBeTruthy();
     expect(JSON.parse(post[1].body)).toEqual({ tab_id: 't2' });
+    expect(post[1]).toEqual(expect.objectContaining({
+      method: 'POST', credentials: 'same-origin',
+    }));
   });
 
   it('is idempotent when the server echo arrives afterwards', async () => {
@@ -62,5 +67,16 @@ describe('closeTabById', () => {
   it('ignores a tab id it does not know about', async () => {
     await closeTabById('c1', 'nope');
     expect(currentSnapshot().tabs.map(t => t.id)).toEqual(['t1', 't2']);
+  });
+
+  it('uses the typed active-tab operation without reading its response', async () => {
+    await switchToTab('t1');
+    const calls = /** @type {any} */ (globalThis.fetch).mock.calls;
+    const post = calls.find((/** @type {any[]} */ c) => String(c[0]).includes('active_tab'));
+    expect(post[0]).toBe('/api/canvas/c1/active_tab');
+    expect(post[1]).toEqual(expect.objectContaining({
+      method: 'POST', credentials: 'same-origin',
+    }));
+    expect(JSON.parse(post[1].body)).toEqual({ tab_id: 't1' });
   });
 });

@@ -188,6 +188,35 @@ async def test_post_canvas_new_tab_requires_auth(unauthed_client, owned_conv):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["new_tab", "active_tab", "close_tab"])
+async def test_canvas_mutations_keep_manual_non_object_validation(
+    authed_client, owned_conv, action,
+):
+    resp = await authed_client.post(f"/api/canvas/{owned_conv}/{action}", json=[])
+    assert resp.status_code == 400
+    assert resp.json() == {"error": "body must be a JSON object"}
+
+
+def test_canvas_openapi_contracts(app):
+    paths = app.openapi()["paths"]
+    state = paths["/api/canvas/{conv_id}"]["get"]
+    assert state["parameters"][0]["name"] == "conv_id"
+    assert state["parameters"][0]["schema"]["type"] == "string"
+    assert state["responses"]["200"]["content"]["application/json"]["schema"] == {
+        "$ref": "#/components/schemas/CanvasStateResponse",
+    }
+    for action, schema in [
+        ("new_tab", "CanvasNewTabRequest"),
+        ("active_tab", "CanvasTabRequest"),
+        ("close_tab", "CanvasTabRequest"),
+    ]:
+        operation = paths[f"/api/canvas/{{conv_id}}/{action}"]["post"]
+        request_schema = operation["requestBody"]["content"]["application/json"]["schema"]
+        assert request_schema["title"] == schema
+        assert operation["parameters"][0]["schema"]["type"] == "string"
+
+
+@pytest.mark.asyncio
 async def test_post_active_tab_changes_active(authed_client, manager_mock, owned_conv):
     # Seed: create two tabs
     await authed_client.post(

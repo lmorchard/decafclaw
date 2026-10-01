@@ -7,6 +7,10 @@ export { CancelablePromise, CancelError } from './core/CancelablePromise';
 export { OpenAPI } from './core/OpenAPI';
 export type { OpenAPIConfig } from './core/OpenAPI';
 
+export type { CanvasMutationResponse } from './models/CanvasMutationResponse';
+export type { CanvasNewTabResponse } from './models/CanvasNewTabResponse';
+export type { CanvasStateResponse } from './models/CanvasStateResponse';
+export type { CanvasTabResponse } from './models/CanvasTabResponse';
 export type { ContextCandidate } from './models/ContextCandidate';
 export type { ContextDiagnosticsResponse } from './models/ContextDiagnosticsResponse';
 export type { ContextMatch } from './models/ContextMatch';
@@ -21,6 +25,7 @@ export type { ConversationListingItem } from './models/ConversationListingItem';
 export type { ConversationListingResponse } from './models/ConversationListingResponse';
 export type { ConversationPatchResponse } from './models/ConversationPatchResponse';
 export type { HTTPValidationError } from './models/HTTPValidationError';
+export type { JsonValue } from './models/JsonValue';
 export type { LoginResponse } from './models/LoginResponse';
 export type { LogoutResponse } from './models/LogoutResponse';
 export type { NotificationCountResponse } from './models/NotificationCountResponse';
@@ -33,5 +38,7 @@ export type { SystemConversationListingResponse } from './models/SystemConversat
 export type { UserResponse } from './models/UserResponse';
 export type { ValidationError } from './models/ValidationError';
 export type { VirtualConversationFolderEntry } from './models/VirtualConversationFolderEntry';
+export type { WidgetCatalogResponse } from './models/WidgetCatalogResponse';
+export type { WidgetDescriptorResponse } from './models/WidgetDescriptorResponse';
 
 export { DefaultService } from './services/DefaultService';

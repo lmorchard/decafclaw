@@ -3,6 +3,10 @@ import { textRequest as __textRequest } from '../core/request';
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { CanvasMutationResponse } from '../models/CanvasMutationResponse';
+import type { CanvasNewTabResponse } from '../models/CanvasNewTabResponse';
+import type { CanvasStateResponse } from '../models/CanvasStateResponse';
+import type { JsonValue } from '../models/JsonValue';
 import type { ContextDiagnosticsResponse } from '../models/ContextDiagnosticsResponse';
 import type { ConversationCreateResponse } from '../models/ConversationCreateResponse';
 import type { ConversationFolderCreateResponse } from '../models/ConversationFolderCreateResponse';
@@ -18,6 +22,7 @@ import type { NotificationReadResponse } from '../models/NotificationReadRespons
 import type { StickyResponse } from '../models/StickyResponse';
 import type { SystemConversationListingResponse } from '../models/SystemConversationListingResponse';
 import type { UserResponse } from '../models/UserResponse';
+import type { WidgetCatalogResponse } from '../models/WidgetCatalogResponse';
 import type { CancelablePromise } from '../core/CancelablePromise';
 import { OpenAPI } from '../core/OpenAPI';
 import { request as __request } from '../core/request';
@@ -934,11 +939,12 @@ export class DefaultService {
         });
     }
     /**
-     * Wrapper
-     * @returns any Successful Response
+     * List Widgets
+     * Return the widget catalog with cache-busted js URLs.
+     * @returns WidgetCatalogResponse Successful Response
      * @throws ApiError
      */
-    public static wrapperApiWidgetsGet(): CancelablePromise<any> {
+    public static listWidgetsApiWidgetsGet(): CancelablePromise<WidgetCatalogResponse> {
         return __request(OpenAPI, {
             method: 'GET',
             url: '/api/widgets',
@@ -956,14 +962,24 @@ export class DefaultService {
         });
     }
     /**
-     * Wrapper
-     * @returns any Successful Response
+     * Get Canvas State
+     * Load current canvas state for a conversation.
+     * @param convId
+     * @returns CanvasStateResponse Successful Response
      * @throws ApiError
      */
-    public static wrapperApiCanvasConvIdGet(): CancelablePromise<any> {
+    public static getCanvasStateApiCanvasConvIdGet(
+        convId: string,
+    ): CancelablePromise<CanvasStateResponse> {
         return __request(OpenAPI, {
             method: 'GET',
             url: '/api/canvas/{conv_id}',
+            path: {
+                'conv_id': convId,
+            },
+            errors: {
+                422: `Validation Error`,
+            },
         });
     }
     /**
@@ -988,36 +1004,135 @@ export class DefaultService {
         });
     }
     /**
-     * Wrapper
-     * @returns any Successful Response
+     * Post Canvas New Tab
+     * Create a new canvas tab. Backs the inline 'Open in Canvas' button.
+     * @param convId
+     * @param requestBody
+     * @returns CanvasNewTabResponse Successful Response
      * @throws ApiError
      */
-    public static wrapperApiCanvasConvIdNewTabPost(): CancelablePromise<any> {
+    public static postCanvasNewTabApiCanvasConvIdNewTabPost(
+        convId: string,
+        requestBody: {
+            widget_type: string;
+            data: Record<string, JsonValue>;
+            label?: (string | null);
+        },
+    ): CancelablePromise<CanvasNewTabResponse>;
+    public static postCanvasNewTabApiCanvasConvIdNewTabPost(
+        convId: string,
+        requestBody: {
+            widget_type: string;
+            data: Record<string, JsonValue>;
+            label?: (string | null);
+        },
+        discardResponse: true,
+    ): CancelablePromise<void>;
+    public static postCanvasNewTabApiCanvasConvIdNewTabPost(
+        convId: string,
+        requestBody: {
+            widget_type: string;
+            data: Record<string, JsonValue>;
+            label?: (string | null);
+        },
+        discardResponse = false,
+    ): CancelablePromise<CanvasNewTabResponse | void> {
         return __request(OpenAPI, {
+            discardResponse,
             method: 'POST',
             url: '/api/canvas/{conv_id}/new_tab',
+            path: {
+                'conv_id': convId,
+            },
+            body: requestBody,
+            mediaType: 'application/json',
+            errors: {
+                422: `Validation Error`,
+            },
         });
     }
     /**
-     * Wrapper
-     * @returns any Successful Response
+     * Post Canvas Active Tab
+     * Set the active tab via user click in the panel.
+     * @param convId
+     * @param requestBody
+     * @returns CanvasMutationResponse Successful Response
      * @throws ApiError
      */
-    public static wrapperApiCanvasConvIdActiveTabPost(): CancelablePromise<any> {
+    public static postCanvasActiveTabApiCanvasConvIdActiveTabPost(
+        convId: string,
+        requestBody: {
+            tab_id: string;
+        },
+    ): CancelablePromise<CanvasMutationResponse>;
+    public static postCanvasActiveTabApiCanvasConvIdActiveTabPost(
+        convId: string,
+        requestBody: {
+            tab_id: string;
+        },
+        discardResponse: true,
+    ): CancelablePromise<void>;
+    public static postCanvasActiveTabApiCanvasConvIdActiveTabPost(
+        convId: string,
+        requestBody: {
+            tab_id: string;
+        },
+        discardResponse = false,
+    ): CancelablePromise<CanvasMutationResponse | void> {
         return __request(OpenAPI, {
+            discardResponse,
             method: 'POST',
             url: '/api/canvas/{conv_id}/active_tab',
+            path: {
+                'conv_id': convId,
+            },
+            body: requestBody,
+            mediaType: 'application/json',
+            errors: {
+                422: `Validation Error`,
+            },
         });
     }
     /**
-     * Wrapper
-     * @returns any Successful Response
+     * Post Canvas Close Tab
+     * Close a tab via user [×] click.
+     * @param convId
+     * @param requestBody
+     * @returns CanvasMutationResponse Successful Response
      * @throws ApiError
      */
-    public static wrapperApiCanvasConvIdCloseTabPost(): CancelablePromise<any> {
+    public static postCanvasCloseTabApiCanvasConvIdCloseTabPost(
+        convId: string,
+        requestBody: {
+            tab_id: string;
+        },
+    ): CancelablePromise<CanvasMutationResponse>;
+    public static postCanvasCloseTabApiCanvasConvIdCloseTabPost(
+        convId: string,
+        requestBody: {
+            tab_id: string;
+        },
+        discardResponse: true,
+    ): CancelablePromise<void>;
+    public static postCanvasCloseTabApiCanvasConvIdCloseTabPost(
+        convId: string,
+        requestBody: {
+            tab_id: string;
+        },
+        discardResponse = false,
+    ): CancelablePromise<CanvasMutationResponse | void> {
         return __request(OpenAPI, {
+            discardResponse,
             method: 'POST',
             url: '/api/canvas/{conv_id}/close_tab',
+            path: {
+                'conv_id': convId,
+            },
+            body: requestBody,
+            mediaType: 'application/json',
+            errors: {
+                422: `Validation Error`,
+            },
         });
     }
     /**
