@@ -44,10 +44,12 @@ export { VaultCompletion } from './models/VaultCompletion';
 export type { VirtualConversationFolderEntry } from './models/VirtualConversationFolderEntry';
 export type { WidgetCatalogResponse } from './models/WidgetCatalogResponse';
 export type { WidgetDescriptorResponse } from './models/WidgetDescriptorResponse';
+export type { WorkspaceDeleteResponse } from './models/WorkspaceDeleteResponse';
 export { WorkspaceFileEntry } from './models/WorkspaceFileEntry';
 export type { WorkspaceFolderEntry } from './models/WorkspaceFolderEntry';
 export type { WorkspaceListingResponse } from './models/WorkspaceListingResponse';
 export type { WorkspaceRecentResponse } from './models/WorkspaceRecentResponse';
 export type { WorkspaceTextResponse } from './models/WorkspaceTextResponse';
+export type { WorkspaceWriteResponse } from './models/WorkspaceWriteResponse';
 
 export { DefaultService } from './services/DefaultService';

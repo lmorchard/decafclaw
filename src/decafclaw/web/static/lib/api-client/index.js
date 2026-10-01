@@ -415,18 +415,19 @@ var request2 = (config, options) => {
   const canvasIgnoredMutation = options.method === "POST" && ["/api/canvas/{conv_id}/active_tab", "/api/canvas/{conv_id}/close_tab"].includes(options.url);
   const canvas = canvasState || canvasNewTab || canvasIgnoredMutation;
   const workspaceRead = options.method === "GET" && ["/api/workspace", "/api/workspace/recent", "/api/workspace-file/{path}", "/api/autocomplete"].includes(options.url);
+  const workspaceMutation = options.url === "/api/workspace/{path}" && ["PUT", "DELETE"].includes(options.method);
   const listing = ["/api/conversations", "/api/conversations/archived", "/api/conversations/system"].includes(options.url);
   const patch = options.method === "PATCH" && options.url === "/api/conversations/{id}";
   const create = options.method === "POST" && options.url === "/api/conversations";
   const lifecycle = options.method === "DELETE" && options.url === "/api/conversations/{id}" || options.method === "POST" && ["/api/conversations/{id}/archive", "/api/conversations/{id}/unarchive"].includes(options.url);
   const folder = options.method === "POST" && options.url === "/api/conversations/folders" || ["PUT", "DELETE"].includes(options.method) && options.url === "/api/conversations/folders/{path}";
-  if (!notification && !diagnostics && !login && !logout && !vaultGuard && !create && !lifecycle && !folder && !patch && !widgetCatalog && !canvas && !workspaceRead && (options.method !== "GET" || !sticky && !listing)) {
+  if (!notification && !diagnostics && !login && !logout && !vaultGuard && !create && !lifecycle && !folder && !patch && !widgetCatalog && !canvas && !workspaceRead && !workspaceMutation && (options.method !== "GET" || !sticky && !listing)) {
     return request(config, options);
   }
   return new CancelablePromise(async (resolve2, reject, onCancel) => {
     try {
       const query = listing && options.query?.folder === "" ? void 0 : options.query;
-      const url = workspaceRead && options.url === "/api/workspace-file/{path}" ? `${config.BASE}/api/workspace-file/${String(options.path.path).split("/").map(encodeURIComponent).join("/")}` : workspaceRead ? `${config.BASE}${options.url}${options.query ? getQueryString(options.query) : ""}` : folder ? `${config.BASE}/api/conversations/folders${options.path ? "/" + String(options.path.path).split("/").map(encodeURIComponent).join("/") : ""}` : canvas ? `${config.BASE}${options.url.replace("{conv_id}", encodeURIComponent(options.path.conv_id))}` : patch || lifecycle || diagnostics || notificationRead && options.path ? `${config.BASE}${options.url.replace("{id}", encodeURIComponent(options.path.id))}${query ? getQueryString(query) : ""}` : sticky ? `${config.BASE}/api/sticky/${encodeURIComponent(options.path.conv_id)}` : `${config.BASE}${options.url}${query ? getQueryString(query) : ""}`;
+      const url = workspaceMutation ? `${config.BASE}/api/workspace/${String(options.path.path).split("/").map(encodeURIComponent).join("/")}${options.query ? getQueryString(options.query) : ""}` : workspaceRead && options.url === "/api/workspace-file/{path}" ? `${config.BASE}/api/workspace-file/${String(options.path.path).split("/").map(encodeURIComponent).join("/")}` : workspaceRead ? `${config.BASE}${options.url}${options.query ? getQueryString(options.query) : ""}` : folder ? `${config.BASE}/api/conversations/folders${options.path ? "/" + String(options.path.path).split("/").map(encodeURIComponent).join("/") : ""}` : canvas ? `${config.BASE}${options.url.replace("{conv_id}", encodeURIComponent(options.path.conv_id))}` : patch || lifecycle || diagnostics || notificationRead && options.path ? `${config.BASE}${options.url.replace("{id}", encodeURIComponent(options.path.id))}${query ? getQueryString(query) : ""}` : sticky ? `${config.BASE}/api/sticky/${encodeURIComponent(options.path.conv_id)}` : `${config.BASE}${options.url}${query ? getQueryString(query) : ""}`;
       const headers = await getHeaders(config, options);
       if (onCancel.isCancelled) return;
       const response = await sendRequest(
@@ -442,17 +443,19 @@ var request2 = (config, options) => {
         headers,
         onCancel
       );
+      const workspaceSave = workspaceMutation && options.method === "PUT" && options.query?.rename_to === void 0;
+      const workspaceRename = workspaceMutation && options.method === "PUT" && options.query?.rename_to !== void 0;
       if (!((logout || notificationRead || canvasIgnoredMutation) && options.discardResponse)) catchErrorCodes(options, {
         url,
         ok: response.ok,
         status: response.status,
         statusText: response.statusText,
-        body: folder && !response.ok ? await response.json() : canvasNewTab && !response.ok ? await response.text() : void 0
+        body: folder && !response.ok ? await response.json() : workspaceMutation && !response.ok ? workspaceSave ? await response.text() : await response.json().catch(() => void 0) : canvasNewTab && !response.ok ? await response.text() : void 0
       });
-      if (options.discardResponse) {
+      if (options.discardResponse || workspaceRename) {
         resolve2(void 0);
       } else {
-        resolve2(await response.json());
+        resolve2(workspaceSave ? await response.json().catch(() => ({})) : await response.json());
       }
     } catch (error) {
       reject(error);
@@ -944,24 +947,34 @@ var DefaultService = class {
   }
   /**
    * Wrapper
-   * @returns any Successful Response
+   * @param path
+   * @param renameTo
+   * @param requestBody
+   * @returns WorkspaceWriteResponse Successful Response
    * @throws ApiError
    */
-  static wrapperApiWorkspacePathPut() {
+  static wrapperApiWorkspacePathPut(path, renameTo, requestBody) {
     return request2(OpenAPI, {
       method: "PUT",
-      url: "/api/workspace/{path}"
+      url: "/api/workspace/{path}",
+      path: {
+        "path": path
+      },
+      query: {
+        "rename_to": renameTo
+      },
+      body: requestBody,
+      mediaType: "application/json"
     });
   }
-  /**
-   * Wrapper
-   * @returns any Successful Response
-   * @throws ApiError
-   */
-  static wrapperApiWorkspacePathDelete() {
+  static wrapperApiWorkspacePathDelete(path, discardResponse = false) {
     return request2(OpenAPI, {
+      discardResponse,
       method: "DELETE",
-      url: "/api/workspace/{path}"
+      url: "/api/workspace/{path}",
+      path: {
+        "path": path
+      }
     });
   }
   /**

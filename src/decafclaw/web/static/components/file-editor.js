@@ -7,7 +7,6 @@
  *   modified (Number) — file mtime for conflict detection
  *   kind (String) — file kind from server (host decides whether to mount us)
  *   readonly (Boolean) — if true, editor is read-only
- *   saveEndpoint (String) — API prefix, default '/api/workspace/'
  *
  * Events (all bubble + composed):
  *   'saving'    — auto-save in flight
@@ -17,7 +16,7 @@
  */
 
 import { LitElement, html } from 'lit';
-import { encodePagePath } from '../lib/utils.js';
+import { ApiError, DefaultService } from '../lib/api-client/index.js';
 import {
   EditorState,
   EditorView,
@@ -44,6 +43,15 @@ import {
 } from 'codemirror';
 
 const SAVE_DEBOUNCE_MS = 800;
+
+/**
+ * Preserve the existing raw HTTP error text while keeping response data unknown.
+ * @param {unknown} body
+ * @returns {string}
+ */
+function errorText(body) {
+  return typeof body === 'string' ? body : '';
+}
 
 /**
  * Return a CodeMirror language extension for the given file path, or null for plain text.
@@ -78,7 +86,7 @@ function languageForPath(path) {
 
 /**
  * Mount contract:
- *   Properties (`path`, `content`, `modified`, `kind`, `readonly`, `saveEndpoint`) are
+ *   Properties (`path`, `content`, `modified`, `kind`, `readonly`) are
  *   read once at `firstUpdated()` time. Reassigning them on an already-mounted instance
  *   is a no-op — the editor does NOT observe property changes. To switch files, hosts
  *   MUST remount the component (e.g. Lit `@keyed(...)`, re-render with a different key,
@@ -99,7 +107,6 @@ export class FileEditor extends LitElement {
     modified: { type: Number },
     kind: { type: String },
     readonly: { type: Boolean },
-    saveEndpoint: { type: String, attribute: 'save-endpoint' },
   };
 
   /** @type {EditorView | null} */
@@ -122,7 +129,6 @@ export class FileEditor extends LitElement {
     /** @type {number} */ this.modified = 0;
     this.kind = 'text';
     this.readonly = false;
-    this.saveEndpoint = '/api/workspace/';
     this.#onKeyDown = (e) => {
       if ((e.ctrlKey || e.metaKey) && e.key === 's') {
         e.preventDefault();
@@ -231,29 +237,31 @@ export class FileEditor extends LitElement {
     const content = this.#currentContent;
     this.#dispatch('saving');
     try {
-      const url = `${this.saveEndpoint}${encodePagePath(this.path)}`;
-      const res = await fetch(url, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content, modified: this.modified }),
-      });
-      if (res.ok) {
-        const data = await res.json().catch(() => ({}));
-        const newModified = data.modified ?? this.modified;
-        this.modified = newModified;
-        this.#lastSavedContent = content;
-        this.#dispatch('saved', { modified: newModified, path: this.path });
-      } else if (res.status === 409) {
+      const data = await DefaultService.wrapperApiWorkspacePathPut(
+        this.path,
+        undefined,
+        { content, modified: this.modified },
+      );
+      const newModified = data.modified ?? this.modified;
+      this.modified = newModified;
+      this.#lastSavedContent = content;
+      this.#dispatch('saved', { modified: newModified, path: this.path });
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 409) {
         this.#dispatch('conflict', { status: 409 });
+      } else if (error instanceof ApiError) {
+        /** @type {unknown} */
+        const body = error.body;
+        this.#dispatch('error', {
+          status: error.status,
+          message: errorText(body),
+        });
       } else {
-        const message = await res.text().catch(() => '');
-        this.#dispatch('error', { status: res.status, message });
+        this.#dispatch('error', {
+          status: 0,
+          message: error instanceof Error ? error.message : 'network error',
+        });
       }
-    } catch (e) {
-      this.#dispatch('error', {
-        status: 0,
-        message: /** @type {Error} */ (e).message || 'network error',
-      });
     }
   }
 
