@@ -1507,6 +1507,42 @@ def test_vault_read_output_drift_fails_at_unchanged_callers(
         assert (source_tree / STATIC_REL / caller).read_bytes() == originals[caller]
 
 
+@pytest.mark.parametrize(("field", "original_type", "changed_type"), [
+    ("body", "str", "int"),
+    ("modified", "float", "str"),
+])
+def test_vault_page_incompatible_types_fail_at_unchanged_editor_assignment(
+    source_tree, field, original_type, changed_type,
+):
+    caller = source_tree / STATIC_REL / "components/wiki-editor.js"
+    original_caller = caller.read_bytes()
+    assignment = f"new{'Content' if field == 'body' else 'Modified'} = data.{field};"
+    target = next(
+        line_no for line_no, line in enumerate(original_caller.decode().splitlines(), 1)
+        if assignment in line
+    )
+
+    def mutate(original):
+        start = original.index("class VaultPageResponse(BaseModel):")
+        end = original.index("\n\n\n", start)
+        block = original[start:end]
+        before = f"    {field}: {original_type}"
+        assert block.count(before) == 1
+        return original[:start] + block.replace(
+            before, f"    {field}: {changed_type}",
+        ) + original[end:]
+
+    output = _mutate_workspace_contract(source_tree, mutate)
+    diagnostics = [line for line in output.splitlines() if "error TS" in line]
+    assert any(
+        diagnostic.startswith(f"components/wiki-editor.js({target},")
+        and "TS2322" in diagnostic
+        and "is not assignable to type" in diagnostic
+        for diagnostic in diagnostics
+    ), output
+    assert caller.read_bytes() == original_caller
+
+
 def test_workspace_mutation_generated_contracts(source_tree):
     result, output = run_make(source_tree, "gen-api-client")
     assert result.returncode == 0, output
