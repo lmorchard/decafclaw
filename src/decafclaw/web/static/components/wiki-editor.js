@@ -244,7 +244,9 @@ export class WikiEditor extends LitElement {
 
   async #reload() {
     try {
+      /** @type {string} */
       let newContent;
+      /** @type {number} */
       let newModified;
       if (this.saveEndpoint === '/api/vault/') {
         try {
