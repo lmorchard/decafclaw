@@ -95,10 +95,12 @@ On 409, the editor dispatches a `conflict` event. The component does not latch �
 ## REST API surface
 
 All routes require auth (see [Web UI](web-ui.md#setup)). Paths are relative to the workspace root.
-The Browse, Recent, and editor-read callers use the generated browser client. Their
-generated response types cover folder and file records plus editor content, modification
-time, and read-only state. The write, rename, delete, and native file-delivery callers are
-separate operations and retain their existing transports.
+The Browse, Recent, editor-read, save, rename, and delete callers use the generated
+browser client. Their generated contracts cover paths, folder queries, save bodies,
+rename queries, folder and file records, editor state, mutation times, rename results,
+and delete results. Rename still sends no body. Save conflict handling and mutation
+error messages retain their existing behavior. Native file delivery remains a separate
+browser URL operation.
 
 | Method | Path | Purpose |
 |---|---|---|
@@ -119,7 +121,7 @@ Frontend (all under `src/decafclaw/web/static/`):
 - `components/files-sidebar.js` — Files tab: browse/recent views, hidden-file toggle, breadcrumbs, auto-refetch listeners.
 - `components/file-page.js` — File content pane: routes to text editor / image preview / binary download based on `kind`; owns rename, delete, conflict recovery.
 - `components/file-editor.js` — CodeMirror 6 editor with debounced auto-save and conflict events.
-- `lib/api-client/` — Generated request methods and response types used by workspace reads.
+- `lib/api-client/` — Generated request methods and response types used by workspace reads and mutations.
 - `codemirror-entry.js` — Bundling barrel for the CodeMirror language packs.
 
 Backend:

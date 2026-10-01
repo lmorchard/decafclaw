@@ -1053,7 +1053,58 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceWriteResponse"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "path",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "rename_to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "content": {
+                    "title": "Content",
+                    "type": "string"
+                  },
+                  "modified": {
+                    "anyOf": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "title": "Modified"
+                  }
+                },
+                "required": [
+                  "content"
+                ],
+                "title": "WorkspaceSaveRequest",
+                "type": "object"
               }
             }
           }
@@ -1067,11 +1118,23 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceDeleteResponse"
+                }
               }
             }
           }
-        }
+        },
+        "parameters": [
+          {
+            "name": "path",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
       }
     },
     "/api/config/files": {
@@ -2904,6 +2967,20 @@
         ],
         "title": "WidgetDescriptorResponse"
       },
+      "WorkspaceDeleteResponse": {
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true,
+            "title": "Ok"
+          }
+        },
+        "type": "object",
+        "required": [
+          "ok"
+        ],
+        "title": "WorkspaceDeleteResponse"
+      },
       "WorkspaceFileEntry": {
         "properties": {
           "name": {
@@ -3037,6 +3114,36 @@
           "readonly"
         ],
         "title": "WorkspaceTextResponse"
+      },
+      "WorkspaceWriteResponse": {
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true,
+            "title": "Ok"
+          },
+          "modified": {
+            "type": "number",
+            "title": "Modified"
+          },
+          "path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Path"
+          }
+        },
+        "type": "object",
+        "required": [
+          "ok",
+          "modified"
+        ],
+        "title": "WorkspaceWriteResponse"
       }
     }
   }
