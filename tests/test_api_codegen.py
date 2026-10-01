@@ -133,6 +133,7 @@ def test_browser_uses_clean_built_client(source_tree, config):
         if getattr(route, "path", None) == "/static":
             route.app = StaticFiles(directory=source_tree / STATIC_REL)
     listing_requests = []
+    patch_requests = []
 
     @app.middleware("http")
     async def record_listing_request(request, call_next):
@@ -140,6 +141,9 @@ def test_browser_uses_clean_built_client(source_tree, config):
             "/api/conversations", "/api/conversations/archived", "/api/conversations/system",
         }:
             listing_requests.append((request.url.path, list(request.query_params.multi_items()), bool(request.cookies)))
+        if request.method == "PATCH":
+            patch_requests.append((request.url.path, await request.json(),
+                                   request.headers.get("content-type"), bool(request.cookies)))
         return await call_next(request)
 
     # Bind before starting the server, avoiding a free-port check/use race.
@@ -220,6 +224,23 @@ def test_browser_uses_clean_built_client(source_tree, config):
                 for folder in [None, "", "heartbeat", "schedule", "delegated"]:
                     expected_requests.append(("/api/conversations/system", [] if not folder else [("folder", folder)], True))
                 assert listing_requests == expected_requests
+                patch_title = "Title 日本語 & plus+ #hash"
+                patched = page.evaluate("""async ({ id, title, folder }) => {
+                    const { DefaultService } = await import('/static/lib/api-client/index.js');
+                    const renamed = await DefaultService.renameConversationApiConversationsIdPatch(id, { title });
+                    const moved = await DefaultService.renameConversationApiConversationsIdPatch(id, { folder }, true);
+                    return { renamed, ignored: moved === undefined };
+                }""", {"id": conv_id, "title": patch_title, "folder": "  " + nested + "  "})
+                assert patched["renamed"]["conv_id"] == conv_id
+                assert patched["renamed"]["title"] == patch_title
+                assert set(patched["renamed"]) == {"conv_id", "title", "created_at", "updated_at"}
+                assert patched["ignored"] is True
+                assert patch_requests == [
+                    (f"/api/conversations/{conv_id}", {"title": patch_title}, "application/json", True),
+                    (f"/api/conversations/{conv_id}", {"folder": "  " + nested + "  "}, "application/json", True),
+                ]
+                saved = page.request.get(base + "/api/conversations", params={"folder": nested}).json()
+                assert any(c["conv_id"] == conv_id and c["title"] == patch_title for c in saved["conversations"])
                 assert not errors, errors
                 assert not failed_requests, failed_requests
             finally:
@@ -279,4 +300,52 @@ def test_listing_contract_drift_fails_at_unchanged_caller(source_tree, operation
     target = next(i for i, line in enumerate(lines[start:], start + 1)
                   if ("await DefaultService." if contract == "query" else "= data.conversations") in line)
     assert f"conversation-store.js({target}," in diagnostics[0], output
+    assert caller.read_bytes() == original_caller
+
+
+@pytest.mark.parametrize("contract", ["identifier", "title", "folder", "response"])
+def test_patch_contract_drift_fails_at_unchanged_caller(source_tree, contract):
+    caller = source_tree / STATIC_REL / "lib/conversation-store.js"
+    original_caller = caller.read_bytes()
+    result, output = run_make(source_tree, "check-js")
+    assert result.returncode == 0, output
+    backend = source_tree / "src/decafclaw/http_server.py"
+    original = backend.read_text()
+    if contract == "identifier":
+        changed = original.replace("async def rename_conversation(request: Request, id: str)",
+                                   "async def rename_conversation(request: Request, id: int)")
+    elif contract in {"title", "folder"}:
+        start = original.index("class ConversationPatchRequest(BaseModel):")
+        end = original.index("\n\n\n", start)
+        changed = (original[:start] + original[start:end].replace(
+            f"    {contract}: str | None", f"    {contract}: int | None") + original[end:])
+    else:
+        start = original.index("class ConversationPatchResponse(TypedDict):")
+        end = original.index("\n\n\n", start)
+        changed = original[:start] + original[start:end].replace("    title: str", "    title: int") + original[end:]
+    assert changed != original
+    backend.write_text(changed)
+    result, output = run_make(source_tree, "check-js")
+    assert result.returncode != 0, output
+    diagnostics = [line for line in output.splitlines() if "error TS" in line]
+    lines = original_caller.decode().splitlines()
+    rename = next(i for i, line in enumerate(lines, 1) if "const updated = await DefaultService.renameConversation" in line)
+    move = next(i for i, line in enumerate(lines, 1) if "{ folder }, true" in line)
+    merge = next(i for i, line in enumerate(lines, 1) if "this.#conversations = this.#conversations.map" in line)
+    # A rejected rename overload also makes its result non-spreadable. Require
+    # the direct argument error as well as that known dependent diagnostic.
+    expected = {
+        "identifier": [(rename, "TS2345"), (merge + 1, "TS2698"), (move, "TS2345")],
+        "title": [(rename, "TS2322"), (merge + 1, "TS2698")],
+        "folder": [(move, "TS2322")],
+        "response": [(merge, "TS2322")],
+    }[contract]
+    assert len(diagnostics) == len(expected), output
+    for diagnostic, (target, code) in zip(diagnostics, expected, strict=True):
+        assert f"conversation-store.js({target}," in diagnostic and code in diagnostic, output
+    if contract == "response":
+        assert "Types of property 'title' are incompatible" in output, output
+        assert "Type 'number' is not assignable to type 'string'" in output, output
+    else:
+        assert "'string' is not assignable to" in diagnostics[0] and "'number'" in diagnostics[0], output
     assert caller.read_bytes() == original_caller

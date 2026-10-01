@@ -3,6 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { ConversationListingResponse } from '../models/ConversationListingResponse';
+import type { ConversationPatchResponse } from '../models/ConversationPatchResponse';
 import type { StickyResponse } from '../models/StickyResponse';
 import type { SystemConversationListingResponse } from '../models/SystemConversationListingResponse';
 import type { UserResponse } from '../models/UserResponse';
@@ -185,14 +186,48 @@ export class DefaultService {
         });
     }
     /**
-     * Wrapper
-     * @returns any Successful Response
+     * Rename Conversation
+     * Rename and/or move a conversation to a different folder.
+     * @param id
+     * @param requestBody
+     * @returns ConversationPatchResponse Successful Response
      * @throws ApiError
      */
-    public static wrapperApiConversationsIdDelete(): CancelablePromise<any> {
+    public static renameConversationApiConversationsIdPatch(
+        id: string,
+        requestBody: {
+            title?: (string | null);
+            folder?: (string | null);
+        },
+    ): CancelablePromise<ConversationPatchResponse>;
+    public static renameConversationApiConversationsIdPatch(
+        id: string,
+        requestBody: {
+            title?: (string | null);
+            folder?: (string | null);
+        },
+        discardResponse: true,
+    ): CancelablePromise<void>;
+    public static renameConversationApiConversationsIdPatch(
+        id: string,
+        requestBody: {
+            title?: (string | null);
+            folder?: (string | null);
+        },
+        discardResponse = false,
+    ): CancelablePromise<ConversationPatchResponse | void> {
         return __request(OpenAPI, {
-            method: 'DELETE',
+            discardResponse,
+            method: 'PATCH',
             url: '/api/conversations/{id}',
+            path: {
+                'id': id,
+            },
+            body: requestBody,
+            mediaType: 'application/json',
+            errors: {
+                422: `Validation Error`,
+            },
         });
     }
     /**
@@ -200,9 +235,9 @@ export class DefaultService {
      * @returns any Successful Response
      * @throws ApiError
      */
-    public static wrapperApiConversationsIdPatch(): CancelablePromise<any> {
+    public static wrapperApiConversationsIdDelete(): CancelablePromise<any> {
         return __request(OpenAPI, {
-            method: 'PATCH',
+            method: 'DELETE',
             url: '/api/conversations/{id}',
         });
     }

@@ -1,4 +1,5 @@
 import json
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -7,6 +8,36 @@ import yaml
 
 from decafclaw.config import Config
 from decafclaw.http_server import create_app
+
+
+def add_patch_discard_overload(service: Path) -> None:
+    """Derive both PATCH call modes from the generated signature, never copy its types.
+
+    Rename reads metadata; move only waits for HTTP success. The stock generator
+    has no per-call option to skip decoding an unused response body.
+    """
+    source = service.read_text()
+    pattern = (r"    public static renameConversationApiConversationsIdPatch\(\n"
+               r"(?P<parameters>.*?)    \): CancelablePromise<(?P<response>[^>]+)> \{")
+
+    def overload(match: re.Match) -> str:
+        method = "    public static renameConversationApiConversationsIdPatch(\n"
+        parameters = match["parameters"]
+        response = match["response"]
+        return (
+            method + parameters + f"    ): CancelablePromise<{response}>;\n"
+            + method + parameters + "        discardResponse: true,\n    ): CancelablePromise<void>;\n"
+            + method + parameters + "        discardResponse = false,\n"
+            + f"    ): CancelablePromise<{response} | void> {{"
+        )
+
+    source, count = re.subn(pattern, overload, source, flags=re.DOTALL)
+    if count != 1:
+        raise ValueError("Expected exactly one generated conversation PATCH method")
+    marker = "            method: 'PATCH',\n            url: '/api/conversations/{id}',"
+    if source.count(marker) != 1:
+        raise ValueError("Expected exactly one generated conversation PATCH request")
+    service.write_text(source.replace(marker, "            discardResponse,\n" + marker))
 
 
 def dump_openapi():
@@ -27,7 +58,8 @@ def dump_openapi():
         "--client", "fetch"
     ]
     subprocess.run(cmd, check=True)
-    # Preserve the stock transport for all operations except migrated sticky and listing reads.
+    add_patch_discard_overload(static / "lib/api-client/services/DefaultService.ts")
+    # Preserve the stock transport outside migrated reads and conversation PATCH.
     # The adapter uses generated helpers but retains those callers' encoding and
     # error behavior without mutating the shared OpenAPI configuration.
     core = static / "lib/api-client/core"
