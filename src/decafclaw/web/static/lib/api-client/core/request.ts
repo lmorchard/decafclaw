@@ -6,6 +6,10 @@ import { request as generatedRequest, getHeaders, sendRequest, catchErrorCodes, 
 
 /** Preserve migrated callers' session, JSON, and HTTP-error semantics. */
 export const request = <T>(config: OpenAPIConfig, options: ApiRequestOptions & { discardResponse?: boolean }): CancelablePromise<T> => {
+    const notificationRead = options.method === 'POST'
+        && ['/api/notifications/{id}/read', '/api/notifications/read-all'].includes(options.url);
+    const notification = notificationRead || (options.method === 'GET'
+        && ['/api/notifications', '/api/notifications/unread-count'].includes(options.url));
     const login = options.method === 'POST' && options.url === '/api/auth/login';
     const logout = options.method === 'POST' && options.url === '/api/auth/logout';
     // Keep the main session check on its existing transport; only the vault
@@ -20,7 +24,7 @@ export const request = <T>(config: OpenAPIConfig, options: ApiRequestOptions & {
         || (options.method === 'POST' && ['/api/conversations/{id}/archive', '/api/conversations/{id}/unarchive'].includes(options.url));
     const folder = (options.method === 'POST' && options.url === '/api/conversations/folders')
         || (['PUT', 'DELETE'].includes(options.method) && options.url === '/api/conversations/folders/{path}');
-    if (!diagnostics && !login && !logout && !vaultGuard && !create && !lifecycle && !folder && !patch && (options.method !== 'GET' || (!sticky && !listing))) {
+    if (!notification && !diagnostics && !login && !logout && !vaultGuard && !create && !lifecycle && !folder && !patch && (options.method !== 'GET' || (!sticky && !listing))) {
         return generatedRequest<T>(config, options);
     }
     return new CancelablePromise(async (resolve, reject, onCancel) => {
@@ -29,7 +33,7 @@ export const request = <T>(config: OpenAPIConfig, options: ApiRequestOptions & {
             const query = listing && options.query?.folder === "" ? undefined : options.query;
             const url = folder
                 ? `${config.BASE}/api/conversations/folders${options.path ? '/' + String(options.path.path).split('/').map(encodeURIComponent).join('/') : ''}`
-                : patch || lifecycle || diagnostics
+                : patch || lifecycle || diagnostics || (notificationRead && options.path)
                 ? `${config.BASE}${options.url.replace('{id}', encodeURIComponent(options.path!.id))}${query ? getQueryString(query) : ''}`
                 : sticky
                 ? `${config.BASE}/api/sticky/${encodeURIComponent(options.path!.conv_id)}`
@@ -41,9 +45,10 @@ export const request = <T>(config: OpenAPIConfig, options: ApiRequestOptions & {
                 options, url, getRequestBody(options), undefined, headers, onCancel,
             );
             // Folder mutations decode error JSON for the existing error log.
-            // Logout's discard caller accepts any HTTP response. Other callers
+            // Logout and notification read callers accept any HTTP response when
+            // discarding the body. Other callers
             // reject HTTP errors before decoding. Propagate JSON failures.
-            if (!(logout && options.discardResponse)) catchErrorCodes(options, {
+            if (!((logout || notificationRead) && options.discardResponse)) catchErrorCodes(options, {
                 url, ok: response.ok, status: response.status,
                 statusText: response.statusText, body: folder && !response.ok ? await response.json() : undefined,
             });

@@ -1,5 +1,6 @@
 """Exercise current backend types and browser output in disposable source trees."""
 
+import json
 import os
 import pathlib
 import shutil
@@ -12,6 +13,7 @@ import uvicorn
 from playwright.sync_api import sync_playwright
 from starlette.staticfiles import StaticFiles
 
+from decafclaw import notifications as notifs
 from decafclaw.archive import append_message, archive_path
 from decafclaw.context_composer import write_context_sidecar
 from decafclaw.events import EventBus
@@ -142,6 +144,15 @@ def test_browser_uses_clean_built_client(source_tree, config):
     for route in app.routes:
         if getattr(route, "path", None) == "/static":
             route.app = StaticFiles(directory=source_tree / STATIC_REL)
+    notification_id = "record ?#%é"
+    notification = notifs.NotificationRecord(
+        id=notification_id, timestamp="2026-10-01T00:00:00Z", category="background",
+        title="Browser notification", body="Finished work", conv_id=conv_id,
+    )
+    inbox = config.workspace_path / "notifications" / "inbox.jsonl"
+    inbox.parent.mkdir(parents=True, exist_ok=True)
+    inbox.write_text(json.dumps(notification.to_dict()) + "\n")
+    notification_requests = []
     context_export_requests = []
     listing_requests = []
     patch_requests = []
@@ -150,6 +161,10 @@ def test_browser_uses_clean_built_client(source_tree, config):
 
     @app.middleware("http")
     async def record_listing_request(request, call_next):
+        if request.url.path.startswith("/api/notifications"):
+            notification_requests.append((request.method, request.scope["path"],
+                                          list(request.query_params.multi_items()),
+                                          await request.body(), bool(request.cookies)))
         if request.url.path.endswith(("/context", "/export")):
             context_export_requests.append((request.method, request.url.path,
                                             list(request.query_params.multi_items()),
@@ -207,6 +222,37 @@ def test_browser_uses_clean_built_client(source_tree, config):
                 }""", token)
                 assert result == {"username": "browser-user", "currentUser": "browser-user"}
                 page.add_script_tag(type="importmap", content='{"imports":{"lit":"/static/vendor/bundle/lit.js"}}')
+                page.evaluate("""async () => {
+                    await import('/static/components/notification-inbox.js');
+                    document.body.append(document.createElement('notification-inbox'));
+                }""")
+                page.wait_for_function("document.querySelector('notification-inbox')._count === 1")
+                page.locator('.notification-bell').click()
+                page.locator('.notification-row').wait_for()
+                assert "Browser notification" in page.locator('.notification-panel').inner_text()
+                page.evaluate("""() => {
+                    window.notificationNavigation = null;
+                    document.querySelector('notification-inbox').addEventListener('navigate-conversation',
+                        e => window.notificationNavigation = e.detail.convId);
+                }""")
+                page.locator('.notification-row').click()
+                page.wait_for_function("window.notificationNavigation !== null")
+                assert page.evaluate("window.notificationNavigation") == conv_id
+                assert notification_id in notifs.get_read_ids(config)
+                # A pushed count enables mark-all; its caller still reaches the real route.
+                page.evaluate("window.dispatchEvent(new CustomEvent('notification-created', {detail: {unread_count: 1}}))")
+                page.locator('.notification-bell').click()
+                page.locator('.notification-row').wait_for()
+                page.locator('.notification-mark-all').click()
+                page.wait_for_function("document.querySelector('notification-inbox')._count === 0")
+                assert notification_requests == [
+                    ("GET", "/api/notifications/unread-count", [], b"", True),
+                    ("GET", "/api/notifications", [("limit", "20")], b"", True),
+                    ("POST", f"/api/notifications/{notification_id}/read", [], b"", True),
+                    ("GET", "/api/notifications", [("limit", "20")], b"", True),
+                    ("POST", "/api/notifications/read-all", [], b"", True),
+                ]
+                page.locator('notification-inbox').evaluate("el => el.remove()")
                 inspected = page.evaluate("""async (convId) => {
                     await import('/static/components/context-inspector.js');
                     const el = document.createElement('context-inspector');
@@ -669,4 +715,36 @@ def test_context_export_contract_drift_fails_at_unchanged_caller(source_tree, co
     diagnostics = [line for line in output.splitlines() if "error TS" in line]
     assert any(component in line and code in line and diagnostic in line for line in diagnostics), output
     assert all(component in line for line in diagnostics), output
+    assert caller.read_bytes() == original_caller
+
+
+@pytest.mark.parametrize("contract", ["limit", "id", "records", "count", "title", "link"])
+def test_notification_contract_drift_fails_at_unchanged_caller(source_tree, contract):
+    result, output = run_make(source_tree, "check-js")
+    assert result.returncode == 0, output
+    backend = source_tree / "src/decafclaw/http_server.py"
+    original = backend.read_text()
+    caller = source_tree / STATIC_REL / "components/notification-inbox.js"
+    original_caller = caller.read_bytes()
+    if contract == "limit":
+        changed = original.replace('"type": "integer", "default": 20, "minimum": 1, "maximum": 200',
+                                   '"type": "string", "default": "20"')
+        diagnostic, code = "not assignable to parameter of type 'string'", "TS2345"
+    elif contract == "id":
+        changed = original.replace('async def notifications_mark_read(request: Request, id: str)',
+                                   'async def notifications_mark_read(request: Request, id: int)')
+        diagnostic, code = "not assignable to parameter of type 'number'", "TS2345"
+    else:
+        model = {"records": "NotificationListResponse", "count": "NotificationCountResponse"}.get(contract, "NotificationResponse")
+        start = original.index(f"class {model}(BaseModel):")
+        end = original.index("\n\n", start)
+        changed = original[:start] + original[start:end].replace(f"    {contract}:", f"    renamed_{contract}:") + original[end:]
+        diagnostic, code = f"Property '{contract}' does not exist", "TS2339"
+    assert changed != original
+    backend.write_text(changed)
+    result, output = run_make(source_tree, "check-js")
+    assert result.returncode != 0, output
+    diagnostics = [line for line in output.splitlines() if "error TS" in line]
+    assert any("notification-inbox.js(" in line and code in line and diagnostic in line for line in diagnostics), output
+    assert all("notification-inbox.js(" in line for line in diagnostics), output
     assert caller.read_bytes() == original_caller
