@@ -1,4 +1,5 @@
 import { LitElement, html, nothing } from 'lit';
+import { ApiError, DefaultService } from '../lib/api-client/index.js';
 import { showToast } from '../lib/toast.js';
 import { copyToClipboard } from '../lib/utils.js';
 
@@ -52,16 +53,14 @@ export class CopyConversationMenu extends LitElement {
     this._open = false;
     if (!this.convId) return;
     try {
-      const url = `/api/conversations/${encodeURIComponent(this.convId)}/export?format=${format}`;
-      const res = await fetch(url);
-      if (!res.ok) {
-        showToast(`Copy failed: server returned ${res.status}`);
-        return;
-      }
-      const text = await res.text();
+      const text = await DefaultService.exportConversationApiConversationsIdExportGet(this.convId, format);
       await copyToClipboard(text);
       showToast(`Copied as ${format}`);
     } catch (err) {
+      if (err instanceof ApiError) {
+        showToast(`Copy failed: server returned ${err.status}`);
+        return;
+      }
       const msg = err instanceof Error ? err.message : String(err);
       showToast(`Copy failed: ${msg}`);
     }

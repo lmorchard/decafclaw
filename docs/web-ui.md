@@ -613,6 +613,26 @@ and creation also logs JSON decoding failures.
 The backend preserves ownership checks, archive data, and folder assignments.
 Deletion stops the target conversation's terminals before it removes files and assignments.
 
+The context inspector and copy menu use generated methods for
+`GET /api/conversations/{id}/context` and `GET /api/conversations/{id}/export`.
+The inspector keeps the generated diagnostics type in its state and rendering helpers.
+Its source records, detail records, memory candidates, and cache statistics retain their types.
+Absent optional diagnostics stay absent. A 404 response still shows the empty state.
+Other HTTP errors, network failures, and JSON decoding failures keep their existing messages.
+
+Export requires a string identifier and a `jsonl` or `markdown` query value.
+Both response formats are text. The generated export method uses a string-returning
+transport in `scripts/sticky_api_request.ts`, so JSONL never goes through JSON decoding.
+Clipboard text, success messages, and HTTP error messages remain unchanged.
+The backend still returns 400 for missing or invalid formats and 404 for unavailable archives or conversations.
+Both operations preserve authentication and conversation access rules.
+
+Context and export contract tests change consumed diagnostics fields, identifiers,
+and the format query. Each requires passing checks before the change and a type
+error at the unchanged component afterward. Component tests cover optional data,
+rendering, clipboard contents, and failures. Chromium runs the components against
+real test routes and checks the received paths, queries, empty bodies, and session cookies.
+
 The isolated tests in `tests/test_api_codegen.py` delete generated output,
 change backend identifier, listing query, PATCH body, and response contracts, and load the client in Chromium through
 `/static` against a test server. They use temporary data and require no live

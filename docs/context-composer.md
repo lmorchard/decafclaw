@@ -514,6 +514,10 @@ Earlier turns covered ... (prose summary)
 After each turn, the agent writes a diagnostics sidecar file (`workspace/conversations/{conv_id}/context.json`) with per-source token estimates, scoring details, memory candidate breakdowns, and cumulative cleanup stats from the lightweight clear tier (see above).
 
 **REST endpoint:** `GET /api/conversations/{id}/context` returns the sidecar data.
+The generated client describes the diagnostics fields consumed by the inspector.
+The inspector retains those types through its state and rendering helpers.
+Optional fields can remain absent. A missing sidecar returns 404 and displays “No context data yet.”
+The route returns the stored data unchanged, including additional fields that the inspector does not use.
 
 **Web UI:** Click the context usage bar in the sidebar to open a popover with:
 - Waffle chart (grid map) showing token allocation by source
