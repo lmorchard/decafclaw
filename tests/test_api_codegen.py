@@ -14,7 +14,9 @@ from starlette.staticfiles import StaticFiles
 
 from decafclaw.events import EventBus
 from decafclaw.http_server import create_app
+from decafclaw.sticky import write_sticky_state
 from decafclaw.web.auth import create_token
+from decafclaw.web.conversations import ConversationIndex
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 STATIC_REL = pathlib.Path("src/decafclaw/web/static")
@@ -80,6 +82,40 @@ def test_backend_response_drift_fails_at_unchanged_caller(source_tree):
     assert "renamed_username" in (source_tree / CLIENT_REL / "models/UserResponse.ts").read_text()
 
 
+@pytest.mark.parametrize("contract", ["identifier", "response"])
+def test_sticky_contract_drift_fails_at_unchanged_caller(source_tree, contract):
+    result, output = run_make(source_tree, "check-js")
+    assert result.returncode == 0, output
+    caller = source_tree / STATIC_REL / "lib/sticky-state.js"
+    original_caller = caller.read_bytes()
+    backend = source_tree / "src/decafclaw/http_server.py"
+    original = backend.read_text()
+    if contract == "identifier":
+        changed = original.replace(
+            "async def get_sticky_state(request: Request, conv_id: str)",
+            "async def get_sticky_state(request: Request, conv_id: int)",
+        )
+        diagnostic = "Argument of type 'string' is not assignable to parameter of type 'number'"
+        code = "TS2345"
+    else:
+        changed = original.replace(
+            "class StickyResponse(BaseModel):\n    widget_type:",
+            "class StickyResponse(BaseModel):\n    renamed_widget_type:",
+        )
+        diagnostic = "Property 'widget_type' does not exist on type 'StickyResponse'"
+        code = "TS2339"
+    assert changed != original
+    backend.write_text(changed)
+    result, output = run_make(source_tree, "check-js")
+    assert result.returncode != 0, output
+    # An install or generation failure, or an error elsewhere, is not evidence.
+    diagnostics = [line for line in output.splitlines() if "error TS" in line]
+    assert len(diagnostics) == 1, output
+    assert "sticky-state.js(" in diagnostics[0] and code in diagnostics[0], output
+    assert diagnostic in diagnostics[0], output
+    assert caller.read_bytes() == original_caller
+
+
 def test_browser_uses_clean_built_client(source_tree, config):
     shutil.rmtree(source_tree / CLIENT_REL)
     result, output = run_make(source_tree, "gen-api-client", "check-browser-assets")
@@ -87,6 +123,11 @@ def test_browser_uses_clean_built_client(source_tree, config):
     config.http.secret = "isolated-browser-test-secret"
     config.agent_path.mkdir(parents=True, exist_ok=True)
     token = create_token(config, "browser-user")
+    conv_id = ConversationIndex(config).create("browser-user", title="Sticky test").conv_id
+    payload = {"content": "# Doc", "extra": {"rows": [1, True, None, {"label": "nested"}]}}
+    assert write_sticky_state(config, conv_id, {
+        "schema_version": 1, "widget_type": "markdown_document", "data": payload,
+    })
     app = create_app(config, EventBus())
     for route in app.routes:
         if getattr(route, "path", None) == "/static":
@@ -126,6 +167,19 @@ def test_browser_uses_clean_built_client(source_tree, config):
                     return { username: await client.checkSession(), currentUser: client.currentUser };
                 }""")
                 assert result == {"username": "browser-user", "currentUser": "browser-user"}
+                sticky_requests = []
+                page.on("request", lambda request: sticky_requests.append(request.url)
+                        if "/api/sticky/" in request.url else None)
+                snapshot = page.evaluate("""async (convId) => {
+                    const sticky = await import('/static/lib/sticky-state.js');
+                    await sticky.setActiveConv(convId);
+                    return sticky.currentSnapshot();
+                }""", conv_id)
+                assert snapshot == {
+                    "widgetType": "markdown_document", "data": payload,
+                    "collapsed": False, "visible": True,
+                }
+                assert sticky_requests == [f"{base}/api/sticky/{conv_id}"]
                 assert not errors, errors
                 assert not failed_requests, failed_requests
             finally:
