@@ -8,6 +8,8 @@ import type { ConversationFolderResponse } from '../models/ConversationFolderRes
 import type { ConversationLifecycleResponse } from '../models/ConversationLifecycleResponse';
 import type { ConversationListingResponse } from '../models/ConversationListingResponse';
 import type { ConversationPatchResponse } from '../models/ConversationPatchResponse';
+import type { LoginResponse } from '../models/LoginResponse';
+import type { LogoutResponse } from '../models/LogoutResponse';
 import type { StickyResponse } from '../models/StickyResponse';
 import type { SystemConversationListingResponse } from '../models/SystemConversationListingResponse';
 import type { UserResponse } from '../models/UserResponse';
@@ -66,23 +68,38 @@ export class DefaultService {
     /**
      * Auth Login
      * Validate a one-time login token, then set the session cookie.
-     * @returns any Successful Response
+     * @param requestBody
+     * @returns LoginResponse Successful Response
      * @throws ApiError
      */
-    public static authLoginApiAuthLoginPost(): CancelablePromise<any> {
+    public static authLoginApiAuthLoginPost(
+        requestBody: {
+            token: string;
+        },
+    ): CancelablePromise<LoginResponse> {
         return __request(OpenAPI, {
             method: 'POST',
             url: '/api/auth/login',
+            body: requestBody,
+            mediaType: 'application/json',
         });
     }
     /**
      * Auth Logout
      * Clear the session cookie.
-     * @returns any Successful Response
+     * @returns LogoutResponse Successful Response
      * @throws ApiError
      */
-    public static authLogoutApiAuthLogoutPost(): CancelablePromise<any> {
+    public static authLogoutApiAuthLogoutPost(
+    ): CancelablePromise<LogoutResponse>;
+    public static authLogoutApiAuthLogoutPost(
+        discardResponse: true,
+    ): CancelablePromise<void>;
+    public static authLogoutApiAuthLogoutPost(
+        discardResponse = false,
+    ): CancelablePromise<LogoutResponse | void> {
         return __request(OpenAPI, {
+            discardResponse,
             method: 'POST',
             url: '/api/auth/logout',
         });
@@ -93,8 +110,16 @@ export class DefaultService {
      * @returns UserResponse Successful Response
      * @throws ApiError
      */
-    public static authMeApiAuthMeGet(): CancelablePromise<UserResponse> {
+    public static authMeApiAuthMeGet(
+    ): CancelablePromise<UserResponse>;
+    public static authMeApiAuthMeGet(
+        discardResponse: true,
+    ): CancelablePromise<void>;
+    public static authMeApiAuthMeGet(
+        discardResponse = false,
+    ): CancelablePromise<UserResponse | void> {
         return __request(OpenAPI, {
+            discardResponse,
             method: 'GET',
             url: '/api/auth/me',
         });

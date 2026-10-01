@@ -97,14 +97,22 @@ async def test_login_sets_cookie(client, http_config):
     token = create_token(http_config, "testuser")
     resp = await client.post("/api/auth/login", json={"token": token})
     assert resp.status_code == 200
-    assert resp.json()["username"] == "testuser"
-    assert "decafclaw_session" in resp.cookies
+    assert resp.json() == {"username": "testuser"}
+    assert resp.cookies["decafclaw_session"] == token
+    cookie = resp.headers["set-cookie"]
+    assert "HttpOnly" in cookie
+    assert "SameSite=lax" in cookie
+    assert "Max-Age=2592000" in cookie
+    assert "Path=/" in cookie
+    assert "Secure" not in cookie
 
 
 @pytest.mark.asyncio
 async def test_login_bad_token(client):
     resp = await client.post("/api/auth/login", json={"token": "bad"})
     assert resp.status_code == 401
+    assert resp.json() == {"error": "invalid token"}
+    assert "set-cookie" not in resp.headers
 
 
 @pytest.mark.asyncio
@@ -135,7 +143,30 @@ async def test_logout_clears_cookie(client, http_config):
     logout_resp = await client.post("/api/auth/logout")
     assert logout_resp.status_code == 200
 
-    # Cookie should be cleared — clear client cookies and verify 401
-    client.cookies.clear()
+    assert logout_resp.json() == {"ok": True}
+    cookie = logout_resp.headers["set-cookie"]
+    assert 'decafclaw_session=""' in cookie
+    assert "Max-Age=0" in cookie
+    assert "expires=" in cookie.lower()
+    assert "Path=/" in cookie
+    assert "SameSite=lax" in cookie
+    assert "decafclaw_session" not in client.cookies
     resp = await client.get("/api/auth/me")
     assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("body", [{}, {"token": ""}, {"token": None}, {"token": "bad", "extra": True}])
+async def test_login_preserves_manual_request_handling(client, body):
+    resp = await client.post("/api/auth/login", json=body)
+    assert resp.status_code == 401
+    assert resp.json() == {"error": "invalid token"}
+    assert "set-cookie" not in resp.headers
+
+
+@pytest.mark.asyncio
+async def test_login_accepts_extra_fields(client, http_config):
+    token = create_token(http_config, "testuser")
+    resp = await client.post("/api/auth/login", json={"token": token, "extra": True})
+    assert resp.status_code == 200
+    assert resp.json() == {"username": "testuser"}

@@ -17,6 +17,8 @@ def add_discard_overload(service: Path, method_name: str, verb: str, url: str) -
     has no per-call option to skip decoding an unused response body.
     """
     source = service.read_text()
+    # The generator puts zero-argument signatures on one line.
+    source = source.replace(f"public static {method_name}():", f"public static {method_name}(\n    ):")
     pattern = (rf"    public static {re.escape(method_name)}\(\n"
                r"(?P<parameters>.*?)    \): CancelablePromise<(?P<response>[^>]+)> \{")
 
@@ -59,6 +61,8 @@ def dump_openapi():
     ]
     subprocess.run(cmd, check=True)
     for method, verb, url in (
+        ("authLogoutApiAuthLogoutPost", "POST", "/api/auth/logout"),
+        ("authMeApiAuthMeGet", "GET", "/api/auth/me"),
         ("archiveConversationApiConversationsIdArchivePost", "POST", "/api/conversations/{id}/archive"),
         ("unarchiveConversationApiConversationsIdUnarchivePost", "POST", "/api/conversations/{id}/unarchive"),
         ("deleteConversationApiConversationsIdDelete", "DELETE", "/api/conversations/{id}"),
