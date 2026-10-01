@@ -16,6 +16,8 @@ export type { ConversationListingItem } from './models/ConversationListingItem';
 export type { ConversationListingResponse } from './models/ConversationListingResponse';
 export type { ConversationPatchResponse } from './models/ConversationPatchResponse';
 export type { HTTPValidationError } from './models/HTTPValidationError';
+export type { LoginResponse } from './models/LoginResponse';
+export type { LogoutResponse } from './models/LogoutResponse';
 export type { StickyResponse } from './models/StickyResponse';
 export type { SystemConversationListingItem } from './models/SystemConversationListingItem';
 export type { SystemConversationListingResponse } from './models/SystemConversationListingResponse';

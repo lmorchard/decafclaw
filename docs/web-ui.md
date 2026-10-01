@@ -361,7 +361,7 @@ socket with no reconnect logic at all, so it is not covered by this.
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `POST` | `/api/auth/login` | Log in with username + token |
+| `POST` | `/api/auth/login` | Log in with a token |
 | `POST` | `/api/auth/logout` | Log out (revoke session) |
 | `GET` | `/api/auth/me` | Get current user info |
 
@@ -484,7 +484,27 @@ See [Configuration Reference](config.md#http) for the full `http` config group.
 `AuthClient.checkSession()` calls the generated client for `GET /api/auth/me`.
 It returns the username and stores it in `currentUser`. An unsuccessful request
 returns `null` and clears `currentUser`, including after an earlier success.
-Login and logout retain their existing request paths.
+`AuthClient.login()` also uses the generated client. Its request contains a
+string `token`, and its response contains a string `username`. Login stores
+and returns the username and emits the existing login event. HTTP failures
+raise `Invalid token` before body decoding. Transport and JSON parsing failures
+propagate without changing the user or emitting an event.
+
+`AuthClient.logout()` uses the generated logout method with `true` to discard
+the response. It clears the user and emits logout after any HTTP response,
+including an error status. It does not decode the body. A transport failure
+leaves the user unchanged and emits no event. The default generated method
+still exposes the `{ok: boolean}` success contract for callers that read it.
+
+The standalone vault page calls `lib/vault-auth.js:checkVaultSession()`.
+This module uses the generated `/me` method with `true` to discard the response
+and participates in frontend type checking. It redirects to `/` on HTTP
+failure. Successful responses require no JSON decoding, and transport failures
+propagate without a redirect. The main session check retains its existing behavior.
+
+Login request metadata describes the existing token body without adding runtime
+validation. The backend retains manual body parsing, token validation, response
+shapes, status codes, and session cookie attributes. Logout deletes that cookie.
 
 Run `make gen-api-client` to regenerate the OpenAPI schema, TypeScript client,
 and browser bundle from the current backend. The build uses the existing
