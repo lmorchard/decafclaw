@@ -3,9 +3,14 @@
 /* tslint:disable */
 /* eslint-disable */
 export type FileCompletion = {
-    type: string;
+    type: FileCompletion.type;
     id: string;
     label: string;
     description: string;
 };
+export namespace FileCompletion {
+    export enum type {
+        FILE = 'file',
+    }
+}
 

@@ -25,12 +25,12 @@ export type { ConversationLifecycleResponse } from './models/ConversationLifecyc
 export type { ConversationListingItem } from './models/ConversationListingItem';
 export type { ConversationListingResponse } from './models/ConversationListingResponse';
 export type { ConversationPatchResponse } from './models/ConversationPatchResponse';
-export type { FileCompletion } from './models/FileCompletion';
+export { FileCompletion } from './models/FileCompletion';
 export type { HTTPValidationError } from './models/HTTPValidationError';
 export type { JsonValue } from './models/JsonValue';
 export type { LoginResponse } from './models/LoginResponse';
 export type { LogoutResponse } from './models/LogoutResponse';
-export type { McpCompletion } from './models/McpCompletion';
+export { McpCompletion } from './models/McpCompletion';
 export type { NotificationCountResponse } from './models/NotificationCountResponse';
 export type { NotificationListResponse } from './models/NotificationListResponse';
 export type { NotificationReadResponse } from './models/NotificationReadResponse';
@@ -40,7 +40,7 @@ export type { SystemConversationListingItem } from './models/SystemConversationL
 export type { SystemConversationListingResponse } from './models/SystemConversationListingResponse';
 export type { UserResponse } from './models/UserResponse';
 export type { ValidationError } from './models/ValidationError';
-export type { VaultCompletion } from './models/VaultCompletion';
+export { VaultCompletion } from './models/VaultCompletion';
 export type { VirtualConversationFolderEntry } from './models/VirtualConversationFolderEntry';
 export type { WidgetCatalogResponse } from './models/WidgetCatalogResponse';
 export type { WidgetDescriptorResponse } from './models/WidgetDescriptorResponse';

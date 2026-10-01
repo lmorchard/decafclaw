@@ -527,4 +527,17 @@ describe('chat-input mention autocomplete', () => {
     expect(textareaOf(el).value).toBe('Inspect @mcp/demo/notes ');
     expect(el.querySelector(MENU)).toBeNull();
   });
+
+  it('does not insert an unknown completion variant as a file mention', async () => {
+    const el = await mount();
+    await type(el, 'Check @');
+    el._mentionMatches = [
+      { type: 'added', id: 'new-target', label: 'New target', description: 'New variant' }
+    ];
+    await el.updateComplete;
+
+    await press(el, 'Tab');
+
+    expect(textareaOf(el).value).toBe('Check @');
+  });
 });

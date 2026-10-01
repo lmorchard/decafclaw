@@ -1512,8 +1512,9 @@ components:
       properties:
         type:
           type: string
-          const: file
           title: Type
+          enum:
+          - file
         id:
           type: string
           title: Id
@@ -1562,8 +1563,9 @@ components:
       properties:
         type:
           type: string
-          const: mcp
           title: Type
+          enum:
+          - mcp
         id:
           type: string
           title: Id
@@ -1759,8 +1761,9 @@ components:
       properties:
         type:
           type: string
-          const: vault
           title: Type
+          enum:
+          - vault
         id:
           type: string
           title: Id
