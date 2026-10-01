@@ -1,5 +1,6 @@
 import { LitElement, html, css } from 'lit';
 import { getActiveConvId } from '/static/lib/canvas-state.js';
+import { ApiError, DefaultService } from '/static/lib/api-client/index.js';
 
 export class JsonViewWidget extends LitElement {
   static properties = {
@@ -109,21 +110,15 @@ export class JsonViewWidget extends LitElement {
     const convId = getActiveConvId() || '';
     if (!convId) return;
     try {
-      const resp = await fetch(`/api/canvas/${encodeURIComponent(convId)}/new_tab`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'same-origin',
-        body: JSON.stringify({
+      await DefaultService.postCanvasNewTabApiCanvasConvIdNewTabPost(
+        convId, {
           widget_type: 'json_view',
           data: this.data,
           label: 'JSON View',
-        }),
-      });
-      if (!resp.ok) {
-        console.error('canvas new_tab failed', resp.status, await resp.text());
-      }
+        }, true);
     } catch (err) {
-      console.error('canvas new_tab error', err);
+      if (err instanceof ApiError) console.error('canvas new_tab failed', err.status, err.body);
+      else console.error('canvas new_tab error', err);
     }
   }
 

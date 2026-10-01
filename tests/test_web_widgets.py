@@ -113,6 +113,13 @@ async def test_list_widgets_requires_auth(unauthed_client):
     assert resp.status_code == 401
 
 
+def test_widget_catalog_openapi_contract(app):
+    operation = app.openapi()["paths"]["/api/widgets"]["get"]
+    assert operation["responses"]["200"]["content"]["application/json"]["schema"] == {
+        "$ref": "#/components/schemas/WidgetCatalogResponse",
+    }
+
+
 # ---------------- /widgets/{tier}/{name}/widget.js ----------------
 
 

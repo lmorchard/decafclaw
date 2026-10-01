@@ -2,6 +2,15 @@ import { LitElement, html, nothing } from 'lit';
 
 import { getCatalog, getDescriptor } from '../../lib/widget-catalog.js';
 
+/** @typedef {HTMLElement & {
+ *   data: unknown,
+ *   convId: string|null,
+ *   tabId: string|null,
+ *   submitted: boolean,
+ *   response: object|null,
+ *   mode: string,
+ * }} WidgetElement */
+
 /**
  * Generic host for rendering a widget by type.
  *
@@ -23,7 +32,7 @@ import { getCatalog, getDescriptor } from '../../lib/widget-catalog.js';
  * survives a tab switch instead of being torn down and rebuilt.
  */
 
-/** @type {Map<string, Promise<any>>} */
+/** @type {Map<string, Promise<unknown>>} */
 const _importCache = new Map();
 
 function _memoizedImport(url) {
@@ -69,7 +78,7 @@ export class WidgetHost extends LitElement {
     this._lastConvId = null;
     this._lastTabId = null;
     this._state = 'loading';
-    /** @type {Element|null} */
+    /** @type {WidgetElement|null} */
     this._child = null;
     this._lastType = null;
     this._lastData = null;
@@ -82,7 +91,7 @@ export class WidgetHost extends LitElement {
       this._lastType = this.widgetType;
       this._loadAndMount();
     } else if (this._child) {
-      const child = /** @type {any} */ (this._child);
+      const child = this._child;
       if (changed.has('data') && this.data !== this._lastData) {
         this._lastData = this.data;
         child.data = this.data;
@@ -135,18 +144,18 @@ export class WidgetHost extends LitElement {
     }
     // Tear down any previous child, mount the new one.
     if (this._child) this._child.remove();
-    const el = document.createElement(tag);
-    /** @type {any} */ (el).data = this.data;
-    /** @type {any} */ (el).convId = this.convId;
-    /** @type {any} */ (el).tabId = this.tabId;
-    /** @type {any} */ (el).submitted = this.submitted;
-    /** @type {any} */ (el).response = this.response;
+    const el = /** @type {WidgetElement} */ (document.createElement(tag));
+    el.data = this.data;
+    el.convId = this.convId;
+    el.tabId = this.tabId;
+    el.submitted = this.submitted;
+    el.response = this.response;
     this._lastData = this.data;
     this._lastConvId = this.convId;
     this._lastTabId = this.tabId;
     this._lastSubmitted = this.submitted;
     this._lastResponse = this.response;
-    /** @type {any} */ (el).mode = this.mode;
+    el.mode = this.mode;
     this._lastMode = this.mode;
     this._child = el;
     // Render() will append it below.

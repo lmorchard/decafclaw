@@ -1,6 +1,7 @@
 import { LitElement, html } from 'lit';
 import hljs from 'hljs';
 import { getActiveConvId } from '/static/lib/canvas-state.js';
+import { ApiError, DefaultService } from '/static/lib/api-client/index.js';
 
 const INLINE_MAX_HEIGHT = '12rem';
 
@@ -105,11 +106,8 @@ export class CodeBlockWidget extends LitElement {
     if (!convId) return;
     const label = this._headerLabel();
     try {
-      const resp = await fetch(`/api/canvas/${encodeURIComponent(convId)}/new_tab`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'same-origin',
-        body: JSON.stringify({
+      await DefaultService.postCanvasNewTabApiCanvasConvIdNewTabPost(
+        convId, {
           widget_type: 'code_block',
           data: {
             code: this.data?.code ?? '',
@@ -117,13 +115,10 @@ export class CodeBlockWidget extends LitElement {
             filename: this.data?.filename ?? undefined,
           },
           label,
-        }),
-      });
-      if (!resp.ok) {
-        console.error('canvas new_tab failed', resp.status, await resp.text());
-      }
+        }, true);
     } catch (err) {
-      console.error('canvas new_tab error', err);
+      if (err instanceof ApiError) console.error('canvas new_tab failed', err.status, err.body);
+      else console.error('canvas new_tab error', err);
     }
   }
 

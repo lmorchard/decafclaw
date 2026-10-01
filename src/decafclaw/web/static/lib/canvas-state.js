@@ -12,11 +12,19 @@
  * resummon click. Survives reload, conv-switch, and update events.
  */
 
+import { ApiError, DefaultService } from './api-client/index.js';
+
+/** @typedef {import('./api-client/index.js').CanvasTabResponse} CanvasTab */
+/** @typedef {{tabs: CanvasTab[], activeTabId: string|null, dismissed: boolean, unreadDot: boolean}} CanvasConversationState */
+
 const DISMISS_KEY_PREFIX = 'canvas-dismissed.';
 
 const _state = {
+  /** @type {Map<string, CanvasConversationState>} */
   byConv: new Map(),  // convId -> { tabs, activeTabId, dismissed, unreadDot }
+  /** @type {string|null} */
   active: null,
+  /** @type {Set<(snapshot: ReturnType<typeof currentSnapshot>) => void>} */
   subscribers: new Set(),
 };
 
@@ -79,15 +87,11 @@ export async function setActiveConv(convId) {
   const s = _ensure(convId);
   s.unreadDot = false;
   try {
-    const resp = await fetch(`/api/canvas/${encodeURIComponent(convId)}`,
-                             { credentials: 'same-origin' });
-    if (resp.ok) {
-      const data = await resp.json();
-      s.tabs = (data.tabs || []).map(t => ({...t}));
-      s.activeTabId = data.active_tab || null;
-    }
+    const data = await DefaultService.getCanvasStateApiCanvasConvIdGet(convId);
+    s.tabs = data.tabs.map(t => ({...t}));
+    s.activeTabId = data.active_tab || null;
   } catch (err) {
-    console.warn('canvas state load failed', err);
+    if (!(err instanceof ApiError)) console.warn('canvas state load failed', err);
   }
   _publish();
 }
@@ -157,14 +161,10 @@ export async function switchToTab(tabId) {
   s.activeTabId = tabId;
   _publish();
   try {
-    await fetch(`/api/canvas/${encodeURIComponent(convId)}/active_tab`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'same-origin',
-      body: JSON.stringify({ tab_id: tabId }),
-    });
+    await DefaultService.postCanvasActiveTabApiCanvasConvIdActiveTabPost(
+      convId, { tab_id: tabId }, true);
   } catch (err) {
-    console.warn('canvas active_tab POST failed', err);
+    if (!(err instanceof ApiError)) console.warn('canvas active_tab POST failed', err);
   }
 }
 
@@ -208,14 +208,10 @@ export async function closeTabById(convId, tabId) {
     });
   }
   try {
-    await fetch(`/api/canvas/${encodeURIComponent(convId)}/close_tab`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'same-origin',
-      body: JSON.stringify({ tab_id: tabId }),
-    });
+    await DefaultService.postCanvasCloseTabApiCanvasConvIdCloseTabPost(
+      convId, { tab_id: tabId }, true);
   } catch (err) {
-    console.warn('canvas close_tab POST failed', err);
+    if (!(err instanceof ApiError)) console.warn('canvas close_tab POST failed', err);
   }
 }
 
