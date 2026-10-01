@@ -551,7 +551,7 @@ Neither failure path emits a change event.
 
 The PATCH adapter sends same-origin cookies and encodes the identifier once as
 one path segment. Authentication and ownership checks remain in the handler.
-The folder operations below also use the adapter. Other operations use the
+The folder and lifecycle operations below also use the adapter. Other operations use the
 unmodified generated transport. Edit the adapter or generator source, then regenerate.
 
 `ConversationStore.createFolder()`, `renameFolder()`, and `deleteFolder()` use
@@ -570,6 +570,29 @@ current listing after success. Failures log the server's JSON error, or the
 network/JSON decoding error, and skip the refresh. Empty or malformed success
 bodies remain ignored.
 
+`ConversationStore.createConversation()` uses the generated `POST /api/conversations`
+method. Its body contains a title and optional model and folder strings.
+The backend documents these inputs but keeps its existing JSON parser, defaults,
+coercions, and legacy `effort` fallback. Authentication runs before body parsing.
+Creation returns HTTP 201 with `conv_id`, `title`, `created_at`, and `updated_at`.
+The response includes `model` and `folder` only when they are nonempty.
+
+The store inserts the typed metadata, selects the conversation, and sends any
+queued message and attachments through the existing upload path.
+`archiveConversation()`, `unarchiveConversation()`, and `deleteConversation()`
+use generated calls with required string identifiers.
+The adapter encodes each identifier once and sends same-origin cookies.
+Their response contract is `{ok: true}`, but the store discards these unused
+bodies through the generated `void` overloads.
+
+Archive and delete clear selection and messages only for the selected conversation.
+Archive refreshes the current listing. Restore and delete refresh the archived listing,
+including its folder counts. Existing change events remain unchanged.
+HTTP failures remain silent. Transport failures keep their operation-specific logs,
+and creation also logs JSON decoding failures.
+The backend preserves ownership checks, archive data, and folder assignments.
+Deletion stops the target conversation's terminals before it removes files and assignments.
+
 The isolated tests in `tests/test_api_codegen.py` delete generated output,
 change backend identifier, listing query, PATCH body, and response contracts, and load the client in Chromium through
 `/static` against a test server. They use temporary data and require no live
@@ -584,6 +607,11 @@ paths, cookies, and success shapes in Chromium. Folder contract mutations
 change the shared body path and each route path type independently; each must
 fail at the unchanged store callers. The actual store runtime tests cover
 success, HTTP/network failures, malformed error JSON, and unused success bodies.
+Lifecycle mutations change each creation body field used by the store, a consumed
+metadata field, and each lifecycle identifier. Each requires the expected TypeScript
+error at the unchanged store caller. Chromium exercises these store methods against
+the isolated backend and checks received bodies, paths, cookies, and deletion.
+Route tests cover defaults, coercions, authentication, ownership, and lifecycle storage.
 Before running `make test`, run `make install-js` and install the
 browser with `uv run playwright install chromium`. CI installs its system dependencies with
 `uv run playwright install --with-deps chromium`.

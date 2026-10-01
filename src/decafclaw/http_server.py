@@ -616,9 +616,32 @@ async def list_system_conversations(request: Request, folder: str = "") -> Syste
     })
 
 
-@_authenticated
-async def create_conversation(request: Request, username: str) -> JSONResponse:
+# Schema-only input: the handler retains legacy JSON parsing and coercions.
+class ConversationCreateRequest(BaseModel):
+    title: str = ""
+    model: str = ""
+    folder: str = ""
+    effort: str = ""
+
+
+class ConversationCreateResponse(TypedDict):
+    conv_id: str
+    title: str
+    created_at: str
+    updated_at: str
+    folder: NotRequired[str]
+    model: NotRequired[str]
+
+
+class ConversationLifecycleResponse(BaseModel):
+    ok: Literal[True]
+
+
+async def create_conversation(request: Request) -> JSONResponse:
     """Create a new conversation, optionally in a folder with a model."""
+    username = _get_username_or_401(request)
+    if not username:
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
     config = request.app.state.config
     body = await request.json()
     folder = str(body.get("folder", "")).strip()
@@ -777,12 +800,14 @@ async def export_conversation(request: Request, username: str) -> Response:
     return Response(text, media_type="text/markdown; charset=utf-8")
 
 
-@_authenticated
-async def archive_conversation(request: Request, username: str) -> JSONResponse:
+async def archive_conversation(request: Request, id: str) -> JSONResponse:
     """Archive a conversation (hide from list, keep data)."""
     from .web.conversations import ConversationIndex
+    username = _get_username_or_401(request)
+    if not username:
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
     config = request.app.state.config
-    conv_id = request.path_params["id"]
+    conv_id = id
     index = ConversationIndex(config)
     conv = index.get(conv_id)
     if not conv or conv.user_id != username:
@@ -791,12 +816,14 @@ async def archive_conversation(request: Request, username: str) -> JSONResponse:
     return JSONResponse({"ok": True})
 
 
-@_authenticated
-async def unarchive_conversation(request: Request, username: str) -> JSONResponse:
+async def unarchive_conversation(request: Request, id: str) -> JSONResponse:
     """Unarchive a conversation (restore to active list)."""
     from .web.conversations import ConversationIndex
+    username = _get_username_or_401(request)
+    if not username:
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
     config = request.app.state.config
-    conv_id = request.path_params["id"]
+    conv_id = id
     index = ConversationIndex(config)
     conv = index.get(conv_id)
     if not conv or conv.user_id != username:
@@ -805,14 +832,16 @@ async def unarchive_conversation(request: Request, username: str) -> JSONRespons
     return JSONResponse({"ok": True})
 
 
-@_authenticated
-async def delete_conversation(request: Request, username: str) -> JSONResponse:
+async def delete_conversation(request: Request, id: str) -> JSONResponse:
     """Permanently delete a conversation and all associated files."""
     from .conversation_paths import delete_conversation_files
     from .web.conversation_folders import ConversationFolderIndex
     from .web.conversations import ConversationIndex
+    username = _get_username_or_401(request)
+    if not username:
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
     config = request.app.state.config
-    conv_id = request.path_params["id"]
+    conv_id = id
     index = ConversationIndex(config)
     conv = index.get(conv_id)
     if not conv or conv.user_id != username:
@@ -2508,7 +2537,11 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> FastAPI:
                  response_model=ConversationListingResponse),
         APIRoute("/api/conversations/system", list_system_conversations, methods=["GET"],
                  response_model=SystemConversationListingResponse),
-        APIRoute("/api/conversations", create_conversation, methods=["POST"]),
+        APIRoute("/api/conversations", create_conversation, methods=["POST"], status_code=201,
+                 response_model=ConversationCreateResponse,
+                 openapi_extra={"requestBody": {"required": True, "content": {
+                     "application/json": {"schema": ConversationCreateRequest.model_json_schema()},
+                 }}}),
         APIRoute("/api/conversations/{id}", get_conversation, methods=["GET"]),
         # Document the input without replacing this route's legacy parsing,
         # null/coercion behavior, authentication order, or 400 responses.
@@ -2532,9 +2565,12 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> FastAPI:
                  openapi_extra={"requestBody": {"required": True, "content": {
                      "application/json": {"schema": ConversationFolderRequest.model_json_schema()},
                  }}}),
-        APIRoute("/api/conversations/{id}", delete_conversation, methods=["DELETE"]),
-        APIRoute("/api/conversations/{id}/archive", archive_conversation, methods=["POST"]),
-        APIRoute("/api/conversations/{id}/unarchive", unarchive_conversation, methods=["POST"]),
+        APIRoute("/api/conversations/{id}", delete_conversation, methods=["DELETE"],
+                 response_model=ConversationLifecycleResponse),
+        APIRoute("/api/conversations/{id}/archive", archive_conversation, methods=["POST"],
+                 response_model=ConversationLifecycleResponse),
+        APIRoute("/api/conversations/{id}/unarchive", unarchive_conversation, methods=["POST"],
+                 response_model=ConversationLifecycleResponse),
         APIRoute("/api/notifications", list_notifications, methods=["GET"]),
         APIRoute("/api/notifications/unread-count", notifications_unread_count, methods=["GET"]),
         APIRoute("/api/notifications/read-all", notifications_mark_all_read, methods=["POST"]),

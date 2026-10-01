@@ -167,14 +167,50 @@
         }
       },
       "post": {
-        "summary": "Wrapper",
-        "operationId": "wrapper_api_conversations_post",
+        "summary": "Create Conversation",
+        "description": "Create a new conversation, optionally in a folder with a model.",
+        "operationId": "create_conversation_api_conversations_post",
         "responses": {
-          "200": {
+          "201": {
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationCreateResponse"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "title": {
+                    "default": "",
+                    "title": "Title",
+                    "type": "string"
+                  },
+                  "model": {
+                    "default": "",
+                    "title": "Model",
+                    "type": "string"
+                  },
+                  "folder": {
+                    "default": "",
+                    "title": "Folder",
+                    "type": "string"
+                  },
+                  "effort": {
+                    "default": "",
+                    "title": "Effort",
+                    "type": "string"
+                  }
+                },
+                "title": "ConversationCreateRequest",
+                "type": "object"
               }
             }
           }
@@ -352,14 +388,38 @@
         }
       },
       "delete": {
-        "summary": "Wrapper",
-        "operationId": "wrapper_api_conversations__id__delete",
+        "summary": "Delete Conversation",
+        "description": "Permanently delete a conversation and all associated files.",
+        "operationId": "delete_conversation_api_conversations__id__delete",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Id"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationLifecycleResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
               }
             }
           }
@@ -553,14 +613,38 @@
     },
     "/api/conversations/{id}/archive": {
       "post": {
-        "summary": "Wrapper",
-        "operationId": "wrapper_api_conversations__id__archive_post",
+        "summary": "Archive Conversation",
+        "description": "Archive a conversation (hide from list, keep data).",
+        "operationId": "archive_conversation_api_conversations__id__archive_post",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Id"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationLifecycleResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
               }
             }
           }
@@ -569,14 +653,38 @@
     },
     "/api/conversations/{id}/unarchive": {
       "post": {
-        "summary": "Wrapper",
-        "operationId": "wrapper_api_conversations__id__unarchive_post",
+        "summary": "Unarchive Conversation",
+        "description": "Unarchive a conversation (restore to active list).",
+        "operationId": "unarchive_conversation_api_conversations__id__unarchive_post",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Id"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationLifecycleResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
               }
             }
           }
@@ -1282,6 +1390,42 @@
   },
   "components": {
     "schemas": {
+      "ConversationCreateResponse": {
+        "properties": {
+          "conv_id": {
+            "type": "string",
+            "title": "Conv Id"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "title": "Updated At"
+          },
+          "folder": {
+            "type": "string",
+            "title": "Folder"
+          },
+          "model": {
+            "type": "string",
+            "title": "Model"
+          }
+        },
+        "type": "object",
+        "required": [
+          "conv_id",
+          "title",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "ConversationCreateResponse"
+      },
       "ConversationFolderCreateResponse": {
         "properties": {
           "ok": {
@@ -1332,6 +1476,20 @@
           "ok"
         ],
         "title": "ConversationFolderResponse"
+      },
+      "ConversationLifecycleResponse": {
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true,
+            "title": "Ok"
+          }
+        },
+        "type": "object",
+        "required": [
+          "ok"
+        ],
+        "title": "ConversationLifecycleResponse"
       },
       "ConversationListingItem": {
         "properties": {
