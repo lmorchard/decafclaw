@@ -479,7 +479,7 @@ See [Configuration Reference](config.md#http) for the full `http` config group.
 - `src/decafclaw/web/websocket.py` — WebSocket message handlers
 - `src/decafclaw/web/static/` — Frontend components and service layer
 
-## Generated session client
+## Generated API clients
 
 `AuthClient.checkSession()` calls the generated client for `GET /api/auth/me`.
 It returns the username and stores it in `currentUser`. An unsuccessful request
@@ -527,15 +527,43 @@ The listing reads also use the adapter for same-origin cookies and error handlin
 Success replaces the corresponding listing state and publishes a change event.
 HTTP failures leave state unchanged without a change event or error log.
 Transport and JSON failures also leave state unchanged, with the existing error log.
-Other operations use the unmodified generated transport. Edit the adapter source,
-then regenerate.
+
+`ConversationStore.renameConversation()` and `moveConversation()` use the generated
+`PATCH /api/conversations/{id}` method. The identifier is a required string.
+The JSON body accepts optional `title` and `folder` strings. Omitted and null
+fields remain no-ops. The backend documents this body without replacing its
+existing parser or coercion rules. Folder validation still returns HTTP 400,
+and an invalid destination cannot rename the conversation first.
+
+The response contains `conv_id`, `title`, `created_at`, and `updated_at`.
+It includes `folder` only when the request supplies a non-null folder.
+That value is trimmed, and an empty string selects the root. The handler keeps
+its existing JSON response so schema defaults cannot add fields to it.
+Rename merges the generated response into the typed listing and emits a change event.
+
+Move passes `true` as the generated method's third argument to discard the
+response body. This overload returns `void`, and its request types come from
+the same generated signature. It refreshes the current listing after HTTP success,
+even when the unused PATCH body is empty or malformed. The transport does not
+decode that body. HTTP failures retain state silently. Network failures retain
+the existing operation-specific error log. Rename also logs JSON decoding failures.
+Neither failure path emits a change event.
+
+The PATCH adapter sends same-origin cookies and encodes the identifier once as
+one path segment. Authentication and ownership checks remain in the handler.
+Other operations use the unmodified generated transport. Edit the adapter or
+generator source, then regenerate.
 
 The isolated tests in `tests/test_api_codegen.py` delete generated output,
-change backend identifier, listing query, and response contracts, and load the client in Chromium through
+change backend identifier, listing query, PATCH body, and response contracts, and load the client in Chromium through
 `/static` against a test server. They use temporary data and require no live
 credentials. Listing mutation tests isolate each operation, require a passing baseline,
 and require a type diagnostic at the unchanged store call or response read.
-The browser test checks session cookies and decoded folder queries at the test server.
+PATCH mutation tests independently change the identifier, title, folder, and
+returned title type. Each starts with passing checks and requires a relevant
+type diagnostic at the unchanged store call or rename merge.
+The browser test checks session cookies, decoded folder queries, and PATCH paths
+and JSON bodies at the test server.
 Before running `make test`, run `make install-js` and install the
 browser with `uv run playwright install chromium`. CI installs its system dependencies with
 `uv run playwright install --with-deps chromium`.
