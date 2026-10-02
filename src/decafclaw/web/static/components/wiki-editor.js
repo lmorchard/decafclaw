@@ -17,7 +17,6 @@
  */
 
 import { LitElement, html, nothing } from 'lit';
-import { encodePagePath } from '../lib/utils.js';
 import { ApiError, DefaultService } from '../lib/api-client/index.js';
 import {
   Editor, rootCtx, defaultValueCtx,
@@ -62,6 +61,8 @@ const STATUS_LABELS = /** @type {Record<string, string>} */ ({
   conflict: 'Conflict',
 });
 
+/** @typedef {'/api/vault/'|'/api/config/files/'|'/api/schedules/'} EditorSaveEndpoint */
+
 export class WikiEditor extends LitElement {
   static properties = {
     page: { type: String },
@@ -92,7 +93,7 @@ export class WikiEditor extends LitElement {
     this.page = '';
     this.content = '';
     /** @type {number} */ this.modified = 0;
-    this.saveEndpoint = '/api/vault/';
+    /** @type {EditorSaveEndpoint} */ this.saveEndpoint = '/api/vault/';
     /** @type {import('lit').TemplateResult|null} Extra content for toolbar right side */
     this.toolbarExtra = null;
     /** @type {import('lit').TemplateResult|null} Content for toolbar left side (replaces format buttons) */
@@ -246,39 +247,31 @@ export class WikiEditor extends LitElement {
       return;
     }
 
-    // The schedule host keeps its existing transport until its own generated
-    // contracts migrate.
     try {
-      const res = await fetch(
-        `${this.saveEndpoint}${encodePagePath(this.page)}`,
-        {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ content, modified: this.modified }),
-        },
+      const data = await DefaultService.wrapperApiSchedulesNamePut(
+        this.page, { content, modified: this.modified },
       );
-      if (res.ok) {
-        const data = await res.json();
-        const newModified = data.modified ?? this.modified;
-        this.modified = newModified;
-        this.#lastSavedContent = content;
-        this._status = 'saved';
-        this._error = '';
-        this.dispatchEvent(new CustomEvent('saved', {
-          detail: { modified: newModified, page: this.page },
-          bubbles: true,
-          composed: true,
-        }));
-      } else if (res.status === 409) {
+      const newModified = data.modified;
+      this.modified = newModified;
+      this.#lastSavedContent = content;
+      this._status = 'saved';
+      this._error = '';
+      this.dispatchEvent(new CustomEvent('saved', {
+        detail: { modified: newModified, page: this.page },
+        bubbles: true,
+        composed: true,
+      }));
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 409) {
         this._status = 'conflict';
         this._error = 'Page was modified externally.';
+      } else if (error instanceof ApiError) {
+        this._status = 'error';
+        this._error = `Save failed (${error.status})`;
       } else {
         this._status = 'error';
-        this._error = `Save failed (${res.status})`;
+        this._error = 'Save failed (network error)';
       }
-    } catch (e) {
-      this._status = 'error';
-      this._error = 'Save failed (network error)';
     }
   }
 
@@ -329,13 +322,14 @@ export class WikiEditor extends LitElement {
           throw e;
         }
       } else {
-        // The schedule host keeps its existing transport until its own
-        // generated contracts migrate.
-        const res = await fetch(`${this.saveEndpoint}${encodePagePath(this.page)}`);
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data = await res.json();
-        newContent = data.body ?? data.content ?? '';
-        newModified = data.modified;
+        try {
+          const data = await DefaultService.wrapperApiSchedulesNameGet(this.page);
+          newContent = data.body;
+          newModified = data.modified;
+        } catch (e) {
+          if (e instanceof ApiError) throw new Error(`HTTP ${e.status}`);
+          throw e;
+        }
       }
       this.content = newContent;
       this.modified = newModified;
@@ -410,35 +404,27 @@ export class WikiEditor extends LitElement {
       return;
     }
 
-    // The schedule host keeps its existing transport until its own generated
-    // contracts migrate.
     try {
-      const res = await fetch(
-        `${this.saveEndpoint}${encodePagePath(this.page)}`,
-        {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ content }),  // no modified field — server skips check
-        },
+      const data = await DefaultService.wrapperApiSchedulesNamePut(
+        this.page, { content },
       );
-      if (res.ok) {
-        const data = await res.json();
-        this.modified = data.modified ?? savedModified;
-        this.#lastSavedContent = content;
-        this._status = 'saved';
-        this._error = '';
-        this.dispatchEvent(new CustomEvent('saved', {
-          detail: { modified: this.modified, page: this.page },
-          bubbles: true,
-          composed: true,
-        }));
-      } else {
-        this._status = 'error';
-        this._error = `Force save failed (${res.status})`;
-      }
-    } catch (e) {
+      this.modified = data.modified;
+      this.#lastSavedContent = content;
+      this._status = 'saved';
+      this._error = '';
+      this.dispatchEvent(new CustomEvent('saved', {
+        detail: { modified: this.modified, page: this.page },
+        bubbles: true,
+        composed: true,
+      }));
+    } catch (error) {
+      this.modified = savedModified;
       this._status = 'error';
-      this._error = 'Force save failed (network error)';
+      if (error instanceof ApiError) {
+        this._error = `Force save failed (${error.status})`;
+      } else {
+        this._error = 'Force save failed (network error)';
+      }
     }
   }
 

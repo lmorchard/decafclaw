@@ -20,9 +20,15 @@ import type { ConversationPatchResponse } from '../models/ConversationPatchRespo
 import type { JsonValue } from '../models/JsonValue';
 import type { LoginResponse } from '../models/LoginResponse';
 import type { LogoutResponse } from '../models/LogoutResponse';
+import type { ModelListResponse } from '../models/ModelListResponse';
 import type { NotificationCountResponse } from '../models/NotificationCountResponse';
 import type { NotificationListResponse } from '../models/NotificationListResponse';
 import type { NotificationReadResponse } from '../models/NotificationReadResponse';
+import type { ScheduleDetailResponse } from '../models/ScheduleDetailResponse';
+import type { ScheduleListResponse } from '../models/ScheduleListResponse';
+import type { ScheduleResetResponse } from '../models/ScheduleResetResponse';
+import type { ScheduleRunResponse } from '../models/ScheduleRunResponse';
+import type { ScheduleUpdateResponse } from '../models/ScheduleUpdateResponse';
 import type { StickyResponse } from '../models/StickyResponse';
 import type { SystemConversationListingResponse } from '../models/SystemConversationListingResponse';
 import type { UserResponse } from '../models/UserResponse';
@@ -840,10 +846,10 @@ export class DefaultService {
     }
     /**
      * Wrapper
-     * @returns any Successful Response
+     * @returns ModelListResponse Successful Response
      * @throws ApiError
      */
-    public static wrapperApiModelsGet(): CancelablePromise<any> {
+    public static wrapperApiModelsGet(): CancelablePromise<ModelListResponse> {
         return __request(OpenAPI, {
             method: 'GET',
             url: '/api/models',
@@ -851,10 +857,10 @@ export class DefaultService {
     }
     /**
      * Wrapper
-     * @returns any Successful Response
+     * @returns ScheduleListResponse Successful Response
      * @throws ApiError
      */
-    public static wrapperApiSchedulesGet(): CancelablePromise<any> {
+    public static wrapperApiSchedulesGet(): CancelablePromise<ScheduleListResponse> {
         return __request(OpenAPI, {
             method: 'GET',
             url: '/api/schedules',
@@ -862,46 +868,145 @@ export class DefaultService {
     }
     /**
      * Wrapper
-     * @returns any Successful Response
+     * @param name
+     * @returns ScheduleRunResponse Successful Response
      * @throws ApiError
      */
-    public static wrapperApiSchedulesNameRunPost(): CancelablePromise<any> {
+    public static wrapperApiSchedulesNameRunPost(
+        name: string,
+    ): CancelablePromise<ScheduleRunResponse>;
+    public static wrapperApiSchedulesNameRunPost(
+        name: string,
+        discardResponse: true,
+    ): CancelablePromise<void>;
+    public static wrapperApiSchedulesNameRunPost(
+        name: string,
+        discardResponse = false,
+    ): CancelablePromise<ScheduleRunResponse | void> {
         return __request(OpenAPI, {
+            discardResponse,
             method: 'POST',
             url: '/api/schedules/{name}/run',
+            path: {
+                'name': name,
+            },
         });
     }
     /**
      * Wrapper
-     * @returns any Successful Response
+     * @param name
+     * @returns ScheduleResetResponse Successful Response
      * @throws ApiError
      */
-    public static wrapperApiSchedulesNameOverlayDelete(): CancelablePromise<any> {
+    public static wrapperApiSchedulesNameOverlayDelete(
+        name: string,
+    ): CancelablePromise<ScheduleResetResponse>;
+    public static wrapperApiSchedulesNameOverlayDelete(
+        name: string,
+        discardResponse: true,
+    ): CancelablePromise<void>;
+    public static wrapperApiSchedulesNameOverlayDelete(
+        name: string,
+        discardResponse = false,
+    ): CancelablePromise<ScheduleResetResponse | void> {
         return __request(OpenAPI, {
+            discardResponse,
             method: 'DELETE',
             url: '/api/schedules/{name}/overlay',
+            path: {
+                'name': name,
+            },
         });
     }
     /**
      * Wrapper
-     * @returns any Successful Response
+     * @param name
+     * @returns ScheduleDetailResponse Successful Response
      * @throws ApiError
      */
-    public static wrapperApiSchedulesNameGet(): CancelablePromise<any> {
+    public static wrapperApiSchedulesNameGet(
+        name: string,
+    ): CancelablePromise<ScheduleDetailResponse> {
         return __request(OpenAPI, {
             method: 'GET',
             url: '/api/schedules/{name}',
+            path: {
+                'name': name,
+            },
         });
     }
     /**
      * Wrapper
-     * @returns any Successful Response
+     * @param name
+     * @param requestBody
+     * @returns ScheduleUpdateResponse Successful Response
      * @throws ApiError
      */
-    public static wrapperApiSchedulesNamePut(): CancelablePromise<any> {
+    public static wrapperApiSchedulesNamePut(
+        name: string,
+        requestBody: {
+            content?: (string | null);
+            body?: (string | null);
+            modified?: (number | null);
+            enabled?: (boolean | null);
+            schedule?: (string | null);
+            channel?: (string | null);
+            model?: (string | null);
+            allowed_tools?: (Array<string> | null);
+            disallowed_tools?: (Array<string> | null);
+            required_skills?: (Array<string> | null);
+            shell_patterns?: (Array<string> | null);
+            email_recipients?: (Array<string> | null);
+            pre_script?: (string | null);
+        },
+    ): CancelablePromise<ScheduleUpdateResponse>;
+    public static wrapperApiSchedulesNamePut(
+        name: string,
+        requestBody: {
+            content?: (string | null);
+            body?: (string | null);
+            modified?: (number | null);
+            enabled?: (boolean | null);
+            schedule?: (string | null);
+            channel?: (string | null);
+            model?: (string | null);
+            allowed_tools?: (Array<string> | null);
+            disallowed_tools?: (Array<string> | null);
+            required_skills?: (Array<string> | null);
+            shell_patterns?: (Array<string> | null);
+            email_recipients?: (Array<string> | null);
+            pre_script?: (string | null);
+        },
+        discardResponse: true,
+    ): CancelablePromise<void>;
+    public static wrapperApiSchedulesNamePut(
+        name: string,
+        requestBody: {
+            content?: (string | null);
+            body?: (string | null);
+            modified?: (number | null);
+            enabled?: (boolean | null);
+            schedule?: (string | null);
+            channel?: (string | null);
+            model?: (string | null);
+            allowed_tools?: (Array<string> | null);
+            disallowed_tools?: (Array<string> | null);
+            required_skills?: (Array<string> | null);
+            shell_patterns?: (Array<string> | null);
+            email_recipients?: (Array<string> | null);
+            pre_script?: (string | null);
+        },
+        discardResponse = false,
+    ): CancelablePromise<ScheduleUpdateResponse | void> {
         return __request(OpenAPI, {
+            discardResponse,
             method: 'PUT',
             url: '/api/schedules/{name}',
+            path: {
+                'name': name,
+            },
+            body: requestBody,
+            mediaType: 'application/json',
         });
     }
     /**

@@ -316,22 +316,22 @@ Every request the editor makes — autosave, force-save, and the conflict
 banner's **Reload** — goes to `{saveEndpoint}{page}`. A host that sets
 `save-endpoint` must therefore serve both verbs there, and both responses must
 put the editor's fields at the **top level**, since the component knows nothing
-about any per-endpoint envelope. The vault and config branches call their
-generated operations directly; the schedule branch retains the same host
-contract while its API migration remains separate:
+about any per-endpoint envelope. All three branches call their generated
+operations directly while retaining this host contract:
 
 - Vault `GET` returns the editable markdown as `body` and its mtime as
   `modified`; the generated vault branch reads those fields directly.
 - Config `GET` returns the editable markdown as `content` and its mtime as
   `modified`; the generated config branch reads those fields directly.
-- Schedule `GET` returns `body` and `modified`. Its handwritten branch still
-  accepts `content` as a fallback while the schedule API migration remains
-  separate.
+- Schedule `GET` returns `body` and `modified`; its generated detail type also
+  exposes the nested `schedule` record used by `schedule-page`.
 - `PUT` accepts `{content, modified}` and returns `modified`.
 
-Force-save omits `modified` for both vault and config so the server skips its
-optimistic-concurrency check. Config reload consumes `content` directly; it
-does not share the vault and schedule `body` field.
+Force-save omits `modified` for vault, config, and schedules. Vault and config
+use that omission to skip optimistic concurrency. The schedule server already
+uses last-write-wins and accepts `modified` only as an editor compatibility
+hint. Config reload consumes `content` directly; it does not share the vault
+and schedule `body` field.
 
 `/api/schedules/{name}` wraps its payload in `{"schedule": ...}` for
 `schedule-page`, so it aliases `body` and `modified` to the top level for this
@@ -665,6 +665,26 @@ and the format query. Each requires passing checks before the change and a type
 error at the unchanged component afterward. Component tests cover optional data,
 rendering, clipboard contents, and failures. Chromium runs the components against
 real test routes and checks the received paths, queries, empty bodies, and session cookies.
+
+The schedules sidebar, schedule page, metadata editor, shared body editor, and
+model picker use generated operations for schedule list/detail/update/reset/run
+and model list requests. Generated schedule records carry every rendered and
+editable field through component state and helpers. The update request documents
+both editor aliases (`content`, `modified`) and every patch accepted by
+`write_overlay`; the handler still parses JSON manually, maps `content` to
+`body`, rejects unknown keys with HTTP 400, and does not introduce FastAPI 422
+responses.
+
+Schedule requests encode the name as one path segment and send same-origin
+session cookies. List and detail callers still treat malformed successful JSON
+as failures. Toggle, run, and reset use generated `void` overloads where the UI
+previously ignored successful bodies, so an empty or malformed 2xx body remains
+successful. The page and editor still parse update responses because they use
+the returned schedule or modification time. HTTP errors retain their existing
+status or JSON-error messages; transport failures retain each caller's existing
+warning, refresh, or UI-state behavior. Browser coverage verifies the real
+backend routes, request bodies, 202 run responses, filesystem writes and reset,
+editor remount, and model fallback without live credentials.
 
 The isolated tests in `tests/test_api_codegen.py` delete generated output,
 change backend identifier, listing query, PATCH body, and response contracts, and load the client in Chromium through
