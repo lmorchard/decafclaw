@@ -102,6 +102,35 @@ def repair_arbitrary_json_types(static: Path) -> None:
     service.write_text(source)
 
 
+def add_native_workspace_url_builder(static: Path) -> None:
+    """Emit a URL builder whose path type comes from the generated operation."""
+    index = static / "lib/api-client/index.ts"
+    source = index.read_text()
+    service_export = "export { DefaultService } from './services/DefaultService';"
+    if source.count(service_export) != 1:
+        raise ValueError("Expected generated DefaultService export")
+    addition = """
+import { DefaultService as __DefaultService } from './services/DefaultService';
+
+type NativeWorkspacePath = Parameters<
+    typeof __DefaultService.wrapperApiWorkspacePathGet
+>[0];
+
+/** Build the native workspace URL while retaining each caller's URL semantics. */
+export const buildNativeWorkspaceUrl = (
+    path: NativeWorkspacePath,
+    mode: 'segments' | 'raw' = 'segments',
+): string => {
+    const pathText = String(path);
+    const suffix = mode === 'raw'
+        ? pathText
+        : pathText.split('/').map(encodeURIComponent).join('/');
+    return `/api/workspace/${suffix}`;
+};
+"""
+    index.write_text(source.replace(service_export, service_export + addition))
+
+
 def dump_openapi():
     app = create_app(Config(), None, None, None)
     openapi_schema = app.openapi()
@@ -122,6 +151,7 @@ def dump_openapi():
     ]
     subprocess.run(cmd, check=True)
     repair_arbitrary_json_types(static)
+    add_native_workspace_url_builder(static)
     for method, verb, url in (
         ("postCanvasNewTabApiCanvasConvIdNewTabPost", "POST", "/api/canvas/{conv_id}/new_tab"),
         ("postCanvasActiveTabApiCanvasConvIdActiveTabPost", "POST", "/api/canvas/{conv_id}/active_tab"),

@@ -365,11 +365,13 @@ describe('conversation creation transport', () => {
       ws.send = message => { original(message); if (message.type === MESSAGE_TYPES.SEND) resolve(message); };
     });
     fetchMock.mockResolvedValueOnce(new Response(JSON.stringify(metadata), { status: 201 }));
-    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify(uploaded)));
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify(uploaded), { status: 201 }));
     store.sendMessage('queued text', [{ file }]);
     expect(await sent).toEqual({ type: MESSAGE_TYPES.SEND, conv_id: 'created', text: 'queued text', attachments: [uploaded] });
     expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ title: '', model: 'chosen' });
     expect(fetchMock.mock.calls[1][0]).toBe('/api/upload/created');
+    expect(fetchMock.mock.calls[1][1].method).toBe('POST');
+    expect(fetchMock.mock.calls[1][1].credentials).toBe('same-origin');
     expect(fetchMock.mock.calls[1][1].body.get('file').name).toBe('note.txt');
     expect(store.currentMessages[0]).toMatchObject({ content: 'queued text', attachments: [uploaded] });
     fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ ...metadata, conv_id: 'second' }), { status: 201 }));

@@ -1,5 +1,7 @@
 import { LitElement, html, nothing } from 'lit';
 import { formatTime } from '../../lib/utils.js';
+import { buildNativeWorkspaceUrl } from '../../lib/api-client/index.js';
+/** @typedef {import('../../lib/api-client/index.js').AttachmentResponse} AttachmentResponse */
 
 /** User message — plain text with optional attachments, right-aligned. */
 export class UserMessage extends LitElement {
@@ -9,12 +11,18 @@ export class UserMessage extends LitElement {
     attachments: { type: Array },
   };
   createRenderRoot() { return this; }
-  constructor() { super(); this.content = ''; this.timestamp = ''; this.attachments = null; }
+  constructor() {
+    super();
+    this.content = '';
+    this.timestamp = '';
+    /** @type {AttachmentResponse[] | null} */
+    this.attachments = null;
+  }
 
+  /** @param {AttachmentResponse} att */
   #renderAttachment(att) {
     const isImage = att.mime_type?.startsWith('image/');
-    // Encode each path segment to handle spaces, #, etc. in filenames
-    const url = '/api/workspace/' + att.path.split('/').map(encodeURIComponent).join('/');
+    const url = buildNativeWorkspaceUrl(att.path);
     if (isImage) {
       return html`
         <a href=${url} target="_blank" rel="noopener noreferrer" class="attachment-image-link">

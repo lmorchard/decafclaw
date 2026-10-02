@@ -3,6 +3,7 @@ import { textRequest as __textRequest } from '../core/request';
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { AttachmentResponse } from '../models/AttachmentResponse';
 import type { AutocompleteResponse } from '../models/AutocompleteResponse';
 import type { CanvasMutationResponse } from '../models/CanvasMutationResponse';
 import type { CanvasNewTabResponse } from '../models/CanvasNewTabResponse';
@@ -644,13 +645,25 @@ export class DefaultService {
     }
     /**
      * Wrapper
-     * @returns any Successful Response
+     * @param convId
+     * @param formData
+     * @returns AttachmentResponse Successful Response
      * @throws ApiError
      */
-    public static wrapperApiUploadConvIdPost(): CancelablePromise<any> {
+    public static wrapperApiUploadConvIdPost(
+        convId: string,
+        formData: {
+            file: Blob;
+        },
+    ): CancelablePromise<AttachmentResponse> {
         return __request(OpenAPI, {
             method: 'POST',
             url: '/api/upload/{conv_id}',
+            path: {
+                'conv_id': convId,
+            },
+            formData: formData,
+            mediaType: 'multipart/form-data',
         });
     }
     /**
@@ -728,13 +741,19 @@ export class DefaultService {
     }
     /**
      * Wrapper
-     * @returns any Successful Response
+     * @param path
+     * @returns binary Workspace file bytes
      * @throws ApiError
      */
-    public static wrapperApiWorkspacePathGet(): CancelablePromise<any> {
+    public static wrapperApiWorkspacePathGet(
+        path: string,
+    ): CancelablePromise<Blob> {
         return __request(OpenAPI, {
             method: 'GET',
             url: '/api/workspace/{path}',
+            path: {
+                'path': path,
+            },
         });
     }
     /**

@@ -6,6 +6,7 @@
 
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
+import { buildNativeWorkspaceUrl } from './api-client/index.js';
 
 // -- Custom renderer: rewrite workspace:// URLs --
 
@@ -16,7 +17,7 @@ const originalImage = renderer.image.bind(renderer);
 renderer.image = function(token) {
   let href = token.href || '';
   if (href.startsWith('workspace://')) {
-    href = '/api/workspace/' + href.slice('workspace://'.length);
+    href = buildNativeWorkspaceUrl(href.slice('workspace://'.length), 'raw');
     token = { ...token, href };
   }
   return originalImage(token);
@@ -27,7 +28,7 @@ const originalLink = renderer.link.bind(renderer);
 renderer.link = function(token) {
   let href = token.href || '';
   if (href.startsWith('workspace://')) {
-    href = '/api/workspace/' + href.slice('workspace://'.length);
+    href = buildNativeWorkspaceUrl(href.slice('workspace://'.length), 'raw');
     token = { ...token, href };
   }
   return originalLink(token);
