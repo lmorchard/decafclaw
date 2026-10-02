@@ -216,8 +216,38 @@ export class WikiEditor extends LitElement {
       return;
     }
 
-    // Config and schedule hosts keep their existing transport until their
-    // own generated contracts migrate.
+    if (this.saveEndpoint === '/api/config/files/') {
+      try {
+        const data = await DefaultService.wrapperApiConfigFilesPathPut(
+          this.page, { content, modified: this.modified },
+        );
+        const newModified = data.modified;
+        this.modified = newModified;
+        this.#lastSavedContent = content;
+        this._status = 'saved';
+        this._error = '';
+        this.dispatchEvent(new CustomEvent('saved', {
+          detail: { modified: newModified, page: this.page },
+          bubbles: true,
+          composed: true,
+        }));
+      } catch (error) {
+        if (error instanceof ApiError && error.status === 409) {
+          this._status = 'conflict';
+          this._error = 'Page was modified externally.';
+        } else if (error instanceof ApiError) {
+          this._status = 'error';
+          this._error = `Save failed (${error.status})`;
+        } else {
+          this._status = 'error';
+          this._error = 'Save failed (network error)';
+        }
+      }
+      return;
+    }
+
+    // The schedule host keeps its existing transport until its own generated
+    // contracts migrate.
     try {
       const res = await fetch(
         `${this.saveEndpoint}${encodePagePath(this.page)}`,
@@ -289,9 +319,18 @@ export class WikiEditor extends LitElement {
           if (e instanceof ApiError) throw new Error(`HTTP ${e.status}`);
           throw e;
         }
+      } else if (this.saveEndpoint === '/api/config/files/') {
+        try {
+          const data = await DefaultService.wrapperApiConfigFilesPathGet(this.page);
+          newContent = data.content;
+          newModified = data.modified ?? 0;
+        } catch (e) {
+          if (e instanceof ApiError) throw new Error(`HTTP ${e.status}`);
+          throw e;
+        }
       } else {
-        // Config and schedule hosts keep their existing transport until their
-        // own generated contracts migrate.
+        // The schedule host keeps its existing transport until its own
+        // generated contracts migrate.
         const res = await fetch(`${this.saveEndpoint}${encodePagePath(this.page)}`);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
@@ -347,8 +386,32 @@ export class WikiEditor extends LitElement {
       return;
     }
 
-    // Config and schedule hosts keep their existing transport until their
-    // own generated contracts migrate.
+    if (this.saveEndpoint === '/api/config/files/') {
+      try {
+        const data = await DefaultService.wrapperApiConfigFilesPathPut(
+          this.page, { content },
+        );
+        this.modified = data.modified;
+        this.#lastSavedContent = content;
+        this._status = 'saved';
+        this._error = '';
+        this.dispatchEvent(new CustomEvent('saved', {
+          detail: { modified: this.modified, page: this.page },
+          bubbles: true,
+          composed: true,
+        }));
+      } catch (error) {
+        this.modified = savedModified;
+        this._status = 'error';
+        this._error = error instanceof ApiError
+          ? `Force save failed (${error.status})`
+          : 'Force save failed (network error)';
+      }
+      return;
+    }
+
+    // The schedule host keeps its existing transport until its own generated
+    // contracts migrate.
     try {
       const res = await fetch(
         `${this.saveEndpoint}${encodePagePath(this.page)}`,
