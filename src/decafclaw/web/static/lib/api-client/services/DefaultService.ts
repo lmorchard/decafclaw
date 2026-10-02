@@ -7,7 +7,6 @@ import type { AutocompleteResponse } from '../models/AutocompleteResponse';
 import type { CanvasMutationResponse } from '../models/CanvasMutationResponse';
 import type { CanvasNewTabResponse } from '../models/CanvasNewTabResponse';
 import type { CanvasStateResponse } from '../models/CanvasStateResponse';
-import type { JsonValue } from '../models/JsonValue';
 import type { ContextDiagnosticsResponse } from '../models/ContextDiagnosticsResponse';
 import type { ConversationCreateResponse } from '../models/ConversationCreateResponse';
 import type { ConversationFolderCreateResponse } from '../models/ConversationFolderCreateResponse';
@@ -15,6 +14,7 @@ import type { ConversationFolderResponse } from '../models/ConversationFolderRes
 import type { ConversationLifecycleResponse } from '../models/ConversationLifecycleResponse';
 import type { ConversationListingResponse } from '../models/ConversationListingResponse';
 import type { ConversationPatchResponse } from '../models/ConversationPatchResponse';
+import type { JsonValue } from '../models/JsonValue';
 import type { LoginResponse } from '../models/LoginResponse';
 import type { LogoutResponse } from '../models/LogoutResponse';
 import type { NotificationCountResponse } from '../models/NotificationCountResponse';
@@ -23,10 +23,14 @@ import type { NotificationReadResponse } from '../models/NotificationReadRespons
 import type { StickyResponse } from '../models/StickyResponse';
 import type { SystemConversationListingResponse } from '../models/SystemConversationListingResponse';
 import type { UserResponse } from '../models/UserResponse';
+import type { VaultCreateResponse } from '../models/VaultCreateResponse';
+import type { VaultDeleteResponse } from '../models/VaultDeleteResponse';
+import type { VaultFolderCreateResponse } from '../models/VaultFolderCreateResponse';
 import type { VaultListingResponse } from '../models/VaultListingResponse';
 import type { VaultPageResponse } from '../models/VaultPageResponse';
 import type { VaultRecentResponse } from '../models/VaultRecentResponse';
 import type { VaultTagsResponse } from '../models/VaultTagsResponse';
+import type { VaultWriteResponse } from '../models/VaultWriteResponse';
 import type { WidgetCatalogResponse } from '../models/WidgetCatalogResponse';
 import type { WorkspaceDeleteResponse } from '../models/WorkspaceDeleteResponse';
 import type { WorkspaceListingResponse } from '../models/WorkspaceListingResponse';
@@ -880,13 +884,36 @@ export class DefaultService {
     }
     /**
      * Wrapper
-     * @returns any Successful Response
+     * @param requestBody
+     * @returns VaultCreateResponse Successful Response
      * @throws ApiError
      */
-    public static wrapperApiVaultPost(): CancelablePromise<any> {
+    public static wrapperApiVaultPost(
+        requestBody: {
+            name: string;
+            content?: (string | null);
+        },
+    ): CancelablePromise<VaultCreateResponse>;
+    public static wrapperApiVaultPost(
+        requestBody: {
+            name: string;
+            content?: (string | null);
+        },
+        discardResponse: true,
+    ): CancelablePromise<void>;
+    public static wrapperApiVaultPost(
+        requestBody: {
+            name: string;
+            content?: (string | null);
+        },
+        discardResponse = false,
+    ): CancelablePromise<VaultCreateResponse | void> {
         return __request(OpenAPI, {
+            discardResponse,
             method: 'POST',
             url: '/api/vault',
+            body: requestBody,
+            mediaType: 'application/json',
         });
     }
     /**
@@ -908,13 +935,33 @@ export class DefaultService {
     }
     /**
      * Wrapper
-     * @returns any Successful Response
+     * @param requestBody
+     * @returns VaultFolderCreateResponse Successful Response
      * @throws ApiError
      */
-    public static wrapperApiVaultFoldersPost(): CancelablePromise<any> {
+    public static wrapperApiVaultFoldersPost(
+        requestBody: {
+            folder: string;
+        },
+    ): CancelablePromise<VaultFolderCreateResponse>;
+    public static wrapperApiVaultFoldersPost(
+        requestBody: {
+            folder: string;
+        },
+        discardResponse: true,
+    ): CancelablePromise<void>;
+    public static wrapperApiVaultFoldersPost(
+        requestBody: {
+            folder: string;
+        },
+        discardResponse = false,
+    ): CancelablePromise<VaultFolderCreateResponse | void> {
         return __request(OpenAPI, {
+            discardResponse,
             method: 'POST',
             url: '/api/vault/folders',
+            body: requestBody,
+            mediaType: 'application/json',
         });
     }
     /**
@@ -941,13 +988,55 @@ export class DefaultService {
     }
     /**
      * Wrapper
-     * @returns any Successful Response
+     * @param page
+     * @param requestBody
+     * @returns VaultWriteResponse Successful Response
      * @throws ApiError
      */
-    public static wrapperApiVaultPagePut(): CancelablePromise<any> {
+    public static wrapperApiVaultPagePut(
+        page: string,
+        requestBody: {
+            content?: (string | null);
+            body?: (string | null);
+            modified?: (number | null);
+            frontmatter?: (Record<string, JsonValue> | null);
+            frontmatter_raw?: (string | null);
+            rename_to?: (string | null);
+        },
+    ): CancelablePromise<VaultWriteResponse>;
+    public static wrapperApiVaultPagePut(
+        page: string,
+        requestBody: {
+            content?: (string | null);
+            body?: (string | null);
+            modified?: (number | null);
+            frontmatter?: (Record<string, JsonValue> | null);
+            frontmatter_raw?: (string | null);
+            rename_to?: (string | null);
+        },
+        discardResponse: true,
+    ): CancelablePromise<void>;
+    public static wrapperApiVaultPagePut(
+        page: string,
+        requestBody: {
+            content?: (string | null);
+            body?: (string | null);
+            modified?: (number | null);
+            frontmatter?: (Record<string, JsonValue> | null);
+            frontmatter_raw?: (string | null);
+            rename_to?: (string | null);
+        },
+        discardResponse = false,
+    ): CancelablePromise<VaultWriteResponse | void> {
         return __request(OpenAPI, {
+            discardResponse,
             method: 'PUT',
             url: '/api/vault/{page}',
+            path: {
+                'page': page,
+            },
+            body: requestBody,
+            mediaType: 'application/json',
         });
     }
     /**
@@ -969,13 +1058,28 @@ export class DefaultService {
     }
     /**
      * Wrapper
-     * @returns any Successful Response
+     * @param page
+     * @returns VaultDeleteResponse Successful Response
      * @throws ApiError
      */
-    public static wrapperApiVaultPageDelete(): CancelablePromise<any> {
+    public static wrapperApiVaultPageDelete(
+        page: string,
+    ): CancelablePromise<VaultDeleteResponse>;
+    public static wrapperApiVaultPageDelete(
+        page: string,
+        discardResponse: true,
+    ): CancelablePromise<void>;
+    public static wrapperApiVaultPageDelete(
+        page: string,
+        discardResponse = false,
+    ): CancelablePromise<VaultDeleteResponse | void> {
         return __request(OpenAPI, {
+            discardResponse,
             method: 'DELETE',
             url: '/api/vault/{page}',
+            path: {
+                'page': page,
+            },
         });
     }
     /**

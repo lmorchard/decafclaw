@@ -1,6 +1,12 @@
 import { LitElement, html, nothing } from 'lit';
 import { ApiError, DefaultService } from '../lib/api-client/index.js';
 
+/** @param {unknown} body */
+function responseError(body) {
+  if (!body || typeof body !== 'object' || !("error" in body)) return '';
+  return typeof body.error === 'string' ? body.error : '';
+}
+
 export class VaultSidebar extends LitElement {
   static properties = {
     active: { type: Boolean },
@@ -156,35 +162,20 @@ export class VaultSidebar extends LitElement {
       ? `${this._vaultFolder}/${name.trim()}`
       : name.trim();
     try {
-      const res = await fetch('/api/vault/folders', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ folder: folderPath }),
-      });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        alert(data.error || `Failed to create folder (${res.status})`);
-        return;
-      }
+      await DefaultService.wrapperApiVaultFoldersPost({ folder: folderPath }, true);
       this.#navigateToFolder(folderPath);
     } catch (e) {
-      alert('Failed to create folder.');
+      if (e instanceof ApiError) {
+        /** @type {unknown} */ const body = e.body;
+        alert(responseError(body) || `Failed to create folder (${e.status})`);
+      } else alert('Failed to create folder.');
     }
   }
 
   /** @param {string} fullName */
   async #createPageInFolder(fullName) {
     try {
-      const res = await fetch('/api/vault', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: fullName }),
-      });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        alert(data.error || `Failed to create page (${res.status})`);
-        return;
-      }
+      await DefaultService.wrapperApiVaultPost({ name: fullName }, true);
       this.dispatchEvent(new CustomEvent('wiki-open', {
         detail: { page: fullName, editing: true },
         bubbles: true,
@@ -192,7 +183,10 @@ export class VaultSidebar extends LitElement {
       }));
       this.#fetchWikiPages();
     } catch (e) {
-      alert('Failed to create page.');
+      if (e instanceof ApiError) {
+        /** @type {unknown} */ const body = e.body;
+        alert(responseError(body) || `Failed to create page (${e.status})`);
+      } else alert('Failed to create page.');
     }
   }
 

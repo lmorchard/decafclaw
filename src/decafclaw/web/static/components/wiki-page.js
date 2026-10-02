@@ -17,6 +17,12 @@ import './wiki-metadata.js';
 
 const EDIT_MODE_KEY = 'wiki-edit-mode';
 
+/** @param {unknown} body */
+function responseError(body) {
+  if (!body || typeof body !== 'object' || !("error" in body)) return '';
+  return typeof body.error === 'string' ? body.error : '';
+}
+
 /**
  * An explicit destination for a metadata PUT, used when it must not be read
  * off `this` — i.e. when flushing a pending edit for the page we're leaving.
@@ -195,22 +201,14 @@ export class WikiPage extends LitElement {
   }
 
   /**
-   * @param {object} body
+   * @param {Parameters<typeof DefaultService.wrapperApiVaultPagePut>[1]} body
    * @param {string} page
    * @param {number} modified
-   * @returns {Promise<{ok: boolean, status: number, error: string, data?: any}>}
+   * @returns {Promise<{ok: true, status: number, error: '', data?: import('../lib/api-client/index.js').VaultWriteResponse} | {ok: false, status: number, error: string}>}
    */
   async #apiPut(body, page, modified) {
     try {
-      const res = await fetch('/api/vault/' + encodePagePath(page), {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        return { ok: false, status: res.status, error: data.error || `Save failed (${res.status})` };
-      }
+      const data = await DefaultService.wrapperApiVaultPagePut(page, body);
       
       // Adopt the response into our own state only while we're still showing
       // the page it was written to.
@@ -223,8 +221,19 @@ export class WikiPage extends LitElement {
         const editor = this.querySelector('wiki-editor');
         if (editor) editor.modified = data.modified;
       }
-      return { ok: true, status: res.status, error: '', data };
+      return { ok: true, status: 200, error: '', data };
     } catch (err) {
+      // The previous metadata transport accepted a malformed 2xx response as
+      // a successful write. Keep that behavior without inventing response
+      // fields: there is simply no generated response value to adopt.
+      if (err instanceof SyntaxError) {
+        return { ok: true, status: 200, error: '' };
+      }
+      if (err instanceof ApiError) {
+        /** @type {unknown} */ const responseBody = err.body;
+        return { ok: false, status: err.status,
+          error: responseError(responseBody) || `Save failed (${err.status})` };
+      }
       return { ok: false, status: 0, error: 'Save failed (network error)' };
     }
   }
@@ -336,20 +345,9 @@ export class WikiPage extends LitElement {
       const editor = this.querySelector('wiki-editor');
       if (editor) await editor.flushSave();
 
-      const res = await fetch('/api/vault/' + encodePagePath(this.page), {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ rename_to: newPath }),
-      });
-      if (res.status === 409) {
-        this._renameError = 'A page already exists at that path.';
-        return;
-      }
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        this._renameError = data.error || `Rename failed (${res.status})`;
-        return;
-      }
+      await DefaultService.wrapperApiVaultPagePut(
+        this.page, { rename_to: newPath }, true,
+      );
       this._renaming = false;
       this._renameError = '';
       // Navigate to the new page
@@ -358,25 +356,26 @@ export class WikiPage extends LitElement {
         bubbles: true,
         composed: true,
       }));
-    } catch {
-      this._renameError = 'Rename failed.';
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 409) {
+        this._renameError = 'A page already exists at that path.';
+      } else if (error instanceof ApiError) {
+        /** @type {unknown} */ const body = error.body;
+        this._renameError = responseError(body) || `Rename failed (${error.status})`;
+      } else this._renameError = 'Rename failed.';
     }
   }
 
   async #deletePage() {
     if (!confirm(`Delete "${this.page}"?`)) return;
     try {
-      const res = await fetch('/api/vault/' + encodePagePath(this.page), {
-        method: 'DELETE',
-      });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        alert(data.error || `Delete failed (${res.status})`);
-        return;
-      }
+      await DefaultService.wrapperApiVaultPageDelete(this.page, true);
       this._close();
-    } catch {
-      alert('Delete failed.');
+    } catch (error) {
+      if (error instanceof ApiError) {
+        /** @type {unknown} */ const body = error.body;
+        alert(responseError(body) || `Delete failed (${error.status})`);
+      } else alert('Delete failed.');
     }
   }
 
