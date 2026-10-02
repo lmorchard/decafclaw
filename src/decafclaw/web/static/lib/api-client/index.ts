@@ -7,6 +7,7 @@ export { CancelablePromise, CancelError } from './core/CancelablePromise';
 export { OpenAPI } from './core/OpenAPI';
 export type { OpenAPIConfig } from './core/OpenAPI';
 
+export type { AttachmentResponse } from './models/AttachmentResponse';
 export type { AutocompleteResponse } from './models/AutocompleteResponse';
 export type { CanvasMutationResponse } from './models/CanvasMutationResponse';
 export type { CanvasNewTabResponse } from './models/CanvasNewTabResponse';
@@ -74,3 +75,21 @@ export type { WorkspaceTextResponse } from './models/WorkspaceTextResponse';
 export type { WorkspaceWriteResponse } from './models/WorkspaceWriteResponse';
 
 export { DefaultService } from './services/DefaultService';
+import { DefaultService as __DefaultService } from './services/DefaultService';
+
+type NativeWorkspacePath = Parameters<
+    typeof __DefaultService.wrapperApiWorkspacePathGet
+>[0];
+
+/** Build the native workspace URL while retaining each caller's URL semantics. */
+export const buildNativeWorkspaceUrl = (
+    path: NativeWorkspacePath,
+    mode: 'segments' | 'raw' = 'segments',
+): string => {
+    const pathText = String(path);
+    const suffix = mode === 'raw'
+        ? pathText
+        : pathText.split('/').map(encodeURIComponent).join('/');
+    return `/api/workspace/${suffix}`;
+};
+
