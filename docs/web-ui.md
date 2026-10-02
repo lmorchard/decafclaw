@@ -320,8 +320,13 @@ about any per-endpoint envelope. The vault and config branches call their
 generated operations directly; the schedule branch retains the same host
 contract while its API migration remains separate:
 
-- `GET` returns the editable markdown as `body` (`content` is accepted as a
-  fallback, which is how config files are served) and its mtime as `modified`.
+- Vault `GET` returns the editable markdown as `body` and its mtime as
+  `modified`; the generated vault branch reads those fields directly.
+- Config `GET` returns the editable markdown as `content` and its mtime as
+  `modified`; the generated config branch reads those fields directly.
+- Schedule `GET` returns `body` and `modified`. Its handwritten branch still
+  accepts `content` as a fallback while the schedule API migration remains
+  separate.
 - `PUT` accepts `{content, modified}` and returns `modified`.
 
 Force-save omits `modified` for both vault and config so the server skips its
