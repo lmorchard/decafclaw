@@ -4,7 +4,7 @@
 
 export class WikiWriteMutex {
   constructor(apiPut) {
-    /** @type {Record<string, any>} */
+    /** @type {Record<string, import('./api-client/index.js').JsonValue>} */
     this.pendingFields = {};
     /** @type {Promise<void> | null} */
     this.metaInFlight = null;
@@ -16,13 +16,13 @@ export class WikiWriteMutex {
     this.orphanMetaError = '';
 
     // Dependencies
-    /** @type {(payload: object, page: string, modified: number) => Promise<{ok: boolean, status: number, error: string, data?: any}>} */
+    /** @type {(payload: Parameters<typeof import('./api-client/index.js').DefaultService.wrapperApiVaultPagePut>[1], page: string, modified: number) => Promise<{ok: true, status: number, error: '', data?: import('./api-client/index.js').VaultWriteResponse} | {ok: false, status: number, error: string}>} */
     this.apiPut = apiPut;
   }
 
   /**
    * Queue a metadata typed-patch edit.
-   * @param {Record<string, any>} fields
+   * @param {Record<string, import('./api-client/index.js').JsonValue>} fields
    * @returns {boolean} true if it can be auto-flushed, false if blocked by conflict
    */
   queueFields(fields) {
@@ -35,7 +35,7 @@ export class WikiWriteMutex {
    * @param {string} currentPage
    * @param {number} currentModified
    * @param {MetaTarget} [target]
-   * @returns {Promise<{ok: boolean, data?: any} | void>}
+   * @returns {Promise<{ok: true, data?: import('./api-client/index.js').VaultWriteResponse} | void>}
    */
   async flush(currentPage, currentModified, target) {
     const fields = this.pendingFields;
@@ -141,11 +141,11 @@ export class WikiWriteMutex {
   }
 
   /**
-   * @param {Record<string, any>} payload
+   * @param {Parameters<typeof import('./api-client/index.js').DefaultService.wrapperApiVaultPagePut>[1]} payload
    * @param {string} currentPage
    * @param {number} currentModified
    * @param {{skipModifiedCheck?: boolean, target?: MetaTarget}} [opts]
-   * @returns {Promise<{ok: boolean, status: number, error: string, data?: any}>}
+   * @returns {Promise<{ok: true, status: number, error: '', data?: import('./api-client/index.js').VaultWriteResponse} | {ok: false, status: number, error: string}>}
    */
   async _writeMeta(payload, currentPage, currentModified, opts) {
     while (this.metaInFlight) await this.metaInFlight;
@@ -170,9 +170,9 @@ export class WikiWriteMutex {
   }
 
   /**
-   * @param {Record<string, any>} payload
+   * @param {Parameters<typeof import('./api-client/index.js').DefaultService.wrapperApiVaultPagePut>[1]} payload
    * @param {{kind: 'raw', raw: string} | {kind: 'patch'}} attempt
-   * @param {Record<string, any> | undefined} patchFields
+   * @param {Record<string, import('./api-client/index.js').JsonValue> | undefined} patchFields
    * @param {string} currentPage
    * @param {number} currentModified
    */
