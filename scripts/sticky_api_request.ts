@@ -29,6 +29,8 @@ export const request = <T>(config: OpenAPIConfig, options: ApiRequestOptions & {
         && ['/api/vault', '/api/vault/recent', '/api/vault/tags', '/api/vault/{page}'].includes(options.url);
     const vaultMutation = ['POST', 'PUT', 'DELETE'].includes(options.method)
         && ['/api/vault', '/api/vault/folders', '/api/vault/{page}'].includes(options.url);
+    const configFile = options.url === '/api/config/files'
+        || options.url === '/api/config/files/{path}';
     const workspaceMutation = options.url === '/api/workspace/{path}'
         && ['PUT', 'DELETE'].includes(options.method);
     const listing = ['/api/conversations', '/api/conversations/archived', '/api/conversations/system'].includes(options.url);
@@ -38,7 +40,7 @@ export const request = <T>(config: OpenAPIConfig, options: ApiRequestOptions & {
         || (options.method === 'POST' && ['/api/conversations/{id}/archive', '/api/conversations/{id}/unarchive'].includes(options.url));
     const folder = (options.method === 'POST' && options.url === '/api/conversations/folders')
         || (['PUT', 'DELETE'].includes(options.method) && options.url === '/api/conversations/folders/{path}');
-    if (!notification && !diagnostics && !login && !logout && !vaultGuard && !create && !lifecycle && !folder && !patch && !widgetCatalog && !canvas && !workspaceRead && !vaultRead && !vaultMutation && !workspaceMutation && (options.method !== 'GET' || (!sticky && !listing))) {
+    if (!notification && !diagnostics && !login && !logout && !vaultGuard && !create && !lifecycle && !folder && !patch && !widgetCatalog && !canvas && !workspaceRead && !vaultRead && !vaultMutation && !configFile && !workspaceMutation && (options.method !== 'GET' || (!sticky && !listing))) {
         return generatedRequest<T>(config, options);
     }
     return new CancelablePromise(async (resolve, reject, onCancel) => {
@@ -47,6 +49,10 @@ export const request = <T>(config: OpenAPIConfig, options: ApiRequestOptions & {
             const query = listing && options.query?.folder === "" ? undefined : options.query;
             const url = workspaceMutation
                 ? `${config.BASE}/api/workspace/${String(options.path!.path).split('/').map(encodeURIComponent).join('/')}${options.query ? getQueryString(options.query) : ''}`
+                : configFile && options.path
+                ? `${config.BASE}/api/config/files/${String(options.path.path).split('/').map(encodeURIComponent).join('/')}`
+                : configFile
+                ? `${config.BASE}/api/config/files`
                 : vaultMutation && options.url === '/api/vault/{page}'
                 ? `${config.BASE}/api/vault/${String(options.path!.page).split('/').map(encodeURIComponent).join('/')}`
                 : vaultRead && options.url === '/api/vault/{page}'

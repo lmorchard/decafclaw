@@ -1146,7 +1146,13 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ConfigFileEntry"
+                  },
+                  "type": "array",
+                  "title": "Response Wrapper Api Config Files Get"
+                }
               }
             }
           }
@@ -1162,11 +1168,23 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ConfigFileResponse"
+                }
               }
             }
           }
-        }
+        },
+        "parameters": [
+          {
+            "name": "path",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
       },
       "put": {
         "summary": "Wrapper",
@@ -1176,7 +1194,50 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ConfigWriteResponse"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "path",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "content": {
+                    "title": "Content",
+                    "type": "string"
+                  },
+                  "modified": {
+                    "anyOf": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "title": "Modified"
+                  }
+                },
+                "required": [
+                  "content"
+                ],
+                "title": "ConfigSaveRequest",
+                "type": "object"
               }
             }
           }
@@ -2126,6 +2187,109 @@
           "data"
         ],
         "title": "CanvasTabResponse"
+      },
+      "ConfigFileEntry": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "path": {
+            "type": "string",
+            "title": "Path"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description"
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "admin",
+              "workspace"
+            ],
+            "title": "Scope"
+          },
+          "modified": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Modified"
+          },
+          "exists": {
+            "type": "boolean",
+            "title": "Exists"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "path",
+          "description",
+          "scope",
+          "modified",
+          "exists"
+        ],
+        "title": "ConfigFileEntry"
+      },
+      "ConfigFileResponse": {
+        "properties": {
+          "content": {
+            "type": "string",
+            "title": "Content"
+          },
+          "modified": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Modified"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "default": {
+            "type": "boolean",
+            "title": "Default"
+          }
+        },
+        "type": "object",
+        "required": [
+          "content",
+          "modified",
+          "name",
+          "default"
+        ],
+        "title": "ConfigFileResponse"
+      },
+      "ConfigWriteResponse": {
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true,
+            "title": "Ok"
+          },
+          "modified": {
+            "type": "number",
+            "title": "Modified"
+          }
+        },
+        "type": "object",
+        "required": [
+          "ok",
+          "modified"
+        ],
+        "title": "ConfigWriteResponse"
       },
       "ContextCandidate": {
         "properties": {
