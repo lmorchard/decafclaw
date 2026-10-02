@@ -204,7 +204,7 @@ export class WikiPage extends LitElement {
    * @param {Parameters<typeof DefaultService.wrapperApiVaultPagePut>[1]} body
    * @param {string} page
    * @param {number} modified
-   * @returns {Promise<{ok: true, status: number, error: '', data: import('../lib/api-client/index.js').VaultWriteResponse} | {ok: false, status: number, error: string}>}
+   * @returns {Promise<{ok: true, status: number, error: '', data?: import('../lib/api-client/index.js').VaultWriteResponse} | {ok: false, status: number, error: string}>}
    */
   async #apiPut(body, page, modified) {
     try {
@@ -223,6 +223,12 @@ export class WikiPage extends LitElement {
       }
       return { ok: true, status: 200, error: '', data };
     } catch (err) {
+      // The previous metadata transport accepted a malformed 2xx response as
+      // a successful write. Keep that behavior without inventing response
+      // fields: there is simply no generated response value to adopt.
+      if (err instanceof SyntaxError) {
+        return { ok: true, status: 200, error: '' };
+      }
       if (err instanceof ApiError) {
         /** @type {unknown} */ const responseBody = err.body;
         return { ok: false, status: err.status,

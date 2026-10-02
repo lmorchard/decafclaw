@@ -126,4 +126,31 @@ describe('vault generated write callers', () => {
       status: 'conflict', message: 'Metadata was modified externally.',
     });
   });
+
+  it('preserves successful metadata writes when response JSON is malformed', async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ title: 'Parse fallback', path: 'Parse fallback', body: '',
+        modified: 10, frontmatter: {}, frontmatter_raw: '' }))
+      .mockResolvedValueOnce({
+        ok: true, status: 200, statusText: 'OK',
+        json: async () => { throw new SyntaxError('malformed JSON'); },
+      });
+    vi.stubGlobal('fetch', fetchMock);
+    const page = document.createElement('wiki-page');
+    page.page = 'Parse fallback';
+    page._editing = false;
+    document.body.append(page);
+    await vi.runAllTimersAsync();
+    await vi.waitFor(() => expect(page._loaded).toBe(true));
+
+    page._onMetadataChange(new CustomEvent('metadata-change', {
+      detail: { fields: { summary: 'saved despite malformed response' } },
+    }));
+    await vi.runAllTimersAsync();
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(page._metaError).toBeNull();
+    expect(page._modified).toBe(10);
+  });
 });
