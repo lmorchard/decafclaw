@@ -1285,7 +1285,7 @@
         "summary": "Wrapper",
         "operationId": "wrapper_api_schedules__name__run_post",
         "responses": {
-          "200": {
+          "202": {
             "description": "Successful Response",
             "content": {
               "application/json": {

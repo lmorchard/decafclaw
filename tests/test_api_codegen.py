@@ -2330,6 +2330,10 @@ def test_config_consumed_output_type_drift_fails_at_unchanged_callers(
 def test_schedule_generated_contracts(source_tree):
     result, output = run_make(source_tree, "gen-api-client")
     assert result.returncode == 0, output
+    schema = json.loads((source_tree / "openapi.json").read_text())
+    run_responses = schema["paths"]["/api/schedules/{name}/run"]["post"]["responses"]
+    assert "202" in run_responses
+    assert "200" not in run_responses
     service = (source_tree / CLIENT_REL / "services/DefaultService.ts").read_text()
     for method, signatures in {
         "wrapperApiModelsGet": ("CancelablePromise<ModelListResponse>",),
