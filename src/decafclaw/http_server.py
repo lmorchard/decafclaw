@@ -3083,6 +3083,7 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> FastAPI:
                  response_model=ScheduleListResponse),
         APIRoute("/api/schedules/{name}/run", schedules_run, methods=["POST"],
                  response_model=ScheduleRunResponse,
+                 status_code=202,
                  openapi_extra={"parameters": [{
                      "name": "name", "in": "path", "required": True,
                      "schema": {"type": "string"},
