@@ -31,6 +31,12 @@ export const request = <T>(config: OpenAPIConfig, options: ApiRequestOptions & {
         && ['/api/vault', '/api/vault/folders', '/api/vault/{page}'].includes(options.url);
     const configFile = options.url === '/api/config/files'
         || options.url === '/api/config/files/{path}';
+    const schedule = options.url === '/api/models'
+        || options.url === '/api/schedules'
+        || ['/api/schedules/{name}', '/api/schedules/{name}/run',
+            '/api/schedules/{name}/overlay'].includes(options.url);
+    const scheduleMutation = options.method === 'PUT'
+        && options.url === '/api/schedules/{name}';
     const workspaceMutation = options.url === '/api/workspace/{path}'
         && ['PUT', 'DELETE'].includes(options.method);
     const listing = ['/api/conversations', '/api/conversations/archived', '/api/conversations/system'].includes(options.url);
@@ -40,7 +46,7 @@ export const request = <T>(config: OpenAPIConfig, options: ApiRequestOptions & {
         || (options.method === 'POST' && ['/api/conversations/{id}/archive', '/api/conversations/{id}/unarchive'].includes(options.url));
     const folder = (options.method === 'POST' && options.url === '/api/conversations/folders')
         || (['PUT', 'DELETE'].includes(options.method) && options.url === '/api/conversations/folders/{path}');
-    if (!notification && !diagnostics && !login && !logout && !vaultGuard && !create && !lifecycle && !folder && !patch && !widgetCatalog && !canvas && !workspaceRead && !vaultRead && !vaultMutation && !configFile && !workspaceMutation && (options.method !== 'GET' || (!sticky && !listing))) {
+    if (!notification && !diagnostics && !login && !logout && !vaultGuard && !create && !lifecycle && !folder && !patch && !widgetCatalog && !canvas && !workspaceRead && !vaultRead && !vaultMutation && !configFile && !schedule && !workspaceMutation && (options.method !== 'GET' || (!sticky && !listing))) {
         return generatedRequest<T>(config, options);
     }
     return new CancelablePromise(async (resolve, reject, onCancel) => {
@@ -49,6 +55,10 @@ export const request = <T>(config: OpenAPIConfig, options: ApiRequestOptions & {
             const query = listing && options.query?.folder === "" ? undefined : options.query;
             const url = workspaceMutation
                 ? `${config.BASE}/api/workspace/${String(options.path!.path).split('/').map(encodeURIComponent).join('/')}${options.query ? getQueryString(options.query) : ''}`
+                : schedule && options.path
+                ? `${config.BASE}${options.url.replace('{name}', encodeURIComponent(options.path.name))}`
+                : schedule
+                ? `${config.BASE}${options.url}`
                 : configFile && options.path
                 ? `${config.BASE}/api/config/files/${String(options.path.path).split('/').map(encodeURIComponent).join('/')}`
                 : configFile
@@ -93,6 +103,8 @@ export const request = <T>(config: OpenAPIConfig, options: ApiRequestOptions & {
                 statusText: response.statusText,
                 body: folder && !response.ok ? await response.json()
                     : vaultMutation && !response.ok ? await response.json().catch(() => undefined)
+                    : scheduleMutation && !response.ok
+                        ? await response.json().catch(() => undefined)
                     : workspaceMutation && !response.ok
                         ? workspaceSave ? await response.text()
                             : await response.json().catch(() => undefined)
