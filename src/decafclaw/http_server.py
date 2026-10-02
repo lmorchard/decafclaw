@@ -14,7 +14,7 @@ import yaml
 from croniter import croniter
 from fastapi import FastAPI, Request
 from fastapi.routing import APIRoute
-from pydantic import BaseModel, JsonValue
+from pydantic import BaseModel, ConfigDict, JsonValue
 from starlette.responses import FileResponse, JSONResponse, Response
 from starlette.routing import BaseRoute, Mount, WebSocketRoute
 from starlette.staticfiles import StaticFiles
@@ -2736,6 +2736,8 @@ class ScheduleDetailResponse(BaseModel):
 # Schema-only input: the handler keeps its manual parsing, aliases, unknown-key
 # rejection, and established 400 responses instead of introducing FastAPI 422s.
 class ScheduleUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     content: str | None = None
     body: str | None = None
     modified: float | None = None

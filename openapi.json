@@ -1393,6 +1393,7 @@
           "content": {
             "application/json": {
               "schema": {
+                "additionalProperties": false,
                 "properties": {
                   "content": {
                     "anyOf": [
