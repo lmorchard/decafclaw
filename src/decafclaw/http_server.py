@@ -200,6 +200,32 @@ class WorkspaceDeleteResponse(BaseModel):
     ok: Literal[True]
 
 
+class ConfigFileEntry(BaseModel):
+    name: str
+    path: str
+    description: str
+    scope: Literal["admin", "workspace"]
+    modified: float | None
+    exists: bool
+
+
+class ConfigFileResponse(BaseModel):
+    content: str
+    modified: float | None
+    name: str
+    default: bool
+
+
+class ConfigSaveRequest(BaseModel):
+    content: str
+    modified: float | None = None
+
+
+class ConfigWriteResponse(BaseModel):
+    ok: Literal[True]
+    modified: float
+
+
 class VaultFolderEntry(BaseModel):
     name: str
     path: str
@@ -2957,9 +2983,29 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> FastAPI:
                      "name": "path", "in": "path", "required": True,
                      "schema": {"type": "string"},
                  }]}),
-        APIRoute("/api/config/files", config_list_files, methods=["GET"]),
-        APIRoute("/api/config/files/{path:path}", config_read_file, methods=["GET"]),
-        APIRoute("/api/config/files/{path:path}", config_write_file, methods=["PUT"]),
+        APIRoute("/api/config/files", config_list_files, methods=["GET"],
+                 response_model=list[ConfigFileEntry]),
+        APIRoute("/api/config/files/{path:path}", config_read_file, methods=["GET"],
+                 response_model=ConfigFileResponse,
+                 openapi_extra={"parameters": [{
+                     "name": "path", "in": "path", "required": True,
+                     "schema": {"type": "string"},
+                 }]}),
+        APIRoute("/api/config/files/{path:path}", config_write_file, methods=["PUT"],
+                 response_model=ConfigWriteResponse,
+                 # Schema metadata only: keep manual parsing and its existing
+                 # 400 responses instead of introducing FastAPI 422s.
+                 openapi_extra={
+                     "parameters": [{
+                         "name": "path", "in": "path", "required": True,
+                         "schema": {"type": "string"},
+                     }],
+                     "requestBody": {"required": True, "content": {
+                         "application/json": {
+                             "schema": _request_schema(ConfigSaveRequest),
+                         },
+                     }},
+                 }),
         APIRoute("/api/models", models_list, methods=["GET"]),
         APIRoute("/api/schedules", schedules_list, methods=["GET"]),
         APIRoute("/api/schedules/{name}/run", schedules_run, methods=["POST"]),

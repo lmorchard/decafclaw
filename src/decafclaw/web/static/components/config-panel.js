@@ -5,6 +5,7 @@
  */
 
 import { LitElement, html, nothing } from 'lit';
+import { DefaultService } from '../lib/api-client/index.js';
 import './wiki-editor.js';
 
 export class ConfigPanel extends LitElement {
@@ -20,9 +21,9 @@ export class ConfigPanel extends LitElement {
 
   constructor() {
     super();
-    /** @type {Array<{name: string, path: string, description: string, scope: string, modified: number|null, exists: boolean}>} */
+    /** @type {import('../lib/api-client/index.js').ConfigFileEntry[]} */
     this._files = [];
-    /** @type {{name: string, path: string, description: string, scope: string}|null} */
+    /** @type {import('../lib/api-client/index.js').ConfigFileEntry|null} */
     this._selectedFile = null;
     /** @type {string} */
     this._fileContent = '';
@@ -40,10 +41,7 @@ export class ConfigPanel extends LitElement {
   async #fetchFiles() {
     this._loading = true;
     try {
-      const res = await fetch('/api/config/files');
-      if (res.ok) {
-        this._files = await res.json();
-      }
+      this._files = await DefaultService.wrapperApiConfigFilesGet();
     } catch {
       // silently fail
     } finally {
@@ -51,17 +49,14 @@ export class ConfigPanel extends LitElement {
     }
   }
 
-  /** @param {{name: string, path: string, description: string, scope: string}} file */
+  /** @param {import('../lib/api-client/index.js').ConfigFileEntry} file */
   async #selectFile(file) {
     this._loading = true;
     try {
-      const res = await fetch(`/api/config/files/${encodeURIComponent(file.path)}`);
-      if (res.ok) {
-        const data = await res.json();
-        this._fileContent = data.content;
-        this._fileModified = data.modified || 0;
-        this._selectedFile = file;
-      }
+      const data = await DefaultService.wrapperApiConfigFilesPathGet(file.path);
+      this._fileContent = data.content;
+      this._fileModified = data.modified || 0;
+      this._selectedFile = file;
     } catch {
       // silently fail
     } finally {

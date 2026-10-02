@@ -122,6 +122,16 @@ var OpenAPI = {
   ENCODE_PATH: void 0
 };
 
+// src/decafclaw/web/static/lib/api-client/models/ConfigFileEntry.ts
+var ConfigFileEntry;
+((ConfigFileEntry2) => {
+  let scope;
+  ((scope2) => {
+    scope2["ADMIN"] = "admin";
+    scope2["WORKSPACE"] = "workspace";
+  })(scope = ConfigFileEntry2.scope || (ConfigFileEntry2.scope = {}));
+})(ConfigFileEntry || (ConfigFileEntry = {}));
+
 // src/decafclaw/web/static/lib/api-client/models/FileCompletion.ts
 var FileCompletion;
 ((FileCompletion2) => {
@@ -417,19 +427,20 @@ var request2 = (config, options) => {
   const workspaceRead = options.method === "GET" && ["/api/workspace", "/api/workspace/recent", "/api/workspace-file/{path}", "/api/autocomplete"].includes(options.url);
   const vaultRead = options.method === "GET" && ["/api/vault", "/api/vault/recent", "/api/vault/tags", "/api/vault/{page}"].includes(options.url);
   const vaultMutation = ["POST", "PUT", "DELETE"].includes(options.method) && ["/api/vault", "/api/vault/folders", "/api/vault/{page}"].includes(options.url);
+  const configFile = options.url === "/api/config/files" || options.url === "/api/config/files/{path}";
   const workspaceMutation = options.url === "/api/workspace/{path}" && ["PUT", "DELETE"].includes(options.method);
   const listing = ["/api/conversations", "/api/conversations/archived", "/api/conversations/system"].includes(options.url);
   const patch = options.method === "PATCH" && options.url === "/api/conversations/{id}";
   const create = options.method === "POST" && options.url === "/api/conversations";
   const lifecycle = options.method === "DELETE" && options.url === "/api/conversations/{id}" || options.method === "POST" && ["/api/conversations/{id}/archive", "/api/conversations/{id}/unarchive"].includes(options.url);
   const folder = options.method === "POST" && options.url === "/api/conversations/folders" || ["PUT", "DELETE"].includes(options.method) && options.url === "/api/conversations/folders/{path}";
-  if (!notification && !diagnostics && !login && !logout && !vaultGuard && !create && !lifecycle && !folder && !patch && !widgetCatalog && !canvas && !workspaceRead && !vaultRead && !vaultMutation && !workspaceMutation && (options.method !== "GET" || !sticky && !listing)) {
+  if (!notification && !diagnostics && !login && !logout && !vaultGuard && !create && !lifecycle && !folder && !patch && !widgetCatalog && !canvas && !workspaceRead && !vaultRead && !vaultMutation && !configFile && !workspaceMutation && (options.method !== "GET" || !sticky && !listing)) {
     return request(config, options);
   }
   return new CancelablePromise(async (resolve2, reject, onCancel) => {
     try {
       const query = listing && options.query?.folder === "" ? void 0 : options.query;
-      const url = workspaceMutation ? `${config.BASE}/api/workspace/${String(options.path.path).split("/").map(encodeURIComponent).join("/")}${options.query ? getQueryString(options.query) : ""}` : vaultMutation && options.url === "/api/vault/{page}" ? `${config.BASE}/api/vault/${String(options.path.page).split("/").map(encodeURIComponent).join("/")}` : vaultRead && options.url === "/api/vault/{page}" ? `${config.BASE}/api/vault/${String(options.path.page).split("/").map(encodeURIComponent).join("/")}` : vaultRead ? `${config.BASE}${options.url}${options.query ? getQueryString(options.query) : ""}` : workspaceRead && options.url === "/api/workspace-file/{path}" ? `${config.BASE}/api/workspace-file/${String(options.path.path).split("/").map(encodeURIComponent).join("/")}` : workspaceRead ? `${config.BASE}${options.url}${options.query ? getQueryString(options.query) : ""}` : folder ? `${config.BASE}/api/conversations/folders${options.path ? "/" + String(options.path.path).split("/").map(encodeURIComponent).join("/") : ""}` : canvas ? `${config.BASE}${options.url.replace("{conv_id}", encodeURIComponent(options.path.conv_id))}` : patch || lifecycle || diagnostics || notificationRead && options.path ? `${config.BASE}${options.url.replace("{id}", encodeURIComponent(options.path.id))}${query ? getQueryString(query) : ""}` : sticky ? `${config.BASE}/api/sticky/${encodeURIComponent(options.path.conv_id)}` : `${config.BASE}${options.url}${query ? getQueryString(query) : ""}`;
+      const url = workspaceMutation ? `${config.BASE}/api/workspace/${String(options.path.path).split("/").map(encodeURIComponent).join("/")}${options.query ? getQueryString(options.query) : ""}` : configFile && options.path ? `${config.BASE}/api/config/files/${String(options.path.path).split("/").map(encodeURIComponent).join("/")}` : configFile ? `${config.BASE}/api/config/files` : vaultMutation && options.url === "/api/vault/{page}" ? `${config.BASE}/api/vault/${String(options.path.page).split("/").map(encodeURIComponent).join("/")}` : vaultRead && options.url === "/api/vault/{page}" ? `${config.BASE}/api/vault/${String(options.path.page).split("/").map(encodeURIComponent).join("/")}` : vaultRead ? `${config.BASE}${options.url}${options.query ? getQueryString(options.query) : ""}` : workspaceRead && options.url === "/api/workspace-file/{path}" ? `${config.BASE}/api/workspace-file/${String(options.path.path).split("/").map(encodeURIComponent).join("/")}` : workspaceRead ? `${config.BASE}${options.url}${options.query ? getQueryString(options.query) : ""}` : folder ? `${config.BASE}/api/conversations/folders${options.path ? "/" + String(options.path.path).split("/").map(encodeURIComponent).join("/") : ""}` : canvas ? `${config.BASE}${options.url.replace("{conv_id}", encodeURIComponent(options.path.conv_id))}` : patch || lifecycle || diagnostics || notificationRead && options.path ? `${config.BASE}${options.url.replace("{id}", encodeURIComponent(options.path.id))}${query ? getQueryString(query) : ""}` : sticky ? `${config.BASE}/api/sticky/${encodeURIComponent(options.path.conv_id)}` : `${config.BASE}${options.url}${query ? getQueryString(query) : ""}`;
       const headers = await getHeaders(config, options);
       if (onCancel.isCancelled) return;
       const response = await sendRequest(
@@ -981,7 +992,7 @@ var DefaultService = class {
   }
   /**
    * Wrapper
-   * @returns any Successful Response
+   * @returns ConfigFileEntry Successful Response
    * @throws ApiError
    */
   static wrapperApiConfigFilesGet() {
@@ -992,24 +1003,35 @@ var DefaultService = class {
   }
   /**
    * Wrapper
-   * @returns any Successful Response
+   * @param path
+   * @returns ConfigFileResponse Successful Response
    * @throws ApiError
    */
-  static wrapperApiConfigFilesPathGet() {
+  static wrapperApiConfigFilesPathGet(path) {
     return request2(OpenAPI, {
       method: "GET",
-      url: "/api/config/files/{path}"
+      url: "/api/config/files/{path}",
+      path: {
+        "path": path
+      }
     });
   }
   /**
    * Wrapper
-   * @returns any Successful Response
+   * @param path
+   * @param requestBody
+   * @returns ConfigWriteResponse Successful Response
    * @throws ApiError
    */
-  static wrapperApiConfigFilesPathPut() {
+  static wrapperApiConfigFilesPathPut(path, requestBody) {
     return request2(OpenAPI, {
       method: "PUT",
-      url: "/api/config/files/{path}"
+      url: "/api/config/files/{path}",
+      path: {
+        "path": path
+      },
+      body: requestBody,
+      mediaType: "application/json"
     });
   }
   /**
@@ -1347,6 +1369,7 @@ export {
   ApiError,
   CancelError,
   CancelablePromise,
+  ConfigFileEntry,
   DefaultService,
   FileCompletion,
   McpCompletion,

@@ -156,6 +156,9 @@ def test_browser_uses_clean_built_client(source_tree, config):
         "---\nsummary: Browser summary\ntags: [BrowserTag]\n"
         "nested:\n  rows: [1, true, null]\n---\n# Browser vault body\n",
     )
+    config_file_path = config.workspace_path / "schedules" / "Config Browser #1.md"
+    config_file_path.parent.mkdir(parents=True, exist_ok=True)
+    config_file_path.write_text("# Initial config\n")
     init_widgets(config)
     app = create_app(config, EventBus())
     for route in app.routes:
@@ -181,6 +184,7 @@ def test_browser_uses_clean_built_client(source_tree, config):
     workspace_mutation_requests = []
     vault_read_requests = []
     vault_mutation_requests = []
+    config_file_requests = []
 
     @app.middleware("http")
     async def record_listing_request(request, call_next):
@@ -243,6 +247,14 @@ def test_browser_uses_clean_built_client(source_tree, config):
             vault_mutation_requests.append((
                 request.method, request.scope["path"],
                 await request.json() if request.method != "DELETE" else None,
+                request.headers.get("content-type"), bool(request.cookies),
+            ))
+        if request.url.path == "/api/config/files" or request.url.path.startswith(
+            "/api/config/files/"
+        ):
+            config_file_requests.append((
+                request.method, request.scope["path"],
+                await request.json() if request.method == "PUT" else None,
                 request.headers.get("content-type"), bool(request.cookies),
             ))
         return await call_next(request)
@@ -838,6 +850,111 @@ def test_browser_uses_clean_built_client(source_tree, config):
                 failed_requests.clear()
                 assert not errors, errors
                 assert not failed_requests, failed_requests
+
+                page.evaluate("""async () => {
+                    await import('/static/components/config-panel.js');
+                    const panel = document.createElement('config-panel');
+                    panel.id = 'browser-config-panel';
+                    document.body.append(panel);
+                }""")
+                page.wait_for_function("""() => document.querySelector('#browser-config-panel')
+                    ._files.some(file => file.path === 'workspace/schedules/Config Browser #1.md')""")
+
+                # Read an absent local file through its bundled fallback. The
+                # null wire mtime remains observable as the editor's existing
+                # zero sentinel rather than preventing selection.
+                page.locator(
+                    '#browser-config-panel .config-file-item', has_text='AGENT.md',
+                ).click()
+                page.wait_for_function("""() => document.querySelector('#browser-config-panel')
+                    ._selectedFile?.path === 'AGENT.md'""")
+                assert page.evaluate("""document.querySelector(
+                    '#browser-config-panel wiki-editor').content.length > 0""")
+                assert page.evaluate("""document.querySelector(
+                    '#browser-config-panel wiki-editor').modified""") == 0
+
+                page.locator('#browser-config-panel .config-back-btn').click()
+                page.wait_for_function("""() => document.querySelector(
+                    '#browser-config-panel')._selectedFile === null""")
+                page.locator(
+                    '#browser-config-panel .config-file-item', has_text='Config Browser #1.md',
+                ).click()
+                page.wait_for_function("""() => document.querySelector('#browser-config-panel')
+                    ._selectedFile?.path === 'workspace/schedules/Config Browser #1.md'""")
+                config_editor = page.locator(
+                    '#browser-config-panel wiki-editor .milkdown .ProseMirror')
+                initial_config_mtime = page.evaluate("""document.querySelector(
+                    '#browser-config-panel wiki-editor').modified""")
+                config_editor.fill("Saved through generated config")
+                page.evaluate("""document.querySelector(
+                    '#browser-config-panel wiki-editor').flushSave()""")
+                page.wait_for_function("""document.querySelector(
+                    '#browser-config-panel wiki-editor')._status === 'saved'""")
+                assert config_file_path.read_text() == "# Saved through generated config\n"
+
+                saved_config_mtime = config_file_path.stat().st_mtime
+                config_file_path.write_text("# First external config change\n")
+                os.utime(config_file_path,
+                         (saved_config_mtime + 100, saved_config_mtime + 100))
+                config_editor.fill("First stale config edit")
+                page.evaluate("""document.querySelector(
+                    '#browser-config-panel wiki-editor').flushSave()""")
+                page.wait_for_function("""document.querySelector(
+                    '#browser-config-panel wiki-editor')._status === 'conflict'""")
+                page.locator(
+                    '#browser-config-panel .wiki-editor-conflict button',
+                    has_text='Reload',
+                ).click()
+                page.wait_for_function("""document.querySelector(
+                    '#browser-config-panel wiki-editor').content
+                    === '# First external config change\\n'""")
+
+                reloaded_config_mtime = config_file_path.stat().st_mtime
+                config_file_path.write_text("# Second external config change\n")
+                os.utime(config_file_path,
+                         (reloaded_config_mtime + 100, reloaded_config_mtime + 100))
+                config_editor.fill("Forced through generated config")
+                page.evaluate("""document.querySelector(
+                    '#browser-config-panel wiki-editor').flushSave()""")
+                page.wait_for_function("""document.querySelector(
+                    '#browser-config-panel wiki-editor')._status === 'conflict'""")
+                page.locator(
+                    '#browser-config-panel .wiki-editor-conflict button',
+                    has_text='Overwrite',
+                ).click()
+                page.wait_for_function("""document.querySelector(
+                    '#browser-config-panel wiki-editor')._status === 'saved'""")
+                assert config_file_path.read_text() == "# Forced through generated config\n"
+
+                config_path = "/api/config/files/workspace/schedules/Config Browser #1.md"
+                assert config_file_requests == [
+                    ("GET", "/api/config/files", None, None, True),
+                    ("GET", "/api/config/files/AGENT.md", None, None, True),
+                    ("GET", "/api/config/files", None, None, True),
+                    ("GET", config_path, None, None, True),
+                    ("PUT", config_path, {
+                        "content": "# Saved through generated config\n",
+                        "modified": initial_config_mtime,
+                    }, "application/json", True),
+                    ("PUT", config_path, {
+                        "content": "# First stale config edit\n",
+                        "modified": saved_config_mtime,
+                    }, "application/json", True),
+                    ("GET", config_path, None, None, True),
+                    ("PUT", config_path, {
+                        "content": "# Forced through generated config\n",
+                        "modified": reloaded_config_mtime,
+                    }, "application/json", True),
+                    ("PUT", config_path, {
+                        "content": "# Forced through generated config\n",
+                    }, "application/json", True),
+                ]
+                assert len(failed_requests) == 2
+                assert all(request.endswith(
+                    "/api/config/files/workspace/schedules/Config%20Browser%20%231.md",
+                ) for request in failed_requests)
+                failed_requests.clear()
+                assert not errors, errors
 
                 # Restore the fixture removed by the delete scenario so the
                 # remaining auth-client regressions can revisit this page.
@@ -1847,6 +1964,195 @@ def test_vault_write_output_type_drift_fails_at_unchanged_consumer(
     diagnostics = [line for line in output.splitlines() if "error TS" in line]
     assert any(caller in diagnostic and "assignable" in diagnostic for diagnostic in diagnostics), output
     assert caller_path.read_bytes() == original_caller
+
+
+def test_config_file_generated_contracts(source_tree):
+    result, output = run_make(source_tree, "gen-api-client")
+    assert result.returncode == 0, output
+    service = (source_tree / CLIENT_REL / "services/DefaultService.ts").read_text()
+    for method, signatures in {
+        "wrapperApiConfigFilesGet": (
+            "CancelablePromise<Array<ConfigFileEntry>>",
+        ),
+        "wrapperApiConfigFilesPathGet": (
+            "path: string", "CancelablePromise<ConfigFileResponse>",
+        ),
+        "wrapperApiConfigFilesPathPut": (
+            "path: string", "content: string", "modified?: (number | null)",
+            "CancelablePromise<ConfigWriteResponse>",
+        ),
+    }.items():
+        start = service.index(f"public static {method}(")
+        end = service.index("    /**", start)
+        block = service[start:end]
+        for signature in signatures:
+            assert signature in block
+        assert "any" not in block
+
+    entry = (source_tree / CLIENT_REL / "models/ConfigFileEntry.ts").read_text()
+    for field in (
+        "name: string", "path: string", "description: string",
+        "modified: (number | null)", "exists: boolean",
+    ):
+        assert field in entry
+    assert "ADMIN = 'admin'" in entry and "WORKSPACE = 'workspace'" in entry
+
+    read = (source_tree / CLIENT_REL / "models/ConfigFileResponse.ts").read_text()
+    for field in (
+        "content: string", "modified: (number | null)",
+        "name: string", "default: boolean",
+    ):
+        assert field in read
+    written = (source_tree / CLIENT_REL / "models/ConfigWriteResponse.ts").read_text()
+    assert "ok: boolean" in written and "modified: number" in written
+    assert all("any" not in model for model in (entry, read, written))
+
+
+@pytest.mark.parametrize(("operation", "callers"), [
+    ("read", ["components/config-panel.js", "components/wiki-editor.js"]),
+    ("write", ["components/wiki-editor.js"]),
+])
+def test_config_path_type_drift_fails_at_unchanged_callers(
+    source_tree, operation, callers,
+):
+    originals = {
+        caller: (source_tree / STATIC_REL / caller).read_bytes()
+        for caller in callers
+    }
+
+    def mutate(original):
+        handler = "config_read_file" if operation == "read" else "config_write_file"
+        start = original.index(
+            f'APIRoute("/api/config/files/{{path:path}}", {handler}',
+        )
+        next_route = (
+            'APIRoute("/api/config/files/{path:path}", config_write_file'
+            if operation == "read" else 'APIRoute("/api/models"'
+        )
+        end = original.index(next_route, start + 1)
+        block = original[start:end]
+        before = '"schema": {"type": "string"}'
+        assert block.count(before) == 1
+        return original[:start] + block.replace(
+            before, '"schema": {"type": "integer"}',
+        ) + original[end:]
+
+    output = _mutate_workspace_contract(source_tree, mutate)
+    diagnostics = [line for line in output.splitlines() if "error TS" in line]
+    for caller in callers:
+        assert any(
+            caller in diagnostic and "TS2345" in diagnostic
+            and "not assignable to parameter of type 'number'" in diagnostic
+            for diagnostic in diagnostics
+        ), output
+        assert (source_tree / STATIC_REL / caller).read_bytes() == originals[caller]
+
+
+@pytest.mark.parametrize(("field", "old_type", "new_type"), [
+    ("content", "str", "int"),
+    ("modified", "float", "str"),
+])
+def test_config_save_input_type_drift_fails_at_unchanged_editor(
+    source_tree, field, old_type, new_type,
+):
+    caller = source_tree / STATIC_REL / "components/wiki-editor.js"
+    original_caller = caller.read_bytes()
+
+    def mutate(original):
+        start = original.index("class ConfigSaveRequest(BaseModel):")
+        end = original.index("\n\n\n", start)
+        block = original[start:end]
+        before = f"    {field}: {old_type}"
+        assert block.count(before) == 1
+        return original[:start] + block.replace(
+            before, f"    {field}: {new_type}",
+        ) + original[end:]
+
+    output = _mutate_workspace_contract(source_tree, mutate)
+    diagnostics = [line for line in output.splitlines() if "error TS" in line]
+    assert any(
+        "components/wiki-editor.js" in diagnostic
+        and ("TS2322" in diagnostic or "TS2345" in diagnostic)
+        and "assignable" in diagnostic
+        for diagnostic in diagnostics
+    ), output
+    assert caller.read_bytes() == original_caller
+
+
+@pytest.mark.parametrize(("model", "field", "callers"), [
+    *[("ConfigFileEntry", field, ["components/config-panel.js"])
+      for field in ("name", "path", "description", "scope", "exists")],
+    ("ConfigFileResponse", "content",
+     ["components/config-panel.js", "components/wiki-editor.js"]),
+    ("ConfigFileResponse", "modified",
+     ["components/config-panel.js", "components/wiki-editor.js"]),
+    ("ConfigWriteResponse", "modified", ["components/wiki-editor.js"]),
+])
+def test_config_consumed_output_drift_fails_at_unchanged_callers(
+    source_tree, model, field, callers,
+):
+    originals = {
+        caller: (source_tree / STATIC_REL / caller).read_bytes()
+        for caller in callers
+    }
+
+    def mutate(original):
+        start = original.index(f"class {model}(BaseModel):")
+        end = original.index("\n\n\n", start)
+        block = original[start:end]
+        before = f"    {field}:"
+        assert block.count(before) == 1
+        return original[:start] + block.replace(
+            before, f"    renamed_{field}:",
+        ) + original[end:]
+
+    output = _mutate_workspace_contract(source_tree, mutate)
+    diagnostics = [line for line in output.splitlines() if "error TS" in line]
+    for caller in callers:
+        assert any(
+            caller in diagnostic
+            and ("TS2339" in diagnostic or "TS2551" in diagnostic)
+            and f"Property '{field}' does not exist" in diagnostic
+            for diagnostic in diagnostics
+        ), output
+        assert (source_tree / STATIC_REL / caller).read_bytes() == originals[caller]
+
+
+@pytest.mark.parametrize(("model", "field", "old_type", "new_type", "callers"), [
+    ("ConfigFileResponse", "content", "str", "int",
+     ["components/config-panel.js", "components/wiki-editor.js"]),
+    ("ConfigFileResponse", "modified", "float", "str",
+     ["components/config-panel.js", "components/wiki-editor.js"]),
+    ("ConfigWriteResponse", "modified", "float", "str",
+     ["components/wiki-editor.js"]),
+])
+def test_config_consumed_output_type_drift_fails_at_unchanged_callers(
+    source_tree, model, field, old_type, new_type, callers,
+):
+    originals = {
+        caller: (source_tree / STATIC_REL / caller).read_bytes()
+        for caller in callers
+    }
+
+    def mutate(original):
+        start = original.index(f"class {model}(BaseModel):")
+        end = original.index("\n\n\n", start)
+        block = original[start:end]
+        before = f"    {field}: {old_type}"
+        assert block.count(before) == 1
+        return original[:start] + block.replace(
+            before, f"    {field}: {new_type}",
+        ) + original[end:]
+
+    output = _mutate_workspace_contract(source_tree, mutate)
+    diagnostics = [line for line in output.splitlines() if "error TS" in line]
+    for caller in callers:
+        assert any(
+            caller in diagnostic and "TS2322" in diagnostic
+            and "is not assignable" in diagnostic
+            for diagnostic in diagnostics
+        ), output
+        assert (source_tree / STATIC_REL / caller).read_bytes() == originals[caller]
 
 
 def test_workspace_mutation_generated_contracts(source_tree):

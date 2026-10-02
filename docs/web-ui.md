@@ -161,6 +161,11 @@ confirmation prompts/responses, cancel/wake markers) are skipped.
 ### Config editor
 
 Edit admin config files (`SOUL.md`, `AGENT.md`, `HEARTBEAT.md`, etc.) directly in the browser. Changes are written to `data/{agent_id}/`.
+The panel's file list and reads, plus the shared editor's config read/write
+operations, use the generated API client. Config paths are encoded one segment
+at a time so allowed nested schedule paths retain their `/` separators. Missing
+local prompt files still open their bundled defaults with a null modification
+time; the first save creates the local override.
 
 ### Theme
 
@@ -311,11 +316,22 @@ Every request the editor makes — autosave, force-save, and the conflict
 banner's **Reload** — goes to `{saveEndpoint}{page}`. A host that sets
 `save-endpoint` must therefore serve both verbs there, and both responses must
 put the editor's fields at the **top level**, since the component knows nothing
-about any per-endpoint envelope:
+about any per-endpoint envelope. The vault and config branches call their
+generated operations directly; the schedule branch retains the same host
+contract while its API migration remains separate:
 
-- `GET` returns the editable markdown as `body` (`content` is accepted as a
-  fallback, which is how config files are served) and its mtime as `modified`.
+- Vault `GET` returns the editable markdown as `body` and its mtime as
+  `modified`; the generated vault branch reads those fields directly.
+- Config `GET` returns the editable markdown as `content` and its mtime as
+  `modified`; the generated config branch reads those fields directly.
+- Schedule `GET` returns `body` and `modified`. Its handwritten branch still
+  accepts `content` as a fallback while the schedule API migration remains
+  separate.
 - `PUT` accepts `{content, modified}` and returns `modified`.
+
+Force-save omits `modified` for both vault and config so the server skips its
+optimistic-concurrency check. Config reload consumes `content` directly; it
+does not share the vault and schedule `body` field.
 
 `/api/schedules/{name}` wraps its payload in `{"schedule": ...}` for
 `schedule-page`, so it aliases `body` and `modified` to the top level for this
@@ -442,6 +458,10 @@ that `modified` into `<wiki-editor>` so the body autosave doesn't 409.
 | `GET` | `/api/config/files` | List editable config files |
 | `GET` | `/api/config/files/{path}` | Read a config file |
 | `PUT` | `/api/config/files/{path}` | Write a config file |
+
+These generated contracts preserve the list's bare-array shape, nullable
+modification times, bundled-default fields, and the config writer's established
+400/409 responses.
 
 ### Notifications
 
