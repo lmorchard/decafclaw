@@ -142,6 +142,9 @@ def dump_openapi():
         ("wrapperApiVaultFoldersPost", "POST", "/api/vault/folders"),
         ("wrapperApiVaultPagePut", "PUT", "/api/vault/{page}"),
         ("wrapperApiVaultPageDelete", "DELETE", "/api/vault/{page}"),
+        ("wrapperApiSchedulesNamePut", "PUT", "/api/schedules/{name}"),
+        ("wrapperApiSchedulesNameRunPost", "POST", "/api/schedules/{name}/run"),
+        ("wrapperApiSchedulesNameOverlayDelete", "DELETE", "/api/schedules/{name}/overlay"),
     ):
         add_discard_overload(static / "lib/api-client/services/DefaultService.ts", method, verb, url)
     service = static / "lib/api-client/services/DefaultService.ts"

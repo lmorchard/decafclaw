@@ -15,6 +15,7 @@ from starlette.staticfiles import StaticFiles
 
 from decafclaw import notifications as notifs
 from decafclaw.archive import append_message, archive_path
+from decafclaw.config_types import ModelConfig
 from decafclaw.context_composer import write_context_sidecar
 from decafclaw.events import EventBus
 from decafclaw.http_server import create_app
@@ -121,7 +122,7 @@ def test_sticky_contract_drift_fails_at_unchanged_caller(source_tree, contract):
     assert caller.read_bytes() == original_caller
 
 
-def test_browser_uses_clean_built_client(source_tree, config):
+def test_browser_uses_clean_built_client(source_tree, config, monkeypatch):
     shutil.rmtree(source_tree / CLIENT_REL)
     result, output = run_make(source_tree, "gen-api-client", "check-browser-assets")
     assert result.returncode == 0, output
@@ -159,6 +160,26 @@ def test_browser_uses_clean_built_client(source_tree, config):
     config_file_path = config.workspace_path / "schedules" / "Config Browser #1.md"
     config_file_path.parent.mkdir(parents=True, exist_ok=True)
     config_file_path.write_text("# Initial config\n")
+    schedule_name = "Browser_Schedule-1"
+    schedule_path = config.agent_path / "schedules" / f"{schedule_name}.md"
+    schedule_path.parent.mkdir(parents=True, exist_ok=True)
+    schedule_path.write_text(
+        "---\nschedule: '0 3 * * *'\nenabled: true\nmodel: browser-model\n---\n"
+        "# Initial schedule\n",
+    )
+    dream_overlay = config.agent_path / "schedules" / "dream.md"
+    dream_overlay.write_text(
+        "---\nschedule: '0 4 * * *'\nenabled: true\n---\n# Browser dream overlay\n",
+    )
+    config.model_configs = {
+        "browser-model": ModelConfig(provider="browser", model="browser-model"),
+    }
+    config.default_model = "browser-model"
+
+    async def fake_run_schedule_task(*_args, **_kwargs):
+        return {"is_ok": True}
+
+    monkeypatch.setattr("decafclaw.http_server.run_schedule_task", fake_run_schedule_task)
     init_widgets(config)
     app = create_app(config, EventBus())
     for route in app.routes:
@@ -185,6 +206,7 @@ def test_browser_uses_clean_built_client(source_tree, config):
     vault_read_requests = []
     vault_mutation_requests = []
     config_file_requests = []
+    schedule_requests = []
 
     @app.middleware("http")
     async def record_listing_request(request, call_next):
@@ -255,6 +277,14 @@ def test_browser_uses_clean_built_client(source_tree, config):
             config_file_requests.append((
                 request.method, request.scope["path"],
                 await request.json() if request.method == "PUT" else None,
+                request.headers.get("content-type"), bool(request.cookies),
+            ))
+        if request.url.path == "/api/models" or request.url.path == "/api/schedules" \
+                or request.url.path.startswith("/api/schedules/"):
+            raw_body = await request.body()
+            schedule_requests.append((
+                request.method, request.scope["raw_path"].decode(),
+                json.loads(raw_body) if raw_body else None,
                 request.headers.get("content-type"), bool(request.cookies),
             ))
         return await call_next(request)
@@ -955,6 +985,148 @@ def test_browser_uses_clean_built_client(source_tree, config):
                 ) for request in failed_requests)
                 failed_requests.clear()
                 assert not errors, errors
+
+                page.evaluate("""async (name) => {
+                    await Promise.all([
+                        import('/static/components/schedules-sidebar.js'),
+                        import('/static/components/schedule-page.js'),
+                    ]);
+                    const sidebar = document.createElement('schedules-sidebar');
+                    sidebar.id = 'browser-schedules-sidebar';
+                    document.body.append(sidebar);
+                    await sidebar.updateComplete;
+                    sidebar.active = true;
+
+                    const schedulePage = document.createElement('schedule-page');
+                    schedulePage.id = 'browser-schedule-page';
+                    schedulePage.name = name;
+                    document.body.append(schedulePage);
+                }""", schedule_name)
+                page.wait_for_function("""name => {
+                    const sidebar = document.querySelector('#browser-schedules-sidebar');
+                    const schedulePage = document.querySelector('#browser-schedule-page');
+                    return sidebar?._schedules?.some(item => item.name === name)
+                        && schedulePage?._data?.name === name
+                        && schedulePage?._models?.includes('browser-model');
+                }""", arg=schedule_name)
+                assert page.evaluate("""document.querySelector(
+                    '#browser-schedule-page schedule-metadata').models""") == ["browser-model"]
+
+                schedule_row = page.locator(
+                    "#browser-schedules-sidebar .schedule-row", has_text=schedule_name,
+                )
+                with page.expect_response("**/api/schedules/Browser_Schedule-1") \
+                        as toggle_response:
+                    schedule_row.locator(".schedule-enabled-toggle").uncheck()
+                assert toggle_response.value.status == 200
+                page.wait_for_function("""name => document.querySelector(
+                    '#browser-schedules-sidebar')._schedules
+                    .find(item => item.name === name)?.enabled === false""", arg=schedule_name)
+                assert "enabled: false" in schedule_path.read_text()
+
+                with page.expect_response("**/api/schedules/*/run") as sidebar_run_response:
+                    schedule_row.locator(".schedule-row-run").click()
+                assert sidebar_run_response.value.status == 202
+                page.wait_for_function("""name => document.querySelector(
+                    '#browser-schedules-sidebar')._runStatus[name] === 'started'""", arg=schedule_name)
+
+                with page.expect_response("**/api/schedules/*/run") as page_run_response:
+                    page.locator("#browser-schedule-page .schedule-run-btn").click()
+                assert page_run_response.value.status == 202
+                page.wait_for_function("""() => document.querySelector(
+                    '#browser-schedule-page')._runStatus === 'started'""")
+
+                channel = page.locator("#browser-schedule-page .sched-md-channel")
+                channel.fill("browser-channel")
+                channel.dispatch_event("change")
+                page.wait_for_function("""() => document.querySelector(
+                    '#browser-schedule-page')._data.channel === 'browser-channel'""")
+                assert "channel: browser-channel" in schedule_path.read_text()
+
+                schedule_editor = page.locator(
+                    "#browser-schedule-page wiki-editor .milkdown .ProseMirror")
+                schedule_editor.fill("Saved through generated schedule")
+                page.evaluate("""document.querySelector(
+                    '#browser-schedule-page wiki-editor').flushSave()""")
+                page.wait_for_function("""document.querySelector(
+                    '#browser-schedule-page wiki-editor')._status === 'saved'""")
+                assert "# Saved through generated schedule\n" in schedule_path.read_text()
+
+                # Exercise the editor's schedule reload against the real detail
+                # envelope. The schedule server intentionally ignores modified,
+                # so conflict UI is entered directly rather than inventing new
+                # conflict enforcement for this migration.
+                schedule_path.write_text(schedule_path.read_text().replace(
+                    "# Saved through generated schedule\n\n", "# Server schedule\n"))
+                page.evaluate("""node => { node._status = 'conflict'; }""",
+                              page.locator("#browser-schedule-page wiki-editor").element_handle())
+                page.locator(
+                    "#browser-schedule-page .wiki-editor-conflict button", has_text="Reload",
+                ).click()
+                page.wait_for_function("""document.querySelector(
+                    '#browser-schedule-page wiki-editor').content.includes('Server schedule')""")
+
+                schedule_editor.fill("Forced through generated schedule")
+                page.wait_for_function("""document.querySelector(
+                    '#browser-schedule-page wiki-editor')._status === 'editing'""")
+                page.evaluate("""node => { node._status = 'conflict'; }""",
+                              page.locator("#browser-schedule-page wiki-editor").element_handle())
+                page.locator(
+                    "#browser-schedule-page .wiki-editor-conflict button", has_text="Overwrite",
+                ).click()
+                page.wait_for_function("""document.querySelector(
+                    '#browser-schedule-page wiki-editor')._status === 'saved'""")
+                assert "# Forced through generated schedule\n" in schedule_path.read_text()
+
+                page.evaluate("""node => {
+                    node.name = 'dream';
+                }""", page.locator("#browser-schedule-page").element_handle())
+                page.wait_for_function("""() => document.querySelector(
+                    '#browser-schedule-page')._data?.name === 'dream'
+                    && document.querySelector('#browser-schedule-page')._data?.has_overlay""")
+                page.evaluate("""() => {
+                    document.querySelector('#browser-schedule-page wiki-editor')
+                        .dataset.beforeReset = 'true';
+                }""")
+                page.once("dialog", lambda dialog: dialog.accept())
+                page.locator("#browser-schedule-page .schedule-reset-btn").click()
+                page.wait_for_function("""() => {
+                    const schedulePage = document.querySelector('#browser-schedule-page');
+                    const editor = schedulePage.querySelector('wiki-editor');
+                    return schedulePage._data?.name === 'dream'
+                        && !schedulePage._data?.has_overlay
+                        && editor?.dataset.beforeReset !== 'true';
+                }""")
+                assert not dream_overlay.exists()
+
+                encoded_schedule = "/api/schedules/Browser_Schedule-1"
+                assert all(request[4] for request in schedule_requests)
+                assert ("GET", "/api/models", None, None, True) in schedule_requests
+                assert ("GET", "/api/schedules", None, None, True) in schedule_requests
+                assert ("GET", encoded_schedule, None, None, True) in schedule_requests
+                assert ("PUT", encoded_schedule, {"enabled": False},
+                        "application/json", True) in schedule_requests
+                assert ("PUT", encoded_schedule, {"channel": "browser-channel"},
+                        "application/json", True) in schedule_requests
+                saved_schedule_requests = [request for request in schedule_requests
+                                           if request[0] == "PUT"
+                                           and request[1] == encoded_schedule
+                                           and request[2].get("content")
+                                           == "# Saved through generated schedule\n"]
+                assert len(saved_schedule_requests) == 1
+                assert isinstance(saved_schedule_requests[0][2].get("modified"), float)
+                assert saved_schedule_requests[0][3:] == ("application/json", True)
+                assert ("PUT", encoded_schedule, {
+                    "content": "# Forced through generated schedule\n",
+                }, "application/json", True) in schedule_requests
+                assert sum(
+                    request[0] == "POST" and request[1] == encoded_schedule + "/run"
+                    for request in schedule_requests
+                ) == 2
+                assert ("DELETE", "/api/schedules/dream/overlay", None, None, True) \
+                    in schedule_requests
+                assert not errors, errors
+                assert not failed_requests, failed_requests
 
                 # Restore the fixture removed by the delete scenario so the
                 # remaining auth-client regressions can revisit this page.
@@ -2153,6 +2325,257 @@ def test_config_consumed_output_type_drift_fails_at_unchanged_callers(
             for diagnostic in diagnostics
         ), output
         assert (source_tree / STATIC_REL / caller).read_bytes() == originals[caller]
+
+
+def test_schedule_generated_contracts(source_tree):
+    result, output = run_make(source_tree, "gen-api-client")
+    assert result.returncode == 0, output
+    service = (source_tree / CLIENT_REL / "services/DefaultService.ts").read_text()
+    for method, signatures in {
+        "wrapperApiModelsGet": ("CancelablePromise<ModelListResponse>",),
+        "wrapperApiSchedulesGet": ("CancelablePromise<ScheduleListResponse>",),
+        "wrapperApiSchedulesNameGet": (
+            "name: string", "CancelablePromise<ScheduleDetailResponse>",
+        ),
+        "wrapperApiSchedulesNamePut": (
+            "name: string", "content?: (string | null)", "body?: (string | null)",
+            "modified?: (number | null)", "enabled?: (boolean | null)",
+            "schedule?: (string | null)", "channel?: (string | null)",
+            "model?: (string | null)", "allowed_tools?: (Array<string> | null)",
+            "disallowed_tools?: (Array<string> | null)",
+            "required_skills?: (Array<string> | null)",
+            "shell_patterns?: (Array<string> | null)",
+            "email_recipients?: (Array<string> | null)",
+            "pre_script?: (string | null)",
+            "CancelablePromise<ScheduleUpdateResponse>", "discardResponse: true",
+        ),
+        "wrapperApiSchedulesNameRunPost": (
+            "name: string", "CancelablePromise<ScheduleRunResponse>",
+            "discardResponse: true",
+        ),
+        "wrapperApiSchedulesNameOverlayDelete": (
+            "name: string", "CancelablePromise<ScheduleResetResponse>",
+            "discardResponse: true",
+        ),
+    }.items():
+        start = service.index(f"public static {method}(")
+        end = service.index("    /**", start)
+        block = service[start:end]
+        for signature in signatures:
+            assert signature in block
+        assert "any" not in block
+
+    for model in (
+        "ModelListResponse", "ScheduleResponse", "ScheduleListResponse",
+        "ScheduleDetailResponse", "ScheduleUpdateResponse", "ScheduleResetResponse",
+        "ScheduleRunResponse",
+    ):
+        assert "any" not in (
+            source_tree / CLIENT_REL / f"models/{model}.ts"
+        ).read_text()
+
+
+@pytest.mark.parametrize(("handler", "next_handler", "callers"), [
+    ("schedules_run", "schedules_reset",
+     ["components/schedules-sidebar.js", "components/schedule-page.js"]),
+    ("schedules_reset", "schedules_get", ["components/schedule-page.js"]),
+    ("schedules_get", "schedules_update",
+     ["components/schedule-page.js", "components/wiki-editor.js"]),
+    ("schedules_update", "vault_create", [
+        "components/schedules-sidebar.js", "components/schedule-page.js",
+        "components/wiki-editor.js",
+    ]),
+])
+def test_schedule_path_type_drift_fails_at_unchanged_callers(
+    source_tree, handler, next_handler, callers,
+):
+    originals = {
+        caller: (source_tree / STATIC_REL / caller).read_bytes()
+        for caller in callers
+    }
+
+    def mutate(original):
+        handler_pos = original.index(f", {handler},")
+        start = original.rfind("APIRoute(", 0, handler_pos)
+        next_handler_pos = original.index(f", {next_handler},", handler_pos)
+        end = original.rfind("APIRoute(", 0, next_handler_pos)
+        block = original[start:end]
+        before = '"schema": {"type": "string"}'
+        assert block.count(before) == 1
+        return original[:start] + block.replace(
+            before, '"schema": {"type": "integer"}',
+        ) + original[end:]
+
+    output = _mutate_workspace_contract(source_tree, mutate)
+    diagnostics = [line for line in output.splitlines() if "error TS" in line]
+    for caller in callers:
+        assert any(
+            caller in diagnostic and "TS2345" in diagnostic
+            and "not assignable to parameter of type 'number'" in diagnostic
+            for diagnostic in diagnostics
+        ), output
+        assert (source_tree / STATIC_REL / caller).read_bytes() == originals[caller]
+    assert all(any(caller in diagnostic for caller in callers)
+               for diagnostic in diagnostics), output
+
+
+@pytest.mark.parametrize(("field", "old_type", "new_type", "callers"), [
+    ("content", "str", "int", ["components/wiki-editor.js"]),
+    ("modified", "float", "str", ["components/wiki-editor.js"]),
+    ("enabled", "bool", "str", [
+        "components/schedules-sidebar.js", "components/schedule-metadata.js",
+    ]),
+    ("schedule", "str", "int", ["components/schedule-metadata.js"]),
+    ("channel", "str", "int", ["components/schedule-metadata.js"]),
+    ("model", "str", "int", ["components/schedule-metadata.js"]),
+    ("allowed_tools", "list[str]", "str", ["components/schedule-metadata.js"]),
+    ("required_skills", "list[str]", "str", ["components/schedule-metadata.js"]),
+    ("shell_patterns", "list[str]", "str", ["components/schedule-metadata.js"]),
+    ("email_recipients", "list[str]", "str", ["components/schedule-metadata.js"]),
+    ("pre_script", "str", "int", ["components/schedule-metadata.js"]),
+])
+def test_schedule_update_input_type_drift_fails_at_unchanged_callers(
+    source_tree, field, old_type, new_type, callers,
+):
+    originals = {
+        caller: (source_tree / STATIC_REL / caller).read_bytes()
+        for caller in callers
+    }
+
+    def mutate(original):
+        start = original.index("class ScheduleUpdateRequest(BaseModel):")
+        end = original.index("\n\n\n", start)
+        block = original[start:end]
+        before = f"    {field}: {old_type} | None"
+        assert block.count(before) == 1
+        return original[:start] + block.replace(
+            before, f"    {field}: {new_type} | None",
+        ) + original[end:]
+
+    output = _mutate_workspace_contract(source_tree, mutate)
+    diagnostics = [line for line in output.splitlines() if "error TS" in line]
+    for caller in callers:
+        assert any(
+            caller in diagnostic
+            and ("TS2322" in diagnostic or "TS2345" in diagnostic)
+            and "assignable" in diagnostic
+            for diagnostic in diagnostics
+        ), output
+        assert (source_tree / STATIC_REL / caller).read_bytes() == originals[caller]
+    assert all(any(caller in diagnostic for caller in callers)
+               for diagnostic in diagnostics), output
+
+
+@pytest.mark.parametrize(("model", "field", "callers"), [
+    ("ModelListResponse", "models", [
+        "components/schedule-page.js", "components/schedule-metadata.js",
+    ]),
+    ("ScheduleListResponse", "schedules", ["components/schedules-sidebar.js"]),
+    ("ScheduleDetailResponse", "schedule", ["components/schedule-page.js"]),
+    ("ScheduleDetailResponse", "body", ["components/wiki-editor.js"]),
+    ("ScheduleDetailResponse", "modified", ["components/wiki-editor.js"]),
+    ("ScheduleUpdateResponse", "schedule", ["components/schedule-page.js"]),
+    ("ScheduleUpdateResponse", "modified", ["components/wiki-editor.js"]),
+    *[("ScheduleResponse", field, callers) for field, callers in (
+        ("name", ["components/schedules-sidebar.js", "components/schedule-page.js"]),
+        ("source_tier", [
+            "components/schedules-sidebar.js", "components/schedule-page.js",
+            "components/schedule-metadata.js",
+        ]),
+        ("has_overlay", [
+            "components/schedules-sidebar.js", "components/schedule-page.js",
+        ]),
+        ("enabled", [
+            "components/schedules-sidebar.js", "components/schedule-metadata.js",
+        ]),
+        ("schedule", [
+            "components/schedules-sidebar.js", "components/schedule-metadata.js",
+        ]),
+        ("channel", ["components/schedule-metadata.js"]),
+        ("model", ["components/schedule-metadata.js"]),
+        ("allowed_tools", ["components/schedule-metadata.js"]),
+        ("required_skills", ["components/schedule-metadata.js"]),
+        ("shell_patterns", ["components/schedule-metadata.js"]),
+        ("email_recipients", ["components/schedule-metadata.js"]),
+        ("pre_script", ["components/schedule-metadata.js"]),
+        ("unknown_keys", ["components/schedule-metadata.js"]),
+        ("frontmatter_raw", ["components/schedule-metadata.js"]),
+        ("body", ["components/schedule-page.js"]),
+        ("modified", ["components/schedule-page.js"]),
+        ("next_run_iso", ["components/schedules-sidebar.js"]),
+    )],
+])
+def test_schedule_consumed_output_drift_fails_at_unchanged_callers(
+    source_tree, model, field, callers,
+):
+    originals = {
+        caller: (source_tree / STATIC_REL / caller).read_bytes()
+        for caller in callers
+    }
+
+    def mutate(original):
+        start = original.index(f"class {model}(BaseModel):")
+        end = original.index("\n\n\n", start)
+        block = original[start:end]
+        before = f"    {field}:"
+        assert block.count(before) == 1
+        return original[:start] + block.replace(
+            before, f"    renamed_{field}:",
+        ) + original[end:]
+
+    output = _mutate_workspace_contract(source_tree, mutate)
+    diagnostics = [line for line in output.splitlines() if "error TS" in line]
+    for caller in callers:
+        assert any(
+            caller in diagnostic
+            and ("TS2339" in diagnostic or "TS2551" in diagnostic)
+            and f"Property '{field}' does not exist" in diagnostic
+            for diagnostic in diagnostics
+        ), output
+        assert (source_tree / STATIC_REL / caller).read_bytes() == originals[caller]
+    assert all(any(caller in diagnostic for caller in callers)
+               for diagnostic in diagnostics), output
+
+
+@pytest.mark.parametrize(("model", "field", "old_type", "new_type", "callers"), [
+    ("ModelListResponse", "models", "list[str]", "str", [
+        "components/schedule-page.js", "components/schedule-metadata.js",
+    ]),
+    ("ScheduleDetailResponse", "body", "str", "int", ["components/wiki-editor.js"]),
+    ("ScheduleDetailResponse", "modified", "float", "str", ["components/wiki-editor.js"]),
+    ("ScheduleUpdateResponse", "modified", "float", "str", ["components/wiki-editor.js"]),
+    ("ScheduleResponse", "next_run_iso", "str | None", "int | None",
+     ["components/schedules-sidebar.js"]),
+])
+def test_schedule_consumed_output_type_drift_fails_at_unchanged_caller(
+    source_tree, model, field, old_type, new_type, callers,
+):
+    caller_paths = {caller: source_tree / STATIC_REL / caller for caller in callers}
+    original_callers = {caller: path.read_bytes() for caller, path in caller_paths.items()}
+
+    def mutate(original):
+        start = original.index(f"class {model}(BaseModel):")
+        end = original.index("\n\n\n", start)
+        block = original[start:end]
+        before = f"    {field}: {old_type}"
+        assert block.count(before) == 1
+        return original[:start] + block.replace(
+            before, f"    {field}: {new_type}",
+        ) + original[end:]
+
+    output = _mutate_workspace_contract(source_tree, mutate)
+    diagnostics = [line for line in output.splitlines() if "error TS" in line]
+    for caller in callers:
+        assert any(
+            caller in diagnostic
+            and ("TS2322" in diagnostic or "TS2339" in diagnostic
+                 or "TS2345" in diagnostic)
+            and ("assignable" in diagnostic or "does not exist" in diagnostic)
+            for diagnostic in diagnostics
+        ), output
+        assert caller_paths[caller].read_bytes() == original_callers[caller]
+    assert all(any(caller in diagnostic for caller in callers)
+               for diagnostic in diagnostics), output
 
 
 def test_workspace_mutation_generated_contracts(source_tree):

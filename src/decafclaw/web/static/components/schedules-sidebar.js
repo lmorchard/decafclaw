@@ -1,23 +1,7 @@
 import { LitElement, html, nothing } from 'lit';
+import { ApiError, DefaultService } from '../lib/api-client/index.js';
 
-/**
- * @typedef {{
- *   name: string,
- *   source_tier: string,
- *   source_path: string,
- *   has_overlay: boolean,
- *   enabled: boolean,
- *   schedule: string,
- *   channel: string,
- *   model: string,
- *   allowed_tools: string[],
- *   required_skills: string[],
- *   body: string,
- *   modified: number,
- *   next_run_iso: string|null,
- *   last_run_iso: string|null,
- * }} ScheduleEntry
- */
+/** @typedef {import('../lib/api-client/index.js').ScheduleResponse} ScheduleEntry */
 
 export class SchedulesSidebar extends LitElement {
   static properties = {
@@ -56,7 +40,7 @@ export class SchedulesSidebar extends LitElement {
     window.removeEventListener('schedule-saved', this._onScheduleSaved);
   }
 
-  /** @param {Map} changedProps */
+  /** @param {Map<string, unknown>} changedProps */
   updated(changedProps) {
     // Re-fetch on every false→true transition of `active`.
     if (changedProps.has('active') && this.active && !changedProps.get('active')) {
@@ -67,13 +51,8 @@ export class SchedulesSidebar extends LitElement {
   async #fetchSchedules() {
     this._loading = true;
     try {
-      const res = await fetch('/api/schedules');
-      if (res.ok) {
-        const data = await res.json();
-        this._schedules = data.schedules || [];
-      } else {
-        this._schedules = [];
-      }
+      const data = await DefaultService.wrapperApiSchedulesGet();
+      this._schedules = data.schedules;
     } catch {
       this._schedules = [];
     } finally {
@@ -86,13 +65,13 @@ export class SchedulesSidebar extends LitElement {
    * @param {boolean} currentEnabled
    */
   async #toggleEnabled(name, currentEnabled) {
-    const res = await fetch(`/api/schedules/${encodeURIComponent(name)}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ enabled: !currentEnabled }),
-    });
-    if (!res.ok) {
-      console.warn('schedules-sidebar: toggle failed:', res.status);
+    try {
+      await DefaultService.wrapperApiSchedulesNamePut(
+        name, { enabled: !currentEnabled }, true,
+      );
+    } catch (error) {
+      if (!(error instanceof ApiError)) throw error;
+      console.warn('schedules-sidebar: toggle failed:', error.status);
     }
     this.#fetchSchedules();
   }
@@ -105,15 +84,7 @@ export class SchedulesSidebar extends LitElement {
   async #runNow(name) {
     this._runStatus = { ...this._runStatus, [name]: 'running' };
     try {
-      const res = await fetch(
-        `/api/schedules/${encodeURIComponent(name)}/run`,
-        { method: 'POST' },
-      );
-      if (!res.ok) {
-        console.warn(`schedules-sidebar: run failed for ${name}:`, res.status);
-        this._runStatus = { ...this._runStatus, [name]: 'error' };
-        return;
-      }
+      await DefaultService.wrapperApiSchedulesNameRunPost(name, true);
       this._runStatus = { ...this._runStatus, [name]: 'started' };
       // Clear after a short window unless a subsequent run replaced it.
       setTimeout(() => {
@@ -124,6 +95,11 @@ export class SchedulesSidebar extends LitElement {
         }
       }, 2500);
     } catch (e) {
+      if (e instanceof ApiError) {
+        console.warn(`schedules-sidebar: run failed for ${name}:`, e.status);
+        this._runStatus = { ...this._runStatus, [name]: 'error' };
+        return;
+      }
       console.warn(`schedules-sidebar: run error for ${name}:`, e);
       this._runStatus = { ...this._runStatus, [name]: 'error' };
     }
@@ -138,7 +114,10 @@ export class SchedulesSidebar extends LitElement {
     }));
   }
 
-  /** Format an ISO datetime string as a short human-readable relative time. */
+  /**
+   * Format an ISO datetime string as a short human-readable relative time.
+   * @param {string|null} isoStr
+   */
   #formatNextRun(isoStr) {
     if (!isoStr) return null;
     try {
