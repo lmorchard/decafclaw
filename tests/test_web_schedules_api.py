@@ -167,6 +167,12 @@ class TestSchedulesAPI:
         assert not overlay.exists(), "overlay must NOT be created on invalid cron"
 
     @pytest.mark.asyncio
+    async def test_put_400_on_unknown_field(self, client):
+        r = await client.put("/api/schedules/dream", json={"unknown": True})
+        assert r.status_code == 400
+        assert r.json() == {"error": "unrecognized patch key(s): unknown"}
+
+    @pytest.mark.asyncio
     async def test_delete_overlay_400_on_unsafe_name(self, client):
         """Important 2: unsafe names must return 400, not 500."""
         r = await client.delete("/api/schedules/foo..bar/overlay")

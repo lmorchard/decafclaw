@@ -14,7 +14,7 @@ import yaml
 from croniter import croniter
 from fastapi import FastAPI, Request
 from fastapi.routing import APIRoute
-from pydantic import BaseModel, JsonValue
+from pydantic import BaseModel, ConfigDict, JsonValue
 from starlette.responses import FileResponse, JSONResponse, Response
 from starlette.routing import BaseRoute, Mount, WebSocketRoute
 from starlette.staticfiles import StaticFiles
@@ -2695,6 +2695,79 @@ def _schedule_to_dict(config, task, skill_schedule_names: set | None = None) -> 
     }
 
 
+class ModelListResponse(BaseModel):
+    models: list[str]
+    default: str
+
+
+class ScheduleResponse(BaseModel):
+    name: str
+    source_tier: Literal["admin", "workspace", "bundled", "extra"]
+    source_path: str
+    has_overlay: bool
+    enabled: bool
+    schedule: str
+    channel: str
+    model: str
+    allowed_tools: list[str]
+    disallowed_tools: list[str]
+    required_skills: list[str]
+    shell_patterns: list[str]
+    email_recipients: list[str]
+    pre_script: str
+    unknown_keys: list[str]
+    frontmatter_raw: str
+    body: str
+    modified: float
+    next_run_iso: str | None
+    last_run_iso: str | None
+
+
+class ScheduleListResponse(BaseModel):
+    schedules: list[ScheduleResponse]
+
+
+class ScheduleDetailResponse(BaseModel):
+    schedule: ScheduleResponse
+    body: str
+    modified: float
+
+
+# Schema-only input: the handler keeps its manual parsing, aliases, unknown-key
+# rejection, and established 400 responses instead of introducing FastAPI 422s.
+class ScheduleUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    content: str | None = None
+    body: str | None = None
+    modified: float | None = None
+    enabled: bool | None = None
+    schedule: str | None = None
+    channel: str | None = None
+    model: str | None = None
+    allowed_tools: list[str] | None = None
+    disallowed_tools: list[str] | None = None
+    required_skills: list[str] | None = None
+    shell_patterns: list[str] | None = None
+    email_recipients: list[str] | None = None
+    pre_script: str | None = None
+
+
+class ScheduleUpdateResponse(BaseModel):
+    schedule: ScheduleResponse
+    modified: float
+
+
+class ScheduleResetResponse(BaseModel):
+    schedule: ScheduleResponse
+
+
+class ScheduleRunResponse(BaseModel):
+    conv_id: str
+    task_name: str
+    started_at: str
+
+
 @_authenticated
 async def models_list(request: Request, username: str) -> JSONResponse:
     """GET /api/models — named model configs for UI pickers.
@@ -3006,12 +3079,42 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> FastAPI:
                          },
                      }},
                  }),
-        APIRoute("/api/models", models_list, methods=["GET"]),
-        APIRoute("/api/schedules", schedules_list, methods=["GET"]),
-        APIRoute("/api/schedules/{name}/run", schedules_run, methods=["POST"]),
-        APIRoute("/api/schedules/{name}/overlay", schedules_reset, methods=["DELETE"]),
-        APIRoute("/api/schedules/{name}", schedules_get, methods=["GET"]),
-        APIRoute("/api/schedules/{name}", schedules_update, methods=["PUT"]),
+        APIRoute("/api/models", models_list, methods=["GET"],
+                 response_model=ModelListResponse),
+        APIRoute("/api/schedules", schedules_list, methods=["GET"],
+                 response_model=ScheduleListResponse),
+        APIRoute("/api/schedules/{name}/run", schedules_run, methods=["POST"],
+                 response_model=ScheduleRunResponse,
+                 status_code=202,
+                 openapi_extra={"parameters": [{
+                     "name": "name", "in": "path", "required": True,
+                     "schema": {"type": "string"},
+                 }]}),
+        APIRoute("/api/schedules/{name}/overlay", schedules_reset, methods=["DELETE"],
+                 response_model=ScheduleResetResponse,
+                 openapi_extra={"parameters": [{
+                     "name": "name", "in": "path", "required": True,
+                     "schema": {"type": "string"},
+                 }]}),
+        APIRoute("/api/schedules/{name}", schedules_get, methods=["GET"],
+                 response_model=ScheduleDetailResponse,
+                 openapi_extra={"parameters": [{
+                     "name": "name", "in": "path", "required": True,
+                     "schema": {"type": "string"},
+                 }]}),
+        APIRoute("/api/schedules/{name}", schedules_update, methods=["PUT"],
+                 response_model=ScheduleUpdateResponse,
+                 openapi_extra={
+                     "parameters": [{
+                         "name": "name", "in": "path", "required": True,
+                         "schema": {"type": "string"},
+                     }],
+                     "requestBody": {"required": True, "content": {
+                         "application/json": {
+                             "schema": _request_schema(ScheduleUpdateRequest),
+                         },
+                     }},
+                 }),
         APIRoute("/api/vault", vault_create, methods=["POST"],
                  response_model=VaultCreateResponse,
                  openapi_extra={"requestBody": {"required": True, "content": {

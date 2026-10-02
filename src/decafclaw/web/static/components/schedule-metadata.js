@@ -15,7 +15,14 @@
  */
 
 import { LitElement, html, nothing } from 'lit';
+import { DefaultService } from '../lib/api-client/index.js';
 import './chip-list.js';
+
+/** @typedef {import('../lib/api-client/index.js').ScheduleResponse} Schedule */
+/** @typedef {import('../lib/api-client/index.js').ModelListResponse['models']} ModelChoices */
+/** @typedef {Parameters<typeof DefaultService.wrapperApiSchedulesNamePut>[1]} SchedulePatch */
+/** @typedef {keyof Pick<SchedulePatch, 'schedule'|'channel'|'model'|'pre_script'>} ScheduleTextField */
+/** @typedef {keyof Pick<SchedulePatch, 'allowed_tools'|'disallowed_tools'|'required_skills'|'shell_patterns'|'email_recipients'>} ScheduleListField */
 
 /** Chip-backed fields that pre-approve actions past confirmation.
  *
@@ -24,6 +31,7 @@ import './chip-list.js';
  * than through this list. It runs arbitrary Python as the bot process
  * on the next fire — the most powerful control on the panel — and read
  * as an ordinary path field when it sat unmarked in the plain form. */
+/** @type {Array<[ScheduleListField, string]>} */
 const PERMISSION_LISTS = [
   ['allowed_tools', 'Allowed tools'],
   ['shell_patterns', 'Shell patterns'],
@@ -44,8 +52,8 @@ export class ScheduleMetadata extends LitElement {
 
   constructor() {
     super();
-    /** @type {any} */ this.data = null;
-    /** @type {string[]} */ this.models = [];
+    /** @type {Schedule|null} */ this.data = null;
+    /** @type {ModelChoices} */ this.models = [];
     /** True only when the `/api/models` fetch failed — not when it
      * succeeded with an empty list. */
     this.modelsUnavailable = false;
@@ -55,21 +63,44 @@ export class ScheduleMetadata extends LitElement {
     this._rawOpen = false;
   }
 
-  /** @param {string} field @param {unknown} value */
-  #emit(field, value) {
+  /** @param {SchedulePatch} fields */
+  #emit(fields) {
     this.dispatchEvent(new CustomEvent('metadata-change', {
-      detail: { fields: { [field]: value } },
+      detail: { fields },
       bubbles: true,
       composed: true,
     }));
   }
 
-  /** @param {string} field @param {Event} e */
+  /** @param {ScheduleTextField} field @param {Event} e */
   #onText(field, e) {
-    this.#emit(field, /** @type {HTMLInputElement} */ (e.target).value);
+    const value = /** @type {HTMLInputElement} */ (e.target).value;
+    if (field === 'schedule') this.#emit({ schedule: value });
+    else if (field === 'channel') this.#emit({ channel: value });
+    else if (field === 'model') this.#emit({ model: value });
+    else this.#emit({ pre_script: value });
   }
 
-  /** @param {string} field @param {string} label */
+  /** @param {ScheduleListField} field @param {string[]} items */
+  #onChips(field, items) {
+    if (field === 'allowed_tools') this.#emit({ allowed_tools: items });
+    else if (field === 'disallowed_tools') this.#emit({ disallowed_tools: items });
+    else if (field === 'required_skills') this.#emit({ required_skills: items });
+    else if (field === 'shell_patterns') this.#emit({ shell_patterns: items });
+    else this.#emit({ email_recipients: items });
+  }
+
+  /** @param {ScheduleListField} field @returns {string[]} */
+  #itemsFor(field) {
+    if (!this.data) return [];
+    if (field === 'allowed_tools') return this.data.allowed_tools;
+    if (field === 'disallowed_tools') return this.data.disallowed_tools;
+    if (field === 'required_skills') return this.data.required_skills;
+    if (field === 'shell_patterns') return this.data.shell_patterns;
+    return this.data.email_recipients;
+  }
+
+  /** @param {ScheduleListField} field @param {string} label */
   #renderChips(field, label) {
     return html`
       <label>
@@ -77,9 +108,10 @@ export class ScheduleMetadata extends LitElement {
         <chip-list
           data-field=${field}
           .label=${label}
-          .items=${this.data?.[field] ?? []}
+          .items=${this.#itemsFor(field)}
           ?readonly=${this.readonly}
-          @chips-change=${(/** @type {any} */ e) => this.#emit(field, e.detail.items)}
+          @chips-change=${(/** @type {CustomEvent<{items: string[]}>} */ e) =>
+            this.#onChips(field, e.detail.items)}
         ></chip-list>
       </label>
     `;
@@ -134,7 +166,7 @@ export class ScheduleMetadata extends LitElement {
           class="sched-md-model"
           ?disabled=${this.readonly}
           @change=${(/** @type {Event} */ e) =>
-            this.#emit('model', /** @type {HTMLSelectElement} */ (e.target).value)}
+            this.#emit({ model: /** @type {HTMLSelectElement} */ (e.target).value })}
         >
           <option value="" ?selected=${!current}>(default)</option>
           ${unconfigured ? html`
@@ -240,7 +272,7 @@ export class ScheduleMetadata extends LitElement {
               ?disabled=${this.readonly}
               .checked=${Boolean(this.data.enabled)}
               @change=${(/** @type {Event} */ e) =>
-                this.#emit('enabled', /** @type {HTMLInputElement} */ (e.target).checked)}
+                this.#emit({ enabled: /** @type {HTMLInputElement} */ (e.target).checked })}
             />
           </label>
           ${this.#renderChips('required_skills', 'Required skills')}

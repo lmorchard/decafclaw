@@ -7,8 +7,19 @@
  */
 
 import { LitElement, html, nothing } from 'lit';
+import { ApiError, DefaultService } from '../lib/api-client/index.js';
 import './wiki-editor.js';
 import './schedule-metadata.js';
+
+/** @typedef {import('../lib/api-client/index.js').ScheduleResponse} Schedule */
+/** @typedef {import('../lib/api-client/index.js').ModelListResponse['models']} ModelChoices */
+/** @typedef {Parameters<typeof DefaultService.wrapperApiSchedulesNamePut>[1]} SchedulePatch */
+
+/** @param {unknown} body */
+function responseError(body) {
+  if (!body || typeof body !== 'object' || !("error" in body)) return '';
+  return typeof body.error === 'string' ? body.error : '';
+}
 
 export class SchedulePage extends LitElement {
   static properties = {
@@ -28,13 +39,13 @@ export class SchedulePage extends LitElement {
   constructor() {
     super();
     this.name = '';
-    /** @type {object|null} */
+    /** @type {Schedule|null} */
     this._data = null;
     this._loading = false;
     /** @type {''|'running'|'started'|'error'} */
     this._runStatus = '';
     this._runError = '';
-    /** @type {string[]} */
+    /** @type {ModelChoices} */
     this._models = [];
     /** True once a fetch has succeeded, empty list or not. */
     this._modelsLoaded = false;
@@ -42,7 +53,7 @@ export class SchedulePage extends LitElement {
     this._saveError = '';
   }
 
-  /** @param {Map<string, any>} changedProps */
+  /** @param {Map<string, unknown>} changedProps */
   updated(changedProps) {
     if (changedProps.has('name') && this.name) {
       // schedule-page is a singleton (app.js reassigns .name rather than
@@ -61,13 +72,8 @@ export class SchedulePage extends LitElement {
   async #fetchSchedule() {
     this._loading = true;
     try {
-      const res = await fetch(`/api/schedules/${encodeURIComponent(this.name)}`);
-      if (res.ok) {
-        const data = await res.json();
-        this._data = data.schedule;
-      } else {
-        this._data = null;
-      }
+      const data = await DefaultService.wrapperApiSchedulesNameGet(this.name);
+      this._data = data.schedule;
     } catch {
       this._data = null;
     } finally {
@@ -77,14 +83,8 @@ export class SchedulePage extends LitElement {
 
   async #fetchModels() {
     try {
-      const res = await fetch('/api/models');
-      if (!res.ok) {
-        this._modelsUnavailable = true;
-        console.warn('schedule-page: model list fetch failed:', res.status);
-        return;
-      }
-      const data = await res.json();
-      this._models = data.models || [];
+      const data = await DefaultService.wrapperApiModelsGet();
+      this._models = data.models;
       // An empty list from a 200 is a real state (no model_configs), so
       // it stays "available" — the panel shows an honest one-entry
       // dropdown rather than the manual-entry fallback.
@@ -98,64 +98,47 @@ export class SchedulePage extends LitElement {
   }
 
   /**
-   * @param {string} field
-   * @param {unknown} value
+   * @param {SchedulePatch} fields
    */
-  async #patchField(field, value) {
+  async #patchFields(fields) {
     if (!this._data) return;
     try {
-      const res = await fetch(`/api/schedules/${encodeURIComponent(this.name)}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ [field]: value }),
-      });
-      if (!res.ok) {
-        let message = `save failed (${res.status})`;
-        try {
-          const err = await res.json();
-          if (err?.error) message = err.error;
-        } catch {
-          // Non-JSON error body; the status line is all we have.
-        }
-        this._saveError = message;
-        console.warn(`schedule-page: PUT ${field} failed:`, res.status);
-        return;
-      }
+      const data = await DefaultService.wrapperApiSchedulesNamePut(this.name, fields);
       this._saveError = '';
-      const data = await res.json();
       this._data = data.schedule;
       window.dispatchEvent(new CustomEvent('schedule-saved'));
-    } catch (e) {
+    } catch (error) {
+      if (error instanceof ApiError) {
+        /** @type {unknown} */ const body = error.body;
+        this._saveError = responseError(body) || `save failed (${error.status})`;
+        console.warn('schedule-page: PUT failed:', error.status);
+        return;
+      }
       // Offline or a restarting server never reaches the HTTP-error
       // path above, so without this the edit vanishes with no feedback
       // at all — the same invisibility the status-code branch fixes.
       this._saveError = 'save failed: could not reach the server';
-      console.warn('schedule-page: PUT error:', e);
+      console.warn('schedule-page: PUT error:', error);
     }
   }
 
-  /** @param {CustomEvent} e */
+  /** @param {CustomEvent<{fields: SchedulePatch}>} e */
   async #onMetadataChange(e) {
     const fields = e.detail?.fields ?? {};
-    for (const [field, value] of Object.entries(fields)) {
-      await this.#patchField(field, value);
-    }
+    await this.#patchFields(fields);
   }
 
   async #resetOverlay() {
     if (!confirm(`Reset "${this.name}" to its skill default?`)) return;
     try {
-      const res = await fetch(`/api/schedules/${encodeURIComponent(this.name)}/overlay`, {
-        method: 'DELETE',
-      });
-      if (res.ok) {
-        window.dispatchEvent(new CustomEvent('schedule-saved'));
-        // Re-fetch (not just _data assignment) so the loading swap in
-        // render() unmounts + remounts wiki-editor with the bundled body.
-        // Milkdown only reads its initial content once in firstUpdated.
-        await this.#fetchSchedule();
-      }
+      await DefaultService.wrapperApiSchedulesNameOverlayDelete(this.name, true);
+      window.dispatchEvent(new CustomEvent('schedule-saved'));
+      // Re-fetch (not just _data assignment) so the loading swap in
+      // render() unmounts + remounts wiki-editor with the bundled body.
+      // Milkdown only reads its initial content once in firstUpdated.
+      await this.#fetchSchedule();
     } catch (e) {
+      if (e instanceof ApiError) return;
       console.warn('schedule-page: reset error:', e);
     }
   }
@@ -168,20 +151,17 @@ export class SchedulePage extends LitElement {
     this._runStatus = 'running';
     this._runError = '';
     try {
-      const res = await fetch(
-        `/api/schedules/${encodeURIComponent(this.name)}/run`,
-        { method: 'POST' },
-      );
-      if (!res.ok) {
-        this._runStatus = 'error';
-        this._runError = `Failed (${res.status})`;
-        return;
-      }
+      await DefaultService.wrapperApiSchedulesNameRunPost(this.name, true);
       this._runStatus = 'started';
       setTimeout(() => {
         if (this._runStatus === 'started') this._runStatus = '';
       }, 3000);
     } catch (e) {
+      if (e instanceof ApiError) {
+        this._runStatus = 'error';
+        this._runError = `Failed (${e.status})`;
+        return;
+      }
       console.warn('schedule-page: run-now error:', e);
       this._runStatus = 'error';
       this._runError = 'Network error';
@@ -200,13 +180,10 @@ export class SchedulePage extends LitElement {
       this._data = { ...this._data, modified: e.detail.modified };
     }
     try {
-      const res = await fetch(`/api/schedules/${encodeURIComponent(this.name)}`);
-      if (res.ok) {
-        const data = await res.json();
-        const preservedBody = this._data?.body ?? data.schedule.body;
-        this._data = { ...data.schedule, body: preservedBody };
-        window.dispatchEvent(new CustomEvent('schedule-saved'));
-      }
+      const data = await DefaultService.wrapperApiSchedulesNameGet(this.name);
+      const preservedBody = this._data?.body ?? data.schedule.body;
+      this._data = { ...data.schedule, body: preservedBody };
+      window.dispatchEvent(new CustomEvent('schedule-saved'));
     } catch (err) {
       console.warn('schedule-page: post-save metadata refresh failed:', err);
     }
@@ -222,7 +199,7 @@ export class SchedulePage extends LitElement {
     if (this._loading || !this._data) {
       return html`<div class="schedule-page-empty">${this._loading ? 'Loading…' : 'Not found.'}</div>`;
     }
-    const d = /** @type {any} */ (this._data);
+    const d = this._data;
     return html`
       <div class="schedule-page">
         <div class="schedule-page-header dc-overlay-header">
