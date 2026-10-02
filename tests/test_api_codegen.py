@@ -1071,11 +1071,18 @@ def test_browser_uses_clean_built_client(source_tree, config, monkeypatch):
                     '#browser-schedule-page wiki-editor')._status === 'editing'""")
                 page.evaluate("""node => { node._status = 'conflict'; }""",
                               page.locator("#browser-schedule-page wiki-editor").element_handle())
+                page.evaluate("""() => {
+                    window.schedulePostSaveRefreshed = false;
+                    window.addEventListener('schedule-saved', () => {
+                        window.schedulePostSaveRefreshed = true;
+                    }, { once: true });
+                }""")
                 page.locator(
                     "#browser-schedule-page .wiki-editor-conflict button", has_text="Overwrite",
                 ).click()
                 page.wait_for_function("""document.querySelector(
                     '#browser-schedule-page wiki-editor')._status === 'saved'""")
+                page.wait_for_function("window.schedulePostSaveRefreshed === true")
                 assert "# Forced through generated schedule\n" in schedule_path.read_text()
 
                 page.evaluate("""node => {
