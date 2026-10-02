@@ -1,5 +1,6 @@
 """Exercise current backend types and browser output in disposable source trees."""
 
+import collections
 import contextlib
 import dataclasses
 import fcntl
@@ -14,7 +15,7 @@ import threading
 
 import pytest
 import uvicorn
-from playwright.sync_api import Page, sync_playwright
+from playwright.sync_api import Browser, Page, sync_playwright
 from starlette.staticfiles import StaticFiles
 
 from decafclaw import notifications as notifs
@@ -132,10 +133,20 @@ def test_sticky_contract_drift_fails_at_unchanged_caller(source_tree, contract):
 # ---------------------------------------------------------------------------
 # Generated-client browser scenarios
 #
-# Each scenario starts its own app, server, and Chromium instance against its
-# own temporary config, so no scenario can observe pending work or page state
-# from another. They share one clean generated-client build (built_static).
+# Each scenario starts its own app and server against its own temporary
+# config, and uses its own browser context, so no scenario can observe
+# cookies, storage, pages, or pending work from another. All scenarios share
+# one clean generated-client build per test run (built_static) and one
+# Chromium process per xdist worker (chromium).
+#
+# The fixtures enforce these setup limits. A change that adds a build, a
+# Chromium launch, a shared or leaked context, or a second server in one
+# scenario fails the tests.
 # ---------------------------------------------------------------------------
+
+# Per worker process: Chromium launches, and server starts per test node id.
+_chromium_launches = 0
+_server_starts = collections.Counter()
 
 
 @pytest.fixture(scope="session")
@@ -169,7 +180,25 @@ def built_static(tmp_path_factory, worker_id):
                     os.chmod(os.path.join(directory, name), 0o444)
                 os.chmod(directory, 0o555)
             (build / "complete").touch()
+            with open(shared / "built-client.builds", "a") as builds:
+                builds.write(f"{worker_id}\n")
+    builders = (shared / "built-client.builds").read_text().split()
+    assert len(builders) == 1, f"generated client built more than once in this run: {builders}"
     return build / "source" / STATIC_REL
+
+
+@pytest.fixture(scope="session")
+def chromium():
+    """One Chromium process for every browser scenario in this worker."""
+    global _chromium_launches
+    _chromium_launches += 1
+    assert _chromium_launches == 1, "Chromium launched more than once in this worker"
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        try:
+            yield browser
+        finally:
+            browser.close()
 
 
 @dataclasses.dataclass
@@ -198,15 +227,20 @@ class BrowserScenario:
 
 
 @contextlib.contextmanager
-def browser_scenario(static, config):
-    """Serve the real app from ``static`` and log a fresh browser in.
+def browser_scenario(static, browser: Browser, config):
+    """Serve the real app from ``static`` and log a fresh browser context in.
 
-    Yields a page on a same-origin host document that carries the app's own
-    import map, holding an authentication cookie from the generated login.
+    Yields a page in a new context of the shared ``browser``, on a same-origin
+    host document that carries the app's own import map, holding an
+    authentication cookie from the generated login. The context is closed,
+    and the server stopped, before the next scenario can start.
     Every /api request reaching the server is recorded. On a normal exit,
     the scenario must have no page errors or failed requests left; scenarios
     assert and clear the failures that they expect.
     """
+    test = os.environ["PYTEST_CURRENT_TEST"].rsplit(" (", 1)[0]
+    _server_starts[test] += 1
+    assert _server_starts[test] == 1, f"{test} started more than one application server"
     config.http.secret = "isolated-browser-test-secret"
     config.agent_path.mkdir(parents=True, exist_ok=True)
     token = create_token(config, "browser-user")
@@ -245,34 +279,36 @@ def browser_scenario(static, config):
     try:
         assert ready.wait(15), "test server failed to start"
         base = f"http://127.0.0.1:{sock.getsockname()[1]}"
-        with sync_playwright() as playwright:
-            browser = playwright.chromium.launch()
-            try:
-                page = browser.new_page()
-                errors = []
-                failed_requests = []
-                page.on("pageerror", lambda error: errors.append(str(error)))
-                page.on("requestfailed", lambda request: failed_requests.append(request.url))
-                page.on("response", lambda response: failed_requests.append(response.url) if response.status >= 400 else None)
-                # A same-origin document without the full app's unrelated services.
-                page.goto(base + "/static/lib/auth-client.js")
-                result = page.evaluate("""async (token) => {
-                    const { AuthClient } = await import('/static/lib/auth-client.js');
-                    const client = new AuthClient();
-                    await client.login(token);
-                    return { username: await client.checkSession(), currentUser: client.currentUser };
-                }""", token)
-                assert result == {"username": "browser-user", "currentUser": "browser-user"}
-                index = (static / "index.html").read_text()
-                import_map = re.search(r'<script type="importmap">(.*?)</script>', index, re.DOTALL)
-                assert import_map, "index.html has no import map"
-                page.add_script_tag(type="importmap", content=import_map.group(1))
-                requests.clear()
-                yield BrowserScenario(page, base, static, requests, errors, failed_requests)
-                assert not errors, errors
-                assert not failed_requests, failed_requests
-            finally:
-                browser.close()
+        assert not browser.contexts, f"browser contexts left by an earlier scenario: {browser.contexts}"
+        context = browser.new_context()
+        try:
+            page = context.new_page()
+            errors = []
+            failed_requests = []
+            page.on("pageerror", lambda error: errors.append(str(error)))
+            page.on("requestfailed", lambda request: failed_requests.append(request.url))
+            page.on("response", lambda response: failed_requests.append(response.url) if response.status >= 400 else None)
+            # A same-origin document without the full app's unrelated services.
+            page.goto(base + "/static/lib/auth-client.js")
+            result = page.evaluate("""async (token) => {
+                const { AuthClient } = await import('/static/lib/auth-client.js');
+                const client = new AuthClient();
+                await client.login(token);
+                return { username: await client.checkSession(), currentUser: client.currentUser };
+            }""", token)
+            assert result == {"username": "browser-user", "currentUser": "browser-user"}
+            index = (static / "index.html").read_text()
+            import_map = re.search(r'<script type="importmap">(.*?)</script>', index, re.DOTALL)
+            assert import_map, "index.html has no import map"
+            page.add_script_tag(type="importmap", content=import_map.group(1))
+            requests.clear()
+            yield BrowserScenario(page, base, static, requests, errors, failed_requests)
+            assert not errors, errors
+            assert not failed_requests, failed_requests
+            assert browser.contexts == [context], browser.contexts
+            assert context.pages == [page], context.pages
+        finally:
+            context.close()
     finally:
         server.should_exit = True
         thread.join(timeout=15)
@@ -332,7 +368,7 @@ def fake_schedule_runs(monkeypatch):
     monkeypatch.setattr("decafclaw.http_server.run_schedule_task", fake_run_schedule_task)
 
 
-def test_browser_workspace_reads(built_static, config):
+def test_browser_workspace_reads(built_static, chromium, config):
     workspace_folder = "Browser files/日本語 #?"
     workspace_rel_path = f"{workspace_folder}/Browser note #?.md"
     workspace_path = config.workspace_path / workspace_rel_path
@@ -340,7 +376,7 @@ def test_browser_workspace_reads(built_static, config):
     workspace_path.write_text("first browser content")
     config.vault_root.mkdir(parents=True, exist_ok=True)
     (config.vault_root / "Browser Vault.md").write_text("# Browser Vault")
-    with browser_scenario(built_static, config) as scenario:
+    with browser_scenario(built_static, chromium, config) as scenario:
         page = scenario.page
         page.evaluate("""async ({ folder, path }) => {
             await Promise.all([
@@ -401,7 +437,7 @@ def test_browser_workspace_reads(built_static, config):
         ]
 
 
-def test_browser_workspace_file_writes(built_static, config):
+def test_browser_workspace_file_writes(built_static, chromium, config):
     workspace_folder = "Browser files/日本語 #?"
     workspace_rel_path = f"{workspace_folder}/Browser note #?.md"
     renamed_workspace_rel_path = f"{workspace_folder}/Renamed 日本語 & #?.md"
@@ -409,7 +445,7 @@ def test_browser_workspace_file_writes(built_static, config):
     renamed_workspace_path = config.workspace_path / renamed_workspace_rel_path
     workspace_path.parent.mkdir(parents=True, exist_ok=True)
     workspace_path.write_text("first browser content")
-    with browser_scenario(built_static, config) as scenario:
+    with browser_scenario(built_static, chromium, config) as scenario:
         page = scenario.page
         page.evaluate("""async ({ folder, path }) => {
             await Promise.all([
@@ -531,7 +567,7 @@ def test_browser_workspace_file_writes(built_static, config):
         assert workspace_mutation_requests[3].body == b""
 
 
-def test_browser_notification_inbox(built_static, config):
+def test_browser_notification_inbox(built_static, chromium, config):
     conv_id = seed_conversation(config, "Notification test")
     notification_id = "record ?#%é"
     notification = notifs.NotificationRecord(
@@ -541,7 +577,7 @@ def test_browser_notification_inbox(built_static, config):
     inbox = config.workspace_path / "notifications" / "inbox.jsonl"
     inbox.parent.mkdir(parents=True, exist_ok=True)
     inbox.write_text(json.dumps(notification.to_dict()) + "\n")
-    with browser_scenario(built_static, config) as scenario:
+    with browser_scenario(built_static, chromium, config) as scenario:
         page = scenario.page
         page.evaluate("""async () => {
             await import('/static/components/notification-inbox.js');
@@ -579,7 +615,7 @@ def test_browser_notification_inbox(built_static, config):
         ]
 
 
-def test_browser_context_inspector(built_static, config):
+def test_browser_context_inspector(built_static, chromium, config):
     conv_id = seed_conversation(config, "Context test")
     diagnostics_payload = {
         "total_tokens_estimated": 123, "context_window_size": 1000,
@@ -587,7 +623,7 @@ def test_browser_context_inspector(built_static, config):
                      "details": {"top_score": 0.9, "budget_source": "dynamic"}}],
     }
     write_context_sidecar(config, conv_id, diagnostics_payload)
-    with browser_scenario(built_static, config) as scenario:
+    with browser_scenario(built_static, chromium, config) as scenario:
         page = scenario.page
         page.evaluate("""async (convId) => {
             await import('/static/components/context-inspector.js');
@@ -605,11 +641,11 @@ def test_browser_context_inspector(built_static, config):
         ]
 
 
-def test_browser_conversation_export(built_static, config):
+def test_browser_conversation_export(built_static, chromium, config):
     conv_id = seed_conversation(config, "Export test")
     append_message(config, conv_id, {"role": "user", "content": "Export 日本語"})
     append_message(config, conv_id, {"role": "assistant", "content": "Second line"})
-    with browser_scenario(built_static, config) as scenario:
+    with browser_scenario(built_static, chromium, config) as scenario:
         copied = scenario.page.evaluate("""async (convId) => {
             await import('/static/components/copy-conversation-menu.js');
             const copies = [];
@@ -634,13 +670,13 @@ def test_browser_conversation_export(built_static, config):
         ]
 
 
-def test_browser_sticky_state(built_static, config):
+def test_browser_sticky_state(built_static, chromium, config):
     conv_id = seed_conversation(config, "Sticky test")
     payload = {"content": "# Doc", "extra": {"rows": [1, True, None, {"label": "nested"}]}}
     assert write_sticky_state(config, conv_id, {
         "schema_version": 1, "widget_type": "markdown_document", "data": payload,
     })
-    with browser_scenario(built_static, config) as scenario:
+    with browser_scenario(built_static, chromium, config) as scenario:
         snapshot = scenario.page.evaluate("""async (convId) => {
             const sticky = await import('/static/lib/sticky-state.js');
             await sticky.setActiveConv(convId);
@@ -658,9 +694,9 @@ def test_browser_sticky_state(built_static, config):
 NESTED_CONV_FOLDER = "Work space/日本語 & plus+ #hash"
 
 
-def test_browser_conversation_listings(built_static, config):
+def test_browser_conversation_listings(built_static, chromium, config):
     nested = NESTED_CONV_FOLDER
-    with browser_scenario(built_static, config) as scenario:
+    with browser_scenario(built_static, chromium, config) as scenario:
         page, base = scenario.page, scenario.base
         assert page.request.post(base + "/api/conversations/folders", data={"path": nested}).status == 200
         active = page.request.post(base + "/api/conversations", data={"title": "Nested", "folder": nested}).json()
@@ -697,10 +733,10 @@ def test_browser_conversation_listings(built_static, config):
         ] == expected_requests
 
 
-def test_browser_conversation_patch(built_static, config):
+def test_browser_conversation_patch(built_static, chromium, config):
     nested = NESTED_CONV_FOLDER
     conv_id = seed_conversation(config, "Patch test")
-    with browser_scenario(built_static, config) as scenario:
+    with browser_scenario(built_static, chromium, config) as scenario:
         page, base = scenario.page, scenario.base
         assert page.request.post(base + "/api/conversations/folders", data={"path": nested}).status == 200
         scenario.requests.clear()
@@ -726,10 +762,10 @@ def test_browser_conversation_patch(built_static, config):
         assert any(c["conv_id"] == conv_id and c["title"] == patch_title for c in saved["conversations"])
 
 
-def test_browser_conversation_folders(built_static, config):
+def test_browser_conversation_folders(built_static, chromium, config):
     folder_path = "Folder space/日本語 & plus+ #hash%?"
     renamed_path = "Folder space/new + %?"
-    with browser_scenario(built_static, config) as scenario:
+    with browser_scenario(built_static, chromium, config) as scenario:
         folders = scenario.page.evaluate("""async ({ path, renamed }) => {
             const { DefaultService } = await import('/static/lib/api-client/index.js');
             return [
@@ -749,9 +785,9 @@ def test_browser_conversation_folders(built_static, config):
         ]
 
 
-def test_browser_conversation_lifecycle(built_static, config):
+def test_browser_conversation_lifecycle(built_static, chromium, config):
     nested = NESTED_CONV_FOLDER
-    with browser_scenario(built_static, config) as scenario:
+    with browser_scenario(built_static, chromium, config) as scenario:
         page, base = scenario.page, scenario.base
         assert page.request.post(base + "/api/conversations/folders", data={"path": nested}).status == 200
         scenario.requests.clear()
@@ -786,9 +822,9 @@ def test_browser_conversation_lifecycle(built_static, config):
         assert ConversationIndex(config).get(created["conv_id"]) is None
 
 
-def test_browser_canvas_tabs_and_standalone_page(built_static, config):
+def test_browser_canvas_tabs_and_standalone_page(built_static, chromium, config):
     conv_id = seed_conversation(config, "Canvas test")
-    with browser_scenario(built_static, config) as scenario:
+    with browser_scenario(built_static, chromium, config) as scenario:
         page = scenario.page
         canvas_result = page.evaluate("""async (convId) => {
             const canvas = await import('/static/lib/canvas-state.js');
@@ -876,9 +912,9 @@ def test_browser_canvas_tabs_and_standalone_page(built_static, config):
         assert widget_catalog_requests() == [True, True]
 
 
-def test_browser_vault_standalone_page(built_static, config):
+def test_browser_vault_standalone_page(built_static, chromium, config):
     seed_vault_page(config)
-    with browser_scenario(built_static, config) as scenario:
+    with browser_scenario(built_static, chromium, config) as scenario:
         page = scenario.page
         # Load the actual standalone page and its module graph, including
         # decoding a page name and observing the loaded title.
@@ -905,9 +941,9 @@ def test_browser_vault_standalone_page(built_static, config):
         ] == [(f"/api/vault/{VAULT_PAGE_NAME}", [], True)]
 
 
-def test_browser_vault_sidebars(built_static, config):
+def test_browser_vault_sidebars(built_static, chromium, config):
     seed_vault_page(config)
-    with browser_scenario(built_static, config) as scenario:
+    with browser_scenario(built_static, chromium, config) as scenario:
         page = scenario.page
         page.evaluate("""async () => {
             await Promise.all([
@@ -983,9 +1019,9 @@ def test_browser_vault_sidebars(built_static, config):
         ]
 
 
-def test_browser_vault_editor_conflicts(built_static, config):
+def test_browser_vault_editor_conflicts(built_static, chromium, config):
     vault_page_path = seed_vault_page(config)
-    with browser_scenario(built_static, config) as scenario:
+    with browser_scenario(built_static, chromium, config) as scenario:
         page = scenario.page
         page.evaluate("""async (pageName) => {
             await import('/static/components/wiki-editor.js');
@@ -1057,9 +1093,9 @@ def test_browser_vault_editor_conflicts(built_static, config):
         scenario.failed_requests.clear()
 
 
-def test_browser_vault_page_metadata_rename_delete(built_static, config):
+def test_browser_vault_page_metadata_rename_delete(built_static, chromium, config):
     vault_page_path = seed_vault_page(config)
-    with browser_scenario(built_static, config) as scenario:
+    with browser_scenario(built_static, chromium, config) as scenario:
         page = scenario.page
         open_vault_page(scenario)
         vault_page_path.write_text("---\nsummary: External summary\n---\n# Externally changed body\n")
@@ -1118,11 +1154,11 @@ def test_browser_vault_page_metadata_rename_delete(built_static, config):
         ]
 
 
-def test_browser_config_files(built_static, config):
+def test_browser_config_files(built_static, chromium, config):
     config_file_path = config.workspace_path / "schedules" / "Config Browser #1.md"
     config_file_path.parent.mkdir(parents=True, exist_ok=True)
     config_file_path.write_text("# Initial config\n")
-    with browser_scenario(built_static, config) as scenario:
+    with browser_scenario(built_static, chromium, config) as scenario:
         page = scenario.page
         page.evaluate("""async () => {
             await import('/static/components/config-panel.js');
@@ -1271,10 +1307,10 @@ def schedule_requests(scenario):
     ]
 
 
-def test_browser_schedule_sidebar(built_static, config, fake_schedule_runs):
+def test_browser_schedule_sidebar(built_static, chromium, config, fake_schedule_runs):
     seed_schedule_models(config)
     schedule_path = seed_schedule(config)
-    with browser_scenario(built_static, config) as scenario:
+    with browser_scenario(built_static, chromium, config) as scenario:
         page = scenario.page
         page.evaluate("""async () => {
             await import('/static/components/schedules-sidebar.js');
@@ -1316,10 +1352,10 @@ def test_browser_schedule_sidebar(built_static, config, fake_schedule_runs):
         ]
 
 
-def test_browser_schedule_page_edits(built_static, config, fake_schedule_runs):
+def test_browser_schedule_page_edits(built_static, chromium, config, fake_schedule_runs):
     seed_schedule_models(config)
     schedule_path = seed_schedule(config)
-    with browser_scenario(built_static, config) as scenario:
+    with browser_scenario(built_static, chromium, config) as scenario:
         page = scenario.page
         page.evaluate("""async (name) => {
             await import('/static/components/schedule-page.js');
@@ -1416,14 +1452,14 @@ def test_browser_schedule_page_edits(built_static, config, fake_schedule_runs):
         ) == 1
 
 
-def test_browser_schedule_overlay_reset(built_static, config):
+def test_browser_schedule_overlay_reset(built_static, chromium, config):
     seed_schedule_models(config)
     dream_overlay = config.agent_path / "schedules" / "dream.md"
     dream_overlay.parent.mkdir(parents=True, exist_ok=True)
     dream_overlay.write_text(
         "---\nschedule: '0 4 * * *'\nenabled: true\n---\n# Browser dream overlay\n",
     )
-    with browser_scenario(built_static, config) as scenario:
+    with browser_scenario(built_static, chromium, config) as scenario:
         page = scenario.page
         page.evaluate("""async () => {
             await import('/static/components/schedule-page.js');
@@ -1458,9 +1494,9 @@ def test_browser_schedule_overlay_reset(built_static, config):
         assert ("DELETE", "/api/schedules/dream/overlay", None, None, True) in requests
 
 
-def test_browser_auth_me_without_body_decoding(built_static, config):
+def test_browser_auth_me_without_body_decoding(built_static, chromium, config):
     seed_vault_page(config)
-    with browser_scenario(built_static, config) as scenario:
+    with browser_scenario(built_static, chromium, config) as scenario:
         page = scenario.page
         vault_url = scenario.base + VAULT_PAGE_URL_PATH
         # The no-body /me overload must not decode a successful response.
@@ -1471,9 +1507,9 @@ def test_browser_auth_me_without_body_decoding(built_static, config):
         assert page.url == vault_url
 
 
-def test_browser_auth_logout_redirects_guard(built_static, config):
+def test_browser_auth_logout_redirects_guard(built_static, chromium, config):
     seed_vault_page(config)
-    with browser_scenario(built_static, config) as scenario:
+    with browser_scenario(built_static, chromium, config) as scenario:
         page, base = scenario.page, scenario.base
         vault_url = base + VAULT_PAGE_URL_PATH
         # Real generated logout deletes the browser cookie. The guard's
