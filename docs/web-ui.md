@@ -448,7 +448,7 @@ that `modified` into `<wiki-editor>` so the body autosave doesn't 409.
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `POST` | `/api/upload/{conv_id}` | Upload a file attachment |
+| `POST` | `/api/upload/{conv_id}` | Upload a multipart `file`; the generated browser contract returns `{filename, path, mime_type}` |
 | `GET` | `/api/workspace/{path}` | Serve a workspace file (images, media) |
 
 ### Config

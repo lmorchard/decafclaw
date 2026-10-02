@@ -237,6 +237,39 @@ async def test_serve_workspace_file_non_secret_still_serves_bytes(client, http_c
     assert resp.content == b"hello world"
 
 
+@pytest.mark.asyncio
+async def test_serve_workspace_safe_image_stays_inline_with_security_headers(
+    client, http_config,
+):
+    workspace: Path = http_config.workspace_path
+    target = workspace / "nested" / "safe image.png"
+    target.parent.mkdir()
+    target.write_bytes(b"\x89PNG\r\n\x1a\n")
+
+    resp = await client.get("/api/workspace/nested/safe%20image.png")
+    assert resp.status_code == 200
+    assert resp.content == b"\x89PNG\r\n\x1a\n"
+    assert resp.headers["content-type"] == "image/png"
+    assert resp.headers["x-content-type-options"] == "nosniff"
+    assert "content-disposition" not in resp.headers
+
+
+@pytest.mark.asyncio
+async def test_serve_workspace_unsafe_content_keeps_ascii_download_filename(
+    client, http_config,
+):
+    workspace: Path = http_config.workspace_path
+    target = workspace / "nested" / "diagram.svg"
+    target.parent.mkdir()
+    target.write_text("<svg></svg>")
+
+    resp = await client.get("/api/workspace/nested/diagram.svg")
+    assert resp.status_code == 200
+    assert resp.headers["content-type"] == "image/svg+xml"
+    assert resp.headers["x-content-type-options"] == "nosniff"
+    assert resp.headers["content-disposition"] == 'attachment; filename="diagram.svg"'
+
+
 # -- workspace_read_json (GET /api/workspace-file/{path}) ---------------------
 
 
@@ -892,4 +925,3 @@ async def test_workspace_recent_prunes_heavy_subtrees(client, http_config):
     assert "attachments/blob.bin" not in paths
     assert ".schedule_last_run/task.txt" not in paths
     assert "nested/attachments/ignored.bin" not in paths
-

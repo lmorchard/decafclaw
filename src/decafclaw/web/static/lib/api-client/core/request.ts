@@ -2,7 +2,7 @@
 import type { ApiRequestOptions } from './ApiRequestOptions';
 import type { OpenAPIConfig } from './OpenAPI';
 import { CancelablePromise } from './CancelablePromise';
-import { request as generatedRequest, getHeaders, sendRequest, catchErrorCodes, getQueryString, getRequestBody } from './generated-request';
+import { request as generatedRequest, getFormData, getHeaders, sendRequest, catchErrorCodes, getQueryString, getRequestBody } from './generated-request';
 
 /** Preserve migrated callers' session, JSON, and HTTP-error semantics. */
 export const request = <T>(config: OpenAPIConfig, options: ApiRequestOptions & { discardResponse?: boolean }): CancelablePromise<T> => {
@@ -39,6 +39,7 @@ export const request = <T>(config: OpenAPIConfig, options: ApiRequestOptions & {
         && options.url === '/api/schedules/{name}';
     const workspaceMutation = options.url === '/api/workspace/{path}'
         && ['PUT', 'DELETE'].includes(options.method);
+    const upload = options.method === 'POST' && options.url === '/api/upload/{conv_id}';
     const listing = ['/api/conversations', '/api/conversations/archived', '/api/conversations/system'].includes(options.url);
     const patch = options.method === 'PATCH' && options.url === '/api/conversations/{id}';
     const create = options.method === 'POST' && options.url === '/api/conversations';
@@ -46,14 +47,16 @@ export const request = <T>(config: OpenAPIConfig, options: ApiRequestOptions & {
         || (options.method === 'POST' && ['/api/conversations/{id}/archive', '/api/conversations/{id}/unarchive'].includes(options.url));
     const folder = (options.method === 'POST' && options.url === '/api/conversations/folders')
         || (['PUT', 'DELETE'].includes(options.method) && options.url === '/api/conversations/folders/{path}');
-    if (!notification && !diagnostics && !login && !logout && !vaultGuard && !create && !lifecycle && !folder && !patch && !widgetCatalog && !canvas && !workspaceRead && !vaultRead && !vaultMutation && !configFile && !schedule && !workspaceMutation && (options.method !== 'GET' || (!sticky && !listing))) {
+    if (!notification && !diagnostics && !login && !logout && !vaultGuard && !create && !lifecycle && !folder && !patch && !widgetCatalog && !canvas && !workspaceRead && !vaultRead && !vaultMutation && !configFile && !schedule && !workspaceMutation && !upload && (options.method !== 'GET' || (!sticky && !listing))) {
         return generatedRequest<T>(config, options);
     }
     return new CancelablePromise(async (resolve, reject, onCancel) => {
         try {
             // The handwritten listing callers omitted an empty root query.
             const query = listing && options.query?.folder === "" ? undefined : options.query;
-            const url = workspaceMutation
+            const url = upload
+                ? `${config.BASE}/api/upload/${encodeURIComponent(options.path!.conv_id)}`
+                : workspaceMutation
                 ? `${config.BASE}/api/workspace/${String(options.path!.path).split('/').map(encodeURIComponent).join('/')}${options.query ? getQueryString(options.query) : ''}`
                 : schedule && options.path
                 ? `${config.BASE}${options.url.replace('{name}', encodeURIComponent(options.path.name))}`
@@ -84,10 +87,16 @@ export const request = <T>(config: OpenAPIConfig, options: ApiRequestOptions & {
                 : `${config.BASE}${options.url}${query ? getQueryString(query) : ""}`;
             const headers = await getHeaders(config, options);
             if (onCancel.isCancelled) return;
+            let formData = getFormData(options);
+            if (upload) {
+                formData = new FormData();
+                const file = options.formData?.file;
+                if (file !== undefined) formData.append('file', file);
+            }
             const response = await sendRequest(
                 { ...config, WITH_CREDENTIALS: true,
                   CREDENTIALS: widgetCatalog ? 'include' : 'same-origin' },
-                options, url, getRequestBody(options), undefined, headers, onCancel,
+                options, url, getRequestBody(options), formData, headers, onCancel,
             );
             // Folder and workspace file actions decode error JSON for their
             // existing UI messages. Workspace saves retain raw error text.
@@ -98,7 +107,14 @@ export const request = <T>(config: OpenAPIConfig, options: ApiRequestOptions & {
                 && options.query?.rename_to === undefined;
             const workspaceRename = workspaceMutation && options.method === 'PUT'
                 && options.query?.rename_to !== undefined;
-            if (!((logout || notificationRead || canvasIgnoredMutation) && options.discardResponse)) catchErrorCodes(options, {
+            if (upload && !response.ok) {
+                const errorBody: unknown = await response.json().catch(() => undefined);
+                const serverError = typeof errorBody === 'object' && errorBody !== null
+                    && 'error' in errorBody ? errorBody.error : undefined;
+                throw new Error(serverError
+                    ? String(serverError) : `Upload failed: ${response.status}`);
+            }
+            if (!upload && !((logout || notificationRead || canvasIgnoredMutation) && options.discardResponse)) catchErrorCodes(options, {
                 url, ok: response.ok, status: response.status,
                 statusText: response.statusText,
                 body: folder && !response.ok ? await response.json()

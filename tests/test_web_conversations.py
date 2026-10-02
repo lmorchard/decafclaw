@@ -181,6 +181,61 @@ async def unauthed_client(app):
 
 
 @pytest.mark.asyncio
+async def test_upload_multipart_preserves_consumed_attachment_fields(
+    authed_client, http_config,
+):
+    conv = ConversationIndex(http_config).create("testuser", "Upload target")
+    response = await authed_client.post(
+        f"/api/upload/{quote(conv.conv_id, safe='')}",
+        files={"file": ("report 日本語.txt", b"upload bytes", "text/plain")},
+    )
+
+    assert response.status_code == 201
+    attachment = response.json()
+    assert set(attachment) == {"filename", "path", "mime_type"}
+    assert attachment["filename"].startswith("report 日本語-")
+    assert attachment["filename"].endswith(".txt")
+    assert attachment["mime_type"] == "text/plain"
+    assert attachment["path"].endswith("/uploads/" + attachment["filename"])
+    assert (http_config.workspace_path / attachment["path"]).read_bytes() == b"upload bytes"
+
+
+@pytest.mark.asyncio
+async def test_upload_rejects_missing_file(authed_client, http_config):
+    conv = ConversationIndex(http_config).create("testuser", "Upload target")
+    response = await authed_client.post(
+        f"/api/upload/{quote(conv.conv_id, safe='')}", data={"other": "value"},
+    )
+    assert response.status_code == 400
+    assert response.json() == {"error": "no file in request"}
+
+
+@pytest.mark.asyncio
+async def test_upload_rejects_file_over_size_limit(authed_client, http_config):
+    conv = ConversationIndex(http_config).create("testuser", "Upload target")
+    http_config.http.max_upload_bytes = 8
+    response = await authed_client.post(
+        f"/api/upload/{quote(conv.conv_id, safe='')}",
+        files={"file": ("large.bin", b"too many bytes", "application/octet-stream")},
+    )
+    assert response.status_code == 413
+    assert response.json() == {"error": "file too large"}
+
+
+@pytest.mark.asyncio
+async def test_upload_hides_conversation_owned_by_another_user(
+    authed_client, http_config,
+):
+    conv = ConversationIndex(http_config).create("another-user", "Private")
+    response = await authed_client.post(
+        f"/api/upload/{quote(conv.conv_id, safe='')}",
+        files={"file": ("secret.txt", b"secret", "text/plain")},
+    )
+    assert response.status_code == 404
+    assert response.json() == {"error": "not found"}
+
+
+@pytest.mark.asyncio
 async def test_create_conv_route(authed_client):
     resp = await authed_client.post(
         "/api/conversations", json={"title": "My chat"}
