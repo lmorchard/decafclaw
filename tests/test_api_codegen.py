@@ -2342,6 +2342,10 @@ def test_schedule_generated_contracts(source_tree):
     run_responses = schema["paths"]["/api/schedules/{name}/run"]["post"]["responses"]
     assert "202" in run_responses
     assert "200" not in run_responses
+    update_request = schema["paths"]["/api/schedules/{name}"]["put"][
+        "requestBody"
+    ]["content"]["application/json"]["schema"]
+    assert update_request["additionalProperties"] is False
     service = (source_tree / CLIENT_REL / "services/DefaultService.ts").read_text()
     for method, signatures in {
         "wrapperApiModelsGet": ("CancelablePromise<ModelListResponse>",),
