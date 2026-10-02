@@ -7,6 +7,9 @@ import type { AutocompleteResponse } from '../models/AutocompleteResponse';
 import type { CanvasMutationResponse } from '../models/CanvasMutationResponse';
 import type { CanvasNewTabResponse } from '../models/CanvasNewTabResponse';
 import type { CanvasStateResponse } from '../models/CanvasStateResponse';
+import type { ConfigFileEntry } from '../models/ConfigFileEntry';
+import type { ConfigFileResponse } from '../models/ConfigFileResponse';
+import type { ConfigWriteResponse } from '../models/ConfigWriteResponse';
 import type { ContextDiagnosticsResponse } from '../models/ContextDiagnosticsResponse';
 import type { ConversationCreateResponse } from '../models/ConversationCreateResponse';
 import type { ConversationFolderCreateResponse } from '../models/ConversationFolderCreateResponse';
@@ -785,10 +788,10 @@ export class DefaultService {
     }
     /**
      * Wrapper
-     * @returns any Successful Response
+     * @returns ConfigFileEntry Successful Response
      * @throws ApiError
      */
-    public static wrapperApiConfigFilesGet(): CancelablePromise<any> {
+    public static wrapperApiConfigFilesGet(): CancelablePromise<Array<ConfigFileEntry>> {
         return __request(OpenAPI, {
             method: 'GET',
             url: '/api/config/files',
@@ -796,24 +799,43 @@ export class DefaultService {
     }
     /**
      * Wrapper
-     * @returns any Successful Response
+     * @param path
+     * @returns ConfigFileResponse Successful Response
      * @throws ApiError
      */
-    public static wrapperApiConfigFilesPathGet(): CancelablePromise<any> {
+    public static wrapperApiConfigFilesPathGet(
+        path: string,
+    ): CancelablePromise<ConfigFileResponse> {
         return __request(OpenAPI, {
             method: 'GET',
             url: '/api/config/files/{path}',
+            path: {
+                'path': path,
+            },
         });
     }
     /**
      * Wrapper
-     * @returns any Successful Response
+     * @param path
+     * @param requestBody
+     * @returns ConfigWriteResponse Successful Response
      * @throws ApiError
      */
-    public static wrapperApiConfigFilesPathPut(): CancelablePromise<any> {
+    public static wrapperApiConfigFilesPathPut(
+        path: string,
+        requestBody: {
+            content: string;
+            modified?: (number | null);
+        },
+    ): CancelablePromise<ConfigWriteResponse> {
         return __request(OpenAPI, {
             method: 'PUT',
             url: '/api/config/files/{path}',
+            path: {
+                'path': path,
+            },
+            body: requestBody,
+            mediaType: 'application/json',
         });
     }
     /**
