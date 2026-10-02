@@ -16,7 +16,7 @@ export class WikiWriteMutex {
     this.orphanMetaError = '';
 
     // Dependencies
-    /** @type {(payload: Parameters<typeof import('./api-client/index.js').DefaultService.wrapperApiVaultPagePut>[1], page: string, modified: number) => Promise<{ok: true, status: number, error: '', data: import('./api-client/index.js').VaultWriteResponse} | {ok: false, status: number, error: string}>} */
+    /** @type {(payload: Parameters<typeof import('./api-client/index.js').DefaultService.wrapperApiVaultPagePut>[1], page: string, modified: number) => Promise<{ok: true, status: number, error: '', data?: import('./api-client/index.js').VaultWriteResponse} | {ok: false, status: number, error: string}>} */
     this.apiPut = apiPut;
   }
 
@@ -35,7 +35,7 @@ export class WikiWriteMutex {
    * @param {string} currentPage
    * @param {number} currentModified
    * @param {MetaTarget} [target]
-   * @returns {Promise<{ok: true, data: import('./api-client/index.js').VaultWriteResponse} | void>}
+   * @returns {Promise<{ok: true, data?: import('./api-client/index.js').VaultWriteResponse} | void>}
    */
   async flush(currentPage, currentModified, target) {
     const fields = this.pendingFields;
@@ -145,7 +145,7 @@ export class WikiWriteMutex {
    * @param {string} currentPage
    * @param {number} currentModified
    * @param {{skipModifiedCheck?: boolean, target?: MetaTarget}} [opts]
-   * @returns {Promise<{ok: true, status: number, error: '', data: import('./api-client/index.js').VaultWriteResponse} | {ok: false, status: number, error: string}>}
+   * @returns {Promise<{ok: true, status: number, error: '', data?: import('./api-client/index.js').VaultWriteResponse} | {ok: false, status: number, error: string}>}
    */
   async _writeMeta(payload, currentPage, currentModified, opts) {
     while (this.metaInFlight) await this.metaInFlight;

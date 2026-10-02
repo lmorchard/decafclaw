@@ -1790,6 +1790,37 @@ def test_vault_write_page_type_drift_fails_at_every_unchanged_caller(source_tree
         assert (source_tree / STATIC_REL / caller).read_bytes() == originals[caller]
 
 
+def test_vault_delete_page_type_drift_fails_at_unchanged_caller(source_tree):
+    caller = source_tree / STATIC_REL / "components/wiki-page.js"
+    original_caller = caller.read_bytes()
+    call = "wrapperApiVaultPageDelete(this.page, true)"
+    target = next(
+        line_no for line_no, line in enumerate(original_caller.decode().splitlines(), 1)
+        if call in line
+    )
+
+    def mutate(original):
+        route = 'APIRoute("/api/vault/{page:path}", vault_delete'
+        start = original.index(route)
+        end = original.index("),\n", start) + len("),\n")
+        block = original[start:end]
+        before = '"schema": {"type": "string"}'
+        assert block.count(before) == 1
+        return original[:start] + block.replace(
+            before, '"schema": {"type": "integer"}',
+        ) + original[end:]
+
+    output = _mutate_workspace_contract(source_tree, mutate)
+    diagnostics = [line for line in output.splitlines() if "error TS" in line]
+    assert any(
+        diagnostic.startswith(f"components/wiki-page.js({target},")
+        and "TS2345" in diagnostic
+        and "not assignable to parameter of type 'number'" in diagnostic
+        for diagnostic in diagnostics
+    ), output
+    assert caller.read_bytes() == original_caller
+
+
 @pytest.mark.parametrize(("field", "old_type", "new_type", "caller"), [
     ("modified", "float", "str", "components/wiki-editor.js"),
     ("frontmatter", "dict[str, JsonValue]", "str", "components/wiki-page.js"),
