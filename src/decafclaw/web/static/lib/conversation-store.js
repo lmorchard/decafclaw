@@ -23,6 +23,7 @@ import { ApiError, DefaultService } from './api-client/index.js';
  * @property {boolean} [submitted]
  * @property {object} [response]
  * @property {string} [source]
+ * @property {AttachmentResponse[]} [attachments]
  */
 
 /**
@@ -42,6 +43,8 @@ import { ApiError, DefaultService } from './api-client/index.js';
  */
 
 import { uploadFile } from './upload-client.js';
+/** @typedef {import('./api-client/index.js').AttachmentResponse} AttachmentResponse */
+/** @typedef {{file: File}} PendingAttachment */
 import { MessageStore } from './message-store.js';
 import { ToolStatusStore } from './tool-status-store.js';
 import { WebSocketClient } from './websocket-client.js';
@@ -106,7 +109,7 @@ export class ConversationStore extends EventTarget {
   #readOnly = false;
   /** @type {string|null} message queued while creating a conversation */
   #pendingMessage = null;
-  /** @type {object[]} attachments queued with pending message */
+  /** @type {Array<AttachmentResponse | PendingAttachment>} attachments queued with pending message */
   #pendingAttachments = [];
 
   /** @param {WebSocketClient} wsClient */
@@ -406,7 +409,7 @@ export class ConversationStore extends EventTarget {
 
   /**
    * @param {string} text
-   * @param {{filename: string, path: string, mime_type: string}[]} [attachments]
+   * @param {Array<AttachmentResponse | PendingAttachment>} [attachments]
    */
   sendMessage(text, attachments = []) {
     if (!text.trim() && !attachments.length) return;
@@ -448,12 +451,13 @@ export class ConversationStore extends EventTarget {
    * Upload any pending File objects, then send the message.
    * @param {string} convId
    * @param {string} text
-   * @param {object[]} attachments
+   * @param {Array<AttachmentResponse | PendingAttachment>} attachments
    */
   async #uploadAndSend(convId, text, attachments) {
+    /** @type {AttachmentResponse[]} */
     const uploaded = [];
     for (const att of attachments) {
-      if (att.file) {
+      if ('file' in att) {
         try {
           const result = await uploadFile(convId, att.file);
           uploaded.push(result);

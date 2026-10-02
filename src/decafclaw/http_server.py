@@ -200,6 +200,12 @@ class WorkspaceDeleteResponse(BaseModel):
     ok: Literal[True]
 
 
+class AttachmentResponse(BaseModel):
+    filename: str
+    path: str
+    mime_type: str
+
+
 class ConfigFileEntry(BaseModel):
     name: str
     path: str
@@ -3004,7 +3010,22 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> FastAPI:
                  response_model=NotificationReadResponse),
         APIRoute("/api/notifications/{id}/read", notifications_mark_read, methods=["POST"],
                  response_model=NotificationReadResponse),
-        APIRoute("/api/upload/{conv_id}", handle_upload, methods=["POST"]),
+        APIRoute("/api/upload/{conv_id}", handle_upload, methods=["POST"],
+                 response_model=AttachmentResponse, status_code=201,
+                 openapi_extra={
+                     "parameters": [{
+                         "name": "conv_id", "in": "path", "required": True,
+                         "schema": {"type": "string"},
+                     }],
+                     "requestBody": {
+                         "required": True,
+                         "content": {"multipart/form-data": {"schema": {
+                             "type": "object",
+                             "properties": {"file": {"type": "string", "format": "binary"}},
+                             "required": ["file"],
+                         }}},
+                     },
+                 }),
         # Literal workspace routes must come before the {path:path} catch-all.
         APIRoute("/api/workspace", workspace_list, methods=["GET"],
                  response_model=WorkspaceListingResponse,
@@ -3031,7 +3052,30 @@ def create_app(config, event_bus, app_ctx=None, manager=None) -> FastAPI:
                      "name": "path", "in": "path", "required": True,
                      "schema": {"type": "string"},
                  }]}),
-        APIRoute("/api/workspace/{path:path}", serve_workspace_file, methods=["GET"]),
+        APIRoute("/api/workspace/{path:path}", serve_workspace_file, methods=["GET"],
+                 response_class=FileResponse,
+                 openapi_extra={
+                     "parameters": [{
+                         "name": "path", "in": "path", "required": True,
+                         "schema": {"type": "string"},
+                     }],
+                     "responses": {"200": {
+                         "description": "Workspace file bytes",
+                         "content": {"application/octet-stream": {
+                             "schema": {"type": "string", "format": "binary"},
+                         }},
+                         "headers": {
+                             "X-Content-Type-Options": {
+                                 "schema": {"type": "string"},
+                                 "description": "Always nosniff",
+                             },
+                             "Content-Disposition": {
+                                 "schema": {"type": "string"},
+                                 "description": "Attachment filename for non-safe-image content",
+                             },
+                         },
+                     }},
+                 }),
         # Describe both existing PUT forms without moving parsing into FastAPI:
         # saves have an optional JSON body schema, while renames send only the
         # rename_to query. The handlers retain their legacy 400 responses.

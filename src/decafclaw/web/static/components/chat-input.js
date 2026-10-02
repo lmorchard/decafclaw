@@ -3,6 +3,9 @@ import { ApiError, DefaultService } from '../lib/api-client/index.js';
 import { uploadFile } from '../lib/upload-client.js';
 
 /** @typedef {import('../lib/api-client/index.js').AutocompleteResponse['results'][number]} Completion */
+/** @typedef {import('../lib/api-client/index.js').AttachmentResponse} AttachmentResponse */
+/** @typedef {AttachmentResponse & {previewUrl: string | null}} UploadedAttachment */
+/** @typedef {{filename: string, mime_type: string, file: File, previewUrl: string | null}} PendingAttachment */
 /** @typedef {{name: string, description: string, argument_hint: string}} Command */
 
 /** A `/` or `!` command token filling the current line up to the caret. */
@@ -96,6 +99,7 @@ export class ChatInput extends LitElement {
     this.convId = '';
     /** @type {Command[]} */
     this.commands = [];
+    /** @type {Array<UploadedAttachment | PendingAttachment>} */
     this._pendingAttachments = [];
     this._dragOver = false;
     /** @type {{prefix: string, query: string, start: number}|null} */
@@ -368,10 +372,10 @@ export class ChatInput extends LitElement {
     if ((!text && !hasAttachments) || this.disabled) return;
 
     const attachments = this._pendingAttachments.map(a => {
-      const att = { filename: a.filename, mime_type: a.mime_type };
-      if (a.path) att.path = a.path;      // already uploaded
-      if (a.file) att.file = a.file;       // needs upload after conv creation
-      return att;
+      if ('path' in a) {
+        return { filename: a.filename, path: a.path, mime_type: a.mime_type };
+      }
+      return { filename: a.filename, mime_type: a.mime_type, file: a.file };
     });
 
     this.dispatchEvent(new CustomEvent('send', {

@@ -1802,6 +1802,122 @@ def test_workspace_read_generated_contracts(source_tree):
         assert f"{literal.upper()} = '{literal}'" in generated
 
 
+def test_upload_and_native_workspace_generated_contracts(source_tree):
+    result, output = run_make(source_tree, "gen-api-client")
+    assert result.returncode == 0, output
+    service = (source_tree / CLIENT_REL / "services/DefaultService.ts").read_text()
+    upload_start = service.index("public static wrapperApiUploadConvIdPost(")
+    upload_end = service.index("    /**", upload_start)
+    upload = service[upload_start:upload_end]
+    for signature in (
+        "convId: string",
+        "file: Blob",
+        "CancelablePromise<AttachmentResponse>",
+        "formData: formData",
+    ):
+        assert signature in upload
+    attachment = (source_tree / CLIENT_REL / "models/AttachmentResponse.ts").read_text()
+    for field in ("filename: string", "path: string", "mime_type: string"):
+        assert field in attachment
+    assert "any" not in attachment
+
+    native_start = service.index("public static wrapperApiWorkspacePathGet(")
+    native_end = service.index("    /**", native_start)
+    native = service[native_start:native_end]
+    assert "path: string" in native
+    assert "CancelablePromise<Blob>" in native
+    assert "CancelablePromise<any>" not in native
+    assert "url: '/api/workspace/{path}'" in native
+    index = (source_tree / CLIENT_REL / "index.ts").read_text()
+    assert "Parameters<" in index
+    assert "typeof __DefaultService.wrapperApiWorkspacePathGet" in index
+    assert "buildNativeWorkspaceUrl" in index
+
+    schema = json.loads((source_tree / "openapi.json").read_text())
+    upload_operation = schema["paths"]["/api/upload/{conv_id}"]["post"]
+    assert upload_operation["responses"]["201"]["content"]["application/json"]["schema"] == {
+        "$ref": "#/components/schemas/AttachmentResponse",
+    }
+    file_schema = upload_operation["requestBody"]["content"]["multipart/form-data"]["schema"]
+    assert file_schema["required"] == ["file"]
+    assert file_schema["properties"]["file"] == {"type": "string", "format": "binary"}
+    native_response = schema["paths"]["/api/workspace/{path}"]["get"]["responses"]["200"]
+    assert native_response["content"]["application/octet-stream"]["schema"] == {
+        "type": "string", "format": "binary",
+    }
+    assert set(native_response["headers"]) == {
+        "X-Content-Type-Options", "Content-Disposition",
+    }
+
+
+@pytest.mark.parametrize(
+    "contract",
+    ["upload_conv_id", "upload_file", "filename", "path", "mime_type", "native_path"],
+)
+def test_upload_and_native_workspace_contract_drift_fails_at_unchanged_callers(
+    source_tree, contract,
+):
+    callers = {
+        "upload-client.js": source_tree / STATIC_REL / "lib/upload-client.js",
+        "conversation-store.js": source_tree / STATIC_REL / "lib/conversation-store.js",
+        "chat-input.js": source_tree / STATIC_REL / "components/chat-input.js",
+        "user-message.js": source_tree / STATIC_REL / "components/messages/user-message.js",
+        "file-page.js": source_tree / STATIC_REL / "components/file-page.js",
+        "markdown.js": source_tree / STATIC_REL / "lib/markdown.js",
+    }
+    originals = {name: path.read_bytes() for name, path in callers.items()}
+
+    def mutate(original):
+        if contract in {"filename", "path", "mime_type"}:
+            before = "class AttachmentResponse(BaseModel):\n"
+            start = original.index(before)
+            end = original.index("\n\n\n", start)
+            block = original[start:end]
+            marker = f"    {contract}:"
+            assert block.count(marker) == 1
+            return original[:start] + block.replace(
+                marker, f"    renamed_{contract}:",
+            ) + original[end:]
+
+        route = "handle_upload" if contract.startswith("upload_") else "serve_workspace_file"
+        start = original.index('APIRoute("/api/' + (
+            'upload/{conv_id}", handle_upload' if route == "handle_upload"
+            else 'workspace/{path:path}", serve_workspace_file'
+        ))
+        end = original.index("        APIRoute(", start + 10)
+        block = original[start:end]
+        if contract == "upload_file":
+            before = '"properties": {"file": {"type": "string", "format": "binary"}}'
+            assert block.count(before) == 1
+            changed = block.replace(before, '"properties": {"file": {"type": "integer"}}')
+        else:
+            parameter = "conv_id" if contract == "upload_conv_id" else "path"
+            marker = f'"name": "{parameter}", "in": "path"'
+            parameter_start = block.index(marker)
+            schema_start = block.index('"schema": {"type": "string"}', parameter_start)
+            changed = (block[:schema_start] + '"schema": {"type": "integer"}'
+                       + block[schema_start + len('"schema": {"type": "string"}'):])
+        return original[:start] + changed + original[end:]
+
+    output = _mutate_workspace_contract(source_tree, mutate)
+    diagnostics = [line for line in output.splitlines() if "error TS" in line]
+    expected_callers = {
+        "upload_conv_id": {"lib/conversation-store.js", "components/chat-input.js"},
+        "upload_file": {"lib/conversation-store.js", "components/chat-input.js"},
+        "filename": {"components/messages/user-message.js"},
+        "path": {"components/messages/user-message.js"},
+        "mime_type": {"components/messages/user-message.js"},
+        "native_path": {
+            "components/messages/user-message.js", "components/file-page.js", "lib/markdown.js",
+        },
+    }[contract]
+    for caller in expected_callers:
+        assert any(line.startswith(caller + "(") for line in diagnostics), output
+    assert all("TS23" in line for line in diagnostics), output
+    for name, path in callers.items():
+        assert path.read_bytes() == originals[name]
+
+
 def test_vault_read_generated_contracts(source_tree):
     result, output = run_make(source_tree, "gen-api-client")
     assert result.returncode == 0, output

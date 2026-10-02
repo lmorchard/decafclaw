@@ -99,8 +99,15 @@ The Browse, Recent, editor-read, save, rename, and delete callers use the genera
 browser client. Their generated contracts cover paths, folder queries, save bodies,
 rename queries, folder and file records, editor state, mutation times, rename results,
 and delete results. Rename still sends no body. Save conflict handling and mutation
-error messages retain their existing behavior. Native file delivery remains a separate
-browser URL operation.
+error messages retain their existing behavior. Native file delivery uses a URL builder
+derived from the generated GET contract, so images and downloads remain ordinary
+authenticated browser requests rather than fetched Blob URLs. File-page and attachment
+paths encode each segment. `workspace://` Markdown URLs retain their existing raw
+percent, query, and fragment semantics.
+
+Forced downloads currently fail before sending a response when the filename contains
+characters outside Latin-1. That pre-existing server-header bug is tracked in
+[#895](https://github.com/lmorchard/decafclaw/issues/895).
 
 | Method | Path | Purpose |
 |---|---|---|
@@ -121,7 +128,7 @@ Frontend (all under `src/decafclaw/web/static/`):
 - `components/files-sidebar.js` — Files tab: browse/recent views, hidden-file toggle, breadcrumbs, auto-refetch listeners.
 - `components/file-page.js` — File content pane: routes to text editor / image preview / binary download based on `kind`; owns rename, delete, conflict recovery.
 - `components/file-editor.js` — CodeMirror 6 editor with debounced auto-save and conflict events.
-- `lib/api-client/` — Generated request methods and response types used by workspace reads and mutations.
+- `lib/api-client/` — Generated request methods, response types, and native-file URL builder used by workspace reads and mutations.
 - `codemirror-entry.js` — Bundling barrel for the CodeMirror language packs.
 
 Backend:

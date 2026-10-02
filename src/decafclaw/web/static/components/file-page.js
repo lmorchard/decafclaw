@@ -9,7 +9,7 @@
 
 import { LitElement, html, nothing } from 'lit';
 import { ApiError, DefaultService } from '../lib/api-client/index.js';
-import { encodePagePath } from '../lib/utils.js';
+import { buildNativeWorkspaceUrl } from '../lib/api-client/index.js';
 import './file-editor.js';
 
 /**
@@ -433,7 +433,7 @@ export class FilePage extends LitElement {
   }
 
   #renderImageBody() {
-    const src = '/api/workspace/' + encodePagePath(this.path);
+    const src = buildNativeWorkspaceUrl(this.path);
     return html`
       <div class="file-page-body file-page-image">
         <img src=${src} alt=${this.path} />
@@ -442,7 +442,7 @@ export class FilePage extends LitElement {
   }
 
   #renderBinaryBody() {
-    const href = '/api/workspace/' + encodePagePath(this.path);
+    const href = buildNativeWorkspaceUrl(this.path);
     const parts = this.path.split('/');
     const fileName = parts[parts.length - 1];
     const kindLabel = this.kind === 'binary' ? 'Binary file' : 'Unknown file type';

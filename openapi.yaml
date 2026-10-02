@@ -582,11 +582,30 @@ paths:
       summary: Wrapper
       operationId: wrapper_api_upload__conv_id__post
       responses:
-        '200':
+        '201':
           description: Successful Response
           content:
             application/json:
-              schema: {}
+              schema:
+                $ref: '#/components/schemas/AttachmentResponse'
+      parameters:
+      - name: conv_id
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+              required:
+              - file
   /api/workspace:
     get:
       summary: Wrapper
@@ -664,10 +683,27 @@ paths:
       operationId: wrapper_api_workspace__path__get
       responses:
         '200':
-          description: Successful Response
+          description: Workspace file bytes
           content:
-            application/json:
-              schema: {}
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+          headers:
+            X-Content-Type-Options:
+              schema:
+                type: string
+              description: Always nosniff
+            Content-Disposition:
+              schema:
+                type: string
+              description: Attachment filename for non-safe-image content
+      parameters:
+      - name: path
+        in: path
+        required: true
+        schema:
+          type: string
     put:
       summary: Wrapper
       operationId: wrapper_api_workspace__path__put
@@ -1399,6 +1435,23 @@ paths:
               schema: {}
 components:
   schemas:
+    AttachmentResponse:
+      properties:
+        filename:
+          type: string
+          title: Filename
+        path:
+          type: string
+          title: Path
+        mime_type:
+          type: string
+          title: Mime Type
+      type: object
+      required:
+      - filename
+      - path
+      - mime_type
+      title: AttachmentResponse
     AutocompleteResponse:
       properties:
         results:
