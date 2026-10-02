@@ -1089,7 +1089,8 @@ def test_browser_uses_clean_built_client(source_tree, config, monkeypatch):
                         .dataset.beforeReset = 'true';
                 }""")
                 page.once("dialog", lambda dialog: dialog.accept())
-                page.locator("#browser-schedule-page .schedule-reset-btn").click()
+                page.evaluate("""() => document.querySelector(
+                    '#browser-schedule-page .schedule-reset-btn').click()""")
                 page.wait_for_function("""() => {
                     const schedulePage = document.querySelector('#browser-schedule-page');
                     const editor = schedulePage.querySelector('wiki-editor');
