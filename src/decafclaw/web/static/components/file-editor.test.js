@@ -26,6 +26,8 @@ function contrast(hex1, hex2) {
   return (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
 }
 
+let styleEl;
+
 beforeAll(() => {
   // Load real application stylesheets in production order to test cascade and variables
   const stylesDir = path.resolve(__dirname, '../styles');
@@ -33,7 +35,7 @@ beforeAll(() => {
   const solarizedCss = fs.readFileSync(path.join(stylesDir, 'palettes/solarized-light.css'), 'utf8');
   const wikiCss = fs.readFileSync(path.join(stylesDir, 'wiki-editor.css'), 'utf8');
 
-  const styleEl = document.createElement('style');
+  styleEl = document.createElement('style');
   styleEl.textContent = [draculaCss, solarizedCss, wikiCss].join('\n\n');
   document.head.appendChild(styleEl);
 });
@@ -55,6 +57,10 @@ async function mountEditor(path, content) {
   editor.kind = 'text';
   document.body.append(editor);
   await editor.updateComplete;
+  // Ensure app stylesheet sits after style-mod injected styles, mirroring browser link order
+  if (styleEl && document.head.contains(styleEl)) {
+    document.head.appendChild(styleEl);
+  }
   const mount = editor.querySelector('.cm-editor');
   if (!(mount instanceof HTMLElement)) throw new Error('CodeMirror did not mount');
   const view = EditorView.findFromDOM(mount);
@@ -197,6 +203,12 @@ describe('FileEditor theming and mounting', () => {
     expect(activeLineGutter).toBeInstanceOf(HTMLElement);
     const content = mount.querySelector('.cm-content');
     expect(content).toBeInstanceOf(HTMLElement);
+
+    // Directly verify cursor element styling inside .cm-editor
+    const cursor = document.createElement('div');
+    cursor.className = 'cm-cursor';
+    mount.appendChild(cursor);
+    expect(getComputedStyle(cursor).borderLeftColor).toContain('--cm-cursor-color');
 
     expect(getComputedStyle(gutters).backgroundColor).toContain('--cm-gutter-bg');
     expect(getComputedStyle(gutterEl).color).toContain('--cm-gutter-color');
