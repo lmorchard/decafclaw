@@ -81,6 +81,13 @@ There is no live file-watcher or websocket-push for external changes — edits m
 
 Anything else renders as plain text with line numbers, search, folding, and bracket matching.
 
+### Theming and syntax styling
+
+The editor adapts dynamically to the active application theme (`light`, `dark`) and color palettes (`dracula`, `solarized-light`) managed by `lib/theme.js`:
+
+- **CSS-variable-backed syntax highlighting:** Tokens (`--cm-keyword`, `--cm-string`, `--cm-comment`, etc.) update immediately upon theme changes without reloading or remounting the editor. Base dark and light modes align with Atom One Dark/Light; Dracula and Solarized Light supply custom palette overrides. All tokens achieve WCAG AA contrast (>= 4.5:1) against their editor backgrounds.
+- **Editor chrome:** Caret/cursor, gutters, active line, active line gutter, matching brackets, and selection highlights adapt via dedicated `--cm-*` custom properties (`--cm-foreground`, `--cm-background`, `--cm-cursor-color`, `--cm-gutter-color`, `--cm-gutter-bg`, `--cm-gutter-active-color`, `--cm-active-line-bg`, `--cm-selection-bg`), ensuring the cursor is clearly visible in dark mode and line numbers meet AA contrast.
+
 ### Save flow
 
 - Typing starts an 800 ms debounce.
