@@ -22,3 +22,9 @@ All four phases completed:
 - Phase 2: CodeMirror theme variables and element styling
 - Phase 3: FileEditor component theme integration
 - Phase 4: Vitest unit tests in file-editor.test.js and verification gates
+
+Copilot review feedback addressed:
+- Addressed cascade override where later :root[data-theme="dark"] rules stomped on :root[data-palette="dracula"] by qualifying dark rules with :not([data-palette]).
+- Lightened Dracula comment color (#8c9fd4) and system-dark comment color (#8590a4) to achieve >= 4.5:1 contrast against dark backgrounds.
+- Darkened Solarized Light syntax tokens (#5b6c00 keyword, #15615a atom/string, #9e1a5a number, #586e75 comment/meta, #145c8f variable/property, #745700 type, #9e340a special, #a81c19 invalid) to achieve >= 4.5:1 contrast against #fdf6e3.
+- Extended file-editor.test.js to load actual stylesheets and assert computed CSS variables and contrast across all themes and palettes.

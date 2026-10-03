@@ -65,7 +65,7 @@ export const editorHighlightStyle = HighlightStyle.define([
   { tag: [tags.special(tags.variableName), tags.macroName], color: 'var(--cm-special, #61aeee)' },
   { tag: tags.definition(tags.propertyName), color: 'var(--cm-property, #61aeee)' },
   { tag: tags.propertyName, color: 'var(--cm-property, #61aeee)' },
-  { tag: tags.comment, color: 'var(--cm-comment, #5c6370)', fontStyle: 'italic' },
+  { tag: tags.comment, color: 'var(--cm-comment, #8590a4)', fontStyle: 'italic' },
   { tag: tags.meta, color: 'var(--cm-meta, #abb2bf)' },
   { tag: tags.number, color: 'var(--cm-number, #d19a66)' },
   { tag: tags.invalid, color: 'var(--cm-invalid, #e06c75)' },
