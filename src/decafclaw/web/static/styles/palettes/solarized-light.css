@@ -27,4 +27,19 @@
   --pico-mark-color: #657b83;              /* base00 */
   --pico-del-color: #dc322f;          /* red   */
   --pico-ins-color: #859900;          /* green */
+
+  --cm-keyword: #859900;
+  --cm-atom: #2aa198;
+  --cm-number: #d33682;
+  --cm-string: #2aa198;
+  --cm-comment: #93a1a1;
+  --cm-variable: #268bd2;
+  --cm-type: #b58900;
+  --cm-class: #b58900;
+  --cm-property: #268bd2;
+  --cm-literal: #2aa198;
+  --cm-regexp: #dc322f;
+  --cm-special: #cb4b16;
+  --cm-meta: #657b83;
+  --cm-invalid: #dc322f;
 }
