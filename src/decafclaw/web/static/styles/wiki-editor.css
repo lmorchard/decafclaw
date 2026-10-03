@@ -196,8 +196,8 @@
 }
 
 .file-editor-mount .cm-editor .cm-selectionMatch {
-  background-color: var(--pico-mark-background-color);
-  opacity: 0.5;
+  background-color: var(--pico-mark-background-color, #ffeeba);
+  color: var(--pico-mark-color, #13171f);
 }
 
 .file-editor-mount .cm-editor .cm-matchingBracket {

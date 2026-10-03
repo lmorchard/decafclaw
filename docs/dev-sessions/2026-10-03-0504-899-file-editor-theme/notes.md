@@ -14,7 +14,7 @@ active line) is styled via `--pico-*` custom properties.
 Baseline `make check` passed. Baseline `make test-js` passed with 395 tests.
 
 Final `make check` passed (lint, typecheck, check-js, module graph).
-Final `make test-js` passed with 400 tests across 40 test files (+5 in `file-editor.test.js`).
+Final `make test-js` passed with 401 tests across 40 test files (+6 in `file-editor.test.js`).
 Backend `tests/web/` passed with 101 tests.
 
 All four phases completed:
