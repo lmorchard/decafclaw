@@ -159,15 +159,18 @@ describe('FileEditor theming and mounting', () => {
     // 3. Solarized Light palette
     applyTheme('solarized-light');
     expect(getProp('--cm-keyword')).toBe('#5b6c00');
-    expect(getProp('--cm-comment')).toBe('#586e75');
+    expect(getProp('--cm-comment')).toBe('#4f636a');
+    expect(getProp('--cm-meta')).toBe('#4f636a');
     expect(getProp('--cm-background')).toBe('#fdf6e3');
     expect(getProp('--cm-foreground')).toBe('#073642');
     expect(getProp('--cm-gutter-bg')).toBe('#eee8d5');
     expect(getProp('--cm-gutter-color')).toBe('#4f636a');
     expect(getProp('--cm-gutter-active-color')).toBe('#073642');
+    expect(getProp('--cm-active-line-bg')).toBe('#eee8d5');
     expect(getProp('--cm-match-bg')).toBe('#eee8d5');
     expect(getProp('--cm-match-color')).toBe('#073642');
     const solarizedBg = getProp('--cm-background');
+    const solarizedActiveBg = getProp('--cm-active-line-bg');
     expect(contrast(solarizedBg, getProp('--cm-foreground'))).toBeGreaterThanOrEqual(4.5);
     expect(contrast(solarizedBg, getProp('--cm-cursor-color'))).toBeGreaterThanOrEqual(3.0);
     expect(contrast(getProp('--cm-gutter-bg'), getProp('--cm-gutter-color'))).toBeGreaterThanOrEqual(4.5);
@@ -176,6 +179,8 @@ describe('FileEditor theming and mounting', () => {
     expect(contrast(solarizedBg, getProp('--cm-keyword'))).toBeGreaterThanOrEqual(4.5);
     expect(contrast(solarizedBg, getProp('--cm-atom'))).toBeGreaterThanOrEqual(4.5);
     expect(contrast(solarizedBg, getProp('--cm-comment'))).toBeGreaterThanOrEqual(4.5);
+    expect(contrast(solarizedActiveBg, getProp('--cm-comment'))).toBeGreaterThanOrEqual(4.5);
+    expect(contrast(solarizedActiveBg, getProp('--cm-meta'))).toBeGreaterThanOrEqual(4.5);
 
     // 4. Base Light theme
     applyTheme('light');

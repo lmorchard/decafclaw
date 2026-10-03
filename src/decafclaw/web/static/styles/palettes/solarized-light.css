@@ -43,7 +43,7 @@
   --cm-atom: #15615a;
   --cm-number: #9e1a5a;
   --cm-string: #15615a;
-  --cm-comment: #586e75;
+  --cm-comment: #4f636a;
   --cm-variable: #145c8f;
   --cm-type: #745700;
   --cm-class: #745700;
@@ -51,6 +51,6 @@
   --cm-literal: #15615a;
   --cm-regexp: #9e340a;
   --cm-special: #9e340a;
-  --cm-meta: #586e75;
+  --cm-meta: #4f636a;
   --cm-invalid: #a81c19;
 }
