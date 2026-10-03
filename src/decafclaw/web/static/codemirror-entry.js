@@ -14,11 +14,13 @@ export { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirro
 export {
   bracketMatching,
   defaultHighlightStyle,
+  HighlightStyle,
   syntaxHighlighting,
   foldGutter,
   foldKeymap,
   indentOnInput,
 } from '@codemirror/language';
+export { tags } from '@lezer/highlight';
 
 // Search
 export { searchKeymap, highlightSelectionMatches } from '@codemirror/search';
