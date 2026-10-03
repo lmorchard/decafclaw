@@ -29,12 +29,11 @@
 
   --cm-foreground: #f8f8f2;
   --cm-background: #282a36;
-  --cm-cursor-color: #f8f8f2;
+  --cm-cursor-color: #bd93f9;
   --cm-gutter-color: #95a7db;
   --cm-gutter-bg: #2f313f;
   --cm-gutter-active-color: #f8f8f2;
-  --cm-active-line-bg: #21222c;
-  --cm-active-line-border: #6272a4;
+  --cm-active-line-bg: #2d303e;
   --cm-selection-bg: rgba(189, 147, 249, 0.08);
   --cm-selection-border: #bd93f9;
   --cm-match-bg: #44475a;

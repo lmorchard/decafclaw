@@ -30,12 +30,11 @@
 
   --cm-foreground: #073642;
   --cm-background: #fdf6e3;
-  --cm-cursor-color: #073642;
+  --cm-cursor-color: #268bd2;
   --cm-gutter-color: #4f636a;
   --cm-gutter-bg: #eee8d5;
   --cm-gutter-active-color: #073642;
-  --cm-active-line-bg: #eee8d5;
-  --cm-active-line-border: #758c8c;
+  --cm-active-line-bg: #f8f2de;
   --cm-selection-bg: rgba(38, 139, 210, 0.1);
   --cm-selection-border: #268bd2;
   --cm-match-bg: #eee8d5;
