@@ -288,6 +288,22 @@ async def test_serve_workspace_ascii_download_keeps_filename_and_media_type(
 
 
 @pytest.mark.asyncio
+async def test_serve_workspace_ascii_download_needing_quoting_uses_utf8_filename(
+    client, http_config,
+):
+    # #895: FileResponse emits filename*= for any name that needs URL quoting,
+    # including plain ASCII names with spaces. That form is accepted; pin it.
+    workspace: Path = http_config.workspace_path
+    (workspace / "my report.txt").write_text("spaced report")
+
+    resp = await client.get("/api/workspace/my%20report.txt")
+    assert resp.status_code == 200
+    assert resp.content == b"spaced report"
+    assert resp.headers["x-content-type-options"] == "nosniff"
+    assert resp.headers["content-disposition"] == "attachment; filename*=utf-8''my%20report.txt"
+
+
+@pytest.mark.asyncio
 async def test_serve_workspace_non_latin_download_uses_utf8_filename(
     client, http_config,
 ):
