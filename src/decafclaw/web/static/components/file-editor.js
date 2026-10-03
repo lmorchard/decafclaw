@@ -28,8 +28,9 @@ import {
   historyKeymap,
   indentWithTab,
   bracketMatching,
-  defaultHighlightStyle,
+  HighlightStyle,
   syntaxHighlighting,
+  tags,
   foldGutter,
   foldKeymap,
   indentOnInput,
@@ -41,6 +42,34 @@ import {
   yaml,
   javascript,
 } from 'codemirror';
+
+/**
+ * Custom HighlightStyle backed by CSS variables (--cm-*) that adapt to the
+ * active application theme (light, dark, Dracula, Solarized Light).
+ */
+export const editorHighlightStyle = HighlightStyle.define([
+  { tag: tags.link, textDecoration: 'underline' },
+  { tag: tags.heading, textDecoration: 'underline', fontWeight: 'bold' },
+  { tag: tags.emphasis, fontStyle: 'italic' },
+  { tag: tags.strong, fontWeight: 'bold' },
+  { tag: tags.strikethrough, textDecoration: 'line-through' },
+  { tag: tags.keyword, color: 'var(--cm-keyword, #c678dd)' },
+  { tag: [tags.atom, tags.bool, tags.url, tags.contentSeparator, tags.labelName], color: 'var(--cm-atom, #56b6c2)' },
+  { tag: [tags.literal, tags.inserted], color: 'var(--cm-literal, #56b6c2)' },
+  { tag: [tags.string, tags.deleted], color: 'var(--cm-string, #98c379)' },
+  { tag: [tags.regexp, tags.escape, tags.special(tags.string)], color: 'var(--cm-regexp, #56b6c2)' },
+  { tag: tags.definition(tags.variableName), color: 'var(--cm-variable, #e06c75)' },
+  { tag: tags.local(tags.variableName), color: 'var(--cm-variable, #e06c75)' },
+  { tag: [tags.typeName, tags.namespace], color: 'var(--cm-type, #e6c07b)' },
+  { tag: tags.className, color: 'var(--cm-class, #e6c07b)' },
+  { tag: [tags.special(tags.variableName), tags.macroName], color: 'var(--cm-special, #61aeee)' },
+  { tag: tags.definition(tags.propertyName), color: 'var(--cm-property, #61aeee)' },
+  { tag: tags.propertyName, color: 'var(--cm-property, #61aeee)' },
+  { tag: tags.comment, color: 'var(--cm-comment, #5c6370)', fontStyle: 'italic' },
+  { tag: tags.meta, color: 'var(--cm-meta, #abb2bf)' },
+  { tag: tags.number, color: 'var(--cm-number, #d19a66)' },
+  { tag: tags.invalid, color: 'var(--cm-invalid, #e06c75)' },
+]);
 
 const SAVE_DEBOUNCE_MS = 800;
 
@@ -153,7 +182,7 @@ export class FileEditor extends LitElement {
       history(),
       indentOnInput(),
       bracketMatching(),
-      syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
+      syntaxHighlighting(editorHighlightStyle, { fallback: true }),
       keymap.of([
         ...defaultKeymap,
         ...historyKeymap,

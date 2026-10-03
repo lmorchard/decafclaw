@@ -53,8 +53,8 @@ Update `FileEditor` in `src/decafclaw/web/static/components/file-editor.js` to d
 - Modify: `src/decafclaw/web/static/components/file-editor.js` — import `HighlightStyle` and `tags` from `codemirror`, construct `editorHighlightStyle`, and apply it to editor extensions
 
 **Verification — automated:**
-- [ ] `make check-js` passes
-- [ ] `make test-js` passes
+- [x] `make check-js` passes — **tsc --noEmit passed**
+- [x] `make test-js` passes — **395 passed**
 
 ---
 
