@@ -109,12 +109,21 @@ describe('FileEditor theming and mounting', () => {
     const { mount } = await mountEditor('theme-test.md', '# Heading\nSome content');
     expect(mount.isConnected).toBe(true);
 
-    const getProp = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    const getProp = (name) => getComputedStyle(mount).getPropertyValue(name).trim();
 
     // 1. Dark theme
     applyTheme('dark');
     expect(getProp('--cm-keyword')).toBe('#c678dd');
     expect(getProp('--cm-comment')).toBe('#8590a4');
+    expect(getProp('--cm-background')).toBe('#13171f');
+    expect(getProp('--cm-foreground')).toBe('#c2c7d0');
+    expect(getProp('--cm-gutter-bg')).toBe('#1b202b');
+    expect(getProp('--cm-gutter-color')).toBe('#8590a4');
+    expect(getProp('--cm-gutter-active-color')).toBe('#c2c7d0');
+    expect(contrast('#13171f', getProp('--cm-foreground'))).toBeGreaterThanOrEqual(4.5);
+    expect(contrast('#13171f', getProp('--cm-cursor-color'))).toBeGreaterThanOrEqual(3.0);
+    expect(contrast('#1b202b', getProp('--cm-gutter-color'))).toBeGreaterThanOrEqual(4.5);
+    expect(contrast('#1b202b', getProp('--cm-gutter-active-color'))).toBeGreaterThanOrEqual(4.5);
     expect(contrast('#13171f', getProp('--cm-comment'))).toBeGreaterThanOrEqual(4.5);
     expect(contrast('#13171f', getProp('--cm-keyword'))).toBeGreaterThanOrEqual(4.5);
 
@@ -122,18 +131,33 @@ describe('FileEditor theming and mounting', () => {
     applyTheme('dracula');
     expect(getProp('--cm-keyword')).toBe('#ff79c6');
     expect(getProp('--cm-comment')).toBe('#8c9fd4');
-    const draculaBg = getProp('--pico-background-color');
-    expect(draculaBg).toBe('#282a36');
+    expect(getProp('--cm-background')).toBe('#282a36');
+    expect(getProp('--cm-foreground')).toBe('#f8f8f2');
+    expect(getProp('--cm-gutter-bg')).toBe('#2f313f');
+    expect(getProp('--cm-gutter-color')).toBe('#8c9fd4');
+    expect(getProp('--cm-gutter-active-color')).toBe('#f8f8f2');
+    const draculaBg = getProp('--cm-background');
+    expect(contrast(draculaBg, getProp('--cm-foreground'))).toBeGreaterThanOrEqual(4.5);
+    expect(contrast(draculaBg, getProp('--cm-cursor-color'))).toBeGreaterThanOrEqual(3.0);
+    expect(contrast(getProp('--cm-gutter-bg'), getProp('--cm-gutter-color'))).toBeGreaterThanOrEqual(4.5);
+    expect(contrast(getProp('--cm-gutter-bg'), getProp('--cm-gutter-active-color'))).toBeGreaterThanOrEqual(4.5);
     expect(contrast(draculaBg, getProp('--cm-comment'))).toBeGreaterThanOrEqual(4.5);
     expect(contrast(draculaBg, getProp('--cm-keyword'))).toBeGreaterThanOrEqual(4.5);
-    expect(contrast(draculaBg, getProp('--pico-color'))).toBeGreaterThanOrEqual(4.5);
 
     // 3. Solarized Light palette
     applyTheme('solarized-light');
     expect(getProp('--cm-keyword')).toBe('#5b6c00');
     expect(getProp('--cm-comment')).toBe('#586e75');
-    const solarizedBg = getProp('--pico-background-color');
-    expect(solarizedBg).toBe('#fdf6e3');
+    expect(getProp('--cm-background')).toBe('#fdf6e3');
+    expect(getProp('--cm-foreground')).toBe('#073642');
+    expect(getProp('--cm-gutter-bg')).toBe('#eee8d5');
+    expect(getProp('--cm-gutter-color')).toBe('#4f636a');
+    expect(getProp('--cm-gutter-active-color')).toBe('#073642');
+    const solarizedBg = getProp('--cm-background');
+    expect(contrast(solarizedBg, getProp('--cm-foreground'))).toBeGreaterThanOrEqual(4.5);
+    expect(contrast(solarizedBg, getProp('--cm-cursor-color'))).toBeGreaterThanOrEqual(3.0);
+    expect(contrast(getProp('--cm-gutter-bg'), getProp('--cm-gutter-color'))).toBeGreaterThanOrEqual(4.5);
+    expect(contrast(getProp('--cm-gutter-bg'), getProp('--cm-gutter-active-color'))).toBeGreaterThanOrEqual(4.5);
     expect(contrast(solarizedBg, getProp('--cm-keyword'))).toBeGreaterThanOrEqual(4.5);
     expect(contrast(solarizedBg, getProp('--cm-atom'))).toBeGreaterThanOrEqual(4.5);
     expect(contrast(solarizedBg, getProp('--cm-comment'))).toBeGreaterThanOrEqual(4.5);
@@ -142,9 +166,19 @@ describe('FileEditor theming and mounting', () => {
     applyTheme('light');
     expect(getProp('--cm-keyword')).toBe('#a626a4');
     expect(getProp('--cm-comment')).toBe('#5c6370');
-    expect(contrast('#ffffff', getProp('--cm-keyword'))).toBeGreaterThanOrEqual(4.5);
-    expect(contrast('#ffffff', getProp('--cm-comment'))).toBeGreaterThanOrEqual(4.5);
-    expect(contrast('#ffffff', getProp('--cm-string'))).toBeGreaterThanOrEqual(4.5);
+    expect(getProp('--cm-background')).toBe('#ffffff');
+    expect(getProp('--cm-foreground')).toBe('#13171f');
+    expect(getProp('--cm-gutter-bg')).toBe('#f6f8fa');
+    expect(getProp('--cm-gutter-color')).toBe('#5c6370');
+    expect(getProp('--cm-gutter-active-color')).toBe('#13171f');
+    const lightBg = getProp('--cm-background');
+    expect(contrast(lightBg, getProp('--cm-foreground'))).toBeGreaterThanOrEqual(4.5);
+    expect(contrast(lightBg, getProp('--cm-cursor-color'))).toBeGreaterThanOrEqual(3.0);
+    expect(contrast(getProp('--cm-gutter-bg'), getProp('--cm-gutter-color'))).toBeGreaterThanOrEqual(4.5);
+    expect(contrast(getProp('--cm-gutter-bg'), getProp('--cm-gutter-active-color'))).toBeGreaterThanOrEqual(4.5);
+    expect(contrast(lightBg, getProp('--cm-keyword'))).toBeGreaterThanOrEqual(4.5);
+    expect(contrast(lightBg, getProp('--cm-comment'))).toBeGreaterThanOrEqual(4.5);
+    expect(contrast(lightBg, getProp('--cm-string'))).toBeGreaterThanOrEqual(4.5);
 
     expect(mount.isConnected).toBe(true);
   });
