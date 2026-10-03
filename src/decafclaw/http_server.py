@@ -1303,10 +1303,16 @@ async def serve_workspace_file(request: Request, username: str):
     # Inline display only for safe image types; everything else (incl. SVG)
     # is forced to download to prevent XSS.
     safe_inline = content_type.startswith("image/") and content_type != "image/svg+xml"
-    headers = {"X-Content-Type-Options": "nosniff"}
-    if not safe_inline:
-        headers["Content-Disposition"] = f'attachment; filename="{resolved.name}"'
-    return FileResponse(str(resolved), media_type=content_type, headers=headers)
+    # Let FileResponse build Content-Disposition: it emits an RFC 5987
+    # filename*=utf-8''... value for names that need quoting, which a
+    # hand-built Latin-1 header cannot carry (#895).
+    return FileResponse(
+        str(resolved),
+        media_type=content_type,
+        headers={"X-Content-Type-Options": "nosniff"},
+        filename=None if safe_inline else resolved.name,
+        content_disposition_type="attachment",
+    )
 
 
 @_authenticated
