@@ -215,5 +215,9 @@ describe('FileEditor theming and mounting', () => {
     expect(getComputedStyle(activeLine).backgroundColor).toContain('--cm-active-line-bg');
     expect(getComputedStyle(activeLineGutter).color).toContain('--cm-gutter-active-color');
     expect(getComputedStyle(content).caretColor).toContain('--cm-cursor-color');
+
+    // Focused state preserves themed outline for keyboard accessibility
+    mount.classList.add('cm-focused');
+    expect(getComputedStyle(mount).outline).toContain('--pico-primary');
   });
 });
