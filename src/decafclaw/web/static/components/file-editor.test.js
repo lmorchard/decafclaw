@@ -1,8 +1,42 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 import { EditorView } from 'codemirror';
-import { afterEach, describe, expect, it } from 'vitest';
+import { beforeAll, afterEach, describe, expect, it } from 'vitest';
 
 import { FileEditor, editorHighlightStyle } from './file-editor.js';
 import { applyTheme } from '../lib/theme.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+/** Calculate WCAG relative luminance of a #rrggbb color. */
+function luminance(hex) {
+  const r = parseInt(hex.slice(1, 3), 16) / 255;
+  const g = parseInt(hex.slice(3, 5), 16) / 255;
+  const b = parseInt(hex.slice(5, 7), 16) / 255;
+  const a = [r, g, b].map((v) => (v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4)));
+  return a[0] * 0.2126 + a[1] * 0.7152 + a[2] * 0.0722;
+}
+
+/** Calculate contrast ratio between two hex colors. */
+function contrast(hex1, hex2) {
+  const l1 = luminance(hex1);
+  const l2 = luminance(hex2);
+  return (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
+}
+
+beforeAll(() => {
+  // Load real application stylesheets in production order to test cascade and variables
+  const stylesDir = path.resolve(__dirname, '../styles');
+  const draculaCss = fs.readFileSync(path.join(stylesDir, 'palettes/dracula.css'), 'utf8');
+  const solarizedCss = fs.readFileSync(path.join(stylesDir, 'palettes/solarized-light.css'), 'utf8');
+  const wikiCss = fs.readFileSync(path.join(stylesDir, 'wiki-editor.css'), 'utf8');
+
+  const styleEl = document.createElement('style');
+  styleEl.textContent = [draculaCss, solarizedCss, wikiCss].join('\n\n');
+  document.head.appendChild(styleEl);
+});
 
 afterEach(() => {
   document.body.replaceChildren();
@@ -56,7 +90,6 @@ describe('FileEditor theming and mounting', () => {
     const { mount } = await mountEditor('test.py', code);
     const spans = mount.querySelectorAll('.cm-line span');
     expect(spans.length).toBeGreaterThan(0);
-    // Find keyword span ("def" or "return")
     const keywordSpan = Array.from(spans).find((s) => s.textContent === 'def' || s.textContent === 'return');
     expect(keywordSpan).toBeDefined();
     expect(keywordSpan?.className).toMatch(/^ͼ/);
@@ -72,27 +105,47 @@ describe('FileEditor theming and mounting', () => {
     expect(keywordSpan?.className).toMatch(/^ͼ/);
   });
 
-  it('updates html attributes dynamically when theme changes without remounting', async () => {
+  it('updates CSS variables and satisfies WCAG AA contrast across themes', async () => {
     const { mount } = await mountEditor('theme-test.md', '# Heading\nSome content');
     expect(mount.isConnected).toBe(true);
 
+    const getProp = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+
+    // 1. Dark theme
     applyTheme('dark');
-    expect(document.documentElement.getAttribute('data-theme')).toBe('dark');
-    expect(document.documentElement.getAttribute('data-palette')).toBeNull();
+    expect(getProp('--cm-keyword')).toBe('#c678dd');
+    expect(getProp('--cm-comment')).toBe('#8590a4');
+    expect(contrast('#13171f', getProp('--cm-comment'))).toBeGreaterThanOrEqual(4.5);
+    expect(contrast('#13171f', getProp('--cm-keyword'))).toBeGreaterThanOrEqual(4.5);
 
+    // 2. Dracula palette (verifying Dracula overrides base dark in cascade)
     applyTheme('dracula');
-    expect(document.documentElement.getAttribute('data-theme')).toBe('dark');
-    expect(document.documentElement.getAttribute('data-palette')).toBe('dracula');
+    expect(getProp('--cm-keyword')).toBe('#ff79c6');
+    expect(getProp('--cm-comment')).toBe('#8c9fd4');
+    const draculaBg = getProp('--pico-background-color');
+    expect(draculaBg).toBe('#282a36');
+    expect(contrast(draculaBg, getProp('--cm-comment'))).toBeGreaterThanOrEqual(4.5);
+    expect(contrast(draculaBg, getProp('--cm-keyword'))).toBeGreaterThanOrEqual(4.5);
+    expect(contrast(draculaBg, getProp('--pico-color'))).toBeGreaterThanOrEqual(4.5);
 
+    // 3. Solarized Light palette
     applyTheme('solarized-light');
-    expect(document.documentElement.getAttribute('data-theme')).toBe('light');
-    expect(document.documentElement.getAttribute('data-palette')).toBe('solarized-light');
+    expect(getProp('--cm-keyword')).toBe('#5b6c00');
+    expect(getProp('--cm-comment')).toBe('#586e75');
+    const solarizedBg = getProp('--pico-background-color');
+    expect(solarizedBg).toBe('#fdf6e3');
+    expect(contrast(solarizedBg, getProp('--cm-keyword'))).toBeGreaterThanOrEqual(4.5);
+    expect(contrast(solarizedBg, getProp('--cm-atom'))).toBeGreaterThanOrEqual(4.5);
+    expect(contrast(solarizedBg, getProp('--cm-comment'))).toBeGreaterThanOrEqual(4.5);
 
+    // 4. Base Light theme
     applyTheme('light');
-    expect(document.documentElement.getAttribute('data-theme')).toBe('light');
-    expect(document.documentElement.getAttribute('data-palette')).toBeNull();
+    expect(getProp('--cm-keyword')).toBe('#a626a4');
+    expect(getProp('--cm-comment')).toBe('#5c6370');
+    expect(contrast('#ffffff', getProp('--cm-keyword'))).toBeGreaterThanOrEqual(4.5);
+    expect(contrast('#ffffff', getProp('--cm-comment'))).toBeGreaterThanOrEqual(4.5);
+    expect(contrast('#ffffff', getProp('--cm-string'))).toBeGreaterThanOrEqual(4.5);
 
-    // Editor remains mounted throughout theme transitions
     expect(mount.isConnected).toBe(true);
   });
 });

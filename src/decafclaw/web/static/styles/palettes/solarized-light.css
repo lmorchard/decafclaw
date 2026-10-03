@@ -28,18 +28,18 @@
   --pico-del-color: #dc322f;          /* red   */
   --pico-ins-color: #859900;          /* green */
 
-  --cm-keyword: #859900;
-  --cm-atom: #2aa198;
-  --cm-number: #d33682;
-  --cm-string: #2aa198;
-  --cm-comment: #93a1a1;
-  --cm-variable: #268bd2;
-  --cm-type: #b58900;
-  --cm-class: #b58900;
-  --cm-property: #268bd2;
-  --cm-literal: #2aa198;
-  --cm-regexp: #dc322f;
-  --cm-special: #cb4b16;
-  --cm-meta: #657b83;
-  --cm-invalid: #dc322f;
+  --cm-keyword: #5b6c00;
+  --cm-atom: #15615a;
+  --cm-number: #9e1a5a;
+  --cm-string: #15615a;
+  --cm-comment: #586e75;
+  --cm-variable: #145c8f;
+  --cm-type: #745700;
+  --cm-class: #745700;
+  --cm-property: #145c8f;
+  --cm-literal: #15615a;
+  --cm-regexp: #9e340a;
+  --cm-special: #9e340a;
+  --cm-meta: #586e75;
+  --cm-invalid: #a81c19;
 }
