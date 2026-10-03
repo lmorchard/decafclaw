@@ -203,6 +203,9 @@ export class SchedulePage extends LitElement {
    */
   async #onWikiSaved(/** @type {CustomEvent} */ e) {
     const name = this.name;
+    // Every selection starts a fetch, so an unchanged count also rules out
+    // A -> B -> A, where the name matches again but newer data has loaded.
+    const fetchId = this.#fetchCount;
     // A detached editor can report a save after the user selected another
     // schedule (focus loss saves as the selection click lands). The save
     // completed, so announce it, but leave the new schedule's panel alone.
@@ -215,7 +218,7 @@ export class SchedulePage extends LitElement {
     }
     try {
       const data = await DefaultService.wrapperApiSchedulesNameGet(name);
-      if (name === this.name) {
+      if (name === this.name && fetchId === this.#fetchCount) {
         const preservedBody = this._data?.body ?? data.schedule.body;
         this._data = { ...data.schedule, body: preservedBody };
       }

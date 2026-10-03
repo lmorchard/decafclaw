@@ -1,5 +1,25 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+// These tests read wiki-editor's properties, not Milkdown's rendering. A real
+// Milkdown editor arms 3-second timers that call the global
+// removeEventListener even after the editor is destroyed; when one fires
+// after jsdom teardown, vitest reports an unhandled ReferenceError and exits
+// 1. Override only `Editor`, as wiki-editor.test.js does.
+vi.mock('@milkdown/kit', async (importOriginal) => {
+  const actual = /** @type {object} */ (await importOriginal());
+  const make = () => {
+    const editor = { action: () => {}, destroy: () => {} };
+    /** @type {Record<string, Function>} */
+    const chainable = {
+      config: () => chainable,
+      use: () => chainable,
+      create: async () => editor,
+    };
+    return chainable;
+  };
+  return { ...actual, Editor: { make } };
+});
+
 await import('./schedule-page.js');
 
 const SCHEDULE = {
@@ -284,16 +304,20 @@ function controlledFetch() {
     });
   });
   /**
-   * Resolve the oldest pending request for this method and URL.
+   * Resolve the oldest pending request for this method and URL, or the
+   * newest one when `newest` is set.
    * @param {string} method
    * @param {string} url
    * @param {unknown} body
    * @param {number} [status]
+   * @param {{newest?: boolean}} [options]
    */
-  async function respond(method, url, body, status) {
+  async function respond(method, url, body, status, { newest = false } = {}) {
     // The generated client reaches fetch() a few microtasks after the call.
     await settle();
-    const index = pending.findIndex(p => p.method === method && p.url === url);
+    const matches = (/** @type {{method: string, url: string}} */ p) =>
+      p.method === method && p.url === url;
+    const index = newest ? pending.findLastIndex(matches) : pending.findIndex(matches);
     if (index < 0) {
       const open = pending.map(p => `${p.method} ${p.url}`).join(', ');
       throw new Error(`no pending ${method} ${url}; pending: ${open}`);
@@ -412,6 +436,33 @@ describe('schedule-page responses after a selection change', () => {
     expect(el._data.modified).toBe(2);
   });
 
+  it('ignores a post-save dream refresh after selecting garden and then dream again', async () => {
+    const el = await mountDream();
+
+    el.querySelector('wiki-editor').dispatchEvent(new CustomEvent('saved', {
+      detail: { modified: 5, page: 'dream' }, bubbles: true, composed: true,
+    }));
+    await settle();
+    await selectGarden(el);
+    await server.respond('GET', '/api/schedules/garden', { schedule: GARDEN });
+    el.name = 'dream';
+    await el.updateComplete;
+    await settle();
+    // The second dream selection loads newer data than the old refresh saw.
+    const freshDream = { ...DREAM, body: 'Fresh dream body.', modified: 9 };
+    await server.respond('GET', '/api/schedules/dream', { schedule: freshDream }, 200,
+      { newest: true });
+    await el.updateComplete;
+    expect(el._data.modified).toBe(9);
+
+    // The refresh from the first dream selection arrives last.
+    await server.respond('GET', '/api/schedules/dream', { schedule: STALE_DREAM });
+    await el.updateComplete;
+
+    expect(el._data).toEqual(freshDream);
+    expect(el.querySelector('.schedule-overlay-badge')).toBeNull();
+  });
+
   it('ignores a dream editor save that finishes after garden is selected', async () => {
     const el = await mountDream();
     const dreamEditor = el.querySelector('wiki-editor');
@@ -497,6 +548,7 @@ describe('schedule-page responses after a selection change', () => {
     expect(el._loading).toBe(false);
     expectPanelShowsGarden(el);
   });
+
   it('does not reload or remount garden when a dream reset finishes after garden', async () => {
     vi.stubGlobal('confirm', () => true);
     const el = /** @type {any} */ (document.createElement('schedule-page'));
