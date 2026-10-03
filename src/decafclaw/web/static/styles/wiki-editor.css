@@ -63,8 +63,164 @@
   overflow: auto;
 }
 
+/* -- CodeMirror Syntax Highlighting & Theme Variables ---------------------- */
+
+:root {
+  --cm-foreground: #13171f;
+  --cm-background: #ffffff;
+  --cm-cursor-color: #13171f;
+  --cm-gutter-color: #5c6370;
+  --cm-gutter-bg: #f6f8fa;
+  --cm-gutter-active-color: #13171f;
+  --cm-active-line-bg: #f6f8fa;
+  --cm-active-line-border: #767676;
+  --cm-selection-bg: rgba(16, 149, 193, 0.1);
+  --cm-selection-border: #1095c1;
+  --cm-match-bg: #ffeeba;
+  --cm-match-color: #13171f;
+
+  --cm-keyword: #a626a4;
+  --cm-atom: #006a96;
+  --cm-number: #855b00;
+  --cm-string: #2e7430;
+  --cm-comment: #5c6370;
+  --cm-variable: #be2e22;
+  --cm-type: #8a5d00;
+  --cm-class: #8a5d00;
+  --cm-property: #1c55cc;
+  --cm-literal: #006a96;
+  --cm-regexp: #2e7430;
+  --cm-special: #1c55cc;
+  --cm-meta: #383a42;
+  --cm-invalid: #be2e22;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]):not([data-palette]) {
+    --cm-foreground: #c2c7d0;
+    --cm-background: #13171f;
+    --cm-cursor-color: #c2c7d0;
+    --cm-gutter-color: #8590a4;
+    --cm-gutter-bg: #1b202b;
+    --cm-gutter-active-color: #c2c7d0;
+    --cm-active-line-bg: #1b202b;
+    --cm-active-line-border: #6b7382;
+    --cm-selection-bg: rgba(16, 149, 193, 0.12);
+    --cm-selection-border: #1095c1;
+    --cm-match-bg: #44475a;
+    --cm-match-color: #f8f8f2;
+
+    --cm-keyword: #c678dd;
+    --cm-atom: #56b6c2;
+    --cm-number: #d19a66;
+    --cm-string: #98c379;
+    --cm-comment: #8590a4;
+    --cm-variable: #e06c75;
+    --cm-type: #e6c07b;
+    --cm-class: #e6c07b;
+    --cm-property: #61aeee;
+    --cm-literal: #56b6c2;
+    --cm-regexp: #98c379;
+    --cm-special: #61aeee;
+    --cm-meta: #abb2bf;
+    --cm-invalid: #e06c75;
+  }
+}
+
+:root[data-theme="dark"]:not([data-palette]) {
+  --cm-foreground: #c2c7d0;
+  --cm-background: #13171f;
+  --cm-cursor-color: #c2c7d0;
+  --cm-gutter-color: #8590a4;
+  --cm-gutter-bg: #1b202b;
+  --cm-gutter-active-color: #c2c7d0;
+  --cm-active-line-bg: #1b202b;
+  --cm-active-line-border: #6b7382;
+  --cm-selection-bg: rgba(16, 149, 193, 0.12);
+  --cm-selection-border: #1095c1;
+  --cm-match-bg: #44475a;
+  --cm-match-color: #f8f8f2;
+
+  --cm-keyword: #c678dd;
+  --cm-atom: #56b6c2;
+  --cm-number: #d19a66;
+  --cm-string: #98c379;
+  --cm-comment: #8590a4;
+  --cm-variable: #e06c75;
+  --cm-type: #e6c07b;
+  --cm-class: #e6c07b;
+  --cm-property: #61aeee;
+  --cm-literal: #56b6c2;
+  --cm-regexp: #98c379;
+  --cm-special: #61aeee;
+  --cm-meta: #abb2bf;
+  --cm-invalid: #e06c75;
+}
+
 .file-editor-mount .cm-editor {
   height: 100%;
+  background-color: var(--cm-background, var(--pico-background-color));
+  color: var(--cm-foreground, var(--pico-color));
+  font-family: var(--pico-font-family-monospace, monospace);
+  font-size: 0.85rem;
+}
+
+.file-editor-mount .cm-editor.cm-focused {
+  outline: 1px solid var(--pico-primary);
+}
+
+.file-editor-mount .cm-editor .cm-scroller {
+  font-family: inherit;
+  line-height: 1.5;
+}
+
+.file-editor-mount .cm-editor .cm-content {
+  caret-color: var(--cm-cursor-color, var(--pico-color));
+}
+
+.file-editor-mount .cm-editor .cm-cursor,
+.file-editor-mount .cm-editor .cm-dropCursor {
+  border-left-color: var(--cm-cursor-color, var(--pico-color)) !important;
+}
+
+.file-editor-mount .cm-editor .cm-gutters {
+  background-color: var(--cm-gutter-bg, var(--pico-card-background-color));
+  color: var(--cm-gutter-color, var(--pico-muted-color));
+  border-right: 1px solid var(--pico-muted-border-color);
+}
+
+.file-editor-mount .cm-editor .cm-gutterElement {
+  color: var(--cm-gutter-color, var(--pico-muted-color));
+}
+
+.file-editor-mount .cm-editor .cm-activeLine {
+  background-color: var(--cm-active-line-bg, var(--pico-code-background-color));
+  outline: 1px solid var(--cm-active-line-border);
+}
+
+.file-editor-mount .cm-editor .cm-activeLineGutter {
+  background-color: var(--cm-active-line-bg, var(--pico-card-sectioning-background-color, var(--pico-code-background-color)));
+  color: var(--cm-gutter-active-color, var(--pico-color));
+}
+
+.file-editor-mount .cm-editor ::selection {
+  background-color: var(--cm-selection-bg, var(--pico-primary-focus)) !important;
+}
+
+.file-editor-mount .cm-editor .cm-selectionBackground,
+.file-editor-mount .cm-editor .cm-selectionLayer .cm-selectionBackground {
+  background-color: var(--cm-selection-bg, var(--pico-primary-focus)) !important;
+  outline: 1px solid var(--cm-selection-border);
+}
+
+.file-editor-mount .cm-editor .cm-selectionMatch {
+  background-color: var(--cm-match-bg, var(--pico-mark-background-color, #ffeeba));
+  color: var(--cm-match-color, var(--pico-mark-color, #13171f));
+}
+
+.file-editor-mount .cm-editor .cm-matchingBracket {
+  background-color: var(--cm-selection-bg, var(--pico-primary-focus));
+  outline: 1px solid var(--pico-primary);
 }
 
 .wiki-editor-toolbar-btn {

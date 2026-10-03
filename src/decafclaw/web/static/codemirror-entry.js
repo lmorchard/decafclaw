@@ -5,7 +5,14 @@
 
 // Core
 export { EditorState } from '@codemirror/state';
-export { EditorView, keymap, lineNumbers, highlightActiveLine } from '@codemirror/view';
+export {
+  EditorView,
+  drawSelection,
+  keymap,
+  lineNumbers,
+  highlightActiveLine,
+  highlightActiveLineGutter,
+} from '@codemirror/view';
 
 // Commands / keymaps
 export { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
@@ -14,11 +21,13 @@ export { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirro
 export {
   bracketMatching,
   defaultHighlightStyle,
+  HighlightStyle,
   syntaxHighlighting,
   foldGutter,
   foldKeymap,
   indentOnInput,
 } from '@codemirror/language';
+export { tags } from '@lezer/highlight';
 
 // Search
 export { searchKeymap, highlightSelectionMatches } from '@codemirror/search';
