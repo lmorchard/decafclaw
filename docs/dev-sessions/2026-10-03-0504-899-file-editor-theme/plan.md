@@ -38,10 +38,10 @@ Define CSS custom properties for code token highlights (`--cm-*`) for light mode
 - Modify: `src/decafclaw/web/static/styles/palettes/solarized-light.css` — add Solarized Light `--cm-*` token overrides
 
 **Verification — automated:**
-- [ ] `make check` passes
+- [x] `make check` passes — **0 errors, all gates green**
 
 **Verification — manual:**
-- [ ] Inspect stylesheet syntax and specificity
+- [x] Inspect stylesheet syntax and specificity — **verified custom properties and (0,2,0) element specificity**
 
 ---
 

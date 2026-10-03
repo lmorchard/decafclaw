@@ -63,8 +63,119 @@
   overflow: auto;
 }
 
+/* -- CodeMirror Syntax Highlighting & Theme Variables ---------------------- */
+
+:root {
+  --cm-keyword: #a626a4;
+  --cm-atom: #0184bb;
+  --cm-number: #986801;
+  --cm-string: #50a14f;
+  --cm-comment: #a0a1a7;
+  --cm-variable: #e45649;
+  --cm-type: #c18401;
+  --cm-class: #c18401;
+  --cm-property: #4078f2;
+  --cm-literal: #0184bb;
+  --cm-regexp: #50a14f;
+  --cm-special: #4078f2;
+  --cm-meta: #383a42;
+  --cm-invalid: #e45649;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --cm-keyword: #c678dd;
+    --cm-atom: #56b6c2;
+    --cm-number: #d19a66;
+    --cm-string: #98c379;
+    --cm-comment: #5c6370;
+    --cm-variable: #e06c75;
+    --cm-type: #e6c07b;
+    --cm-class: #e6c07b;
+    --cm-property: #61aeee;
+    --cm-literal: #56b6c2;
+    --cm-regexp: #98c379;
+    --cm-special: #61aeee;
+    --cm-meta: #abb2bf;
+    --cm-invalid: #e06c75;
+  }
+}
+
+:root[data-theme="dark"] {
+  --cm-keyword: #c678dd;
+  --cm-atom: #56b6c2;
+  --cm-number: #d19a66;
+  --cm-string: #98c379;
+  --cm-comment: #5c6370;
+  --cm-variable: #e06c75;
+  --cm-type: #e6c07b;
+  --cm-class: #e6c07b;
+  --cm-property: #61aeee;
+  --cm-literal: #56b6c2;
+  --cm-regexp: #98c379;
+  --cm-special: #61aeee;
+  --cm-meta: #abb2bf;
+  --cm-invalid: #e06c75;
+}
+
 .file-editor-mount .cm-editor {
   height: 100%;
+  background-color: var(--pico-background-color);
+  color: var(--pico-color);
+  font-family: var(--pico-font-family-monospace, monospace);
+  font-size: 0.85rem;
+}
+
+.file-editor-mount .cm-editor.cm-focused {
+  outline: none;
+}
+
+.file-editor-mount .cm-scroller {
+  font-family: inherit;
+  line-height: 1.5;
+}
+
+.file-editor-mount .cm-content {
+  caret-color: var(--pico-color);
+}
+
+.file-editor-mount .cm-cursor,
+.file-editor-mount .cm-dropCursor {
+  border-left-color: var(--pico-color) !important;
+}
+
+.file-editor-mount .cm-gutters {
+  background-color: var(--pico-card-background-color);
+  color: var(--pico-muted-color);
+  border-right: 1px solid var(--pico-muted-border-color);
+}
+
+.file-editor-mount .cm-gutterElement {
+  color: var(--pico-muted-color);
+}
+
+.file-editor-mount .cm-activeLine {
+  background-color: var(--pico-code-background-color);
+}
+
+.file-editor-mount .cm-activeLineGutter {
+  background-color: var(--pico-card-sectioning-background-color, var(--pico-code-background-color));
+  color: var(--pico-color);
+}
+
+.file-editor-mount .cm-selectionBackground,
+.file-editor-mount .cm-selectionLayer .cm-selectionBackground {
+  background-color: var(--pico-primary-focus) !important;
+}
+
+.file-editor-mount .cm-selectionMatch {
+  background-color: var(--pico-mark-background-color);
+  opacity: 0.5;
+}
+
+.file-editor-mount .cm-matchingBracket {
+  background-color: var(--pico-primary-focus);
+  outline: 1px solid var(--pico-primary);
 }
 
 .wiki-editor-toolbar-btn {
