@@ -26,6 +26,18 @@ function contrast(hex1, hex2) {
   return (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
 }
 
+/** Alpha-composite an rgba color over a background hex color. */
+function composite(bgHex, rgbaStr) {
+  const [br, bg, bb] = [parseInt(bgHex.slice(1, 3), 16), parseInt(bgHex.slice(3, 5), 16), parseInt(bgHex.slice(5, 7), 16)];
+  const m = rgbaStr.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)/);
+  if (!m) return bgHex;
+  const [fr, fg, fb, a] = [parseInt(m[1], 10), parseInt(m[2], 10), parseInt(m[3], 10), m[4] ? parseFloat(m[4]) : 1];
+  const r = Math.round(a * fr + (1 - a) * br);
+  const g = Math.round(a * fg + (1 - a) * bg);
+  const b = Math.round(a * fb + (1 - a) * bb);
+  return '#' + [r, g, b].map((v) => v.toString(16).padStart(2, '0')).join('');
+}
+
 let styleEl;
 
 beforeAll(() => {
@@ -135,15 +147,19 @@ describe('FileEditor theming and mounting', () => {
     expect(contrast(getProp('--cm-match-bg'), getProp('--cm-match-color'))).toBeGreaterThanOrEqual(4.5);
     expect(contrast('#13171f', getProp('--cm-comment'))).toBeGreaterThanOrEqual(4.5);
     expect(contrast('#13171f', getProp('--cm-keyword'))).toBeGreaterThanOrEqual(4.5);
+    const darkSelection = composite('#13171f', getProp('--cm-selection-bg'));
+    expect(contrast(darkSelection, getProp('--cm-foreground'))).toBeGreaterThanOrEqual(4.5);
+    expect(contrast(darkSelection, getProp('--cm-comment'))).toBeGreaterThanOrEqual(4.5);
+    expect(contrast(darkSelection, getProp('--cm-keyword'))).toBeGreaterThanOrEqual(4.5);
 
     // 2. Dracula palette (verifying Dracula overrides base dark in cascade)
     applyTheme('dracula');
     expect(getProp('--cm-keyword')).toBe('#ff79c6');
-    expect(getProp('--cm-comment')).toBe('#8c9fd4');
+    expect(getProp('--cm-comment')).toBe('#95a7db');
     expect(getProp('--cm-background')).toBe('#282a36');
     expect(getProp('--cm-foreground')).toBe('#f8f8f2');
     expect(getProp('--cm-gutter-bg')).toBe('#2f313f');
-    expect(getProp('--cm-gutter-color')).toBe('#8c9fd4');
+    expect(getProp('--cm-gutter-color')).toBe('#95a7db');
     expect(getProp('--cm-gutter-active-color')).toBe('#f8f8f2');
     expect(getProp('--cm-match-bg')).toBe('#44475a');
     expect(getProp('--cm-match-color')).toBe('#f8f8f2');
@@ -155,6 +171,10 @@ describe('FileEditor theming and mounting', () => {
     expect(contrast(getProp('--cm-match-bg'), getProp('--cm-match-color'))).toBeGreaterThanOrEqual(4.5);
     expect(contrast(draculaBg, getProp('--cm-comment'))).toBeGreaterThanOrEqual(4.5);
     expect(contrast(draculaBg, getProp('--cm-keyword'))).toBeGreaterThanOrEqual(4.5);
+    const draculaSelection = composite(draculaBg, getProp('--cm-selection-bg'));
+    expect(contrast(draculaSelection, getProp('--cm-foreground'))).toBeGreaterThanOrEqual(4.5);
+    expect(contrast(draculaSelection, getProp('--cm-comment'))).toBeGreaterThanOrEqual(4.5);
+    expect(contrast(draculaSelection, getProp('--cm-keyword'))).toBeGreaterThanOrEqual(4.5);
 
     // 3. Solarized Light palette
     applyTheme('solarized-light');
@@ -181,6 +201,10 @@ describe('FileEditor theming and mounting', () => {
     expect(contrast(solarizedBg, getProp('--cm-comment'))).toBeGreaterThanOrEqual(4.5);
     expect(contrast(solarizedActiveBg, getProp('--cm-comment'))).toBeGreaterThanOrEqual(4.5);
     expect(contrast(solarizedActiveBg, getProp('--cm-meta'))).toBeGreaterThanOrEqual(4.5);
+    const solarizedSelection = composite(solarizedBg, getProp('--cm-selection-bg'));
+    expect(contrast(solarizedSelection, getProp('--cm-foreground'))).toBeGreaterThanOrEqual(4.5);
+    expect(contrast(solarizedSelection, getProp('--cm-comment'))).toBeGreaterThanOrEqual(4.5);
+    expect(contrast(solarizedSelection, getProp('--cm-keyword'))).toBeGreaterThanOrEqual(4.5);
 
     // 4. Base Light theme
     applyTheme('light');
@@ -202,6 +226,11 @@ describe('FileEditor theming and mounting', () => {
     expect(contrast(lightBg, getProp('--cm-keyword'))).toBeGreaterThanOrEqual(4.5);
     expect(contrast(lightBg, getProp('--cm-comment'))).toBeGreaterThanOrEqual(4.5);
     expect(contrast(lightBg, getProp('--cm-string'))).toBeGreaterThanOrEqual(4.5);
+    const lightSelection = composite(lightBg, getProp('--cm-selection-bg'));
+    expect(contrast(lightSelection, getProp('--cm-foreground'))).toBeGreaterThanOrEqual(4.5);
+    expect(contrast(lightSelection, getProp('--cm-comment'))).toBeGreaterThanOrEqual(4.5);
+    expect(contrast(lightSelection, getProp('--cm-keyword'))).toBeGreaterThanOrEqual(4.5);
+    expect(contrast(lightSelection, getProp('--cm-string'))).toBeGreaterThanOrEqual(4.5);
 
     expect(mount.isConnected).toBe(true);
   });

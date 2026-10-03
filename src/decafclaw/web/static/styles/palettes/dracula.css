@@ -30,11 +30,11 @@
   --cm-foreground: #f8f8f2;
   --cm-background: #282a36;
   --cm-cursor-color: #f8f8f2;
-  --cm-gutter-color: #8c9fd4;
+  --cm-gutter-color: #95a7db;
   --cm-gutter-bg: #2f313f;
   --cm-gutter-active-color: #f8f8f2;
   --cm-active-line-bg: #21222c;
-  --cm-selection-bg: rgba(189, 147, 249, 0.375);
+  --cm-selection-bg: rgba(189, 147, 249, 0.08);
   --cm-match-bg: #44475a;
   --cm-match-color: #f8f8f2;
 
@@ -42,7 +42,7 @@
   --cm-atom: #bd93f9;
   --cm-number: #bd93f9;
   --cm-string: #f1fa8c;
-  --cm-comment: #8c9fd4;
+  --cm-comment: #95a7db;
   --cm-variable: #50fa7b;
   --cm-type: #8be9fd;
   --cm-class: #8be9fd;
@@ -51,5 +51,5 @@
   --cm-regexp: #f1fa8c;
   --cm-special: #bd93f9;
   --cm-meta: #f8f8f2;
-  --cm-invalid: #ff5555;
+  --cm-invalid: #ff6e6e;
 }
