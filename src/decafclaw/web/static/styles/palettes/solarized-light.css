@@ -28,6 +28,15 @@
   --pico-del-color: #dc322f;          /* red   */
   --pico-ins-color: #859900;          /* green */
 
+  --cm-foreground: #073642;
+  --cm-background: #fdf6e3;
+  --cm-cursor-color: #073642;
+  --cm-gutter-color: #4f636a;
+  --cm-gutter-bg: #eee8d5;
+  --cm-gutter-active-color: #073642;
+  --cm-active-line-bg: #eee8d5;
+  --cm-selection-bg: rgba(38, 139, 210, 0.25);
+
   --cm-keyword: #5b6c00;
   --cm-atom: #15615a;
   --cm-number: #9e1a5a;
