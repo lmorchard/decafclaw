@@ -115,6 +115,7 @@ The **Schedules** tab lists all discovered scheduled tasks and lets you manage t
 - **Body editor**: a full `<wiki-editor>` for the prompt body. Autosaves after 1 second of inactivity or on Ctrl+S / focus-out. The editor sends the file's `mtime` as a `modified` field, but the server does not enforce conflict detection — concurrent edits are last-write-wins. Refresh before editing if you need the latest version.
 - **Workspace-tier schedules**: fully editable. Changes write in-place to `workspace/schedules/{name}.md`.
 - **URL deep-linking**: opening a schedule sets `?schedule={name}` in the URL. Pasting the URL in a new tab opens the same schedule page directly.
+- **Switching schedules**: one `<schedule-page>` element serves every schedule, so a response for an earlier selection can arrive late. The panel ignores it: detail loads, post-save refreshes, metadata saves (including their errors), and reset reloads update the panel only while their schedule is still selected. The earlier save itself still completes and still dispatches `schedule-saved`.
 
 The tab auto-refreshes on activation. Save/reset actions dispatch a `schedule-saved` window event that triggers an immediate silent list refresh.
 
