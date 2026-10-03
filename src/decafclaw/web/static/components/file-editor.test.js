@@ -182,4 +182,26 @@ describe('FileEditor theming and mounting', () => {
 
     expect(mount.isConnected).toBe(true);
   });
+
+  it('verifies mounted editor chrome elements receive theme styles', async () => {
+    const { mount, view } = await mountEditor('chrome-test.py', 'def foo():\n    return 1');
+    view.focus();
+
+    const gutters = mount.querySelector('.cm-gutters');
+    expect(gutters).toBeInstanceOf(HTMLElement);
+    const gutterEl = mount.querySelector('.cm-gutterElement');
+    expect(gutterEl).toBeInstanceOf(HTMLElement);
+    const activeLine = mount.querySelector('.cm-activeLine');
+    expect(activeLine).toBeInstanceOf(HTMLElement);
+    const activeLineGutter = mount.querySelector('.cm-activeLineGutter');
+    expect(activeLineGutter).toBeInstanceOf(HTMLElement);
+    const content = mount.querySelector('.cm-content');
+    expect(content).toBeInstanceOf(HTMLElement);
+
+    expect(getComputedStyle(gutters).backgroundColor).toContain('--cm-gutter-bg');
+    expect(getComputedStyle(gutterEl).color).toContain('--cm-gutter-color');
+    expect(getComputedStyle(activeLine).backgroundColor).toContain('--cm-active-line-bg');
+    expect(getComputedStyle(activeLineGutter).color).toContain('--cm-gutter-active-color');
+    expect(getComputedStyle(content).caretColor).toContain('--cm-cursor-color');
+  });
 });

@@ -5,7 +5,13 @@
 
 // Core
 export { EditorState } from '@codemirror/state';
-export { EditorView, keymap, lineNumbers, highlightActiveLine } from '@codemirror/view';
+export {
+  EditorView,
+  keymap,
+  lineNumbers,
+  highlightActiveLine,
+  highlightActiveLineGutter,
+} from '@codemirror/view';
 
 // Commands / keymaps
 export { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';

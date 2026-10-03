@@ -157,50 +157,50 @@
   outline: none;
 }
 
-.file-editor-mount .cm-scroller {
+.file-editor-mount .cm-editor .cm-scroller {
   font-family: inherit;
   line-height: 1.5;
 }
 
-.file-editor-mount .cm-content {
+.file-editor-mount .cm-editor .cm-content {
   caret-color: var(--cm-cursor-color, var(--pico-color));
 }
 
-.file-editor-mount .cm-cursor,
-.file-editor-mount .cm-dropCursor {
+.file-editor-mount .cm-editor .cm-cursor,
+.file-editor-mount .cm-editor .cm-dropCursor {
   border-left-color: var(--cm-cursor-color, var(--pico-color)) !important;
 }
 
-.file-editor-mount .cm-gutters {
+.file-editor-mount .cm-editor .cm-gutters {
   background-color: var(--cm-gutter-bg, var(--pico-card-background-color));
   color: var(--cm-gutter-color, var(--pico-muted-color));
   border-right: 1px solid var(--pico-muted-border-color);
 }
 
-.file-editor-mount .cm-gutterElement {
+.file-editor-mount .cm-editor .cm-gutterElement {
   color: var(--cm-gutter-color, var(--pico-muted-color));
 }
 
-.file-editor-mount .cm-activeLine {
+.file-editor-mount .cm-editor .cm-activeLine {
   background-color: var(--cm-active-line-bg, var(--pico-code-background-color));
 }
 
-.file-editor-mount .cm-activeLineGutter {
+.file-editor-mount .cm-editor .cm-activeLineGutter {
   background-color: var(--cm-active-line-bg, var(--pico-card-sectioning-background-color, var(--pico-code-background-color)));
   color: var(--cm-gutter-active-color, var(--pico-color));
 }
 
-.file-editor-mount .cm-selectionBackground,
-.file-editor-mount .cm-selectionLayer .cm-selectionBackground {
+.file-editor-mount .cm-editor .cm-selectionBackground,
+.file-editor-mount .cm-editor .cm-selectionLayer .cm-selectionBackground {
   background-color: var(--cm-selection-bg, var(--pico-primary-focus)) !important;
 }
 
-.file-editor-mount .cm-selectionMatch {
+.file-editor-mount .cm-editor .cm-selectionMatch {
   background-color: var(--pico-mark-background-color);
   opacity: 0.5;
 }
 
-.file-editor-mount .cm-matchingBracket {
+.file-editor-mount .cm-editor .cm-matchingBracket {
   background-color: var(--cm-selection-bg, var(--pico-primary-focus));
   outline: 1px solid var(--pico-primary);
 }
