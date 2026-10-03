@@ -34,7 +34,9 @@
   --cm-gutter-bg: #2f313f;
   --cm-gutter-active-color: #f8f8f2;
   --cm-active-line-bg: #21222c;
+  --cm-active-line-border: #6272a4;
   --cm-selection-bg: rgba(189, 147, 249, 0.08);
+  --cm-selection-border: #bd93f9;
   --cm-match-bg: #44475a;
   --cm-match-color: #f8f8f2;
 

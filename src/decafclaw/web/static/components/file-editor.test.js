@@ -138,10 +138,14 @@ describe('FileEditor theming and mounting', () => {
     expect(getProp('--cm-gutter-bg')).toBe('#1b202b');
     expect(getProp('--cm-gutter-color')).toBe('#8590a4');
     expect(getProp('--cm-gutter-active-color')).toBe('#c2c7d0');
+    expect(getProp('--cm-active-line-border')).toBe('#6b7382');
+    expect(getProp('--cm-selection-border')).toBe('#1095c1');
     expect(getProp('--cm-match-bg')).toBe('#44475a');
     expect(getProp('--cm-match-color')).toBe('#f8f8f2');
     expect(contrast('#13171f', getProp('--cm-foreground'))).toBeGreaterThanOrEqual(4.5);
     expect(contrast('#13171f', getProp('--cm-cursor-color'))).toBeGreaterThanOrEqual(3.0);
+    expect(contrast('#13171f', getProp('--cm-selection-border'))).toBeGreaterThanOrEqual(3.0);
+    expect(contrast('#13171f', getProp('--cm-active-line-border'))).toBeGreaterThanOrEqual(3.0);
     expect(contrast('#1b202b', getProp('--cm-gutter-color'))).toBeGreaterThanOrEqual(4.5);
     expect(contrast('#1b202b', getProp('--cm-gutter-active-color'))).toBeGreaterThanOrEqual(4.5);
     expect(contrast(getProp('--cm-match-bg'), getProp('--cm-match-color'))).toBeGreaterThanOrEqual(4.5);
@@ -161,11 +165,15 @@ describe('FileEditor theming and mounting', () => {
     expect(getProp('--cm-gutter-bg')).toBe('#2f313f');
     expect(getProp('--cm-gutter-color')).toBe('#95a7db');
     expect(getProp('--cm-gutter-active-color')).toBe('#f8f8f2');
+    expect(getProp('--cm-active-line-border')).toBe('#6272a4');
+    expect(getProp('--cm-selection-border')).toBe('#bd93f9');
     expect(getProp('--cm-match-bg')).toBe('#44475a');
     expect(getProp('--cm-match-color')).toBe('#f8f8f2');
     const draculaBg = getProp('--cm-background');
     expect(contrast(draculaBg, getProp('--cm-foreground'))).toBeGreaterThanOrEqual(4.5);
     expect(contrast(draculaBg, getProp('--cm-cursor-color'))).toBeGreaterThanOrEqual(3.0);
+    expect(contrast(draculaBg, getProp('--cm-selection-border'))).toBeGreaterThanOrEqual(3.0);
+    expect(contrast(draculaBg, getProp('--cm-active-line-border'))).toBeGreaterThanOrEqual(3.0);
     expect(contrast(getProp('--cm-gutter-bg'), getProp('--cm-gutter-color'))).toBeGreaterThanOrEqual(4.5);
     expect(contrast(getProp('--cm-gutter-bg'), getProp('--cm-gutter-active-color'))).toBeGreaterThanOrEqual(4.5);
     expect(contrast(getProp('--cm-match-bg'), getProp('--cm-match-color'))).toBeGreaterThanOrEqual(4.5);
@@ -187,12 +195,16 @@ describe('FileEditor theming and mounting', () => {
     expect(getProp('--cm-gutter-color')).toBe('#4f636a');
     expect(getProp('--cm-gutter-active-color')).toBe('#073642');
     expect(getProp('--cm-active-line-bg')).toBe('#eee8d5');
+    expect(getProp('--cm-active-line-border')).toBe('#758c8c');
+    expect(getProp('--cm-selection-border')).toBe('#268bd2');
     expect(getProp('--cm-match-bg')).toBe('#eee8d5');
     expect(getProp('--cm-match-color')).toBe('#073642');
     const solarizedBg = getProp('--cm-background');
     const solarizedActiveBg = getProp('--cm-active-line-bg');
     expect(contrast(solarizedBg, getProp('--cm-foreground'))).toBeGreaterThanOrEqual(4.5);
     expect(contrast(solarizedBg, getProp('--cm-cursor-color'))).toBeGreaterThanOrEqual(3.0);
+    expect(contrast(solarizedBg, getProp('--cm-selection-border'))).toBeGreaterThanOrEqual(3.0);
+    expect(contrast(solarizedBg, getProp('--cm-active-line-border'))).toBeGreaterThanOrEqual(3.0);
     expect(contrast(getProp('--cm-gutter-bg'), getProp('--cm-gutter-color'))).toBeGreaterThanOrEqual(4.5);
     expect(contrast(getProp('--cm-gutter-bg'), getProp('--cm-gutter-active-color'))).toBeGreaterThanOrEqual(4.5);
     expect(contrast(getProp('--cm-match-bg'), getProp('--cm-match-color'))).toBeGreaterThanOrEqual(4.5);
@@ -215,11 +227,15 @@ describe('FileEditor theming and mounting', () => {
     expect(getProp('--cm-gutter-bg')).toBe('#f6f8fa');
     expect(getProp('--cm-gutter-color')).toBe('#5c6370');
     expect(getProp('--cm-gutter-active-color')).toBe('#13171f');
+    expect(getProp('--cm-active-line-border')).toBe('#767676');
+    expect(getProp('--cm-selection-border')).toBe('#1095c1');
     expect(getProp('--cm-match-bg')).toBe('#ffeeba');
     expect(getProp('--cm-match-color')).toBe('#13171f');
     const lightBg = getProp('--cm-background');
     expect(contrast(lightBg, getProp('--cm-foreground'))).toBeGreaterThanOrEqual(4.5);
     expect(contrast(lightBg, getProp('--cm-cursor-color'))).toBeGreaterThanOrEqual(3.0);
+    expect(contrast(lightBg, getProp('--cm-selection-border'))).toBeGreaterThanOrEqual(3.0);
+    expect(contrast(lightBg, getProp('--cm-active-line-border'))).toBeGreaterThanOrEqual(3.0);
     expect(contrast(getProp('--cm-gutter-bg'), getProp('--cm-gutter-color'))).toBeGreaterThanOrEqual(4.5);
     expect(contrast(getProp('--cm-gutter-bg'), getProp('--cm-gutter-active-color'))).toBeGreaterThanOrEqual(4.5);
     expect(contrast(getProp('--cm-match-bg'), getProp('--cm-match-color'))).toBeGreaterThanOrEqual(4.5);
@@ -263,9 +279,16 @@ describe('FileEditor theming and mounting', () => {
     expect(getComputedStyle(selectionMatch).backgroundColor).toContain('--cm-match-bg');
     expect(getComputedStyle(selectionMatch).color).toContain('--cm-match-color');
 
+    // Directly verify selection layer outline styling inside .cm-editor
+    const selectionBg = document.createElement('div');
+    selectionBg.className = 'cm-selectionBackground';
+    mount.appendChild(selectionBg);
+    expect(getComputedStyle(selectionBg).outline).toContain('--cm-selection-border');
+
     expect(getComputedStyle(gutters).backgroundColor).toContain('--cm-gutter-bg');
     expect(getComputedStyle(gutterEl).color).toContain('--cm-gutter-color');
     expect(getComputedStyle(activeLine).backgroundColor).toContain('--cm-active-line-bg');
+    expect(getComputedStyle(activeLine).outline).toContain('--cm-active-line-border');
     expect(getComputedStyle(activeLineGutter).color).toContain('--cm-gutter-active-color');
 
     // Focused state preserves themed outline for keyboard accessibility
