@@ -6,8 +6,10 @@ Shared fixtures (``http_config``, ``bus``, ``app``, ``client``) live in
 
 import os
 from pathlib import Path
+from urllib.parse import unquote
 
 import pytest
+from httpx import ASGITransport, AsyncClient
 
 # -- workspace_list ------------------------------------------------------------
 
@@ -268,6 +270,79 @@ async def test_serve_workspace_unsafe_content_keeps_ascii_download_filename(
     assert resp.headers["content-type"] == "image/svg+xml"
     assert resp.headers["x-content-type-options"] == "nosniff"
     assert resp.headers["content-disposition"] == 'attachment; filename="diagram.svg"'
+
+
+@pytest.mark.asyncio
+async def test_serve_workspace_ascii_download_keeps_filename_and_media_type(
+    client, http_config,
+):
+    workspace: Path = http_config.workspace_path
+    (workspace / "report.txt").write_text("plain report")
+
+    resp = await client.get("/api/workspace/report.txt")
+    assert resp.status_code == 200
+    assert resp.content == b"plain report"
+    assert resp.headers["content-type"].startswith("text/plain")
+    assert resp.headers["x-content-type-options"] == "nosniff"
+    assert resp.headers["content-disposition"] == 'attachment; filename="report.txt"'
+
+
+@pytest.mark.asyncio
+async def test_serve_workspace_ascii_download_needing_quoting_uses_utf8_filename(
+    client, http_config,
+):
+    # #895: FileResponse emits filename*= for any name that needs URL quoting,
+    # including plain ASCII names with spaces. That form is accepted; pin it.
+    workspace: Path = http_config.workspace_path
+    (workspace / "my report.txt").write_text("spaced report")
+
+    resp = await client.get("/api/workspace/my%20report.txt")
+    assert resp.status_code == 200
+    assert resp.content == b"spaced report"
+    assert resp.headers["x-content-type-options"] == "nosniff"
+    assert resp.headers["content-disposition"] == "attachment; filename*=utf-8''my%20report.txt"
+
+
+@pytest.mark.asyncio
+async def test_serve_workspace_non_latin_download_uses_utf8_filename(
+    client, http_config,
+):
+    # #895: a non-Latin name in a hand-built Content-Disposition header made
+    # Starlette raise UnicodeEncodeError, so the download had no response.
+    workspace: Path = http_config.workspace_path
+    target = workspace / "nested" / "日本語.txt"
+    target.parent.mkdir()
+    target.write_bytes("日本語 bytes".encode())
+    url = "/api/workspace/nested/%E6%97%A5%E6%9C%AC%E8%AA%9E.txt"
+
+    resp = await client.get(url)
+    assert resp.status_code == 200
+    assert resp.content == "日本語 bytes".encode()
+    assert resp.headers["content-type"].startswith("text/plain")
+    assert resp.headers["x-content-type-options"] == "nosniff"
+    disposition = resp.headers["content-disposition"]
+    assert disposition == "attachment; filename*=utf-8''%E6%97%A5%E6%9C%AC%E8%AA%9E.txt"
+    encoded_name = disposition.split("filename*=utf-8''", 1)[1]
+    assert unquote(encoded_name, errors="strict") == "日本語.txt"
+    assert "etag" in resp.headers
+    assert "last-modified" in resp.headers
+
+    ranged = await client.get(url, headers={"Range": "bytes=0-2"})
+    assert ranged.status_code == 206
+    assert ranged.content == "日".encode()
+    assert ranged.headers["content-disposition"] == disposition
+    assert ranged.headers["etag"] == resp.headers["etag"]
+
+
+@pytest.mark.asyncio
+async def test_serve_workspace_non_latin_download_requires_auth(app, http_config):
+    workspace: Path = http_config.workspace_path
+    (workspace / "日本語.txt").write_text("private")
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as anon:
+        resp = await anon.get("/api/workspace/%E6%97%A5%E6%9C%AC%E8%AA%9E.txt")
+    assert resp.status_code == 401
 
 
 # -- workspace_read_json (GET /api/workspace-file/{path}) ---------------------
