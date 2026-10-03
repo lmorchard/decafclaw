@@ -179,7 +179,7 @@ export class FileEditor extends LitElement {
     const extensions = [
       lineNumbers(),
       foldGutter(),
-      drawSelection(),
+      drawSelection({ cursorBlinkRate: 800 }),
       highlightActiveLine(),
       highlightActiveLineGutter(),
       highlightSelectionMatches(),

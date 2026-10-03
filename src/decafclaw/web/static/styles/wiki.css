@@ -13,6 +13,10 @@
   display: none !important;
 }
 
+#wiki-main:has(file-page:not(.hidden) file-editor) {
+  overflow-y: hidden;
+}
+
 /* ── Wiki links ─────────────────────────────────────────────────────────── */
 
 a.wiki-link {
