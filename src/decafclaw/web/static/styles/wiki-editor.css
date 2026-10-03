@@ -73,7 +73,7 @@
   --cm-gutter-bg: #f6f8fa;
   --cm-gutter-active-color: #13171f;
   --cm-active-line-bg: #f6f8fa;
-  --cm-selection-bg: rgba(16, 149, 193, 0.25);
+  --cm-selection-bg: rgba(16, 149, 193, 0.1);
   --cm-match-bg: #ffeeba;
   --cm-match-color: #13171f;
 
@@ -102,7 +102,7 @@
     --cm-gutter-bg: #1b202b;
     --cm-gutter-active-color: #c2c7d0;
     --cm-active-line-bg: #1b202b;
-    --cm-selection-bg: rgba(16, 149, 193, 0.25);
+    --cm-selection-bg: rgba(16, 149, 193, 0.12);
     --cm-match-bg: #44475a;
     --cm-match-color: #f8f8f2;
 
@@ -131,7 +131,7 @@
   --cm-gutter-bg: #1b202b;
   --cm-gutter-active-color: #c2c7d0;
   --cm-active-line-bg: #1b202b;
-  --cm-selection-bg: rgba(16, 149, 193, 0.25);
+  --cm-selection-bg: rgba(16, 149, 193, 0.12);
   --cm-match-bg: #44475a;
   --cm-match-color: #f8f8f2;
 
