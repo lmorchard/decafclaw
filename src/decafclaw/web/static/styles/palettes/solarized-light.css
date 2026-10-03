@@ -27,4 +27,32 @@
   --pico-mark-color: #657b83;              /* base00 */
   --pico-del-color: #dc322f;          /* red   */
   --pico-ins-color: #859900;          /* green */
+
+  --cm-foreground: #073642;
+  --cm-background: #fdf6e3;
+  --cm-cursor-color: #073642;
+  --cm-gutter-color: #4f636a;
+  --cm-gutter-bg: #eee8d5;
+  --cm-gutter-active-color: #073642;
+  --cm-active-line-bg: #eee8d5;
+  --cm-active-line-border: #758c8c;
+  --cm-selection-bg: rgba(38, 139, 210, 0.1);
+  --cm-selection-border: #268bd2;
+  --cm-match-bg: #eee8d5;
+  --cm-match-color: #073642;
+
+  --cm-keyword: #5b6c00;
+  --cm-atom: #15615a;
+  --cm-number: #9e1a5a;
+  --cm-string: #15615a;
+  --cm-comment: #4f636a;
+  --cm-variable: #145c8f;
+  --cm-type: #745700;
+  --cm-class: #745700;
+  --cm-property: #145c8f;
+  --cm-literal: #15615a;
+  --cm-regexp: #9e340a;
+  --cm-special: #9e340a;
+  --cm-meta: #4f636a;
+  --cm-invalid: #a81c19;
 }
