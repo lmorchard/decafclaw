@@ -72,6 +72,6 @@ Run full project gates.
 - Create: `src/decafclaw/web/static/components/file-editor.test.js`
 
 **Verification — automated:**
-- [ ] `make test-js` passes with new tests
-- [ ] `make check` passes
-- [ ] `make test` passes
+- [x] `make test-js` passes with new tests — **40 test files, 400 passed (+5 in file-editor.test.js)**
+- [x] `make check` passes — **0 errors, all gates green**
+- [x] `make test` passes — **tests/web passed (101 passed)**
