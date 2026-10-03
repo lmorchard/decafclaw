@@ -154,7 +154,7 @@
 }
 
 .file-editor-mount .cm-editor.cm-focused {
-  outline: none;
+  outline: 1px solid var(--pico-primary);
 }
 
 .file-editor-mount .cm-editor .cm-scroller {
