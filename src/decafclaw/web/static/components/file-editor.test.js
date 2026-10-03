@@ -296,5 +296,26 @@ describe('FileEditor theming and mounting', () => {
     // Focused state preserves themed outline for keyboard accessibility
     mount.classList.add('cm-focused');
     expect(getComputedStyle(mount).outline).toContain('--pico-primary');
+
+    // Verify cursor layer animation on focused editor
+    const cursorLayer = mount.querySelector('.cm-cursorLayer');
+    expect(cursorLayer).toBeInstanceOf(HTMLElement);
+    if (cursorLayer) {
+      expect(getComputedStyle(cursorLayer).animationIterationCount).toBe('infinite');
+    }
+  });
+
+  it('constrains editor mount and delegates scrolling to cm-scroller', async () => {
+    const { editor, mount } = await mountEditor('scroll-test.txt', 'line 1\nline 2');
+    const scroller = mount.querySelector('.cm-scroller');
+    expect(scroller).toBeInstanceOf(HTMLElement);
+    const mountEl = editor.querySelector('.file-editor-mount');
+    expect(mountEl).toBeInstanceOf(HTMLElement);
+    if (mountEl) {
+      expect(getComputedStyle(mountEl).overflow).toBe('hidden');
+    }
+    if (scroller) {
+      expect(getComputedStyle(scroller).overflowY).toBe('auto');
+    }
   });
 });

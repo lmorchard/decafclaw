@@ -43,24 +43,31 @@
   flex-wrap: wrap;
 }
 
+file-page,
 .file-page {
   display: flex;
   flex-direction: column;
-  height: 100%;
+  flex: 1;
   min-height: 0;
+  height: 100%;
 }
 
+file-editor,
 .file-editor {
   display: flex;
   flex-direction: column;
   flex: 1;
   min-height: 0;
+  height: 100%;
 }
 
 .file-editor-mount {
   flex: 1;
   min-height: 0;
-  overflow: auto;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 /* -- CodeMirror Syntax Highlighting & Theme Variables ---------------------- */
@@ -155,6 +162,8 @@
 }
 
 .file-editor-mount .cm-editor {
+  flex: 1;
+  min-height: 0;
   height: 100%;
   background-color: var(--cm-background, var(--pico-background-color));
   color: var(--cm-foreground, var(--pico-color));
@@ -169,6 +178,21 @@
 .file-editor-mount .cm-editor .cm-scroller {
   font-family: inherit;
   line-height: 1.5;
+  height: 100%;
+  overflow-x: auto !important;
+  overflow-y: auto !important;
+}
+
+.file-editor-mount .cm-editor.cm-focused .cm-cursorLayer {
+  animation-iteration-count: infinite !important;
+  animation-duration: 0.8s !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .file-editor-mount .cm-editor .cm-cursorLayer {
+    animation-iteration-count: infinite !important;
+    animation-duration: 0.8s !important;
+  }
 }
 
 .file-editor-mount .cm-editor .cm-content {
