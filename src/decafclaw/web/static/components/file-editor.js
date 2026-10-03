@@ -57,8 +57,8 @@ export const editorHighlightStyle = HighlightStyle.define([
   { tag: tags.strikethrough, textDecoration: 'line-through' },
   { tag: tags.keyword, color: 'var(--cm-keyword, #c678dd)' },
   { tag: [tags.atom, tags.bool, tags.url, tags.contentSeparator, tags.labelName], color: 'var(--cm-atom, #56b6c2)' },
-  { tag: [tags.literal, tags.inserted], color: 'var(--cm-literal, #56b6c2)' },
-  { tag: [tags.string, tags.deleted], color: 'var(--cm-string, #98c379)' },
+  { tag: tags.literal, color: 'var(--cm-literal, #56b6c2)' },
+  { tag: [tags.string, tags.inserted], color: 'var(--cm-string, #98c379)' },
   { tag: [tags.regexp, tags.escape, tags.special(tags.string)], color: 'var(--cm-regexp, #56b6c2)' },
   { tag: tags.definition(tags.variableName), color: 'var(--cm-variable, #e06c75)' },
   { tag: tags.local(tags.variableName), color: 'var(--cm-variable, #e06c75)' },
@@ -70,7 +70,7 @@ export const editorHighlightStyle = HighlightStyle.define([
   { tag: tags.comment, color: 'var(--cm-comment, #8590a4)', fontStyle: 'italic' },
   { tag: tags.meta, color: 'var(--cm-meta, #abb2bf)' },
   { tag: tags.number, color: 'var(--cm-number, #d19a66)' },
-  { tag: tags.invalid, color: 'var(--cm-invalid, #e06c75)' },
+  { tag: [tags.invalid, tags.deleted], color: 'var(--cm-invalid, #e06c75)' },
 ]);
 
 const SAVE_DEBOUNCE_MS = 800;
