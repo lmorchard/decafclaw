@@ -20,6 +20,7 @@ import { ApiError, DefaultService } from '../lib/api-client/index.js';
 import {
   EditorState,
   EditorView,
+  drawSelection,
   keymap,
   lineNumbers,
   highlightActiveLine,
@@ -178,6 +179,7 @@ export class FileEditor extends LitElement {
     const extensions = [
       lineNumbers(),
       foldGutter(),
+      drawSelection(),
       highlightActiveLine(),
       highlightActiveLineGutter(),
       highlightSelectionMatches(),

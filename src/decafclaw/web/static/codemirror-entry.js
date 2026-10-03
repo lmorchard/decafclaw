@@ -7,6 +7,7 @@
 export { EditorState } from '@codemirror/state';
 export {
   EditorView,
+  drawSelection,
   keymap,
   lineNumbers,
   highlightActiveLine,

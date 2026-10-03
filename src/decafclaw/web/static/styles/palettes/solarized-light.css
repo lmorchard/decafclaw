@@ -36,6 +36,8 @@
   --cm-gutter-active-color: #073642;
   --cm-active-line-bg: #eee8d5;
   --cm-selection-bg: rgba(38, 139, 210, 0.25);
+  --cm-match-bg: #eee8d5;
+  --cm-match-color: #073642;
 
   --cm-keyword: #5b6c00;
   --cm-atom: #15615a;
