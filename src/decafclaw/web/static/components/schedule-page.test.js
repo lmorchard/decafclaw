@@ -260,3 +260,325 @@ describe('schedule-page', () => {
     expect(panel.models).toEqual(['a']);
   });
 });
+
+/**
+ * A fetch stub whose schedule requests stay pending until the test
+ * resolves them, so a test controls the order in which responses arrive.
+ * The model list resolves at once; it is not part of the race.
+ */
+function controlledFetch() {
+  /** @type {{url: string, method: string, resolve: (body: unknown, status?: number) => void}[]} */
+  const pending = [];
+  const fetch = vi.fn((/** @type {string} */ url, /** @type {any} */ init) => {
+    if (url.startsWith('/api/models')) {
+      return Promise.resolve({ ok: true, json: async () => ({ models: ['a'], default: 'a' }) });
+    }
+    return new Promise(resolve => {
+      pending.push({
+        url,
+        method: init?.method ?? 'GET',
+        resolve: (body, status = 200) => resolve({
+          ok: status < 400, status, json: async () => body,
+        }),
+      });
+    });
+  });
+  /**
+   * Resolve the oldest pending request for this method and URL.
+   * @param {string} method
+   * @param {string} url
+   * @param {unknown} body
+   * @param {number} [status]
+   */
+  async function respond(method, url, body, status) {
+    // The generated client reaches fetch() a few microtasks after the call.
+    await settle();
+    const index = pending.findIndex(p => p.method === method && p.url === url);
+    if (index < 0) {
+      const open = pending.map(p => `${p.method} ${p.url}`).join(', ');
+      throw new Error(`no pending ${method} ${url}; pending: ${open}`);
+    }
+    const [request] = pending.splice(index, 1);
+    request.resolve(body, status);
+    await settle();
+  }
+  return { fetch, pending, respond };
+}
+
+async function settle() {
+  for (let i = 0; i < 3; i++) await new Promise(r => setTimeout(r, 0));
+}
+
+const DREAM = { ...SCHEDULE, name: 'dream', body: 'Dream body.', modified: 1 };
+const GARDEN = { ...SCHEDULE, name: 'garden', body: 'Garden body.', modified: 2 };
+// What a late response for dream looks like: different badges and
+// metadata from garden, so a stale assignment is visible in the panel.
+const STALE_DREAM = {
+  ...DREAM, source_tier: 'admin', has_overlay: true, channel: 'dream-channel',
+};
+
+/** @param {any} el */
+function expectPanelShowsGarden(el) {
+  expect(el._data.name).toBe('garden');
+  expect(el.querySelector('.schedule-page-title').textContent).toBe('garden');
+  expect(el.querySelector('.schedule-tier-badge').textContent).toBe('bundled');
+  expect(el.querySelector('.schedule-overlay-badge')).toBeNull();
+  expect(el.querySelector('schedule-metadata').data.name).toBe('garden');
+  expect(el.querySelector('schedule-metadata').data.channel).toBe('');
+  expect(el.querySelector('wiki-editor').page).toBe('garden');
+}
+
+describe('schedule-page responses after a selection change', () => {
+  /** @type {ReturnType<typeof controlledFetch>} */
+  let server;
+
+  beforeEach(() => {
+    server = controlledFetch();
+    vi.stubGlobal('fetch', server.fetch);
+  });
+
+  afterEach(() => {
+    document.body.innerHTML = '';
+    vi.unstubAllGlobals();
+  });
+
+  /** Mount the page with dream loaded. */
+  async function mountDream() {
+    const el = /** @type {any} */ (document.createElement('schedule-page'));
+    el.name = 'dream';
+    document.body.appendChild(el);
+    await el.updateComplete;
+    await server.respond('GET', '/api/schedules/dream', { schedule: DREAM });
+    await el.updateComplete;
+    expect(el._data.name).toBe('dream');
+    return el;
+  }
+
+  /** @param {any} el */
+  async function selectGarden(el) {
+    el.name = 'garden';
+    await el.updateComplete;
+    await settle();
+  }
+
+  it('ignores a dream detail response that arrives after garden (rapid selection)', async () => {
+    const el = /** @type {any} */ (document.createElement('schedule-page'));
+    el.name = 'dream';
+    document.body.appendChild(el);
+    await el.updateComplete;
+    await selectGarden(el);
+
+    await server.respond('GET', '/api/schedules/garden', { schedule: GARDEN });
+    await server.respond('GET', '/api/schedules/dream', { schedule: STALE_DREAM });
+    await el.updateComplete;
+
+    expect(el._loading).toBe(false);
+    expectPanelShowsGarden(el);
+  });
+
+  it('keeps loading garden when an earlier dream detail response arrives first', async () => {
+    const el = /** @type {any} */ (document.createElement('schedule-page'));
+    el.name = 'dream';
+    document.body.appendChild(el);
+    await el.updateComplete;
+    await selectGarden(el);
+
+    await server.respond('GET', '/api/schedules/dream', { schedule: STALE_DREAM });
+    await el.updateComplete;
+    expect(el._loading).toBe(true);
+    expect(el.querySelector('schedule-metadata')).toBeNull();
+
+    await server.respond('GET', '/api/schedules/garden', { schedule: GARDEN });
+    await el.updateComplete;
+    expect(el._loading).toBe(false);
+    expectPanelShowsGarden(el);
+  });
+
+  it('ignores a post-save dream refresh that arrives after garden', async () => {
+    const el = await mountDream();
+
+    el.querySelector('wiki-editor').dispatchEvent(new CustomEvent('saved', {
+      detail: { modified: 5, page: 'dream' }, bubbles: true, composed: true,
+    }));
+    await settle();
+    await selectGarden(el);
+
+    await server.respond('GET', '/api/schedules/garden', { schedule: GARDEN });
+    await server.respond('GET', '/api/schedules/dream', { schedule: STALE_DREAM });
+    await el.updateComplete;
+
+    expectPanelShowsGarden(el);
+    expect(el.querySelector('wiki-editor').content).toBe('Garden body.');
+    expect(el._data.modified).toBe(2);
+  });
+
+  it('ignores a dream editor save that finishes after garden is selected', async () => {
+    const el = await mountDream();
+    const dreamEditor = el.querySelector('wiki-editor');
+    await selectGarden(el);
+    await server.respond('GET', '/api/schedules/garden', { schedule: GARDEN });
+    await el.updateComplete;
+
+    // Focus loss saves dream; the selection click lands before the PUT
+    // returns, and the detached dream editor then reports its save.
+    const saved = vi.fn();
+    window.addEventListener('schedule-saved', saved);
+    dreamEditor.dispatchEvent(new CustomEvent('saved', {
+      detail: { modified: 5, page: 'dream' }, bubbles: true, composed: true,
+    }));
+    await settle();
+    await el.updateComplete;
+    window.removeEventListener('schedule-saved', saved);
+
+    expectPanelShowsGarden(el);
+    expect(el._data.modified).toBe(2);
+    expect(server.pending).toEqual([]);
+    expect(saved).toHaveBeenCalledTimes(1);
+  });
+
+  it('ignores a dream metadata save response that arrives after garden', async () => {
+    const el = await mountDream();
+    const saved = vi.fn();
+    window.addEventListener('schedule-saved', saved);
+
+    el.querySelector('schedule-metadata').dispatchEvent(new CustomEvent('metadata-change', {
+      detail: { fields: { channel: 'dream-channel' } }, bubbles: true, composed: true,
+    }));
+    await settle();
+    await selectGarden(el);
+
+    await server.respond('GET', '/api/schedules/garden', { schedule: GARDEN });
+    await server.respond('PUT', '/api/schedules/dream', { schedule: STALE_DREAM });
+    await el.updateComplete;
+    window.removeEventListener('schedule-saved', saved);
+
+    expectPanelShowsGarden(el);
+    // The dream save itself completed, so listeners such as the sidebar
+    // still hear about it.
+    expect(saved).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not show a late dream save error on garden', async () => {
+    const el = await mountDream();
+
+    el.querySelector('schedule-metadata').dispatchEvent(new CustomEvent('metadata-change', {
+      detail: { fields: { schedule: 'nope' } }, bubbles: true, composed: true,
+    }));
+    await settle();
+    await selectGarden(el);
+
+    await server.respond('GET', '/api/schedules/garden', { schedule: GARDEN });
+    await server.respond('PUT', '/api/schedules/dream',
+      { error: "invalid cron expression: 'nope'" }, 400);
+    await el.updateComplete;
+
+    expectPanelShowsGarden(el);
+    expect(el.querySelector('schedule-metadata').error).toBe('');
+  });
+
+  it('ignores a dream reset reload that arrives after garden', async () => {
+    vi.stubGlobal('confirm', () => true);
+    const el = /** @type {any} */ (document.createElement('schedule-page'));
+    el.name = 'dream';
+    document.body.appendChild(el);
+    await el.updateComplete;
+    await server.respond('GET', '/api/schedules/dream', { schedule: STALE_DREAM });
+    await el.updateComplete;
+
+    el.querySelector('.schedule-reset-btn').click();
+    await settle();
+    await server.respond('DELETE', '/api/schedules/dream/overlay', {});
+    await selectGarden(el);
+
+    await server.respond('GET', '/api/schedules/garden', { schedule: GARDEN });
+    await server.respond('GET', '/api/schedules/dream', { schedule: DREAM });
+    await el.updateComplete;
+
+    expect(el._loading).toBe(false);
+    expectPanelShowsGarden(el);
+  });
+  it('does not reload or remount garden when a dream reset finishes after garden', async () => {
+    vi.stubGlobal('confirm', () => true);
+    const el = /** @type {any} */ (document.createElement('schedule-page'));
+    el.name = 'dream';
+    document.body.appendChild(el);
+    await el.updateComplete;
+    await server.respond('GET', '/api/schedules/dream', { schedule: STALE_DREAM });
+    await el.updateComplete;
+
+    el.querySelector('.schedule-reset-btn').click();
+    await selectGarden(el);
+    await server.respond('GET', '/api/schedules/garden', { schedule: GARDEN });
+    await el.updateComplete;
+    const gardenEditor = el.querySelector('wiki-editor');
+
+    await server.respond('DELETE', '/api/schedules/dream/overlay', {});
+    await el.updateComplete;
+
+    expect(server.pending).toEqual([]);
+    expect(el.querySelector('wiki-editor')).toBe(gardenEditor);
+    expectPanelShowsGarden(el);
+  });
+});
+
+describe('schedule-page without a selection change', () => {
+  /** @type {ReturnType<typeof controlledFetch>} */
+  let server;
+
+  beforeEach(() => {
+    server = controlledFetch();
+    vi.stubGlobal('fetch', server.fetch);
+  });
+
+  afterEach(() => {
+    document.body.innerHTML = '';
+    vi.unstubAllGlobals();
+  });
+
+  it('post-save refresh keeps the editor body and updates badges', async () => {
+    const el = /** @type {any} */ (document.createElement('schedule-page'));
+    el.name = 'dream';
+    document.body.appendChild(el);
+    await el.updateComplete;
+    await server.respond('GET', '/api/schedules/dream', { schedule: DREAM });
+    await el.updateComplete;
+    const editor = el.querySelector('wiki-editor');
+
+    editor.dispatchEvent(new CustomEvent('saved', {
+      detail: { modified: 5, page: 'dream' }, bubbles: true, composed: true,
+    }));
+    await settle();
+    await server.respond('GET', '/api/schedules/dream', {
+      schedule: { ...DREAM, body: 'Server body.', source_tier: 'admin', has_overlay: true, modified: 5 },
+    });
+    await el.updateComplete;
+
+    expect(el.querySelector('wiki-editor')).toBe(editor);
+    expect(el._data.body).toBe('Dream body.');
+    expect(el._data.modified).toBe(5);
+    expect(el.querySelector('.schedule-tier-badge').textContent).toBe('admin');
+    expect(el.querySelector('.schedule-overlay-badge')).not.toBeNull();
+  });
+
+  it('reset remounts the editor with the default body', async () => {
+    vi.stubGlobal('confirm', () => true);
+    const el = /** @type {any} */ (document.createElement('schedule-page'));
+    el.name = 'dream';
+    document.body.appendChild(el);
+    await el.updateComplete;
+    await server.respond('GET', '/api/schedules/dream', { schedule: STALE_DREAM });
+    await el.updateComplete;
+    const editor = el.querySelector('wiki-editor');
+
+    el.querySelector('.schedule-reset-btn').click();
+    await settle();
+    await server.respond('DELETE', '/api/schedules/dream/overlay', {});
+    await server.respond('GET', '/api/schedules/dream', { schedule: DREAM });
+    await el.updateComplete;
+
+    const remounted = el.querySelector('wiki-editor');
+    expect(remounted).not.toBe(editor);
+    expect(remounted.content).toBe('Dream body.');
+    expect(el.querySelector('.schedule-overlay-badge')).toBeNull();
+  });
+});

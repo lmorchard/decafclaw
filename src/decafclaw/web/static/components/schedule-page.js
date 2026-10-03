@@ -36,6 +36,12 @@ export class SchedulePage extends LitElement {
 
   createRenderRoot() { return this; }
 
+  /**
+   * Counts detail fetches so that only the latest one updates the panel.
+   * A selection change starts a new fetch, which makes earlier ones stale.
+   */
+  #fetchCount = 0;
+
   constructor() {
     super();
     this.name = '';
@@ -70,14 +76,22 @@ export class SchedulePage extends LitElement {
   }
 
   async #fetchSchedule() {
+    // schedule-page is a singleton that app.js reuses for every schedule,
+    // so a response can arrive after the user selected another schedule.
+    // Every handler below that assigns _data after an await checks that
+    // its schedule is still the selected one (#897).
+    const name = this.name;
+    const fetchId = ++this.#fetchCount;
+    const isLatest = () => fetchId === this.#fetchCount && name === this.name;
     this._loading = true;
     try {
-      const data = await DefaultService.wrapperApiSchedulesNameGet(this.name);
-      this._data = data.schedule;
+      const data = await DefaultService.wrapperApiSchedulesNameGet(name);
+      if (isLatest()) this._data = data.schedule;
     } catch {
-      this._data = null;
+      if (isLatest()) this._data = null;
     } finally {
-      this._loading = false;
+      // A newer fetch owns the loading state until it finishes.
+      if (fetchId === this.#fetchCount) this._loading = false;
     }
   }
 
@@ -102,12 +116,20 @@ export class SchedulePage extends LitElement {
    */
   async #patchFields(fields) {
     if (!this._data) return;
+    const name = this.name;
     try {
-      const data = await DefaultService.wrapperApiSchedulesNamePut(this.name, fields);
-      this._saveError = '';
-      this._data = data.schedule;
+      const data = await DefaultService.wrapperApiSchedulesNamePut(name, fields);
+      if (name === this.name) {
+        this._saveError = '';
+        this._data = data.schedule;
+      }
+      // The save completed even if the selection changed, so announce it.
       window.dispatchEvent(new CustomEvent('schedule-saved'));
     } catch (error) {
+      if (name !== this.name) {
+        console.warn('schedule-page: PUT failed for a deselected schedule:', name, error);
+        return;
+      }
       if (error instanceof ApiError) {
         /** @type {unknown} */ const body = error.body;
         this._saveError = responseError(body) || `save failed (${error.status})`;
@@ -129,10 +151,14 @@ export class SchedulePage extends LitElement {
   }
 
   async #resetOverlay() {
-    if (!confirm(`Reset "${this.name}" to its skill default?`)) return;
+    const name = this.name;
+    if (!confirm(`Reset "${name}" to its skill default?`)) return;
     try {
-      await DefaultService.wrapperApiSchedulesNameOverlayDelete(this.name, true);
+      await DefaultService.wrapperApiSchedulesNameOverlayDelete(name, true);
       window.dispatchEvent(new CustomEvent('schedule-saved'));
+      // Another selection has its own fetch; a reload here would remount
+      // its editor and discard unsaved typing.
+      if (name !== this.name) return;
       // Re-fetch (not just _data assignment) so the loading swap in
       // render() unmounts + remounts wiki-editor with the bundled body.
       // Milkdown only reads its initial content once in firstUpdated.
@@ -176,13 +202,23 @@ export class SchedulePage extends LitElement {
    * because the user is actively editing.
    */
   async #onWikiSaved(/** @type {CustomEvent} */ e) {
+    const name = this.name;
+    // A detached editor can report a save after the user selected another
+    // schedule (focus loss saves as the selection click lands). The save
+    // completed, so announce it, but leave the new schedule's panel alone.
+    if (typeof e.detail?.page === 'string' && e.detail.page !== name) {
+      window.dispatchEvent(new CustomEvent('schedule-saved'));
+      return;
+    }
     if (this._data && typeof e.detail?.modified === 'number') {
       this._data = { ...this._data, modified: e.detail.modified };
     }
     try {
-      const data = await DefaultService.wrapperApiSchedulesNameGet(this.name);
-      const preservedBody = this._data?.body ?? data.schedule.body;
-      this._data = { ...data.schedule, body: preservedBody };
+      const data = await DefaultService.wrapperApiSchedulesNameGet(name);
+      if (name === this.name) {
+        const preservedBody = this._data?.body ?? data.schedule.body;
+        this._data = { ...data.schedule, body: preservedBody };
+      }
       window.dispatchEvent(new CustomEvent('schedule-saved'));
     } catch (err) {
       console.warn('schedule-page: post-save metadata refresh failed:', err);
