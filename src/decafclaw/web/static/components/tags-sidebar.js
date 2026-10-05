@@ -1,5 +1,6 @@
 import { LitElement, html, nothing } from 'lit';
 import { DefaultService } from '../lib/api-client/index.js';
+import { activateOnEnterOrSpace } from '../lib/row-activation.js';
 
 /**
  * Tag rows carry vault paths with `.md` (from /api/vault/tags), while pages
@@ -90,7 +91,10 @@ export class TagsSidebar extends LitElement {
     }
     return html`
       ${this._tags.map(t => html`
-        <div class="conv-item wiki-item" @click=${() => this.#selectTag(t.tag)} title=${t.tag}>
+        <div class="conv-item wiki-item" title=${t.tag}
+          tabindex="0" aria-label=${`Open tag ${t.tag}`}
+          @click=${() => this.#selectTag(t.tag)}
+          @keydown=${activateOnEnterOrSpace(() => this.#selectTag(t.tag))}>
           <span class="conv-title">${t.tag}</span>
           <span class="conv-type-badge">${t.count}</span>
         </div>
@@ -110,7 +114,10 @@ export class TagsSidebar extends LitElement {
       </div>
       ${pages.length
         ? pages.map(p => html`
-            <div class="conv-item wiki-item ${withoutMd(p) === openPage ? 'active' : ''}" @click=${() => this.#openPage(p)} title=${p}>
+            <div class="conv-item wiki-item ${withoutMd(p) === openPage ? 'active' : ''}" title=${p}
+              tabindex="0" aria-label=${`Open page ${p}`}
+              @click=${() => this.#openPage(p)}
+              @keydown=${activateOnEnterOrSpace(() => this.#openPage(p))}>
               <span class="conv-title">${p}</span>
             </div>
           `)

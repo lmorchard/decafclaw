@@ -1,4 +1,5 @@
 import { LitElement, html, nothing } from 'lit';
+import { activateOnEnterOrSpace } from '../lib/row-activation.js';
 import './context-inspector.js';
 import './notification-inbox.js';
 import './vault-sidebar.js';
@@ -435,7 +436,10 @@ export class ConversationSidebar extends LitElement {
     return html`
       <div
         class=${classes.join(' ')}
+        tabindex="0"
+        aria-label=${`Open conversation ${conv.title}`}
         @click=${() => this.#handleSelect(conv.conv_id)}
+        @keydown=${activateOnEnterOrSpace(() => this.#handleSelect(conv.conv_id))}
         title=${titleAttr}
       >
         <span
@@ -539,17 +543,21 @@ export class ConversationSidebar extends LitElement {
         ${this.#renderChatBreadcrumbs()}
         ${this._chatFolders.map(f => {
           const isVirtual = ('virtual' in f && f.virtual) || f.path === '_archived' || f.path === '_system' || this._chatSection !== '';
+          const openFolder = () => {
+            if (f.path === '_archived') {
+              this.#navigateChatFolder('_archived', '');
+            } else if (f.path === '_system') {
+              this.#navigateChatFolder('_system', '');
+            } else {
+              this.#navigateChatFolder(this._chatSection, f.path);
+            }
+          };
           return html`
             <div class="conv-item wiki-item wiki-folder-item"
-              @click=${() => {
-                if (f.path === '_archived') {
-                  this.#navigateChatFolder('_archived', '');
-                } else if (f.path === '_system') {
-                  this.#navigateChatFolder('_system', '');
-                } else {
-                  this.#navigateChatFolder(this._chatSection, f.path);
-                }
-              }}
+              tabindex="0"
+              aria-label=${`Open folder ${f.name}`}
+              @click=${openFolder}
+              @keydown=${activateOnEnterOrSpace(openFolder)}
               @dblclick=${!isVirtual ? (/** @type {Event} */ e) => { e.stopPropagation(); this.#renameChatFolder(f.path, f.name); } : nothing}
               title=${f.path}>
               <span class="conv-title">\u{1F4C1} ${f.name}</span>
