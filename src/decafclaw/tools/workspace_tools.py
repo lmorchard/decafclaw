@@ -10,11 +10,13 @@ from __future__ import annotations
 import difflib
 import fnmatch
 import logging
+import os
 import re
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
 
 from ..media import ToolResult, WidgetRequest
+from ..util import find_fuzzy_matches
 from ..workspace_index import invalidate_workspace_file_cache
 from .file_locks import file_lock
 
@@ -43,6 +45,51 @@ def _file_error(e: Exception, path: str) -> ToolResult:
     if isinstance(e, UnicodeDecodeError):
         return ToolResult(text=f"[error: file is not valid UTF-8 text: {path}]")
     return ToolResult(text=f"[error: {e}: {path}]")
+
+
+# Upper bound on files examined when looking for "Did you mean" suggestions,
+# so a typo in a huge workspace stays cheap.
+MAX_SUGGESTION_CANDIDATES = 5000
+# Top-level directories that hold bookkeeping, not files the agent reads.
+# Mirrors the prune list in workspace_index._scan_workspace_files.
+_SUGGESTION_PRUNE_ROOT_DIRS = frozenset({"conversations", ".schedule_last_run", "attachments"})
+
+
+def _workspace_file_candidates(workspace: Path) -> list[str]:
+    """List workspace-relative file paths to compare against a missing path.
+
+    Skips hidden entries and node_modules, and stops after
+    MAX_SUGGESTION_CANDIDATES files.
+    """
+    candidates: list[str] = []
+    for dirpath, dirnames, filenames in os.walk(workspace):
+        is_root = Path(dirpath) == workspace
+        dirnames[:] = sorted(
+            d for d in dirnames
+            if not d.startswith(".")
+            and d != "node_modules"
+            and not (is_root and d in _SUGGESTION_PRUNE_ROOT_DIRS)
+        )
+        for fname in sorted(filenames):
+            if fname.startswith("."):
+                continue
+            candidates.append((Path(dirpath) / fname).relative_to(workspace).as_posix())
+            if len(candidates) >= MAX_SUGGESTION_CANDIDATES:
+                return candidates
+    return candidates
+
+
+def _file_not_found_with_suggestions(config, path: str) -> ToolResult:
+    """File-not-found error that lists up to three close workspace paths.
+
+    Suggestions only. The caller never reads or writes a suggested path.
+    """
+    workspace = config.workspace_path.resolve()
+    target = PurePosixPath(path).as_posix()
+    matches = find_fuzzy_matches(target, _workspace_file_candidates(workspace))
+    if not matches:
+        return ToolResult(text=f"[error: file not found: {path}]")
+    return ToolResult(text=f"[error: file not found: {path}. Did you mean: {', '.join(matches)}?]")
 
 
 # Max lines returned by workspace_read when no line range is specified
@@ -116,7 +163,9 @@ def tool_workspace_read(
         return ToolResult(text=f"[error: path '{path}' is outside the workspace]")
     try:
         content = resolved.read_text()
-    except (FileNotFoundError, IsADirectoryError, PermissionError, UnicodeDecodeError) as e:
+    except FileNotFoundError:
+        return _file_not_found_with_suggestions(ctx.config, path)
+    except (IsADirectoryError, PermissionError, UnicodeDecodeError) as e:
         return _file_error(e, path)
 
     all_lines = content.splitlines()
