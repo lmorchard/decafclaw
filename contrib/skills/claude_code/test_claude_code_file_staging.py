@@ -62,6 +62,7 @@ async def test_push_file_happy_path(staging_env, ctx):
         ctx, session.session_id, "spec.md"
     )
 
+    assert result.data is not None
     assert result.data["status"] == "success"
     assert result.data["size_bytes"] > 0
     dest = Path(result.data["dest"])
@@ -82,6 +83,7 @@ async def test_push_file_custom_dest(staging_env, ctx):
         ctx, session.session_id, "spec.md", dest_name="docs/spec.md"
     )
 
+    assert result.data is not None
     assert result.data["status"] == "success"
     dest = Path(result.data["dest"])
     assert dest.name == "spec.md"
@@ -98,6 +100,7 @@ async def test_push_file_source_not_found(staging_env, ctx):
         ctx, session.session_id, "nonexistent.txt"
     )
 
+    assert result.data is not None
     assert result.data["status"] == "error"
     assert "not found" in result.text
 
@@ -114,6 +117,7 @@ async def test_push_file_source_is_directory(staging_env, ctx):
         ctx, session.session_id, "somedir"
     )
 
+    assert result.data is not None
     assert result.data["status"] == "error"
     assert "not a file" in result.text
 
@@ -130,6 +134,7 @@ async def test_push_file_dest_traversal(staging_env, ctx):
         ctx, session.session_id, "spec.md", dest_name="../../../../etc/evil"
     )
 
+    assert result.data is not None
     assert result.data["status"] == "error"
     assert "must be within" in result.text
 
@@ -141,6 +146,7 @@ async def test_push_file_session_not_found(staging_env, ctx):
         ctx, "nonexistent", "spec.md"
     )
 
+    assert result.data is not None
     assert result.data["status"] == "error"
     assert "not found" in result.text
 
@@ -158,6 +164,7 @@ async def test_pull_file_happy_path(staging_env, ctx):
         ctx, session.session_id, "output.txt"
     )
 
+    assert result.data is not None
     assert result.data["status"] == "success"
     assert result.data["size_bytes"] > 0
     dest = Path(result.data["dest"])
@@ -177,6 +184,7 @@ async def test_pull_file_custom_dest(staging_env, ctx):
         ctx, session.session_id, "output.txt", dest_path="results/output.txt"
     )
 
+    assert result.data is not None
     assert result.data["status"] == "success"
     dest = Path(result.data["dest"])
     assert dest.read_text() == "content"
@@ -192,6 +200,7 @@ async def test_pull_file_source_not_found(staging_env, ctx):
         ctx, session.session_id, "nonexistent.txt"
     )
 
+    assert result.data is not None
     assert result.data["status"] == "error"
     assert "not found" in result.text
 
@@ -205,6 +214,7 @@ async def test_pull_file_source_traversal(staging_env, ctx):
         ctx, session.session_id, "../../../../etc/passwd"
     )
 
+    assert result.data is not None
     assert result.data["status"] == "error"
     assert "must be within" in result.text
 
@@ -218,6 +228,7 @@ async def test_push_file_source_traversal(staging_env, ctx):
         ctx, session.session_id, "../../outside.txt"
     )
 
+    assert result.data is not None
     assert result.data["status"] == "error"
     assert "must be within" in result.text
 
@@ -234,6 +245,7 @@ async def test_pull_file_dest_traversal(staging_env, ctx):
         ctx, session.session_id, "output.txt", dest_path="../../outside.txt"
     )
 
+    assert result.data is not None
     assert result.data["status"] == "error"
     assert "must be within" in result.text
 
@@ -251,6 +263,7 @@ async def test_push_binary_file(staging_env, ctx):
         ctx, session.session_id, "image.bin"
     )
 
+    assert result.data is not None
     assert result.data["status"] == "success"
     dest = Path(result.data["dest"])
     assert dest.read_bytes() == binary_data
