@@ -127,7 +127,7 @@ def parse_feed(raw: str, feed_name: str) -> list[dict]:
     The ONLY feedparser-dependent function — imported lazily so the module
     stays importable where feedparser is absent (project test env).
     """
-    import feedparser  # lazy: confined to this adapter
+    import feedparser  # pyright: ignore[reportMissingImports]  # lazy: confined to this adapter
 
     parsed = feedparser.parse(raw)
     entries: list[dict] = []

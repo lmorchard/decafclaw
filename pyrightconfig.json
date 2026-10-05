@@ -1,5 +1,5 @@
 {
-  "include": ["src/decafclaw", "scripts"],
+  "include": ["src/decafclaw", "scripts", "contrib"],
   "exclude": [
     "**/skills/*/cli.py",
     "**/skills/*/tests",
@@ -7,5 +7,5 @@
   ],
   "pythonVersion": "3.13",
   "typeCheckingMode": "basic",
-  "reportAttributeAccessIssue": "warning"
+  "reportAttributeAccessIssue": "error"
 }
