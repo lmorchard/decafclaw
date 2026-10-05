@@ -96,6 +96,7 @@ filterwarnings = [
 addopts = "-n auto --dist=worksteal -m 'not integration'"
 markers = [
     "integration: marks tests that hit real LLM APIs (opt in with: -m integration)",
+    "live_llm: marks tests that intentionally make real LLM network calls",
 ]
 
 [tool.ruff]
