@@ -20,6 +20,11 @@ from .registry import (  # noqa: F401
     register_provider,
 )
 from .types import (  # noqa: F401
+    FINISH_REASON_CANCELLED,
+    FINISH_REASON_ERROR,
+    FINISH_REASON_LENGTH,
+    FINISH_REASON_STOP,
+    FINISH_REASON_TOOL_CALLS,
     PROVIDER_LITELLM,
     PROVIDER_OPENAI,
     PROVIDER_OPENAI_COMPAT,
