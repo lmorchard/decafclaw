@@ -81,34 +81,6 @@ def test_metrics_endpoint_or_query(config):
 # -- #848 review blockers -----------------------------------------------------
 
 
-@pytest.fixture
-def stub_llm(monkeypatch):
-    """Stub both LLM seams and record the calls.
-
-    ``_call_llm_with_events`` picks between the module-level ``agent.call_llm``
-    and ``call_llm_streaming``, which the streaming branch imports from
-    ``.llm`` *inside* the function — so patching one seam leaves the other
-    live. That matters more than it looks: ``config.llm.streaming`` defaults to
-    ``True`` and the default ``llm.url`` is a LAN address, so a half-patched
-    test makes a real request, passes wherever that host is reachable, and
-    fails in CI with a ConnectError.
-
-    Tests assert against the returned list, so a live network path cannot pass
-    silently — an unpatched seam leaves it empty.
-    """
-    from decafclaw import agent, llm
-
-    calls: list[dict] = []
-
-    async def fake_call(config, messages, tools=None, **kwargs):
-        calls.append(kwargs)
-        return {"content": "hi", "tool_calls": None, "role": "assistant", "usage": {}}
-
-    monkeypatch.setattr(agent, "call_llm", fake_call)
-    monkeypatch.setattr(llm, "call_llm_streaming", fake_call)
-    return calls
-
-
 def _config_with_streaming(tmp_path, streaming: bool, **kwargs):
     config = Config(agent=AgentConfig(data_home=str(tmp_path), id="t"), **kwargs)
     return dataclasses.replace(
