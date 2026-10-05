@@ -541,3 +541,41 @@ describe('chat-input mention autocomplete', () => {
     expect(textareaOf(el).value).toBe('Check @');
   });
 });
+
+describe('chat-input accessible button names (#166)', () => {
+  /** @param {any} el @param {string} label */
+  const byLabel = (el, label) => el.querySelector(`button[aria-label="${label}"]`);
+
+  it('labels the send and attach buttons', async () => {
+    const el = await mount();
+
+    expect(byLabel(el, 'Send message')?.textContent.trim()).toBe('Send');
+    expect(byLabel(el, 'Attach file')?.classList.contains('attach-btn')).toBe(true);
+  });
+
+  it('labels the stop button while busy', async () => {
+    const el = await mount({ busy: true });
+
+    expect(byLabel(el, 'Stop generation')?.classList.contains('stop-btn')).toBe(true);
+  });
+
+  it('labels the attachment remove button', async () => {
+    const el = await mount();
+    el._pendingAttachments = [{ filename: 'notes.txt' }];
+    await el.updateComplete;
+
+    expect(byLabel(el, 'Remove attachment')?.classList.contains('attachment-remove')).toBe(true);
+  });
+
+  it('gives every rendered button a non-empty aria-label', async () => {
+    const el = await mount({ busy: true });
+    el._pendingAttachments = [{ filename: 'notes.txt' }];
+    await el.updateComplete;
+
+    const buttons = [...el.querySelectorAll('button')];
+    expect(buttons.length).toBe(4);
+    for (const b of buttons) {
+      expect(b.getAttribute('aria-label')?.trim()).toBeTruthy();
+    }
+  });
+});

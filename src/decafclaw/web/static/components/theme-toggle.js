@@ -71,6 +71,7 @@ export class ThemeToggle extends LitElement {
             class="theme-btn ${this._theme === t.name ? 'active' : ''}"
             @click=${() => this.#select(t.name)}
             title=${t.label}
+            aria-label="Switch to ${t.label} theme"
           >${t.icon}</button>
         `)}
         <div class="theme-palette-wrap">
@@ -79,6 +80,7 @@ export class ThemeToggle extends LitElement {
             class="theme-btn ${paletteActive ? 'active' : ''}"
             @click=${() => { this._paletteOpen = !this._paletteOpen; }}
             title="Color palette"
+            aria-label="Select color palette"
             aria-expanded=${this._paletteOpen ? 'true' : 'false'}
           >🎨</button>
           ${this._paletteOpen ? html`
@@ -88,6 +90,7 @@ export class ThemeToggle extends LitElement {
                   type="button"
                   class="theme-palette-item ${this._theme === p.name ? 'active' : ''}"
                   @click=${() => this.#select(p.name)}
+                  aria-label="Select ${p.label} theme"
                 >
                   <span class="theme-palette-dot" style="background:${p.dot}"></span>
                   ${p.label}
