@@ -271,6 +271,7 @@ class _VertexStreamState:
         self.all_tool_calls: list[dict] = []
         self.tool_calls_seen = 0
         self.usage: dict | None = None
+        self.finish_reason: str | None = None
         self._all_events: list = []
 
     def record_event(self, chunk: dict):
@@ -295,6 +296,14 @@ class _VertexStreamState:
         candidates = chunk.get("candidates", [])
         if not candidates:
             return
+
+        raw_reason = candidates[0].get("finishReason")
+        if raw_reason == "MAX_TOKENS":
+            self.finish_reason = "length"
+        elif raw_reason == "STOP":
+            self.finish_reason = "stop"
+        elif raw_reason:
+            self.finish_reason = raw_reason.lower()
 
         parts = candidates[0].get("content", {}).get("parts", [])
 
@@ -350,6 +359,10 @@ class _VertexStreamState:
                     tc["thought_signature"] = sig
                 tool_calls.append(tc)
 
+        finish_reason = self.finish_reason
+        if finish_reason is None and (content or tool_calls):
+            finish_reason = "stop"
+
         await self._emit("done", {"usage": self.usage})
 
         if not content and not tool_calls and self._all_events:
@@ -365,6 +378,7 @@ class _VertexStreamState:
             "tool_calls": tool_calls,
             "role": "assistant",
             "usage": self.usage,
+            "finish_reason": finish_reason,
         }
 
     async def _emit(self, chunk_type: str, data):
@@ -574,7 +588,18 @@ def _parse_response(data: dict) -> dict:
             "tool_calls": None,
             "role": "assistant",
             "usage": _parse_usage(data),
+            "finish_reason": "error",
         }
+
+    raw_reason = candidates[0].get("finishReason")
+    if raw_reason == "MAX_TOKENS":
+        finish_reason = "length"
+    elif raw_reason == "STOP":
+        finish_reason = "stop"
+    elif raw_reason:
+        finish_reason = raw_reason.lower()
+    else:
+        finish_reason = None
 
     parts = candidates[0].get("content", {}).get("parts", [])
 
@@ -609,6 +634,7 @@ def _parse_response(data: dict) -> dict:
         "tool_calls": tool_calls or None,
         "role": "assistant",
         "usage": _parse_usage(data),
+        "finish_reason": finish_reason,
     }
 
 

@@ -112,7 +112,14 @@ class OpenAICompatProvider:
         resp.raise_for_status()
         data = resp.json()
 
-        message = data["choices"][0]["message"]
+        choices = data.get("choices", [])
+        if choices:
+            choice = choices[0]
+            message = choice.get("message", {})
+            finish_reason = choice.get("finish_reason")
+        else:
+            message = {}
+            finish_reason = "error"
         usage = data.get("usage")
 
         if usage:
@@ -120,8 +127,9 @@ class OpenAICompatProvider:
             log.debug("LLM usage: prompt=%s, completion=%s, cached=%s",
                       usage.get("prompt_tokens"), usage.get("completion_tokens"),
                       usage.get("cached_tokens"))
-        log.debug("LLM response: content=%s, tool_calls=%d",
-                  bool(message.get("content")), len(message.get("tool_calls", [])))
+        log.debug("LLM response: content=%s, tool_calls=%d, finish_reason=%s",
+                  bool(message.get("content")), len(message.get("tool_calls", [])),
+                  finish_reason)
 
         tool_calls = message.get("tool_calls")
         if tool_calls:
@@ -133,6 +141,7 @@ class OpenAICompatProvider:
             "tool_calls": tool_calls,
             "role": "assistant",
             "usage": usage,
+            "finish_reason": finish_reason,
         }
 
     async def _complete_streaming(
@@ -177,6 +186,7 @@ class OpenAICompatProvider:
                 if not state.content_parts and not state.tool_calls_in_progress:
                     raise
                 log.error("LLM streaming error (partial content kept): %s", e)
+                state.finish_reason = "error"
                 break
 
         return await state.finalize()
@@ -206,8 +216,10 @@ class OpenAICompatProvider:
         async for event in event_source.aiter_sse():
             if cancel_event and cancel_event.is_set():
                 log.info("LLM streaming cancelled by user")
+                state.finish_reason = "cancelled"
                 break
             if event.data == "[DONE]":
+                state.saw_done = True
                 break
 
             event_type = getattr(event, "event", None)
@@ -306,6 +318,8 @@ class _StreamState:
         self.content_parts: list[str] = []
         self.tool_calls_in_progress: dict = {}
         self.usage: dict | None = None
+        self.finish_reason: str | None = None
+        self.saw_done: bool = False
         self._all_events: list = []
 
     def record_event(self, chunk: dict):
@@ -322,13 +336,17 @@ class _StreamState:
 
         choices = chunk.get("choices", [])
         if not choices:
-            if chunk.get("error") or not chunk.get("usage"):
+            if chunk.get("error"):
+                self.finish_reason = "error"
+            elif not chunk.get("usage"):
                 log.debug("LLM chunk with no choices: %s", json.dumps(chunk)[:500])
             return
 
         finish_reason = choices[0].get("finish_reason")
-        if finish_reason and finish_reason not in ("stop", "tool_calls"):
-            log.warning("LLM finish_reason: %s", finish_reason)
+        if finish_reason:
+            self.finish_reason = finish_reason
+            if finish_reason not in ("stop", "tool_calls"):
+                log.warning("LLM finish_reason: %s", finish_reason)
 
         delta = choices[0].get("delta", {})
 
@@ -389,14 +407,21 @@ class _StreamState:
                 })
 
         content = "".join(self.content_parts) or None
+        finish_reason = self.finish_reason
+        if finish_reason is None:
+            if self.saw_done:
+                finish_reason = "stop"
+            elif content or self.tool_calls_in_progress:
+                finish_reason = "error"
+
         await self._emit("done", {"usage": self.usage})
 
         if self.usage:
             log.debug("LLM streaming usage: prompt=%s, completion=%s",
                       self.usage.get("prompt_tokens"),
                       self.usage.get("completion_tokens"))
-        log.debug("LLM streaming response: content=%s, tool_calls=%d",
-                  bool(content), len(tool_calls) if tool_calls else 0)
+        log.debug("LLM streaming response: content=%s, tool_calls=%d, finish_reason=%s",
+                  bool(content), len(tool_calls) if tool_calls else 0, finish_reason)
 
         if not content and not self.tool_calls_in_progress and self._all_events:
             log.warning(
@@ -411,6 +436,7 @@ class _StreamState:
             "tool_calls": tool_calls,
             "role": "assistant",
             "usage": self.usage,
+            "finish_reason": finish_reason,
         }
 
     async def _emit(self, chunk_type: str, data):
