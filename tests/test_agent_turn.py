@@ -496,14 +496,17 @@ def test_refresh_dynamic_tools_handles_provider_error(ctx):
 # -- run_agent_turn integration tests ------------------------------------------
 
 
-def _mock_llm_response(content="Hello!", tool_calls=None, usage=None):
+def _mock_llm_response(content="Hello!", tool_calls=None, usage=None, finish_reason=None):
     """Build a mock LLM response dict."""
-    return {
+    res = {
         "content": content,
         "tool_calls": tool_calls,
         "role": "assistant",
         "usage": usage or {"prompt_tokens": 100, "completion_tokens": 50},
     }
+    if finish_reason is not None:
+        res["finish_reason"] = finish_reason
+    return res
 
 
 @pytest.mark.asyncio
