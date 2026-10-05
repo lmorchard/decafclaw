@@ -184,6 +184,7 @@ export class ChatView extends LitElement {
         <button
           class="scroll-to-bottom dc-floating-btn"
           @click=${() => this.#scrollToBottom()}
+          aria-label="Scroll to new messages"
         >\u2193 New messages</button>
       ` : ''}
     `;
