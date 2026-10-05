@@ -77,6 +77,69 @@ def test_read_nonexistent(ctx):
     assert "error" in _text(result).lower()
 
 
+def test_read_misspelled_path_suggests_close_match(ctx):
+    tool_workspace_write(ctx, "config.py", "SETTING = 1")
+    text = _text(tool_workspace_read(ctx, "cnfg.py"))
+    assert text == "[error: file not found: cnfg.py. Did you mean: config.py?]"
+
+
+def test_read_exact_path_returns_contents(ctx):
+    tool_workspace_write(ctx, "config.py", "SETTING = 1")
+    text = _text(tool_workspace_read(ctx, "config.py"))
+    assert "SETTING = 1" in text
+    assert "error" not in text.lower()
+
+
+def test_read_ambiguous_path_suggests_all_close_matches(ctx):
+    tool_workspace_write(ctx, "test_alpha.py", "a")
+    tool_workspace_write(ctx, "test_alphe.py", "e")
+    text = _text(tool_workspace_read(ctx, "test_alphx.py"))
+    assert "Did you mean:" in text
+    assert "test_alpha.py" in text
+    assert "test_alphe.py" in text
+
+
+def test_read_suggestions_limited_to_three(ctx):
+    for suffix in "abcde":
+        tool_workspace_write(ctx, f"report_{suffix}.md", "x")
+    text = _text(tool_workspace_read(ctx, "report_z.md"))
+    suggestions = text.split("Did you mean: ", 1)[1].rstrip("?]").split(", ")
+    assert len(suggestions) == 3
+
+
+def test_read_suggests_nested_path(ctx):
+    tool_workspace_write(ctx, "notes/meeting.md", "x")
+    text = _text(tool_workspace_read(ctx, "notes/meetng.md"))
+    assert "Did you mean: notes/meeting.md?" in text
+
+
+def test_read_without_close_match_has_no_suggestions(ctx):
+    tool_workspace_write(ctx, "config.py", "x")
+    text = _text(tool_workspace_read(ctx, "zzzzzzzz.txt"))
+    assert text == "[error: file not found: zzzzzzzz.txt]"
+
+
+def test_read_suggestions_skip_hidden_files(ctx):
+    tool_workspace_write(ctx, ".secret.env", "x")
+    text = _text(tool_workspace_read(ctx, "secret.env"))
+    assert "Did you mean" not in text
+
+
+def test_write_does_not_redirect_to_fuzzy_match(ctx):
+    tool_workspace_write(ctx, "notes.txt", "original")
+    tool_workspace_write(ctx, "notez.txt", "new text")
+    assert (ctx.config.workspace_path / "notes.txt").read_text() == "original"
+    assert (ctx.config.workspace_path / "notez.txt").read_text() == "new text"
+
+
+def test_edit_does_not_redirect_to_fuzzy_match(ctx):
+    tool_workspace_write(ctx, "notes.txt", "original")
+    text = _text(tool_workspace_edit(ctx, "notez.txt", "original", "changed"))
+    assert "not found" in text
+    assert (ctx.config.workspace_path / "notes.txt").read_text() == "original"
+    assert not (ctx.config.workspace_path / "notez.txt").exists()
+
+
 def test_read_escape_blocked(ctx):
     result = tool_workspace_read(ctx, "../../etc/passwd")
     assert "outside" in _text(result).lower()

@@ -35,6 +35,7 @@ from decafclaw.skills.vault._sections import (
 )
 from decafclaw.tags import collect_all_tags, extract_tags, normalize_tag, pages_with_tags
 from decafclaw.tools.confirmation import request_confirmation
+from decafclaw.util import find_fuzzy_matches
 
 if TYPE_CHECKING:
     from decafclaw.context import Context
@@ -108,6 +109,35 @@ def resolve_page(config, page: str, from_page: str | None = None) -> Path | None
         matches.sort(key=_distance)
 
     return matches[0]
+
+
+def suggest_pages(config, page: str) -> list[str]:
+    """Return up to three existing page names close to a missing ``page``.
+
+    A bare name is compared with page stems; a name with a folder is compared
+    with vault-relative paths. Suggestions are vault-relative paths without
+    ``.md``, the form ``vault_read`` accepts. This never resolves the page.
+    """
+    if ".." in page or page.startswith("/"):
+        return []
+    if page.endswith(".md"):
+        page = page[:-3]
+    vault = _vault_root(config).resolve()
+    if not vault.is_dir():
+        return []
+
+    # Map each comparison key to the page names it stands for. Several
+    # pages in different folders can share a stem.
+    by_key: dict[str, list[str]] = {}
+    match_on_stem = "/" not in page
+    for path in sorted(vault.rglob("*.md")):
+        name = path.relative_to(vault).with_suffix("").as_posix()
+        key = path.stem if match_on_stem else name
+        by_key.setdefault(key, []).append(name)
+
+    target = Path(page).stem if match_on_stem else page
+    suggestions = [name for key in find_fuzzy_matches(target, by_key) for name in by_key[key]]
+    return suggestions[:3]
 
 
 def _safe_write_path(config, page: str) -> Path | None:
@@ -314,6 +344,11 @@ async def tool_vault_read(ctx: "Context", page: str) -> str | ToolResult:
     log.info(f"[tool:vault_read] page={page}")
     path = resolve_page(ctx.config, page)
     if path is None:
+        suggestions = suggest_pages(ctx.config, page)
+        if suggestions:
+            return ToolResult(
+                text=f"[error: vault page '{page}' not found. Did you mean: {', '.join(suggestions)}?]"
+            )
         return ToolResult(text=f"[error: vault page '{page}' not found]")
     content = path.read_text()
     # Structured metadata for programmatic callers (code_execution sandbox).
