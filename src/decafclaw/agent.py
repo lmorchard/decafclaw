@@ -439,7 +439,13 @@ async def _call_llm_with_events(ctx: "Context", config, messages, tools,
                     await llm_task
                 except (asyncio.CancelledError, Exception):
                     pass
-                response = {"content": "", "tool_calls": None, "role": "assistant", "usage": {}}
+                response = {
+                    "content": "",
+                    "tool_calls": None,
+                    "role": "assistant",
+                    "usage": {},
+                    "finish_reason": "cancelled",
+                }
             else:
                 response = llm_task.result()
         else:
@@ -803,6 +809,47 @@ class TurnRunner:
             self.accumulated_text_parts.append(iter_content)
             await self.ctx.publish("text_before_tools", text=iter_content)
 
+        finish_reason = response.get("finish_reason")
+        if finish_reason == "cancelled":
+            cancelled = _check_cancelled(self.ctx, self.history)
+            if not cancelled:
+                log.info("Agent turn cancelled by response finish_reason")
+                msg = "[Agent turn cancelled by user]"
+                final_msg = {"role": "assistant", "content": msg}
+                self.history.append(final_msg)
+                _archive(self.ctx, final_msg)
+                cancelled = ToolResult(text=msg)
+            return _Final(result=cancelled)
+
+        if finish_reason == "length" or finish_reason in ("error", "interrupted"):
+            log.warning(
+                "LLM response finish_reason is %r; rejecting %d tool call(s)",
+                finish_reason, len(tool_calls),
+            )
+            if finish_reason == "length":
+                error_text = (
+                    "[error: tool call was not executed because the model response was "
+                    "truncated at the token limit. Please reissue the call.]"
+                )
+            else:
+                error_text = (
+                    f"[error: tool call was not executed because the model response was "
+                    f"interrupted ({finish_reason}). Please reissue the call.]"
+                )
+
+            for tc in tool_calls:
+                call_id = tc.get("id", "")
+                tool_msg = {
+                    "role": "tool",
+                    "tool_call_id": call_id,
+                    "content": error_text,
+                }
+                self.history.append(tool_msg)
+                self.messages.append(tool_msg)
+                _archive(self.ctx, tool_msg)
+
+            return _Continue()
+
         cancelled, end_turn_signal = await execute_tool_calls(
             self.ctx, tool_calls, self.history, self.messages,
         )
@@ -812,7 +859,6 @@ class TurnRunner:
         if self.ctx.steer_event and self.ctx.steer_event.is_set():
             log.info("Agent loop interrupted by steering message")
             text = "\n\n".join(self.accumulated_text_parts) if self.accumulated_text_parts else ""
-            from .media import ToolResult
             return _Final(result=ToolResult(text=text))
 
         if isinstance(end_turn_signal, WidgetInputPause):

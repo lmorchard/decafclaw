@@ -12,6 +12,13 @@ PROVIDER_VERTEX = "vertex"
 # Legacy alias
 PROVIDER_LITELLM = "litellm"
 
+# Completion finish reason constants
+FINISH_REASON_STOP = "stop"
+FINISH_REASON_TOOL_CALLS = "tool_calls"
+FINISH_REASON_LENGTH = "length"
+FINISH_REASON_ERROR = "error"
+FINISH_REASON_CANCELLED = "cancelled"
+
 # Callback type for streaming chunks
 # on_chunk(chunk_type, data) where chunk_type is one of:
 #   "text", "tool_call_start", "tool_call_delta", "tool_call_end", "done"
@@ -30,7 +37,7 @@ class Provider(Protocol):
     for a specific API (OpenAI, Vertex/Gemini, etc.).
 
     All methods return data in the internal format:
-    - complete() returns {"content", "tool_calls", "role", "usage"}
+    - complete() returns {"content", "tool_calls", "role", "usage", "finish_reason"}
     - embed() returns a list of floats or None
     """
 
@@ -53,6 +60,7 @@ class Provider(Protocol):
           - "tool_calls": list or None
           - "role": "assistant"
           - "usage": dict or None
+          - "finish_reason": str | None (e.g. "stop", "length", "error", "cancelled")
         """
         ...
 
