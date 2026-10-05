@@ -1,5 +1,6 @@
 import { LitElement, html, nothing } from 'lit';
 import { ApiError, DefaultService } from '../lib/api-client/index.js';
+import { activateOnEnterOrSpace } from '../lib/row-activation.js';
 
 /** @param {unknown} body */
 function responseError(body) {
@@ -236,7 +237,10 @@ export class VaultSidebar extends LitElement {
       </div>
       <div class="vault-breadcrumbs">${this.#renderVaultBreadcrumbs()}</div>
       ${this._vaultFolders.map(f => html`
-        <div class="conv-item wiki-item wiki-folder-item" @click=${() => this.#navigateToFolder(f.path)} title=${f.path}>
+        <div class="conv-item wiki-item wiki-folder-item" title=${f.path}
+          tabindex="0" aria-label=${`Open folder ${f.name}`}
+          @click=${() => this.#navigateToFolder(f.path)}
+          @keydown=${activateOnEnterOrSpace(() => this.#navigateToFolder(f.path))}>
           <span class="conv-title">\u{1F4C1} ${f.name}</span>
         </div>
       `)}
@@ -244,7 +248,10 @@ export class VaultSidebar extends LitElement {
         const pagePath = p.path || p.title;
         const isOpen = pagePath === this._openWikiPage;
         return html`
-          <div class="conv-item wiki-item ${isOpen ? 'active' : ''}" @click=${() => this.#handleWikiSelect(pagePath)} title=${pagePath}>
+          <div class="conv-item wiki-item ${isOpen ? 'active' : ''}" title=${pagePath}
+            tabindex="0" aria-label=${`Open page ${p.title}`}
+            @click=${() => this.#handleWikiSelect(pagePath)}
+            @keydown=${activateOnEnterOrSpace(() => this.#handleWikiSelect(pagePath))}>
             <span class="conv-title">${p.title}</span>
             ${p.summary ? html`<span class="wiki-item-summary">${p.summary}</span>` : nothing}
           </div>
@@ -266,7 +273,10 @@ export class VaultSidebar extends LitElement {
         const pagePath = p.path || p.title;
         const isOpen = pagePath === this._openWikiPage;
         return html`
-          <div class="conv-item wiki-item recent-item ${isOpen ? 'active' : ''}" @click=${() => this.#handleWikiSelect(pagePath)} title=${pagePath}>
+          <div class="conv-item wiki-item recent-item ${isOpen ? 'active' : ''}" title=${pagePath}
+            tabindex="0" aria-label=${`Open page ${p.folder ? `${p.folder}/` : ''}${p.title}`}
+            @click=${() => this.#handleWikiSelect(pagePath)}
+            @keydown=${activateOnEnterOrSpace(() => this.#handleWikiSelect(pagePath))}>
             ${p.folder ? html`<span class="recent-folder">${p.folder}/</span>` : nothing}
             <span class="conv-title">${p.title}</span>
             <span class="recent-time">${this.#formatRelativeTime(p.modified)}</span>

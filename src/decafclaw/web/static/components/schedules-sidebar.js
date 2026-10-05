@@ -1,5 +1,6 @@
 import { LitElement, html, nothing } from 'lit';
 import { ApiError, DefaultService } from '../lib/api-client/index.js';
+import { activateOnEnterOrSpace } from '../lib/row-activation.js';
 
 /** @typedef {import('../lib/api-client/index.js').ScheduleResponse} ScheduleEntry */
 
@@ -143,7 +144,10 @@ export class SchedulesSidebar extends LitElement {
     return html`
       <div class="schedule-row ${isOpen ? 'open' : ''}">
         <div class="schedule-row-header"
-             @click=${() => this.#openSchedule(s.name)}>
+             tabindex="0"
+             aria-label=${`Open schedule ${s.name}`}
+             @click=${() => this.#openSchedule(s.name)}
+             @keydown=${activateOnEnterOrSpace(() => this.#openSchedule(s.name))}>
           <span class="schedule-name">${s.name}</span>
           <span class="schedule-tier-badge tier-${s.source_tier}">${s.source_tier}</span>
           ${s.has_overlay ? html`<span class="schedule-overlay-badge">overridden</span>` : nothing}
