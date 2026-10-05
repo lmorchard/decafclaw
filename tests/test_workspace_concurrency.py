@@ -383,6 +383,7 @@ def test_cancellation_does_not_release_guard_while_worker_write_running(ctx):
 
     worker1_started = threading.Event()
     worker1_can_finish = threading.Event()
+    worker2_checked = threading.Event()
     worker2_overlap_detected = False
 
     def worker1():
@@ -397,6 +398,7 @@ def test_cancellation_does_not_release_guard_while_worker_write_running(ctx):
         # Attempt to acquire lock; while worker 1 is running, it must be locked
         if not is_file_locked(target):
             worker2_overlap_detected = True
+        worker2_checked.set()
         with file_lock(target):
             # Lock acquired only after worker 1 finished
             pass
@@ -408,6 +410,9 @@ def test_cancellation_does_not_release_guard_while_worker_write_running(ctx):
     t2.start()
 
     assert worker1_started.wait(timeout=5.0)
+    # Worker 1 must not finish before worker 2 has checked the lock;
+    # otherwise worker 2 can see the lock released and report a false overlap.
+    assert worker2_checked.wait(timeout=5.0)
     # Target file is still held by worker 1
     assert is_file_locked(target)
     assert not worker2_overlap_detected
