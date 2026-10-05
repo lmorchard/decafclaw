@@ -562,7 +562,7 @@ export class ChatInput extends LitElement {
                 : html`<span class="attachment-file-icon">${a.filename}</span>`
               }
               <button class="attachment-remove" @click=${() => this.#removeAttachment(i)}
-                title="Remove">&times;</button>
+                title="Remove" aria-label="Remove attachment">&times;</button>
             </div>
           `)}
         </div>
@@ -575,7 +575,7 @@ export class ChatInput extends LitElement {
           @change=${this.#handleFileInput}>
         ${!this.disabled ? html`
           <button type="button" class="attach-btn" @click=${this.#openFilePicker}
-            title="Attach file">&#128206;</button>
+            title="Attach file" aria-label="Attach file">&#128206;</button>
         ` : nothing}
         <textarea
           placeholder=${this.placeholder}
@@ -588,9 +588,9 @@ export class ChatInput extends LitElement {
           @paste=${this.#handlePaste}
         ></textarea>
         ${this.busy ? html`
-          <button class="stop-btn" @click=${this.#handleStop}>&#9632; Stop</button>
+          <button class="stop-btn" @click=${this.#handleStop} aria-label="Stop generation">&#9632; Stop</button>
         ` : ''}
-        <button @click=${this.#handleSend} ?disabled=${this.disabled}>Send</button>
+        <button @click=${this.#handleSend} ?disabled=${this.disabled} aria-label="Send message">Send</button>
       </div>
     `;
   }
