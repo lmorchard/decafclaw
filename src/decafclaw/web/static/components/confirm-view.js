@@ -55,7 +55,7 @@ export class ConfirmView extends LitElement {
     if (choices.length > 0) {
       // Render a button per choice, plus a cancel button
       return html`
-        <div class="confirm-card" role="dialog" aria-modal="true"
+        <div class="confirm-card" role="dialog"
           aria-label=${c.message}>
           <div class="confirm-header">
             <strong>${c.message}</strong>
@@ -90,7 +90,7 @@ export class ConfirmView extends LitElement {
     };
 
     return html`
-      <div class="confirm-card" role="dialog" aria-modal="true"
+      <div class="confirm-card" role="dialog"
         aria-label=${c.message}>
         <div class="confirm-header">
           <strong>${c.message}</strong>
@@ -136,7 +136,7 @@ export class ConfirmView extends LitElement {
       }
 
       return html`
-        <div class="confirm-card" role="dialog" aria-modal="true"
+        <div class="confirm-card" role="dialog"
           aria-label="Confirm ${c.tool}">
           <div class="confirm-header">
             <strong>Confirm ${c.tool}:</strong>
