@@ -115,6 +115,18 @@ conversation-sidebar .conv-item.active {
   color: var(--pico-primary-inverse);
 }
 
+/* Keyboard focus on clickable list rows (#555). Inset so the scrolling list
+   does not clip it; the active row's background is the primary color, so its
+   ring uses the inverse color. Matches .notification-row:focus-visible. */
+conversation-sidebar .conv-item:focus-visible {
+  outline: 2px solid var(--pico-primary);
+  outline-offset: -2px;
+}
+
+conversation-sidebar .conv-item.active:focus-visible {
+  outline-color: var(--pico-primary-inverse);
+}
+
 conversation-sidebar .conv-item.system {
   font-size: 0.8rem;
 }
@@ -542,6 +554,13 @@ button.vault-breadcrumb-segment {
 
 .schedule-row-header:hover .schedule-name {
   color: var(--pico-primary);
+}
+
+/* Keyboard focus (#555). The header has no horizontal padding, so the ring
+   sits outside it, inside the row's padding. */
+.schedule-row-header:focus-visible {
+  outline: 2px solid var(--pico-primary);
+  outline-offset: 2px;
 }
 
 .schedule-name {

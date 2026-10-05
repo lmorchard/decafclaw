@@ -1,5 +1,6 @@
 import { LitElement, html, nothing } from 'lit';
 import { ApiError, DefaultService } from '../lib/api-client/index.js';
+import { activateOnEnterOrSpace } from '../lib/row-activation.js';
 
 /**
  * @typedef {import('../lib/api-client/index.js').WorkspaceFileEntry} FileEntry
@@ -185,6 +186,15 @@ export class FilesSidebar extends LitElement {
     }));
   }
 
+  /**
+   * Accessible name for a file row. Secret files do not open, so say why.
+   * @param {FileEntry} f
+   * @param {string} name - the name or path that the row shows
+   */
+  #fileRowLabel(f, name) {
+    return f.secret ? `${name}, hidden from the UI by policy` : `Open file ${name}`;
+  }
+
   #toggleShowHidden() {
     this._showHidden = !this._showHidden;
     localStorage.setItem('files-show-hidden', String(this._showHidden));
@@ -258,7 +268,10 @@ export class FilesSidebar extends LitElement {
     return html`
       <div class="vault-breadcrumbs">${this.#renderBreadcrumbs()}</div>
       ${folders.map(f => html`
-        <div class="conv-item wiki-item wiki-folder-item" @click=${() => this.#navigateToFolder(f.path)} title=${f.path}>
+        <div class="conv-item wiki-item wiki-folder-item" title=${f.path}
+          tabindex="0" aria-label=${`Open folder ${f.name}`}
+          @click=${() => this.#navigateToFolder(f.path)}
+          @keydown=${activateOnEnterOrSpace(() => this.#navigateToFolder(f.path))}>
           <span class="conv-title">\u{1F4C1} ${f.name}</span>
         </div>
       `)}
@@ -268,7 +281,10 @@ export class FilesSidebar extends LitElement {
         return html`
           <div
             class="conv-item wiki-item ${isOpen ? 'active' : ''} ${f.secret ? 'secret' : ''}"
+            tabindex="0"
+            aria-label=${this.#fileRowLabel(f, f.name)}
             @click=${() => this.#handleFileClick(f)}
+            @keydown=${activateOnEnterOrSpace(() => this.#handleFileClick(f))}
             title=${secretTitle}
           >
             <span class="conv-title">${this.#fileIcon(f)} ${f.name}</span>
@@ -299,7 +315,10 @@ export class FilesSidebar extends LitElement {
         return html`
           <div
             class="conv-item wiki-item recent-item ${isOpen ? 'active' : ''} ${f.secret ? 'secret' : ''}"
+            tabindex="0"
+            aria-label=${this.#fileRowLabel(f, f.path)}
             @click=${() => this.#handleFileClick(f)}
+            @keydown=${activateOnEnterOrSpace(() => this.#handleFileClick(f))}
             title=${secretTitle}
           >
             ${folder ? html`<span class="recent-folder">${folder}/</span>` : nothing}
