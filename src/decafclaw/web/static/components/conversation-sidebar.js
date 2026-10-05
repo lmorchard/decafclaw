@@ -156,12 +156,16 @@ export class ConversationSidebar extends LitElement {
     this._sidebarTab = 'wiki';
     const vs = /** @type {any} */ (this.querySelector('vault-sidebar'));
     vs?.navigateToPageFolder(pagePath);
+    const ts = /** @type {any} */ (this.querySelector('tags-sidebar'));
+    if (ts) ts.openPage = pagePath;
   }
 
   /** Clear the open page highlight (called when wiki pane is closed). */
   clearOpenPage() {
     const vs = /** @type {any} */ (this.querySelector('vault-sidebar'));
     vs?.clearOpenPage();
+    const ts = /** @type {any} */ (this.querySelector('tags-sidebar'));
+    if (ts) ts.openPage = null;
   }
 
   /**
