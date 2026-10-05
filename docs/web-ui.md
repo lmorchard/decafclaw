@@ -127,6 +127,7 @@ The **Tags** tab lists every tag in use across the vault, with usage counts, sor
 
 - Click a tag to see the pages that carry it
 - Click a page to open it in the wiki pane (same side panel as the Vault editor)
+- The page open in the wiki pane is highlighted in any tag's page list, however it was opened; closing the pane clears the highlight
 - Backed by `GET /api/vault/tags`
 
 ### Model picker
