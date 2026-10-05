@@ -130,6 +130,14 @@ The **Tags** tab lists every tag in use across the vault, with usage counts, sor
 - The page open in the wiki pane is highlighted in any tag's page list that contains it; closing the pane clears the highlight
 - Backed by `GET /api/vault/tags`
 
+### Keyboard navigation
+
+The sidebar list rows in the Chats, Vault, Files, Tags, and Schedules tabs work from the keyboard:
+
+- **Tab** moves between rows
+- **Enter** or **Space** opens the focused row, the same as a click
+- A focus ring shows on the row that has keyboard focus
+
 ### Model picker
 
 When multiple model configs are defined, a dropdown in the sidebar lets you switch models per-conversation. See [Model Selection](model-selection.md).

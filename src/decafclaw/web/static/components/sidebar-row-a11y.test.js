@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import './schedules-sidebar.js';
 import './vault-sidebar.js';
 import './files-sidebar.js';
+import './tags-sidebar.js';
 import './conversation-sidebar.js';
 
 const jsonResponse = (body, status = 200) => new Response(JSON.stringify(body), {
@@ -283,5 +284,97 @@ describe('conversation-sidebar row keyboard access', () => {
     }
     await new Promise(resolve => setTimeout(resolve, 0));
     expect(store.selectConversation).not.toHaveBeenCalled();
+  });
+});
+
+describe('tags-sidebar row keyboard access', () => {
+  const TAGS = [{ tag: 'alpha', count: 2, pages: ['agent/pages/one.md', 'agent/pages/two.md'] }];
+
+  async function mount() {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () => jsonResponse({ tags: TAGS }));
+    const sidebar = /** @type {any} */ (document.createElement('tags-sidebar'));
+    document.body.append(sidebar);
+    await sidebar.updateComplete;
+    sidebar.active = true;
+    await vi.waitFor(() => expect(sidebar.querySelector('.wiki-item[title="alpha"]')).toBeTruthy());
+    const opened = [];
+    sidebar.addEventListener('wiki-open', (/** @type {CustomEvent} */ e) => opened.push(e.detail.page));
+    return { sidebar, opened };
+  }
+
+  /** @param {any} sidebar */
+  const tagRow = (sidebar) => sidebar.querySelector('.wiki-item[title="alpha"]');
+  /** @param {any} sidebar */
+  const showsTagPages = (sidebar) => Boolean(sidebar.querySelector('.vault-breadcrumb-segment.active'));
+
+  /** @param {any} sidebar */
+  async function backToTagList(sidebar) {
+    sidebar.querySelector('button.vault-breadcrumb-segment').click();
+    await vi.waitFor(() => expect(tagRow(sidebar)).toBeTruthy());
+  }
+
+  it('shows a tag\'s pages with click, Enter, or Space', async () => {
+    // Activating a tag row replaces the tag list, so each step returns to it.
+    const { sidebar } = await mount();
+    const row = tagRow(sidebar);
+    expect(row.getAttribute('tabindex')).toBe('0');
+    expect(row.getAttribute('aria-label')).toBe('Open tag alpha');
+    expect(row.hasAttribute('role')).toBe(false);
+    expect(row.tagName).toBe('DIV');
+
+    tagRow(sidebar).click();
+    await vi.waitFor(() => expect(showsTagPages(sidebar)).toBe(true));
+    await backToTagList(sidebar);
+
+    const enter = press(tagRow(sidebar), 'Enter');
+    await vi.waitFor(() => expect(showsTagPages(sidebar)).toBe(true));
+    expect(enter.defaultPrevented).toBe(false);
+    await backToTagList(sidebar);
+
+    const space = press(tagRow(sidebar), ' ');
+    await vi.waitFor(() => expect(showsTagPages(sidebar)).toBe(true));
+    expect(space.defaultPrevented).toBe(true);
+    await backToTagList(sidebar);
+
+    for (const key of ['a', 'Escape', 'Tab', 'ArrowDown', 'Spacebar']) {
+      expect(press(tagRow(sidebar), key).defaultPrevented).toBe(false);
+    }
+    await sidebar.updateComplete;
+    expect(showsTagPages(sidebar)).toBe(false);
+  });
+
+  it('does not show a tag\'s pages for keys pressed on the row\'s children', async () => {
+    const { sidebar } = await mount();
+    for (const child of tagRow(sidebar).querySelectorAll('span')) {
+      expect(press(child, 'Enter').defaultPrevented).toBe(false);
+      expect(press(child, ' ').defaultPrevented).toBe(false);
+    }
+    await sidebar.updateComplete;
+    expect(showsTagPages(sidebar)).toBe(false);
+  });
+
+  it('opens a tagged page with click, Enter, or Space', async () => {
+    const { sidebar, opened } = await mount();
+    tagRow(sidebar).click();
+    await vi.waitFor(() => expect(sidebar.querySelector('.wiki-item[title="agent/pages/one.md"]')).toBeTruthy());
+
+    await expectKeyboardRow(
+      () => sidebar.querySelector('.wiki-item[title="agent/pages/one.md"]'),
+      () => opened.length,
+      'Open page agent/pages/one.md',
+    );
+    expect(opened).toEqual(['agent/pages/one.md', 'agent/pages/one.md', 'agent/pages/one.md']);
+  });
+
+  it('does not open a tagged page for keys pressed on the row\'s children', async () => {
+    const { sidebar, opened } = await mount();
+    tagRow(sidebar).click();
+    await vi.waitFor(() => expect(sidebar.querySelector('.wiki-item[title="agent/pages/one.md"]')).toBeTruthy());
+
+    const title = sidebar.querySelector('.wiki-item[title="agent/pages/one.md"] .conv-title');
+    expect(press(title, 'Enter').defaultPrevented).toBe(false);
+    expect(press(title, ' ').defaultPrevented).toBe(false);
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(opened).toEqual([]);
   });
 });
