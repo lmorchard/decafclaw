@@ -1,9 +1,19 @@
 import { LitElement, html, nothing } from 'lit';
 import { DefaultService } from '../lib/api-client/index.js';
 
+/**
+ * Tag rows carry vault paths with `.md` (from /api/vault/tags), while pages
+ * opened elsewhere use extensionless paths. Compare without the suffix.
+ * @param {string|null} path
+ */
+const withoutMd = (path) => (path || '').replace(/\.md$/, '');
+
 export class TagsSidebar extends LitElement {
   static properties = {
     active: { type: Boolean },
+    // Page open in the wiki pane, set by conversation-sidebar. Independent
+    // of _selectedTag: it highlights whenever a list containing it renders.
+    openPage: { type: String, attribute: false },
     _tags: { type: Array, state: true },
     _loading: { type: Boolean, state: true },
     _selectedTag: { type: String, state: true },
@@ -14,6 +24,8 @@ export class TagsSidebar extends LitElement {
   constructor() {
     super();
     this.active = false;
+    /** @type {string|null} */
+    this.openPage = null;
     /** @type {import('../lib/api-client/index.js').VaultTagEntry[]} */
     this._tags = [];
     this._loading = false;
@@ -89,6 +101,7 @@ export class TagsSidebar extends LitElement {
   #renderTagPages() {
     const entry = this._tags.find(t => t.tag === this._selectedTag);
     const pages = entry?.pages || [];
+    const openPage = this.openPage ? withoutMd(this.openPage) : null;
     return html`
       <div class="vault-breadcrumbs">
         <button type="button" class="vault-breadcrumb-segment" @click=${() => this.#clearSelection()}>tags</button>
@@ -97,7 +110,7 @@ export class TagsSidebar extends LitElement {
       </div>
       ${pages.length
         ? pages.map(p => html`
-            <div class="conv-item wiki-item" @click=${() => this.#openPage(p)} title=${p}>
+            <div class="conv-item wiki-item ${withoutMd(p) === openPage ? 'active' : ''}" @click=${() => this.#openPage(p)} title=${p}>
               <span class="conv-title">${p}</span>
             </div>
           `)
