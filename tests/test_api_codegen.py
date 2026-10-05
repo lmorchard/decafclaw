@@ -1,5 +1,6 @@
 """Exercise current backend types and browser output in disposable source trees."""
 
+import asyncio
 import collections
 import contextlib
 import dataclasses
@@ -137,7 +138,7 @@ def test_sticky_contract_drift_fails_at_unchanged_caller(source_tree, contract):
 # config, and uses its own browser context, so no scenario can observe
 # cookies, storage, pages, or pending work from another. All scenarios share
 # one clean generated-client build per test run (built_static) and one
-# Chromium process per xdist worker (chromium).
+# Chromium process per xdist worker (chromium_process).
 #
 # The fixtures enforce these setup limits. A change that adds a build, a
 # Chromium launch, a shared or leaked context, or a second server in one
@@ -188,17 +189,39 @@ def built_static(tmp_path_factory, worker_id):
 
 
 @pytest.fixture(scope="session")
-def chromium():
-    """One Chromium process for every browser scenario in this worker."""
+def chromium_process():
+    """One Chromium process for every browser scenario in this worker.
+
+    Playwright's sync API marks its own event loop as running in this thread
+    after every call and does not clear the mark. While this session fixture
+    stays open, every later async test in the worker would then fail with
+    "Runner.run() cannot be called from a running event loop" (#941). So the
+    mark is cleared here, and the ``chromium`` fixture sets it only for the
+    duration of each browser test.
+    """
     global _chromium_launches
     _chromium_launches += 1
     assert _chromium_launches == 1, "Chromium launched more than once in this worker"
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch()
+        playwright_loop = asyncio._get_running_loop()
+        asyncio._set_running_loop(None)
         try:
-            yield browser
+            yield browser, playwright_loop
         finally:
+            asyncio._set_running_loop(playwright_loop)
             browser.close()
+
+
+@pytest.fixture
+def chromium(chromium_process):
+    """The worker's shared browser, with Playwright's loop marked running only during the test."""
+    browser, playwright_loop = chromium_process
+    asyncio._set_running_loop(playwright_loop)
+    try:
+        yield browser
+    finally:
+        asyncio._set_running_loop(None)
 
 
 @dataclasses.dataclass
