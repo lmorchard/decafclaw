@@ -448,6 +448,7 @@ export class ConversationSidebar extends LitElement {
             class="conv-archive"
             @click=${(/** @type {Event} */ e) => { e.stopPropagation(); opts.onAction2(conv.conv_id); }}
             title=${opts.action2Title || ''}
+            aria-label=${opts.action2Title || nothing}
           >${opts.action2Label}</button>
         ` : nothing}
         ${opts.onAction ? html`
@@ -455,6 +456,7 @@ export class ConversationSidebar extends LitElement {
             class="conv-archive"
             @click=${(/** @type {Event} */ e) => { e.stopPropagation(); opts.onAction(conv.conv_id); }}
             title=${opts.actionTitle || ''}
+            aria-label=${opts.actionTitle || nothing}
           >${opts.actionLabel}</button>
         ` : nothing}
       </div>
@@ -504,7 +506,7 @@ export class ConversationSidebar extends LitElement {
           <button class="sidebar-tab ${this._sidebarTab === 'tags' ? 'active' : ''}"
             @click=${() => this.#switchTab('tags')}>Tags</button>
         </div>
-        <button class="mobile-close-btn dc-overlay-close-x" @click=${() => this.closeMobile()} title="Close sidebar">×</button>
+        <button class="mobile-close-btn dc-overlay-close-x" @click=${() => this.closeMobile()} title="Close sidebar" aria-label="Close sidebar">×</button>
         <button class="collapse-btn dc-icon-btn" @click=${this.#toggleCollapse} title="Collapse sidebar" aria-label="Collapse sidebar">‹</button>
       </div>
       <vault-sidebar
@@ -530,8 +532,8 @@ export class ConversationSidebar extends LitElement {
       <div class="conv-list" style="${this._sidebarTab !== 'conversations' ? 'display:none' : ''}">
         ${this._chatSection === '' ? html`
           <div class="vault-action-btns">
-            <button class="new-conv-btn outline" @click=${this.#handleNew} title="New chat (⌘K)">+ Chat</button>
-            <button class="wiki-new-folder-btn outline" @click=${() => this.#createChatFolder()}>+ Folder</button>
+            <button class="new-conv-btn outline" @click=${this.#handleNew} title="New chat (⌘K)" aria-label="New chat">+ Chat</button>
+            <button class="wiki-new-folder-btn outline" @click=${() => this.#createChatFolder()} aria-label="New chat folder">+ Folder</button>
           </div>
         ` : nothing}
         ${this.#renderChatBreadcrumbs()}
@@ -640,7 +642,7 @@ export class ConversationSidebar extends LitElement {
             @navigate-conversation=${(e) => this.#onNotificationNavigate(e)}
             @navigate-vault=${(e) => this.#onNotificationNavigateVault(e)}
           ></notification-inbox>
-          <button class="config-btn" title="Agent Config" @click=${() => this.#openConfig()}>&#9881;</button>
+          <button class="config-btn" title="Agent Config" aria-label="Agent Config" @click=${() => this.#openConfig()}>&#9881;</button>
         </div>
         <button class="logout-btn" @click=${() => this.authClient?.logout()} title="Sign out">Sign out</button>
       </div>
