@@ -94,9 +94,14 @@ def _test_config(streaming: bool = False) -> Config:
 
 # ---------------------------------------------------------------------------
 # Provider unit tests: finish_reason capture
+#
+# These exercise the real OpenAICompatProvider.complete with httpx/httpx_sse
+# mocked, so they opt out of the conftest unstubbed-call guard via live_llm
+# (same approach as tests/test_llm_streaming.py). No network calls are made.
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.live_llm
 @pytest.mark.asyncio
 async def test_provider_non_streaming_captures_finish_reason_stop():
     """Non-streaming completions preserve finish_reason='stop'."""
@@ -119,6 +124,7 @@ async def test_provider_non_streaming_captures_finish_reason_stop():
     assert res["content"] == "Hello!"
 
 
+@pytest.mark.live_llm
 @pytest.mark.asyncio
 async def test_provider_non_streaming_captures_finish_reason_length():
     """Non-streaming completions preserve finish_reason='length'."""
@@ -152,6 +158,7 @@ async def test_provider_non_streaming_captures_finish_reason_length():
     assert res["tool_calls"][0]["id"] == "call_abc"
 
 
+@pytest.mark.live_llm
 @pytest.mark.asyncio
 async def test_provider_streaming_captures_finish_reason_stop():
     """Streaming completions capture finish_reason='stop' from choices."""
@@ -169,6 +176,7 @@ async def test_provider_streaming_captures_finish_reason_stop():
     assert res["finish_reason"] == FINISH_REASON_STOP
 
 
+@pytest.mark.live_llm
 @pytest.mark.asyncio
 async def test_provider_streaming_captures_finish_reason_length():
     """Streaming completions capture finish_reason='length' when truncated."""
@@ -199,6 +207,7 @@ async def test_provider_streaming_captures_finish_reason_length():
     assert len(res["tool_calls"]) == 1
 
 
+@pytest.mark.live_llm
 @pytest.mark.asyncio
 async def test_provider_streaming_disconnected_stream_marks_error():
     """A streaming connection error after receiving partial tool calls sets finish_reason='error'."""
@@ -225,6 +234,7 @@ async def test_provider_streaming_disconnected_stream_marks_error():
     assert len(res["tool_calls"]) == 1
 
 
+@pytest.mark.live_llm
 @pytest.mark.asyncio
 async def test_provider_streaming_cancelled_sets_finish_reason():
     """Streaming cancelled via cancel_event sets finish_reason='cancelled'."""
