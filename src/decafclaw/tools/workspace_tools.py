@@ -1,4 +1,9 @@
-"""Workspace file tools — sandboxed to the agent's workspace directory."""
+"""Workspace file tools — sandboxed to the agent's workspace directory.
+
+Concurrency boundary: mutations are serialized by per-file locks within this
+process. These guards coordinate participating tools, not arbitrary shell
+commands, external editors, or other processes.
+"""
 
 from __future__ import annotations
 
@@ -11,11 +16,20 @@ from typing import TYPE_CHECKING
 
 from ..media import ToolResult, WidgetRequest
 from ..workspace_index import invalidate_workspace_file_cache
+from .file_locks import file_lock
 
 if TYPE_CHECKING:
     from decafclaw.context import Context
 
 log = logging.getLogger(__name__)
+
+
+def _is_cancelled(ctx: "Context | None") -> bool:
+    """Return True if the context has an active cancellation event set."""
+    if ctx is None:
+        return False
+    cancelled = getattr(ctx, "cancelled", None)
+    return bool(cancelled is not None and cancelled.is_set())
 
 
 def _file_error(e: Exception, path: str) -> ToolResult:
@@ -41,12 +55,15 @@ def _mini_diff(old_text: str, new_text: str, path: str = "") -> str:
     """Generate a compact unified diff for edit tool output."""
     old_lines = old_text.splitlines(keepends=True)
     new_lines = new_text.splitlines(keepends=True)
-    diff = list(difflib.unified_diff(
-        old_lines, new_lines,
-        fromfile=f"a/{path}" if path else "before",
-        tofile=f"b/{path}" if path else "after",
-        n=EDIT_CONTEXT_LINES,
-    ))
+    diff = list(
+        difflib.unified_diff(
+            old_lines,
+            new_lines,
+            fromfile=f"a/{path}" if path else "before",
+            tofile=f"b/{path}" if path else "after",
+            n=EDIT_CONTEXT_LINES,
+        )
+    )
     if not diff:
         return ""
     return "".join(diff)
@@ -89,8 +106,9 @@ def _resolve_safe(config, path_str: str) -> Path | None:
     return target
 
 
-def tool_workspace_read(ctx: "Context", path: str, start_line: int | None = None,
-                        end_line: int | None = None) -> str | ToolResult:
+def tool_workspace_read(
+    ctx: "Context", path: str, start_line: int | None = None, end_line: int | None = None
+) -> str | ToolResult:
     """Read a file from the agent's workspace, optionally a line range."""
     log.info(f"[tool:workspace_read] {path}")
     resolved = _resolve_safe(ctx.config, path)
@@ -119,10 +137,11 @@ def tool_workspace_read(ctx: "Context", path: str, start_line: int | None = None
         end = MAX_READ_LINES
         selected = all_lines[:end]
         width = len(str(end))
-        numbered = [f"{str(i + 1).rjust(width)}| {line}"
-                    for i, line in enumerate(selected)]
-        header = (f"File has {total} lines, showing first {MAX_READ_LINES}. "
-                  f"Use start_line/end_line to read specific sections.\n")
+        numbered = [f"{str(i + 1).rjust(width)}| {line}" for i, line in enumerate(selected)]
+        header = (
+            f"File has {total} lines, showing first {MAX_READ_LINES}. "
+            f"Use start_line/end_line to read specific sections.\n"
+        )
         return ToolResult(
             text=header + "\n".join(numbered),
             data={**base_data, "range": [1, end], "truncated": True},
@@ -131,10 +150,9 @@ def tool_workspace_read(ctx: "Context", path: str, start_line: int | None = None
     # Determine range (1-based, inclusive)
     start = max(1, start_line or 1)
     end = min(total, end_line or total)
-    selected = all_lines[start - 1:end]
+    selected = all_lines[start - 1 : end]
     width = len(str(end))
-    numbered = [f"{str(start + i).rjust(width)}| {line}"
-                for i, line in enumerate(selected)]
+    numbered = [f"{str(start + i).rjust(width)}| {line}" for i, line in enumerate(selected)]
     if partial:
         header = f"Lines {start}-{end} of {total}:\n"
         return ToolResult(
@@ -164,9 +182,7 @@ def tool_workspace_preview_markdown(ctx: "Context", path: str) -> ToolResult:
     """
     config = ctx.config
     if not any(path.lower().endswith(ext) for ext in _MARKDOWN_EXTS):
-        return ToolResult(
-            text=f"[error: workspace_preview_markdown requires a .md or .markdown file; got '{path}']"
-        )
+        return ToolResult(text=f"[error: workspace_preview_markdown requires a .md or .markdown file; got '{path}']")
     safe = _resolve_safe(config, path)
     if safe is None:
         return ToolResult(text=f"[error: invalid path '{path}']")
@@ -214,13 +230,16 @@ def tool_workspace_write(ctx: "Context", path: str, content: str) -> str | ToolR
     resolved = _resolve_safe(ctx.config, path)
     if resolved is None:
         return ToolResult(text=f"[error: path '{path}' is outside the workspace]")
-    try:
-        resolved.parent.mkdir(parents=True, exist_ok=True)
-        resolved.write_text(content)
-        invalidate_workspace_file_cache(ctx.config)
-        return f"Wrote {len(content)} characters to {path}{_redundant_prefix_note(path)}"
-    except PermissionError as e:
-        return _file_error(e, path)
+    with file_lock(resolved):
+        if _is_cancelled(ctx):
+            return ToolResult(text="[tool interrupted: agent turn cancelled]")
+        try:
+            resolved.parent.mkdir(parents=True, exist_ok=True)
+            resolved.write_text(content)
+            invalidate_workspace_file_cache(ctx.config)
+            return f"Wrote {len(content)} characters to {path}{_redundant_prefix_note(path)}"
+        except PermissionError as e:
+            return _file_error(e, path)
 
 
 def tool_workspace_list(ctx: "Context", path: str = ".") -> str | ToolResult:
@@ -244,11 +263,13 @@ def tool_workspace_list(ctx: "Context", path: str = ".") -> str | ToolResult:
             size_bytes = entry.stat().st_size if entry.is_file() else None
             size = f" ({size_bytes}B)" if size_bytes is not None else ""
             lines.append(f"{rel}{suffix}{size}")
-            data_entries.append({
-                "name": str(rel),
-                "is_dir": is_dir,
-                "size": size_bytes,
-            })
+            data_entries.append(
+                {
+                    "name": str(rel),
+                    "is_dir": is_dir,
+                    "size": size_bytes,
+                }
+            )
         text = "\n".join(lines) if lines else "(empty directory)"
         return ToolResult(
             text=text,
@@ -276,12 +297,14 @@ def tool_file_share(ctx: "Context", path: str, message: str = "") -> "ToolResult
         content_type = mimetypes.guess_type(str(resolved))[0] or "application/octet-stream"
         return ToolResult(
             text=message or f"Sharing {path}",
-            media=[{
-                "type": "file",
-                "filename": resolved.name,
-                "data": data,
-                "content_type": content_type,
-            }],
+            media=[
+                {
+                    "type": "file",
+                    "filename": resolved.name,
+                    "data": data,
+                    "content_type": content_type,
+                }
+            ],
         )
     except PermissionError as e:
         return _file_error(e, path)
@@ -296,17 +319,20 @@ def tool_workspace_move(ctx: "Context", path: str, destination: str) -> str | To
     resolved_dst = _resolve_safe(ctx.config, destination)
     if resolved_dst is None:
         return ToolResult(text=f"[error: destination '{destination}' is outside the workspace]")
-    if not resolved_src.exists():
-        return ToolResult(text=f"[error: file not found: {path}]")
-    if resolved_dst.exists():
-        return ToolResult(text=f"[error: destination already exists: {destination}]")
-    try:
-        resolved_dst.parent.mkdir(parents=True, exist_ok=True)
-        resolved_src.rename(resolved_dst)
-        invalidate_workspace_file_cache(ctx.config)
-        return f"Moved {path} -> {destination}"
-    except PermissionError as e:
-        return _file_error(e, path)
+    with file_lock(resolved_src, resolved_dst):
+        if _is_cancelled(ctx):
+            return ToolResult(text="[tool interrupted: agent turn cancelled]")
+        if not resolved_src.exists():
+            return ToolResult(text=f"[error: file not found: {path}]")
+        if resolved_dst.exists():
+            return ToolResult(text=f"[error: destination already exists: {destination}]")
+        try:
+            resolved_dst.parent.mkdir(parents=True, exist_ok=True)
+            resolved_src.rename(resolved_dst)
+            invalidate_workspace_file_cache(ctx.config)
+            return f"Moved {path} -> {destination}"
+        except PermissionError as e:
+            return _file_error(e, path)
 
 
 def tool_workspace_mkdir(ctx: "Context", path: str) -> str | ToolResult:
@@ -328,6 +354,7 @@ def tool_workspace_mkdir(ctx: "Context", path: str) -> str | ToolResult:
 def tool_workspace_copy(ctx: "Context", source: str, destination: str) -> str | ToolResult:
     """Copy a file within the workspace."""
     import shutil
+
     log.info(f"[tool:workspace_copy] {source} -> {destination}")
     resolved_src = _resolve_safe(ctx.config, source)
     if resolved_src is None:
@@ -335,80 +362,97 @@ def tool_workspace_copy(ctx: "Context", source: str, destination: str) -> str | 
     resolved_dst = _resolve_safe(ctx.config, destination)
     if resolved_dst is None:
         return ToolResult(text=f"[error: destination '{destination}' is outside the workspace]")
-    if not resolved_src.exists():
-        return ToolResult(text=f"[error: source file not found: {source}]")
-    if resolved_src.is_dir():
-        return ToolResult(text=f"[error: source '{source}' is a directory, workspace_copy only copies files]")
-    if resolved_dst.exists():
-        return ToolResult(text=f"[error: destination already exists: {destination}]")
-    try:
-        resolved_dst.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(resolved_src, resolved_dst)
-        invalidate_workspace_file_cache(ctx.config)
-        return f"Copied {source} -> {destination}"
-    except PermissionError as e:
-        return _file_error(e, destination)
+    with file_lock(resolved_src, resolved_dst):
+        if _is_cancelled(ctx):
+            return ToolResult(text="[tool interrupted: agent turn cancelled]")
+        if not resolved_src.exists():
+            return ToolResult(text=f"[error: source file not found: {source}]")
+        if resolved_src.is_dir():
+            return ToolResult(text=f"[error: source '{source}' is a directory, workspace_copy only copies files]")
+        if resolved_dst.exists():
+            return ToolResult(text=f"[error: destination already exists: {destination}]")
+        try:
+            resolved_dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(resolved_src, resolved_dst)
+            invalidate_workspace_file_cache(ctx.config)
+            return f"Copied {source} -> {destination}"
+        except PermissionError as e:
+            return _file_error(e, destination)
 
 
 def tool_workspace_delete(ctx: "Context", path: str, recursive: bool = False) -> str | ToolResult:
     """Delete a file or directory from the workspace."""
     import shutil
+
     log.info(f"[tool:workspace_delete] {path} recursive={recursive}")
     resolved = _resolve_safe(ctx.config, path)
     if resolved is None:
         return ToolResult(text=f"[error: path '{path}' is outside the workspace]")
-    if not resolved.exists():
-        return ToolResult(text=f"[error: file not found: {path}]")
-    try:
-        if resolved.is_dir():
-            is_empty = not any(resolved.iterdir())
-            if not is_empty and not recursive:
-                return ToolResult(text=f"[error: '{path}' is a directory. Use recursive=true to remove non-empty directories, or use shell to remove directories.]")
-            if not is_empty:
-                shutil.rmtree(resolved)
+    with file_lock(resolved):
+        if _is_cancelled(ctx):
+            return ToolResult(text="[tool interrupted: agent turn cancelled]")
+        if not resolved.exists():
+            return ToolResult(text=f"[error: file not found: {path}]")
+        try:
+            if resolved.is_dir():
+                is_empty = not any(resolved.iterdir())
+                if not is_empty and not recursive:
+                    return ToolResult(
+                        text=f"[error: '{path}' is a directory. Use recursive=true to remove non-empty directories, or use shell to remove directories.]"
+                    )
+                if not is_empty:
+                    shutil.rmtree(resolved)
+                else:
+                    resolved.rmdir()
+                invalidate_workspace_file_cache(ctx.config)
+                return f"Deleted directory {path}"
             else:
-                resolved.rmdir()
-            invalidate_workspace_file_cache(ctx.config)
-            return f"Deleted directory {path}"
-        else:
-            resolved.unlink()
-            invalidate_workspace_file_cache(ctx.config)
-            return f"Deleted {path}"
-    except PermissionError as e:
-        return _file_error(e, path)
+                resolved.unlink()
+                invalidate_workspace_file_cache(ctx.config)
+                return f"Deleted {path}"
+        except PermissionError as e:
+            return _file_error(e, path)
 
 
-def tool_workspace_edit(ctx: "Context", path: str, old_text: str, new_text: str,
-                       replace_all: bool = False) -> str | ToolResult:
+def tool_workspace_edit(
+    ctx: "Context", path: str, old_text: str, new_text: str, replace_all: bool = False
+) -> str | ToolResult:
     """Edit a file by replacing exact text matches."""
     log.info(f"[tool:workspace_edit] {path}")
     resolved = _resolve_safe(ctx.config, path)
     if resolved is None:
         return ToolResult(text=f"[error: path '{path}' is outside the workspace]")
-    try:
-        content = resolved.read_text()
-    except (FileNotFoundError, PermissionError, UnicodeDecodeError) as e:
-        return _file_error(e, path)
+    with file_lock(resolved):
+        if _is_cancelled(ctx):
+            return ToolResult(text="[tool interrupted: agent turn cancelled]")
+        try:
+            content = resolved.read_text()
+        except (FileNotFoundError, PermissionError, UnicodeDecodeError) as e:
+            return _file_error(e, path)
 
-    count = content.count(old_text)
-    if count == 0:
-        return ToolResult(text=f"[error: text not found in {path}. "
-                "Make sure old_text matches exactly, including whitespace and indentation.]")
-    if count > 1 and not replace_all:
-        return ToolResult(text=f"[error: found {count} matches in {path}. "
+        count = content.count(old_text)
+        if count == 0:
+            return ToolResult(
+                text=f"[error: text not found in {path}. "
+                "Make sure old_text matches exactly, including whitespace and indentation.]"
+            )
+        if count > 1 and not replace_all:
+            return ToolResult(
+                text=f"[error: found {count} matches in {path}. "
                 "Use replace_all=true for bulk replacement, "
-                "or provide more surrounding context to make old_text unique.]")
+                "or provide more surrounding context to make old_text unique.]"
+            )
 
-    if replace_all:
-        new_content = content.replace(old_text, new_text)
-    else:
-        new_content = content.replace(old_text, new_text, 1)
-    resolved.write_text(new_content)
-    summary = f"Edited {path}: replaced {count} occurrence(s)"
-    diff = _mini_diff(content, new_content, path)
-    if diff:
-        return f"{summary}\n\n{diff}"
-    return summary
+        if replace_all:
+            new_content = content.replace(old_text, new_text)
+        else:
+            new_content = content.replace(old_text, new_text, 1)
+        resolved.write_text(new_content)
+        summary = f"Edited {path}: replaced {count} occurrence(s)"
+        diff = _mini_diff(content, new_content, path)
+        if diff:
+            return f"{summary}\n\n{diff}"
+        return summary
 
 
 def tool_workspace_insert(ctx: "Context", path: str, line_number: int, content: str) -> str | ToolResult:
@@ -417,64 +461,72 @@ def tool_workspace_insert(ctx: "Context", path: str, line_number: int, content: 
     resolved = _resolve_safe(ctx.config, path)
     if resolved is None:
         return ToolResult(text=f"[error: path '{path}' is outside the workspace]")
-    try:
-        existing = resolved.read_text()
-    except (FileNotFoundError, PermissionError) as e:
-        return _file_error(e, path)
+    with file_lock(resolved):
+        if _is_cancelled(ctx):
+            return ToolResult(text="[tool interrupted: agent turn cancelled]")
+        try:
+            existing = resolved.read_text()
+        except (FileNotFoundError, PermissionError) as e:
+            return _file_error(e, path)
 
-    lines = existing.splitlines(keepends=True)
-    if line_number < 1 or line_number > len(lines) + 1:
-        return ToolResult(text=f"[error: line_number {line_number} is out of range. "
-                f"File has {len(lines)} lines, valid range is 1-{len(lines) + 1}.]")
+        lines = existing.splitlines(keepends=True)
+        if line_number < 1 or line_number > len(lines) + 1:
+            return ToolResult(
+                text=f"[error: line_number {line_number} is out of range. "
+                f"File has {len(lines)} lines, valid range is 1-{len(lines) + 1}.]"
+            )
 
-    # Ensure content ends with newline for clean insertion
-    if content and not content.endswith("\n"):
-        content += "\n"
-    insert_lines = content.splitlines(keepends=True)
-    new_lines = list(lines)
-    new_lines[line_number - 1:line_number - 1] = insert_lines
-    resolved.write_text("".join(new_lines))
-    summary = f"Inserted {len(insert_lines)} line(s) at line {line_number} in {path}"
-    diff = _mini_diff(existing, "".join(new_lines), path)
-    if diff:
-        return f"{summary}\n\n{diff}"
-    return summary
+        # Ensure content ends with newline for clean insertion
+        if content and not content.endswith("\n"):
+            content += "\n"
+        insert_lines = content.splitlines(keepends=True)
+        new_lines = list(lines)
+        new_lines[line_number - 1 : line_number - 1] = insert_lines
+        resolved.write_text("".join(new_lines))
+        summary = f"Inserted {len(insert_lines)} line(s) at line {line_number} in {path}"
+        diff = _mini_diff(existing, "".join(new_lines), path)
+        if diff:
+            return f"{summary}\n\n{diff}"
+        return summary
 
 
-def tool_workspace_replace_lines(ctx: "Context", path: str, start_line: int, end_line: int,
-                                 content: str = "") -> str | ToolResult:
+def tool_workspace_replace_lines(
+    ctx: "Context", path: str, start_line: int, end_line: int, content: str = ""
+) -> str | ToolResult:
     """Replace a range of lines in a workspace file."""
     log.info(f"[tool:workspace_replace_lines] {path} lines {start_line}-{end_line}")
     resolved = _resolve_safe(ctx.config, path)
     if resolved is None:
         return ToolResult(text=f"[error: path '{path}' is outside the workspace]")
-    try:
-        existing = resolved.read_text()
-    except (FileNotFoundError, PermissionError) as e:
-        return _file_error(e, path)
+    with file_lock(resolved):
+        if _is_cancelled(ctx):
+            return ToolResult(text="[tool interrupted: agent turn cancelled]")
+        try:
+            existing = resolved.read_text()
+        except (FileNotFoundError, PermissionError) as e:
+            return _file_error(e, path)
 
-    lines = existing.splitlines(keepends=True)
-    if start_line < 1 or end_line < start_line or end_line > len(lines):
-        return ToolResult(text=f"[error: invalid line range {start_line}-{end_line}. "
-                f"File has {len(lines)} lines.]")
+        lines = existing.splitlines(keepends=True)
+        if start_line < 1 or end_line < start_line or end_line > len(lines):
+            return ToolResult(text=f"[error: invalid line range {start_line}-{end_line}. File has {len(lines)} lines.]")
 
-    if content:
-        if not content.endswith("\n"):
-            content += "\n"
-        replacement = content.splitlines(keepends=True)
-    else:
-        replacement = []
-    new_lines = list(lines)
-    new_lines[start_line - 1:end_line] = replacement
-    resolved.write_text("".join(new_lines))
-    if not content:
-        summary = f"Deleted lines {start_line}-{end_line} from {path}"
-    else:
-        summary = f"Replaced lines {start_line}-{end_line} with {len(replacement)} line(s) in {path}"
-    diff = _mini_diff(existing, "".join(new_lines), path)
-    if diff:
-        return f"{summary}\n\n{diff}"
-    return summary
+        if content:
+            if not content.endswith("\n"):
+                content += "\n"
+            replacement = content.splitlines(keepends=True)
+        else:
+            replacement = []
+        new_lines = list(lines)
+        new_lines[start_line - 1 : end_line] = replacement
+        resolved.write_text("".join(new_lines))
+        if not content:
+            summary = f"Deleted lines {start_line}-{end_line} from {path}"
+        else:
+            summary = f"Replaced lines {start_line}-{end_line} with {len(replacement)} line(s) in {path}"
+        diff = _mini_diff(existing, "".join(new_lines), path)
+        if diff:
+            return f"{summary}\n\n{diff}"
+        return summary
 
 
 def tool_workspace_append(ctx: "Context", path: str, content: str) -> str | ToolResult:
@@ -483,19 +535,22 @@ def tool_workspace_append(ctx: "Context", path: str, content: str) -> str | Tool
     resolved = _resolve_safe(ctx.config, path)
     if resolved is None:
         return ToolResult(text=f"[error: path '{path}' is outside the workspace]")
-    try:
-        resolved.parent.mkdir(parents=True, exist_ok=True)
-        if resolved.exists():
-            existing = resolved.read_text()
-            if existing and not existing.endswith("\n"):
-                content = "\n" + content
-            resolved.write_text(existing + content)
-        else:
-            resolved.write_text(content)
-        invalidate_workspace_file_cache(ctx.config)
-        return f"Appended {len(content)} characters to {path}"
-    except PermissionError as e:
-        return _file_error(e, path)
+    with file_lock(resolved):
+        if _is_cancelled(ctx):
+            return ToolResult(text="[tool interrupted: agent turn cancelled]")
+        try:
+            resolved.parent.mkdir(parents=True, exist_ok=True)
+            if resolved.exists():
+                existing = resolved.read_text()
+                if existing and not existing.endswith("\n"):
+                    content = "\n" + content
+                resolved.write_text(existing + content)
+            else:
+                resolved.write_text(content)
+            invalidate_workspace_file_cache(ctx.config)
+            return f"Appended {len(content)} characters to {path}"
+        except PermissionError as e:
+            return _file_error(e, path)
 
 
 def tool_workspace_diff(ctx: "Context", path1: str, path2: str, context_lines: int = 3) -> str | ToolResult:
@@ -516,18 +571,23 @@ def tool_workspace_diff(ctx: "Context", path1: str, path2: str, context_lines: i
     except (FileNotFoundError, PermissionError, UnicodeDecodeError) as e:
         return _file_error(e, path2)
 
-    diff = list(difflib.unified_diff(
-        lines1, lines2,
-        fromfile=path1, tofile=path2,
-        n=context_lines,
-    ))
+    diff = list(
+        difflib.unified_diff(
+            lines1,
+            lines2,
+            fromfile=path1,
+            tofile=path2,
+            n=context_lines,
+        )
+    )
     if not diff:
         return f"Files are identical: {path1} and {path2}"
     return "".join(diff)
 
 
-def tool_workspace_search(ctx: "Context", pattern: str, path: str = ".",
-                          glob: str = "*", context_lines: int = 2) -> str | ToolResult:
+def tool_workspace_search(
+    ctx: "Context", pattern: str, path: str = ".", glob: str = "*", context_lines: int = 2
+) -> str | ToolResult:
     """Search for a regex pattern across workspace files."""
     log.info(f"[tool:workspace_search] pattern={pattern!r} path={path} glob={glob}")
     resolved = _resolve_safe(ctx.config, path)
@@ -554,8 +614,7 @@ def tool_workspace_search(ctx: "Context", pattern: str, path: str = ".",
     if resolved.is_file():
         files = [resolved]
     else:
-        files = sorted(f for f in resolved.rglob("*") if f.is_file()
-                       and fnmatch.fnmatch(f.name, glob))
+        files = sorted(f for f in resolved.rglob("*") if f.is_file() and fnmatch.fnmatch(f.name, glob))
 
     for fpath in files:
         try:
@@ -594,10 +653,12 @@ def tool_workspace_search(ctx: "Context", pattern: str, path: str = ".",
                 section_lines.append(f"{prefix} {lineno:>4}| {lines[j]}")
 
         output_sections.append("\n".join(section_lines))
-        data_files.append({
-            "path": str(rel_path),
-            "match_lines": [i + 1 for i in file_matches],  # 1-based
-        })
+        data_files.append(
+            {
+                "path": str(rel_path),
+                "match_lines": [i + 1 for i in file_matches],  # 1-based
+            }
+        )
         if total_matches >= max_matches:
             break
 
@@ -640,14 +701,22 @@ def tool_workspace_glob(ctx: "Context", pattern: str, path: str = ".") -> str | 
         if fpath.is_file():
             size = fpath.stat().st_size
             text_lines.append(f"{rel} ({size}B)")
-            data_matches.append({
-                "path": str(rel), "is_dir": False, "size": size,
-            })
+            data_matches.append(
+                {
+                    "path": str(rel),
+                    "is_dir": False,
+                    "size": size,
+                }
+            )
         elif is_dir:
             text_lines.append(f"{rel}/")
-            data_matches.append({
-                "path": str(rel), "is_dir": True, "size": None,
-            })
+            data_matches.append(
+                {
+                    "path": str(rel),
+                    "is_dir": True,
+                    "size": None,
+                }
+            )
         if len(text_lines) >= max_results:
             break
 
