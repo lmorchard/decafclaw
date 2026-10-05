@@ -1,6 +1,13 @@
 import { LitElement, html, nothing } from 'lit';
 import { DefaultService } from '../lib/api-client/index.js';
 
+/**
+ * Tag rows carry vault paths with `.md` (from /api/vault/tags), while pages
+ * opened elsewhere use extensionless paths. Compare without the suffix.
+ * @param {string|null} path
+ */
+const withoutMd = (path) => (path || '').replace(/\.md$/, '');
+
 export class TagsSidebar extends LitElement {
   static properties = {
     active: { type: Boolean },
@@ -94,6 +101,7 @@ export class TagsSidebar extends LitElement {
   #renderTagPages() {
     const entry = this._tags.find(t => t.tag === this._selectedTag);
     const pages = entry?.pages || [];
+    const openPage = this.openPage ? withoutMd(this.openPage) : null;
     return html`
       <div class="vault-breadcrumbs">
         <button type="button" class="vault-breadcrumb-segment" @click=${() => this.#clearSelection()}>tags</button>
@@ -102,7 +110,7 @@ export class TagsSidebar extends LitElement {
       </div>
       ${pages.length
         ? pages.map(p => html`
-            <div class="conv-item wiki-item ${p === this.openPage ? 'active' : ''}" @click=${() => this.#openPage(p)} title=${p}>
+            <div class="conv-item wiki-item ${withoutMd(p) === openPage ? 'active' : ''}" @click=${() => this.#openPage(p)} title=${p}>
               <span class="conv-title">${p}</span>
             </div>
           `)
