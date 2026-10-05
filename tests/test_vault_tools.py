@@ -119,6 +119,42 @@ class TestVaultRead:
         assert "not found" in result.text
 
     @pytest.mark.asyncio
+    async def test_read_misspelled_page_suggests_close_match(self, ctx, vault_dir):
+        (vault_dir / "Architecture.md").write_text("# Architecture")
+        result = await tool_vault_read(ctx, "Architecure")
+        assert result.text == (
+            "[error: vault page 'Architecure' not found. Did you mean: Architecture?]"
+        )
+
+    @pytest.mark.asyncio
+    async def test_read_misspelled_bare_name_suggests_nested_page(self, ctx, vault_dir):
+        (vault_dir / "projects" / "deep").mkdir(parents=True)
+        (vault_dir / "projects" / "deep" / "Architecture.md").write_text("# A")
+        result = await tool_vault_read(ctx, "Architecure")
+        assert "Did you mean: projects/deep/Architecture?" in result.text
+
+    @pytest.mark.asyncio
+    async def test_read_misspelled_folder_path_suggests_page(self, ctx, vault_dir):
+        (vault_dir / "projects").mkdir()
+        (vault_dir / "projects" / "Roadmap.md").write_text("# R")
+        result = await tool_vault_read(ctx, "projcts/Roadmp")
+        assert "Did you mean: projects/Roadmap?" in result.text
+
+    @pytest.mark.asyncio
+    async def test_read_without_close_page_has_no_suggestions(self, ctx, vault_dir):
+        (vault_dir / "Architecture.md").write_text("# Architecture")
+        result = await tool_vault_read(ctx, "Zzzzzz")
+        assert result.text == "[error: vault page 'Zzzzzz' not found]"
+
+    @pytest.mark.asyncio
+    async def test_write_does_not_redirect_to_fuzzy_page(self, ctx, agent_pages):
+        (agent_pages / "Architecture.md").write_text("original")
+        rel = agent_pages.relative_to(ctx.config.vault_root).as_posix()
+        await tool_vault_write(ctx, f"{rel}/Architecure", "new text")
+        assert (agent_pages / "Architecture.md").read_text() == "original"
+        assert (agent_pages / "Architecure.md").exists()
+
+    @pytest.mark.asyncio
     async def test_read_rejects_path_traversal(self, ctx, vault_dir, config):
         outside = config.workspace_path / "secrets"
         outside.mkdir(parents=True)
