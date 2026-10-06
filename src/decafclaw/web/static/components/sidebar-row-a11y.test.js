@@ -1,5 +1,9 @@
 // Keyboard access for clickable sidebar list rows (#555). Each row is a
 // focusable <div> with an aria-label; Enter and Space do what a click does.
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import './schedules-sidebar.js';
@@ -284,6 +288,64 @@ describe('conversation-sidebar row keyboard access', () => {
     }
     await new Promise(resolve => setTimeout(resolve, 0));
     expect(store.selectConversation).not.toHaveBeenCalled();
+  });
+
+  // #944: the row buttons are hidden until hover. Focus inside the row must
+  // show them too, so a keyboard user can Tab to them. Load the real
+  // stylesheet so the computed display comes from sidebar.css.
+  describe('action buttons with sidebar.css', () => {
+    const stylesDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../styles');
+    /** @type {HTMLStyleElement} */
+    let styleEl;
+
+    async function mountStyled() {
+      styleEl = document.createElement('style');
+      styleEl.textContent = fs.readFileSync(path.join(stylesDir, 'sidebar.css'), 'utf8');
+      document.head.append(styleEl);
+      const mounted = await mount();
+      await vi.waitFor(() => expect(mounted.sidebar.querySelector('.conv-list .wiki-folder-item')).toBeTruthy());
+      return mounted;
+    }
+
+    afterEach(() => styleEl?.remove());
+
+    /**
+     * jsdom caches computed styles and drops the cache on attribute changes,
+     * not on focus changes. Touch an attribute so each read sees current focus.
+     * @param {Element} el
+     */
+    function display(el) {
+      el.toggleAttribute('data-style-read');
+      return getComputedStyle(el).display;
+    }
+
+    for (const [name, rowSelector, labels] of [
+      ['conversation', '.conv-list .conv-item:not(.wiki-folder-item)', ['Archive conversation']],
+      ['chat folder', '.conv-list .wiki-folder-item', ['Delete folder']],
+    ]) {
+      it(`shows the ${name} row buttons while focus is in the row, with their labels`, async () => {
+        const { sidebar } = await mountStyled();
+        const row = sidebar.querySelector(rowSelector);
+        const buttons = [...row.querySelectorAll('button.conv-archive')];
+        expect(buttons.map(b => b.getAttribute('aria-label'))).toEqual(labels);
+
+        // Hidden (and so out of the tab order) while the row has no focus.
+        for (const b of buttons) expect(display(b)).toBe('none');
+
+        row.focus();
+        expect(document.activeElement).toBe(row);
+        for (const b of buttons) expect(display(b)).toBe('block');
+
+        // Focus moving from the row to a button keeps the buttons shown.
+        // (jsdom has no Tab order; the PR's manual check covers real Tab.)
+        buttons[0].focus();
+        expect(document.activeElement).toBe(buttons[0]);
+        for (const b of buttons) expect(display(b)).toBe('block');
+
+        buttons[0].blur();
+        for (const b of buttons) expect(display(b)).toBe('none');
+      });
+    }
   });
 });
 
