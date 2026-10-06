@@ -644,9 +644,7 @@ def discover_skills(config, rejections: list | None = None) -> list[SkillInfo]:
                     info.tools_trust_tier = p_tier
                     if not info.requires_env and p_req_env:
                         info.requires_env = list(p_req_env)
-                    log.debug(
-                        f"Skill '{info.name}' at {info.location} inherited tools from {p_dir} ({p_tier})"
-                    )
+                    log.debug(f"Skill '{info.name}' at {info.location} inherited tools from {p_dir} ({p_tier})")
 
             # Check requires.env
             missing_env = []
