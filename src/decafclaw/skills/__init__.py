@@ -82,11 +82,8 @@ class SkillInfo:
     trust_tier: str = "workspace"
 
     def __post_init__(self):
-        if self.has_native_tools:
-            if self.tools_location is None:
-                self.tools_location = self.location
-            if self.tools_trust_tier is None:
-                self.tools_trust_tier = self.trust_tier
+        if self.has_native_tools and self.tools_location is None:
+            self.tools_location = self.location
 
 
 @dataclass
@@ -432,7 +429,7 @@ def tools_grant_capability(info: SkillInfo) -> bool:
     and may be safely inspected during discovery. If the tools originate
     from the workspace tier, they must not be imported before activation.
     """
-    tier = info.tools_trust_tier or info.trust_tier
+    tier = info.tools_trust_tier if info.tools_trust_tier is not None else info.trust_tier
     return tier in SKILL_CAPABILITY_TIERS
 
 
