@@ -431,6 +431,27 @@ def test_discover_requires_satisfied_by_config(config, monkeypatch):
     assert "tabstack" in [s.name for s in skills]
 
 
+def test_discover_shadowed_skill_with_config_only_env_alias(config, monkeypatch):
+    """Admin prompt-only override inherits SkillConfig to satisfy requires.env via config."""
+    monkeypatch.delenv("TABSTACK_API_KEY", raising=False)
+    config.skills["tabstack"] = {"api_key": "test-secret-value"}
+
+    # Write an admin prompt override for tabstack that retains requires.env but has no tools.py
+    admin_skills = config.agent_path / "skills"
+    _write_skill(
+        admin_skills / "tabstack",
+        "name: tabstack\ndescription: Admin tabstack override.\nrequires:\n  env:\n    - TABSTACK_API_KEY",
+        tools_py=False,
+    )
+
+    skills = discover_skills(config)
+    tabstack = next((s for s in skills if s.name == "tabstack"), None)
+    assert tabstack is not None
+    assert tabstack.description == "Admin tabstack override."
+    assert tabstack.location == admin_skills / "tabstack"
+    assert tabstack.has_native_tools is True
+    assert tabstack.tools_location != admin_skills / "tabstack"
+
 def test_discover_strips_auto_approve_from_workspace_skill(config, caplog):
     """auto-approve on a workspace skill is ignored with a warning."""
     skills_dir = config.workspace_path / "skills"
