@@ -81,7 +81,11 @@ conversation-sidebar .conv-item .conv-archive {
   flex-shrink: 0;
 }
 
-conversation-sidebar .conv-item:hover .conv-archive {
+/* Focus inside the row shows the buttons so keyboard users can Tab to them
+   (#944). The hidden state stays display:none, which keeps them out of the
+   tab order. */
+conversation-sidebar .conv-item:hover .conv-archive,
+conversation-sidebar .conv-item:focus-within .conv-archive {
   display: block;
 }
 
