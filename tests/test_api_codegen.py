@@ -1793,10 +1793,13 @@ def test_listing_contract_drift_fails_at_unchanged_caller(source_tree, operation
     assert result.returncode == 0, output
     backend = source_tree / "src/decafclaw/http_server.py"
     original = backend.read_text()
+    # ruff wraps the longer system signature and route; the others fit on one line.
+    wrapped = operation != "list_conversations"
+    wrap, unwrap = ("\n    ", "\n") if operation == "list_system_conversations" else ("", "")
     if contract == "query":
         changed = original.replace(
-            f'async def {operation}(request: Request, folder: str = "")',
-            f"async def {operation}(request: Request, folder: int = 0)",
+            f'async def {operation}({wrap}request: Request, folder: str = ""{unwrap})',
+            f"async def {operation}({wrap}request: Request, folder: int = 0{unwrap})",
         )
         diagnostic = "Argument of type 'string' is not assignable to parameter of type 'number'"
         code = "TS2345"
@@ -1811,7 +1814,11 @@ def test_listing_contract_drift_fails_at_unchanged_caller(source_tree, operation
             .replace("    conversations:", "    renamed_conversations:")
         )
         changed = original[:start] + isolated + "\n\n\n" + original[start:]
-        route = changed.index(f', {operation}, methods=["GET"],')
+        route = changed.index(
+            f',\n            {operation},\n            methods=["GET"],'
+            if wrapped
+            else f', {operation}, methods=["GET"],'
+        )
         prefix, suffix = changed[:route], changed[route:]
         changed = prefix + suffix.replace(f"response_model={model}", "response_model=ChangedListingResponse", 1)
         diagnostic = "Property 'conversations' does not exist on type 'ChangedListingResponse'"
@@ -2327,21 +2334,25 @@ def test_workspace_read_input_drift_fails_at_every_unchanged_call(source_tree, c
     def mutate(original):
         parameter = "q" if contract == "query" else contract
         before = (
-            f'"name": "{parameter}", "in": "'
+            f'"name": "{parameter}",\n                        "in": "'
             + ("path" if contract == "path" else "query")
-            + '", "required": '
+            + '",\n                        "required": '
             + ("True" if contract != "folder" else "False")
-            + ',\n                     "schema": {"type": "string"},'
+            + ',\n                        "schema": {"type": "string"},'
         )
         after = before.replace('"type": "string"', '"type": "integer"')
         if contract == "path":
-            start = original.index('APIRoute("/api/workspace-file/{path:path}", workspace_read_json')
-            end = original.index('APIRoute("/api/workspace/{path:path}", serve_workspace_file', start)
+            start = original.index(
+                'APIRoute(\n            "/api/workspace-file/{path:path}",\n            workspace_read_json'
+            )
+            end = original.index(
+                'APIRoute(\n            "/api/workspace/{path:path}",\n            serve_workspace_file', start
+            )
             block = original[start:end]
             assert block.count(before) == 1
             return original[:start] + block.replace(before, after) + original[end:]
         if contract == "folder":
-            start = original.index('APIRoute("/api/workspace", workspace_list')
+            start = original.index('APIRoute(\n            "/api/workspace",\n            workspace_list')
             end = original.index('APIRoute("/api/workspace", workspace_create', start)
             block = original[start:end]
             assert block.count(before) == 1
@@ -2575,11 +2586,11 @@ def test_upload_and_native_workspace_contract_drift_fails_at_unchanged_callers(
 
         route = "handle_upload" if contract.startswith("upload_") else "serve_workspace_file"
         start = original.index(
-            'APIRoute("/api/'
+            'APIRoute(\n            "/api/'
             + (
-                'upload/{conv_id}", handle_upload'
+                'upload/{conv_id}",\n            handle_upload'
                 if route == "handle_upload"
-                else 'workspace/{path:path}", serve_workspace_file'
+                else 'workspace/{path:path}",\n            serve_workspace_file'
             )
         )
         end = original.index("        APIRoute(", start + 10)
@@ -2590,7 +2601,7 @@ def test_upload_and_native_workspace_contract_drift_fails_at_unchanged_callers(
             changed = block.replace(before, '"properties": {"file": {"type": "integer"}}')
         else:
             parameter = "conv_id" if contract == "upload_conv_id" else "path"
-            marker = f'"name": "{parameter}", "in": "path"'
+            marker = f'"name": "{parameter}",\n                        "in": "path"'
             parameter_start = block.index(marker)
             schema_start = block.index('"schema": {"type": "string"}', parameter_start)
             changed = (
@@ -2670,9 +2681,9 @@ def test_vault_read_input_drift_fails_at_every_unchanged_call(source_tree, contr
 
     def mutate(original):
         route = (
-            'APIRoute("/api/vault", vault_list'
+            'APIRoute(\n            "/api/vault",\n            vault_list'
             if contract == "folder"
-            else 'APIRoute("/api/vault/{page:path}", vault_read'
+            else 'APIRoute(\n            "/api/vault/{page:path}",\n            vault_read'
         )
         start = original.index(route)
         end = original.index("),\n", start) + len("),\n")
@@ -2930,7 +2941,7 @@ def test_vault_write_page_type_drift_fails_at_every_unchanged_caller(source_tree
     originals = {caller: (source_tree / STATIC_REL / caller).read_bytes() for caller in callers}
 
     def mutate(original):
-        route = 'APIRoute("/api/vault/{page:path}", vault_write'
+        route = 'APIRoute(\n            "/api/vault/{page:path}",\n            vault_write'
         start = original.index(route)
         end = original.index("),\n", start) + len("),\n")
         block = original[start:end]
@@ -2964,7 +2975,7 @@ def test_vault_delete_page_type_drift_fails_at_unchanged_caller(source_tree):
     target = next(line_no for line_no, line in enumerate(original_caller.decode().splitlines(), 1) if call in line)
 
     def mutate(original):
-        route = 'APIRoute("/api/vault/{page:path}", vault_delete'
+        route = 'APIRoute(\n            "/api/vault/{page:path}",\n            vault_delete'
         start = original.index(route)
         end = original.index("),\n", start) + len("),\n")
         block = original[start:end]
@@ -3095,10 +3106,10 @@ def test_config_path_type_drift_fails_at_unchanged_callers(
     def mutate(original):
         handler = "config_read_file" if operation == "read" else "config_write_file"
         start = original.index(
-            f'APIRoute("/api/config/files/{{path:path}}", {handler}',
+            f'APIRoute(\n            "/api/config/files/{{path:path}}",\n            {handler}',
         )
         next_route = (
-            'APIRoute("/api/config/files/{path:path}", config_write_file'
+            'APIRoute(\n            "/api/config/files/{path:path}",\n            config_write_file'
             if operation == "read"
             else 'APIRoute("/api/models"'
         )
@@ -3352,9 +3363,9 @@ def test_schedule_path_type_drift_fails_at_unchanged_callers(
     originals = {caller: (source_tree / STATIC_REL / caller).read_bytes() for caller in callers}
 
     def mutate(original):
-        handler_pos = original.index(f", {handler},")
+        handler_pos = original.index(f",\n            {handler},")
         start = original.rfind("APIRoute(", 0, handler_pos)
-        next_handler_pos = original.index(f", {next_handler},", handler_pos)
+        next_handler_pos = original.index(f",\n            {next_handler},", handler_pos)
         end = original.rfind("APIRoute(", 0, next_handler_pos)
         block = original[start:end]
         before = '"schema": {"type": "string"}'
@@ -3674,16 +3685,18 @@ def test_workspace_mutation_contract_drift_fails_at_unchanged_callers(
             return original.replace(before, after)
 
         route = "workspace_delete" if contract == "delete_path" else "workspace_write"
-        start = original.index(f'APIRoute("/api/workspace/{{path:path}}", {route}')
+        start = original.index(f'APIRoute(\n            "/api/workspace/{{path:path}}",\n            {route}')
         end_marker = (
             'APIRoute("/api/config/files"'
             if route == "workspace_delete"
-            else 'APIRoute("/api/workspace/{path:path}", workspace_delete'
+            else 'APIRoute(\n            "/api/workspace/{path:path}",\n            workspace_delete'
         )
         end = original.index(end_marker, start)
         block = original[start:end]
         parameter = "rename_to" if contract == "rename_query" else "path"
-        before = f'"name": "{parameter}", "in": ' + ('"query"' if parameter == "rename_to" else '"path"')
+        # ruff keeps the PUT route's parameters on one line but wraps DELETE's.
+        separator = ",\n                        " if route == "workspace_delete" else ", "
+        before = f'"name": "{parameter}"{separator}"in": ' + ('"query"' if parameter == "rename_to" else '"path"')
         parameter_start = block.index(before)
         schema_start = block.index('"schema": {"type": "string"}', parameter_start)
         schema_end = schema_start + len('"schema": {"type": "string"}')
