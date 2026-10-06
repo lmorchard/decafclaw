@@ -47,6 +47,7 @@ class SkillInfo:
     location: Path
     body: str = ""
     has_native_tools: bool = False
+    tools_location: Path | None = None
     requires_env: list[str] = field(default_factory=list)
     user_invocable: bool = True
     disable_model_invocation: bool = False
@@ -78,6 +79,10 @@ class SkillInfo:
     # constructor that forgets to set the tier loses capability rather than
     # silently gaining it.
     trust_tier: str = "workspace"
+
+    def __post_init__(self):
+        if self.has_native_tools and self.tools_location is None:
+            self.tools_location = self.location
 
 
 @dataclass
@@ -186,6 +191,7 @@ def build_skill_info(result: SkillValidation) -> SkillInfo:
     meta = result.meta or {}
     skill_dir = result.path.parent
     has_native_tools = (skill_dir / "tools.py").exists()
+    tools_location = skill_dir if has_native_tools else None
 
     requires = meta.get("requires", {})
     requires_env = requires.get("env", []) if isinstance(requires, dict) else []
@@ -198,6 +204,7 @@ def build_skill_info(result: SkillValidation) -> SkillInfo:
         location=skill_dir,
         body=result.body.strip(),
         has_native_tools=has_native_tools,
+        tools_location=tools_location,
         requires_env=requires_env,
         user_invocable=meta.get("user-invocable", meta.get("user_invocable", True)),
         disable_model_invocation=meta.get("disable-model-invocation", meta.get("disable_model_invocation", False)),
@@ -524,7 +531,7 @@ def discover_skills(config, rejections: list | None = None) -> list[SkillInfo]:
     # "extra" tier regardless of how many were configured.
     scan_entries: list[tuple[str, Path]] = skill_scan_entries(config)
 
-    seen_names: dict[str, Path] = {}
+    seen_skills: dict[str, SkillInfo] = {}
     skills: list[SkillInfo] = []
 
     for tier, base_path in scan_entries:
@@ -619,12 +626,20 @@ def discover_skills(config, rejections: list | None = None) -> list[SkillInfo]:
                 log.debug(f"Skipping skill '{info.name}': missing env vars {missing_env}")
                 continue
 
-            # Name collision: first-found wins
-            if info.name in seen_names:
-                log.debug(f"Skill '{info.name}' at {skill_dir} shadowed by {seen_names[info.name]}")
+            # Name collision: first-found wins, except for native tool inheritance
+            if info.name in seen_skills:
+                existing = seen_skills[info.name]
+                if not existing.has_native_tools and info.has_native_tools:
+                    existing.has_native_tools = True
+                    existing.tools_location = info.tools_location or info.location
+                    if not existing.requires_env and info.requires_env:
+                        existing.requires_env = list(info.requires_env)
+                    log.debug(f"Skill '{info.name}' at {existing.location} inherited tools from {info.location}")
+                else:
+                    log.debug(f"Skill '{info.name}' at {skill_dir} shadowed by {existing.location}")
                 continue
 
-            seen_names[info.name] = skill_dir
+            seen_skills[info.name] = info
             skills.append(info)
 
     log.info(f"Discovered {len(skills)} skills: {[s.name for s in skills]}")

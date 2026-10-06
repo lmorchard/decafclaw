@@ -353,6 +353,50 @@ def test_discover_priority_ordering(tmp_path, config):
     assert dupe_skills[0].description == "Workspace version."
 
 
+def test_discover_shadowed_skill_inherits_native_tools(tmp_path, config):
+    """Prompt-only skill in workspace inherits native tools from lower-precedence tier."""
+    ws_skills = config.workspace_path / "skills"
+    _write_skill(ws_skills / "helper", "name: helper\ndescription: Workspace prompt-only.", tools_py=False)
+
+    admin_skills = config.agent_path / "skills"
+    _write_skill(admin_skills / "helper", "name: helper\ndescription: Admin base.", tools_py=True)
+
+    skills = discover_skills(config)
+    helper = next(s for s in skills if s.name == "helper")
+    assert helper.description == "Workspace prompt-only."
+    assert helper.location == ws_skills / "helper"
+    assert helper.has_native_tools is True
+    assert helper.tools_location == admin_skills / "helper"
+
+
+def test_discover_shadowed_skill_with_own_tools_does_not_inherit(tmp_path, config):
+    """Skill with its own tools.py does not inherit lower-precedence tools_location."""
+    ws_skills = config.workspace_path / "skills"
+    _write_skill(ws_skills / "helper", "name: helper\ndescription: Workspace with tools.", tools_py=True)
+
+    admin_skills = config.agent_path / "skills"
+    _write_skill(admin_skills / "helper", "name: helper\ndescription: Admin base.", tools_py=True)
+
+    skills = discover_skills(config)
+    helper = next(s for s in skills if s.name == "helper")
+    assert helper.has_native_tools is True
+    assert helper.tools_location == ws_skills / "helper"
+
+
+def test_discover_shadowed_prompt_only_remains_prompt_only(tmp_path, config):
+    """Prompt-only override of a prompt-only skill remains prompt-only."""
+    ws_skills = config.workspace_path / "skills"
+    _write_skill(ws_skills / "helper", "name: helper\ndescription: Workspace prompt-only.", tools_py=False)
+
+    admin_skills = config.agent_path / "skills"
+    _write_skill(admin_skills / "helper", "name: helper\ndescription: Admin prompt-only.", tools_py=False)
+
+    skills = discover_skills(config)
+    helper = next(s for s in skills if s.name == "helper")
+    assert helper.has_native_tools is False
+    assert helper.tools_location is None
+
+
 def test_discover_skips_unmet_requires(tmp_path, config, monkeypatch):
     """Skills with unmet requires.env are not included."""
     monkeypatch.delenv("MISSING_VAR", raising=False)
@@ -1042,6 +1086,36 @@ async def test_activate_native_skill(ctx, tmp_path):
     assert "Native instructions." in _text(result)
     assert "native_test" in _text(result)
     assert "native_test" in ctx.tools.extra
+    assert len(ctx.tools.extra_definitions) == 1
+
+
+@pytest.mark.asyncio
+async def test_activate_shadowed_skill_with_inherited_tools(ctx, tmp_path):
+    """Activating a skill that inherited tools loads tools from tools_location."""
+    base_dir = tmp_path / "base-skill"
+    base_dir.mkdir(parents=True)
+    (base_dir / "tools.py").write_text(
+        "TOOLS = {'inherited_test': lambda ctx: 'from_base'}\n"
+        "TOOL_DEFINITIONS = [{'type': 'function', 'function': {'name': 'inherited_test'}}]\n"
+    )
+    override_dir = tmp_path / "override-skill"
+    override_dir.mkdir(parents=True)
+
+    skill = SkillInfo(
+        name="inherited-skill",
+        description="Override test.",
+        location=override_dir,
+        body="Overridden instructions.",
+        has_native_tools=True,
+        tools_location=base_dir,
+    )
+    ctx.config.discovered_skills = [skill]
+    _save_permission(ctx.config, "inherited-skill", {"status": "always", "hash": _compute_skill_hash(skill)})
+
+    result = await tool_activate_skill(ctx, name="inherited-skill")
+    assert "Overridden instructions." in _text(result)
+    assert "inherited_test" in _text(result)
+    assert "inherited_test" in ctx.tools.extra
     assert len(ctx.tools.extra_definitions) == 1
 
 
