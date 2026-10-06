@@ -222,7 +222,8 @@ def _compute_skill_hash(skill_info: "SkillInfo") -> str:
     """Hash the tools.py content. Empty string if no native tools."""
     if not skill_info.has_native_tools:
         return ""
-    tools_path = skill_info.location / "tools.py"
+    tools_loc = skill_info.tools_location or skill_info.location
+    tools_path = tools_loc / "tools.py"
     if not tools_path.exists():
         return ""
     try:
@@ -290,7 +291,8 @@ def _skill_phantom_calls(skill_info, config) -> list[str]:
     Returns [] when the source can't be read; the import that follows will
     report that far better than a guess from here.
     """
-    tools_path = skill_info.location / "tools.py"
+    tools_loc = skill_info.tools_location or skill_info.location
+    tools_path = tools_loc / "tools.py"
     try:
         source = tools_path.read_text()
     except OSError:
@@ -523,7 +525,10 @@ def _load_native_tools(skill_info) -> tuple[dict, list, object]:
     If the module exports a get_tools(ctx) function, it can be retrieved
     via getattr(module, "get_tools", None) by the caller.
     """
-    tools_path = skill_info.location / "tools.py"
+    tools_loc = skill_info.tools_location or skill_info.location
+    tools_path = tools_loc / "tools.py"
+    if not tools_path.exists():
+        raise RuntimeError(f"Skill {skill_info.name} has native tools but {tools_path} does not exist")
     module = _import_tools_module(f"decafclaw_skill_{skill_info.name}", tools_path)
 
     # Reject wrong-shaped exports here rather than letting them surface
