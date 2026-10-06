@@ -48,6 +48,7 @@ class SkillInfo:
     body: str = ""
     has_native_tools: bool = False
     tools_location: Path | None = None
+    tools_trust_tier: str | None = None
     requires_env: list[str] = field(default_factory=list)
     user_invocable: bool = True
     disable_model_invocation: bool = False
@@ -81,8 +82,11 @@ class SkillInfo:
     trust_tier: str = "workspace"
 
     def __post_init__(self):
-        if self.has_native_tools and self.tools_location is None:
-            self.tools_location = self.location
+        if self.has_native_tools:
+            if self.tools_location is None:
+                self.tools_location = self.location
+            if self.tools_trust_tier is None:
+                self.tools_trust_tier = self.trust_tier
 
 
 @dataclass
@@ -420,6 +424,45 @@ def grants_capability(info: SkillInfo) -> bool:
     return info.trust_tier in SKILL_CAPABILITY_TIERS
 
 
+def tools_grant_capability(info: SkillInfo) -> bool:
+    """True when info's native tools originate from a trusted tier.
+
+    When a prompt-only skill (such as an admin override) inherits tools.py
+    from a bundled or admin skill, the tools themselves are trusted code
+    and may be safely inspected during discovery. If the tools originate
+    from the workspace tier, they must not be imported before activation.
+    """
+    tier = info.tools_trust_tier or info.trust_tier
+    return tier in SKILL_CAPABILITY_TIERS
+
+
+def _find_inherited_tool_provider(
+    name: str, remaining_scan_entries: list[tuple[str, Path]]
+) -> tuple[Path, str, list[str]] | None:
+    """Find the first lower-precedence skill with the same name that has tools.py."""
+    for tier, base_path in remaining_scan_entries:
+        for s_dir in _iter_skill_dirs(base_path):
+            tools_py = s_dir / "tools.py"
+            if not tools_py.is_file():
+                continue
+            skill_md = s_dir / "SKILL.md"
+            if not skill_md.is_file():
+                continue
+            validation = validate_skill_md(skill_md)
+            if not validation.ok or not validation.meta:
+                continue
+            skill_name = validation.meta.get("name") or s_dir.name
+            if skill_name == name:
+                req_env: list[str] = []
+                req = validation.meta.get("requires")
+                if isinstance(req, dict):
+                    env_list = req.get("env")
+                    if isinstance(env_list, list):
+                        req_env = [str(x) for x in env_list if x]
+                return s_dir, tier, req_env
+    return None
+
+
 def skill_scan_entries(config) -> list[tuple[str, Path]]:
     """The (trust tier, base path) scan entries, in discovery priority order.
 
@@ -534,7 +577,7 @@ def discover_skills(config, rejections: list | None = None) -> list[SkillInfo]:
     seen_skills: dict[str, SkillInfo] = {}
     skills: list[SkillInfo] = []
 
-    for tier, base_path in scan_entries:
+    for entry_idx, (tier, base_path) in enumerate(scan_entries):
         for skill_dir in _iter_skill_dirs(base_path):
             skill_md = skill_dir / "SKILL.md"
             if not skill_md.exists():
@@ -586,10 +629,29 @@ def discover_skills(config, rejections: list | None = None) -> list[SkillInfo]:
                 else:
                     info.always_loaded = True
 
+            # Name collision: first-found wins (higher precedence)
+            if info.name in seen_skills:
+                log.debug(f"Skill '{info.name}' at {skill_dir} shadowed by {seen_skills[info.name].location}")
+                continue
+
+            # If prompt-only, inherit native tools from a lower-precedence tier before requires.env check
+            if not info.has_native_tools:
+                provider = _find_inherited_tool_provider(info.name, scan_entries[entry_idx + 1 :])
+                if provider is not None:
+                    p_dir, p_tier, p_req_env = provider
+                    info.has_native_tools = True
+                    info.tools_location = p_dir
+                    info.tools_trust_tier = p_tier
+                    if not info.requires_env and p_req_env:
+                        info.requires_env = list(p_req_env)
+                    log.debug(
+                        f"Skill '{info.name}' at {info.location} inherited tools from {p_dir} ({p_tier})"
+                    )
+
             # Check requires.env
             missing_env = []
             skill_config_cls = None
-            if info.has_native_tools and grants_capability(info):
+            if info.has_native_tools and tools_grant_capability(info):
                 try:
                     from ..tools.skill_tools import _load_native_tools
 
@@ -626,19 +688,6 @@ def discover_skills(config, rejections: list | None = None) -> list[SkillInfo]:
                 log.debug(f"Skipping skill '{info.name}': missing env vars {missing_env}")
                 continue
 
-            # Name collision: first-found wins, except for native tool inheritance
-            if info.name in seen_skills:
-                existing = seen_skills[info.name]
-                if not existing.has_native_tools and info.has_native_tools:
-                    existing.has_native_tools = True
-                    existing.tools_location = info.tools_location or info.location
-                    if not existing.requires_env and info.requires_env:
-                        existing.requires_env = list(info.requires_env)
-                    log.debug(f"Skill '{info.name}' at {existing.location} inherited tools from {info.location}")
-                else:
-                    log.debug(f"Skill '{info.name}' at {skill_dir} shadowed by {existing.location}")
-                continue
-
             seen_skills[info.name] = info
             skills.append(info)
 
@@ -673,7 +722,7 @@ def build_skill_tool_owners(skills: list[SkillInfo]) -> dict[str, str]:
     for skill in skills:
         if not skill.has_native_tools:
             continue
-        if not grants_capability(skill):
+        if not tools_grant_capability(skill):
             log.debug("Not indexing tools for %s-tier skill %r", skill.trust_tier, skill.name)
             continue
         try:
